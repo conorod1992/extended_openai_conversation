@@ -29,6 +29,8 @@ const DATA_FEATURES = new Set([
 ]);
 const featureLoaders = {
   "agent-config": () => import("./agent-config-editor.js"),
+  "assistant/prompt-context": () => import("./exposed-attributes-ui.js"),
+  "usage-maintenance/backup-restore": () => import("./backup-transfer-ui.js"),
   "status": () => import("./management-feature-status.js"),
   "capabilities": () => import("./management-capabilities-ia.js"),
   "configuration": () => import("./management-configuration-feature.js"),

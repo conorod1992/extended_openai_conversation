@@ -5,6 +5,8 @@ import {readFile} from "node:fs/promises";
 import {applyConfigurationControl} from "../../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 import {settingsResultsMarkup, SEARCH_DEBOUNCE_MS} from "../../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 import {renderConfiguration, renderTools} from "../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import {renderBackupTransferPanel} from "../../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
+import {renderExposedAttributeSettings} from "../../custom_components/extended_openai_conversation_responses/frontend/exposed-attributes-ui.js";
 
 const owner = () => ({_e:(value) => String(value ?? ""), _titleCase:String, _empty:String, _draft:{}, _result:{options:{}}});
 
@@ -101,7 +103,10 @@ describe("native management rendering", () => {
     try {
       const panel = owner();
       panel._configSections = ["local","prompt","backup"];
-      const html = renderConfiguration(panel);
+      const html = renderConfiguration(panel, {
+        renderBackup: renderBackupTransferPanel,
+        renderExposedAttributes: renderExposedAttributeSettings,
+      });
       expect(html).toContain("local-handling-explainer");
       expect(html).toContain("exposed-attribute");
       expect(html).toContain("transfer-panel");

@@ -244,7 +244,7 @@ assert.equal(routeModule.routeFeaturesReady("capabilities/request-rules"), false
 await Promise.all([routeModule.routeAssetPromise("assistant/basics"), routeModule.routeAssetPromise("assistant/basics")]);
 const editor = routeModule.getConfigurationEditor();
 assert.equal(routeModule.routeFeaturesReady("assistant/basics"), true);
-for (const name of ["renderConfiguration", "bindConfiguration", "renderTools", "bindTools", "configurationDialogs", "restoreDialog", "reconcileTools"]) assert.equal(typeof editor[name], "function", name);
+for (const name of ["renderConfiguration", "bindConfiguration", "renderTools", "bindTools", "configurationDialogs", "reconcileTools"]) assert.equal(typeof editor[name], "function", name);
 await routeModule.routeAssetPromise("assistant/basics");
 assert.equal(routeModule.getConfigurationEditor(), editor);
 assert.equal(routeModule.getRouteFeature("capabilities/request-rules"), undefined);
@@ -254,3 +254,19 @@ assert.equal(routeModule.routeFeaturesReady("capabilities/request-rules"), true)
 for (const name of ["renderRequestRules", "bindRequestRules", "requestRulesDialog", "reconcileRequestRules"]) assert.equal(typeof rules[name], "function", name);
 await routeModule.routeAssetPromise("capabilities/request-rules");
 assert.equal(routeModule.getRouteFeature("capabilities/request-rules"), rules);
+
+// Specialized configuration modules stay cold until their owning route loads.
+assert.equal(editor.restoreDialog, undefined);
+for (const [view, exports] of [
+  ["assistant/prompt-context", ["renderExposedAttributeSettings", "bindExposedAttributeSettings"]],
+  ["usage-maintenance/backup-restore", ["renderBackupTransferPanel", "renderRestoreTransferDialog", "bindBackupTransfer"]],
+]) {
+  assert.equal(routeModule.getRouteFeature(view), undefined);
+  assert.equal(routeModule.routeFeaturesReady(view), false);
+  await routeModule.routeAssetPromise(view);
+  const feature = routeModule.getRouteFeature(view);
+  assert.equal(routeModule.routeFeaturesReady(view), true);
+  for (const name of exports) assert.equal(typeof feature[name], "function", name);
+  await routeModule.routeAssetPromise(view);
+  assert.equal(routeModule.getRouteFeature(view), feature);
+}
