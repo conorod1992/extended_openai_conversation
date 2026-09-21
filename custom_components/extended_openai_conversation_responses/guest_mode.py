@@ -498,6 +498,8 @@ def resolve_guest_policy(
     if manager is None or not manager.is_active():
         return GuestCapabilityPolicy.unrestricted()
     if options.get(CONF_GUEST_POLICY_VERSION) == GUEST_POLICY_VERSION:
+        if exposed_entities is None:
+            return _resolve_exclusion_policy(hass, options, configured_tools)
         return _resolve_exclusion_policy(
             hass,
             options,
