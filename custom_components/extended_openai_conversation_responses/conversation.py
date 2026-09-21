@@ -834,7 +834,7 @@ class ExtendedOpenAIAgentEntity(
                         self._local_intent_result(user_input, chat_log, local_intent)
                         if local_intent is not None
                         else await self._async_handle_message_with_ha_tools(
-                            user_input, chat_log, request_options
+                            user_input, chat_log, request_options, llm_context
                         )
                     )
                     if chat_log.content and isinstance(
@@ -852,7 +852,7 @@ class ExtendedOpenAIAgentEntity(
                         self._local_intent_result(user_input, chat_log, local_intent)
                         if local_intent is not None
                         else await self._async_handle_message_with_ha_tools(
-                            user_input, chat_log, request_options
+                            user_input, chat_log, request_options, llm_context
                         )
                     )
                     await self._async_archive_turn(
@@ -895,8 +895,11 @@ class ExtendedOpenAIAgentEntity(
         user_input: ConversationInput,
         chat_log: ChatLog,
         request_options: Mapping[str, Any] | None = None,
+        llm_context: Any | None = None,
     ) -> ConversationResult:
         """Resolve HA references and cache one validated config revision per request."""
+        if llm_context is None:
+            llm_context = user_input.as_llm_context(DOMAIN)
         configured = self._configured_function_tools_from_data(self.subentry.data)
         references = [
             tool["function"]
@@ -905,16 +908,14 @@ class ExtendedOpenAIAgentEntity(
         ]
         snapshot = ToolSnapshot()
         if references and not self._effective_guest_policy().guest_active:
-            snapshot = await async_discover(
-                self.hass, user_input.as_llm_context(DOMAIN), references
-            )
+            snapshot = await async_discover(self.hass, llm_context, references)
         with tool_snapshot_scope(snapshot):
             function_config_token = _ACTIVE_FUNCTION_CONFIG.set(
                 (snapshot.project(configured), None)
             )
             try:
                 return await self._async_handle_message(
-                    user_input, chat_log, request_options
+                    user_input, chat_log, request_options, llm_context
                 )
             finally:
                 _ACTIVE_FUNCTION_CONFIG.reset(function_config_token)
@@ -924,6 +925,7 @@ class ExtendedOpenAIAgentEntity(
         user_input: ConversationInput,
         chat_log: ChatLog,
         request_options: Mapping[str, Any] | None = None,
+        llm_context: Any | None = None,
     ) -> ConversationResult:
         """Own model timings and completed-response isolated speech processing."""
         try:
@@ -934,6 +936,7 @@ class ExtendedOpenAIAgentEntity(
                     user_input,
                     chat_log,
                     request_options,
+                    llm_context=llm_context,
                     deferred_speech=deferred_speech,
                 )
             if deferred_speech:
@@ -950,11 +953,12 @@ class ExtendedOpenAIAgentEntity(
         chat_log: ChatLog,
         request_options: Mapping[str, Any] | None = None,
         *,
+        llm_context: Any | None = None,
         deferred_speech: list[tuple[str, Mapping[str, Any]]],
     ) -> ConversationResult:
         """Call the API."""
-        # Create LLM context
-        llm_context = user_input.as_llm_context(DOMAIN)
+        if llm_context is None:
+            llm_context = user_input.as_llm_context(DOMAIN)
 
         # Get exposed entities for function tools
         exposed_entities = self._get_exposed_entities()
