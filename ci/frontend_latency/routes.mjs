@@ -29,34 +29,52 @@ export function expectedRouteState(route) {
 }
 
 export async function managementRouteState(page) {
-  return page.evaluate(() => {
-    const panel = document.querySelector("extended-openai-management-panel");
-    return panel ? {
-      page: panel._page || null,
-      subsection: panel._subsection || null,
-      busy: Boolean(panel._busy),
-      error: panel._error || null,
-      loading: Boolean(panel.shadowRoot?.querySelector("main .loading")),
-      renderedRoute: panel._eocRenderedRoute || null,
-    } : null;
+  const panel = page.locator("extended-openai-management-panel");
+  if (await panel.count() === 0) return null;
+  return panel.evaluate((element) => {
+    if (!element?.shadowRoot) return null;
+    return {
+      page: element._page || null,
+      subsection: element._subsection || null,
+      busy: Boolean(element._busy),
+      error: element._error || null,
+      loading: Boolean(element.shadowRoot.querySelector("main .loading")),
+      renderedRoute: element._eocRenderedRoute || null,
+    };
   });
 }
 
 export async function waitForManagementRouteReady(page, route, timeout) {
-  await page.waitForFunction(
-    ({path}) => {
-      const panel = document.querySelector("extended-openai-management-panel");
-      if (!panel?.shadowRoot) return false;
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.waitFor({state: "attached", timeout});
+
+  const deadline = Date.now() + timeout;
+  let lastState = null;
+  while (Date.now() < deadline) {
+    lastState = await panel.evaluate((element, path) => {
+      if (!element?.shadowRoot) return null;
       const [pageName, subsection = null] = path.split("/");
-      if (panel._page !== pageName) return false;
-      if ((panel._subsection || null) !== subsection) return false;
-      if (panel._busy || panel._error) return false;
-      const main = panel.shadowRoot.querySelector("main");
-      if (!main || main.querySelector(".loading")) return false;
-      return String(panel._eocRenderedRoute || "").endsWith(`|${path}`);
-    },
-    {path: route.path},
-    {timeout},
+      const state = {
+        page: element._page || null,
+        subsection: element._subsection || null,
+        busy: Boolean(element._busy),
+        error: element._error || null,
+        loading: Boolean(element.shadowRoot.querySelector("main .loading")),
+        renderedRoute: element._eocRenderedRoute || null,
+      };
+      state.ready = state.page === pageName
+        && state.subsection === subsection
+        && !state.busy
+        && !state.error
+        && !state.loading
+        && String(state.renderedRoute || "").endsWith(`|${path}`);
+      return state;
+    }, route.path).catch(() => null);
+    if (lastState?.ready) return;
+    await page.waitForTimeout(50);
+  }
+  throw new Error(
+    `Timed out waiting for management route ${route.path}; panel=${JSON.stringify(lastState)}`,
   );
 }
 
