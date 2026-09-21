@@ -101,6 +101,26 @@ def test_function_tools_validate_yaml_schema_and_duplicates() -> None:
         validate_function_tools([_native_tool(), _native_tool()])
 
 
+def test_function_tool_cache_key_avoids_yaml_for_persisted_lists(
+    monkeypatch,
+) -> None:
+    config = {"functions": [_native_tool()]}
+    monkeypatch.setattr(
+        agent_config.yaml,
+        "safe_dump",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("persisted list cache keys must not use PyYAML")
+        ),
+    )
+
+    key = agent_config._configured_tools_yaml(config)
+
+    assert key == agent_config._configured_tools_yaml(
+        {"functions": [dict(reversed(list(_native_tool().items())))]}
+    )
+    assert key.startswith("[{")
+
+
 def test_function_tool_metadata_uses_cached_tools_without_runtime_copy(
     monkeypatch,
 ) -> None:

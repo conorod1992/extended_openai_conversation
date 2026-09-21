@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from functools import lru_cache
+import json
 import re
 from types import MappingProxyType
 from typing import Any, cast
@@ -1104,11 +1105,25 @@ def _configured_tools_yaml(data: Mapping[str, Any]) -> str | None:
         return None
     if isinstance(configured, str):
         return configured
-    return yaml.safe_dump(
-        configured,
-        sort_keys=True,
-        allow_unicode=True,
-    )
+    try:
+        # Persisted Function Tool collections are JSON-compatible. Using JSON here
+        # keeps cache-key construction linear and avoids PyYAML's expensive emitter
+        # on every Management/agent catalogue read. JSON is valid YAML, so the
+        # existing cached parser can consume this representation unchanged.
+        return json.dumps(
+            configured,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+    except TypeError, ValueError:
+        # Runtime-only hydrated configs may contain objects such as HA Templates.
+        # Preserve the established fallback for those uncommon call sites.
+        return yaml.safe_dump(
+            configured,
+            sort_keys=True,
+            allow_unicode=True,
+        )
 
 
 @lru_cache(maxsize=64)
