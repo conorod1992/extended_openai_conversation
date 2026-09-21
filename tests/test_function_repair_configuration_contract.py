@@ -139,7 +139,7 @@ async def test_function_repair_configuration_get_defers_live_metadata(
             "action": "live_metadata",
             "entry_id": entry.entry_id,
             "subentry_id": subentry.subentry_id,
-            "metadata": ["exposed_attribute_catalog"],
+            "metadata_keys": ["exposed_attribute_catalog"],
         },
     )
     assert live["exposed_attribute_catalog"]["entities"] == [
