@@ -50,11 +50,10 @@ test("Assistant becomes usable while supplemental configuration guidance is pend
   await expect(panel.locator("main .loading")).toHaveCount(0);
 
   release();
-  await expect.poll(() => panel.evaluate(async host => {
-    const base = new URL("./management-route.js", import.meta.url);
-    const module = await import(base.href);
-    return Boolean(module.getRouteFeature("configuration"));
-  })).toBe(true);
+  await expect.poll(() => page.evaluate(() =>
+    performance.getEntriesByType("resource")
+      .some(entry => entry.name.endsWith("/management-configuration-feature.js"))
+  )).toBe(true);
   await expectHarnessClean(page, errors);
 });
 
