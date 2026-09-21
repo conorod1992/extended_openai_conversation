@@ -95,4 +95,6 @@ const currentManagementPaths = new Set(
 for (const route of LATENCY_ROUTES) {
   assert.ok(currentManagementPaths.has(route.path), `stale latency route: ${route.path}`);
 }
-assert.equal(new Set(LATENCY_ROUTES.map((route) => route.path)).size, LATENCY_ROUTES.length);
+const latencyPaths = new Set(LATENCY_ROUTES.map((route) => route.path));
+assert.equal(latencyPaths.size, LATENCY_ROUTES.length);
+assert.deepEqual([...latencyPaths].sort(), [...currentManagementPaths].sort());
