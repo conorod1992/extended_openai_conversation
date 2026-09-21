@@ -169,14 +169,28 @@ function healthActionLabel(check) {
 function setupHealthMarkup(panel, health) {
   if (!health?.checks?.length) return "";
   const state = ["ready", "warning", "error"].includes(health.state) ? health.state : "ready";
-  const issueCount = Number(health.warning_count || 0) + Number(health.error_count || 0) + Number(health.unknown_count || 0);
-  const summaryDetail = issueCount
-    ? `${issueCount} item${issueCount === 1 ? "" : "s"} to review`
-    : "Core setup looks ready";
+  const errors = Number(health.error_count || 0);
+  const warnings = Number(health.warning_count || 0);
+  const unknown = Number(health.unknown_count || 0);
+  const issues = errors + warnings;
+  const summaryTitle = errors
+    ? "Needs attention"
+    : warnings
+      ? "Review recommended"
+      : unknown
+        ? "Status incomplete"
+        : "Ready";
+  const summaryDetail = issues && unknown
+    ? `${issues} ${issues === 1 ? "issue" : "issues"} to review · ${unknown} ${unknown === 1 ? "check" : "checks"} unavailable`
+    : issues
+      ? `${issues} ${issues === 1 ? "issue" : "issues"} to review`
+      : unknown
+        ? `${unknown} ${unknown === 1 ? "check" : "checks"} unavailable`
+        : "Core setup looks ready";
   return `<section class="setup-health setup-health-${state}" aria-label="Setup and health">
     <div class="setup-health-heading">
       <div><span class="section-kicker"><ha-icon icon="mdi:heart-pulse"></ha-icon> Configuration</span><h2>Setup & health</h2><p>Quick checks for the selected assistant. Optional features that are off by choice are not treated as problems.</p></div>
-      <div class="setup-health-summary" role="status"><strong>${panel._e(health.summary || "Ready")}</strong><span>${panel._e(summaryDetail)}</span></div>
+      <div class="setup-health-summary" role="status"><strong>${panel._e(summaryTitle)}</strong><span>${panel._e(summaryDetail)}</span></div>
     </div>
     <div class="setup-health-grid">
       ${health.checks.map((check) => {
