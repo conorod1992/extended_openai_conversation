@@ -9,7 +9,7 @@ import {MODEL_RESET_FIELDS} from "../custom_components/extended_openai_conversat
 import {settingCurrentState} from "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 import {renderMemorySettings} from "../custom_components/extended_openai_conversation_responses/frontend/memory-settings-ui.js";
 import {renderOverview} from "../custom_components/extended_openai_conversation_responses/frontend/overview-page.js";
-import {renderConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import {renderConfiguration, renderConfigurationActions} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
@@ -197,6 +197,7 @@ assert.match(partialOverviewHtml, /5,678 this month/);
 
 const panel = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const managementStyles = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management.css", import.meta.url), "utf8");
+const managementRenderer = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js", import.meta.url), "utf8");
 const controlReader = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js", import.meta.url), "utf8");
 const editor = (
   await Promise.all([
@@ -253,6 +254,12 @@ assert.match(editor, /const cleanOnly = panel\._configDirty/);
 assert.match(editor, /id="duplicate-agent" \$\{cleanOnly\}/);
 assert.match(editor, /id="export-agent" \$\{cleanOnly\}/);
 assert.match(editor, /id="import-agent">Import configuration/);
+const actionOwner = {_configDirty:false, _configSections:["general"]};
+assert.match(renderConfigurationActions(actionOwner, ["general"]), /id="duplicate-agent"/);
+assert.match(renderConfigurationActions(actionOwner, ["general"]), /id="import-agent"/);
+assert.doesNotMatch(renderConfiguration(actionOwner), /agent-actions-menu|config-toolbar|action-help/);
+assert.match(panel, /id="eoc-agent-actions-host"/);
+assert.doesNotMatch(managementRenderer, /syncManagementActions|replaceChildren\(actionsMenu\)|main \.agent-actions-menu/);
 assert.match(navigation, /"assistant\/advanced": \["capabilities", "web-skills"\]/);
 assert.doesNotMatch(navigation, /LEGACY_NESTED_ROUTES/);
 assert.match(memoryManagement, /data-memory\/memory-settings/);
