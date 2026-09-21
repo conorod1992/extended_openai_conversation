@@ -31,7 +31,7 @@ for (const route of [
   "usage-maintenance-retention",
   "usage-maintenance-request-debug",
 ]) {
-  assert.match(browserHarness, new RegExp(`name: "\${route}"`), route);
+  assert.match(browserHarness, new RegExp(`name: "${route}"`), route);
 }
 
 for (const operation of [
