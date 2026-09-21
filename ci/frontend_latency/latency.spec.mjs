@@ -49,7 +49,33 @@ async function measureRoute(browser, authData, route, iteration) {
   try {
     await page.goto(`${baseUrl}/extended-openai/${route.path}`, {waitUntil: "domcontentloaded"});
     await expect(page.locator("extended-openai-management-panel")).toHaveCount(1);
-    await waitForManagementRouteReady(page, route, baselineMode ? 2500 : 30000);
+
+    if (!baselineMode) {
+      await waitForManagementRouteReady(page, route, 30000);
+    } else {
+      try {
+        await waitForManagementRouteReady(page, route, 2500);
+      } catch (probeError) {
+        const probeState = await managementRouteState(page).catch(() => null);
+        const expected = expectedRouteState(route);
+        const probeMismatch = probeState
+          && (probeState.page !== expected.page || probeState.subsection !== expected.subsection);
+        if (probeMismatch) {
+          await closeContext(context);
+          return {
+            route: route.name,
+            iteration,
+            supported: false,
+            unavailable_reason:
+              `Historical route resolved to ${probeState.page || "unknown"}/${probeState.subsection || ""}`,
+            failures,
+          };
+        }
+        // A valid historical route can simply be slower than the short
+        // compatibility probe. Give it the same full readiness budget as current.
+        await waitForManagementRouteReady(page, route, 30000);
+      }
+    }
   } catch (error) {
     const state = await managementRouteState(page).catch(() => null);
     const expected = expectedRouteState(route);
