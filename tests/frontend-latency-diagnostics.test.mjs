@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
+import {LATENCY_ROUTES} from "../ci/frontend_latency/routes.mjs";
+import {NAVIGATION} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
 
 const workflow = await readFile(".github/workflows/frontend-latency-diagnostics.yml", "utf8");
 const pythonHarness = await readFile("ci/frontend_latency/test_latency_diagnostics.py", "utf8");
@@ -16,7 +18,6 @@ for (const route of [
   "assistant-prompt-context",
   "assistant-voice",
   "assistant-speech",
-  "assistant-advanced",
   "capabilities-home-assistant",
   "capabilities-web-skills",
   "capabilities-request-rules",
@@ -85,3 +86,13 @@ assert.match(latencyPlaywrightConfig, /timeout: 240_000/);
 const closeContextBody = browserHarness.match(/async function closeContext\(context\) \{([\s\S]*?)\n\}/)?.[1] || "";
 assert.match(closeContextBody, /await context\.close\(\)/);
 assert.doesNotMatch(closeContextBody, /await closeContext\(context\)/);
+
+const currentManagementPaths = new Set(
+  NAVIGATION.flatMap((page) => page.sections.length
+    ? page.sections.map((section) => `${page.id}/${section.id}`)
+    : page.id === "overview" ? ["overview"] : []),
+);
+for (const route of LATENCY_ROUTES) {
+  assert.ok(currentManagementPaths.has(route.path), `stale latency route: ${route.path}`);
+}
+assert.equal(new Set(LATENCY_ROUTES.map((route) => route.path)).size, LATENCY_ROUTES.length);
