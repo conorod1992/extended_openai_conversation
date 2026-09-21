@@ -14,6 +14,19 @@ export default defineConfig({
       output: {
         entryFileNames: "assets/[name]-[hash].js",
         chunkFileNames: "assets/[name]-[hash].js",
+        manualChunks(id) {
+          const coreHelpers = [
+            "management-enhancement-state.js",
+            "management-data-state.js",
+            "management-confirmation-scope.js",
+            "management-dialogs.js",
+            "usage-data.js",
+            "usage-format.js",
+          ];
+          if (coreHelpers.some((name) => id.endsWith(`/frontend/${name}`))) {
+            return "management-core";
+          }
+        },
       },
     },
     outDir: `${productionFrontend}/dist`,
