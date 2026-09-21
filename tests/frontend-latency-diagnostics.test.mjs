@@ -66,4 +66,8 @@ assert.match(comparison, /Negative deltas mean current develop is faster than th
 
 assert.match(pythonHarness, /label == "baseline" and optional_on_baseline/);
 assert.match(pythonHarness, /"supported": False/);
-assert.match(comparison, /Backend operations unavailable on the historical baseline are shown as `n\/a`/);
+
+assert.match(browserHarness, /baselineMode = label === "baseline"/);
+assert.match(browserHarness, /supported: false/);
+assert.match(browserHarness, /if \(!baselineMode\)/);
+assert.match(comparison, /Backend operations or browser routes unavailable on the historical baseline are shown as `n\/a`/);

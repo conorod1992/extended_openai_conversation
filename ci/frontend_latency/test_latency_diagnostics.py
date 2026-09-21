@@ -211,6 +211,7 @@ async def test_manual_frontend_latency_diagnostics(
             "REAL_HA_FRONTEND_URL": base_url,
             "REAL_HA_FRONTEND_AUTH": json.dumps(auth_data),
             "EOAI_BROWSER_LATENCY_OUTPUT": str(browser_output.resolve()),
+            "EOAI_LATENCY_LABEL": label,
             "EOAI_LATENCY_RUNS": str(runs),
         },
         failure_label="Manual genuine-HA latency browser diagnostics failed",
