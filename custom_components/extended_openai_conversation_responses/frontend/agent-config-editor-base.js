@@ -234,6 +234,7 @@ export function saveBar(panel) {
 }
 
 export function renderConfigurationActions(panel, sections = panel._configSections || []) {
+  const cleanOnly = panel._configDirty ? "disabled title=\"Save or revert the shared draft first\"" : "";
   const includesBackup = sections.includes("backup");
   return `<details class="agent-actions-menu"><summary aria-haspopup="menu">Assistant actions</summary><div role="menu"><button type="button" class="secondary" role="menuitem" id="duplicate-agent" ${cleanOnly}>Duplicate agent</button>${includesBackup ? "" : `<button type="button" class="secondary" role="menuitem" id="import-agent">Import configuration</button><button type="button" class="secondary" role="menuitem" id="export-agent" ${cleanOnly}>Export configuration</button>`}</div></details>${panel._configDirty ? `<p class="action-help">Duplicate and Export configuration use the saved configuration. Save or revert your settings changes to enable them.</p>` : ""}`;
 }
