@@ -75,7 +75,9 @@ assert.match(browserHarness, /supported: false/);
 assert.match(comparison, /Backend operations or browser routes unavailable on the historical baseline are shown as `n\/a`/);
 
 assert.match(browserHarness, /async function closeContext/);
-assert.match(browserHarness, /baselineMode \? 2500 : 30000/);
+assert.match(browserHarness, /waitForManagementRouteReady\(page, route, 2500\)/);
+assert.match(browserHarness, /waitForManagementRouteReady\(page, route, 30000\)/);
+assert.match(browserHarness, /valid historical route can simply be slower/i);
 assert.match(browserHarness, /waitForManagementRouteReady/);
 assert.doesNotMatch(routeManifest, /ready:/);
 assert.match(routeSmoke, /for \(const route of LATENCY_ROUTES\)/);
