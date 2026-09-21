@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import re
 from collections.abc import Mapping
 from copy import deepcopy
 from functools import lru_cache
+import json
+import re
 from types import MappingProxyType
 from typing import Any, cast
 
