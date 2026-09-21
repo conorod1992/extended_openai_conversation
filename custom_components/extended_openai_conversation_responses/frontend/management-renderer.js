@@ -49,7 +49,7 @@ function updateAgentPicker(panel, agent) {
   }
 }
 
-function updateNavigation(panel, navigation) {
+function updateNavigation(panel) {
   const root = panel.shadowRoot;
   root.querySelectorAll(".top-nav button").forEach((button) => {
     const active = button.dataset.page === panel._page;
@@ -167,7 +167,7 @@ function renderDynamicRegions(panel) {
   const currentSection = local.find((item) => item.id === panel._subsection);
 
   updateAgentPicker(panel, agent);
-  updateNavigation(panel, navigationFor(panel));
+  updateNavigation(panel);
 
   const scopeHost = root.querySelector("#eoc-scope-host");
   updateRegion(scopeHost, ["data-memory/conversations", "data-memory/memories"].includes(panel._viewKey()) ? panel._scopePicker() : "");
