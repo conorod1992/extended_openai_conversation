@@ -753,11 +753,11 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "_performance": timings,
         }
     if action == "live_metadata":
-        requested = message.get("metadata", [])
+        requested = message.get("metadata_keys", [])
         if not isinstance(requested, list) or any(
             not isinstance(item, str) for item in requested
         ):
-            raise HomeAssistantError("metadata must be a list of strings")
+            raise HomeAssistantError("metadata_keys must be a list of strings")
         unknown = set(requested) - _LIVE_CONFIGURATION_METADATA
         if unknown:
             raise HomeAssistantError(
@@ -1954,7 +1954,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("expected_revision"): str,
         vol.Optional("refresh_confirmation"): bool,
         vol.Optional("memory_ids"): list,
-        vol.Optional("metadata"): list,
+        vol.Optional("metadata_keys"): list,
         vol.Optional("memory_id"): str,
         vol.Optional("session_id"): str,
         vol.Optional("source_id"): str,
