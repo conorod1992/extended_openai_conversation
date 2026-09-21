@@ -29,14 +29,7 @@ export async function loadAllUsageDays(
     const response = await callPage(startDate, endDate);
     const current = Array.isArray(response?.days) ? response.days : [];
     rows.push(...current);
-    if (current.length < pageSize) {
-      const unique = new Map(rows.map((day) => [String(day?.date || ""), day]));
-      return {
-        days: [...unique.values()].sort(
-          (left, right) => String(left.date).localeCompare(String(right.date)),
-        ),
-      };
-    }
+    if (current.length < pageSize) return {days: rows};
     const lastDate = String(current.at(-1)?.date || "");
     const nextDate = addUsageCalendarDays(lastDate, 1);
     if (!nextDate || nextDate <= startDate || nextDate > endDate) break;
