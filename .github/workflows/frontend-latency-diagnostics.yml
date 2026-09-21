@@ -29,6 +29,8 @@ jobs:
     name: Compare develop with candidate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
       credentials:
@@ -47,11 +49,16 @@ jobs:
           ref: ${{ inputs.candidate_ref || github.ref }}
           fetch-depth: 0
 
+      - name: Trust mounted checkout for Git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Resolve comparison refs
         run: |
-          echo "CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          CANDIDATE_SHA="$(git rev-parse HEAD)"
           git fetch origin develop
-          echo "DEVELOP_SHA=$(git rev-parse origin/develop)" >> "$GITHUB_ENV"
+          DEVELOP_SHA="$(git rev-parse origin/develop)"
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
+          echo "DEVELOP_SHA=$DEVELOP_SHA" >> "$GITHUB_ENV"
 
       - name: Require matching dependency declarations
         run: |
@@ -89,6 +96,8 @@ jobs:
           EOAI_LATENCY_OUTPUT: latency-results/develop.json
         run: |
           git checkout --force "$DEVELOP_SHA"
+          # Use the same diagnostic harness for both integration revisions.
+          git checkout "$CANDIDATE_SHA" -- ci/frontend_latency
           pytest ci/frontend_latency/test_latency_diagnostics.py::test_manual_frontend_latency_diagnostics             -q             --asyncio-mode=auto             --timeout=240
 
       - name: Measure candidate
