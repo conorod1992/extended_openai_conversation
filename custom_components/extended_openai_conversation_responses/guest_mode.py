@@ -724,9 +724,7 @@ def guest_policy_editor_snapshot(
         }
 
     exposed = (
-        exposed_entities
-        if exposed_entities is not None
-        else get_exposed_entities(hass)
+        exposed_entities if exposed_entities is not None else get_exposed_entities(hass)
     )
     baseline = {
         item["entity_id"]
