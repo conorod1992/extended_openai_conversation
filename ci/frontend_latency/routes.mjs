@@ -37,7 +37,7 @@ export async function managementRouteState(page) {
       busy: Boolean(panel._busy),
       error: panel._error || null,
       loading: Boolean(panel.shadowRoot?.querySelector("main .loading")),
-      heading: panel.shadowRoot?.querySelector("main .page-intro h1")?.textContent?.trim() || null,
+      renderedRoute: panel._eocRenderedRoute || null,
     } : null;
   });
 }
@@ -53,7 +53,7 @@ export async function waitForManagementRouteReady(page, route, timeout) {
       if (panel._busy || panel._error) return false;
       const main = panel.shadowRoot.querySelector("main");
       if (!main || main.querySelector(".loading")) return false;
-      return Boolean(main.querySelector(".page-intro h1")?.textContent?.trim());
+      return String(panel._eocRenderedRoute || "").endsWith(`|${path}`);
     },
     {path: route.path},
     {timeout},
