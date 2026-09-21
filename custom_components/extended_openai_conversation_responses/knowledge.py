@@ -362,7 +362,6 @@ class KnowledgeLibrary:
             chunk = self._chunks[chunk_key]
             if allowed is not None and chunk.source_id not in allowed:
                 continue
-            source = self._sources[chunk.source_id]
             features = self._source_features[chunk.source_id]
             title_tokens = features.title_tokens
             description_tokens = features.description_tokens
@@ -542,13 +541,17 @@ class KnowledgeLibrary:
         title_tokens = frozenset(_tokens(source.title))
         description_tokens = frozenset(_tokens(source.description))
         metadata_tokens = title_tokens | description_tokens
+        normalized_title = _normalize(source.title)
+        normalized_description = _normalize(source.description)
         self._source_features[source.source_id] = _SourceFeatures(
             title_tokens=title_tokens,
             description_tokens=description_tokens,
             metadata_tokens=metadata_tokens,
-            normalized_title=_normalize(source.title),
-            normalized_description=_normalize(source.description),
-            normalized_metadata=_normalize(f"{source.title} {source.description}"),
+            normalized_title=normalized_title,
+            normalized_description=normalized_description,
+            normalized_metadata=" ".join(
+                filter(None, (normalized_title, normalized_description))
+            ),
         )
         for chunk_id, (start, text) in enumerate(_split_chunks(source.content)):
             chunk = _Chunk(
