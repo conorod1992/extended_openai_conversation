@@ -1,0 +1,116 @@
+name: Frontend Latency Diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: "Candidate branch/tag/SHA (blank = the ref used to dispatch this workflow)"
+        required: false
+        type: string
+      runs:
+        description: "Cold samples per route and backend operation"
+        required: true
+        default: "3"
+        type: choice
+        options:
+          - "3"
+          - "5"
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: frontend-latency-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    name: Compare develop with candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --ipc=host
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate_ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve comparison refs
+        run: |
+          echo "CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git fetch origin develop
+          echo "DEVELOP_SHA=$(git rev-parse origin/develop)" >> "$GITHUB_ENV"
+
+      - name: Require matching dependency declarations
+        run: |
+          git show "$DEVELOP_SHA:requirements_test.txt" > /tmp/develop-requirements_test.txt
+          git show "$DEVELOP_SHA:custom_components/extended_openai_conversation_responses/manifest.json" > /tmp/develop-manifest.json
+          if ! cmp -s /tmp/develop-requirements_test.txt requirements_test.txt             || ! cmp -s /tmp/develop-manifest.json custom_components/extended_openai_conversation_responses/manifest.json; then
+            echo "Latency comparison requires identical test/HA dependency declarations on develop and candidate." >&2
+            exit 1
+          fi
+
+      - name: Reconcile Home Assistant environment
+        run: |
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" = "$BUILT_ENVIRONMENT_SHA" ]; then
+            echo "Prebuilt dependency environment matches this checkout."
+          else
+            pip install -r requirements_test.txt
+            pip install --upgrade homeassistant
+            python ci/install_ha_dependencies.py               --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
+
+      - name: Verify browser environment
+        run: |
+          pip check
+          node --version
+          npx playwright --version
+          npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+
+      - name: Measure develop baseline
+        env:
+          RUN_EOAI_LATENCY_DIAGNOSTICS: "1"
+          EOAI_LATENCY_LABEL: develop
+          EOAI_LATENCY_RUNS: ${{ inputs.runs }}
+          EOAI_LATENCY_OUTPUT: latency-results/develop.json
+        run: |
+          git checkout --force "$DEVELOP_SHA"
+          pytest ci/frontend_latency/test_latency_diagnostics.py::test_manual_frontend_latency_diagnostics             -q             --asyncio-mode=auto             --timeout=240
+
+      - name: Measure candidate
+        env:
+          RUN_EOAI_LATENCY_DIAGNOSTICS: "1"
+          EOAI_LATENCY_LABEL: candidate
+          EOAI_LATENCY_RUNS: ${{ inputs.runs }}
+          EOAI_LATENCY_OUTPUT: latency-results/candidate.json
+        run: |
+          git checkout --force "$CANDIDATE_SHA"
+          pytest ci/frontend_latency/test_latency_diagnostics.py::test_manual_frontend_latency_diagnostics             -q             --asyncio-mode=auto             --timeout=240
+
+      - name: Compare results
+        run: |
+          python ci/frontend_latency/compare.py             latency-results/develop.json             latency-results/candidate.json             latency-results/comparison
+          cat latency-results/comparison/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload latency diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-latency-diagnostics
+          path: latency-results/
+          if-no-files-found: warn
+          retention-days: 14
