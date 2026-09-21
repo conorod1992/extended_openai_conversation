@@ -105,10 +105,6 @@ export function bindSingleRequestSave(panel) {
   }, true);
 }
 
-function ruleSensitivityValue(value) {
-  return value === "Conservative" ? 94 : value === "Tolerant" ? 84 : 90;
-}
-
 export function bindFrontendCorrectness(panel) {
   const root = panel.shadowRoot;
   if (root.__eocFrontendCorrectnessBound) return;

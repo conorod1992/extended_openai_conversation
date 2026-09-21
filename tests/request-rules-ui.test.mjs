@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
 import {renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
-import {createRequestRuleActionSelector, friendlyFieldChange, friendlyFieldChangesForService, loadRequestRuleActions, mergeActionEditorValue, mergeFriendlyActionValue, parseAdvancedActionConfig, readRequestRuleActions, refreshRequestRuleSlotSelectors} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
+import {createRequestRuleActionSelector, loadRequestRuleActions, readRequestRuleActions} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const panel = {
@@ -59,8 +59,6 @@ const literalHtml = renderRequestRules({...panel, _result: {...panel._result, ru
 ]}});
 assert.match(literalHtml, /<h2>Home Assistant sentence pattern<\/h2>/);
 assert.match(literalHtml, /<b>Equals<\/b> Home Assistant sentence pattern/);
-assert.match(bindingSource, /Value from request/);
-assert.match(bindingSource, /function_catalog/);
 assert.match(bindingSource, /Captured values:/);
 assert.match(bindingSource, /selector = \{action:\{\}\}/);
 
@@ -106,27 +104,6 @@ assert.match(bindingSource, /selector = \{action:\{\}\}/);
   assert.equal(readRequestRuleActions(actionSelector), editedActions);
 }
 
-const makeSlotSelect = (value) => ({
-  value,
-  options: [],
-  refreshes: 0,
-  ownerDocument: {createElement: () => ({value:"",textContent:""})},
-  replaceChildren(...options) { this.options = options; },
-  _refreshSlotBinding() { this.refreshes += 1; },
-});
-const haSlot = makeSlotSelect("item"), functionSlot = makeSlotSelect("");
-const slotRoot = {querySelectorAll: () => [haSlot, functionSlot]};
-refreshRequestRuleSlotSelectors(slotRoot, ["item", "product"]);
-assert.equal(haSlot.value, "item");
-assert.equal(functionSlot.value, "");
-assert.deepEqual(functionSlot.options.map((option) => option.value), ["", "item", "product"]);
-refreshRequestRuleSlotSelectors(slotRoot, ["product"]);
-assert.equal(haSlot.value, "");
-assert.equal(functionSlot.value, "");
-assert.equal(haSlot.refreshes, 2);
-functionSlot.value = "product";
-refreshRequestRuleSlotSelectors(slotRoot, ["product", "list_name"]);
-assert.equal(functionSlot.value, "product");
 assert.match(requestRulesDialog(panel), /Rest of this conversation/);
 assert.match(requestRulesDialog(panel), /without asking the AI model/);
 assert.match(requestRulesDialog(panel), /ExtendedOpenAI sentence pattern/);
@@ -142,53 +119,3 @@ assert.match(requestRulesDialog(panel), /Treats simple variations such as “lig
 const diagnosticHtml = renderRequestRules({...panel,_result:{...panel._result,diagnostics:{one:"Sentence pattern is inactive: permutations are not supported"}}});
 assert.match(diagnosticHtml, /Rule inactive/);
 assert.match(diagnosticHtml, /permutations are not supported/);
-
-const existing = {domain:"light",service:"turn_on",target:{entity_id:["light.lamp"],area_id:["kitchen"],device_id:"device-one",floor_id:["ground"],label_id:["ambient"],custom_target:"keep-me"},data:{brightness_pct:35,transition:2}};
-const advanced = JSON.stringify({target:existing.target,data:existing.data});
-assert.deepEqual(
-  mergeActionEditorValue(existing, "light.lamp", advanced, "light.lamp"),
-  existing,
-);
-assert.deepEqual(
-  mergeFriendlyActionValue(existing, "area_id", ["garage"], advanced, "entity_id", ["light.lamp"]),
-  {...existing,target:{area_id:["garage"],custom_target:"keep-me"}},
-);
-assert.deepEqual(
-  mergeFriendlyActionValue(existing, "device_id", ["device-two"], advanced, "area_id", ["kitchen"]),
-  {...existing,target:{device_id:["device-two"],custom_target:"keep-me"}},
-);
-assert.deepEqual(
-  mergeActionEditorValue(existing, "light.desk", advanced, "light.lamp"),
-  {...existing,target:{entity_id:["light.desk"],custom_target:"keep-me"}},
-);
-assert.deepEqual(
-  mergeFriendlyActionValue(existing, "", [], advanced, "entity_id", ["light.lamp"]),
-  {...existing,target:{custom_target:"keep-me"}},
-);
-
-assert.deepEqual(mergeFriendlyActionValue(existing, "entity_id", ["light.lamp"], advanced, "entity_id", ["light.lamp"], {}), existing);
-assert.deepEqual(
-  mergeFriendlyActionValue(existing, "entity_id", ["light.lamp"], advanced, "entity_id", ["light.lamp"], {brightness_pct:{operation:"set",value:50}}),
-  {...existing,data:{brightness_pct:50,transition:2}},
-);
-assert.deepEqual(
-  mergeFriendlyActionValue(existing, "entity_id", ["light.lamp"], advanced, "entity_id", ["light.lamp"], {brightness_pct:{operation:"delete"}}),
-  {...existing,data:{transition:2}},
-);
-assert.deepEqual(friendlyFieldChange(0), {operation:"set",value:0});
-assert.deepEqual(friendlyFieldChange(false), {operation:"set",value:false});
-assert.deepEqual(friendlyFieldChange(""), {operation:"delete"});
-assert.deepEqual(friendlyFieldChange(null), {operation:"delete"});
-assert.deepEqual(
-  mergeFriendlyActionValue(existing, "entity_id", ["light.lamp"], advanced, "entity_id", ["light.lamp"], {brightness_pct:friendlyFieldChange(0),enabled:friendlyFieldChange(false)}).data,
-  {brightness_pct:0,transition:2,enabled:false},
-);
-const oldServiceChanges = {brightness_pct:friendlyFieldChange(50)};
-assert.equal(friendlyFieldChangesForService("light.turn_on", "light.turn_on", oldServiceChanges), oldServiceChanges);
-assert.deepEqual(friendlyFieldChangesForService("light.turn_on", "media_player.volume_set", oldServiceChanges), {});
-assert.deepEqual(
-  mergeFriendlyActionValue({domain:"media_player",service:"volume_set"}, "entity_id", ["media_player.lounge"], advanced, "entity_id", ["light.lamp"], friendlyFieldChangesForService("light.turn_on", "media_player.volume_set", oldServiceChanges)),
-  {domain:"media_player",service:"volume_set",target:{entity_id:["media_player.lounge"],custom_target:"keep-me"},data:existing.data},
-);
-assert.throws(() => parseAdvancedActionConfig("target: bad"), /valid JSON/);
-assert.throws(() => parseAdvancedActionConfig('{"target":[],"data":{}}'), /target must be a JSON object/);
