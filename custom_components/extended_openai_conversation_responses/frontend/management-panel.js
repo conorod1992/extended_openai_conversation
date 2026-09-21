@@ -794,7 +794,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!missing.length) return;
     const agentId = this._agentId;
     const loadToken = this._loadToken;
-    const metadata = await this._call("configuration", "live_metadata", {metadata: missing});
+    const metadata = await this._call("configuration", "live_metadata", {metadata_keys: missing});
     if (agentId !== this._agentId || loadToken !== this._loadToken) return;
     this._configData = {...this._configData, ...metadata};
   }
