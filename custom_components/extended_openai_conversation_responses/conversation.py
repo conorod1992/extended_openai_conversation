@@ -244,6 +244,9 @@ _ACTIVE_GUEST_POLICY: ContextVar[GuestCapabilityPolicy | None] = ContextVar(
 _ACTIVE_FUNCTION_CONFIG: ContextVar[
     tuple[list[dict[str, Any]], list[dict[str, Any]] | None] | None
 ] = ContextVar("extended_openai_active_function_config", default=None)
+_ACTIVE_LLM_CONTEXT: ContextVar[Any | None] = ContextVar(
+    "extended_openai_active_llm_context", default=None
+)
 _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
     "extended_openai_process_metadata", default=None
 )
@@ -631,6 +634,7 @@ class ExtendedOpenAIAgentEntity(
         cache_token = _PROMPT_CACHE_CONTEXT.set(None)
         try:
             llm_context = user_input.as_llm_context(DOMAIN)
+            llm_context_token = _ACTIVE_LLM_CONTEXT.set(llm_context)
             request_policy = self._resolve_live_guest_policy()
             guest_policy_token = _ACTIVE_GUEST_POLICY.set(request_policy)
             try:
@@ -683,6 +687,7 @@ class ExtendedOpenAIAgentEntity(
                     )
             finally:
                 _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
+                _ACTIVE_LLM_CONTEXT.reset(llm_context_token)
         finally:
             _PROMPT_CACHE_CONTEXT.reset(cache_token)
 
@@ -834,7 +839,7 @@ class ExtendedOpenAIAgentEntity(
                         self._local_intent_result(user_input, chat_log, local_intent)
                         if local_intent is not None
                         else await self._async_handle_message_with_ha_tools(
-                            user_input, chat_log, request_options, llm_context
+                            user_input, chat_log, request_options
                         )
                     )
                     if chat_log.content and isinstance(
@@ -852,7 +857,7 @@ class ExtendedOpenAIAgentEntity(
                         self._local_intent_result(user_input, chat_log, local_intent)
                         if local_intent is not None
                         else await self._async_handle_message_with_ha_tools(
-                            user_input, chat_log, request_options, llm_context
+                            user_input, chat_log, request_options
                         )
                     )
                     await self._async_archive_turn(
@@ -895,9 +900,9 @@ class ExtendedOpenAIAgentEntity(
         user_input: ConversationInput,
         chat_log: ChatLog,
         request_options: Mapping[str, Any] | None = None,
-        llm_context: Any | None = None,
     ) -> ConversationResult:
         """Resolve HA references and cache one validated config revision per request."""
+        llm_context = _ACTIVE_LLM_CONTEXT.get()
         if llm_context is None:
             llm_context = user_input.as_llm_context(DOMAIN)
         configured = self._configured_function_tools_from_data(self.subentry.data)
@@ -915,7 +920,7 @@ class ExtendedOpenAIAgentEntity(
             )
             try:
                 return await self._async_handle_message(
-                    user_input, chat_log, request_options, llm_context
+                    user_input, chat_log, request_options
                 )
             finally:
                 _ACTIVE_FUNCTION_CONFIG.reset(function_config_token)
@@ -925,7 +930,6 @@ class ExtendedOpenAIAgentEntity(
         user_input: ConversationInput,
         chat_log: ChatLog,
         request_options: Mapping[str, Any] | None = None,
-        llm_context: Any | None = None,
     ) -> ConversationResult:
         """Own model timings and completed-response isolated speech processing."""
         try:
@@ -936,7 +940,6 @@ class ExtendedOpenAIAgentEntity(
                     user_input,
                     chat_log,
                     request_options,
-                    llm_context=llm_context,
                     deferred_speech=deferred_speech,
                 )
             if deferred_speech:
@@ -953,10 +956,10 @@ class ExtendedOpenAIAgentEntity(
         chat_log: ChatLog,
         request_options: Mapping[str, Any] | None = None,
         *,
-        llm_context: Any | None = None,
         deferred_speech: list[tuple[str, Mapping[str, Any]]],
     ) -> ConversationResult:
         """Call the API."""
+        llm_context = _ACTIVE_LLM_CONTEXT.get()
         if llm_context is None:
             llm_context = user_input.as_llm_context(DOMAIN)
 
