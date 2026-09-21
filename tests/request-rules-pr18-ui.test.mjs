@@ -97,3 +97,5 @@ assert.deepEqual(toasts, [{message: "Unable to update Request Rule: backend reje
 assert.match(source, /recoverRequestRuleMutation\(panel, err, "Unable to duplicate Request Rule"\)/);
 assert.match(source, /recoverRequestRuleMutation\(panel, err, "Unable to delete Request Rule"\)/);
 assert.match(source, /input\.checked = Boolean\(rule\.enabled\)/);
+
+assert.match(source, /recoverRequestRuleMutation\(panel, err, "Unable to move Request Rule"\)/);
