@@ -158,7 +158,7 @@
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js": {
-    "file": "assets/management-navigation-search-BWvUBdoP.js",
+    "file": "assets/management-navigation-search-rr7Kuz8b.js",
     "name": "management-navigation-search",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js",
     "isDynamicEntry": true,
@@ -169,7 +169,7 @@
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js": {
-    "file": "assets/management-Bv-hf_VH.js",
+    "file": "assets/management-CaQ5l5pk.js",
     "name": "management",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js",
     "isEntry": true,
