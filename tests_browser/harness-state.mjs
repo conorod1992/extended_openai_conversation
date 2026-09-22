@@ -151,8 +151,8 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     if (key === "memories/delete") { state.memories = state.memories.filter((m) => !(m.memory_id === message.memory_id && m.scope_id === message.scope_id)); counts(); save(); return {deleted: true}; }
 
     if (key === "request_rules/list") return clone(state.requestRules);
-    if (key === "request_rules/create") { state.requestRules.rules.push({...clone(message.rule), id: `rule-${state.nextRuleId++}`}); normalizeRules(); state.requestRules.revision++; save(); return {revision: state.requestRules.revision}; }
-    if (key === "request_rules/update") { const i = state.requestRules.rules.findIndex((r) => r.id === message.rule_id); if (i < 0) throw new Error("Request Rule not found"); state.requestRules.rules[i] = {...clone(message.rule), id: message.rule_id}; normalizeRules(); state.requestRules.revision++; save(); return {revision: state.requestRules.revision}; }
+    if (key === "request_rules/create") { const rule = {...clone(message.rule), id: `rule-${state.nextRuleId++}`}; state.requestRules.rules.push(rule); normalizeRules(); state.requestRules.revision++; save(); return {rule: clone(rule), revision: state.requestRules.revision}; }
+    if (key === "request_rules/update") { const i = state.requestRules.rules.findIndex((r) => r.id === message.rule_id); if (i < 0) throw new Error("Request Rule not found"); state.requestRules.rules[i] = {...clone(message.rule), id: message.rule_id}; normalizeRules(); state.requestRules.revision++; save(); return {rule: clone(state.requestRules.rules[i]), revision: state.requestRules.revision}; }
     if (key === "request_rules/delete") { state.requestRules.rules = state.requestRules.rules.filter((r) => r.id !== message.rule_id); normalizeRules(); state.requestRules.revision++; save(); return {revision: state.requestRules.revision}; }
     if (key === "request_rules/duplicate") {
       if (message.revision !== state.requestRules.revision) throw new Error("Saved data changed; reload before saving.");
@@ -161,10 +161,19 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       const source = state.requestRules.rules[i], names = new Set(state.requestRules.rules.map(r => r.name.toLowerCase()));
       let name = `${source.name} copy`, n = 2;
       while (names.has(name.toLowerCase())) name = `${source.name} copy ${n++}`;
-      state.requestRules.rules.splice(i + 1, 0, {...clone(source), id: `rule-${state.nextRuleId++}`, name});
-      normalizeRules(); state.requestRules.revision++; save(); return {revision: state.requestRules.revision};
+      const rule = {...clone(source), id: `rule-${state.nextRuleId++}`, name};
+      state.requestRules.rules.splice(i + 1, 0, rule);
+      normalizeRules(); state.requestRules.revision++; save(); return {rule: clone(rule), revision: state.requestRules.revision};
     }
-    if (key === "request_rules/move") { const i = state.requestRules.rules.findIndex((r) => r.id === message.rule_id), j = message.direction === "up" ? i - 1 : i + 1; if (i >= 0 && j >= 0 && j < state.requestRules.rules.length) [state.requestRules.rules[i], state.requestRules.rules[j]] = [state.requestRules.rules[j], state.requestRules.rules[i]]; normalizeRules(); state.requestRules.revision++; save(); return {revision: state.requestRules.revision}; }
+    if (key === "request_rules/move") { const i = state.requestRules.rules.findIndex((r) => r.id === message.rule_id), j = message.direction === "up" ? i - 1 : i + 1; if (i >= 0 && j >= 0 && j < state.requestRules.rules.length) [state.requestRules.rules[i], state.requestRules.rules[j]] = [state.requestRules.rules[j], state.requestRules.rules[i]]; normalizeRules(); state.requestRules.revision++; save(); const rule = state.requestRules.rules.find((r) => r.id === message.rule_id); return {rule: clone(rule), revision: state.requestRules.revision}; }
+    if (key === "request_rules/settings") {
+      if (message.revision !== state.requestRules.revision) throw new Error("Saved data changed; reload before saving.");
+      state.requestRules.defaults = clone(message.defaults);
+      state.requestRules.wording_groups = clone(message.wording_groups);
+      state.requestRules.revision++;
+      save();
+      return {defaults: clone(state.requestRules.defaults), wording_groups: clone(state.requestRules.wording_groups), revision: state.requestRules.revision};
+    }
     if (key === "request_rules/defaults") { if (message.revision !== state.requestRules.revision) throw new Error("Saved data changed; reload before saving."); state.requestRules.defaults = clone(message.defaults); state.requestRules.revision++; save(); return {defaults: clone(state.requestRules.defaults), revision: state.requestRules.revision}; }
     if (key === "request_rules/wording_groups") { if (message.revision !== state.requestRules.revision) throw new Error("Saved data changed; reload before saving."); state.requestRules.wording_groups = clone(message.wording_groups); state.requestRules.revision++; save(); return {wording_groups: clone(state.requestRules.wording_groups), revision: state.requestRules.revision}; }
 
