@@ -1,42 +1,35 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-const panel = await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
-  "utf8",
-);
-const draftNavigation = await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-draft-navigation.js", import.meta.url),
-  "utf8",
-);
-const metadata = await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-setting-metadata.js", import.meta.url),
-  "utf8",
-);
-const vite = await readFile(new URL("../frontend/vite.config.ts", import.meta.url), "utf8");
+const manifest = JSON.parse(await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/dist/manifest.json", import.meta.url), "utf8"));
+const entry = Object.entries(manifest).find(([, chunk]) => chunk.isEntry && chunk.name === "management")?.[0];
+assert.ok(entry, "the production management entry must exist");
 
-assert.doesNotMatch(panel, /from "\.\/management-navigation-search\.js"/);
-assert.doesNotMatch(panel, /from "\.\/management-setting-metadata\.js"/);
-assert.doesNotMatch(panel, /from "\.\/usage-data\.js"/);
-assert.match(panel, /import\("\.\/management-navigation-search\.js"\)/);
-assert.match(panel, /await import\("\.\/usage-data\.js"\)/);
+function staticDependencies(source, seen = new Set()) {
+  if (seen.has(source)) return seen;
+  seen.add(source);
+  for (const dependency of manifest[source]?.imports || []) {
+    assert.ok(manifest[dependency], `missing production chunk ${dependency}`);
+    staticDependencies(dependency, seen);
+  }
+  return seen;
+}
 
-assert.match(
-  draftNavigation,
-  /from "\.\/management-config-destinations\.js"/,
-  "dirty navigation ownership must not pull rich settings metadata into startup",
-);
-assert.match(
-  metadata,
-  /from "\.\/management-config-destinations\.js"/,
-  "settings metadata should re-export shared destination helpers",
-);
+const coldGraph = staticDependencies(entry);
+const lazyGraph = new Set();
+for (const [source, chunk] of Object.entries(manifest)) {
+  if (chunk.isDynamicEntry) staticDependencies(source, lazyGraph);
+}
+const lazyFeatures = ["management-navigation-search", "usage-data", "management-setting-metadata", "agent-config-tools"];
+for (const name of lazyFeatures) {
+  const source = Object.entries(manifest).find(([, chunk]) => chunk.name === name)?.[0];
+  assert.ok(source, `${name} must be present in the production build`);
+  assert.ok(!coldGraph.has(source), `${name} must stay out of the cold management graph`);
+  assert.ok(lazyGraph.has(source), `${name} must remain reachable through a lazy boundary`);
+}
 
-const coreHelpers = vite.match(/const coreHelpers = \[([\s\S]*?)\];/)?.[1] || "";
-assert.doesNotMatch(coreHelpers, /usage-data\.js/);
-assert.match(coreHelpers, /usage-format\.js/);
-
-assert.match(panel, /setTimeout\(\(\) => \{[\s\S]*?this\._warmNavigationTarget\(target\);[\s\S]*?\}, 100\)/);
-assert.match(panel, /root\.addEventListener\("pointerout"/);
-assert.match(panel, /root\.addEventListener\("pointerdown"/);
-assert.match(panel, /root\.addEventListener\("focusin"/);
+// The browser lazy-ownership suite also checks that cold Overview/Guide loads
+// no feature chunks and that hover, focus, and click warming behave correctly.
+for (const dependency of manifest[entry].dynamicImports || []) {
+  assert.ok(manifest[dependency]?.isDynamicEntry, `dynamic management dependency ${dependency} must resolve`);
+}
