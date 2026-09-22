@@ -115,12 +115,17 @@ for (const name of ["quiet-hours-ui.js","management-function-repair.js","usage-c
 }
 
 // Cleanup is a panel lifecycle responsibility even after lazy activation.
-let disconnects = 0;
-panel._eocProviderCredentialObserver = {disconnect(){disconnects++;}};
+let removals = 0;
+const originalRemove = panel.shadowRoot.removeEventListener.bind(panel.shadowRoot);
+panel.shadowRoot.removeEventListener = (type, handler, options) => {
+  if (type === "eoc-diagnostics-result") removals++;
+  return originalRemove(type, handler, options);
+};
+panel._eocProviderCredentialResultHandler = () => {};
 panel.disconnectedCallback();
 panel.disconnectedCallback();
-assert.equal(disconnects,1);
-assert.equal(panel._eocProviderCredentialObserver,null);
+assert.equal(removals,1);
+assert.equal(panel._eocProviderCredentialResultHandler,null);
 
 // Permission checks cannot depend on whether the Debug feature has been visited.
 panel._data.is_admin = false;
