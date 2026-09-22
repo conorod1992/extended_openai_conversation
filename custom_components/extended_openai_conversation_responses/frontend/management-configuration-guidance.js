@@ -1,36 +1,12 @@
 import {enhancementChanged} from "./management-enhancement-state.js";
+import {SETTINGS_INDEX} from "./frontend-navigation.js";
 import {storeRuntimeGuidance} from "./management-data-state.js";
 
-const MODEL_PARAMETERS = Object.freeze([
-  Object.freeze({
-    key: "temperature",
-    capability: "supports_temperature",
-    type: "number",
-    label: "Response creativity (temperature)",
-    description: "Higher values make responses more varied; lower values make them more predictable.",
-  }),
-  Object.freeze({
-    key: "top_p",
-    capability: "supports_top_p",
-    type: "number",
-    label: "Response diversity (Top P)",
-    description: "Adjusts how widely the model samples possible words. Usually leave this at its default.",
-  }),
-  Object.freeze({
-    key: "reasoning_effort",
-    capability: "supports_reasoning_effort",
-    type: "select",
-    label: "Reasoning effort",
-    description: "Choose how much work the model spends on difficult tasks; higher settings may be slower and cost more.",
-  }),
-  Object.freeze({
-    key: "service_tier",
-    capability: "supports_service_tier",
-    type: "select",
-    label: "Processing tier",
-    description: "Choose the provider's service tier, which can affect request priority, availability, or cost.",
-  }),
-]);
+const MODEL_PARAMETERS = Object.freeze(
+  SETTINGS_INDEX
+    .filter((item) => item.page === "assistant" && item.section === "model-responses" && item.capability)
+    .map((item) => Object.freeze({key: item.configKey, capability: item.capability})),
+);
 
 function activeConfig(panel) {
   if (panel?._draft && panel._draftAgentId === panel._agentId) return panel._draft;
