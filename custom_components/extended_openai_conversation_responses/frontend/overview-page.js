@@ -100,8 +100,8 @@ export function bindOverview(panel) {
     bindSnapshotOverview(panel);
     return;
   }
-  implementation.bindOverview?.(panel, broadcast);
-  implementation.bindGettingStarted?.(panel);
+  implementation.bindOverview(panel, broadcast);
+  implementation.bindGettingStarted(panel);
 }
 
 export function enhanceOverviewHealthClarity(panel) {
