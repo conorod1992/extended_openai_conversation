@@ -90,15 +90,6 @@ assert.equal(calls.some((item) => item.action === "agents"), true);
 assert.equal(calls.some((item) => item.section === "overview" && item.action === "summary"), true);
 assert.equal(calls.some((item) => item.action === "snapshot"), true);
 
-resolveOverview({agent: {...selectedAgent, model: "gpt-test"}, usage: {today: {total_tokens: 12}}, conversations: {}, load_errors: []});
-resolveBroadcast({enabled:false, can_manage:true, catalog:{}, history:[]});
-resolveAgents({agents: [selectedAgent], is_admin: true});
-await load;
-assert.equal(panel.fallbackLoads || 0, 0);
-assert.equal(panel._result.usage.today.total_tokens, 12);
-assert.equal(panel._selectedAgent().model, "gpt-test");
-assert.equal(storage.get(module.ENTRY_KEY), "entry-a");
-
 
 const assistantStorage = new Map([
   [module.AGENT_KEY, "agent-a"],

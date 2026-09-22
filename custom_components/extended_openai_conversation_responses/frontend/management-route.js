@@ -310,6 +310,8 @@ export function startStoredOverviewPrefetch(
   return {
     entryId,
     subentryId,
+    overviewAsset,
+    overviewSummary,
     promise: Promise.allSettled([
       overviewAsset,
       overviewSummary,
@@ -378,6 +380,17 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   if (previousAgentId !== panel._agentId) panel._scopeId = null;
   panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
 
+  const overviewSelected = panel._viewKey?.() === "overview" && Boolean(selected);
+  if (overviewSelected) {
+    // The agent catalogue is enough for a useful first Overview. Do not hide it
+    // behind the full Overview module or storage-backed summary.
+    panel._contentData = null;
+    panel._result = null;
+    panel._error = null;
+    panel._busy = false;
+    panel._render();
+  }
+
   if (
     assistantConfigPrefetch
     && selected?.subentry_id === assistantConfigPrefetch.subentryId
@@ -398,18 +411,25 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
     prefetch
     && selected?.subentry_id === prefetch.subentryId
     && selected?.entry_id === prefetch.entryId
-    && panel._viewKey?.() === "overview"
+    && overviewSelected
   ) {
-    const [assetResult, overviewResult] = await prefetch.promise;
+    const overviewResult = await prefetch.overviewSummary.then(
+      (value) => ({status: "fulfilled", value}),
+      (reason) => ({status: "rejected", reason}),
+    );
     if (panel._viewKey?.() !== "overview" || panel._loadToken !== initialToken
         || panel._agentId !== prefetch.subentryId) return;
-    if (assetResult.status === "fulfilled" && overviewResult.status === "fulfilled") {
+    if (overviewResult.status === "fulfilled") {
       applyOverviewResult(panel, overviewResult.value);
       return;
     }
+    // A speculative stored-ID request can fail after an agent was recreated.
+    // Keep the useful snapshot visible while the authoritative route load retries.
+    await panel._loadSection(true);
+    return;
   }
 
-  await panel._loadSection();
+  await panel._loadSection(overviewSelected);
 }
 
 

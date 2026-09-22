@@ -1,5 +1,4 @@
 export {bindGettingStarted} from "./overview-onboarding.js";
-export {enhanceOverviewHealthClarity} from "./management-overview-health-clarity.js";
 import {buildSetupHealth} from "./overview-health.js";
 
 function card(panel, title, status, detail, page, section, action, icon, tone = "neutral") {
