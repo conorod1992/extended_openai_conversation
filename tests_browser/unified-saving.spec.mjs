@@ -51,7 +51,7 @@ for (const [view, field, section, action, removed] of [
   });
 }
 
-test("Request Rules settings coordinate partial saves and retain drafts through search and immediate toggles", async ({page}) => {
+test("Request Rules settings save atomically and retain drafts through search and immediate toggles", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules")); const panel = panelFor(page);
   await expect(panel.locator(".rule-settings details")).toHaveCount(2);
@@ -60,10 +60,12 @@ test("Request Rules settings coordinate partial saves and retain drafts through 
   await panel.locator("#wording-add").click();
   await panel.locator(".wording-canonical").fill("turn on"); await panel.locator(".wording-alternatives").fill("enable, switch on");
   await panel.locator("#rule-search").fill("baseline"); await expect(panel.locator("#save-page")).toBeVisible();
-  await rejectOnce(page, "request_rules", "wording_groups");
+  await rejectOnce(page, "request_rules", "settings");
   await panel.locator("#save-page").click();
-  await expect(panel.locator("#toast")).toContainText("Some settings were saved");
+  await expect(panel.locator("#toast")).toContainText("Save rejected");
   await expect(panel.locator(".wording-canonical")).toHaveValue("turn on");
+  await expect(panel.locator("#rules-default-word-forms")).not.toBeChecked();
+  expect(await page.evaluate(() => window.browserHarness.getState().requestRules.wording_groups)).toEqual([]);
   await expect(panel.locator("#save-page")).toBeEnabled();
   await panel.locator("#save-page").click(); await expect(panel.locator(".save-bar")).toHaveCount(0);
   expect(await page.evaluate(() => window.browserHarness.getState().requestRules.wording_groups)).toEqual([{canonical: "turn on", alternatives: ["enable", "switch on"]}]);
