@@ -1226,7 +1226,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       getRouteFeature("memory-browser")?.bindMemoryBrowser(this);
     }
     if (view === "data-memory/memories") getRouteFeature(view)?.bindTemporaryMemory(this);
-    if (view === "data-memory/memory-settings") getRouteFeature("configuration")?.bindMemorySettings(this);
+    if (view === "data-memory/memory-settings") getRouteFeature(view)?.bindMemorySettings(this);
     if (["capabilities/home-assistant", "capabilities/web-skills", "data-memory/knowledge"].includes(view)) {
       getRouteFeature("capabilities")?.bindCapabilities(this);
     }
