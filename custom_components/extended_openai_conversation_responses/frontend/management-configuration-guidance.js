@@ -161,23 +161,6 @@ export function modelParameterGuidance(key, capabilities = {}) {
   };
 }
 
-function ensureStyles(panel) {
-  const root = panel.shadowRoot;
-  if (!root || root.querySelector("style[data-eoc-configuration-guidance]")) return;
-  const style = document.createElement("style");
-  style.dataset.eocConfigurationGuidance = "";
-  style.textContent = `
-    .eoc-guidance-note{display:grid;gap:3px;margin:8px 0;padding:9px 11px;border:1px solid var(--divider-color);border-radius:9px;background:var(--secondary-background-color);color:var(--secondary-text-color);font-size:12px;line-height:1.45}
-    .eoc-guidance-note strong{color:var(--primary-text-color);font-size:12px}
-    .eoc-guidance-note.eoc-guidance-warning{border-left:3px solid var(--warning-color,var(--error-color));background:color-mix(in srgb,var(--warning-color,var(--error-color)) 6%,var(--card-background-color))}
-    .eoc-guidance-note.eoc-guidance-unavailable{border-left:3px solid var(--disabled-text-color,var(--secondary-text-color))}
-    .eoc-guidance-note .eoc-guidance-actions{margin-top:4px}
-    .eoc-guidance-note .eoc-guidance-route{min-height:30px;padding:4px 9px}
-    .eoc-unavailable-model-setting{opacity:.82}
-    .eoc-unavailable-model-setting:focus{outline:2px solid var(--primary-color);outline-offset:3px}
-  `;
-  root.append(style);
-}
 
 function noteElement(guidance, key = "") {
   const note = document.createElement("div");
@@ -333,7 +316,6 @@ function enhanceGroup(panel, name, dependencies, enhance) {
 
 export function enhanceConfigurationGuidance(panel) {
   if (!panel.shadowRoot) return;
-  if (enhancementChanged(panel, "guidance-styles")) ensureStyles(panel);
   const config = activeConfig(panel);
   const capabilities = activeCapabilities(panel);
   enhanceGroup(panel, "model", [MODEL_PARAMETERS.map((spec) => config[spec.key]), capabilities, panel._result?.options || panel._configData?.options], decorateModelParameters);
