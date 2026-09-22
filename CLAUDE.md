@@ -10,11 +10,12 @@ Extended OpenAI Conversation (Responses) is a Home Assistant custom component th
 
 ### Lint & Format
 ```bash
+# Run before final testing or handing off changes:
+python scripts/fix.py
+
+# CI-equivalent, non-mutating verification:
 ruff check custom_components/
 ruff format --check custom_components/
-# Auto-fix:
-ruff check --fix custom_components/
-ruff format custom_components/
 ```
 
 ### Type Check
