@@ -396,24 +396,28 @@ test("Usage request details bind once after repeated explicit binding", async ({
   await expectHarnessClean(page, errors);
 });
 
-test("credential observer is disposed on disconnect and restored on reconnect", async ({page}) => {
+test("credential diagnostics result handler is disposed on disconnect and restored on reconnect", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/diagnostics"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#eoc-change-api-key")).toBeVisible();
   const result = await page.evaluate(async () => {
     const {panel} = window.browserHarness;
-    const observer = panel._eocProviderCredentialObserver;
-    const disconnect = observer.disconnect.bind(observer);
-    let stopped = 0;
-    observer.disconnect = () => { stopped++; disconnect(); };
+    const handler = panel._eocProviderCredentialResultHandler;
+    let removed = 0;
+    const originalRemove = panel.shadowRoot.removeEventListener.bind(panel.shadowRoot);
+    panel.shadowRoot.removeEventListener = (type, listener, options) => {
+      if (type === "eoc-diagnostics-result" && listener === handler) removed++;
+      return originalRemove(type, listener, options);
+    };
     panel.remove();
-    const cleared = panel._eocProviderCredentialObserver === null;
+    const cleared = panel._eocProviderCredentialResultHandler === null;
     document.body.append(panel);
-    const restarted = panel._eocProviderCredentialObserver !== null && panel._eocProviderCredentialObserver !== observer;
+    const restarted = panel._eocProviderCredentialResultHandler !== null
+      && panel._eocProviderCredentialResultHandler !== handler;
     await panel._navigate("guide");
-    return {stopped,cleared,restarted,afterNavigation:panel._eocProviderCredentialObserver === null};
+    return {removed,cleared,restarted,afterNavigation:panel._eocProviderCredentialResultHandler === null};
   });
-  expect(result).toEqual({stopped:1,cleared:true,restarted:true,afterNavigation:true});
+  expect(result).toEqual({removed:1,cleared:true,restarted:true,afterNavigation:true});
   await expectHarnessClean(page, errors);
 });

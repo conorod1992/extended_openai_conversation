@@ -12,6 +12,18 @@ const USAGE_WINDOW_OPTIONS = [
 ];
 const DEFAULT_USAGE_WINDOW = "30";
 const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
+const usageDateKeyFormatters = new Map();
+const usageDisplayFormatters = new Map();
+
+function cachedDateTimeFormat(cache, locales, options) {
+  const key = JSON.stringify([locales || null, options]);
+  let formatter = cache.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locales, options);
+    cache.set(key, formatter);
+  }
+  return formatter;
+}
 
 function normalizeUsageWindow(value) {
   const key = String(value || "");
@@ -50,7 +62,7 @@ export function localUsageDateKey(value = new Date(), timeZone = undefined) {
   if (Number.isNaN(date.getTime())) return "";
   try {
     const parts = Object.fromEntries(
-      new Intl.DateTimeFormat("en-US", {
+      cachedDateTimeFormat(usageDateKeyFormatters, "en-US", {
         year: "numeric", month: "2-digit", day: "2-digit", timeZone,
       }).formatToParts(date).filter((item) => item.type !== "literal").map((item) => [item.type, item.value]),
     );
@@ -75,10 +87,10 @@ function formatUsageDate(value, locales = undefined, monthOnly = false) {
   if (!parts) return String(value || "");
   const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12));
   try {
-    return new Intl.DateTimeFormat(locales, monthOnly
+    const options = monthOnly
       ? {year: "numeric", month: "short", timeZone: "UTC"}
-      : {year: "numeric", month: "short", day: "numeric", timeZone: "UTC"}
-    ).format(date);
+      : {year: "numeric", month: "short", day: "numeric", timeZone: "UTC"};
+    return cachedDateTimeFormat(usageDisplayFormatters, locales, options).format(date);
   } catch (_) {
     return String(value || "");
   }

@@ -345,9 +345,12 @@ export function bindConfiguration(panel) {
   bindSaveBar(panel);
   bindConfigurationInputs(panel);
   root.querySelector("#local-intent-search")?.addEventListener("input", (event) => {
-    const query = event.target.value;
+    const queryTokens = searchTokens(event.target.value);
     root.querySelectorAll("[data-local-intent-choice]").forEach((choice) => {
-      choice.hidden = !matchesFunctionSearch(query, choice.dataset.choiceSearch);
+      choice.hidden = !matchesFunctionSearchTokens(
+        queryTokens,
+        cachedFunctionSearchTokens(choice, choice.dataset.choiceSearch),
+      );
     });
   });
   bindRegexRules(panel);
@@ -928,7 +931,7 @@ export function bindTools(panel) {
   });
   root.querySelector("#group-name")?.addEventListener("input",(event)=>{if(!panel._groupIdEdited)root.querySelector("#group-id").value=functionGroupIdFromName(event.target.value);});
   root.querySelector("#group-id")?.addEventListener("input",()=>{panel._groupIdEdited=true;});
-  root.querySelector("#group-function-search")?.addEventListener("input",(event)=>{const query=event.target.value;root.querySelectorAll(".group-function-choice").forEach((choice)=>{choice.hidden=!matchesFunctionSearch(query,choice.dataset.choiceSearch);});});
+  root.querySelector("#group-function-search")?.addEventListener("input",(event)=>{const queryTokens=searchTokens(event.target.value);root.querySelectorAll(".group-function-choice").forEach((choice)=>{choice.hidden=!matchesFunctionSearchTokens(queryTokens,cachedFunctionSearchTokens(choice,choice.dataset.choiceSearch));});});
   root.querySelector("#group-cancel")?.addEventListener("click",()=>root.querySelector("#group-dialog").close());
   root.querySelector("#group-save")?.addEventListener("click",()=>saveFunctionGroup(panel));
 }
