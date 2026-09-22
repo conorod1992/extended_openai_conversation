@@ -95,4 +95,4 @@ assert.equal(refreshed, 1);
 assert.deepEqual(toasts, [{message: "Unable to update Request Rule: backend rejected update", isError: true}]);
 
 
-assert.match(source, /recoverRequestRuleMutation\(panel, err, "Unable to move Request Rule"\)/);
+assert.match(source, /recoverRequestRuleMutation\(panel,err,"Unable to move Request Rule"\)/);
