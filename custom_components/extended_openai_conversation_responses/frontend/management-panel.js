@@ -67,7 +67,7 @@ const CRITICAL_STYLE = `
   input,select,textarea,button{font:inherit}
   input,select,textarea{width:100%;min-height:42px;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:9px;padding:10px 12px}
   button{min-height:42px;border:0;border-radius:9px;padding:9px 16px;cursor:pointer;background:var(--primary-color);color:var(--text-primary-color)}
-  .mobile-nav,.mobile-local-nav{display:none}
+  .mobile-nav{display:none}
   .eoc-agent-context-row{display:flex;align-items:end;gap:12px;margin:0 0 14px}
   .eoc-agent-context-row .agent-picker{width:min(390px,100%);min-width:0;margin:0}
   .eoc-agent-context-row .agent-picker.eoc-agent-context{min-width:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}

@@ -146,10 +146,10 @@ export function renderGuide(panel) {
       .guide-group-heading{padding:0 4px 10px;border-bottom:1px solid var(--divider-color)}
       .guide-group-heading h2{margin:0;font-size:18px}
       .guide-group-heading p{margin:5px 0 0;color:var(--secondary-text-color);line-height:1.5}
-      .guide-topics{display:grid!important;grid-template-columns:1fr!important;gap:9px}
-      .guide-topic{margin:0!important;padding:0 22px!important;border:1px solid color-mix(in srgb,var(--divider-color) 76%,var(--secondary-text-color))!important;background:var(--card-background-color);scroll-margin-top:18px;box-shadow:0 1px 2px rgba(0,0,0,.035)}
-      .guide-topic[open]{border-color:color-mix(in srgb,var(--primary-color) 30%,var(--divider-color))!important}
-      .guide-topic summary{padding:17px 0!important}
+      .guide-topics{display:grid;grid-template-columns:1fr;gap:9px}
+      .guide-topic{margin:0;padding:0 22px;border:1px solid color-mix(in srgb,var(--divider-color) 76%,var(--secondary-text-color));background:var(--card-background-color);scroll-margin-top:18px;box-shadow:0 1px 2px rgba(0,0,0,.035)}
+      .guide-topic[open]{border-color:color-mix(in srgb,var(--primary-color) 30%,var(--divider-color))}
+      .guide-topic summary{padding:17px 0}
       .guide-topic summary>span{display:grid;gap:5px}
       .guide-topic summary strong{font-size:15px}
       .guide-topic summary small{font-size:13px;font-weight:400;line-height:1.45}
@@ -161,7 +161,7 @@ export function renderGuide(panel) {
       .guide-topic-body .notice{margin:16px 0}
       .guide-topic-body .guide-action{margin-top:10px}
       @media(max-width:950px){.guide-quick-tasks{grid-template-columns:repeat(2,minmax(0,1fr))}}
-      @media(max-width:600px){.guide-quick-tasks{grid-template-columns:1fr}.guide-topic{padding:0 17px!important}.guide-group-heading{padding-inline:1px}}
+      @media(max-width:600px){.guide-quick-tasks{grid-template-columns:1fr}.guide-topic{padding:0 17px}.guide-group-heading{padding-inline:1px}}
     </style>
     <section class="page-intro"><h1>Guide</h1><p>New to Extended OpenAI, or unsure which feature you need? Start here. This Guide explains the main features in plain language and links directly to the relevant settings.</p></section>
     <section class="content-card guide-quick-start">
