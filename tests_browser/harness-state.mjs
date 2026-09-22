@@ -85,7 +85,22 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     }
     if (key === "usage/summary") return {today: {total_tokens: 1234}, month: {total_tokens: 5678}, lifetime: {total_tokens: 9999}};
     if (key === "conversations/settings") return {archive_enabled: true, archive_retention_days: 30, archive_model_search_enabled: false};
-    if (key === "knowledge/list") { if (partialOverview) throw new Error("Knowledge fixture unavailable"); return {sources: []}; }
+    if (key === "knowledge/list") { if (partialOverview) throw new Error("Knowledge fixture unavailable"); return {sources: [], stats: {source_count: 0}, feature_status: {state: state.configuration.config.knowledge_enabled === false ? "disabled" : "empty", enabled: state.configuration.config.knowledge_enabled !== false, source_count: 0}}; }
+    if (key === "knowledge/set_enabled") {
+      state.configuration.config.knowledge_enabled = message.enabled;
+      state.configuration.revision = `${state.configuration.revision}x`;
+      state.agent.knowledge_enabled = message.enabled;
+      state.agent.feature_status = {
+        ...(state.agent.feature_status || {}),
+        knowledge: {state: message.enabled ? "empty" : "disabled", enabled: message.enabled, source_count: 0},
+      };
+      save();
+      return {
+        revision: state.configuration.revision,
+        knowledge_enabled: message.enabled,
+        feature_status: clone(state.agent.feature_status.knowledge),
+      };
+    }
     if (key === "scopes/catalog") return {scopes: clone(state.scopes)};
     if (key === "guest_mode/get") return clone(state.guest);
     if (key === "guest_mode/save_policy") {

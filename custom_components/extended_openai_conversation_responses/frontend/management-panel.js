@@ -808,7 +808,24 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     try {
       const configPromise = view === "data-memory/conversations" && this._data?.is_admin
         ? this._loadConfigDraft() : Promise.resolve();
+      const initialScopeId = needsScopes ? this._scopeId : null;
+      const cachedScopeLoadedAt = scopeCatalogKey ? this._eocScopeCatalogTimes.get(scopeCatalogKey) : null;
+      const cachedScopes = cachedScopeLoadedAt && Date.now() - cachedScopeLoadedAt <= SCOPE_CACHE_TTL_MS
+        ? this._scopeCatalogCache.get(scopeCatalogKey) : null;
+      const knownScopes = cachedScopes || this._baseScopes || [];
+      const canPrefetchScopedCollection = Boolean(
+        initialScopeId && knownScopes.some((scope) => scope.scope_id === initialScopeId),
+      );
+      const loadScopedCollection = (scopeId) => view === "data-memory/conversations"
+        ? this._call("conversations", "list", { scope_id: scopeId, limit: 50 })
+        : this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: scopeId, limit: 100 });
       const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey) : Promise.resolve();
+      const prefetchedScopedCollection = canPrefetchScopedCollection
+        ? loadScopedCollection(initialScopeId).then(
+          (value) => ({status: "fulfilled", value}),
+          (reason) => ({status: "rejected", reason}),
+        )
+        : null;
       const activeConversationsPromise = view === "data-memory/conversations" && this._data?.is_admin
         ? this._call("conversations", "active") : Promise.resolve({active: []});
       // Attach rejection handlers immediately so independent History work can run
@@ -818,8 +835,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ]);
       if (needsScopes) await scopePromise;
       if (loadToken !== this._loadToken) return;
+      const scopedCollection = async () => {
+        if (prefetchedScopedCollection && initialScopeId === this._scopeId) {
+          const settled = await prefetchedScopedCollection;
+          if (settled.status === "rejected") throw settled.reason;
+          return settled.value;
+        }
+        return loadScopedCollection(this._scopeId);
+      };
       let result;
       let contentData = null;
+      let usageSecondary = null;
       if (view === "overview") {
         this._markColdLifecycle("overview-summary-start");
         const summary = await this._call("overview", "summary");
@@ -829,15 +855,26 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (agent) Object.assign(this._selectedAgent(), agent);
         result = overview;
       } else if (view === "usage-maintenance/usage") {
-        const entries = [["summary", "Usage summary"], ["days", "Daily usage"], ["runs", "Recent runs"], ["retention", "Usage retention"]];
-        const settled = await Promise.allSettled([
-          this._call("usage", "summary"), this._call("usage", "daily"),
-          this._call("usage", "runs", { limit: 30 }), this._call("usage", "retention"),
-        ]);
-        result = settledSectionResult(entries, settled);
+        const summaryPromise = this._call("usage", "summary");
+        const daysPromise = this._call("usage", "daily");
+        const settle = (promise) => promise.then(
+          (value) => ({status: "fulfilled", value}),
+          (reason) => ({status: "rejected", reason}),
+        );
+        const runsPromise = settle(this._call("usage", "runs", { limit: 30 }));
+        const retentionPromise = settle(this._call("usage", "retention"));
+        const primary = await Promise.allSettled([summaryPromise, daysPromise]);
+        result = {
+          ...settledSectionResult([["summary", "Usage summary"], ["days", "Daily usage"]], primary),
+          loading: {runs: true, retention: true},
+        };
+        usageSecondary = [
+          ["runs", "Recent runs", runsPromise],
+          ["retention", "Usage retention", retentionPromise],
+        ];
       } else if (view === "data-memory/conversations") {
         const [sessions, prerequisiteResults] = await Promise.all([
-          this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
+          scopedCollection(),
           prerequisites,
         ]);
         if (prerequisiteResults[1].status === "rejected") {
@@ -851,7 +888,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (this._data?.is_admin) result = this._configData;
         else result = contentData;
       } else if (view === "data-memory/memories") {
-        result = await this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: this._scopeId, limit: 100 });
+        result = await scopedCollection();
       } else if (view === "data-memory/knowledge") {
         result = await this._call("knowledge", "list");
       } else if (view === "capabilities/guest-mode") {
@@ -876,6 +913,30 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._result = result;
       writeSectionCache(this, cacheKey, result);
       this._error = null;
+      if (usageSecondary) {
+        for (const [key, label, pending] of usageSecondary) {
+          void pending.then((settled) => {
+            if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+                || this._viewKey() !== "usage-maintenance/usage") return;
+            const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== key);
+            const loading = {...(this._result?.loading || {}), [key]: false};
+            if (settled.status === "fulfilled") {
+              this._result = {...(this._result || {}), [key]: settled.value, load_errors: errors, loading};
+            } else {
+              this._result = {
+                ...(this._result || {}),
+                load_errors: [...errors, {
+                  key,
+                  label,
+                  message: settled.reason?.message || String(settled.reason || "Unknown error"),
+                }],
+                loading,
+              };
+            }
+            this._render();
+          });
+        }
+      }
     } catch (err) {
       if (loadToken === this._loadToken) this._error = err.message || String(err);
     } finally {
@@ -1226,19 +1287,40 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     });
   }
 
+  _patchGuestModeStatus(agentId, status) {
+    if (!agentId || !status) return;
+    const agent = this._data?.agents?.find((item) => item.subentry_id === agentId);
+    if (agent) agent.guest_mode = {...(agent.guest_mode || {}), ...status};
+    if (this._agentId === agentId && this._viewKey() === "capabilities/guest-mode" && this._result) {
+      this._result = {...this._result, status: {...(this._result.status || {}), ...status}};
+    }
+  }
+
+  async _refreshGuestModeMutation(agentId, mutationResult) {
+    this._patchGuestModeStatus(agentId, mutationResult?.status);
+    if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
+    const result = await this._call("guest_mode", "get");
+    if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
+    this._patchGuestModeStatus(agentId, result?.status);
+    this._result = result;
+    this._error = null;
+    this._render();
+  }
+
   _updateGuestMode(now = false) {
     return this._runGuestOperation(async () => {
       const root = this.shadowRoot;
+      const agentId = this._agentId;
       const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
       const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
       const end = root.querySelector("#guest-end")?.value;
       try {
-        await this._call("guest_mode", "update", {
+        const result = await this._call("guest_mode", "update", {
           ...(start ? {active_from: start} : {}),
           ...(!indefinite && end ? {active_until: end} : {}),
           indefinite: indefinite || !end,
         });
-        await this._loadAgents(this._agentId);
+        await this._refreshGuestModeMutation(agentId, result);
         this._toast("Guest Mode updated");
       } catch (err) {
         this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
@@ -1249,9 +1331,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _disableGuestMode() {
     return this._runGuestOperation(async () => {
       if (!await this._confirm("End Guest Mode?", "This immediately ends an active interval or cancels a future schedule.", "End Guest Mode")) return;
+      const agentId = this._agentId;
       try {
-        await this._call("guest_mode", "disable");
-        await this._loadAgents(this._agentId);
+        const result = await this._call("guest_mode", "disable");
+        await this._refreshGuestModeMutation(agentId, result);
         this._toast("Guest Mode ended");
       } catch (err) {
         this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);

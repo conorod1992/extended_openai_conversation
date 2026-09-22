@@ -208,8 +208,10 @@ def test_discovery_uses_same_device_and_voice_pe_wake_sound(monkeypatch) -> None
     assert discovered[0].name == "Bedroom Voice"
     assert discovered[0].media_player_entity_id == "media_player.bedroom"
     assert discovered[0].media_player_source == "auto"
+    assert discovered[0].media_player_candidates == ("media_player.bedroom",)
     assert discovered[0].wake_sound_entity_id == "switch.bedroom_wake_sound"
     assert discovered[0].wake_sound_source == "auto"
+    assert discovered[0].wake_sound_candidates == ("switch.bedroom_wake_sound",)
 
 
 def test_manual_mapping_overrides_auto_discovery(monkeypatch) -> None:
@@ -255,6 +257,8 @@ def test_clock_config_and_value_object_edge_cases() -> None:
         "manual",
     )
     assert capability.as_dict()["wake_sound_source"] == "manual"
+    assert capability.as_dict()["media_player_candidates"] == []
+    assert capability.as_dict()["wake_sound_candidates"] == []
 
     with pytest.raises(ValueError, match="HH:MM string"):
         runtime._parse_clock(2200)
