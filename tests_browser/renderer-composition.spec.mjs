@@ -33,7 +33,8 @@ test("Request Rules render diagnostics, search and global reorder boundaries", a
   await page.goto(fixtureUrl("capabilities/request-rules"));
   await expect(page.locator("extended-openai-management-panel #rule-search")).toBeVisible();
   const result = await page.evaluate(async (path) => {
-    const {renderRequestRules, requestRulesDialog} = await import(`${path}request-rules-ui.js`);
+    const {renderRequestRules} = await import(`${path}request-rules-ui.js`);
+    const {requestRulesDialog} = await import(`${path}request-rules-ui-impl.js`);
     const panel = window.browserHarness.panel;
     panel._result = {rules:["First", "Middle", "Last"].map((name, order) => ({id:String(order), name, order, enabled:true, phrases:[name], match_type:"equals", action_type:"local_action", action:{actions:[]}})), diagnostics:{1:"Old <pattern>"}};
     panel._query = "Middle";
