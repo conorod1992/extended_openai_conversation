@@ -294,29 +294,29 @@ async def test_real_ha_spring_forward_normalizes_nonexistent_start_time(
         # to 01:00 UTC / 02:00 local. The requested 01:30 wall time therefore
         # normalizes to the corresponding real instant at 02:30 local.
         await manager.async_reconcile(now=datetime(2026, 3, 29, 1, 15, tzinfo=UTC))
-        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
             0.60
         )
-        assert hass.states[wake_sound_id].state == "on"
-        assert hass.states[_STATE_ENTITY_ID].state == "off"
+        assert hass.states.get(wake_sound_id).state == "on"
+        assert hass.states.get(_STATE_ENTITY_ID).state == "off"
 
         await manager.async_reconcile(now=datetime(2026, 3, 29, 1, 35, tzinfo=UTC))
-        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
             0.20
         )
-        assert hass.states[wake_sound_id].state == "off"
-        quiet_state = hass.states[_STATE_ENTITY_ID]
+        assert hass.states.get(wake_sound_id).state == "off"
+        quiet_state = hass.states.get(_STATE_ENTITY_ID)
         assert quiet_state.state == "on"
         assert quiet_state.attributes["period_started_at"] == (
             "2026-03-29T02:30:00+01:00"
         )
 
         await manager.async_reconcile(now=datetime(2026, 3, 29, 2, 30, tzinfo=UTC))
-        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
             0.60
         )
-        assert hass.states[wake_sound_id].state == "on"
-        assert hass.states[_STATE_ENTITY_ID].state == "off"
+        assert hass.states.get(wake_sound_id).state == "on"
+        assert hass.states.get(_STATE_ENTITY_ID).state == "off"
         assert manager.active is None
     finally:
         await manager.async_shutdown()
@@ -354,25 +354,25 @@ async def test_real_ha_fall_back_duplicate_time_is_one_quiet_period(
         await manager.async_reconcile(now=datetime(2026, 10, 25, 0, 30, tzinfo=UTC))
         assert len(calls) == 2
         first_period_id = manager.active["period_started_at"]
-        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
             0.20
         )
-        assert hass.states[wake_sound_id].state == "off"
+        assert hass.states.get(wake_sound_id).state == "off"
 
         await manager.async_reconcile(now=datetime(2026, 10, 25, 1, 30, tzinfo=UTC))
         assert len(calls) == 2
         assert manager.active["period_started_at"] == first_period_id
-        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
             0.20
         )
-        assert hass.states[wake_sound_id].state == "off"
+        assert hass.states.get(wake_sound_id).state == "off"
 
         await manager.async_reconcile(now=datetime(2026, 10, 25, 3, 30, tzinfo=UTC))
         assert len(calls) == 4
-        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
             0.60
         )
-        assert hass.states[wake_sound_id].state == "on"
+        assert hass.states.get(wake_sound_id).state == "on"
         assert manager.active is None
     finally:
         await manager.async_shutdown()
