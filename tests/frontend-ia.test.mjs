@@ -246,6 +246,7 @@ const {readConfigurationDraft} = await import("../custom_components/extended_ope
 const hiddenConfig = {voice_device_mappings:{speaker:"user"}, speech_regex_replacements:[{pattern:"a",replacement:"b"}]};
 assert.deepEqual(readConfigurationDraft({_draft:hiddenConfig, shadowRoot:{querySelector:() => null, querySelectorAll:() => []}}), hiddenConfig);
 assert.doesNotMatch(editor, /id="config-search"/);
+// Shared details styling may add classes without changing the actions-menu contract.
 assert.match(editor, /class="[^"]*\bagent-actions-menu\b[^"]*"/);
 assert.match(editor, /aria-haspopup="menu"/);
 assert.ok(editor.indexOf("Duplicate agent") < editor.indexOf("Import configuration"));
