@@ -33,9 +33,11 @@ assert.match(loading, /Document changed\. Validate & preview again before import
 assert.match(loading, /validatedImportMatches\(panel\._importDocument, current\)/);
 assert.match(panelSource, /section === "guest_mode" && action === "update"/);
 assert.doesNotMatch(loading, /button\.id === "guest-policy-save"/);
-assert.match(loading, /button\.classList\.contains\("rule-duplicate"\)/);
-assert.match(loading, /button\.classList\.contains\("rule-delete"\)/);
-assert.match(loading, /input\?\.classList\?\.contains\("rule-enabled"\)/);
+assert.doesNotMatch(loading, /rule-duplicate|rule-delete|rule-enabled/);
+const requestRulesCore = await readFile(frontend("request-rules-ui-core.js"), "utf8");
+assert.match(requestRulesCore, /rule-duplicate/);
+assert.match(requestRulesCore, /rule-delete/);
+assert.match(requestRulesCore, /rule-enabled/);
 assert.match(panelSource, /this\._eocRuleSavePromise/);
 
 assert.match(overview, /import\("\.\/overview-page-impl\.js"\)/);
@@ -52,7 +54,8 @@ assert.doesNotMatch(panelSource, /from "\.\/agent-config-editor\.js"/);
 assert.doesNotMatch(agentEditor, /agent-config-native-yaml|agent-config-tools-base/);
 assert.match(agentTools, /from "\.\/agent-config-native-yaml\.js"/);
 assert.match(agentNativeYaml, /from "\.\/agent-config-tools-base\.js"/);
-assert.match(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
+assert.match(requestRules, /import\("\.\/request-rules-ui-impl\.js"\)/);
+assert.doesNotMatch(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
 assert.match(routes, /import\("\.\/request-rules-ui\.js"\)/);
 assert.doesNotMatch(routes, /from "\.\/(?:agent-config-editor|request-rules-ui)\.js"/);
 assert.doesNotMatch(agentEditor + requestRules, /requiredImplementation|queueRender|typeof document/);
