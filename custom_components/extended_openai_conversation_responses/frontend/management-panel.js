@@ -754,6 +754,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       };
       let result;
       let contentData = null;
+      let usageSecondary = null;
       if (view === "overview") {
         this._markColdLifecycle("overview-summary-start");
         const summary = await this._call("overview", "summary");
@@ -763,12 +764,23 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (agent) Object.assign(this._selectedAgent(), agent);
         result = overview;
       } else if (view === "usage-maintenance/usage") {
-        const entries = [["summary", "Usage summary"], ["days", "Daily usage"], ["runs", "Recent runs"], ["retention", "Usage retention"]];
-        const settled = await Promise.allSettled([
-          this._call("usage", "summary"), this._call("usage", "daily"),
-          this._call("usage", "runs", { limit: 30 }), this._call("usage", "retention"),
-        ]);
-        result = settledSectionResult(entries, settled);
+        const summaryPromise = this._call("usage", "summary");
+        const daysPromise = this._call("usage", "daily");
+        const settle = (promise) => promise.then(
+          (value) => ({status: "fulfilled", value}),
+          (reason) => ({status: "rejected", reason}),
+        );
+        const runsPromise = settle(this._call("usage", "runs", { limit: 30 }));
+        const retentionPromise = settle(this._call("usage", "retention"));
+        const primary = await Promise.allSettled([summaryPromise, daysPromise]);
+        result = {
+          ...settledSectionResult([["summary", "Usage summary"], ["days", "Daily usage"]], primary),
+          loading: {runs: true, retention: true},
+        };
+        usageSecondary = [
+          ["runs", "Recent runs", runsPromise],
+          ["retention", "Usage retention", retentionPromise],
+        ];
       } else if (view === "data-memory/conversations") {
         const [sessions, prerequisiteResults] = await Promise.all([
           scopedCollection(),
@@ -810,6 +822,30 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._result = result;
       writeSectionCache(this, cacheKey, result);
       this._error = null;
+      if (usageSecondary) {
+        for (const [key, label, pending] of usageSecondary) {
+          void pending.then((settled) => {
+            if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+                || this._viewKey() !== "usage-maintenance/usage") return;
+            const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== key);
+            const loading = {...(this._result?.loading || {}), [key]: false};
+            if (settled.status === "fulfilled") {
+              this._result = {...(this._result || {}), [key]: settled.value, load_errors: errors, loading};
+            } else {
+              this._result = {
+                ...(this._result || {}),
+                load_errors: [...errors, {
+                  key,
+                  label,
+                  message: settled.reason?.message || String(settled.reason || "Unknown error"),
+                }],
+                loading,
+              };
+            }
+            this._render();
+          });
+        }
+      }
     } catch (err) {
       if (loadToken === this._loadToken) this._error = err.message || String(err);
     } finally {
