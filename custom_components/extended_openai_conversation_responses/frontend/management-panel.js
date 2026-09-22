@@ -828,14 +828,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const cachedScopeLoadedAt = scopeCatalogKey ? this._eocScopeCatalogTimes.get(scopeCatalogKey) : null;
       const cachedScopes = cachedScopeLoadedAt && Date.now() - cachedScopeLoadedAt <= SCOPE_CACHE_TTL_MS
         ? this._scopeCatalogCache.get(scopeCatalogKey) : null;
-      const knownScopes = cachedScopes || this._baseScopes || [];
+      const knownScopes = cachedScopes || this._data?.scopes || this._baseScopes || [];
       const canPrefetchScopedCollection = Boolean(
         initialScopeId && knownScopes.some((scope) => scope.scope_id === initialScopeId),
       );
       const loadScopedCollection = (scopeId) => view === "data-memory/conversations"
         ? this._call("conversations", "list", { scope_id: scopeId, limit: 50 })
         : this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: scopeId, limit: 100 });
-      const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey) : Promise.resolve();
+      const scopeCatalogKind = this._scopeCatalogKind(view);
+      const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey, scopeCatalogKind) : Promise.resolve();
       const prefetchedScopedCollection = canPrefetchScopedCollection
         ? loadScopedCollection(initialScopeId).then(
           (value) => ({status: "fulfilled", value}),
@@ -844,12 +845,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         : null;
       const activeConversationsPromise = view === "data-memory/conversations" && this._data?.is_admin
         ? this._call("conversations", "active") : Promise.resolve({active: []});
-      // Attach rejection handlers immediately so independent History work can run
-      // while the selected archive scope is still resolving.
-      const prerequisites = Promise.allSettled([
-        scopePromise, configPromise, activeConversationsPromise,
-      ]);
-      if (needsScopes) await scopePromise;
+      // Memory still waits for an authoritative scope selection. History may
+      // render a known selected scope immediately while its archive counts refresh.
+      if (needsScopes && (view !== "data-memory/conversations" || !prefetchedScopedCollection)) {
+        await scopePromise;
+      }
       if (loadToken !== this._loadToken) return;
       const scopedCollection = async () => {
         if (prefetchedScopedCollection && initialScopeId === this._scopeId) {
@@ -889,20 +889,73 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           ["retention", "Usage retention", retentionPromise],
         ];
       } else if (view === "data-memory/conversations") {
-        const [sessions, prerequisiteResults] = await Promise.all([
-          scopedCollection(),
-          prerequisites,
-        ]);
-        if (prerequisiteResults[1].status === "rejected") {
-          throw prerequisiteResults[1].reason;
+        const sessions = await scopedCollection();
+        const admin = Boolean(this._data?.is_admin);
+        contentData = {
+          sessions,
+          active: {active: []},
+          loading: {
+            scopes: Boolean(prefetchedScopedCollection),
+            active: admin,
+            config: admin,
+          },
+          load_errors: [],
+        };
+        result = admin ? (this._configData || null) : contentData;
+
+        const patchHistory = (key, settled, label) => {
+          if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+              || this._viewKey() !== "data-memory/conversations" || !this._contentData) return;
+          const loadErrors = (this._contentData.load_errors || []).filter((issue) => issue.key !== key);
+          const loading = {...(this._contentData.loading || {}), [key]: false};
+          if (settled.status === "rejected") {
+            this._contentData = {
+              ...this._contentData,
+              loading,
+              load_errors: [...loadErrors, {
+                key,
+                label,
+                message: settled.reason?.message || String(settled.reason || "Unknown error"),
+              }],
+            };
+          } else {
+            this._contentData = {...this._contentData, loading, load_errors: loadErrors};
+            if (key === "active") this._contentData.active = settled.value;
+            if (key === "config") this._result = this._configData;
+          }
+          this._render();
+        };
+
+        if (prefetchedScopedCollection) {
+          void scopePromise.then(async () => {
+            if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+                || this._viewKey() !== "data-memory/conversations") return;
+            let refreshedSessions = null;
+            if (this._scopeId !== initialScopeId) {
+              refreshedSessions = await loadScopedCollection(this._scopeId);
+              if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+                  || this._viewKey() !== "data-memory/conversations") return;
+            }
+            if (this._contentData) {
+              this._contentData = {
+                ...this._contentData,
+                ...(refreshedSessions ? {sessions: refreshedSessions} : {}),
+                loading: {...(this._contentData.loading || {}), scopes: false},
+              };
+              this._render();
+            }
+          }).catch((reason) => patchHistory("scopes", {status: "rejected", reason}, "Scope catalogue"));
         }
-        if (prerequisiteResults[2].status === "rejected") {
-          throw prerequisiteResults[2].reason;
+        if (admin) {
+          void Promise.resolve(activeConversationsPromise).then(
+            (value) => patchHistory("active", {status: "fulfilled", value}, "Active conversations"),
+            (reason) => patchHistory("active", {status: "rejected", reason}, "Active conversations"),
+          );
+          void Promise.resolve(configPromise).then(
+            () => patchHistory("config", {status: "fulfilled", value: this._configData}, "Archive settings"),
+            (reason) => patchHistory("config", {status: "rejected", reason}, "Archive settings"),
+          );
         }
-        const active = prerequisiteResults[2].value;
-        contentData = { sessions, active };
-        if (this._data?.is_admin) result = this._configData;
-        else result = contentData;
       } else if (view === "data-memory/memories") {
         result = await scopedCollection();
       } else if (view === "data-memory/knowledge") {
