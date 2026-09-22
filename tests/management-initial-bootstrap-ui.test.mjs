@@ -90,9 +90,14 @@ assert.equal(calls.some((item) => item.action === "agents"), true);
 assert.equal(calls.some((item) => item.section === "overview" && item.action === "summary"), true);
 assert.equal(calls.some((item) => item.action === "snapshot"), true);
 
-resolveOverview({agent: {...selectedAgent, model: "gpt-test"}, usage: {today: {total_tokens: 12}}, conversations: {}, load_errors: []});
 resolveBroadcast({enabled:false, can_manage:true, catalog:{}, history:[]});
 resolveAgents({agents: [selectedAgent], is_admin: true});
+await Promise.resolve();
+await Promise.resolve();
+assert.equal(panel.rendered, true, "agent catalogue should render a useful Overview before the summary settles");
+assert.equal(panel._result, null, "progressive first paint must not invent detailed Overview data");
+assert.equal(panel.fallbackLoads || 0, 0);
+resolveOverview({agent: {...selectedAgent, model: "gpt-test"}, usage: {today: {total_tokens: 12}}, conversations: {}, load_errors: []});
 await load;
 assert.equal(panel.fallbackLoads || 0, 0);
 assert.equal(panel._result.usage.today.total_tokens, 12);
