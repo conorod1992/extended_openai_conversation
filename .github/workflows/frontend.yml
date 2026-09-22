@@ -1,3 +1,4 @@
+# Temporary PR 764 bundle rebuild
 name: Frontend
 
 on:
@@ -45,7 +46,7 @@ on:
       - ".github/workflows/frontend.yml"
 
 permissions:
-  contents: read
+  contents: write
   packages: read
 
 concurrency:
@@ -89,6 +90,25 @@ jobs:
       - name: Build frontend bundle
         working-directory: frontend
         run: npm run build
+
+      - name: Commit generated frontend bundle for PR 764
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 764
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          rm -rf /tmp/eoai-generated-dist
+          cp -a custom_components/extended_openai_conversation_responses/frontend/dist /tmp/eoai-generated-dist
+          git fetch origin "$HEAD_REF"
+          git checkout -B "$HEAD_REF" "origin/$HEAD_REF"
+          rm -rf custom_components/extended_openai_conversation_responses/frontend/dist
+          cp -a /tmp/eoai-generated-dist custom_components/extended_openai_conversation_responses/frontend/dist
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/extended_openai_conversation_responses/frontend/dist
+          if ! git diff --cached --quiet; then
+            git commit -m "Rebuild frontend bundle"
+            git push origin "HEAD:$HEAD_REF"
+          fi
 
       - name: Verify tracked production frontend bundle
         run: git diff --exit-code -- custom_components/extended_openai_conversation_responses/frontend/dist/
