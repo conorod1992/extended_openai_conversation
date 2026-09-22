@@ -1,4 +1,4 @@
-// Topic content is rendered directly; terms retain established search aliases.
+// Topic content is rendered directly; terms contain only extra search aliases not already supplied by title, summary, or body.
 export const GUIDE_TOPICS = [
   {
     id: "getting-started",
@@ -45,7 +45,7 @@ export const GUIDE_TOPICS = [
     id: "continuity",
     title: "Conversation continuity",
     summary: "Conversation continuity lets the assistant remember the recent discussion so follow-up questions can make sense.",
-    terms: "conversation continuity follow up timeout recent context device user sessions resume history When Extended OpenAI is managing continuity itself, the conversation timeout controls how long a conversation can sit unused before the next request starts a new one. A shorter timeout reduces the chance of an old conversation being continued by mistake. A longer timeout makes it easier to return to a discussion later.",
+    terms: "conversation continuity follow up timeout recent context device user sessions resume history",
     body: [
       {type: "p", text: "Normally, a new Assist request may be treated as a completely new conversation. Conversation continuity keeps the recent discussion available, so a follow-up such as “what about tomorrow?” can still refer to what you were just talking about."},
       {type: "heading", text: "Ways a conversation can continue"},
@@ -128,7 +128,7 @@ export const GUIDE_TOPICS = [
     id: "knowledge",
     title: "Knowledge Library",
     summary: "Knowledge Library stores larger reference material that the assistant can search when needed instead of sending all of it with every request.",
-    terms: "knowledge library source document manual reference search retrieval article text local excerpts Knowledge sources are stored with the agent and indexed locally so they can be searched. When Knowledge is enabled, the assistant can search the library, see which sources match and retrieve only the useful part of a source. The entire library is not added to every model request. If you use Guest Mode, you can separately choose whether guests may use all Knowledge sources, no Knowledge sources, or only specific sources that you select.",
+    terms: "knowledge library source document manual reference search retrieval article text local excerpts",
     body: [
       {type: "p", text: "Use Knowledge Library for information that is too large or detailed to work well as a few memories. Examples include manuals, policies, household notes, project documentation, procedures and other reference material that you maintain."},
       {type: "p", text: "Knowledge sources are stored with the agent and indexed locally so they can be searched. Each source can also be disabled independently. A disabled source stays stored and editable, but it is removed from the assistant's Knowledge catalogue, search index and retrieval until you enable it again. When Knowledge is enabled, the assistant can search the available sources, see which sources match and retrieve only the useful part of a source. The entire library is not added to every model request."},
@@ -142,7 +142,7 @@ export const GUIDE_TOPICS = [
     id: "functions",
     title: "Function Tools and Function Groups",
     summary: "Function Tools give the assistant extra actions beyond normal Home Assistant control. Function Groups help keep large collections of tools efficient.",
-    terms: "function tools groups yaml actions capabilities built in on demand loading token schemas enabled disabled Every Function Tool needs instructions that explain it to the model. If you have many tools, sending all of those instructions with every request can use unnecessary input tokens. Function Groups let you decide which tool instructions are always sent and which are loaded only when needed. Deleting a Function Group does not delete the functions inside it. Those functions simply return to the normal always-available collection unless you place them in another group.",
+    terms: "function tools groups yaml actions capabilities built in on demand loading token schemas enabled disabled",
     body: [
       {type: "p", text: "You do not need to create a Function Tool just to control normal Home Assistant devices. The assistant can already work with the Home Assistant entities and actions that are exposed through Assist."},
       {type: "p", text: "Create a Function Tool when you want to give the AI an extra capability or a specially defined action. Function Tools are configured using YAML, a structured text format commonly used by Home Assistant. Extended OpenAI checks the configuration before saving it. If a tool is disabled, its setup is kept, but the model cannot see or use it."},
@@ -173,7 +173,7 @@ export const GUIDE_TOPICS = [
     id: "request-rules",
     title: "Request Rules",
     summary: "Request Rules let you create reliable shortcuts for particular phrases, either running Home Assistant actions without using AI or changing how the AI handles a request.",
-    terms: "request rules local command hassil sentence pattern synonym fuzzy routing model action automation voice shortcut Starts with, Ends with and Contains are broader. They can be useful when your trigger phrase may appear as part of a longer request. Word forms and editable wording alternatives let Extended OpenAI accept small, predictable wording differences. Fuzzy matching is a final fallback that can accept a slightly imperfect match, but it is only tried if no stricter rule matched first.",
+    terms: "request rules local command hassil sentence pattern synonym fuzzy routing model action automation voice shortcut",
     body: [
       {type: "p", text: "Request Rules check what you said before the request is sent to the AI model. They only apply after Home Assistant has already chosen this Extended OpenAI conversation agent to handle the request."},
       {type: "p", text: "There are two main uses. A local rule can recognise a phrase, run one or more Home Assistant actions in order, and give you a response without making an OpenAI request. An AI-routing rule still sends the request to the model, but can temporarily use a different model or reasoning effort for that request or for the rest of the current conversation."},
@@ -197,7 +197,7 @@ export const GUIDE_TOPICS = [
     id: "local-handling",
     title: "Local handling: Home Assistant before AI",
     summary: "Use Home Assistant's fast built-in commands after Request Rules, while keeping selected command types available to Function Tools or AI.",
-    terms: "local handling home assistant intents built in commands no ai request prefer local handling delayed command timer request rules exceptions Choose which commands should still use AI The Local handling settings show the command types Home Assistant currently provides. Select any command type under Always send these command types to AI if you want that kind of request to skip the local shortcut. The friendly name is shown first; the technical Hass... name is included only as a reference. Delayed device commands are a special case Home Assistant uses its timer command for both ordinary timers and commands such as “turn off the lights in 20 minutes”. The delayed-device option lets those future device actions continue to your AI or Function Tool path while normal requests such as “set a 20 minute timer” can still be handled locally. Local handling: use Home Assistant before AI Let Home Assistant handle simple built-in commands without an AI request, while anything it cannot handle continues to Extended OpenAI normally.",
+    terms: "local handling home assistant intents built in commands no ai request prefer local handling delayed command timer request rules exceptions",
     body: [
       {type: "p", text: "Local handling is an optional shortcut for commands that Home Assistant already understands on its own. It can make simple requests faster and avoid an unnecessary AI request, without replacing the AI for more flexible or complicated language."},
       {type: "heading", text: "What happens when you speak"},
@@ -258,7 +258,7 @@ export const GUIDE_TOPICS = [
     id: "voice",
     title: "Voice assistants and multiple users",
     summary: "If several people use voice devices, you can control whose conversation and saved personal data each voice request is allowed to use.",
-    terms: "voice satellite device user mapping household identity scope default user unmapped continuity privacy When Home Assistant supplies a device-registry device ID, Extended OpenAI uses that stable device identity for voice mapping. Satellite metadata is retained and can be used as a fallback when no registry device ID is available. The resulting mapping chooses the retained-data scope; it does not bypass Home Assistant permissions.",
+    terms: "voice satellite device user mapping household identity scope default user unmapped continuity privacy",
     body: [
       {type: "p", text: "A request typed into Home Assistant normally comes from a known logged-in user. Voice devices can be less clear. A kitchen satellite might be used by everyone, while a phone or bedroom satellite may effectively belong to one person."},
       {type: "p", text: "Voice scope settings decide whose saved data a voice request is allowed to use. Depending on your setup, an unmapped voice request can avoid personal data entirely, use shared household data, use a default user that you choose, or use a device-to-user mapping."},
@@ -273,7 +273,7 @@ export const GUIDE_TOPICS = [
     id: "speech-processing",
     title: "Speech cleanup for TTS",
     summary: "Speech processing removes text that is useful on screen but awkward when spoken, while keeping the original assistant response for logs and conversation history.",
-    terms: "speech tts markdown urls links citations formatting regex replacements progressive streaming cleanup spoken output Custom regular-expression replacements run only after the response is complete, so enabling any custom replacement disables progressive TTS for that response. Replacement rules are bounded and isolated; if one fails or times out, speech falls back atomically to the text from before custom replacements.",
+    terms: "speech tts markdown urls links citations formatting regex replacements progressive streaming cleanup spoken output",
     body: [
       {type: "p", text: "Speech processing creates a speech-safe version of the assistant response for TTS. It can remove Markdown links, formatting, citations and bare URLs so they are not read aloud, while the original provider response remains available to ChatLog, conversation history and archives."},
       {type: "p", text: "The built-in cleanup can work progressively while a response is streaming, including when Markdown or URLs are split across provider chunks. This allows spoken output to start before the full answer has finished."},
@@ -302,7 +302,7 @@ export const GUIDE_TOPICS = [
     id: "usage",
     title: "Usage, maintenance and troubleshooting",
     summary: "The maintenance pages help you understand token use, test the provider, inspect recent requests, manage retention and create private backups.",
-    terms: "usage troubleshooting diagnostics tokens cached uncached recent runs provider test backup restore retention cleanup preview heading Request debugging and backups p Request debugging can capture complete recent provider requests when you need to inspect exactly what was sent. Full Backup & Restore includes normalized agent configuration, Request Rules, Persistent Memory, active Temporary Memory with expiry, Knowledge sources, archived conversations, Guest Mode schedule and usage data. Provider credentials, in-flight conversations, loaded Function Groups and transient caches are deliberately excluded. note Restore is validated before durable state is replaced A restore validates the backup and applies the durable agent state as one maintenance operation. If persistence fails during the restore, Extended OpenAI attempts to roll back rather than intentionally leaving only part of the backup applied.",
+    terms: "usage troubleshooting diagnostics tokens cached uncached recent runs provider test backup restore retention cleanup preview",
     body: [
       {type: "p", text: "The Usage page shows recent and total token use. This can help you see how heavily an agent is being used and whether changes such as Function Groups are reducing the amount of repeated input sent to the model."},
       {type: "list", items: ["Today, month and lifetime totals show overall usage.","Recent runs show individual completed requests, including request counts, how long they took and whether they succeeded or failed.","Cached input is a reusable part of the input included within the total token count. Some providers charge less for these cached tokens.","Retention settings control how long detailed usage records are kept. This is separate from the lifetime totals."]},
