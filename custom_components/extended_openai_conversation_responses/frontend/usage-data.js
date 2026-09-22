@@ -51,7 +51,7 @@ export async function loadAllUsageDays(
     const response = await callPage(cursor, endDate);
     const current = Array.isArray(response?.days) ? response.days : [];
     rows.push(...current);
-    if (current.length < pageSize) return {days: rows};
+    if (response?.has_more === false || current.length < pageSize) return {days: rows};
     const lastDate = String(current.at(-1)?.date || "");
     const nextDate = addUsageCalendarDays(lastDate, 1);
     if (!nextDate || nextDate <= cursor || nextDate > endDate) break;
@@ -71,14 +71,19 @@ function usageCacheKey(panel, window, today) {
   return `${panel._agentId || ""}|${window}|${today}`;
 }
 
-export async function loadUsageWindow(panel, window = DEFAULT_USAGE_WINDOW, today = localUsageDateKey(panel)) {
+export async function loadUsageWindow(
+  panel,
+  window = DEFAULT_USAGE_WINDOW,
+  today = localUsageDateKey(panel),
+  {useCache = true} = {},
+) {
   const agent = panel._selectedAgent?.();
   const identity = agent
     ? {entry_id: agent.entry_id, subentry_id: agent.subentry_id}
     : {};
   const key = usageCacheKey(panel, window, today);
   const cache = usageCache(panel);
-  if (cache.has(key)) return cache.get(key);
+  if (useCache && cache.has(key)) return cache.get(key);
 
   const {startDate, endDate} = usageWindowBounds(window, today);
   const pending = window === "all"
@@ -111,5 +116,5 @@ export function loadUsageDaily(panel, extra = {}) {
       : {};
     return panel._call("usage", "daily", {...extra, ...identity});
   }
-  return loadUsageWindow(panel, DEFAULT_USAGE_WINDOW);
+  return loadUsageWindow(panel, DEFAULT_USAGE_WINDOW, localUsageDateKey(panel), {useCache: false});
 }
