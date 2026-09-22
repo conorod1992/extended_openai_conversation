@@ -1,6 +1,6 @@
 {
-  "schema_version": 2,
-  "catalog_version": 2,
+  "schema_version": 3,
+  "catalog_version": 3,
   "defaults": {
     "status": "unknown",
     "api": {
@@ -44,7 +44,7 @@
       "temperature": "omit",
       "top_p": "omit"
     },
-    "service_tier": false,
+    "service_tiers": [],
     "explicit_prompt_cache": false
   },
   "models": [
@@ -63,7 +63,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": false
     },
     {
@@ -81,7 +81,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default","flex","fast","priority","ultrafast"],
       "explicit_prompt_cache": true,
       "alias_of": "gpt-5.6-sol"
     },
@@ -100,7 +100,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default","flex","fast","priority","ultrafast"],
       "explicit_prompt_cache": true
     },
     {
@@ -118,7 +118,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true
     },
     {
@@ -136,7 +136,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true
     },
     {
@@ -153,7 +153,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -170,7 +170,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -187,7 +187,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -204,7 +204,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -221,7 +221,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -238,7 +238,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -255,7 +255,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "minimal", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -272,7 +272,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "minimal", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -289,7 +289,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "minimal", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -306,7 +306,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
-      "service_tier": false,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -323,7 +323,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
-      "service_tier": false,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -340,7 +340,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
-      "service_tier": false,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -357,7 +357,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
-      "service_tier": false,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -374,7 +374,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
-      "service_tier": true,
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false
     },
     {
@@ -391,7 +391,7 @@
       "streaming": true,
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
-      "service_tier": false,
+      "service_tiers": [],
       "explicit_prompt_cache": false,
       "lifecycle_note": "Deprecated legacy alias retained for existing configurations."
     }
