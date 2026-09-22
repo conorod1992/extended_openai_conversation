@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import json
 import os
+from datetime import timedelta
 from pathlib import Path
 import shutil
 import subprocess
@@ -19,6 +20,9 @@ import pytest
 DOMAIN = "extended_openai_conversation_responses"
 _CHILD_PHASE = "PACKAGED_PROCESS_ACCEPTANCE_PHASE"
 _ENTRY_MARKER = "packaged-process-entry.json"
+_QH_SATELLITE_ID = "assist_satellite.packaged_process_voice"
+_QH_MEDIA_PLAYER_ID = "media_player.packaged_process_voice"
+_QH_WAKE_SOUND_ID = "switch.packaged_process_voice_wake_sound"
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("RELEASE_COMPONENT_DIR"),
@@ -143,6 +147,66 @@ class _TextWire:
         )
 
 
+
+def _install_quiet_hours_controls(
+    hass: Any,
+    *,
+    volume: float,
+    wake: str,
+    calls: list[tuple[str, str]] | None = None,
+) -> None:
+    """Install deterministic state-backed controls for restart ownership coverage."""
+    from homeassistant.core import ServiceCall
+
+    hass.states.async_set(
+        _QH_SATELLITE_ID,
+        "idle",
+        {"friendly_name": "Packaged Process Voice"},
+    )
+    hass.states.async_set(
+        _QH_MEDIA_PLAYER_ID,
+        "idle",
+        {
+            "friendly_name": "Packaged Process Voice",
+            "volume_level": volume,
+        },
+    )
+    hass.states.async_set(
+        _QH_WAKE_SOUND_ID,
+        wake,
+        {"friendly_name": "Packaged Process Voice Wake sound"},
+    )
+
+    async def volume_set(call: ServiceCall) -> None:
+        entity_id = call.data["entity_id"]
+        if calls is not None:
+            calls.append(("volume_set", entity_id))
+        state = hass.states.get(entity_id)
+        assert state is not None
+        attributes = dict(state.attributes)
+        attributes["volume_level"] = call.data["volume_level"]
+        hass.states.async_set(entity_id, state.state, attributes)
+
+    async def turn_on(call: ServiceCall) -> None:
+        entity_id = call.data["entity_id"]
+        if calls is not None:
+            calls.append(("turn_on", entity_id))
+        state = hass.states.get(entity_id)
+        assert state is not None
+        hass.states.async_set(entity_id, "on", dict(state.attributes))
+
+    async def turn_off(call: ServiceCall) -> None:
+        entity_id = call.data["entity_id"]
+        if calls is not None:
+            calls.append(("turn_off", entity_id))
+        state = hass.states.get(entity_id)
+        assert state is not None
+        hass.states.async_set(entity_id, "off", dict(state.attributes))
+
+    hass.services.async_register("media_player", "volume_set", volume_set)
+    hass.services.async_register("switch", "turn_on", turn_on)
+    hass.services.async_register("switch", "turn_off", turn_off)
+
 def _raw_client(agent: Any) -> Any:
     client = agent._client
     while hasattr(client, "_delegate"):
@@ -226,8 +290,53 @@ async def _first_boot(config_dir: Path) -> None:
         assert hass.services.has_service(DOMAIN, const.SERVICE_PROCESS)
 
         await _exercise_conversation(hass, entry.entry_id, "First process is healthy.")
+
+        # Enter a Quiet Hours period that safely spans the short process restart.
+        # The persisted ownership record must keep the true pre-Quiet-Hours values.
+        from homeassistant.util import dt as dt_util
+
+        quiet_hours = importlib.import_module(
+            f"custom_components.{DOMAIN}.quiet_hours"
+        )
+        now = dt_util.now()
+        start = (now - timedelta(minutes=2)).strftime("%H:%M")
+        end = (now + timedelta(minutes=10)).strftime("%H:%M")
+        _install_quiet_hours_controls(hass, volume=0.55, wake="on")
+        manager = await quiet_hours.async_get_quiet_hours(hass)
+        await manager.async_update_config(
+            {
+                "enabled": True,
+                "start": start,
+                "end": end,
+                "max_volume": 0.20,
+                "wake_sound": "off",
+                "overrides": {
+                    _QH_SATELLITE_ID: {
+                        "media_player_entity_id": _QH_MEDIA_PLAYER_ID,
+                        "wake_sound_entity_id": _QH_WAKE_SOUND_ID,
+                    }
+                },
+            }
+        )
+        assert hass.states[_QH_MEDIA_PLAYER_ID].attributes[
+            "volume_level"
+        ] == pytest.approx(0.20)
+        assert hass.states[_QH_WAKE_SOUND_ID].state == "off"
+        assert manager.active is not None
+        assert manager.active["controls"][_QH_MEDIA_PLAYER_ID][
+            "original_value"
+        ] == pytest.approx(0.55)
+        assert manager.active["controls"][_QH_WAKE_SOUND_ID]["original_value"] is True
+
         (config_dir / _ENTRY_MARKER).write_text(
-            json.dumps({"entry_id": entry.entry_id}), encoding="utf-8"
+            json.dumps(
+                {
+                    "entry_id": entry.entry_id,
+                    "quiet_start": start,
+                    "quiet_end": end,
+                }
+            ),
+            encoding="utf-8",
         )
     finally:
         await hass.async_stop()
@@ -259,6 +368,49 @@ async def _second_boot(config_dir: Path) -> None:
         assert hass.services.has_service(DOMAIN, const.SERVICE_PROCESS)
 
         await _exercise_conversation(hass, entry.entry_id, "Cold restart is healthy.")
+
+        # Recreate the physical controls in the quiet state a real satellite would
+        # report after HA restarts. The manager was reconstructed from disk during
+        # integration setup and must retain 0.55/on as the owned originals.
+        from homeassistant.util import dt as dt_util
+
+        quiet_hours = importlib.import_module(
+            f"custom_components.{DOMAIN}.quiet_hours"
+        )
+        control_calls: list[tuple[str, str]] = []
+        _install_quiet_hours_controls(
+            hass,
+            volume=0.20,
+            wake="off",
+            calls=control_calls,
+        )
+        manager = await quiet_hours.async_get_quiet_hours(hass)
+        await manager.async_reconcile(now=dt_util.now())
+
+        assert manager.active is not None
+        assert manager.active["controls"][_QH_MEDIA_PLAYER_ID][
+            "original_value"
+        ] == pytest.approx(0.55)
+        assert manager.active["controls"][_QH_WAKE_SOUND_ID]["original_value"] is True
+        assert hass.states[_QH_MEDIA_PLAYER_ID].attributes[
+            "volume_level"
+        ] == pytest.approx(0.20)
+        assert hass.states[_QH_WAKE_SOUND_ID].state == "off"
+        assert control_calls == []
+
+        period_end = dt_util.parse_datetime(manager.active["period_ends_at"])
+        assert period_end is not None
+        await manager.async_reconcile(now=period_end + timedelta(seconds=1))
+
+        assert hass.states[_QH_MEDIA_PLAYER_ID].attributes[
+            "volume_level"
+        ] == pytest.approx(0.55)
+        assert hass.states[_QH_WAKE_SOUND_ID].state == "on"
+        assert manager.active is None
+        assert control_calls == [
+            ("volume_set", _QH_MEDIA_PLAYER_ID),
+            ("turn_on", _QH_WAKE_SOUND_ID),
+        ]
     finally:
         await hass.async_stop()
 
