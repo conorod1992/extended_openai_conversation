@@ -47,6 +47,41 @@ try {
   owner._modelCatalogData.model_metadata.reasoning.supported = false;
   assert.doesNotMatch(renderConfiguration(owner), /data-config="reasoning_effort"/);
 
+  const unsupportedOwner = panel({
+    temperature:0.6,
+    top_p:0.8,
+    reasoning_effort:"high",
+    service_tier:"flex",
+    shorten_tool_call_id:false,
+  });
+  unsupportedOwner._configSections = ["model"];
+  unsupportedOwner._viewKey = () => "assistant/model-responses";
+  unsupportedOwner._result.model_capabilities = {
+    supports_temperature:false,
+    supports_top_p:false,
+    supports_reasoning_effort:false,
+    supports_service_tier:false,
+  };
+  unsupportedOwner._result.options.reasoning_effort = [{value:"low",label:"Low"},{value:"high",label:"High"}];
+  unsupportedOwner._result.options.service_tier = [{value:"flex",label:"Flex"},{value:"default",label:"Default"}];
+  const unsupportedHtml = renderConfiguration(unsupportedOwner);
+  for (const key of ["temperature","top_p","reasoning_effort","service_tier"]) {
+    assert.match(
+      unsupportedHtml,
+      new RegExp(`class="setting is-disabled eoc-unavailable-model-setting"[^>]*data-field="${key}"`),
+      `${key} should be rendered at source as unavailable`,
+    );
+    assert.match(
+      unsupportedHtml,
+      new RegExp(`id="config-${key}"[^>]*disabled`),
+      `${key} should preserve its saved value in a disabled control`,
+    );
+  }
+  const modelOrder = ["temperature","top_p","reasoning_effort","service_tier","shorten_tool_call_id"]
+    .map((key) => unsupportedHtml.indexOf(`data-field="${key}"`));
+  assert.ok(modelOrder.every((position) => position >= 0));
+  assert.deepEqual([...modelOrder].sort((a,b) => a - b), modelOrder);
+
   for (const enabled of [true,false]) {
     const owner = panel({functions:[{spec:{name:"one",description:"<Tool>"},function:{type:"native"},enabled:false}],function_groups:[{id:'g"',name:"<Group>",description:"& private",functions:["one"],enabled}]});
     const html = renderTools(owner);
