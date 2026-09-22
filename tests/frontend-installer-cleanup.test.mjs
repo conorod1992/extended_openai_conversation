@@ -34,7 +34,7 @@ assert.match(
   "persistent configuration clarity binding belongs to connection lifecycle",
 );
 const orderedCalls = [
-  "enhanceNavigationSearch(this)",
+  "navigationSearchModule?.enhanceNavigationSearch(this)",
   "enhanceConfigurationClarity(this)",
   "enhanceConfigurationGuidance(this)",
   "enhanceOverviewHealthClarity(this)",
@@ -53,6 +53,7 @@ assert.doesNotMatch(panel, /bindConfigurationGuidance/, "configuration inputs mu
 
 assert.doesNotMatch(panel, /applyManagementToolbarLayout|polishSettingsLayout/u,
   "deterministic toolbar/settings layout belongs to the canonical renderer");
-assert.match(panel, /searchMarkup\(this\)/u);
+assert.match(panel, /settingsSearchShellMarkup\(this\)/u);
+assert.match(panel, /import\("\.\/management-navigation-search\.js"\)/u);
 assert.match(panel, /data-eoc-persistent-shell/u);
 assert.match(panel, /data-eoc-main/u);
