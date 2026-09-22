@@ -372,6 +372,8 @@ async def test_provider_exposed_tool_disabled_before_call_fails_closed(
     )
     wire.release_reply.set()
     result = await task
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
     assert result.response.error_code is not None
     assert executed == []
@@ -422,6 +424,8 @@ async def test_provider_exposed_tool_deleted_before_call_fails_closed(
     )
     wire.release_reply.set()
     result = await task
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
     assert result.response.error_code is not None
     assert executed == []
@@ -476,6 +480,8 @@ async def test_provider_exposed_tool_edit_uses_latest_definition_before_executio
     )
     wire.release_reply.set()
     result = await task
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
     assert _speech(result) == "Latest implementation used."
     assert len(executed) == 1
