@@ -237,3 +237,73 @@ test("Guest activation remains immediate, coalesces requests, and preserves poli
   await expect(panel.locator("#save-page")).toBeVisible();
   expect(await page.evaluate(() => window.browserHarness.getState().guest.config.guest_mode_enabled)).toBe(false);
 });
+
+test("Function Tool stale revision rejects save and preserves unsaved YAML", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/functions")); const panel = panelFor(page);
+  await panel.locator(".edit-tool").first().click();
+  const yaml = panel.locator("#tool-yaml");
+  const edited = (await yaml.inputValue()).replace("Baseline browser fixture", "Unsaved stale editor");
+  await yaml.fill(edited);
+
+  const newer = await page.evaluate(async () => {
+    const panel = window.browserHarness.panel;
+    return window.browserHarness.hass.callWS({
+      type: "extended_openai_conversation_responses/management",
+      section: "tools",
+      action: "set_enabled",
+      entry_id: "entry-1",
+      subentry_id: "agent-1",
+      name: "baseline_tool",
+      enabled: false,
+      revision: panel._configData.revision,
+    });
+  });
+  expect(typeof newer.revision).toBe("string");
+
+  await panel.locator("#tool-save").click();
+  await expect(panel.locator("#tool-error")).toContainText("changed in another tab");
+  await expect(yaml).toHaveValue(edited);
+  expect(await unload(page)).toBe(true);
+
+  const state = await page.evaluate(() => window.browserHarness.getState());
+  expect(state.configuration.config.functions[0].enabled).toBe(false);
+  expect(state.configuration.config.functions[0].spec.description).toBe("Baseline browser fixture Function Tool");
+  await expectHarnessClean(page, errors);
+});
+
+test("Function Group stale revision rejects save and preserves unsaved fields", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/functions")); const panel = panelFor(page);
+  await panel.locator(".edit-group").first().click();
+  const description = panel.locator("#group-description");
+  await description.fill("Unsaved stale group description");
+
+  const newer = await page.evaluate(async () => {
+    const panel = window.browserHarness.panel;
+    const state = window.browserHarness.getState();
+    const group = structuredClone(state.configuration.config.function_groups[0]);
+    group.description = "Newer external group description";
+    return window.browserHarness.hass.callWS({
+      type: "extended_openai_conversation_responses/management",
+      section: "tools",
+      action: "save_group",
+      entry_id: "entry-1",
+      subentry_id: "agent-1",
+      original_id: group.id,
+      group,
+      revision: panel._configData.revision,
+    });
+  });
+  expect(typeof newer.revision).toBe("string");
+
+  await panel.locator("#group-save").click();
+  await expect(panel.locator("#group-error")).toContainText("changed in another tab");
+  await expect(description).toHaveValue("Unsaved stale group description");
+  expect(await unload(page)).toBe(true);
+
+  const state = await page.evaluate(() => window.browserHarness.getState());
+  expect(state.configuration.config.function_groups[0].description).toBe("Newer external group description");
+  await expectHarnessClean(page, errors);
+});
+
