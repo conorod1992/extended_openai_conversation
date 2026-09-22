@@ -88,11 +88,16 @@ def _install_satellite_entities(
     return satellite.entity_id, media_player.entity_id, wake_sound.entity_id
 
 
-def _install_control_services(hass: HomeAssistant) -> None:
+def _install_control_services(
+    hass: HomeAssistant,
+    calls: list[tuple[str, str]] | None = None,
+) -> None:
     """Register control services that update the real HA state machine."""
 
     async def volume_set(call: ServiceCall) -> None:
         entity_id = call.data["entity_id"]
+        if calls is not None:
+            calls.append(("volume_set", entity_id))
         state = hass.states.get(entity_id)
         assert state is not None
         attributes = dict(state.attributes)
@@ -101,12 +106,16 @@ def _install_control_services(hass: HomeAssistant) -> None:
 
     async def turn_on(call: ServiceCall) -> None:
         entity_id = call.data["entity_id"]
+        if calls is not None:
+            calls.append(("turn_on", entity_id))
         state = hass.states.get(entity_id)
         assert state is not None
         hass.states.async_set(entity_id, "on", dict(state.attributes))
 
     async def turn_off(call: ServiceCall) -> None:
         entity_id = call.data["entity_id"]
+        if calls is not None:
+            calls.append(("turn_off", entity_id))
         state = hass.states.get(entity_id)
         assert state is not None
         hass.states.async_set(entity_id, "off", dict(state.attributes))
@@ -254,3 +263,117 @@ async def test_real_ha_discovery_tick_normalizes_utc_to_ha_local_time(
         assert manager.active is not None
     finally:
         await manager.async_shutdown()
+
+@pytest.mark.asyncio
+async def test_real_ha_spring_forward_normalizes_nonexistent_start_time(
+    hass: HomeAssistant,
+) -> None:
+    """A wall-clock start inside Dublin's DST gap begins after the skipped hour."""
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    _satellite_id, media_player_id, wake_sound_id = _install_satellite_entities(
+        hass,
+        slug="spring",
+        name="Spring Voice",
+    )
+    _install_control_services(hass)
+
+    manager = await async_get_quiet_hours(hass)
+    try:
+        await manager.async_update_config(
+            {
+                "enabled": True,
+                "start": "01:30",
+                "end": "03:30",
+                "max_volume": 0.20,
+                "wake_sound": "off",
+                "overrides": {},
+            }
+        )
+
+        # On 29 March 2026 Dublin jumps from 00:59:59 UTC / 00:59:59 local
+        # to 01:00 UTC / 02:00 local. The requested 01:30 wall time therefore
+        # normalizes to the corresponding real instant at 02:30 local.
+        await manager.async_reconcile(now=datetime(2026, 3, 29, 1, 15, tzinfo=UTC))
+        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+            0.60
+        )
+        assert hass.states[wake_sound_id].state == "on"
+        assert hass.states[_STATE_ENTITY_ID].state == "off"
+
+        await manager.async_reconcile(now=datetime(2026, 3, 29, 1, 35, tzinfo=UTC))
+        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+            0.20
+        )
+        assert hass.states[wake_sound_id].state == "off"
+        quiet_state = hass.states[_STATE_ENTITY_ID]
+        assert quiet_state.state == "on"
+        assert quiet_state.attributes["period_started_at"] == (
+            "2026-03-29T02:30:00+01:00"
+        )
+
+        await manager.async_reconcile(now=datetime(2026, 3, 29, 2, 30, tzinfo=UTC))
+        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+            0.60
+        )
+        assert hass.states[wake_sound_id].state == "on"
+        assert hass.states[_STATE_ENTITY_ID].state == "off"
+        assert manager.active is None
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_real_ha_fall_back_duplicate_time_is_one_quiet_period(
+    hass: HomeAssistant,
+) -> None:
+    """The repeated Dublin wall time must not reapply owned controls twice."""
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    _satellite_id, media_player_id, wake_sound_id = _install_satellite_entities(
+        hass,
+        slug="autumn",
+        name="Autumn Voice",
+    )
+    calls: list[tuple[str, str]] = []
+    _install_control_services(hass, calls)
+
+    manager = await async_get_quiet_hours(hass)
+    try:
+        await manager.async_update_config(
+            {
+                "enabled": True,
+                "start": "01:30",
+                "end": "03:30",
+                "max_volume": 0.20,
+                "wake_sound": "off",
+                "overrides": {},
+            }
+        )
+        calls.clear()
+
+        # 01:30 occurs twice on 25 October 2026: first in IST, then in GMT.
+        await manager.async_reconcile(now=datetime(2026, 10, 25, 0, 30, tzinfo=UTC))
+        assert len(calls) == 2
+        first_period_id = manager.active["period_started_at"]
+        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+            0.20
+        )
+        assert hass.states[wake_sound_id].state == "off"
+
+        await manager.async_reconcile(now=datetime(2026, 10, 25, 1, 30, tzinfo=UTC))
+        assert len(calls) == 2
+        assert manager.active["period_started_at"] == first_period_id
+        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+            0.20
+        )
+        assert hass.states[wake_sound_id].state == "off"
+
+        await manager.async_reconcile(now=datetime(2026, 10, 25, 3, 30, tzinfo=UTC))
+        assert len(calls) == 4
+        assert hass.states[media_player_id].attributes["volume_level"] == pytest.approx(
+            0.60
+        )
+        assert hass.states[wake_sound_id].state == "on"
+        assert manager.active is None
+    finally:
+        await manager.async_shutdown()
+
