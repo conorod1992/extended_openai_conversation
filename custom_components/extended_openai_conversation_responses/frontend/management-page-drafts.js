@@ -63,24 +63,21 @@ export function initializePageDraft(panel) {
 }
 
 async function saveRuleSettings(panel, submitted, scope) {
-  // Each acknowledged write advances only its own baseline and the shared CAS
-  // revision. A failure leaves the remaining draft dirty; never retry a write
-  // against an unverified newer revision or report a partial save as success.
-  let completed = 0;
-  try {
-    for (const key of ["defaults", "wording_groups"]) {
-      if (same(submitted[key], scope.baseline[key])) continue;
-      const result = await panel._call("request_rules", key, {[key]: submitted[key], revision: scope.revision});
-      scope.baseline[key] = clone(result[key]);
-      scope.revision = result.revision;
-      panel._result = {...panel._result, [key]: clone(result[key]), revision: result.revision};
-      scope.result = panel._result;
-      completed++;
-    }
-    return clone(scope.baseline);
-  } catch (err) {
-    throw new Error(`${completed ? "Some settings were saved; the remaining changes are still unsaved. " : ""}${err.message || String(err)}`);
-  }
+  const result = await panel._call("request_rules", "settings", {
+    defaults: submitted.defaults,
+    wording_groups: submitted.wording_groups,
+    revision: scope.revision,
+  });
+  scope.baseline = settings(result);
+  scope.revision = result.revision;
+  panel._result = {
+    ...panel._result,
+    defaults: clone(result.defaults),
+    wording_groups: clone(result.wording_groups),
+    revision: result.revision,
+  };
+  scope.result = panel._result;
+  return clone(scope.baseline);
 }
 
 export function readRuleSettings(panel) {
