@@ -115,7 +115,9 @@ test("a dependency toggle leaves unrelated guidance groups untouched", async ({p
   const web = page.locator('extended-openai-management-panel [data-config="web_search"]');
   await expect(web).toBeVisible();
   const result = await page.evaluate(async () => {
+    const {enhanceConfigurationGuidance} = await import("/custom_components/extended_openai_conversation_responses/frontend/management-configuration-guidance.js");
     const {panel} = window.browserHarness;
+    enhanceConfigurationGuidance(panel);
     const root = panel.shadowRoot, original = root.querySelector;
     const scans = {model:0, memory:0, provider:0};
     root.querySelector = function(selector) {
