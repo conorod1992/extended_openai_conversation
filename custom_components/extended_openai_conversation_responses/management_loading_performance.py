@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable
 from copy import deepcopy
-import logging
 from time import perf_counter
 from typing import Any, TypeVar
 
@@ -42,19 +41,11 @@ from .memory import async_get_memory, get_memory_mode
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
 
-_LOGGER = logging.getLogger(__name__)
-_SLOW_MANAGEMENT_MS = 250.0
 _T = TypeVar("_T")
 
 
 def _ms(start: float) -> float:
     return round((perf_counter() - start) * 1000, 2)
-
-
-def _warn_if_slow(operation: str, timings: dict[str, Any]) -> None:
-    total = float(timings.get("total_ms", 0.0))
-    if total >= _SLOW_MANAGEMENT_MS:
-        _LOGGER.warning("Management performance %s: %s", operation, timings)
 
 
 def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
@@ -172,7 +163,6 @@ async def async_agent_catalog(
         "agent_count": len(agents),
         "snapshots": snapshot_timings,
     }
-    _warn_if_slow("agents", timings)
     return {"agents": agents, "is_admin": is_admin, "_performance": timings}
 
 
@@ -310,7 +300,6 @@ async def async_overview_summary(
         "total_ms": _ms(started),
     }
     result["_performance"] = timings
-    _warn_if_slow("overview.summary", timings)
     return result
 
 
