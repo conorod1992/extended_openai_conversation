@@ -8,7 +8,7 @@ const frontend = (name) => new URL(
 
 const stateSafety = await import(frontend("management-state-safety.js"));
 const rulesUi = await import(frontend("request-rules-ui-impl.js"));
-const source = await readFile(frontend("request-rules-ui-impl.js"), "utf8");
+const source = await readFile(frontend("request-rules-ui-core.js"), "utf8");
 
 const selector = {
   id: "",
