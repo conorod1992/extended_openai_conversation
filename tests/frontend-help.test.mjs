@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import {
-  helpSearchTerms,
+  helpButton,
 } from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-help.js";
 import {
   HELP_METADATA,
@@ -23,6 +23,7 @@ const editorSource = (
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
 ).join("\n");
 
+const panel = {_e: (value) => String(value)};
 assert.ok(Object.keys(HELP_METADATA).length > 0, "help metadata must not be empty");
 for (const [key, entry] of Object.entries(HELP_METADATA)) {
   assert.match(key, /^[a-z][a-z0-9_]*$/, `${key} is not a valid help key`);
@@ -47,22 +48,24 @@ for (const [key, entry] of Object.entries(HELP_METADATA)) {
     assert.ok(item.term.trim() && item.text.trim(), `${key} has an empty help item`);
   }
   if (entry.href) assert.match(entry.href, /^https:\/\//, `${key} has an invalid documentation link`);
-  const expectedSearch = [
-    entry.title,
-    ...(entry.paragraphs || []),
-    ...(entry.items || []).flatMap((item) => [item.term, item.text]),
-    entry.example || "",
-    entry.keywords || "",
-  ].join(" ");
-  assert.equal(helpSearchTerms(key), expectedSearch, `${key} help search text changed`);
+  assert.match(helpButton(panel, key), new RegExp("More information about " + entry.title.replace(/[.*+?^$()|[\]\\]/g, "\\$&")));
   assert.ok(editorSource.includes(`"${key}"`), `${key} is not referenced by the UI`);
 }
 
-assert.equal(helpSearchTerms("missing_help_key"), "");
+assert.throws(() => helpButton(panel, "missing_help_key"), /Unknown configuration help key/);
 
 const helpCoreSource = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-help.js", import.meta.url),
   "utf8",
 );
 assert.match(helpCoreSource, /import\("\.\/agent-config-help-content\.js"\)/);
-assert.doesNotMatch(helpCoreSource, /HELP_METADATA/);
+assert.doesNotMatch(helpCoreSource, /paragraphs|keywords|HELP_METADATA|helpSearchTerms/);
+
+const editorBaseSource = await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js", import.meta.url),
+  "utf8",
+);
+assert.doesNotMatch(editorBaseSource, /helpSearchTerms/);
+
+const viteSource = await readFile(new URL("../frontend/vite.config.ts", import.meta.url), "utf8");
+assert.match(viteSource, /"agent-config-help\.js"/);
