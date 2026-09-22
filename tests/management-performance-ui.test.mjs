@@ -118,7 +118,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   };
   panel._bindRouteAssetWarmup();
   panel._bindRouteAssetWarmup();
-  assert.deepEqual([...listeners.keys()].sort(), ["focusin", "pointerdown", "pointerover"]);
+  assert.deepEqual([...listeners.keys()].sort(), ["focusin", "pointerdown", "pointerout", "pointerover"]);
 
   const target = {
     dataset:{page:"guide"},
@@ -396,7 +396,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   }};
   const loading = panel._loadSection();
 
-  for (const action of ["summary", "daily", "runs", "retention"]) {
+  for (const action of ["summary", "runs", "retention"]) {
     assert.ok(
       started.includes(action),
       `${action} starts before the lazy Usage UI module resolves`,
@@ -405,8 +405,12 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.equal(
     routeFeaturesReady("usage-maintenance/usage"),
     false,
-    "Usage data starts while the chart feature is still cold",
+    "Usage requests start while the chart feature is still cold",
   );
+  for (let turn = 0; turn < 20 && !started.includes("daily"); turn++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.ok(started.includes("daily"), "daily starts after its lazy usage-data helper resolves");
 
   resolvers.get("summary")?.({});
   resolvers.get("daily")?.({days:[]});

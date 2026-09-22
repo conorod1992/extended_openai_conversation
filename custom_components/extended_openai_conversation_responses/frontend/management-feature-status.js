@@ -51,11 +51,14 @@ export async function testAgent(panel) {
   const button = panel.shadowRoot?.querySelector("#test-agent");
   if (!output) return;
   if (button) button.disabled = true;
+  panel.shadowRoot?.dispatchEvent(new CustomEvent("eoc-diagnostics-result", {detail: {result: null}}));
   output.innerHTML = '<div class="diagnostic-loading"><span class="spinner" aria-hidden="true"></span><span>Running diagnostic checks…</span></div>';
   try {
     const result = await panel._call("diagnostics", "test_agent");
+    panel.shadowRoot?.dispatchEvent(new CustomEvent("eoc-diagnostics-result", {detail: {result}}));
     output.innerHTML = diagnosticResultMarkup(panel, result);
   } catch (err) {
+    panel.shadowRoot?.dispatchEvent(new CustomEvent("eoc-diagnostics-result", {detail: {result: null}}));
     const message = err?.message || String(err);
     output.innerHTML = `<div class="diagnostic-summary failed" role="alert"><span class="diagnostic-icon" aria-hidden="true">×</span><span><strong>Unable to run diagnostics</strong><small>${panel._e(message)}</small></span></div>`;
   } finally {

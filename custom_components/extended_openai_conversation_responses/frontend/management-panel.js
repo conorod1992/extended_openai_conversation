@@ -1,8 +1,7 @@
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
 import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope, storeRuntimeGuidance} from "./management-data-state.js";
 import {enhanceConfirmationScope} from "./management-confirmation-scope.js";
-import {enhanceNavigationSearch, searchMarkup} from "./management-navigation-search.js";
-import {configurationDestinations} from "./management-setting-metadata.js";
+import {configurationDestinations} from "./management-config-destinations.js";
 import {
   bindPageDrafts,
   initializePageDraft,
@@ -18,7 +17,6 @@ import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAss
 import {NAVIGATION, pageMetadata, routeFromPath, routePath} from "./frontend-navigation.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview, enhanceOverviewHealthClarity} from "./overview-page.js";
-import {loadUsageDaily} from "./usage-data.js";
 import {formatUsageNumber} from "./usage-format.js";
 import {
   bindStateSafety,
@@ -43,6 +41,32 @@ const MAX_MEASURE_ENTRIES = 100;
 const COLD_MARK_PREFIX = "extended-openai:cold";
 // Performance entries are global to the document, not to a panel instance.
 let performanceSequence = 0;
+let navigationSearchModule = null;
+let navigationSearchPromise = null;
+
+function settingsSearchShellMarkup(panel) {
+  const query = panel._settingsSearchQuery || "";
+  return `<div class="global-search eoc-global-search"><label><span class="search-label">Find a setting</span><input id="settings-search" type="search" value="${panel._e(query)}" placeholder="Search settings by name or purpose" aria-label="Search all settings" autocomplete="off"></label><div class="search-results" role="listbox" aria-label="Settings search results" ${query ? "" : "hidden"}></div></div>`;
+}
+
+function ensureNavigationSearchModule(panel) {
+  if (navigationSearchModule) {
+    navigationSearchModule.enhanceNavigationSearch(panel);
+    return Promise.resolve(navigationSearchModule);
+  }
+  if (!navigationSearchPromise) {
+    navigationSearchPromise = import("./management-navigation-search.js")
+      .then((module) => {
+        navigationSearchModule = module;
+        return module;
+      })
+      .finally(() => { navigationSearchPromise = null; });
+  }
+  return navigationSearchPromise.then((module) => {
+    module.enhanceNavigationSearch(panel);
+    return module;
+  });
+}
 
 try {
   globalThis.performance?.mark?.(`${COLD_MARK_PREFIX}:module-evaluated`);
@@ -264,6 +288,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     bindFrontendCorrectness(this);
     bindPageDrafts(this);
     bindConfigurationClarity(this);
+    this._bindSettingsSearchLazyLoad();
     this._bindRouteAssetWarmup();
     if (this._viewKey() === "usage-maintenance/diagnostics") {
       getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
@@ -282,17 +307,59 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     warmRouteAsset(this._viewKey(page, subsection));
   }
 
+  _bindSettingsSearchLazyLoad() {
+    const root = this.shadowRoot;
+    if (!root || root.__eocSettingsSearchLazyBound) return;
+    root.__eocSettingsSearchLazyBound = true;
+    const load = (event) => {
+      const input = event.target?.closest?.("#settings-search");
+      if (!input) return;
+      if (event.type === "input") {
+        this._settingsSearchQuery = input.value;
+        if (navigationSearchModule || navigationSearchPromise) return;
+      }
+      void ensureNavigationSearchModule(this);
+    };
+    root.addEventListener("focusin", load, true);
+    root.addEventListener("input", load, true);
+  }
+
   _bindRouteAssetWarmup() {
     const root = this.shadowRoot;
     if (!root || root.__eocRouteAssetWarmupBound) return;
     root.__eocRouteAssetWarmupBound = true;
-    const warm = (event) => {
+    let hoverTimer = null;
+    let hoverTarget = null;
+    const cancelHover = () => {
+      if (hoverTimer !== null) clearTimeout(hoverTimer);
+      hoverTimer = null;
+      hoverTarget = null;
+    };
+    root.addEventListener("pointerover", (event) => {
+      const target = event.target?.closest?.("[data-page],[data-subsection]");
+      if (!target || target === hoverTarget) return;
+      cancelHover();
+      hoverTarget = target;
+      hoverTimer = setTimeout(() => {
+        hoverTimer = null;
+        if (hoverTarget === target) this._warmNavigationTarget(target);
+      }, 100);
+    });
+    root.addEventListener("pointerout", (event) => {
+      const target = event.target?.closest?.("[data-page],[data-subsection]");
+      if (target && target === hoverTarget && !target.contains(event.relatedTarget)) cancelHover();
+    });
+    root.addEventListener("focusin", (event) => {
       const target = event.target?.closest?.("[data-page],[data-subsection]");
       if (target) this._warmNavigationTarget(target);
-    };
-    root.addEventListener("pointerover", warm);
-    root.addEventListener("focusin", warm);
-    root.addEventListener("pointerdown", warm);
+    });
+    root.addEventListener("pointerdown", (event) => {
+      const target = event.target?.closest?.("[data-page],[data-subsection]");
+      if (target) {
+        cancelHover();
+        this._warmNavigationTarget(target);
+      }
+    });
   }
 
   _setConfigDirty(value) {
@@ -413,12 +480,36 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return true;
   }
 
+  _enhanceSubsectionNavigation() {
+    const root = this.shadowRoot;
+    if (!root) return;
+    const local = this._visibleSubsections();
+    const topNav = root.querySelector(".top-nav");
+    let nav = root.querySelector(".subsection-nav");
+    const markup = local.length > 1
+      ? local.map((item) => `<button type="button" data-subsection="${this._e(item.id)}" class="${item.id === this._subsection ? "active" : ""}" ${item.id === this._subsection ? 'aria-current="page"' : ""}>${this._e(item.label)}</button>`).join("")
+      : "";
+    if (!nav && topNav) {
+      nav = document.createElement("nav");
+      nav.className = "subsection-nav";
+      topNav.after(nav);
+    }
+    if (nav && nav._eocMarkup !== markup) {
+      nav.innerHTML = markup;
+      nav._eocMarkup = markup;
+      this._eocNavigationRevision = (this._eocNavigationRevision || 0) + 1;
+      nav.hidden = !markup;
+      nav.setAttribute("aria-label", `${pageMetadata(this._page).label} sections`);
+    }
+  }
+
   _visibleSubsections(page = this._page) {
     return pageMetadata(page).sections.filter((item) => this._canAccessView(page, item.id));
   }
 
   async _call(section, action, extra = {}) {
     if (section === "usage" && action === "daily" && !extra.start_date && !extra.end_date) {
+      const {loadUsageDaily} = await import("./usage-data.js");
       return loadUsageDaily(this, extra);
     }
     const guidanceCall = section === "configuration"
@@ -717,7 +808,24 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     try {
       const configPromise = view === "data-memory/conversations" && this._data?.is_admin
         ? this._loadConfigDraft() : Promise.resolve();
+      const initialScopeId = needsScopes ? this._scopeId : null;
+      const cachedScopeLoadedAt = scopeCatalogKey ? this._eocScopeCatalogTimes.get(scopeCatalogKey) : null;
+      const cachedScopes = cachedScopeLoadedAt && Date.now() - cachedScopeLoadedAt <= SCOPE_CACHE_TTL_MS
+        ? this._scopeCatalogCache.get(scopeCatalogKey) : null;
+      const knownScopes = cachedScopes || this._baseScopes || [];
+      const canPrefetchScopedCollection = Boolean(
+        initialScopeId && knownScopes.some((scope) => scope.scope_id === initialScopeId),
+      );
+      const loadScopedCollection = (scopeId) => view === "data-memory/conversations"
+        ? this._call("conversations", "list", { scope_id: scopeId, limit: 50 })
+        : this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: scopeId, limit: 100 });
       const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey) : Promise.resolve();
+      const prefetchedScopedCollection = canPrefetchScopedCollection
+        ? loadScopedCollection(initialScopeId).then(
+          (value) => ({status: "fulfilled", value}),
+          (reason) => ({status: "rejected", reason}),
+        )
+        : null;
       const activeConversationsPromise = view === "data-memory/conversations" && this._data?.is_admin
         ? this._call("conversations", "active") : Promise.resolve({active: []});
       // Attach rejection handlers immediately so independent History work can run
@@ -727,8 +835,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ]);
       if (needsScopes) await scopePromise;
       if (loadToken !== this._loadToken) return;
+      const scopedCollection = async () => {
+        if (prefetchedScopedCollection && initialScopeId === this._scopeId) {
+          const settled = await prefetchedScopedCollection;
+          if (settled.status === "rejected") throw settled.reason;
+          return settled.value;
+        }
+        return loadScopedCollection(this._scopeId);
+      };
       let result;
       let contentData = null;
+      let usageSecondary = null;
       if (view === "overview") {
         this._markColdLifecycle("overview-summary-start");
         const summary = await this._call("overview", "summary");
@@ -738,15 +855,26 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (agent) Object.assign(this._selectedAgent(), agent);
         result = overview;
       } else if (view === "usage-maintenance/usage") {
-        const entries = [["summary", "Usage summary"], ["days", "Daily usage"], ["runs", "Recent runs"], ["retention", "Usage retention"]];
-        const settled = await Promise.allSettled([
-          this._call("usage", "summary"), this._call("usage", "daily"),
-          this._call("usage", "runs", { limit: 30 }), this._call("usage", "retention"),
-        ]);
-        result = settledSectionResult(entries, settled);
+        const summaryPromise = this._call("usage", "summary");
+        const daysPromise = this._call("usage", "daily");
+        const settle = (promise) => promise.then(
+          (value) => ({status: "fulfilled", value}),
+          (reason) => ({status: "rejected", reason}),
+        );
+        const runsPromise = settle(this._call("usage", "runs", { limit: 30 }));
+        const retentionPromise = settle(this._call("usage", "retention"));
+        const primary = await Promise.allSettled([summaryPromise, daysPromise]);
+        result = {
+          ...settledSectionResult([["summary", "Usage summary"], ["days", "Daily usage"]], primary),
+          loading: {runs: true, retention: true},
+        };
+        usageSecondary = [
+          ["runs", "Recent runs", runsPromise],
+          ["retention", "Usage retention", retentionPromise],
+        ];
       } else if (view === "data-memory/conversations") {
         const [sessions, prerequisiteResults] = await Promise.all([
-          this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
+          scopedCollection(),
           prerequisites,
         ]);
         if (prerequisiteResults[1].status === "rejected") {
@@ -760,7 +888,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (this._data?.is_admin) result = this._configData;
         else result = contentData;
       } else if (view === "data-memory/memories") {
-        result = await this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: this._scopeId, limit: 100 });
+        result = await scopedCollection();
       } else if (view === "data-memory/knowledge") {
         result = await this._call("knowledge", "list");
       } else if (view === "capabilities/guest-mode") {
@@ -785,6 +913,30 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._result = result;
       writeSectionCache(this, cacheKey, result);
       this._error = null;
+      if (usageSecondary) {
+        for (const [key, label, pending] of usageSecondary) {
+          void pending.then((settled) => {
+            if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+                || this._viewKey() !== "usage-maintenance/usage") return;
+            const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== key);
+            const loading = {...(this._result?.loading || {}), [key]: false};
+            if (settled.status === "fulfilled") {
+              this._result = {...(this._result || {}), [key]: settled.value, load_errors: errors, loading};
+            } else {
+              this._result = {
+                ...(this._result || {}),
+                load_errors: [...errors, {
+                  key,
+                  label,
+                  message: settled.reason?.message || String(settled.reason || "Unknown error"),
+                }],
+                loading,
+              };
+            }
+            this._render();
+          });
+        }
+      }
     } catch (err) {
       if (loadToken === this._loadToken) this._error = err.message || String(err);
     } finally {
@@ -921,7 +1073,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (ownsPageDraft) refreshPageSaveBar(this);
 
     // Keep the former decorator ordering explicit without mutating class methods at runtime.
-    enhanceNavigationSearch(this);
+    this._enhanceSubsectionNavigation();
+    navigationSearchModule?.enhanceNavigationSearch(this);
     enhanceConfigurationClarity(this);
     const ownsConfigurationGuidance = (
       (routeAssetKind(view) === "agent-config"
@@ -952,7 +1105,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       <div class="page-shell" data-eoc-persistent-shell>
         <header>
           <div class="page-heading"><h1>Extended OpenAI</h1><p>Configure your assistant, capabilities, retained data, and maintenance.</p></div>
-          ${searchMarkup(this)}
+          ${settingsSearchShellMarkup(this)}
         </header>
         <label class="mobile-nav"><span>Page</span><select id="top-section-mobile">${navigation.map((item) => `<option value="${item.id}" ${item.id === this._page ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
         <div class="eoc-agent-context-row" aria-label="Assistant context">
@@ -1134,19 +1287,40 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     });
   }
 
+  _patchGuestModeStatus(agentId, status) {
+    if (!agentId || !status) return;
+    const agent = this._data?.agents?.find((item) => item.subentry_id === agentId);
+    if (agent) agent.guest_mode = {...(agent.guest_mode || {}), ...status};
+    if (this._agentId === agentId && this._viewKey() === "capabilities/guest-mode" && this._result) {
+      this._result = {...this._result, status: {...(this._result.status || {}), ...status}};
+    }
+  }
+
+  async _refreshGuestModeMutation(agentId, mutationResult) {
+    this._patchGuestModeStatus(agentId, mutationResult?.status);
+    if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
+    const result = await this._call("guest_mode", "get");
+    if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
+    this._patchGuestModeStatus(agentId, result?.status);
+    this._result = result;
+    this._error = null;
+    this._render();
+  }
+
   _updateGuestMode(now = false) {
     return this._runGuestOperation(async () => {
       const root = this.shadowRoot;
+      const agentId = this._agentId;
       const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
       const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
       const end = root.querySelector("#guest-end")?.value;
       try {
-        await this._call("guest_mode", "update", {
+        const result = await this._call("guest_mode", "update", {
           ...(start ? {active_from: start} : {}),
           ...(!indefinite && end ? {active_until: end} : {}),
           indefinite: indefinite || !end,
         });
-        await this._loadAgents(this._agentId);
+        await this._refreshGuestModeMutation(agentId, result);
         this._toast("Guest Mode updated");
       } catch (err) {
         this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
@@ -1157,9 +1331,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _disableGuestMode() {
     return this._runGuestOperation(async () => {
       if (!await this._confirm("End Guest Mode?", "This immediately ends an active interval or cancels a future schedule.", "End Guest Mode")) return;
+      const agentId = this._agentId;
       try {
-        await this._call("guest_mode", "disable");
-        await this._loadAgents(this._agentId);
+        const result = await this._call("guest_mode", "disable");
+        await this._refreshGuestModeMutation(agentId, result);
         this._toast("Guest Mode ended");
       } catch (err) {
         this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);

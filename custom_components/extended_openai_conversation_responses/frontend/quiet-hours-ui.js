@@ -16,24 +16,7 @@ export async function loadQuietHours(panel, silent = false) {
 
 const VIEW = "capabilities/quiet-hours";
 const QUIET_HOURS_STYLES = `
-      .qh-status,.qh-satellite-heading{display:flex;justify-content:space-between;gap:16px;align-items:center}.qh-status{padding-bottom:18px;border-bottom:1px solid var(--divider-color);margin-bottom:8px}.qh-status div,.qh-satellite-heading div{display:flex;flex-direction:column;gap:3px}.qh-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.qh-grid label{display:flex;flex-direction:column;gap:7px}.qh-grid label>span{font-weight:600}.qh-grid small,.qh-entity-note small,.qh-satellite small{color:var(--secondary-text-color);line-height:1.45}.qh-policy{margin-top:20px}.qh-volume{display:flex;align-items:center;gap:12px}.qh-volume input{flex:1}.qh-volume output{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}.qh-entity-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:20px;padding:14px;border-radius:10px;background:var(--secondary-background-color)}.qh-entity-note small{flex-basis:100%}.qh-satellites{display:grid;gap:14px}.qh-satellite{border:1px solid var(--divider-color);border-radius:12px;padding:16px}.qh-satellite-heading{margin-bottom:14px}.config-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}@media(max-width:760px){.qh-grid{grid-template-columns:1fr}.qh-status,.qh-satellite-heading{align-items:flex-start}}`;
-
-function entityLabel(hass, entityId) {
-  const state = hass?.states?.[entityId];
-  return state?.attributes?.friendly_name || entityId;
-}
-
-function entityOptions(panel, domain, selected = "") {
-  const entries = Object.keys(panel._hass?.states || {})
-    .filter((entityId) => entityId.startsWith(`${domain}.`))
-    .sort((a, b) => entityLabel(panel._hass, a).localeCompare(entityLabel(panel._hass, b)));
-  if (selected && !entries.includes(selected)) entries.unshift(selected);
-  return entries.map((entityId) => {
-    const missing = !panel._hass?.states?.[entityId];
-    const label = missing ? `Unavailable · ${entityId}` : `${entityLabel(panel._hass, entityId)} · ${entityId}`;
-    return `<option value="${panel._e(entityId)}" ${entityId === selected ? "selected" : ""}>${panel._e(label)}</option>`;
-  }).join("");
-}
+      .qh-status,.qh-satellite-heading{display:flex;justify-content:space-between;gap:16px;align-items:center}.qh-status{padding-bottom:18px;border-bottom:1px solid var(--divider-color);margin-bottom:8px}.qh-status div,.qh-satellite-heading div{display:flex;flex-direction:column;gap:3px}.qh-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.qh-grid label{display:flex;flex-direction:column;gap:7px}.qh-grid label>span{font-weight:600}.qh-override{display:block;width:100%;min-width:0}.qh-grid small,.qh-entity-note small,.qh-satellite small{color:var(--secondary-text-color);line-height:1.45}.qh-policy{margin-top:20px}.qh-volume{display:flex;align-items:center;gap:12px}.qh-volume input{flex:1}.qh-volume output{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}.qh-entity-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:20px;padding:14px;border-radius:10px;background:var(--secondary-background-color)}.qh-entity-note small{flex-basis:100%}.qh-satellites{display:grid;gap:14px}.qh-satellite{border:1px solid var(--divider-color);border-radius:12px;padding:16px}.qh-satellite-heading{margin-bottom:14px}.config-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}@media(max-width:760px){.qh-grid{grid-template-columns:1fr}.qh-status,.qh-satellite-heading{align-items:flex-start}}`;
 
 function manualOverride(config, satelliteId) {
   return config?.overrides?.[satelliteId] || {};
@@ -56,15 +39,31 @@ function satelliteCard(panel, satellite, config) {
   const wake = override.wake_sound_entity_id || "";
   const autoMedia = satellite.media_player_source === "auto" ? satellite.media_player_entity_id : null;
   const autoWake = satellite.wake_sound_source === "auto" ? satellite.wake_sound_entity_id : null;
+  const mediaCandidates = satellite.media_player_candidates || [];
+  const wakeCandidates = satellite.wake_sound_candidates || [];
   const speakerStatus = volumeStatus(panel, satellite);
+  const mediaHelp = satellite.media_player_source === "manual"
+    ? "Manually selected for this satellite."
+    : autoMedia
+      ? `Found automatically: ${panel._e(autoMedia)}`
+      : mediaCandidates.length
+        ? "No speaker was selected automatically. Choose one of the media players attached to this satellite's device."
+        : "No media player entity is attached to this satellite's Home Assistant device.";
+  const wakeHelp = satellite.wake_sound_source === "manual"
+    ? "Manually selected for this satellite. Make sure this switch controls the chime played when the wake word is heard."
+    : autoWake
+      ? `Found automatically: ${panel._e(autoWake)}`
+      : wakeCandidates.length
+        ? "No wake-word switch was selected automatically. Choose one of the switches attached to this satellite's device."
+        : "No switch entity is attached to this satellite's Home Assistant device. That is normal for many satellites.";
   return `<article class="qh-satellite">
     <div class="qh-satellite-heading">
       <div><strong>${panel._e(satellite.name)}</strong><small>${panel._e(satellite.satellite_entity_id)}</small></div>
       <span class="${speakerStatus.ready ? "availability-badge" : "disabled-badge"}">${speakerStatus.label}</span>
     </div>
     <div class="qh-grid">
-      <label><span>Speaker volume entity</span><select class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="media_player_entity_id"><option value="">Automatic${autoMedia ? ` · ${panel._e(autoMedia)}` : ""}</option>${entityOptions(panel, "media_player", media)}</select><small>${satellite.media_player_source === "manual" ? "Manually selected for this satellite." : autoMedia ? `Found automatically: ${panel._e(autoMedia)}` : "No speaker volume control was found automatically. Choose one manually if this satellite uses a separate media player."}</small></label>
-      <label><span>Wake-word sound switch</span><select class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="wake_sound_entity_id"><option value="">Automatic${autoWake ? ` · ${panel._e(autoWake)}` : ""}</option>${entityOptions(panel, "switch", wake)}</select><small>${satellite.wake_sound_source === "manual" ? "Manually selected for this satellite. Make sure this switch controls the chime played when the wake word is heard." : autoWake ? `Found automatically: ${panel._e(autoWake)}` : "No wake-word sound switch was found. That is normal for many satellites. If yours has one, you can choose it manually."}</small></label>
+      <label><span>Speaker volume entity</span><ha-entity-picker class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="media_player_entity_id" data-domain="media_player" data-auto-entity="${panel._e(autoMedia || "")}"></ha-entity-picker><small>${mediaHelp}</small></label>
+      <label><span>Wake-word sound switch</span><ha-entity-picker class="qh-override" data-satellite="${panel._e(satellite.satellite_entity_id)}" data-kind="wake_sound_entity_id" data-domain="switch" data-auto-entity="${panel._e(autoWake || "")}"></ha-entity-picker><small>${wakeHelp}</small></label>
     </div>
   </article>`;
 }
@@ -117,6 +116,26 @@ export function bindQuietHours(panel) {
     const output = root.querySelector("#qh-volume-value");
     if (output) output.textContent = `${percent}%`;
   });
-  root.querySelectorAll(".qh-override").forEach((select) => select.addEventListener("change", () => setOverride(panel, select.dataset.satellite, select.dataset.kind, select.value)));
+  const satellites = new Map((panel._result?.satellites || []).map((satellite) => [satellite.satellite_entity_id, satellite]));
+  root.querySelectorAll(".qh-override").forEach((picker) => {
+    const satellite = satellites.get(picker.dataset.satellite);
+    const candidates = picker.dataset.kind === "media_player_entity_id"
+      ? satellite?.media_player_candidates || []
+      : satellite?.wake_sound_candidates || [];
+    const selected = manualOverride(panel._quietHoursDraft, picker.dataset.satellite)?.[picker.dataset.kind] || "";
+    picker.hass = panel._hass;
+    picker.value = selected;
+    picker.includeDomains = [picker.dataset.domain];
+    picker.includeEntities = selected && !candidates.includes(selected)
+      ? [...candidates, selected]
+      : candidates;
+    picker.allowCustomEntity = false;
+    picker.placeholder = picker.dataset.autoEntity ? `Automatic · ${picker.dataset.autoEntity}` : "Automatic";
+    picker.addEventListener("value-changed", (event) => {
+      const value = String(event?.detail?.value || picker.value || "");
+      picker.value = value;
+      setOverride(panel, picker.dataset.satellite, picker.dataset.kind, value);
+    });
+  });
 
 }

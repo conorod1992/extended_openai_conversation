@@ -36,24 +36,33 @@ export {knowledgeSourceAvailabilityControl} from "./management-dialogs.js";
 
 async function saveKnowledgeAvailability(panel, input) {
   const desired = input.checked;
+  const agentId = panel._agentId;
   input.disabled = true;
   try {
-    const current = await panel._call("configuration", "get");
-    const config = JSON.parse(JSON.stringify(current.config || {}));
-    config.knowledge_enabled = desired;
-    const validation = await panel._call("configuration", "validate", {config});
-    if (!validation.valid) throw new Error(Object.values(validation.errors || {})[0] || "Configuration validation failed");
-    await panel._call("configuration", "update", {config, title: current.title});
+    const result = await panel._call("knowledge", "set_enabled", {enabled: desired});
+    if (panel._agentId !== agentId) return;
+    const agent = panel._selectedAgent?.();
+    if (agent) {
+      agent.knowledge_enabled = result.knowledge_enabled;
+      agent.feature_status = {
+        ...(agent.feature_status || {}),
+        knowledge: result.feature_status,
+      };
+    }
+    if (panel._viewKey?.() === "data-memory/knowledge" && panel._result) {
+      panel._result = {
+        ...panel._result,
+        feature_status: result.feature_status,
+      };
+    }
     panel._clearConfigDraft?.();
-    await panel._loadAgents(panel._agentId);
-    await panel._loadSection(true);
-    panel._toast(`Knowledge ${desired ? "enabled" : "disabled"}`);
+    panel._render();
+    panel._toast(`Knowledge ${result.knowledge_enabled ? "enabled" : "disabled"}`);
   } catch (err) {
     input.checked = !desired;
     input.disabled = false;
     panel._toast(`Unable to update Knowledge: ${err.message || String(err)}`, true);
   } finally {
-    // Reconciliation can retain this control after a successful save.
     input.disabled = false;
   }
 }

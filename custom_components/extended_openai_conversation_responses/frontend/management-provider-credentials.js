@@ -95,12 +95,11 @@ function resetDiagnosticsAfterCredentialUpdate(panel, result) {
   // If validation was explicitly skipped and the stored key did not change, the
   // previous diagnostic result is still the best evidence we have; keep it.
   if (result?.updated === false && result?.validation_performed === false) return;
+  syncAuthenticationRecovery(panel, {authentication_rejected: false});
   const output = panel.shadowRoot?.querySelector("#test-result");
   if (output) {
     output.textContent = "Credential updated or validated. Run the connection test again to verify this agent.";
-    return;
   }
-  panel.shadowRoot?.querySelector("#eoc-auth-recovery")?.remove();
 }
 
 function ensureApiKeyDialog(panel, agent) {
@@ -214,37 +213,19 @@ function syncAuthenticationRecovery(panel, result) {
 }
 
 export function stopDiagnosticsWatch(panel) {
-  panel._eocProviderCredentialObserver?.disconnect?.();
-  panel._eocProviderCredentialObserver = null;
+  const root = panel.shadowRoot;
+  if (root && panel._eocProviderCredentialResultHandler) {
+    root.removeEventListener("eoc-diagnostics-result", panel._eocProviderCredentialResultHandler);
+  }
+  panel._eocProviderCredentialResultHandler = null;
 }
 
-function watchDiagnosticsResult(panel) {
-  const output = panel.shadowRoot?.querySelector("#test-result");
-  if (!output) return;
-  stopDiagnosticsWatch(panel);
-  let observer = null;
-  const inspect = () => {
-    if (output !== panel.shadowRoot?.querySelector("#test-result")) {
-      observer?.disconnect();
-      if (panel._eocProviderCredentialObserver === observer) {
-        panel._eocProviderCredentialObserver = null;
-      }
-      return;
-    }
-    // Any new test supersedes the previous authentication result. Remove stale
-    // recovery UI first, then re-add it only for a structured auth rejection.
-    syncAuthenticationRecovery(panel, {authentication_rejected: false});
-    try {
-      const result = JSON.parse(output.textContent || "");
-      syncAuthenticationRecovery(panel, result);
-    } catch (_) {
-      // "Testing…" and plain error messages are not structured diagnostic results.
-    }
-  };
-  observer = new MutationObserver(inspect);
-  panel._eocProviderCredentialObserver = observer;
-  observer.observe(output, {childList: true, characterData: true, subtree: true});
-  inspect();
+function bindDiagnosticsResult(panel) {
+  const root = panel.shadowRoot;
+  if (!root || panel._eocProviderCredentialResultHandler) return;
+  const handler = (event) => syncAuthenticationRecovery(panel, event?.detail?.result || {});
+  panel._eocProviderCredentialResultHandler = handler;
+  root.addEventListener("eoc-diagnostics-result", handler);
 }
 
 export function enhanceDiagnostics(panel) {
@@ -258,5 +239,5 @@ export function enhanceDiagnostics(panel) {
   ensureStyles(panel);
   ensureApiKeyDialog(panel, agent);
   ensureProviderCard(panel, agent);
-  watchDiagnosticsResult(panel);
+  bindDiagnosticsResult(panel);
 }
