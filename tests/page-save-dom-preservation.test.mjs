@@ -14,5 +14,6 @@ assert.match(source, /function syncGuestSavedDom\(panel\)/);
 assert.match(saveBody, /syncSavedPageDom\(panel\)/);
 assert.doesNotMatch(saveBody, /window\.scrollTo/);
 assert.doesNotMatch(saveBody, /querySelectorAll\("main details"\)/);
-assert.doesNotMatch(saveBody, /panel\._render\(\);\s*panel\._toast/);
+assert.doesNotMatch(saveBody, /renderSavedDraft/);
+assert.match(saveBody, /if \(!syncSavedPageDom\(panel\)\) panel\._render\(\);/);
 assert.match(source, /function renderDiscardedDraft\(panel\)/);
