@@ -67,6 +67,28 @@ def _tool_call_stream(
         [_chat_chunk(tool_calls=[tool_delta], finish_reason="tool_calls")]
     )
 
+def _duplicate_tool_call_id_stream() -> _FakeStream:
+    """Return one malformed provider round with two different calls sharing an ID."""
+    first = SimpleNamespace(
+        index=0,
+        id="call-duplicate",
+        function=SimpleNamespace(
+            name="first",
+            arguments=json.dumps({"value": 1}, separators=(",", ":")),
+        ),
+    )
+    second = SimpleNamespace(
+        index=1,
+        id="call-duplicate",
+        function=SimpleNamespace(
+            name="second",
+            arguments=json.dumps({"value": 2}, separators=(",", ":")),
+        ),
+    )
+    return _FakeStream(
+        [_chat_chunk(tool_calls=[first, second], finish_reason="tool_calls")]
+    )
+
 
 def _final_stream(text: str = "Done") -> _FakeStream:
     return _FakeStream([_chat_chunk(content=text, finish_reason="stop")])
@@ -283,3 +305,32 @@ async def test_chat_completions_provider_failure_after_tool_does_not_retry_side_
     assert [call["id"] for call in calls] == ["call-1"]
     assert [output["tool_call_id"] for output in outputs] == ["call-1"]
     assert json.loads(outputs[0]["content"]) == {"result": "done"}
+
+async def test_chat_completions_duplicate_tool_call_ids_fail_before_execution(
+    hass,
+) -> None:
+    """Duplicate provider call IDs are rejected before either side effect can run."""
+    entity = _entity(hass, [_duplicate_tool_call_id_stream()])
+    entity._execute_function_tool = AsyncMock()
+    chat_log = _chat_log(hass)
+
+    with pytest.raises(
+        HomeAssistantError,
+        match="Provider returned duplicate tool call id `call-duplicate`",
+    ):
+        await entity._async_handle_chat_log(
+            chat_log,
+            [_tool("first"), _tool("second")],
+            [],
+        )
+
+    entity._execute_function_tool.assert_not_awaited()
+
+    history = _convert_content_to_param(chat_log.content)
+    calls, outputs = _protocol_messages(history)
+    assert [call["id"] for call in calls] == [
+        "call-duplicate",
+        "call-duplicate",
+    ]
+    assert outputs == []
+
