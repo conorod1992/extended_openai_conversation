@@ -161,6 +161,8 @@ Model capability metadata can be refreshed independently of an integration relea
 
 ## Reliability and testing
 
+Contributors and coding agents should run `python scripts/fix.py` before final tests or hand-off. CI checks the committed source with `ruff check custom_components/` and `ruff format --check custom_components/`; it does not apply fixes.
+
 The integration is exercised through unit/integration tests plus genuine Home Assistant acceptance tests. Selected critical flows are also tested through a real browser against Home Assistant, including upgrade-from-a-previous-release scenarios and cross-browser smoke coverage.
 
 Green CI cannot prove that every provider, Home Assistant installation, entity combination, or custom Function Tool will behave identically, but the test suite is designed to cover the real runtime boundaries rather than only isolated helpers.
