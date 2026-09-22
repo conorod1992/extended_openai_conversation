@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 import math
 from typing import Any
 
@@ -138,7 +138,15 @@ def quiet_period_for(
         raise ValueError("Quiet Hours start and end times must differ")
 
     def at(day, clock: time) -> datetime:
-        return datetime.combine(day, clock, tzinfo=now.tzinfo)
+        candidate = datetime.combine(day, clock, tzinfo=now.tzinfo)
+        # zoneinfo permits construction of imaginary wall times during a
+        # spring-forward gap. Round-tripping through UTC maps those values to
+        # the corresponding first real wall time after the gap, while valid
+        # and ambiguous times retain their ordinary first-occurrence meaning.
+        normalized = candidate.astimezone(UTC).astimezone(now.tzinfo)
+        if normalized.replace(fold=0) != candidate.replace(fold=0):
+            return normalized
+        return candidate
 
     if start_time < end_time:
         start = at(now.date(), start_time)
