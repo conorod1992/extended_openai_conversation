@@ -175,7 +175,6 @@ function renderDynamicRegions(panel) {
       updateDialogs(panel, dialogs, {preserveEditors: true});
       panel._eocDialogMarkup = dialogs;
     }
-    bindDynamicBase(panel);
     return;
   }
   const markup = !agent
@@ -192,6 +191,7 @@ function renderDynamicRegions(panel) {
   panel._eocDeferredEditorRender = false;
   if (main && changed) {
     main.innerHTML = markup;
+    delete main.dataset.eocInitialLoading;
     panel._eocMainRevision = (panel._eocMainRevision || 0) + 1;
     panel._eocMainMarkup = markup;
     panel._eocRenderedRoute = route;
@@ -205,7 +205,6 @@ function renderDynamicRegions(panel) {
     updateDialogs(panel, dialogs, {preserveEditors: true});
     panel._eocDialogMarkup = dialogs;
   }
-  bindDynamicBase(panel);
 }
 
 // The host calls this directly; feature decorators cannot own shell lifetime.
@@ -225,7 +224,7 @@ export function renderManagement(panel) {
 export function showInitialLoading(panel) {
   if (panel?._data !== null) return false;
   const main = panel.shadowRoot?.querySelector?.("main");
-  if (!main) return false;
+  if (!main || main.dataset.eocInitialLoading !== undefined) return false;
   main.innerHTML = panel._loading?.() || '<div class="loading" role="status">Loading…</div>';
   panel._eocMainRevision = (panel._eocMainRevision || 0) + 1;
   main.setAttribute("aria-busy", "true");

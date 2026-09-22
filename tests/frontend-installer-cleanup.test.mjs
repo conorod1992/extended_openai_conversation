@@ -28,9 +28,13 @@ assert.match(panel, /_configurationDirtyDestinations\(\)\s*\{\s*return configura
 assert.match(panel, /_settingsSearchConfig = null;/u);
 assert.match(panel, /enhanceConfirmationScope\(this, subject\)/u);
 
+assert.match(
+  panel,
+  /connectedCallback\(\)[\s\S]*bindConfigurationClarity\(this\)/u,
+  "persistent configuration clarity binding belongs to connection lifecycle",
+);
 const orderedCalls = [
   "enhanceNavigationSearch(this)",
-  "bindConfigurationClarity(this)",
   "enhanceConfigurationClarity(this)",
   "enhanceConfigurationGuidance(this)",
   "enhanceOverviewHealthClarity(this)",
@@ -38,7 +42,7 @@ const orderedCalls = [
 let previous = -1;
 for (const call of orderedCalls) {
   const index = panel.indexOf(call);
-  assert.ok(index > previous, `${call} should retain explicit composition order`);
+  assert.ok(index > previous, `${call} should retain explicit per-render composition order`);
   previous = index;
 }
 

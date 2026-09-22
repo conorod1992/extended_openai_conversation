@@ -259,8 +259,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this[name] = value;
     }
     bindStateSafety(this);
+    bindPanelDialogs(this);
+    bindSingleRequestSave(this);
+    bindFrontendCorrectness(this);
+    bindPageDrafts(this);
+    bindConfigurationClarity(this);
     this._bindRouteAssetWarmup();
-    getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
+    if (this._viewKey() === "usage-maintenance/diagnostics") {
+      getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
+    }
   }
 
   disconnectedCallback() {
@@ -870,11 +877,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         main.classList.add("eoc-loading-in-background");
       } else {
         result = this._renderContent(...args);
-        getRouteFeature("data-memory/conversations")?.decorateConversationPager(this);
+        if (view === "data-memory/conversations") {
+          getRouteFeature(view)?.decorateConversationPager(this);
+        }
       }
-      getRouteFeature("capabilities/functions")?.bindFunctionRepair(this);
-      getRouteFeature("usage-maintenance/request-debug")?.bindManagementDebug(this);
-      getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
+      if (view === "capabilities/functions") getRouteFeature(view)?.bindFunctionRepair(this);
+      if (view === "usage-maintenance/request-debug") getRouteFeature(view)?.bindManagementDebug(this);
+      if (view === "usage-maintenance/diagnostics") getRouteFeature(view)?.enhanceDiagnostics(this);
       if (preserve) return undefined;
       return result;
     } finally {
@@ -892,8 +901,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _renderContent() {
-    initializePageDraft(this);
-    bindStateSafety(this);
+    const view = this._viewKey();
+    const ownsPageDraft = ["capabilities/guest-mode", "capabilities/quiet-hours", "capabilities/request-rules"].includes(view);
+    if (ownsPageDraft) initializePageDraft(this);
     renderManagement(this);
     const main = this.shadowRoot?.querySelector?.("[data-eoc-main]") || this.shadowRoot?.querySelector?.("main");
     const routeTitle = main?.querySelector?.(".page-intro h1");
@@ -904,19 +914,24 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         && this._markColdLifecycle("overview-content-present")) {
       requestAnimationFrame(() => this._markColdLifecycle("overview-content-next-frame"));
     }
-    bindPanelDialogs(this);
-    bindSingleRequestSave(this);
-    bindFrontendCorrectness(this);
-    bindRequestRuleSearch(this);
-    applyRequestRuleSearch(this);
-    bindPageDrafts(this);
-    refreshPageSaveBar(this);
+    if (view === "capabilities/request-rules") {
+      bindRequestRuleSearch(this);
+      applyRequestRuleSearch(this);
+    }
+    if (ownsPageDraft) refreshPageSaveBar(this);
 
     // Keep the former decorator ordering explicit without mutating class methods at runtime.
     enhanceNavigationSearch(this);
-    bindConfigurationClarity(this);
     enhanceConfigurationClarity(this);
-    getRouteFeature("configuration")?.enhanceConfigurationGuidance(this);
+    const ownsConfigurationGuidance = (
+      (routeAssetKind(view) === "agent-config"
+        && view !== "capabilities/functions"
+        && (view !== "data-memory/conversations" || this._data?.is_admin))
+      || view === "data-memory/memory-settings"
+    );
+    if (ownsConfigurationGuidance) {
+      getRouteFeature("configuration")?.enhanceConfigurationGuidance(this);
+    }
     if (this._page === "overview") queueMicrotask(() => enhanceOverviewHealthClarity(this));
   }
 
@@ -1174,39 +1189,47 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!["data-memory/knowledge", "data-memory/memories"].includes(this._viewKey())) {
       q("#list-search")?.addEventListener("input", (event) => { this._query = event.target.value; this._updateVisibleList(); });
     }
-    getRouteFeature("data-memory/knowledge")?.bindKnowledge(this);
-    getRouteFeature("data-memory/conversations")?.bindConversationActions(this);
-    root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => { if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return; await this._call("conversations", "end_active", { continuity_key: button.dataset.key }); await this._loadSection(); }));
-    root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id); }));
-    q("#clear-details")?.addEventListener("click", () => this._clearUsageDetails());
+    const view = this._viewKey();
+    if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
+    if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
+    if (view === "data-memory/conversations") {
+      root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => { if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return; await this._call("conversations", "end_active", { continuity_key: button.dataset.key }); await this._loadSection(); }));
+      root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id); }));
+    }
+    if (view === "usage-maintenance/usage") q("#clear-details")?.addEventListener("click", () => this._clearUsageDetails());
     q("#test-agent")?.addEventListener("click", () => this._testAgent());
-    q("#guest-indefinite")?.addEventListener("change", (event) => { const end = q("#guest-end"); if (end) end.disabled = event.target.checked; });
-    q("#guest-update")?.addEventListener("click", () => this._updateGuestMode(false));
-    q("#guest-now")?.addEventListener("click", () => this._updateGuestMode(true));
-    q("#guest-disable")?.addEventListener("click", () => this._disableGuestMode());
-    q("#guest-review-converted")?.addEventListener("click", () => { this._guestMigrationReview = true; this._render(); });
-    q("#guest-start-fresh")?.addEventListener("click", () => this._startFreshGuestPolicy());
-    q("#guest-separate-control")?.addEventListener("change", (event) => { this._guestDraft.guest_separate_control_restrictions = event.target.checked; this._render(); });
-    q("#guest-controls-enabled")?.addEventListener("change", (event) => { this._guestDraft.guest_mode_enabled = event.target.checked; });
-    root.querySelectorAll("[data-guest-mode]").forEach((element) => element.addEventListener("change", () => { this._guestDraft[element.dataset.guestMode] = element.value; this._render(); }));
-    if (this._viewKey() === "capabilities/guest-mode") this._setupGuestSelectors();
-    if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(this._viewKey())) getConfigurationEditor()?.bindConfiguration(this);
-    if (this._viewKey() === "assistant/prompt-context") getRouteFeature("assistant/prompt-context")?.bindExposedAttributeSettings(this);
-    if (this._viewKey() === "usage-maintenance/backup-restore") getRouteFeature("usage-maintenance/backup-restore")?.bindBackupTransfer(this, getConfigurationEditor()?.backupSummaryLines);
-    if (this._viewKey() === "capabilities/functions") getConfigurationEditor()?.bindTools(this);
-    if (this._viewKey() === "capabilities/request-rules") getRouteFeature("capabilities/request-rules")?.bindRequestRules(this);
-    if (this._viewKey() === "overview") bindOverview(this);
-    if (this._viewKey() === "guide") bindGuide(this);
+    if (view === "capabilities/guest-mode") {
+      q("#guest-indefinite")?.addEventListener("change", (event) => { const end = q("#guest-end"); if (end) end.disabled = event.target.checked; });
+      q("#guest-update")?.addEventListener("click", () => this._updateGuestMode(false));
+      q("#guest-now")?.addEventListener("click", () => this._updateGuestMode(true));
+      q("#guest-disable")?.addEventListener("click", () => this._disableGuestMode());
+      q("#guest-review-converted")?.addEventListener("click", () => { this._guestMigrationReview = true; this._render(); });
+      q("#guest-start-fresh")?.addEventListener("click", () => this._startFreshGuestPolicy());
+      q("#guest-separate-control")?.addEventListener("change", (event) => { this._guestDraft.guest_separate_control_restrictions = event.target.checked; this._render(); });
+      q("#guest-controls-enabled")?.addEventListener("change", (event) => { this._guestDraft.guest_mode_enabled = event.target.checked; });
+      root.querySelectorAll("[data-guest-mode]").forEach((element) => element.addEventListener("change", () => { this._guestDraft[element.dataset.guestMode] = element.value; this._render(); }));
+      this._setupGuestSelectors();
+    }
+    if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) getConfigurationEditor()?.bindConfiguration(this);
+    if (view === "assistant/prompt-context") getRouteFeature(view)?.bindExposedAttributeSettings(this);
+    if (view === "usage-maintenance/backup-restore") getRouteFeature(view)?.bindBackupTransfer(this, getConfigurationEditor()?.backupSummaryLines);
+    if (view === "capabilities/functions") getConfigurationEditor()?.bindTools(this);
+    if (view === "capabilities/request-rules") getRouteFeature(view)?.bindRequestRules(this);
+    if (view === "overview") bindOverview(this);
+    if (view === "guide") bindGuide(this);
     if (this._pendingSettingFocus && root.querySelector(`#${CSS.escape(this._pendingSettingFocus)}`)) {
       const target = this._pendingSettingFocus;
       this._pendingSettingFocus = null;
       requestAnimationFrame(() => { const element = this.shadowRoot.querySelector(`#${target}`); element?.scrollIntoView({behavior:"smooth", block:"start"}); (element?.querySelector("input,select,textarea,button") || element)?.focus?.(); });
     }
-    getRouteFeature("memory-browser")?.bindMemoryBrowser(this);
-    getRouteFeature("data-memory/memories")?.bindTemporaryMemory(this);
-    getRouteFeature("configuration")?.bindMemorySettings(this);
-    getRouteFeature("capabilities")?.bindCapabilities(this);
-    const view = this._viewKey();
+    if (["data-memory/memories", "data-memory/conversations", "capabilities/guest-mode"].includes(view)) {
+      getRouteFeature("memory-browser")?.bindMemoryBrowser(this);
+    }
+    if (view === "data-memory/memories") getRouteFeature(view)?.bindTemporaryMemory(this);
+    if (view === "data-memory/memory-settings") getRouteFeature("configuration")?.bindMemorySettings(this);
+    if (["capabilities/home-assistant", "capabilities/web-skills", "data-memory/knowledge"].includes(view)) {
+      getRouteFeature("capabilities")?.bindCapabilities(this);
+    }
     if (view === "assistant/voice") getRouteFeature(view)?.bindVoiceIdentity(this);
     if (view === "capabilities/quiet-hours") getRouteFeature(view)?.bindQuietHours(this);
     if (view === "usage-maintenance/usage") {
