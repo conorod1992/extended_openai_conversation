@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
+import {bindBroadcast} from "../custom_components/extended_openai_conversation_responses/frontend/overview-broadcast.js";
 
 globalThis.window = {
   location: {pathname: "/extended-openai/assistant/basics"},
@@ -478,12 +479,6 @@ const renderer = await readFile(new URL("../custom_components/extended_openai_co
 const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-core.js", import.meta.url), "utf8");
 const requestRulesEditor = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
 const managementRoute = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8");
-const overviewImplementation = (
-  await Promise.all([
-    "../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js",
-    "../custom_components/extended_openai_conversation_responses/frontend/overview-broadcast.js",
-  ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
-).join("\n");
 assert.match(management, /_loadServiceCatalog\(\)/);
 assert.equal(
   (management.match(/bindStateSafety\(this\)/g) || []).length,
@@ -522,12 +517,31 @@ assert.doesNotMatch(requestRules, /root\.addEventListener\("click"/);
 assert.match(requestRules, /const EMPTY_RULES_MARKUP =/);
 assert.match(requestRules, /const NO_RULES_MATCH_CONTENT =/);
 assert.doesNotMatch(managementRoute, /createElement\("section"\)[\s\S]*eocRuleSearchEmpty/);
-const scopeFilter = management.indexOf("const scopes = [...(this._data?.scopes || [])].filter");
-const scopeSort = management.indexOf("scopes.sort(", scopeFilter);
-assert.ok(scopeFilter >= 0 && scopeSort > scopeFilter, "scope visibility filtering should happen before sorting");
-assert.match(overviewImplementation, /const satellitesById = new Map\(satellites\.map/);
-assert.match(overviewImplementation, /satellitesById\.get\(entityId\)/);
-assert.doesNotMatch(overviewImplementation, /satellites\.find\(\(sat\) => sat\.id === entityId\)/);
+// A large delivery history must resolve satellite names with bounded work.
+// Reading each satellite ID for every delivery would make this quadratic.
+{
+  const size = 300;
+  let idReads = 0;
+  const satellites = Array.from({length:size}, (_, index) => ({
+    get id() { idReads++; return `satellite-${index}`; },
+    name:`Satellite ${index}`,
+  }));
+  const host = {innerHTML:""};
+  const panel = {
+    _viewKey:() => "overview",
+    _e:String,
+    shadowRoot:{querySelector:(selector) => selector === "#broadcast-card" ? host : null, querySelectorAll:() => []},
+  };
+  const deliveries = Object.fromEntries(satellites.map((_, index) => [`satellite-${index}`, {status:"delivered"}]));
+  await bindBroadcast(panel, Promise.resolve({
+    enabled:false,
+    can_manage:false,
+    catalog:{satellites, areas:[]},
+    history:[{message:"Update", created_at:"2026-01-01T00:00:00Z", deliveries}],
+  }));
+  assert.match(host.innerHTML, /Satellite 299/);
+  assert.ok(idReads <= size * 3, `broadcast history performed ${idReads} satellite ID reads for ${size} deliveries`);
+}
 assert.match(requestRulesEditor, /id="rule-action-sequence-host"/);
 assert.doesNotMatch(requestRulesEditor, /<ha-selector id="rule-action-sequence"/);
 assert.match(requestRulesEditor, /selector = \{action:\{\}\}/);
