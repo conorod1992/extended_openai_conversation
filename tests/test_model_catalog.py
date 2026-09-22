@@ -84,11 +84,11 @@ def _websocket_handler():
     return inspect.unwrap(runtime.websocket_catalog)
 
 
-def test_bundled_catalog_is_schema_v2_and_parses_exactly():
+def test_bundled_catalog_is_schema_v3_and_parses_exactly():
     parsed = data.parse_catalog(Path(data.__file__).with_suffix(".json").read_bytes())
     assert parsed == data.BUNDLED_CATALOG
-    assert parsed["schema_version"] == 2
-    assert parsed["catalog_version"] >= 2
+    assert parsed["schema_version"] == 3
+    assert parsed["catalog_version"] >= 3
 
 
 def test_required_current_models_and_invalid_aliases():
@@ -148,6 +148,21 @@ def test_every_current_model_supports_streaming():
             assert item["streaming"] is True, item["id"]
 
 
+def test_bundled_service_tiers_match_current_openai_support() -> None:
+    expected_latest = {
+        "gpt-6-astra": ["auto", "default", "flex", "fast", "priority"],
+        "gpt-5.6": ["auto", "default", "flex", "fast", "priority", "ultrafast"],
+        "gpt-5.6-sol": ["auto", "default", "flex", "fast", "priority", "ultrafast"],
+        "gpt-5.6-terra": ["auto", "default", "flex", "fast", "priority"],
+        "gpt-5.6-luna": ["auto", "default", "flex", "fast", "priority"],
+    }
+    by_id = {item["id"]: item for item in data.BUNDLED_CATALOG["models"]}
+    for model_id, tiers in expected_latest.items():
+        assert by_id[model_id]["service_tiers"] == tiers
+    for model_id in ("gpt-5.5", "gpt-5-mini", "gpt-4.1", "gpt-4o", "o3"):
+        assert by_id[model_id]["service_tiers"] == ["auto", "default"]
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -164,14 +179,14 @@ def test_every_current_model_supports_streaming():
         lambda v: v["models"][0]["limits"].update(max_output_tokens=0),
     ],
 )
-def test_invalid_schema_v2_catalog_is_rejected(mutate):
+def test_invalid_schema_v3_catalog_is_rejected(mutate):
     value = _label_candidate()
     mutate(value)
     with pytest.raises(ValueError):
         data.validate_catalog(value)
 
 
-async def test_stored_v1_catalog_is_migrated_to_authoritative_v2(check_manager):
+async def test_stored_v1_catalog_is_migrated_to_authoritative_v3(check_manager):
     check_manager.store.saved = {
         "catalog": {
             "schema_version": 1,
@@ -183,7 +198,7 @@ async def test_stored_v1_catalog_is_migrated_to_authoritative_v2(check_manager):
         "last_checked": 0,
     }
     await check_manager.async_load()
-    assert check_manager.status()["schema_version"] == 2
+    assert check_manager.status()["schema_version"] == 3
     assert data.model_metadata("gpt-5.6")["reasoning"]["efforts"] == [
         "none",
         "low",
@@ -198,7 +213,7 @@ async def test_corrupt_storage_falls_back_to_bundled(check_manager):
     check_manager.store.saved = {"catalog": {"schema_version": 99}}
     await check_manager.async_load()
     assert check_manager.status()["source"] == "bundled"
-    assert check_manager.status()["schema_version"] == 2
+    assert check_manager.status()["schema_version"] == 3
     assert check_manager.last_error
 
 
@@ -350,12 +365,20 @@ def test_recommended_sampling_profile_must_omit_sampling() -> None:
         data.validate_catalog(value)
 
 
-@pytest.mark.parametrize("field", ["service_tier", "explicit_prompt_cache"])
-def test_compatibility_feature_flags_must_be_boolean(field: str) -> None:
+def test_service_tiers_and_cache_flag_are_strictly_validated() -> None:
     value = _catalog()
-    _model(value)[field] = 1
+    _model(value)["service_tiers"] = ["auto", "auto"]
+    with pytest.raises(ValueError, match="Invalid service-tier"):
+        data.validate_catalog(value)
 
-    with pytest.raises(ValueError, match="Compatibility feature flags must be boolean"):
+    value = _catalog()
+    _model(value)["service_tiers"] = ["turbo"]
+    with pytest.raises(ValueError, match="Invalid service-tier"):
+        data.validate_catalog(value)
+
+    value = _catalog()
+    _model(value)["explicit_prompt_cache"] = 1
+    with pytest.raises(ValueError, match="Invalid service-tier"):
         data.validate_catalog(value)
 
 
@@ -413,14 +436,27 @@ def test_v1_migration_rejects_non_v1_and_preserves_monotonic_version() -> None:
             "catalog_version": data.BUNDLED_CATALOG["catalog_version"] + 5,
         }
     )
-    assert migrated["schema_version"] == 2
+    assert migrated["schema_version"] == 3
     assert migrated["catalog_version"] == data.BUNDLED_CATALOG["catalog_version"] + 6
 
 
-def test_validate_or_migrate_marks_only_v1_as_migrated() -> None:
+def test_validate_or_migrate_marks_legacy_schemas_as_migrated() -> None:
     migrated, changed = data.validate_or_migrate_catalog({"schema_version": 1})
     assert changed is True
-    assert migrated["schema_version"] == 2
+    assert migrated["schema_version"] == 3
+
+    legacy_v2 = deepcopy(data.BUNDLED_CATALOG)
+    legacy_v2["schema_version"] = 2
+    legacy_v2["catalog_version"] = 2
+    legacy_v2["defaults"]["service_tier"] = bool(
+        legacy_v2["defaults"].pop("service_tiers")
+    )
+    for model in legacy_v2["models"]:
+        model["service_tier"] = bool(model.pop("service_tiers"))
+    migrated, changed = data.validate_or_migrate_catalog(legacy_v2)
+    assert changed is True
+    assert migrated["schema_version"] == 3
+    assert migrated["models"][0]["service_tiers"] == data.BUNDLED_CATALOG["models"][0]["service_tiers"]
 
     current = _catalog()
     validated, changed = data.validate_or_migrate_catalog(current)
@@ -521,7 +557,7 @@ async def test_websocket_actions_return_complete_catalog_payload(
     status = {
         "source": "downloaded",
         "catalog_version": 7,
-        "schema_version": 2,
+        "schema_version": 3,
         "update_available": False,
         "available_catalog_version": None,
         "last_checked": 123.0,
