@@ -471,8 +471,36 @@ function panelFor(page = "assistant", subsection = "basics") {
 }
 
 const management = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
+const renderer = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js", import.meta.url), "utf8");
 const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
 assert.match(management, /_loadServiceCatalog\(\)/);
+assert.equal(
+  (management.match(/bindStateSafety\(this\)/g) || []).length,
+  1,
+  "persistent state-safety binding belongs to connection, not each render",
+);
+for (const binder of [
+  "bindPanelDialogs", "bindSingleRequestSave", "bindFrontendCorrectness",
+  "bindPageDrafts", "bindConfigurationClarity",
+]) {
+  assert.equal(
+    (management.match(new RegExp(`${binder}\\(this\\)`, "g")) || []).length,
+    1,
+    `${binder} should be requested once for the persistent shadow root`,
+  );
+}
+assert.match(management, /if \(view === "capabilities\/functions"\) getRouteFeature\(view\)\?\.bindFunctionRepair\(this\)/);
+assert.match(management, /if \(view === "usage-maintenance\/request-debug"\) getRouteFeature\(view\)\?\.bindManagementDebug\(this\)/);
+assert.match(management, /if \(view === "usage-maintenance\/diagnostics"\) getRouteFeature\(view\)\?\.enhanceDiagnostics\(this\)/);
+assert.match(management, /if \(view === "data-memory\/memories"\) getRouteFeature\(view\)\?\.bindTemporaryMemory\(this\)/);
+assert.match(management, /if \(view === "data-memory\/memory-settings"\) getRouteFeature\("configuration"\)\?\.bindMemorySettings\(this\)/);
+assert.equal(
+  (renderer.match(/bindDynamicBase\(panel\);/g) || []).length,
+  1,
+  "persistent route controls should bind only when the shell is prepared",
+);
+assert.match(renderer, /main\.dataset\.eocInitialLoading !== undefined/);
+assert.match(renderer, /delete main\.dataset\.eocInitialLoading/);
 assert.doesNotMatch(requestRules, /result\.service_catalog/);
 assert.doesNotMatch(requestRules, /root\.addEventListener\("click"/);
 assert.match(requestRules, /id="rule-action-sequence-host"/);
