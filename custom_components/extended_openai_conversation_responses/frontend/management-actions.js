@@ -144,60 +144,12 @@ export function bindFrontendCorrectness(panel) {
       return;
     }
 
-    if (button.classList.contains("rule-duplicate")) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void (async () => {
-        const saved = await runFrontendMutation(panel, button, "duplicate Request Rule", () =>
-          panel._call("request_rules", "duplicate", {rule_id: button.dataset.id, revision: panel._result?.revision})
-        );
-        if (saved) { await panel._loadSection(true); panel._toast("Request Rule duplicated"); }
-      })();
-      return;
-    }
 
-    if (button.classList.contains("rule-delete")) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void (async () => {
-        if (!await panel._confirm("Delete Request Rule?", "This cannot be undone.", "Delete")) return;
-        const saved = await runFrontendMutation(panel, button, "delete Request Rule", () =>
-          panel._call("request_rules", "delete", {rule_id: button.dataset.id, confirm: true, revision: panel._result?.revision})
-        );
-        if (saved) { await panel._loadSection(true); panel._toast("Request Rule deleted"); }
-      })();
-      return;
-    }
 
 
   }, true);
 
-  root.addEventListener("change", (event) => {
-    const input = event.target;
-    if (!input?.classList?.contains("rule-enabled")) return;
-    event.stopImmediatePropagation();
-    const previous = !input.checked;
-    void (async () => {
-      const rule = (panel._result?.rules || []).find((item) => item.id === input.dataset.id);
-      if (!rule) {
-        input.checked = previous;
-        return;
-      }
-      const saved = await runFrontendMutation(panel, input, "update Request Rule", () =>
-        panel._call("request_rules", "update", {
-          rule_id: rule.id,
-          revision: panel._result?.revision,
-          rule: {...rule, enabled: input.checked, sensitive_matching_warning: undefined},
-        })
-      );
-      if (!saved) {
-        input.checked = previous;
-        return;
-      }
-      await panel._loadSection(true);
-      panel._toast("Changes saved");
-    })();
-  }, true);
+
 
   root.addEventListener("submit", (event) => {
     if (event.target?.id !== "rule-form" || !panel._eocRuleSavePromise) return;
@@ -218,7 +170,7 @@ export const MUTATIONS = new Map([
   ["guest_mode", new Set(["save_policy", "update", "disable"])],
   ["knowledge", new Set(["create", "update", "delete"])],
   ["memories", new Set(["add", "update", "delete", "temporary_delete", "temporary_update", "reassign_legacy"])],
-  ["request_rules", new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate", "move"])],
+  ["request_rules", new Set(["settings", "defaults", "wording_groups", "create", "update", "delete", "duplicate", "move"])],
   ["tools", new Set(["save", "delete", "set_enabled", "save_group", "delete_group"])],
   ["usage", new Set(["clear_details"])],
 ]);

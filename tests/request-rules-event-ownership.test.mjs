@@ -8,19 +8,18 @@ const frontend = (name) => new URL(
 
 const [actions, rules, route] = await Promise.all([
   readFile(frontend("management-actions.js"), "utf8"),
-  readFile(frontend("request-rules-ui-impl.js"), "utf8"),
+  readFile(frontend("request-rules-ui-core.js"), "utf8"),
   readFile(frontend("management-route.js"), "utf8"),
 ]);
 
-// Duplicate/Delete/Enable keep their existing active owner in the global
-// capture-phase correctness layer. The lazy feature owns Move/Edit/Create only.
-assert.match(actions, /button\.classList\.contains\("rule-duplicate"\)/);
-assert.match(actions, /button\.classList\.contains\("rule-delete"\)/);
-assert.match(actions, /input\?\.classList\?\.contains\("rule-enabled"\)/);
-assert.doesNotMatch(rules, /button\.matches\("\.rule-duplicate/);
-assert.doesNotMatch(rules, /button\.matches\("\.rule-delete/);
-assert.doesNotMatch(rules, /input\.matches\?\.\("\.rule-enabled"\)/);
+// Request Rules now own all collection mutations inside the lazy route.
+assert.doesNotMatch(actions, /rule-duplicate|rule-delete|rule-enabled/);
+assert.match(rules, /button\.matches\("\.rule-duplicate"\)/);
+assert.match(rules, /button\.matches\("\.rule-delete"\)/);
+assert.match(rules, /input\.matches\?\.\("\.rule-enabled"\)/);
 assert.match(rules, /button\.matches\("\.rule-move"\)/);
+assert.match(rules, /applyRequestRuleMutation/);
+assert.doesNotMatch(rules, /_loadSection\(true\).*Request Rule duplicated/);
 
 // Search has one owner: the route-level in-place cached search path.
 assert.doesNotMatch(

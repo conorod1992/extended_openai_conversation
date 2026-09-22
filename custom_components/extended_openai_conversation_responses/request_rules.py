@@ -439,6 +439,29 @@ class RequestRules:
             await self._async_save_locked()
         return _copy_wording_groups(groups)
 
+    async def async_set_settings(
+        self,
+        defaults_value: Any,
+        wording_groups_value: Any,
+        *,
+        expected_revision: str | None = None,
+    ) -> dict[str, Any]:
+        """Replace Request Rule page settings atomically under one revision."""
+        defaults = validate_matching_settings(defaults_value)
+        groups = validate_wording_groups(wording_groups_value)
+        async with self._lock:
+            self._require_revision_locked(expected_revision)
+            self._defaults = defaults
+            self._wording_groups = groups
+            self._sort_and_compile()
+            await self._async_save_locked()
+            revision = self.revision()
+        return {
+            "defaults": dict(defaults),
+            "wording_groups": _copy_wording_groups(groups),
+            "revision": revision,
+        }
+
     async def async_create(
         self, value: Any, *, expected_revision: str | None = None
     ) -> dict[str, Any]:

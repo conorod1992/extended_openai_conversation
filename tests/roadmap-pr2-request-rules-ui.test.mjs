@@ -13,14 +13,14 @@ const {renderGuide} = await import(new URL("guide-page.js", frontend));
 const panel = {_e:(value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("'", "&#39;"), _empty:String};
 
 test("Request Rules UI exposes revision-safe move controls", async () => {
-  const source = await readFrontend("request-rules-ui-impl.js");
+  const source = await readFrontend("request-rules-ui-core.js");
   const markup = renderRequestRules({...panel, _result:{rules:[{id:"one",name:"One",enabled:true,phrases:["one"],action_type:"local_action",action:{},match_type:"equals"}]}});
 
   assert.match(markup, /class=\"secondary rule-move\"/);
   assert.match(markup, /data-direction=\"up\" disabled/);
   assert.match(markup, /data-direction=\"down\" disabled/);
-  assert.match(source, /panel\._call\("request_rules", "move"/);
-  assert.match(source, /revision: panel\._result\?\.revision/);
+  assert.match(source, /panel\._call\("request_rules","move"/);
+  assert.match(source, /revision:panel\._result\?\.revision/);
 });
 
 test("Request Rules UI explains AI-routing command semantics", async () => {

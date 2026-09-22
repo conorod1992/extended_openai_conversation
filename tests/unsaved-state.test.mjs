@@ -34,21 +34,40 @@ for (const view of ["capabilities/guest-mode", "capabilities/quiet-hours"]) {
   });
 }
 
-test("Request Rules partial saves advance only acknowledged baselines and revisions", async () => {
-  let fail = true; const calls = [];
-  const panel = {_agentId: "a", _viewKey: () => "capabilities/request-rules", _result: {defaults: {fuzzy: false}, wording_groups: [], revision: 1},
-    _call: async (_section, action, payload) => {
-      calls.push([action, payload.revision]);
-      if (action === "wording_groups" && fail) throw Error("offline");
-      return {[action]: payload[action], revision: payload.revision + 1};
-    }};
-  initializePageDraft(panel); const scope = currentPageScope(panel);
-  scope.read().defaults.fuzzy = true; scope.read().wording_groups.push({canonical: "on", alternatives: ["enable"]});
-  await assert.rejects(scope.save(), /Some settings were saved/);
-  assert.deepEqual(calls, [["defaults", 1], ["wording_groups", 2]]);
-  assert.equal(scope.dirty(), true); assert.equal(scope.baseline.defaults.fuzzy, true); assert.deepEqual(scope.baseline.wording_groups, []);
-  fail = false; await scope.save(); assert.equal(scope.dirty(), false);
-  assert.deepEqual(calls.at(-1), ["wording_groups", 2]);
+test("Request Rules settings save atomically and preserve the whole draft on failure", async () => {
+  let fail = true;
+  const calls = [];
+  const panel = {
+    _agentId: "a",
+    _viewKey: () => "capabilities/request-rules",
+    _result: {defaults: {fuzzy: false}, wording_groups: [], revision: "v1"},
+    _call: async (section, action, payload) => {
+      calls.push([section, action, payload.revision]);
+      assert.equal(section, "request_rules");
+      assert.equal(action, "settings");
+      assert.deepEqual(payload.defaults, {fuzzy: true});
+      assert.deepEqual(payload.wording_groups, [{canonical: "on", alternatives: ["enable"]}]);
+      if (fail) throw Error("offline");
+      return {defaults: payload.defaults, wording_groups: payload.wording_groups, revision: "v2"};
+    },
+  };
+  initializePageDraft(panel);
+  const scope = currentPageScope(panel);
+  scope.read().defaults.fuzzy = true;
+  scope.read().wording_groups.push({canonical: "on", alternatives: ["enable"]});
+
+  await assert.rejects(scope.save(), /offline/);
+  assert.deepEqual(calls, [["request_rules", "settings", "v1"]]);
+  assert.equal(scope.dirty(), true);
+  assert.equal(scope.baseline.defaults.fuzzy, false);
+  assert.deepEqual(scope.baseline.wording_groups, []);
+  assert.equal(scope.revision, "v1");
+
+  fail = false;
+  await scope.save();
+  assert.equal(scope.dirty(), false);
+  assert.equal(scope.revision, "v2");
+  assert.deepEqual(calls.at(-1), ["request_rules", "settings", "v1"]);
 });
 
 test("central navigation shares config context, cancels safely, and discards without persistence", async () => {

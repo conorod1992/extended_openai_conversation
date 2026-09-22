@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 
-import {
-  requestRulesDialog,
-  syncRequestRuleRoutingControls,
-} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
+import {syncRequestRuleRoutingControls} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
+import {requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 
 function makeSelect(value, optionValues = []) {
   const options = optionValues.map((optionValue) => ({value:optionValue,disabled:false,textContent:optionValue}));

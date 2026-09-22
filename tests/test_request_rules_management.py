@@ -152,6 +152,34 @@ async def test_revision_guard_accepts_current_revision_and_changes_after_save() 
     assert rules.revision() != revision
     assert store.saves == 1
 
+async def test_request_rule_settings_save_atomically_once() -> None:
+    store = MemoryStore()
+    rules = rr.RequestRules(store)
+    await rules.async_initialize()
+    revision = rules.revision()
+    groups = [{"canonical": "turn on", "alternatives": ["switch on"]}]
+
+    result = await rules.async_set_settings(
+        {**rr.DEFAULT_MATCHING, "fuzzy": True},
+        groups,
+        expected_revision=revision,
+    )
+
+    assert result["defaults"]["fuzzy"] is True
+    assert result["wording_groups"] == groups
+    assert result["revision"] == rules.revision()
+    assert store.saves == 1
+
+    saved = rules.snapshot()
+    with pytest.raises(ValueError, match="changed in another tab"):
+        await rules.async_set_settings(
+            {**rr.DEFAULT_MATCHING, "fuzzy_threshold": 91},
+            [{"canonical": "off", "alternatives": ["disable"]}],
+            expected_revision=revision,
+        )
+    assert rules.snapshot() == saved
+    assert store.saves == 1
+
 
 @pytest.mark.parametrize(
     ("value", "message"),
