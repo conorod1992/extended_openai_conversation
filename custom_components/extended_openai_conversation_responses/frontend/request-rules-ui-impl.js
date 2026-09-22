@@ -1,6 +1,43 @@
 import {applyRequestRuleMutation, fuzzyThresholdValue, matchingControls} from "./request-rules-ui-core.js";
 export {fuzzyThresholdValue, recoverRequestRuleMutation, reconcileRequestRules, renderRequestRules} from "./request-rules-ui-core.js";
 
+export function applySentencePatternHelper(value, selectionStart, selectionEnd, kind) {
+  const start = Math.max(0, Math.min(Number(selectionStart) || 0, value.length));
+  const end = Math.max(start, Math.min(Number(selectionEnd) || start, value.length));
+  const selected = value.slice(start, end);
+  let snippet;
+  let editStart;
+  let editEnd;
+  if (kind === "optional") {
+    const inner = selected || "optional words";
+    snippet = `[${inner}]`;
+    editStart = start + 1;
+    editEnd = editStart + inner.length;
+  } else if (kind === "choice") {
+    const inner = selected ? `${selected}|alternative` : "one|two";
+    snippet = `(${inner})`;
+    editStart = start + 1;
+    editEnd = editStart + inner.length;
+  } else if (kind === "variable") {
+    const name = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(selected) ? selected : "name";
+    snippet = `{${name}}`;
+    editStart = start + 1;
+    editEnd = editStart + name.length;
+  } else if (kind === "range") {
+    const name = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(selected) ? selected : "level";
+    snippet = `{${name}=0..100}`;
+    editStart = start + 1;
+    editEnd = editStart + name.length;
+  } else {
+    throw new Error(`Unknown sentence-pattern helper: ${kind}`);
+  }
+  return {
+    value: `${value.slice(0, start)}${snippet}${value.slice(end)}`,
+    selectionStart: editStart,
+    selectionEnd: editEnd,
+  };
+}
+
 export function requestRulesDialog() {
   return `<dialog id="rule-dialog" class="editor-dialog wide request-rule-dialog" aria-labelledby="rule-dialog-title"><form id="rule-form"><div class="dialog-header"><h2 id="rule-dialog-title">Create Request Rule</h2><button type="button" class="icon rule-close" aria-label="Close">×</button></div><div class="dialog-body"><div class="form-grid"><label>Rule name<input id="rule-name" required maxlength="120" placeholder="Shopping list"></label><label class="toggle"><span>Enabled</span><input id="rule-enabled-edit" type="checkbox" checked></label></div><section><h3>1. What will you say?</h3><label>Trigger phrases or patterns<textarea id="rule-phrases" required placeholder="Add {item} to my shopping list"></textarea><small>Put each alternative on a new line. Alternatives must use the same variable names.</small></label><div id="sentence-pattern-builder" class="section-actions" hidden><span class="help">Insert pattern:</span><button type="button" class="secondary pattern-helper" data-pattern-helper="optional">Optional</button><button type="button" class="secondary pattern-helper" data-pattern-helper="choice">Choice</button><button type="button" class="secondary pattern-helper" data-pattern-helper="variable">Variable</button><button type="button" class="secondary pattern-helper" data-pattern-helper="range">Number range</button></div><div id="rule-slot-help" class="notice" hidden><strong>Variable values</strong><p>Variable values let part of the request change each time. You can use the captured value in actions or responses.</p><p id="rule-slot-list"></p></div><label>How should it match?<select id="rule-match"><option value="equals">Equals</option><option value="starts_with">Starts with</option><option value="ends_with">Ends with</option><option value="contains">Contains</option><option value="sentence_pattern">ExtendedOpenAI sentence pattern</option></select></label><div id="sentence-pattern-help" class="notice" hidden><strong>Sentence-pattern syntax</strong><p>Use <code>[optional words]</code>, <code>(one|two)</code>, free-text values such as <code>{room}</code>, constrained values such as <code>{room=kitchen|bedroom}</code>, and integer ranges such as <code>{level=0..100}</code>. Escape syntax characters with <code>\\</code>, including <code>\\|</code> inside choices. Sentence-ending punctuation is tolerated. This is ExtendedOpenAI syntax; named expansions and permutations are not supported.</p></div></section><section><h3>2. What should happen?</h3><label>Behaviour<select id="rule-action-type"><option value="local_action">Run actions locally</option><option value="model_routing">Route through AI with different settings</option></select></label><div id="rule-local-config"><p class="help">Build a native Home Assistant action sequence that runs locally without asking the AI model. Conditions, delays, choose, repeat, parallel, and templates use the same editor and syntax as scripts and automations.</p><div id="rule-action-sequence-host"></div><div id="rule-action-slot-help" class="notice" hidden><strong>Captured values in actions</strong><p id="rule-action-slot-list"></p><p>Use a captured value as a script variable, for example <code>{{ item }}</code>. The same values are also available under <code>request.slots</code>.</p><p>To call an enabled configured function, add <code>extended_openai_conversation_responses.call_function</code> and provide its name and arguments.</p></div></div><div id="rule-routing-config" hidden><p class="help"><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> are complete commands by default. Enable <strong>Continue to AI</strong> to send the original request to the provider unchanged after applying the route. Broader Starts/Ends/Contains matches continue to the provider by default.</p><p class="help" id="rule-routing-scope-help"></p><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Continue to AI</span><small>After applying these routing settings, send the original request to the AI provider.</small></span><input id="rule-continue-to-ai" type="checkbox" checked></label><div class="form-grid"><label>Model<input id="rule-model" placeholder="gpt-5-mini"></label><label>Reasoning effort<select id="rule-reasoning"><option value="">Keep current</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><label>Scope<select id="rule-scope"><option value="request">This request only</option><option value="conversation">Rest of this conversation</option></select></label><label class="toggle"><span>Reset to configured defaults</span><input id="rule-reset" type="checkbox"></label></div></div></section><section><h3>3. What should the assistant say?</h3><div id="rule-local-responses" class="form-grid"><label>Success response<input id="rule-success" value="Done"><small>You can include a captured value such as <code>{item}</code>.</small></label><label>Failure response<input id="rule-failure" value="Sorry, that did not work"></label></div><p id="rule-routing-ai-response" class="help" hidden>The AI provider will generate the response.</p><label id="rule-routing-response" hidden>Acknowledgement<input id="rule-routing-success" value="Updated"></label></section><details id="rule-advanced" class="advanced-context-formatting eoc-details-base"><summary>Advanced matching and action configuration</summary><label>Matching behaviour<select id="rule-matching-behavior"><option value="defaults">Use default settings</option><option value="custom">Customize for this rule</option></select></label>${matchingControls("rule", {word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90}, true)}<p class="help">Sentence patterns use ExtendedOpenAI's bounded matcher, so fuzzy matching, wording alternatives, and word-form normalization do not apply. Advanced Home Assistant JSON can use <code>{slot}</code> in text values.</p></details><div id="rule-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" class="secondary rule-close">Cancel</button><button type="submit" id="rule-save">Save</button></div></form></dialog>`;
 }
