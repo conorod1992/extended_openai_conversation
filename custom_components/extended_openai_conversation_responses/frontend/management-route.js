@@ -317,6 +317,38 @@ export function startStoredOverviewPrefetch(
   };
 }
 
+export function startStoredAssistantConfigPrefetch(panel, preferredSubentryId) {
+  const view = panel._viewKey?.();
+  if (!String(view || "").startsWith("assistant/")) return null;
+  const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
+  const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
+  if (!subentryId || !entryId) return null;
+  const request = panel._hass.callWS({
+    type: WS_TYPE,
+    section: "configuration",
+    action: "get",
+    entry_id: entryId,
+    subentry_id: subentryId,
+  });
+  return {
+    view,
+    entryId,
+    subentryId,
+    promise: request.then(
+      (value) => ({status: "fulfilled", value}),
+      (reason) => ({status: "rejected", reason}),
+    ),
+  };
+}
+
+function applyPrefetchedAssistantConfig(panel, prefetch, configData) {
+  panel._configData = configData;
+  panel._draft = JSON.parse(JSON.stringify(configData.config));
+  panel._draftTitle = configData.title;
+  panel._draftAgentId = prefetch.subentryId;
+  panel._setConfigDirty?.(false);
+}
+
 export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   const initialToken = panel._loadToken;
   const previousAgentId = panel._agentId;
@@ -331,6 +363,7 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
     );
   }
   const prefetch = startStoredOverviewPrefetch(panel, preferred, routeAsset);
+  const assistantConfigPrefetch = startStoredAssistantConfigPrefetch(panel, preferred);
 
   panel._data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
   panel._baseScopes = panel._data.scopes || [];
@@ -344,6 +377,22 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   if (selected?.entry_id) globalThis.localStorage?.setItem?.(ENTRY_KEY, selected.entry_id);
   if (previousAgentId !== panel._agentId) panel._scopeId = null;
   panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
+
+  if (
+    assistantConfigPrefetch
+    && selected?.subentry_id === assistantConfigPrefetch.subentryId
+    && selected?.entry_id === assistantConfigPrefetch.entryId
+    && panel._viewKey?.() === assistantConfigPrefetch.view
+  ) {
+    const settled = await assistantConfigPrefetch.promise;
+    if (
+      panel._viewKey?.() === assistantConfigPrefetch.view
+      && panel._agentId === assistantConfigPrefetch.subentryId
+      && settled.status === "fulfilled"
+    ) {
+      applyPrefetchedAssistantConfig(panel, assistantConfigPrefetch, settled.value);
+    }
+  }
 
   if (
     prefetch
