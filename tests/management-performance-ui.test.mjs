@@ -473,6 +473,8 @@ function panelFor(page = "assistant", subsection = "basics") {
 const management = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const renderer = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js", import.meta.url), "utf8");
 const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
+const managementRoute = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8");
+const overviewImplementation = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js", import.meta.url), "utf8");
 assert.match(management, /_loadServiceCatalog\(\)/);
 assert.equal(
   (management.match(/bindStateSafety\(this\)/g) || []).length,
@@ -503,6 +505,15 @@ assert.match(renderer, /main\.dataset\.eocInitialLoading !== undefined/);
 assert.match(renderer, /delete main\.dataset\.eocInitialLoading/);
 assert.doesNotMatch(requestRules, /result\.service_catalog/);
 assert.doesNotMatch(requestRules, /root\.addEventListener\("click"/);
+assert.match(requestRules, /const EMPTY_RULES_MARKUP =/);
+assert.match(requestRules, /const NO_RULES_MATCH_CONTENT =/);
+assert.doesNotMatch(managementRoute, /createElement\("section"\)[\s\S]*eocRuleSearchEmpty/);
+const scopeFilter = management.indexOf("const scopes = [...(this._data?.scopes || [])].filter");
+const scopeSort = management.indexOf("scopes.sort(", scopeFilter);
+assert.ok(scopeFilter >= 0 && scopeSort > scopeFilter, "scope visibility filtering should happen before sorting");
+assert.match(overviewImplementation, /const satellitesById = new Map\(satellites\.map/);
+assert.match(overviewImplementation, /satellitesById\.get\(entityId\)/);
+assert.doesNotMatch(overviewImplementation, /satellites\.find\(\(sat\) => sat\.id === entityId\)/);
 assert.match(requestRules, /id="rule-action-sequence-host"/);
 assert.doesNotMatch(requestRules, /<ha-selector id="rule-action-sequence"/);
 assert.match(requestRules, /selector = \{action:\{\}\}/);

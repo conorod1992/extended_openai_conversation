@@ -108,6 +108,13 @@ try {
   html = renderRequestRules(ownerRules);
   assert.equal((html.match(/class="request-rule-card/g)||[]).length,1);
   assert.doesNotMatch(html, /class="secondary rule-move"[^>]* disabled/);
+  const noMatchOwner = {...panel(), _result:{rules}, _query:"Nothing here", _eocInPlaceRequestRuleSearch:false};
+  html = renderRequestRules(noMatchOwner);
+  assert.match(html, /data-eoc-rule-search-empty ><h2>No rules match your search/);
+  const emptyOwner = {...panel(), _result:{rules:[]}, _query:"", _eocInPlaceRequestRuleSearch:true};
+  html = renderRequestRules(emptyOwner);
+  assert.match(html, /id="rule-empty-add"/);
+  assert.match(html, /data-eoc-rule-search-empty hidden/);
   assert.match(requestRulesDialog(), /id="rule-continue-to-ai"[^>]*checked/);
   assert.match(requestRulesDialog(), /id="rule-action-sequence-host"/);
   const guide = renderGuide({...panel(),_guideTopic:"backup-restore"});
