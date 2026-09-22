@@ -161,3 +161,21 @@ assert.match(
   /panel\._modelCatalogData\?\.requested_model === model/,
   "Overview should reuse model data already loaded for the selected model",
 );
+
+
+const overviewEntrySource = await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page.js", import.meta.url),
+  "utf8",
+);
+assert.match(
+  overviewEntrySource,
+  /import\("\.\/management-overview-health-clarity\.js"\)/,
+  "Model Data health should load only after the full Overview implementation is available",
+);
+assert.match(overviewEntrySource, /renderOverviewSnapshot/);
+assert.match(overviewEntrySource, /Detailed health, usage, and stored-data counts are still loading/);
+assert.doesNotMatch(
+  source,
+  /management-overview-health-clarity/,
+  "Overview implementation must not statically pull Model Data/catalog work into first useful paint",
+);
