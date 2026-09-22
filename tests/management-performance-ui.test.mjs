@@ -473,7 +473,12 @@ const management = await readFile(new URL("../custom_components/extended_openai_
 const renderer = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js", import.meta.url), "utf8");
 const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
 const managementRoute = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8");
-const overviewImplementation = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js", import.meta.url), "utf8");
+const overviewImplementation = (
+  await Promise.all([
+    "../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/overview-broadcast.js",
+  ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
+).join("\n");
 assert.match(management, /_loadServiceCatalog\(\)/);
 assert.equal(
   (management.match(/bindStateSafety\(this\)/g) || []).length,
