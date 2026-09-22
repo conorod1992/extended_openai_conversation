@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from typing import Any
 
@@ -16,6 +17,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.function_groups import (
     assemble_function_tools,
 )
+from custom_components.extended_openai_conversation_responses.management_ui import (
+    async_management_command,
+)
 from custom_components.extended_openai_conversation_responses.request_rules import (
     DEFAULT_MATCHING,
 )
@@ -23,10 +27,13 @@ from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_provider_wire_e2e import (
+    _ScriptedWire,
     _chat_sse_text,
     _install_wire,
+    _raw_client,
     _speech,
 )
+from tests_real_ha.test_knowledge_provider_wire_e2e import _chat_sse_tool_call
 
 _GROUP_ID = "live-group"
 _TOOL_NAME = "live_status"
@@ -96,6 +103,83 @@ async def _say(
         agent_id=agent.entry.entry_id,
     )
 
+
+
+class _GatedFirstReplyWire(_ScriptedWire):
+    """Expose the request before releasing the provider's first tool-call reply."""
+
+    def __init__(self, replies: list[Any]) -> None:
+        super().__init__(replies)
+        self.request_sent = asyncio.Event()
+        self.release_reply = asyncio.Event()
+        self.first_body: dict[str, Any] | None = None
+
+    async def send(self, request, *args: Any, **kwargs: Any):
+        if not self.requests and self.first_body is None:
+            import json
+
+            self.first_body = json.loads(request.content.decode())
+            self.request_sent.set()
+            await self.release_reply.wait()
+        return await super().send(request, *args, **kwargs)
+
+
+async def _tool_revision(hass: HomeAssistant, agent: Any) -> str:
+    result = await async_management_command(
+        hass,
+        "admin-user",
+        True,
+        {
+            "section": "configuration",
+            "action": "get",
+            "entry_id": agent.entry.entry_id,
+            "subentry_id": agent.subentry.subentry_id,
+        },
+    )
+    revision = result["revision"]
+    assert isinstance(revision, str)
+    return revision
+
+
+async def _mutate_tool(
+    hass: HomeAssistant,
+    agent: Any,
+    *,
+    action: str,
+    revision: str,
+    **extra: Any,
+) -> dict[str, Any]:
+    return await async_management_command(
+        hass,
+        "admin-user",
+        True,
+        {
+            "section": "tools",
+            "action": action,
+            "entry_id": agent.entry.entry_id,
+            "subentry_id": agent.subentry.subentry_id,
+            "revision": revision,
+            **extra,
+        },
+    )
+
+
+async def _run_gated_tool_turn(
+    hass: HomeAssistant,
+    monkeypatch: Any,
+    agent: Any,
+    replies: list[bytes],
+) -> tuple[Any, _GatedFirstReplyWire, asyncio.Task[Any]]:
+    wire = _GatedFirstReplyWire(replies)
+    monkeypatch.setattr(_raw_client(agent)._client, "send", wire.send)
+    task = asyncio.create_task(_say(hass, agent, "Use the live status tool."))
+    await asyncio.wait_for(wire.request_sent.wait(), timeout=10)
+    assert wire.first_body is not None
+    assert any(
+        tool.get("function", {}).get("name") == _TOOL_NAME
+        for tool in wire.first_body.get("tools", [])
+    )
+    return agent, wire, task
 
 def test_loaded_group_selection_resolves_current_configuration_each_turn() -> None:
     """Loaded group IDs select live definitions rather than frozen tool snapshots."""
@@ -242,3 +326,158 @@ async def test_config_entry_reload_resets_transient_conversation_route(
     assert _speech(second) == "Configured defaults restored."
     assert second_wire.requests[0]["body"]["model"] == "gpt-5.6"
     assert second_wire.requests[0]["body"]["reasoning_effort"] == "medium"
+
+async def test_provider_exposed_tool_disabled_before_call_fails_closed(
+    hass: HomeAssistant,
+    monkeypatch: Any,
+) -> None:
+    """A tool disabled after request serialization must not execute from that request."""
+    entry = _make_entry(
+        "Live tool disable race",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_CHAT_MODEL: "gpt-5.6",
+            CONF_FUNCTION_TOOLS: [_tool(_TOOL_NAME, "Initially exposed implementation")],
+            CONF_FUNCTION_GROUPS: [],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert agent is not None
+
+    executed: list[dict[str, Any]] = []
+    original_execute = agent._execute_function_tool
+
+    async def record_execute(function_tool, *args):
+        executed.append(deepcopy(function_tool))
+        return await original_execute(function_tool, *args)
+
+    monkeypatch.setattr(agent, "_execute_function_tool", record_execute)
+    revision = await _tool_revision(hass, agent)
+    _agent, wire, task = await _run_gated_tool_turn(
+        hass,
+        monkeypatch,
+        agent,
+        [_chat_sse_tool_call("call-live-disable", _TOOL_NAME, {})],
+    )
+
+    await _mutate_tool(
+        hass,
+        agent,
+        action="set_enabled",
+        revision=revision,
+        name=_TOOL_NAME,
+        enabled=False,
+    )
+    wire.release_reply.set()
+    result = await task
+
+    assert result.response.error_code is not None
+    assert executed == []
+
+
+async def test_provider_exposed_tool_deleted_before_call_fails_closed(
+    hass: HomeAssistant,
+    monkeypatch: Any,
+) -> None:
+    """A tool deleted after request serialization must not execute from that request."""
+    entry = _make_entry(
+        "Live tool delete race",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_CHAT_MODEL: "gpt-5.6",
+            CONF_FUNCTION_TOOLS: [_tool(_TOOL_NAME, "Initially exposed implementation")],
+            CONF_FUNCTION_GROUPS: [],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert agent is not None
+
+    executed: list[dict[str, Any]] = []
+    original_execute = agent._execute_function_tool
+
+    async def record_execute(function_tool, *args):
+        executed.append(deepcopy(function_tool))
+        return await original_execute(function_tool, *args)
+
+    monkeypatch.setattr(agent, "_execute_function_tool", record_execute)
+    revision = await _tool_revision(hass, agent)
+    _agent, wire, task = await _run_gated_tool_turn(
+        hass,
+        monkeypatch,
+        agent,
+        [_chat_sse_tool_call("call-live-delete", _TOOL_NAME, {})],
+    )
+
+    await _mutate_tool(
+        hass,
+        agent,
+        action="delete",
+        revision=revision,
+        name=_TOOL_NAME,
+        confirm=True,
+    )
+    wire.release_reply.set()
+    result = await task
+
+    assert result.response.error_code is not None
+    assert executed == []
+
+
+async def test_provider_exposed_tool_edit_uses_latest_definition_before_execution(
+    hass: HomeAssistant,
+    monkeypatch: Any,
+) -> None:
+    """An old exposed schema resolves to the current implementation at dispatch."""
+    entry = _make_entry(
+        "Live tool edit race",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_CHAT_MODEL: "gpt-5.6",
+            CONF_FUNCTION_TOOLS: [_tool(_TOOL_NAME, "Old implementation")],
+            CONF_FUNCTION_GROUPS: [],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert agent is not None
+
+    executed: list[dict[str, Any]] = []
+    original_execute = agent._execute_function_tool
+
+    async def record_execute(function_tool, *args):
+        executed.append(deepcopy(function_tool))
+        return await original_execute(function_tool, *args)
+
+    monkeypatch.setattr(agent, "_execute_function_tool", record_execute)
+    revision = await _tool_revision(hass, agent)
+    _agent, wire, task = await _run_gated_tool_turn(
+        hass,
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call("call-live-edit", _TOOL_NAME, {}),
+            _chat_sse_text("Latest implementation used."),
+        ],
+    )
+
+    edited = _tool(_TOOL_NAME, "New implementation")
+    await _mutate_tool(
+        hass,
+        agent,
+        action="save",
+        revision=revision,
+        tool=edited,
+        original_name=_TOOL_NAME,
+    )
+    wire.release_reply.set()
+    result = await task
+
+    assert _speech(result) == "Latest implementation used."
+    assert len(executed) == 1
+    assert executed[0]["function"]["value_template"] == "New implementation"
+
