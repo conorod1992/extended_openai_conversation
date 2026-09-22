@@ -238,6 +238,90 @@ test("conversation configuration starts before a pending scope catalog finishes"
   expect(result).toEqual({concurrent:true, sessions:true, config:true});
 });
 
+test("conversation collection starts before a pending scope catalog finishes", async ({page}) => {
+  await page.goto(fixtureUrl("overview"));
+  await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const host = browserHarness.panel;
+    const original = host._hass.callWS;
+    const initialScope = host._scopeId;
+    let releaseScope;
+    let listStarted = false;
+    const listScopes = [];
+    host._hass.callWS = async message => {
+      if (message.section === "scopes") await new Promise(resolve => { releaseScope = resolve; });
+      if (message.section === "conversations" && message.action === "list") {
+        listStarted = true;
+        listScopes.push(message.scope_id);
+      }
+      return original(message);
+    };
+    const pending = host._navigate("data-memory", "conversations");
+    while (!releaseScope) await new Promise(resolve => setTimeout(resolve, 0));
+    const concurrent = listStarted;
+    releaseScope();
+    await pending;
+    host._hass.callWS = original;
+    return {concurrent, initialScope, selectedScope:host._scopeId, listScopes};
+  });
+  expect(result.concurrent).toBe(true);
+  expect(result.selectedScope).toBe(result.initialScope);
+  expect(result.listScopes).toEqual([result.initialScope]);
+});
+
+test("invalidated speculative Memory scope is discarded and refetched once", async ({page}) => {
+  await page.goto(fixtureUrl("overview"));
+  await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const host = browserHarness.panel;
+    const original = host._hass.callWS;
+    const initialScope = host._scopeId;
+    const replacementScope = "user:replacement";
+    let releaseScope;
+    const listScopes = [];
+    host._hass.callWS = async message => {
+      if (message.section === "scopes") {
+        await new Promise(resolve => { releaseScope = resolve; });
+        return {scopes:[{
+          scope_id:replacementScope,
+          scope_type:"user",
+          display_name:"Replacement user",
+          is_current_user:true,
+          memory_count:0,
+          conversation_count:0,
+        }]};
+      }
+      if (message.section === "memories" && message.action === "list") {
+        listScopes.push(message.scope_id);
+        if (message.scope_id === initialScope) throw new Error("stale scope");
+        return {memories:[], marker:message.scope_id};
+      }
+      return original(message);
+    };
+    const pending = host._navigate("data-memory", "memories");
+    while (!releaseScope) await new Promise(resolve => setTimeout(resolve, 0));
+    const speculativeStarted = listScopes.includes(initialScope);
+    releaseScope();
+    await pending;
+    host._hass.callWS = original;
+    return {
+      speculativeStarted,
+      initialScope,
+      selectedScope:host._scopeId,
+      listScopes,
+      marker:host._result?.marker,
+      error:host._error,
+    };
+  });
+  expect(result).toMatchObject({
+    speculativeStarted:true,
+    selectedScope:"user:replacement",
+    marker:"user:replacement",
+    error:null,
+  });
+  expect(result.listScopes).toEqual([result.initialScope, "user:replacement"]);
+});
+
 test("late conversation configuration cannot replace a newer route result", async ({page}) => {
   await page.goto(fixtureUrl("overview"));
   await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
