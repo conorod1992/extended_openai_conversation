@@ -1,6 +1,6 @@
 const DAILY_PAGE_SIZE = 366;
 const MAX_DAILY_PAGES = 128;
-const DATE_KEY = /^(\\d{4})-(\\d{2})-(\\d{2})$/;
+const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DEFAULT_USAGE_WINDOW = "30";
 
 function addUsageCalendarDays(value, amount) {
