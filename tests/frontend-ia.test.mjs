@@ -209,6 +209,7 @@ const overview = (
   await Promise.all([
     "../custom_components/extended_openai_conversation_responses/frontend/overview-page.js",
     "../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/overview-broadcast.js",
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
 ).join("\n");
 const navigation = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js", import.meta.url), "utf8");
