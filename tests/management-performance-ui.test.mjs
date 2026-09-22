@@ -496,6 +496,10 @@ assert.match(management, /if \(view === "usage-maintenance\/diagnostics"\) getRo
 assert.match(management, /if \(view === "data-memory\/memories"\) getRouteFeature\(view\)\?\.bindTemporaryMemory\(this\)/);
 assert.match(management, /if \(view === "data-memory\/memory-settings"\) getRouteFeature\(view\)\?\.bindMemorySettings\(this\)/);
 assert.doesNotMatch(managementRoute, /view === "data-memory\/memory-settings"\) keys\.push\("configuration"\)/);
+assert.match(managementRoute, /"agent-config-tools": \(\) => import\("\.\/agent-config-tools\.js"\)/);
+assert.match(managementRoute, /view === "capabilities\/functions"\) return "agent-config-tools"/);
+assert.match(management, /getConfigurationTools\(\)\?\.renderTools/);
+assert.match(management, /getConfigurationTools\(\)\?\.bindTools/);
 assert.equal(
   (renderer.match(/bindDynamicBase\(panel\);/g) || []).length,
   1,

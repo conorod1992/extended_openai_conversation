@@ -4,7 +4,8 @@ import {readFile} from "node:fs/promises";
 
 import {applyConfigurationControl} from "../../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 import {settingsResultsMarkup, SEARCH_DEBOUNCE_MS} from "../../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
-import {renderConfiguration, renderTools} from "../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import {renderConfiguration} from "../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import {renderTools} from "../../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js";
 import {renderBackupTransferPanel} from "../../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
 import {renderExposedAttributeSettings} from "../../custom_components/extended_openai_conversation_responses/frontend/exposed-attributes-ui.js";
 

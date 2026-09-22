@@ -6,7 +6,7 @@ import {
   renderFunctionRepairCards,
   invalidToolCards,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-function-repair.js";
-import {renderTools} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import {renderTools} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js";
 
 const panel = {
   _e(value) {

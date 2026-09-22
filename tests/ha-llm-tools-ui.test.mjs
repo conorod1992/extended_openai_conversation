@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { filterHATools, haToolName, isHALlmTool, renderHAToolCard } from "../custom_components/extended_openai_conversation_responses/frontend/ha-llm-tools.js";
-import {categorizeFunctionTools, synchronizePersistedFunctions} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
+import {categorizeFunctionTools, synchronizePersistedFunctions} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools-base.js";
 
 const tool = {spec: {name: "ha_reference_id"}, function: {type: "ha_llm", tool_name: "native_tool", source_id: "source", api_id: "assist"}, enabled: true};
 const panel = {_e: value => String(value).replaceAll("<", "&lt;").replaceAll('"', "&quot;"), _haCatalog: {saved: {ha_reference_id: {available: false, source: "source <unsafe>", description: "Unavailable"}}}};

@@ -1,7 +1,6 @@
 import {renderConfiguration as renderConfigurationMarkup, renderConfigurationActions as renderConfigurationActionsMarkup, backupSummaryLines as summaryLines} from "./agent-config-editor-base.js";
 import {bindConfiguration as bindModelConfiguration} from "./agent-config-editor-model-v2.js";
-export {renderTools, reconcileTools, configurationDialogs} from "./agent-config-editor-base.js";
-export {bindTools} from "./agent-config-native-yaml.js";
+export {configurationDialogs} from "./agent-config-editor-base.js";
 
 export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
 const CACHEABLE_CONFIG_SECTIONS = new Set(["capabilities", "archive", "voice", "speech", "context", "retention", "backup"]);

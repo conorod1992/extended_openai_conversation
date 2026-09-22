@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {bindTools, openTool} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
+import {bindTools, openTool} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools-base.js";
 
 function deferred() {
   let resolve, reject;

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-import {renderTools} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
-import {canReplaceToolYamlWithoutConfirmation, categorizeFunctionTools, configurationChoiceLabel, deleteFunctionGroup, functionGroupIdFromName, functionToolCountLabel, isFunctionGroupEnabled, isFunctionToolEnabled, matchesFunctionSearch, saveBar, synchronizePersistedFunctions} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
+import {renderTools} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js";
+import {configurationChoiceLabel, matchesFunctionSearch, saveBar} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
+import {canReplaceToolYamlWithoutConfirmation, categorizeFunctionTools, deleteFunctionGroup, functionGroupIdFromName, functionToolCountLabel, isFunctionGroupEnabled, isFunctionToolEnabled, synchronizePersistedFunctions} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools-base.js";
 
 const tool = (name) => ({spec: {name, description: name}, function: {type: "native"}});
 const config = {
@@ -107,6 +108,8 @@ const editorSource = (
   await Promise.all([
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js",
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools-base.js",
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
 ).join("\n");
 assert.match(editorSource, /insertAdjacentHTML\("beforebegin", saveBar\(panel\)\)/, "the bar should appear as soon as a clean configuration becomes dirty");
