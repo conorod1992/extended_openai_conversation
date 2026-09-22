@@ -115,7 +115,7 @@ function finishMutation(panel,result,rules){
   panel._result={...(panel._result||{}),rules,revision:result.revision};
   const cacheKey=panel._sectionCacheKey?.(); if(cacheKey) panel._sectionCache?.delete(cacheKey);
   syncScopeRevision(panel,result);
-  const reconciled = reconcileRequestRules(panel);
+  const reconciled = panel.shadowRoot ? reconcileRequestRules(panel) : false;
   if (reconciled) {
     const count = panel.shadowRoot?.querySelector?.(".search-row .count");
     if (count) count.textContent = `${rules.length} rule${rules.length === 1 ? "" : "s"}`;
