@@ -17,6 +17,7 @@ test("Request Rules page save preserves the route DOM", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
   const panel = page.locator("extended-openai-management-panel");
+  await panel.locator(".rule-settings details").first().evaluate((node) => { node.open = true; });
   await expect(panel.locator("#rules-default-fuzzy")).toBeVisible();
   await trackRenders(panel);
 
@@ -65,11 +66,10 @@ test("Guest Mode policy save preserves DOM", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/guest-mode"));
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.locator("#guest-controls-enabled")).toBeVisible();
-  await trackRenders(panel);
-
   const advanced = panel.locator(".guest-advanced").last();
   await advanced.evaluate((node) => { node.open = true; });
+  await expect(panel.locator("#guest-controls-enabled")).toBeVisible();
+  await trackRenders(panel);
   const toggle = panel.locator("#guest-controls-enabled");
   const original = await toggle.isChecked();
   await toggle.setChecked(!original);
