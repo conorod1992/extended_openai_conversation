@@ -64,7 +64,7 @@ def _reject_duplicate_tool_call_ids(tool_calls: Iterable[llm.ToolInput]) -> None
     for tool_call in tool_calls:
         if tool_call.id in seen:
             raise HomeAssistantError(
-                f"Provider returned duplicate tool call id \`{tool_call.id}\`"
+                f"Provider returned duplicate tool call id `{tool_call.id}`"
             )
         seen.add(tool_call.id)
 
