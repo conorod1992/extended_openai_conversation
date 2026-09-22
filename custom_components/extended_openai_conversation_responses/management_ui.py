@@ -52,6 +52,7 @@ from .const import (
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
+    CONF_KNOWLEDGE_ENABLED,
     CONF_SHARED_MEMORY_MODE,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_SHARED_MEMORY_MODE,
@@ -1741,6 +1742,31 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             "stats": stats,
             "feature_status": management_feature_status(
                 request.subentry.data, knowledge_source_count=source_count
+            )["knowledge"],
+        }
+    if action == "set_enabled":
+        from .feature_status import management_feature_status
+
+        _require_admin(request.is_admin)
+        enabled = message.get("enabled")
+        if not isinstance(enabled, bool):
+            raise HomeAssistantError("enabled must be a boolean")
+        normalized = merge_agent_config(
+            request.subentry.data, {CONF_KNOWLEDGE_ENABLED: enabled}
+        )
+        request.hass.config_entries.async_update_subentry(
+            request.entry, request.subentry, data=normalized
+        )
+        stats = library.stats()
+        source_count = 0
+        if isinstance(stats, Mapping):
+            with suppress(TypeError, ValueError):
+                source_count = int(stats.get("source_count", 0))
+        return {
+            "revision": _agent_config_revision(normalized, request.subentry.title),
+            "knowledge_enabled": bool(normalized.get(CONF_KNOWLEDGE_ENABLED, False)),
+            "feature_status": management_feature_status(
+                normalized, knowledge_source_count=source_count
             )["knowledge"],
         }
     if action == "get":
