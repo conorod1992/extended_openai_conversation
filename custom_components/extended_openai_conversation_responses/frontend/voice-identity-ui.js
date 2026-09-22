@@ -14,25 +14,6 @@ const OWNER_TYPES = Object.freeze({
   user: "Home Assistant user",
 });
 
-const VOICE_STYLE = `<style data-eoc-voice-identity>
-  .voice-identity-flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}
-  .voice-flow-step,.voice-policy-card,.voice-default-card,.voice-mappings-card{padding:14px;border:1px solid var(--divider-color);border-radius:11px;background:var(--card-background-color)}
-  .voice-flow-step{background:var(--secondary-background-color)}
-  .voice-flow-step strong{display:block;margin-bottom:4px}.voice-flow-step small{display:block;color:var(--secondary-text-color);line-height:1.4}
-  .voice-policy-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
-  .voice-policy-card h3,.voice-default-card h3,.voice-mappings-card h3{margin:0 0 4px;font-size:15px}
-  .voice-policy-card>p,.voice-default-card>p,.voice-mappings-card .section-heading p{margin:0 0 11px;color:var(--secondary-text-color)}
-  .voice-policy-card .setting,.voice-default-card .setting{margin:0}.voice-default-card{margin-bottom:14px}
-  .voice-policy-card.is-disabled,.voice-default-card.is-disabled,.voice-mappings-card.is-disabled{opacity:.7}
-  .voice-native-picker{display:block;width:100%;margin-top:6px}
-  .voice-picker-note{display:block;margin-top:5px;color:var(--secondary-text-color);line-height:1.35}
-  .voice-picker-warning{display:block;margin-top:5px;color:var(--error-color,#db4437);line-height:1.35}
-  .voice-mapping-list{display:grid;gap:9px;margin-top:11px}.voice-mapping-empty{padding:13px;border:1px dashed var(--divider-color);border-radius:9px;color:var(--secondary-text-color)}
-  .voice-mapping-row{display:grid;grid-template-columns:minmax(220px,1fr) minmax(240px,1.2fr) auto;gap:10px;align-items:end;padding:11px;border:1px solid var(--divider-color);border-radius:9px;background:var(--primary-background-color)}
-  .voice-mapping-row label{display:grid;gap:5px;font-size:13px;color:var(--secondary-text-color)}.voice-mapping-row select{width:100%;box-sizing:border-box}
-  .voice-owner-user{margin-top:7px}.voice-owner-user[hidden]{display:none}
-  @media(max-width:800px){.voice-identity-flow,.voice-policy-grid,.voice-mapping-row{grid-template-columns:1fr}.remove-voice-mapping{justify-self:start}}
-</style>`;
 
 const e = (panel,value) => panel._e(String(value ?? ""));
 const rawUserId = (value) => String(value || "").replace(/^user:/,"");
@@ -128,7 +109,7 @@ export function renderVoiceIdentity(panel) {
   const config = panel?._draft || panel?._result?.config || {};
   const entries = mappingEntries(config);
   const selectedUser = String(config.voice_default_user_id || "");
-  return `${VOICE_STYLE}<div class="config-section-heading"><p class="eyebrow">Voice & identity</p><p>Choose whose memories and conversation history may be used when Home Assistant does not identify the speaker.</p></div>
+  return `<div class="config-section-heading"><p class="eyebrow">Voice & identity</p><p>Choose whose memories and conversation history may be used when Home Assistant does not identify the speaker.</p></div>
     <div class="voice-identity-flow"><div class="voice-flow-step"><strong>1 · Signed-in identity wins</strong><small>If Home Assistant supplies an authenticated user, that user's personal scope is used regardless of the settings below.</small></div><div class="voice-flow-step"><strong>2 · Otherwise use the voice policy</strong><small>Unidentified requests can use no retained personal data, shared household data, a default user, or a device assignment.</small></div><div class="voice-flow-step"><strong>3 · No identity guessing</strong><small>Device assignments use Home Assistant's source device ID only; room, presence, Bluetooth, and camera data are not used to guess a speaker.</small></div></div>
     <div class="notice on"><strong>Current unidentified voice behavior</strong><p id="voice-current-summary">${e(panel,voiceIdentitySummary(config,voiceUsers(panel)))}</p></div>
     <div class="voice-policy-grid"><section class="voice-policy-card"><h3>Unidentified voice requests</h3><p>Applies only when Home Assistant has not already attached a user to the request.</p>${policySelect(panel,"voice_scope_policy","Use retained data from",String(config.voice_scope_policy || "unretained"),"Choose the data owner for unidentified voice requests.")}</section><section class="voice-policy-card" data-voice-fallback-card><h3>Unmapped-device fallback</h3><p>Used only when device assignment is selected and the source device has no saved assignment.</p>${policySelect(panel,"voice_unmapped_policy","If the device is not assigned",String(config.voice_unmapped_policy || "unretained"),"Choose the safe fallback for an unidentified device.",true)}</section></div>
