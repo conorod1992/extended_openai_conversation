@@ -193,7 +193,11 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
         pendingRuleButtons.add(button);button.disabled=true;
         try{const result=await panel._call("request_rules","move",{rule_id:id,direction:button.dataset.direction,revision:panel._result?.revision});applyRequestRuleMutation(panel,"move",result,{ruleId:id,direction:button.dataset.direction});}
         catch(err){await recoverRequestRuleMutation(panel,err,"Unable to move Request Rule");}
-        finally{pendingRuleButtons.delete(button);} return;
+        finally{
+          pendingRuleButtons.delete(button);
+          reconcileRequestRules(panel);
+        }
+        return;
       }
       if(button.matches(".rule-duplicate")){
         button.disabled=true;
