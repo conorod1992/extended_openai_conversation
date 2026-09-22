@@ -717,7 +717,24 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     try {
       const configPromise = view === "data-memory/conversations" && this._data?.is_admin
         ? this._loadConfigDraft() : Promise.resolve();
+      const initialScopeId = needsScopes ? this._scopeId : null;
+      const cachedScopeLoadedAt = scopeCatalogKey ? this._eocScopeCatalogTimes.get(scopeCatalogKey) : null;
+      const cachedScopes = cachedScopeLoadedAt && Date.now() - cachedScopeLoadedAt <= SCOPE_CACHE_TTL_MS
+        ? this._scopeCatalogCache.get(scopeCatalogKey) : null;
+      const knownScopes = cachedScopes || this._baseScopes || [];
+      const canPrefetchScopedCollection = Boolean(
+        initialScopeId && knownScopes.some((scope) => scope.scope_id === initialScopeId),
+      );
+      const loadScopedCollection = (scopeId) => view === "data-memory/conversations"
+        ? this._call("conversations", "list", { scope_id: scopeId, limit: 50 })
+        : this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: scopeId, limit: 100 });
       const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey) : Promise.resolve();
+      const prefetchedScopedCollection = canPrefetchScopedCollection
+        ? loadScopedCollection(initialScopeId).then(
+          (value) => ({status: "fulfilled", value}),
+          (reason) => ({status: "rejected", reason}),
+        )
+        : null;
       const activeConversationsPromise = view === "data-memory/conversations" && this._data?.is_admin
         ? this._call("conversations", "active") : Promise.resolve({active: []});
       // Attach rejection handlers immediately so independent History work can run
@@ -727,6 +744,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ]);
       if (needsScopes) await scopePromise;
       if (loadToken !== this._loadToken) return;
+      const scopedCollection = async () => {
+        if (prefetchedScopedCollection && initialScopeId === this._scopeId) {
+          const settled = await prefetchedScopedCollection;
+          if (settled.status === "rejected") throw settled.reason;
+          return settled.value;
+        }
+        return loadScopedCollection(this._scopeId);
+      };
       let result;
       let contentData = null;
       if (view === "overview") {
@@ -746,7 +771,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         result = settledSectionResult(entries, settled);
       } else if (view === "data-memory/conversations") {
         const [sessions, prerequisiteResults] = await Promise.all([
-          this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
+          scopedCollection(),
           prerequisites,
         ]);
         if (prerequisiteResults[1].status === "rejected") {
@@ -760,7 +785,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (this._data?.is_admin) result = this._configData;
         else result = contentData;
       } else if (view === "data-memory/memories") {
-        result = await this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: this._scopeId, limit: 100 });
+        result = await scopedCollection();
       } else if (view === "data-memory/knowledge") {
         result = await this._call("knowledge", "list");
       } else if (view === "capabilities/guest-mode") {
