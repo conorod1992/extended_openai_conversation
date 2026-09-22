@@ -58,6 +58,17 @@ def retained_tool_calls_since(
     return calls
 
 
+def _reject_duplicate_tool_call_ids(tool_calls: Iterable[llm.ToolInput]) -> None:
+    """Reject one provider round whose call IDs cannot be paired unambiguously."""
+    seen: set[str] = set()
+    for tool_call in tool_calls:
+        if tool_call.id in seen:
+            raise HomeAssistantError(
+                f"Provider returned duplicate tool call id \`{tool_call.id}\`"
+            )
+        seen.add(tool_call.id)
+
+
 def append_unresolved_tool_results(
     chat_log: conversation.ChatLog,
     agent_id: str,
@@ -451,6 +462,7 @@ async def async_execute_tool_exchange(
     """Execute one provider tool batch while keeping retained history complete."""
     if not pending_tool_calls:
         return
+    _reject_duplicate_tool_call_ids(pending_tool_calls)
     if recovery_state is not None and recovery_state.enabled:
         await _async_execute_with_recovery(
             entity,
