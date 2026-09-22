@@ -97,6 +97,8 @@ class SatelliteCapabilities:
     wake_sound_entity_id: str | None
     media_player_source: str | None
     wake_sound_source: str | None
+    media_player_candidates: tuple[str, ...] = ()
+    wake_sound_candidates: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -107,6 +109,8 @@ class SatelliteCapabilities:
             "wake_sound_entity_id": self.wake_sound_entity_id,
             "media_player_source": self.media_player_source,
             "wake_sound_source": self.wake_sound_source,
+            "media_player_candidates": list(self.media_player_candidates),
+            "wake_sound_candidates": list(self.wake_sound_candidates),
         }
 
 

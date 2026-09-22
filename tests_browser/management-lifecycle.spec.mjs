@@ -429,7 +429,29 @@ test("Quiet Hours and request debugging initialize on first entry without global
     host._hass.callWS = async message => {
       if (message.section === "quiet_hours") {
         window.featureCalls.push(message);
-        return {config:message.config || {enabled:false, start:"22:00", end:"07:00", max_volume:0.3, wake_sound:"off"}, satellites:[]};
+        return {
+          config:message.config || {
+            enabled:false,
+            start:"22:00",
+            end:"07:00",
+            max_volume:0.3,
+            wake_sound:"off",
+            overrides:{
+              "assist_satellite.kitchen":{media_player_entity_id:"media_player.legacy"},
+            },
+          },
+          satellites:[{
+            satellite_entity_id:"assist_satellite.kitchen",
+            name:"Kitchen Voice",
+            device_id:"device-kitchen",
+            media_player_entity_id:"media_player.legacy",
+            wake_sound_entity_id:"switch.kitchen_wake",
+            media_player_source:"manual",
+            wake_sound_source:"auto",
+            media_player_candidates:["media_player.kitchen"],
+            wake_sound_candidates:["switch.kitchen_wake"],
+          }],
+        };
       }
       if (message.type.endsWith("/request_debug")) {
         window.featureCalls.push(message);
@@ -442,6 +464,35 @@ test("Quiet Hours and request debugging initialize on first entry without global
   await expect(panel.locator("#qh-enabled")).toBeVisible();
   await expect(panel.locator(".save-bar")).toHaveCount(0);
   await expect(panel.locator(".qh-grid").first()).toHaveCSS("display", "grid");
+  const pickerState = await panel.evaluate(host => {
+    const pickers = [...host.shadowRoot.querySelectorAll(".qh-override")];
+    return pickers.map(picker => ({
+      kind:picker.dataset.kind,
+      value:picker.value,
+      includeDomains:picker.includeDomains,
+      includeEntities:picker.includeEntities,
+      allowCustomEntity:picker.allowCustomEntity,
+      placeholder:picker.placeholder,
+    }));
+  });
+  expect(pickerState).toEqual([
+    {
+      kind:"media_player_entity_id",
+      value:"media_player.legacy",
+      includeDomains:["media_player"],
+      includeEntities:["media_player.kitchen", "media_player.legacy"],
+      allowCustomEntity:false,
+      placeholder:"Automatic",
+    },
+    {
+      kind:"wake_sound_entity_id",
+      value:"",
+      includeDomains:["switch"],
+      includeEntities:["switch.kitchen_wake"],
+      allowCustomEntity:false,
+      placeholder:"Automatic · switch.kitchen_wake",
+    },
+  ]);
   await panel.locator("#qh-enabled").check();
   await panel.locator("#save-page").click();
   await expect.poll(() => page.evaluate(() => featureCalls.filter(c => c.section === "quiet_hours" && c.action === "update").length)).toBe(1);
