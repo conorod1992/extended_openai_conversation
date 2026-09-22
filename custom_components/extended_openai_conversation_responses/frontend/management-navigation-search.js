@@ -142,13 +142,15 @@ function searchMarkup(panel) {
 export function updateSettingsResults(panel) {
   const results = panel.shadowRoot?.querySelector(".eoc-global-search .search-results");
   if (!results) return;
+  const query = String(panel._settingsSearchQuery || "");
   const markup = settingsResultsMarkup(panel);
   if (results._eocMarkup !== markup) {
     results.innerHTML = markup;
     results._eocMarkup = markup;
     panel._eocSearchResultsRevision = (panel._eocSearchResultsRevision || 0) + 1;
   }
-  const hidden = !panel._settingsSearchQuery;
+  results.dataset.searchQuery = query;
+  const hidden = !query;
   if (results.hidden !== hidden) results.hidden = hidden;
 }
 
@@ -216,8 +218,18 @@ function bindSearch(panel, search) {
       void ensureSearchConfiguration(panel, {retry:true});
       return;
     }
-    const button = event.target.closest(".settings-result");
+    let button = event.target.closest(".settings-result");
     if (!button) return;
+    const results = search.querySelector(".search-results");
+    const currentQuery = String(panel._settingsSearchQuery || "");
+    if (results?.dataset.searchQuery !== currentQuery) {
+      const target = button.dataset.target;
+      updateSettingsResults(panel);
+      button = target
+        ? [...search.querySelectorAll(".settings-result")].find((candidate) => candidate.dataset.target === target)
+        : null;
+      if (!button) return;
+    }
     panel._pendingSettingFocus = button.dataset.target;
     panel._settingsSearchQuery = "";
     input.value = "";
