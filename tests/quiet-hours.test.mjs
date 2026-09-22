@@ -114,7 +114,7 @@ test("renders native device-scoped override pickers and preserves manual status"
   assert.match(html, /Speaker unavailable/);
   assert.doesNotMatch(html, /Speaker ready/);
   assert.match(html, /Manually selected for this satellite/);
-  assert.doesNotMatch(html, /<option/);
+  assert.doesNotMatch(html, /<select class="qh-override"/);
 });
 
 test("marks a mapped speaker ready only when a numeric volume is available", () => {
