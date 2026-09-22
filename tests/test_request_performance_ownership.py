@@ -21,6 +21,7 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
     estimate_prepared_request,
+    measure_provider_input,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
@@ -311,7 +312,7 @@ def test_prepared_measurement_reuses_wire_artifacts_without_mutation(
         {"role": "system", "content": "system"},
         {"role": "user", "content": "hello"},
     ]
-    expected = context_usage_hardening.measure_provider_input(measured, tools)[2]
+    expected = measure_provider_input(measured, tools)[2]
     assert usage.input_tokens == expected
     assert agent.hass.data == {}
     assert (payload, tools) == original
