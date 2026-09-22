@@ -469,10 +469,8 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             candidate, expected_revision=message.get("revision")
         )
         return {
-            "rule": {
-                **rule,
-                "sensitive_matching_warning": rule_has_sensitive_actions(rule),
-            },
+            "rule": rule,
+            "sensitive_matching_warning": rule_has_sensitive_actions(rule),
             "revision": rules.revision(),
         }
     rule_id = message.get("rule_id")
@@ -489,7 +487,11 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         rule = await rules.async_update(
             rule_id, candidate, expected_revision=message.get("revision")
         )
-        return {"rule": {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}, "revision": rules.revision()}
+        return {
+            "rule": rule,
+            "sensitive_matching_warning": rule_has_sensitive_actions(rule),
+            "revision": rules.revision(),
+        }
     if action == "delete":
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
@@ -501,7 +503,11 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         rule = await rules.async_duplicate(
             rule_id, expected_revision=message.get("revision")
         )
-        return {"rule": {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}, "revision": rules.revision()}
+        return {
+            "rule": rule,
+            "sensitive_matching_warning": rule_has_sensitive_actions(rule),
+            "revision": rules.revision(),
+        }
     if action == "move":
         direction = message.get("direction")
         if not isinstance(direction, str):
@@ -511,7 +517,11 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             direction,
             expected_revision=message.get("revision"),
         )
-        return {"rule": {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}, "revision": rules.revision()}
+        return {
+            "rule": rule,
+            "sensitive_matching_warning": rule_has_sensitive_actions(rule),
+            "revision": rules.revision(),
+        }
     raise HomeAssistantError(f"Unknown Request Rules action: {action}")
 
 
