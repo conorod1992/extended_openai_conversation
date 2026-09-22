@@ -26,7 +26,7 @@ _METADATA_REQUIRED = {
     "streaming",
     "output_tokens",
     "recommended_profile",
-    "service_tier",
+    "service_tiers",
     "explicit_prompt_cache",
 }
 _MODEL_WRAPPER_KEYS = {"id", "display_name", "kind"}
@@ -146,11 +146,18 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
         raise ValueError("Invalid recommended reasoning effort")
     if profile["temperature"] != "omit" or profile["top_p"] != "omit":
         raise ValueError("Recommended sampling profile must omit temperature/top_p")
+    service_tiers = value["service_tiers"]
+    allowed_tiers = {"auto", "default", "flex", "fast", "priority", "ultrafast"}
     if (
-        type(value["service_tier"]) is not bool
+        not isinstance(service_tiers, list)
+        or len(set(service_tiers)) != len(service_tiers)
+        or any(
+            not isinstance(item, str) or item not in allowed_tiers
+            for item in service_tiers
+        )
         or type(value["explicit_prompt_cache"]) is not bool
     ):
-        raise ValueError("Compatibility feature flags must be boolean")
+        raise ValueError("Invalid service-tier or compatibility metadata")
 
     alias_of = value.get("alias_of")
     if alias_of is not None and (
@@ -163,14 +170,14 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
 
 
 def validate_catalog(value: Any) -> dict[str, Any]:
-    """Validate one strict model-capability catalogue v2 document."""
+    """Validate one strict model-capability catalogue v3 document."""
     _keys(value, {"schema_version", "catalog_version", "defaults", "models"})
     if (
-        value.get("schema_version") != 2
+        value.get("schema_version") != 3
         or type(value.get("catalog_version")) is not int
     ):
         raise ValueError("Unsupported model catalogue schema")
-    if value["catalog_version"] < 2:
+    if value["catalog_version"] < 3:
         raise ValueError("catalog_version must be at least 2")
     _validate_metadata(value["defaults"])
     if value["defaults"]["status"] != "unknown":
@@ -235,9 +242,34 @@ def migrate_catalog_v1(value: Any) -> dict[str, Any]:
     return migrated
 
 
+def migrate_catalog_v2(value: Any) -> dict[str, Any]:
+    """Preserve v2 metadata while replacing service-tier booleans with exact lists."""
+    if not isinstance(value, dict) or value.get("schema_version") != 2:
+        raise ValueError("Not a model catalogue v2 document")
+    migrated = deepcopy(value)
+    migrated["schema_version"] = 3
+    migrated["catalog_version"] = max(3, int(migrated.get("catalog_version", 0)))
+    bundled_tiers = {
+        item["id"]: list(item["service_tiers"]) for item in BUNDLED_CATALOG["models"]
+    }
+
+    def migrate_metadata(metadata: dict[str, Any], model_id: str | None = None) -> None:
+        supported = metadata.pop("service_tier", False)
+        metadata["service_tiers"] = (
+            bundled_tiers.get(model_id, ["auto", "default"]) if supported else []
+        )
+
+    migrate_metadata(migrated["defaults"])
+    for model in migrated["models"]:
+        migrate_metadata(model, model.get("id"))
+    return validate_catalog(migrated)
+
+
 def validate_or_migrate_catalog(value: Any) -> tuple[dict[str, Any], bool]:
     if isinstance(value, dict) and value.get("schema_version") == 1:
         return migrate_catalog_v1(value), True
+    if isinstance(value, dict) and value.get("schema_version") == 2:
+        return migrate_catalog_v2(value), True
     return validate_catalog(value), False
 
 
@@ -340,6 +372,8 @@ def validate_catalog_transition(
             raise ValueError(
                 "Catalogue update cannot lower max output without migration"
             )
+        if not set(old["service_tiers"]).issubset(new["service_tiers"]):
+            raise ValueError("Catalogue update cannot remove service-tier choices")
         for name in ("temperature", "top_p"):
             old_rank, old_allowed = _sampling_rank(old[name])
             new_rank, new_allowed = _sampling_rank(new[name])
@@ -383,7 +417,8 @@ def compatibility_capabilities(
         "supports_max_tokens": False,
         "supports_max_completion_tokens": True,
         "supports_reasoning_effort": metadata["reasoning"]["supported"],
-        "supports_service_tier": metadata["service_tier"],
+        "supports_service_tier": bool(metadata["service_tiers"]),
+        "service_tier_options": list(metadata["service_tiers"]),
         "reasoning_effort_options": list(metadata["reasoning"]["efforts"]),
         "api": deepcopy(metadata["api"]),
         "auto_api": metadata.get("auto_api"),
