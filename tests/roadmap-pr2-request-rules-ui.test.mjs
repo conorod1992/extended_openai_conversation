@@ -19,8 +19,8 @@ test("Request Rules UI exposes revision-safe move controls", async () => {
   assert.match(markup, /class=\"secondary rule-move\"/);
   assert.match(markup, /data-direction=\"up\" disabled/);
   assert.match(markup, /data-direction=\"down\" disabled/);
-  assert.match(source, /panel\._call\("request_rules", "move"/);
-  assert.match(source, /revision: panel\._result\?\.revision/);
+  assert.match(source, /panel\._call\("request_rules","move"/);
+  assert.match(source, /revision:panel\._result\?\.revision/);
 });
 
 test("Request Rules UI explains AI-routing command semantics", async () => {
