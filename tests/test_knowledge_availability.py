@@ -250,6 +250,51 @@ async def test_unified_management_preserves_knowledge_availability() -> None:
         assert defaulted["source"]["enabled"] is True
 
 
+async def test_management_set_enabled_updates_only_knowledge_config() -> None:
+    subentry = SimpleNamespace(
+        subentry_id="agent-1",
+        subentry_type="conversation",
+        title="Assistant",
+        data={CONF_KNOWLEDGE_ENABLED: True},
+    )
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        domain="extended_openai_conversation_responses",
+        title="OpenAI",
+        data={},
+        subentries={"agent-1": subentry},
+    )
+    hass = MagicMock()
+    hass.config_entries.async_get_entry.return_value = entry
+    library = await _library()
+    await library.async_create("Reference", "", "Content", enabled=True)
+    base = {
+        "section": "knowledge",
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+    }
+
+    with patch.object(
+        management_ui,
+        "async_get_knowledge",
+        AsyncMock(return_value=library),
+    ):
+        result = await management_ui.async_management_command(
+            hass,
+            "admin-user",
+            True,
+            {**base, "action": "set_enabled", "enabled": False},
+        )
+
+    assert result["knowledge_enabled"] is False
+    assert result["feature_status"]["enabled"] is False
+    assert isinstance(result["revision"], str)
+    hass.config_entries.async_update_subentry.assert_called_once()
+    args = hass.config_entries.async_update_subentry.call_args
+    assert args.args[:2] == (entry, subentry)
+    assert args.kwargs["data"][CONF_KNOWLEDGE_ENABLED] is False
+
+
 async def test_enabled_field_requires_boolean() -> None:
     library = await _library()
     with pytest.raises(ValueError, match="enabled"):
