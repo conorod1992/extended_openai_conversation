@@ -8,7 +8,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
 import json
-import logging
 from time import perf_counter
 from types import MappingProxyType
 from typing import Any, Final
@@ -144,8 +143,6 @@ from .usage import async_get_usage
 
 WS_COMMAND = f"{DOMAIN}/management"
 _UI_SETUP = f"{DOMAIN}.management_ui_setup"
-_LOGGER = logging.getLogger(__name__)
-_SLOW_MANAGEMENT_MS = 250.0
 _LIVE_CONFIGURATION_METADATA = frozenset(
     {"local_handling", "exposed_attribute_catalog"}
 )
@@ -173,11 +170,6 @@ def _configuration_options() -> dict[str, list[dict[str, Any]]]:
 
 def _elapsed_ms(start: float) -> float:
     return round((perf_counter() - start) * 1000, 2)
-
-
-def _warn_management_performance(operation: str, timings: dict[str, Any]) -> None:
-    if float(timings.get("total_ms", 0.0)) >= _SLOW_MANAGEMENT_MS:
-        _LOGGER.warning("Management performance %s: %s", operation, timings)
 
 
 def _reset_request_rule_runtime(
@@ -635,11 +627,6 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 "total_ms": _elapsed_ms(started),
             },
         }
-        guest_performance = {
-            **timings,
-            "total_ms": _elapsed_ms(started),
-        }
-        _warn_management_performance("guest_mode.get", guest_performance)
         return result
     _require_admin(is_admin)
     if action == "save_policy":
@@ -804,7 +791,6 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "model_capabilities_ms": model_capabilities_ms,
             "total_ms": _elapsed_ms(started),
         }
-        _warn_management_performance("configuration.get", timings)
         return {
             "title": subentry.title,
             "revision": revision,
@@ -1956,10 +1942,6 @@ async def _async_management_request(
         if isinstance(performance, dict):
             performance["decoration_ms"] = decoration_ms
             performance["request_total_ms"] = request_total_ms
-        _warn_management_performance(
-            f"configuration.{configuration_action}.request",
-            {"decoration_ms": decoration_ms, "total_ms": request_total_ms},
-        )
     return result
 
 
