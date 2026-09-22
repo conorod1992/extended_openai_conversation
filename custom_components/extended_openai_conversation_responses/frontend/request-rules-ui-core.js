@@ -134,11 +134,11 @@ function finishMutation(panel,result,rules){
   panel._render();
 }
 export function applyRequestRuleMutation(panel, action, result, context={}) {
-  if (!result || typeof result.revision !== "string") return false;
+  if (!result || result.revision == null) return false;
   let rules=[...(panel._result?.rules || [])];
   const presentedRule = result.rule
     ? {
-        ...presentedRule,
+        ...result.rule,
         ...(Object.prototype.hasOwnProperty.call(result, "sensitive_matching_warning")
           ? {sensitive_matching_warning: Boolean(result.sensitive_matching_warning)}
           : {}),
