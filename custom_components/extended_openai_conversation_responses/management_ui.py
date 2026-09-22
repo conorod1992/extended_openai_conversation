@@ -1754,8 +1754,11 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         normalized = merge_agent_config(
             request.subentry.data, {CONF_KNOWLEDGE_ENABLED: enabled}
         )
+        persisted = preserve_legacy_guest_policy(
+            dict(request.subentry.data), deepcopy(normalized)
+        )
         request.hass.config_entries.async_update_subentry(
-            request.entry, request.subentry, data=normalized
+            request.entry, request.subentry, data=persisted
         )
         stats = library.stats()
         source_count = 0
@@ -1763,10 +1766,10 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             with suppress(TypeError, ValueError):
                 source_count = int(stats.get("source_count", 0))
         return {
-            "revision": _agent_config_revision(normalized, request.subentry.title),
-            "knowledge_enabled": bool(normalized.get(CONF_KNOWLEDGE_ENABLED, False)),
+            "revision": _agent_config_revision(persisted, request.subentry.title),
+            "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
             "feature_status": management_feature_status(
-                normalized, knowledge_source_count=source_count
+                persisted, knowledge_source_count=source_count
             )["knowledge"],
         }
     if action == "get":
