@@ -238,6 +238,90 @@ test("conversation configuration starts before a pending scope catalog finishes"
   expect(result).toEqual({concurrent:true, sessions:true, config:true});
 });
 
+test("conversation collection starts before a pending scope catalog finishes", async ({page}) => {
+  await page.goto(fixtureUrl("overview"));
+  await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const host = browserHarness.panel;
+    const original = host._hass.callWS;
+    const initialScope = host._scopeId;
+    let releaseScope;
+    let listStarted = false;
+    const listScopes = [];
+    host._hass.callWS = async message => {
+      if (message.section === "scopes") await new Promise(resolve => { releaseScope = resolve; });
+      if (message.section === "conversations" && message.action === "list") {
+        listStarted = true;
+        listScopes.push(message.scope_id);
+      }
+      return original(message);
+    };
+    const pending = host._navigate("data-memory", "conversations");
+    while (!releaseScope) await new Promise(resolve => setTimeout(resolve, 0));
+    const concurrent = listStarted;
+    releaseScope();
+    await pending;
+    host._hass.callWS = original;
+    return {concurrent, initialScope, selectedScope:host._scopeId, listScopes};
+  });
+  expect(result.concurrent).toBe(true);
+  expect(result.selectedScope).toBe(result.initialScope);
+  expect(result.listScopes).toEqual([result.initialScope]);
+});
+
+test("invalidated speculative Memory scope is discarded and refetched once", async ({page}) => {
+  await page.goto(fixtureUrl("overview"));
+  await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const host = browserHarness.panel;
+    const original = host._hass.callWS;
+    const initialScope = host._scopeId;
+    const replacementScope = "user:replacement";
+    let releaseScope;
+    const listScopes = [];
+    host._hass.callWS = async message => {
+      if (message.section === "scopes") {
+        await new Promise(resolve => { releaseScope = resolve; });
+        return {scopes:[{
+          scope_id:replacementScope,
+          scope_type:"user",
+          display_name:"Replacement user",
+          is_current_user:true,
+          memory_count:0,
+          conversation_count:0,
+        }]};
+      }
+      if (message.section === "memories" && message.action === "list") {
+        listScopes.push(message.scope_id);
+        if (message.scope_id === initialScope) throw new Error("stale scope");
+        return {memories:[], marker:message.scope_id};
+      }
+      return original(message);
+    };
+    const pending = host._navigate("data-memory", "memories");
+    while (!releaseScope) await new Promise(resolve => setTimeout(resolve, 0));
+    const speculativeStarted = listScopes.includes(initialScope);
+    releaseScope();
+    await pending;
+    host._hass.callWS = original;
+    return {
+      speculativeStarted,
+      initialScope,
+      selectedScope:host._scopeId,
+      listScopes,
+      marker:host._result?.marker,
+      error:host._error,
+    };
+  });
+  expect(result).toMatchObject({
+    speculativeStarted:true,
+    selectedScope:"user:replacement",
+    marker:"user:replacement",
+    error:null,
+  });
+  expect(result.listScopes).toEqual([result.initialScope, "user:replacement"]);
+});
+
 test("late conversation configuration cannot replace a newer route result", async ({page}) => {
   await page.goto(fixtureUrl("overview"));
   await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
@@ -452,7 +536,29 @@ test("Quiet Hours and request debugging initialize on first entry without global
     host._hass.callWS = async message => {
       if (message.section === "quiet_hours") {
         window.featureCalls.push(message);
-        return {config:message.config || {enabled:false, start:"22:00", end:"07:00", max_volume:0.3, wake_sound:"off"}, satellites:[]};
+        return {
+          config:message.config || {
+            enabled:false,
+            start:"22:00",
+            end:"07:00",
+            max_volume:0.3,
+            wake_sound:"off",
+            overrides:{
+              "assist_satellite.kitchen":{media_player_entity_id:"media_player.legacy"},
+            },
+          },
+          satellites:[{
+            satellite_entity_id:"assist_satellite.kitchen",
+            name:"Kitchen Voice",
+            device_id:"device-kitchen",
+            media_player_entity_id:"media_player.legacy",
+            wake_sound_entity_id:"switch.kitchen_wake",
+            media_player_source:"manual",
+            wake_sound_source:"auto",
+            media_player_candidates:["media_player.kitchen"],
+            wake_sound_candidates:["switch.kitchen_wake"],
+          }],
+        };
       }
       if (message.type.endsWith("/request_debug")) {
         window.featureCalls.push(message);
@@ -465,6 +571,35 @@ test("Quiet Hours and request debugging initialize on first entry without global
   await expect(panel.locator("#qh-enabled")).toBeVisible();
   await expect(panel.locator(".save-bar")).toHaveCount(0);
   await expect(panel.locator(".qh-grid").first()).toHaveCSS("display", "grid");
+  const pickerState = await panel.evaluate(host => {
+    const pickers = [...host.shadowRoot.querySelectorAll(".qh-override")];
+    return pickers.map(picker => ({
+      kind:picker.dataset.kind,
+      value:picker.value,
+      includeDomains:picker.includeDomains,
+      includeEntities:picker.includeEntities,
+      allowCustomEntity:picker.allowCustomEntity,
+      placeholder:picker.placeholder,
+    }));
+  });
+  expect(pickerState).toEqual([
+    {
+      kind:"media_player_entity_id",
+      value:"media_player.legacy",
+      includeDomains:["media_player"],
+      includeEntities:["media_player.kitchen", "media_player.legacy"],
+      allowCustomEntity:false,
+      placeholder:"Automatic",
+    },
+    {
+      kind:"wake_sound_entity_id",
+      value:"",
+      includeDomains:["switch"],
+      includeEntities:["switch.kitchen_wake"],
+      allowCustomEntity:false,
+      placeholder:"Automatic · switch.kitchen_wake",
+    },
+  ]);
   await panel.locator("#qh-enabled").check();
   await panel.locator("#save-page").click();
   await expect.poll(() => page.evaluate(() => featureCalls.filter(c => c.section === "quiet_hours" && c.action === "update").length)).toBe(1);
