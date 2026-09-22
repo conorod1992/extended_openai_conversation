@@ -16,7 +16,7 @@ test("renders the shipped Guide and responds to real browser interactions", asyn
   const search = panel.locator("#guide-search");
   await search.fill("Broadcast");
   await expect(panel.getByText("Broadcast spoken messages around the home", {exact: false}).first()).toBeVisible();
-  await expect(panel.getByText("No Guide topics match your search.", {exact: true})).toHaveCount(0);
+  await expect(panel.getByText("No Guide topics match your search.", {exact: true})).toBeHidden();
 
   await expectHarnessClean(page, pageErrors);
 });
