@@ -118,19 +118,94 @@ export function refreshPageSaveBar(panel) {
   root.dispatchEvent?.(new Event("eoc-config-dirty-changed"));
 }
 
-function renderSavedDraft(panel, force = false) {
+function syncRequestRulesSavedDom(panel) {
   const root = panel.shadowRoot;
-  const expanded = [...root.querySelectorAll("main details")].map((details) => details.open);
-  const focus = root.activeElement;
-  const position = {x: window.scrollX, y: window.scrollY};
-  const selection = focus && typeof focus.selectionStart === "number" ? [focus.selectionStart, focus.selectionEnd] : null;
-  if (force) panel._eocMainMarkup = null;
+  const draft = panel._rulesSettingsDraft;
+  if (!root || !draft) return true;
+  const q = (selector) => root.querySelector(selector);
+  const defaults = draft.defaults || {};
+  const controls = [
+    ["#rules-default-word-forms", "checked", Boolean(defaults.word_forms)],
+    ["#rules-default-wording", "checked", Boolean(defaults.wording_alternatives)],
+    ["#rules-default-fuzzy", "checked", Boolean(defaults.fuzzy)],
+    ["#rules-default-threshold", "value", String(defaults.fuzzy_threshold ?? 90)],
+  ];
+  for (const [selector, property, value] of controls) {
+    const control = q(selector);
+    if (control) control[property] = value;
+  }
+  const threshold = q("#rules-default-threshold");
+  if (threshold) threshold.disabled = !defaults.fuzzy;
+
+  const rows = [...root.querySelectorAll(".wording-group")];
+  const groups = draft.wording_groups || [];
+  if (rows.length !== groups.length) return false;
+  rows.forEach((row, index) => {
+    const group = groups[index] || {};
+    const canonical = row.querySelector(".wording-canonical");
+    const alternatives = row.querySelector(".wording-alternatives");
+    if (canonical) canonical.value = group.canonical || "";
+    if (alternatives) alternatives.value = (group.alternatives || []).join(", ");
+  });
+  return true;
+}
+
+function syncQuietHoursSavedDom(panel) {
+  const root = panel.shadowRoot;
+  const result = panel._result || {};
+  const config = panel._quietHoursDraft || result.config || {};
+  if (!root) return;
+  const enabled = root.querySelector("#qh-enabled");
+  const start = root.querySelector("#qh-start");
+  const end = root.querySelector("#qh-end");
+  const volume = root.querySelector("#qh-volume");
+  const volumeValue = root.querySelector("#qh-volume-value");
+  const wake = root.querySelector("#qh-wake");
+  const maxPercent = Math.round(Number(config.max_volume ?? 0.2) * 100);
+  if (enabled) enabled.checked = Boolean(config.enabled);
+  if (start) start.value = config.start || "22:00";
+  if (end) end.value = config.end || "07:00";
+  if (volume) volume.value = String(maxPercent);
+  if (volumeValue) volumeValue.textContent = `${maxPercent}%`;
+  if (wake) wake.value = config.wake_sound || "off";
+
+  const status = root.querySelector(".qh-status");
+  if (status) {
+    const title = result.active
+      ? "Quiet Hours active now"
+      : config.enabled ? "Outside Quiet Hours" : "Quiet Hours schedule disabled";
+    const detail = config.enabled
+      ? `${config.start || "22:00"}–${config.end || "07:00"} every day`
+      : "The saved schedule is currently turned off.";
+    const copy = status.querySelector("div");
+    const strong = copy?.querySelector("strong");
+    const small = copy?.querySelector("small");
+    const badge = status.querySelector(":scope > span");
+    if (strong) strong.textContent = title;
+    if (small) small.textContent = detail;
+    if (badge) {
+      badge.textContent = result.active ? "Active" : "Inactive";
+      badge.className = result.active ? "availability-badge" : "disabled-badge";
+    }
+  }
+}
+
+function syncGuestSavedDom(panel) {
+  const root = panel.shadowRoot;
+  root?.querySelector(".legacy-migration")?.remove();
+}
+
+function syncSavedPageDom(panel) {
+  const view = panel._viewKey?.();
+  if (view === RULES) return syncRequestRulesSavedDom(panel);
+  if (view === QUIET) syncQuietHoursSavedDom(panel);
+  if (view === GUEST) syncGuestSavedDom(panel);
+  return true;
+}
+
+function renderDiscardedDraft(panel) {
+  panel._eocMainMarkup = null;
   panel._render();
-  root.querySelectorAll("main details").forEach((details, index) => { details.open = expanded[index] ?? details.open; });
-  const nextFocus = focus?.id ? root.getElementById(focus.id) : null;
-  nextFocus?.focus({preventScroll: true});
-  if (nextFocus && selection) nextFocus.setSelectionRange(...selection);
-  window.scrollTo(position.x, position.y);
 }
 
 export async function savePageChanges(panel) {
@@ -140,8 +215,10 @@ export async function savePageChanges(panel) {
   refreshPageSaveBar(panel);
   try {
     await operation;
-    // Re-project authoritative status and normalized fields without a data reload.
-    renderSavedDraft(panel);
+    // Keep the live route DOM when the saved structure is unchanged. The focused
+    // control, details state, selection, and scroll position then remain native.
+    // Fall back only if a future backend normalization changes editor structure.
+    if (!syncSavedPageDom(panel)) panel._render();
     panel._toast("Changes saved");
     return true;
   } catch (err) {
@@ -170,7 +247,7 @@ export function bindPageDrafts(panel) {
       const scope = currentPageScope(panel);
       if (scope?.pending) return;
       scope?.discard();
-      renderSavedDraft(panel, true);
+      renderDiscardedDraft(panel);
     }
     if (button?.matches("#wording-add,.wording-remove")) sync();
   });
