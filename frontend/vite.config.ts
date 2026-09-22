@@ -20,6 +20,7 @@ export default defineConfig({
             "management-data-state.js",
             "management-confirmation-scope.js",
             "management-dialogs.js",
+            "agent-config-help.js",
             "usage-format.js",
           ];
           if (coreHelpers.some((name) => id.endsWith(`/frontend/${name}`))) {
