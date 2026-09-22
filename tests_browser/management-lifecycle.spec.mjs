@@ -333,6 +333,112 @@ test("overview uses the native registry and defers unrelated feature code", asyn
   await expectHarnessClean(page, errors);
 });
 
+test("Usage becomes usable before recent runs and retention settle", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+
+  await panel.evaluate(host => {
+    const original = host._hass.callWS;
+    window.progressiveUsage = {calls:[], releaseRuns:null, releaseRetention:null};
+    host._hass.callWS = async message => {
+      if (message.section !== "usage") return original(message);
+      window.progressiveUsage.calls.push(message.action);
+      if (message.action === "summary") {
+        return {today:{date:"2026-09-22", total_tokens:30}, lifetime:{total_tokens:300}, latest:{total_tokens:12}};
+      }
+      if (message.action === "daily") {
+        return {days:[{date:"2026-09-22", total_tokens:30, input_tokens:20, output_tokens:10, cached_input_tokens:5, api_request_count:1, run_count:1}]};
+      }
+      if (message.action === "runs") {
+        return new Promise(resolve => {
+          window.progressiveUsage.releaseRuns = () => resolve({runs:[{
+            run_id:"run-progressive",
+            completed_at:"2026-09-22T12:00:00+00:00",
+            total_tokens:30,
+            cached_input_tokens:5,
+            request_count:1,
+            duration_ms:250,
+            successful:true,
+          }]});
+        });
+      }
+      if (message.action === "retention") {
+        return new Promise(resolve => {
+          window.progressiveUsage.releaseRetention = () => resolve({detail_retention_days:30});
+        });
+      }
+      return original(message);
+    };
+  });
+
+  await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  await expect(panel.getByText("Loading recent runs…")).toBeVisible();
+  expect(await panel.evaluate(host => host._busy)).toBe(false);
+  expect(await page.evaluate(() => progressiveUsage.calls.sort())).toEqual(["daily", "retention", "runs", "summary"]);
+  expect(await panel.evaluate(host => host._result.loading)).toEqual({runs:true, retention:true});
+
+  await page.evaluate(() => {
+    progressiveUsage.releaseRuns();
+    progressiveUsage.releaseRetention();
+  });
+  await expect.poll(() => panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:false});
+  await expect(panel.getByText("Loading recent runs…")).toHaveCount(0);
+  await expect(panel.getByText("Success", {exact:true})).toBeVisible();
+  expect(await panel.evaluate(host => host._result.retention.detail_retention_days)).toBe(30);
+  await expectHarnessClean(page, errors);
+});
+
+test("secondary Usage failure does not replace the primary page", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+
+  await panel.evaluate(host => {
+    const original = host._hass.callWS;
+    window.progressiveUsageFailure = {releaseRuns:null, releaseRetention:null};
+    host._hass.callWS = async message => {
+      if (message.section !== "usage") return original(message);
+      if (message.action === "summary") {
+        return {today:{date:"2026-09-22", total_tokens:30}, lifetime:{total_tokens:300}};
+      }
+      if (message.action === "daily") {
+        return {days:[{date:"2026-09-22", total_tokens:30, input_tokens:20, output_tokens:10}]};
+      }
+      if (message.action === "runs") {
+        return new Promise((_, reject) => {
+          window.progressiveUsageFailure.releaseRuns = () => reject(new Error("runs unavailable"));
+        });
+      }
+      if (message.action === "retention") {
+        return new Promise(resolve => {
+          window.progressiveUsageFailure.releaseRetention = () => resolve({detail_retention_days:30});
+        });
+      }
+      return original(message);
+    };
+  });
+
+  await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  await expect(panel.getByText("Loading recent runs…")).toBeVisible();
+
+  await page.evaluate(() => {
+    progressiveUsageFailure.releaseRuns();
+    progressiveUsageFailure.releaseRetention();
+  });
+  await expect(panel.getByText("Recent runs unavailable", {exact:true})).toBeVisible();
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  expect(await panel.evaluate(host => host._error)).toBe(null);
+  expect(await panel.evaluate(host => host._result.load_errors)).toEqual([
+    {key:"runs", label:"Recent runs", message:"runs unavailable"},
+  ]);
+  await expectHarnessClean(page, errors);
+});
+
 test("Quiet Hours and request debugging initialize on first entry without global loader wrappers", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("overview"));
