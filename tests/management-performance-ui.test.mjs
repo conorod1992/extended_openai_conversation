@@ -383,7 +383,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   const panel = {shadowRoot, _result:{rules:[]}, _serviceCatalog:null};
   bindRequestRules(panel);
   bindRequestRules(panel);
-  assert.equal(shadowRootListeners, 1, "delete-context delegation binds only once across rerenders");
+  assert.equal(shadowRootListeners, 0, "Request Rule collection ownership should not add a persistent root listener");
 }
 
 {
@@ -475,7 +475,8 @@ function panelFor(page = "assistant", subsection = "basics") {
 
 const management = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const renderer = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js", import.meta.url), "utf8");
-const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
+const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-core.js", import.meta.url), "utf8");
+const requestRulesEditor = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
 const managementRoute = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8");
 const overviewImplementation = (
   await Promise.all([
@@ -527,9 +528,9 @@ assert.ok(scopeFilter >= 0 && scopeSort > scopeFilter, "scope visibility filteri
 assert.match(overviewImplementation, /const satellitesById = new Map\(satellites\.map/);
 assert.match(overviewImplementation, /satellitesById\.get\(entityId\)/);
 assert.doesNotMatch(overviewImplementation, /satellites\.find\(\(sat\) => sat\.id === entityId\)/);
-assert.match(requestRules, /id="rule-action-sequence-host"/);
-assert.doesNotMatch(requestRules, /<ha-selector id="rule-action-sequence"/);
-assert.match(requestRules, /selector = \{action:\{\}\}/);
+assert.match(requestRulesEditor, /id="rule-action-sequence-host"/);
+assert.doesNotMatch(requestRulesEditor, /<ha-selector id="rule-action-sequence"/);
+assert.match(requestRulesEditor, /selector = \{action:\{\}\}/);
 
 // Exercise cache ownership through the actual host, with no performance installer.
 {
