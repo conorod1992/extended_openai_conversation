@@ -116,10 +116,8 @@ for (const name of ["quiet-hours-ui.js","management-function-repair.js","usage-c
 
 // Cleanup is a panel lifecycle responsibility even after lazy activation.
 let removals = 0;
-const originalRemove = panel.shadowRoot.removeEventListener.bind(panel.shadowRoot);
-panel.shadowRoot.removeEventListener = (type, handler, options) => {
+panel.shadowRoot.removeEventListener = (type) => {
   if (type === "eoc-diagnostics-result") removals++;
-  return originalRemove(type, handler, options);
 };
 panel._eocProviderCredentialResultHandler = () => {};
 panel.disconnectedCallback();
