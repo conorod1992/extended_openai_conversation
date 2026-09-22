@@ -74,7 +74,6 @@ from .const import (
     DEFAULT_TOP_P,
     DEFAULT_WEB_SEARCH,
     DOMAIN,
-    SERVICE_TIER_OPTIONS,
 )
 from .helpers import get_authenticated_client
 from .model_capabilities import (
@@ -630,7 +629,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
             )
 
-        if metadata["service_tier"]:
+        service_tiers = metadata["service_tiers"]
+        if service_tiers:
             schema[
                 vol.Optional(
                     CONF_SERVICE_TIER,
@@ -640,7 +640,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 SelectSelectorConfig(
                     options=[
                         SelectOptionDict(value=opt, label=opt.capitalize())
-                        for opt in SERVICE_TIER_OPTIONS
+                        for opt in service_tiers
                     ],
                     mode=SelectSelectorMode.DROPDOWN,
                 )
