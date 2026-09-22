@@ -696,9 +696,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return null;
   }
 
+  _scopeCatalogKind(view = this._viewKey()) {
+    if (view === "data-memory/conversations") return "archive";
+    if (view === "data-memory/memories") return this._memoryKind === "temporary" ? "temporary" : "memory";
+    return null;
+  }
+
   _scopeCatalogKey(view = this._viewKey(), agentId = this._agentId) {
-    if (!agentId || !["data-memory/memories", "data-memory/conversations"].includes(view)) return null;
-    return `${agentId}|scopes`;
+    const kind = this._scopeCatalogKind(view);
+    if (!agentId || !kind) return null;
+    return `${agentId}|scopes|${kind}`;
   }
 
   _prepareScopeCatalogVisit(view) {
@@ -740,8 +747,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
   }
 
-  async _loadScopes(scopeCatalogKey) {
-    if (!this._selectedAgent() || !scopeCatalogKey) return;
+  async _loadScopes(scopeCatalogKey, scopeKind = this._scopeCatalogKind()) {
+    if (!this._selectedAgent() || !scopeCatalogKey || !scopeKind) return;
     const agentId = this._agentId;
     const loadedAt = this._eocScopeCatalogTimes.get(scopeCatalogKey);
     if (!loadedAt || Date.now() - loadedAt > SCOPE_CACHE_TTL_MS) {
@@ -754,7 +761,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     const generation = this._cacheGeneration;
     const loadToken = this._loadToken;
-    const response = await this._call("scopes", "catalog");
+    const response = await this._call("scopes", "catalog", {scope_kind: scopeKind});
     const scopes = response.scopes || [];
     if (scopeCatalogKey !== this._scopeCatalogVisitKey || agentId !== this._agentId
         || generation !== this._cacheGeneration || loadToken !== this._loadToken) return;
