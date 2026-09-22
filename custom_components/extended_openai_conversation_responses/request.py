@@ -297,10 +297,9 @@ def build_provider_request_snapshot(
             if top_p is not None:
                 api_kwargs[CONF_TOP_P] = top_p
 
-            if capabilities.get("service_tier"):
-                api_kwargs["service_tier"] = options.get(
-                    CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER
-                )
+            service_tier = options.get(CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER)
+            if service_tier in capabilities.get("service_tiers", []):
+                api_kwargs["service_tier"] = service_tier
     except ModelCapabilityError as err:
         raise HomeAssistantError(str(err)) from err
 
