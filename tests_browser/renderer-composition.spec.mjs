@@ -59,6 +59,7 @@ test("configuration emits the shipped local, exposed-attribute, group and transf
   await expect(page.locator('extended-openai-management-panel [data-config="chat_model"]')).toBeVisible();
   const result = await page.evaluate(async (path) => {
     const editor = await import(`${path}agent-config-editor.js`);
+    const toolsEditor = await import(`${path}agent-config-tools.js`);
     const backup = await import(`${path}backup-transfer-ui.js`);
     const exposedAttributes = await import(`${path}exposed-attributes-ui.js`);
     const presentation = {renderBackup:backup.renderBackupTransferPanel, renderExposedAttributes:exposedAttributes.renderExposedAttributeSettings};
@@ -77,7 +78,7 @@ test("configuration emits the shipped local, exposed-attribute, group and transf
     const delayed = root.content.querySelector('[data-config="local_intent_delayed_commands_to_ai"]');
     const exposed = root.content.querySelector(".context-toggles");
     const configuration = {delayed:[delayed.checked, delayed.disabled, delayed.closest("#local-intent-list") !== null], jumps:root.content.querySelectorAll(".config-jumps").length, local:root.content.querySelectorAll(".local-handling-explainer").length, exposed:exposed.innerHTML, exposedPosition:exposed.querySelector('[data-field="exposed_entities_enabled"]').nextElementSibling.className, attributes:[...exposed.querySelectorAll("[data-exposed-attribute]")].map((input) => [input.dataset.attribute,input.checked]), transfer:root.content.querySelector(".transfer-panel").textContent, dialog:backup.renderRestoreTransferDialog(panel)};
-    root.innerHTML = editor.renderTools(panel);
+    root.innerHTML = toolsEditor.renderTools(panel);
     const group = root.content.querySelector('[data-group-id="group"]');
     return {...configuration, group:{disabled:group.classList.contains("is-disabled"), badge:group.querySelector(".group-disabled-badge").textContent, edit:group.querySelector(".edit-group").disabled, checked:group.querySelector(".group-enabled").checked, name:group.querySelector("h3").textContent}};
   }, frontend);
@@ -99,6 +100,7 @@ test("render owners emit final markup without creating a template in a browser",
   await expect(page.locator('extended-openai-management-panel [data-config="chat_model"]')).toBeVisible();
   const result = await page.evaluate(async (path) => {
     const editor = await import(`${path}agent-config-editor.js`);
+    const toolsEditor = await import(`${path}agent-config-tools.js`);
     const backup = await import(`${path}backup-transfer-ui.js`);
     const exposedAttributes = await import(`${path}exposed-attributes-ui.js`);
     const presentation = {renderBackup:backup.renderBackupTransferPanel, renderExposedAttributes:exposedAttributes.renderExposedAttributeSettings};
@@ -114,8 +116,8 @@ test("render owners emit final markup without creating a template in a browser",
         if (tag === "template") throw new Error("Production renderer reparsed its output");
         return create.call(this, tag, ...args);
       };
-      html = editor.renderConfiguration(panel, presentation) + editor.renderTools(panel)
-        + editor.configurationDialogs({_e:panel._e.bind(panel), _viewKey:() => "capabilities/functions"}) + backup.renderRestoreTransferDialog(panel)
+      html = editor.renderConfiguration(panel, presentation) + toolsEditor.renderTools(panel)
+        + toolsEditor.configurationDialogs({_e:panel._e.bind(panel), _viewKey:() => "capabilities/functions"}) + backup.renderRestoreTransferDialog(panel)
         + rules.renderRequestRules(panel) + rules.requestRulesDialog()
         + guide.renderGuide(panel);
     } finally { document.createElement = create; }

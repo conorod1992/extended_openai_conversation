@@ -1,4 +1,4 @@
-import {bindTools as bindBaseTools, synchronizePersistedFunctions} from "./agent-config-editor-base.js";
+import {bindTools as bindBaseTools, synchronizePersistedFunctions} from "./agent-config-tools-base.js";
 import {
   getToolYamlEditor,
   installToolYamlEditor,

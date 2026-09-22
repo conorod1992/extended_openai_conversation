@@ -4,15 +4,16 @@ const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
   "capabilities/web-skills",
-  "capabilities/functions",
   "data-memory/conversations",
   "usage-maintenance/backup-restore",
   "usage-maintenance/retention",
 ]);
 
 export function getConfigurationEditor() { return getRouteFeature("agent-config"); }
+export function getConfigurationTools() { return getRouteFeature("agent-config-tools"); }
 
 export function routeAssetKind(view) {
+  if (view === "capabilities/functions") return "agent-config-tools";
   if (String(view || "").startsWith("assistant/") || CONFIG_VIEWS.has(view)) return "agent-config";
   if (view === REQUEST_RULES_VIEW) return "request-rules";
   return null;
@@ -28,6 +29,7 @@ const DATA_FEATURES = new Set([
 ]);
 const featureLoaders = {
   "agent-config": () => import("./agent-config-editor.js"),
+  "agent-config-tools": () => import("./agent-config-tools.js"),
   "assistant/prompt-context": () => import("./exposed-attributes-ui.js"),
   "usage-maintenance/backup-restore": () => import("./backup-transfer-ui.js"),
   "status": () => import("./management-feature-status.js"),
@@ -51,7 +53,8 @@ export function getRouteFeature(view) { return featureModules.get(view); }
 
 function routeFeatureKeys(view) {
   const keys = [view];
-  if (routeAssetKind(view) === "agent-config") keys.push("agent-config");
+  const assetKind = routeAssetKind(view);
+  if (assetKind === "agent-config" || assetKind === "agent-config-tools") keys.push(assetKind);
   // Configuration guidance is additive and never blocks route readiness.
   if (["data-memory/memories", "data-memory/conversations", "capabilities/guest-mode"].includes(view)) keys.push("memory-browser");
   if (["capabilities/home-assistant", "capabilities/web-skills", "data-memory/knowledge"].includes(view)) keys.push("capabilities");

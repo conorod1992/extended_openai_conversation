@@ -8,8 +8,8 @@ const source = await readFile(
   ),
   "utf8",
 );
-const renderer = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js", import.meta.url), "utf8");
-const {renderTools} = await import("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js");
+const renderer = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools-base.js", import.meta.url), "utf8");
+const {renderTools} = await import("../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js");
 
 assert.match(
   source,

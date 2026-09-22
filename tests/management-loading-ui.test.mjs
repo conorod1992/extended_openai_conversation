@@ -6,12 +6,13 @@ const frontend = (name) => new URL(
   import.meta.url,
 );
 
-const [loading, overview, guide, debug, agentEditor, agentNativeYaml, requestRules, routes] = await Promise.all([
+const [loading, overview, guide, debug, agentEditor, agentTools, agentNativeYaml, requestRules, routes] = await Promise.all([
   readFile(frontend("management-actions.js"), "utf8"),
   readFile(frontend("overview-page.js"), "utf8"),
   readFile(frontend("guide-page.js"), "utf8"),
   readFile(frontend("debug-management.js"), "utf8"),
   readFile(frontend("agent-config-editor.js"), "utf8"),
+  readFile(frontend("agent-config-tools.js"), "utf8"),
   readFile(frontend("agent-config-native-yaml.js"), "utf8"),
   readFile(frontend("request-rules-ui.js"), "utf8"),
   readFile(frontend("management-route.js"), "utf8"),
@@ -48,8 +49,9 @@ assert.doesNotMatch(debug, /^import "\.\/debug-panel\.js"/m);
 assert.doesNotMatch(agentEditor, /management-bootstrap\.js/);
 assert.match(routes, /import\("\.\/agent-config-editor\.js"\)/);
 assert.doesNotMatch(panelSource, /from "\.\/agent-config-editor\.js"/);
-assert.match(agentEditor, /from "\.\/agent-config-native-yaml\.js"/);
-assert.match(agentNativeYaml, /from "\.\/agent-config-editor-base\.js"/);
+assert.doesNotMatch(agentEditor, /agent-config-native-yaml|agent-config-tools-base/);
+assert.match(agentTools, /from "\.\/agent-config-native-yaml\.js"/);
+assert.match(agentNativeYaml, /from "\.\/agent-config-tools-base\.js"/);
 assert.match(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
 assert.match(routes, /import\("\.\/request-rules-ui\.js"\)/);
 assert.doesNotMatch(routes, /from "\.\/(?:agent-config-editor|request-rules-ui)\.js"/);
@@ -71,7 +73,7 @@ assert.equal(loadingModule.fieldErrorKey("chat_model"), "chat_model");
 
 assert.equal(routeModule.routeAssetKind("assistant/basics"), "agent-config");
 assert.equal(routeModule.routeAssetKind("assistant/advanced"), "agent-config");
-assert.equal(routeModule.routeAssetKind("capabilities/functions"), "agent-config");
+assert.equal(routeModule.routeAssetKind("capabilities/functions"), "agent-config-tools");
 assert.equal(routeModule.routeAssetKind("data-memory/conversations"), "agent-config");
 assert.equal(routeModule.routeAssetKind("usage-maintenance/backup-restore"), "agent-config");
 assert.equal(routeModule.routeAssetKind("usage-maintenance/retention"), "agent-config");
@@ -248,9 +250,15 @@ assert.equal(routeModule.routeFeaturesReady("capabilities/request-rules"), false
 await Promise.all([routeModule.routeAssetPromise("assistant/basics"), routeModule.routeAssetPromise("assistant/basics")]);
 const editor = routeModule.getConfigurationEditor();
 assert.equal(routeModule.routeFeaturesReady("assistant/basics"), true);
-for (const name of ["renderConfiguration", "bindConfiguration", "renderTools", "bindTools", "configurationDialogs", "reconcileTools"]) assert.equal(typeof editor[name], "function", name);
+for (const name of ["renderConfiguration", "bindConfiguration", "configurationDialogs"]) assert.equal(typeof editor[name], "function", name);
+for (const name of ["renderTools", "bindTools", "reconcileTools"]) assert.equal(editor[name], undefined, name);
 await routeModule.routeAssetPromise("assistant/basics");
 assert.equal(routeModule.getConfigurationEditor(), editor);
+assert.equal(routeModule.getConfigurationTools(), undefined);
+await routeModule.routeAssetPromise("capabilities/functions");
+const toolsEditor = routeModule.getConfigurationTools();
+assert.equal(routeModule.routeFeaturesReady("capabilities/functions"), true);
+for (const name of ["renderTools", "bindTools", "configurationDialogs", "reconcileTools"]) assert.equal(typeof toolsEditor[name], "function", name);
 assert.equal(routeModule.getRouteFeature("capabilities/request-rules"), undefined);
 await routeModule.routeAssetPromise("capabilities/request-rules");
 const rules = routeModule.getRouteFeature("capabilities/request-rules");

@@ -18,11 +18,11 @@ const manifest = JSON.parse(manifestText);
 
 assert.match(
   loaderSource,
-  /import\("\.\/agent-config-editor\.js"\)/,
-  "the agent configuration loader must lazy-load the complete editor with native YAML bindings",
+  /import\("\.\/agent-config-tools\.js"\)/,
+  "the Functions route must lazy-load the tools editor with native YAML bindings",
 );
 const nativeYaml = Object.entries(manifest).find(([source]) =>
-  source.endsWith("/agent-config-editor.js")
+  source.endsWith("/agent-config-tools.js")
 );
-assert.ok(nativeYaml, "the lazy editor feature must be emitted in the production manifest");
+assert.ok(nativeYaml, "the lazy Function Tools feature must be emitted in the production manifest");
 assert.equal(nativeYaml[1].isDynamicEntry, true);

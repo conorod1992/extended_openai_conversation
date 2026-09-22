@@ -16,7 +16,7 @@ globalThis.HTMLElement = class {
 };
 
 const {ExtendedOpenAIManagementPanel: Panel} = await import(frontend("management-panel.js"));
-const {routeAssetPromise, getRouteFeature} = await import(frontend("management-route.js"));
+const {routeAssetPromise, getRouteFeature, getConfigurationTools} = await import(frontend("management-route.js"));
 Object.freeze(Panel.prototype);
 const panelMethods = Object.getOwnPropertyDescriptors(Panel.prototype);
 const loaderOwner = {get constructor() { throw new Error("Lazy loaders must not inspect or patch a panel constructor"); }};
@@ -30,6 +30,12 @@ for (const view of [
   await routeAssetPromise(view, loaderOwner);
 }
 assert.deepEqual(Object.getOwnPropertyDescriptors(Panel.prototype), panelMethods);
+
+await routeAssetPromise("capabilities/functions", loaderOwner);
+assert.ok(getConfigurationTools(), "Functions should publish its dedicated tools editor");
+assert.equal(typeof getConfigurationTools().renderTools, "function");
+assert.equal(typeof getRouteFeature("agent-config")?.renderTools, "undefined",
+  "ordinary configuration entry must not retain Function Tools exports");
 
 const debugHelpers = getRouteFeature("usage-maintenance/request-debug");
 await debugHelpers.ensureDebugPanel();
@@ -91,6 +97,16 @@ assert.doesNotMatch(panel._usage(), /Input footprint/);
 assert.match(panel._dialogs(), /id="usage-request-dialog"/);
 
 // A deleted installer cannot accidentally be revived through a route import.
+const coreEditorSource = await readFile(frontend("agent-config-editor.js"),"utf8");
+assert.doesNotMatch(coreEditorSource,/renderTools|reconcileTools|agent-config-native-yaml/,
+  "ordinary configuration entry must stay free of Function Tools exports");
+const coreBaseSource = await readFile(frontend("agent-config-editor-base.js"),"utf8");
+assert.doesNotMatch(coreBaseSource,/keyed-collection|ha-llm-tools|tool-yaml-editor-adapter/,
+  "ordinary configuration base must not import Function Tools dependencies");
+const toolsBaseSource = await readFile(frontend("agent-config-tools-base.js"),"utf8");
+assert.match(toolsBaseSource,/keyed-collection/);
+assert.match(toolsBaseSource,/ha-llm-tools/);
+assert.match(toolsBaseSource,/tool-yaml-editor-adapter/);
 const routeSource = await readFile(frontend("management-route.js"),"utf8");
 assert.doesNotMatch(routeSource,/panel\.constructor|\.install[A-Z]/);
 for (const name of ["quiet-hours-ui.js","management-function-repair.js","usage-chart.js","management-provider-credentials.js","debug-management.js"]) {

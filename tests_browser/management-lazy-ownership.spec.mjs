@@ -57,6 +57,29 @@ test("Assistant becomes usable while supplemental configuration guidance is pend
   await expectHarnessClean(page, errors);
 });
 
+test("ordinary config routes do not load the Functions editor chunk", async ({page}) => {
+  const errors = trackPageErrors(page);
+  const assets = [];
+  page.on("request", request => assets.push(new URL(request.url()).pathname.split("/").pop()));
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+
+  await panel.evaluate(host => host._navigate("usage-maintenance", "retention"));
+  await expect(panel.locator('[data-config="usage_request_retention_days"]')).toBeVisible();
+  await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
+  await expect(panel.getByRole("heading", {name:"Export / Backup", exact:true})).toBeVisible();
+
+  const beforeFunctions = assets.filter(file => file === "agent-config-tools.js" || file.startsWith("agent-config-tools-"));
+  expect(beforeFunctions).toEqual([]);
+
+  await panel.evaluate(host => host._navigate("capabilities", "functions"));
+  await expect(panel.locator(".tools-surface")).toBeVisible();
+  const afterFunctions = assets.filter(file => file === "agent-config-tools.js" || file.startsWith("agent-config-tools-"));
+  expect(afterFunctions.length).toBeGreaterThan(0);
+  await expectHarnessClean(page, errors);
+});
+
 test("Memory Settings becomes usable while configuration guidance is pending", async ({page}) => {
   const errors = trackPageErrors(page);
   let release;
@@ -120,6 +143,7 @@ const lazyJourneys = [
   ["data-memory", "memories", "management-memory-feature", "#add-memory"],
   ["capabilities", "request-rules", "request-rules-ui", "#rule-search"],
   ["usage-maintenance", "usage", "usage-chart", "#usage-window"],
+  ["capabilities", "functions", "agent-config-tools", ".tools-surface"],
 ];
 
 for (const route of ["overview", "guide"]) {
@@ -134,7 +158,7 @@ for (const route of ["overview", "guide"]) {
       await expect(panel.locator(route === "guide" ? ".guide-search" : ".dashboard-grid")).toBeVisible();
       const coldCoverage = await page.coverage.stopJSCoverage();
       const absent = [
-        "agent-config-editor", "agent-config-model-presentation", "management-configuration-feature",
+        "agent-config-editor", "agent-config-tools", "agent-config-model-presentation", "management-configuration-feature",
         "management-configuration-guidance", "management-configuration-clarity", "management-guest-feature",
         "guest-mode-ui", "management-knowledge-feature", "management-memory-feature", "keyed-collection", "management-temporary-memory", "request-rules-ui",
         "usage-chart", "management-feature-status", "backup-transfer-ui",
@@ -202,6 +226,7 @@ test("a cold lazy import failure reaches the section error and a fresh load reco
 
 for (const [routeName, asset, control] of [
   ["assistant/basics", "agent-config-editor", '[data-config="__title"]'],
+  ["capabilities/functions", "agent-config-tools", ".tools-surface"],
   ["capabilities/request-rules", "request-rules-ui", "#rule-search"],
 ]) {
   test(`${asset}: failed feature load remains unavailable and a fresh page recovers`, async ({page}) => {
@@ -277,7 +302,7 @@ test("visiting lazy routes keeps the panel prototype fixed and feature imports l
   await page.goto(fixtureUrl("guide"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".guide-search")).toBeVisible();
-  for (const name of ["quiet-hours-ui.js", "management-function-repair.js", "usage-chart.js", "debug-panel.js", "management-provider-credentials.js"]) {
+  for (const name of ["quiet-hours-ui.js", "management-function-repair.js", "agent-config-tools.js", "usage-chart.js", "debug-panel.js", "management-provider-credentials.js"]) {
     expect(assets.some((url) => url.endsWith(`/${name}`)), name).toBe(false);
   }
   const unchanged = await page.evaluate(async () => {
