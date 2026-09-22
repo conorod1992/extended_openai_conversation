@@ -1491,7 +1491,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _scopeOptions(section, includeEmpty = this._showEmptyScopes, excludeLegacy = false) {
     const key = section === "memories" ? "memory_count" : "conversation_count";
-    const scopes = [...(this._data?.scopes || [])].filter((scope) => !excludeLegacy || scope.scope_type !== "anonymous_legacy");
+    const scopes = [...(this._data?.scopes || [])].filter((scope) =>
+      (!excludeLegacy || scope.scope_type !== "anonymous_legacy")
+      && (scope.scope_id === this._scopeId || scope.is_current_user || scope[key] > 0 || scope.scope_type !== "user" || includeEmpty)
+    );
     scopes.sort((a, b) => {
       if (a.scope_type === "anonymous_legacy") return 1;
       if (b.scope_type === "anonymous_legacy") return -1;
@@ -1499,8 +1502,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const populated = Number(b[key] > 0) - Number(a[key] > 0);
       return populated || a.display_name.localeCompare(b.display_name);
     });
-    const visible = scopes.filter((scope) => scope.scope_id === this._scopeId || scope.is_current_user || scope[key] > 0 || scope.scope_type !== "user" || includeEmpty);
-    return visible.map((scope) => `<option value="${this._e(scope.scope_id)}" ${scope.scope_id === this._scopeId ? "selected" : ""}>${this._e(scope.display_name)} (${formatUsageNumber(scope[key] || 0)})${scope.is_current_user ? " · You" : ""}</option>`).join("");
+    return scopes.map((scope) => `<option value="${this._e(scope.scope_id)}" ${scope.scope_id === this._scopeId ? "selected" : ""}>${this._e(scope.display_name)} (${formatUsageNumber(scope[key] || 0)})${scope.is_current_user ? " · You" : ""}</option>`).join("");
   }
 
   _filtered(items, value) {
