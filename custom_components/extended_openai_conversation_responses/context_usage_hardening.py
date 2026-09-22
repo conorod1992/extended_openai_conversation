@@ -228,8 +228,6 @@ def estimate_prepared_request(
     entity: Any, request_usage: RequestUsage, input_value: Any, tools: Any
 ) -> None:
     """Measure the already assembled provider round without rebuilding tools/history."""
-    from .input_footprint import capture_live_footprint
-
     # Attachments are excluded from the established character footprint. Avoid
     # rebuilding the complete input list on the overwhelmingly common text-only path.
     # Materialize non-list iterables once so the eligibility scan cannot consume them.
@@ -266,12 +264,11 @@ def estimate_prepared_request(
         tool_measurement = _serialized_characters(tools)
         remember_formatted_tool_measurement(tools, tool_measurement)
     try:
-        estimate = capture_live_footprint(
-            entity,
+        estimate = measure_provider_input(
             measured,
             tools,
             tool_measurement=tool_measurement,
-        )
+        )[2]
     except Exception:
         _LOGGER.debug("Unable to estimate provider input size", exc_info=True)
         return

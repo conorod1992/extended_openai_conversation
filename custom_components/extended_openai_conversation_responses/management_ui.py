@@ -1396,10 +1396,6 @@ async def async_usage_command(request: _ManagementRequest) -> dict[str, Any]:
     entry_id = request.entry_id
     subentry_id = request.subentry_id
     action = request.message["action"]
-    if action == "footprint":
-        from .input_footprint import async_input_footprint
-
-        return await async_input_footprint(hass, request.user_id, message)
     usage = await async_get_usage(hass, entry_id, subentry_id)
     if action == "summary":
         result = usage_summary(usage)

@@ -5,10 +5,7 @@ from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import (
-    context_usage_hardening,
-    input_footprint,
-)
+from custom_components.extended_openai_conversation_responses import context_usage_hardening
 from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
     _capture_provider_usage,
     _LOCAL_ESTIMATE_DETAIL,
@@ -47,13 +44,13 @@ def test_estimate_prepared_request_reuses_text_only_input_list(monkeypatch) -> N
     usage = RequestUsage()
     seen = {}
 
-    def capture(_entity, measured, tools, *, tool_measurement=None):
+    def measure(measured, tools, *, tool_measurement=None):
         seen["measured"] = measured
         seen["tools"] = tools
         seen["tool_measurement"] = tool_measurement
-        return 321
+        return (0, 0, 321)
 
-    monkeypatch.setattr(input_footprint, "capture_live_footprint", capture)
+    monkeypatch.setattr(context_usage_hardening, "measure_provider_input", measure)
 
     estimate_prepared_request(object(), usage, input_value, None)
 
@@ -76,11 +73,11 @@ def test_estimate_prepared_request_materializes_non_list_iterables(monkeypatch) 
     usage = RequestUsage()
     seen = {}
 
-    def capture(_entity, measured, tools, *, tool_measurement=None):
+    def measure(measured, tools, *, tool_measurement=None):
         seen["measured"] = measured
-        return 111
+        return (0, 0, 111)
 
-    monkeypatch.setattr(input_footprint, "capture_live_footprint", capture)
+    monkeypatch.setattr(context_usage_hardening, "measure_provider_input", measure)
 
     estimate_prepared_request(object(), usage, source, None)
 
@@ -106,11 +103,11 @@ def test_estimate_prepared_request_projects_multipart_user_content(monkeypatch) 
     usage = RequestUsage()
     seen = {}
 
-    def capture(_entity, measured, tools, *, tool_measurement=None):
+    def measure(measured, tools, *, tool_measurement=None):
         seen["measured"] = measured
-        return 222
+        return (0, 0, 222)
 
-    monkeypatch.setattr(input_footprint, "capture_live_footprint", capture)
+    monkeypatch.setattr(context_usage_hardening, "measure_provider_input", measure)
 
     estimate_prepared_request(object(), usage, input_value, None)
 
