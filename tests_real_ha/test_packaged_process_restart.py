@@ -318,10 +318,10 @@ async def _first_boot(config_dir: Path) -> None:
                 },
             }
         )
-        assert hass.states[_QH_MEDIA_PLAYER_ID].attributes[
+        assert hass.states.get(_QH_MEDIA_PLAYER_ID).attributes[
             "volume_level"
         ] == pytest.approx(0.20)
-        assert hass.states[_QH_WAKE_SOUND_ID].state == "off"
+        assert hass.states.get(_QH_WAKE_SOUND_ID).state == "off"
         assert manager.active is not None
         assert manager.active["controls"][_QH_MEDIA_PLAYER_ID][
             "original_value"
@@ -392,20 +392,20 @@ async def _second_boot(config_dir: Path) -> None:
             "original_value"
         ] == pytest.approx(0.55)
         assert manager.active["controls"][_QH_WAKE_SOUND_ID]["original_value"] is True
-        assert hass.states[_QH_MEDIA_PLAYER_ID].attributes[
+        assert hass.states.get(_QH_MEDIA_PLAYER_ID).attributes[
             "volume_level"
         ] == pytest.approx(0.20)
-        assert hass.states[_QH_WAKE_SOUND_ID].state == "off"
+        assert hass.states.get(_QH_WAKE_SOUND_ID).state == "off"
         assert control_calls == []
 
         period_end = dt_util.parse_datetime(manager.active["period_ends_at"])
         assert period_end is not None
         await manager.async_reconcile(now=period_end + timedelta(seconds=1))
 
-        assert hass.states[_QH_MEDIA_PLAYER_ID].attributes[
+        assert hass.states.get(_QH_MEDIA_PLAYER_ID).attributes[
             "volume_level"
         ] == pytest.approx(0.55)
-        assert hass.states[_QH_WAKE_SOUND_ID].state == "on"
+        assert hass.states.get(_QH_WAKE_SOUND_ID).state == "on"
         assert manager.active is None
         assert control_calls == [
             ("volume_set", _QH_MEDIA_PLAYER_ID),
