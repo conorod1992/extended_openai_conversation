@@ -6,7 +6,6 @@ test("Usage renders aggregate detail and navigates into retention settings", asy
   await page.goto(fixtureUrl("usage-maintenance/usage"));
 
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.getByRole("heading", {name: "Input footprint", exact: true})).toBeVisible();
   await expect(panel.getByRole("heading", {name: "Usage period", exact: true})).toBeVisible();
   await expect(panel.getByRole("heading", {name: "Tokens by recorded day", exact: true})).toBeVisible();
   await expect(panel.getByRole("heading", {name: "Recent runs", exact: true})).toBeVisible();

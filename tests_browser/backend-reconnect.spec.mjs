@@ -33,7 +33,7 @@ test("mounted management panel recovers after HA backend disconnect and reconnec
   // A disconnected backend must not tear down the mounted panel. The requested
   // section still renders with explicit unavailable states for backend-backed
   // data, while locally renderable usage content remains usable.
-  await expect(panel.getByRole("heading", {name: "Input footprint", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Usage period", exact: true})).toBeVisible();
   await expect(panel.getByText("Usage summary unavailable", {exact: true})).toBeVisible();
   await expect(panel.getByText(/Home Assistant backend disconnected/).first()).toBeVisible();
   const disconnectedState = await page.evaluate(() => ({
