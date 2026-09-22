@@ -118,7 +118,7 @@ class ModelCatalogManager:
                     try:
                         await self._save(candidate, available, etag, checked)
                     except Exception:
-                        _LOGGER.warning("Unable to persist migrated model catalogue v2")
+                        _LOGGER.warning("Unable to persist migrated model catalogue")
         except Exception:
             self.catalog = None
             self.available_catalog = None
@@ -136,7 +136,7 @@ class ModelCatalogManager:
         return {
             "source": "downloaded" if self.catalog is not None else "bundled",
             "catalog_version": active["catalog_version"],
-            "schema_version": 2,
+            "schema_version": active["schema_version"],
             "update_available": self.available_catalog is not None,
             "available_catalog_version": (
                 self.available_catalog["catalog_version"]
