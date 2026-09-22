@@ -10,7 +10,8 @@ for (const admin of [true, false]) {
     const result = await page.evaluate(async () => {
       const panel = browserHarness.panel;
       const base = "/custom_components/extended_openai_conversation_responses/frontend/";
-      const {renderOverview, bindOverview} = await import(`${base}overview-page-impl.js`);
+      const {renderOverview} = await import(`${base}overview-page-impl.js`);
+      const {bindBroadcast} = await import(`${base}overview-broadcast.js`);
       const {renderKnowledge} = await import(`${base}management-knowledge-feature.js`);
       const {renderUsagePage} = await import(`${base}usage-chart.js`);
       const dom = markup => { const node = document.createElement("div"); node.innerHTML = markup; return node; };
@@ -33,11 +34,10 @@ for (const admin of [true, false]) {
       const overview = await Promise.all([false, true].map(async enabled => {
         const root = dom(renderOverview(panel, panel._selectedAgent()));
         const snapshot = {enabled, can_manage: panel._data.is_admin, catalog: {}, history: []};
-        bindOverview(
-          {shadowRoot: root, _e: panel._e, _hass: {callWS: async () => snapshot}},
+        await bindBroadcast(
+          {shadowRoot: root, _e: panel._e, _titleCase: panel._titleCase.bind(panel), _viewKey: () => "overview", _hass: {callWS: async () => snapshot}},
           Promise.resolve(snapshot),
         );
-        await Promise.resolve();
         return {intro: root.querySelector(".broadcast-heading p")?.textContent,
           state: root.querySelector(".broadcast-toggle-row p")?.textContent,
           footnote: root.querySelector(".setup-health-footnote")?.textContent.trim(),
