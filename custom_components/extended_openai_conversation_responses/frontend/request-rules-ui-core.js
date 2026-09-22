@@ -115,6 +115,22 @@ function finishMutation(panel,result,rules){
   panel._result={...(panel._result||{}),rules,revision:result.revision};
   const cacheKey=panel._sectionCacheKey?.(); if(cacheKey) panel._sectionCache?.delete(cacheKey);
   syncScopeRevision(panel,result);
+  const reconciled = reconcileRequestRules(panel);
+  if (reconciled) {
+    const count = panel.shadowRoot?.querySelector?.(".search-row .count");
+    if (count) count.textContent = `${rules.length} rule${rules.length === 1 ? "" : "s"}`;
+    const query = String(panel._query || "").trim().toLocaleLowerCase();
+    const byId = new Map(rules.map((rule) => [String(rule.id), rule]));
+    let visible = 0;
+    panel.shadowRoot?.querySelectorAll?.("[data-rule-key]").forEach((card) => {
+      const rule = byId.get(String(card.dataset.ruleKey));
+      const show = Boolean(rule) && (!query || `${rule.name || ""} ${(rule.phrases || []).join(" ")} ${rule.action_type || ""}`.toLocaleLowerCase().includes(query));
+      card.hidden = !show;
+      if (show) visible++;
+    });
+    const empty = panel.shadowRoot?.querySelector?.("[data-eoc-rule-search-empty]");
+    if (empty) empty.hidden = !query || visible > 0 || rules.length === 0;
+  }
   panel._render();
 }
 export function applyRequestRuleMutation(panel, action, result, context={}) {
