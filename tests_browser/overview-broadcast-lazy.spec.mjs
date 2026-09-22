@@ -23,10 +23,10 @@ test("Overview is usable while Broadcast implementation is still loading", async
   await expect(panel.locator("#broadcast-card")).toContainText("Loading Broadcast…");
   await expect(panel.locator("#broadcast-enabled")).toHaveCount(0);
 
-  const marksBeforeBroadcast = await page.evaluate(() =>
-    new Set(performance.getEntriesByType("mark").map((entry) => entry.name))
-  );
-  expect([...marksBeforeBroadcast]).toContain("extended-openai:cold:overview-content-present");
+  expect(await page.evaluate(() =>
+    performance.getEntriesByType("mark")
+      .some((entry) => entry.name === "extended-openai:cold:overview-content-present")
+  )).toBe(true);
 
   release();
   await expect(panel.locator("#broadcast-card")).not.toContainText("Loading Broadcast…");
