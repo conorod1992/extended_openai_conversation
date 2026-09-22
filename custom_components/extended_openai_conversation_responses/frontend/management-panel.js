@@ -741,14 +741,21 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       } else if (view === "usage-maintenance/usage") {
         const summaryPromise = this._call("usage", "summary");
         const daysPromise = this._call("usage", "daily");
-        const runsPromise = this._call("usage", "runs", { limit: 30 });
-        const retentionPromise = this._call("usage", "retention");
+        const settle = (promise) => promise.then(
+          (value) => ({status: "fulfilled", value}),
+          (reason) => ({status: "rejected", reason}),
+        );
+        const runsPromise = settle(this._call("usage", "runs", { limit: 30 }));
+        const retentionPromise = settle(this._call("usage", "retention"));
         const primary = await Promise.allSettled([summaryPromise, daysPromise]);
         result = {
           ...settledSectionResult([["summary", "Usage summary"], ["days", "Daily usage"]], primary),
           loading: {runs: true, retention: true},
         };
-        usageSecondary = Promise.allSettled([runsPromise, retentionPromise]);
+        usageSecondary = [
+          ["runs", "Recent runs", runsPromise],
+          ["retention", "Usage retention", retentionPromise],
+        ];
       } else if (view === "data-memory/conversations") {
         const [sessions, prerequisiteResults] = await Promise.all([
           this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
@@ -791,21 +798,28 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       writeSectionCache(this, cacheKey, result);
       this._error = null;
       if (usageSecondary) {
-        void usageSecondary.then((settled) => {
-          if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
-              || this._viewKey() !== "usage-maintenance/usage") return;
-          const secondary = settledSectionResult(
-            [["runs", "Recent runs"], ["retention", "Usage retention"]],
-            settled,
-          );
-          this._result = {
-            ...(this._result || {}),
-            ...Object.fromEntries(Object.entries(secondary).filter(([key]) => key !== "load_errors")),
-            load_errors: [...(this._result?.load_errors || []), ...(secondary.load_errors || [])],
-            loading: {runs: false, retention: false},
-          };
-          this._render();
-        });
+        for (const [key, label, pending] of usageSecondary) {
+          void pending.then((settled) => {
+            if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+                || this._viewKey() !== "usage-maintenance/usage") return;
+            const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== key);
+            const loading = {...(this._result?.loading || {}), [key]: false};
+            if (settled.status === "fulfilled") {
+              this._result = {...(this._result || {}), [key]: settled.value, load_errors: errors, loading};
+            } else {
+              this._result = {
+                ...(this._result || {}),
+                load_errors: [...errors, {
+                  key,
+                  label,
+                  message: settled.reason?.message || String(settled.reason || "Unknown error"),
+                }],
+                loading,
+              };
+            }
+            this._render();
+          });
+        }
       }
     } catch (err) {
       if (loadToken === this._loadToken) this._error = err.message || String(err);
