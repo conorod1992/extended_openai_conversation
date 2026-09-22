@@ -15,3 +15,9 @@ assert.match(source, /id=\"knowledge-source-enabled\" type=\"checkbox\" role=\"s
 assert.match(source, /Available to the assistant/);
 assert.match(source, /keep the source stored locally without including it in Knowledge retrieval/);
 assert.doesNotMatch(source, /id=\"knowledge-enabled-toggle\"[^\n]*knowledge-source-enabled/);
+
+assert.match(source, /_call\("knowledge", "set_enabled", \{enabled: desired\}\)/);
+assert.doesNotMatch(source, /_call\("configuration", "get"\)/);
+assert.doesNotMatch(source, /_call\("configuration", "validate"/);
+assert.doesNotMatch(source, /_loadAgents\(panel\._agentId\)/);
+assert.doesNotMatch(source, /_loadSection\(true\)/);
