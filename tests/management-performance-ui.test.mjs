@@ -494,7 +494,8 @@ assert.match(management, /if \(view === "capabilities\/functions"\) getRouteFeat
 assert.match(management, /if \(view === "usage-maintenance\/request-debug"\) getRouteFeature\(view\)\?\.bindManagementDebug\(this\)/);
 assert.match(management, /if \(view === "usage-maintenance\/diagnostics"\) getRouteFeature\(view\)\?\.enhanceDiagnostics\(this\)/);
 assert.match(management, /if \(view === "data-memory\/memories"\) getRouteFeature\(view\)\?\.bindTemporaryMemory\(this\)/);
-assert.match(management, /if \(view === "data-memory\/memory-settings"\) getRouteFeature\("configuration"\)\?\.bindMemorySettings\(this\)/);
+assert.match(management, /if \(view === "data-memory\/memory-settings"\) getRouteFeature\(view\)\?\.bindMemorySettings\(this\)/);
+assert.doesNotMatch(managementRoute, /view === "data-memory\/memory-settings"\) keys\.push\("configuration"\)/);
 assert.equal(
   (renderer.match(/bindDynamicBase\(panel\);/g) || []).length,
   1,
