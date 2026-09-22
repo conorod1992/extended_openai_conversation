@@ -314,7 +314,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const load = (event) => {
       const input = event.target?.closest?.("#settings-search");
       if (!input) return;
-      if (event.type === "input") this._settingsSearchQuery = input.value;
+      if (event.type === "input") {
+        this._settingsSearchQuery = input.value;
+        if (navigationSearchModule || navigationSearchPromise) return;
+      }
       void ensureNavigationSearchModule(this);
     };
     root.addEventListener("focusin", load, true);
