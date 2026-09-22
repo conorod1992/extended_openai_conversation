@@ -70,6 +70,6 @@ for (const query of ["archive_list_page", "archive_search_page", "archive_get_pa
 assert.match(management, /result = usage_summary\(usage\)/);
 assert.match(loading, /usage = usage_summary\(usage_result\)/);
 assert.match(management, /require_management_permission\(is_admin, message\)/);
-assert.match(permissions, /section == "usage" and message\.get\("action"\) != "summary"/);
+assert.match(permissions, /section == "usage" and action != "summary"/);
 assert.doesNotMatch(management, /wrap_management_history_bounds|install_management_history_bounds/);
 assert.doesNotMatch(permissions, /wrap_management_permissions/);
