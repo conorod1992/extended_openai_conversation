@@ -516,7 +516,7 @@ LEGACY_CONTEXT_TRUNCATE_STRATEGY = CONTEXT_TRUNCATE_CLEAR
 # Service Tier options (for supported reasoning models)
 CONF_SERVICE_TIER = "service_tier"
 DEFAULT_SERVICE_TIER = "default"
-SERVICE_TIER_OPTIONS = ["auto", "default", "flex", "priority"]
+SERVICE_TIER_OPTIONS = ["auto", "default", "flex", "fast", "priority", "ultrafast"]
 
 # Reasoning Effort options (extended levels are handled separately)
 CONF_REASONING_EFFORT = "reasoning_effort"
