@@ -1195,19 +1195,40 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     });
   }
 
+  _patchGuestModeStatus(agentId, status) {
+    if (!agentId || !status) return;
+    const agent = this._data?.agents?.find((item) => item.subentry_id === agentId);
+    if (agent) agent.guest_mode = {...(agent.guest_mode || {}), ...status};
+    if (this._agentId === agentId && this._viewKey() === "capabilities/guest-mode" && this._result) {
+      this._result = {...this._result, status: {...(this._result.status || {}), ...status}};
+    }
+  }
+
+  async _refreshGuestModeMutation(agentId, mutationResult) {
+    this._patchGuestModeStatus(agentId, mutationResult?.status);
+    if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
+    const result = await this._call("guest_mode", "get");
+    if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
+    this._patchGuestModeStatus(agentId, result?.status);
+    this._result = result;
+    this._error = null;
+    this._render();
+  }
+
   _updateGuestMode(now = false) {
     return this._runGuestOperation(async () => {
       const root = this.shadowRoot;
+      const agentId = this._agentId;
       const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
       const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
       const end = root.querySelector("#guest-end")?.value;
       try {
-        await this._call("guest_mode", "update", {
+        const result = await this._call("guest_mode", "update", {
           ...(start ? {active_from: start} : {}),
           ...(!indefinite && end ? {active_until: end} : {}),
           indefinite: indefinite || !end,
         });
-        await this._loadAgents(this._agentId);
+        await this._refreshGuestModeMutation(agentId, result);
         this._toast("Guest Mode updated");
       } catch (err) {
         this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
@@ -1218,9 +1239,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _disableGuestMode() {
     return this._runGuestOperation(async () => {
       if (!await this._confirm("End Guest Mode?", "This immediately ends an active interval or cancels a future schedule.", "End Guest Mode")) return;
+      const agentId = this._agentId;
       try {
-        await this._call("guest_mode", "disable");
-        await this._loadAgents(this._agentId);
+        const result = await this._call("guest_mode", "disable");
+        await this._refreshGuestModeMutation(agentId, result);
         this._toast("Guest Mode ended");
       } catch (err) {
         this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
