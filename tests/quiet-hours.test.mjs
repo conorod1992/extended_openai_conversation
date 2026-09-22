@@ -81,7 +81,7 @@ test("distinguishes active and disabled saved schedules", () => {
   assert.match(disabled, /Quiet Hours schedule disabled/);
 });
 
-test("keeps an unavailable manual override visible and marks it unavailable", () => {
+test("renders native device-scoped override pickers and preserves manual status", () => {
   const config = {
     ...baseConfig,
     overrides: {
@@ -96,18 +96,25 @@ test("keeps an unavailable manual override visible and marks it unavailable", ()
     satellites: [{
       satellite_entity_id: "assist_satellite.bedroom",
       name: "Bedroom Voice",
+      device_id: "device-bedroom",
       media_player_entity_id: "media_player.missing",
       media_player_source: "manual",
+      media_player_candidates: ["media_player.bedroom"],
       wake_sound_entity_id: null,
       wake_sound_source: null,
+      wake_sound_candidates: ["switch.bedroom_wake_sound"],
     }],
   }));
 
-  assert.match(html, /Unavailable · media_player\.missing/);
+  assert.match(html, /<ha-entity-picker class="qh-override"/);
+  assert.match(html, /data-kind="media_player_entity_id"/);
+  assert.match(html, /data-domain="media_player"/);
+  assert.match(html, /data-kind="wake_sound_entity_id"/);
+  assert.match(html, /data-domain="switch"/);
   assert.match(html, /Speaker unavailable/);
   assert.doesNotMatch(html, /Speaker ready/);
   assert.match(html, /Manually selected for this satellite/);
-  assert.match(html, /normal for many satellites/);
+  assert.doesNotMatch(html, /<option/);
 });
 
 test("marks a mapped speaker ready only when a numeric volume is available", () => {
