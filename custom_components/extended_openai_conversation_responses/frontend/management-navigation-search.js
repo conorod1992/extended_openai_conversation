@@ -260,22 +260,6 @@ export function enhanceNavigationSearch(panel) {
   if (input && input.value !== (panel._settingsSearchQuery || "")) input.value = panel._settingsSearchQuery || "";
   updateSettingsResults(panel);
 
-  const local = panel._visibleSubsections();
-  const topNav = root.querySelector(".top-nav");
-  let nav = root.querySelector(".subsection-nav");
-  const markup = local.length > 1 ? local.map((item) => `<button type="button" data-subsection="${panel._e(item.id)}" class="${item.id === panel._subsection ? "active" : ""}" ${item.id === panel._subsection ? 'aria-current="page"' : ""}>${panel._e(item.label)}</button>`).join("") : "";
-  if (!nav && topNav) {
-    nav = document.createElement("nav");
-    nav.className = "subsection-nav";
-    topNav.after(nav);
-  }
-  if (nav && nav._eocMarkup !== markup) {
-    nav.innerHTML = markup;
-    nav._eocMarkup = markup;
-    panel._eocNavigationRevision = (panel._eocNavigationRevision || 0) + 1;
-    nav.hidden = !markup;
-    nav.setAttribute("aria-label", `${pageMetadata(panel._page).label} sections`);
-  }
   if (panel._settingsSearchQuery) void ensureSearchConfiguration(panel);
 }
 
