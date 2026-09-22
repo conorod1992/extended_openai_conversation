@@ -13,7 +13,7 @@ const {renderGuide} = await import(new URL("guide-page.js", frontend));
 const panel = {_e:(value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("'", "&#39;"), _empty:String};
 
 test("Request Rules UI exposes revision-safe move controls", async () => {
-  const source = await readFrontend("request-rules-ui-impl.js");
+  const source = await readFrontend("request-rules-ui-core.js");
   const markup = renderRequestRules({...panel, _result:{rules:[{id:"one",name:"One",enabled:true,phrases:["one"],action_type:"local_action",action:{},match_type:"equals"}]}});
 
   assert.match(markup, /class=\"secondary rule-move\"/);
