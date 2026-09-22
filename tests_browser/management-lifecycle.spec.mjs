@@ -380,13 +380,14 @@ test("Usage becomes usable before recent runs and retention settle", async ({pag
   expect(await page.evaluate(() => progressiveUsage.calls.sort())).toEqual(["daily", "retention", "runs", "summary"]);
   expect(await panel.evaluate(host => host._result.loading)).toEqual({runs:true, retention:true});
 
-  await page.evaluate(() => {
-    progressiveUsage.releaseRuns();
-    progressiveUsage.releaseRetention();
-  });
-  await expect.poll(() => panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:false});
+  await page.evaluate(() => progressiveUsage.releaseRuns());
+  await expect.poll(() => panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:true});
   await expect(panel.getByText("Loading recent runs…")).toHaveCount(0);
   await expect(panel.getByText("Success", {exact:true})).toBeVisible();
+  expect(await panel.evaluate(host => host._result.retention)).toBeUndefined();
+
+  await page.evaluate(() => progressiveUsage.releaseRetention());
+  await expect.poll(() => panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:false});
   expect(await panel.evaluate(host => host._result.retention.detail_retention_days)).toBe(30);
   await expectHarnessClean(page, errors);
 });
@@ -426,11 +427,11 @@ test("secondary Usage failure does not replace the primary page", async ({page})
   await expect(panel.locator("#usage-window")).toBeVisible();
   await expect(panel.getByText("Loading recent runs…")).toBeVisible();
 
-  await page.evaluate(() => {
-    progressiveUsageFailure.releaseRuns();
-    progressiveUsageFailure.releaseRetention();
-  });
+  await page.evaluate(() => progressiveUsageFailure.releaseRuns());
   await expect(panel.getByText("Recent runs unavailable", {exact:true})).toBeVisible();
+  expect(await panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:true});
+  await page.evaluate(() => progressiveUsageFailure.releaseRetention());
+  await expect.poll(() => panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:false});
   await expect(panel.locator("#usage-window")).toBeVisible();
   expect(await panel.evaluate(host => host._error)).toBe(null);
   expect(await panel.evaluate(host => host._result.load_errors)).toEqual([
