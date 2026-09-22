@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import {renderConfiguration, renderConfigurationActions} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 import {renderTools, configurationDialogs} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js";
-import {renderRequestRules, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
+import {renderRequestRules} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
+import {requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 import {renderGuide} from "../custom_components/extended_openai_conversation_responses/frontend/guide-page.js";
 
 const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"})[c]);
