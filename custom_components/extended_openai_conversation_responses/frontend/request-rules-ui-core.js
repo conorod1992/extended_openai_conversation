@@ -59,7 +59,7 @@ const wordingEditor = (panel, groups) => `<details class="wording-editor eoc-det
 const ROUTING_HELP = '<section class="notice"><strong>AI routing command behavior</strong><p><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> routing rules are complete commands by default: they are acknowledged locally and apply to the rest of the current conversation. Enable <strong>Continue to AI</strong> to send the original request to the provider unchanged after applying the route. <strong>Starts with</strong>, <strong>Ends with</strong>, and <strong>Contains</strong> continue to the provider by default; matched words are not stripped.</p><p>A request-only reset bypasses a conversation override for that one provider request; it does not clear the saved conversation route. For strict matches, rules are evaluated from top to bottom and the first matching rule wins.</p></section>';
 
 function requestRuleCard(panel, rule, index) {
-  const result = panel._result || {}, rules = result.rules || [], summary = requestRuleSummary(rule, result.defaults || {});
+  const result = panel._result || {}, rules = presentedRules || [], summary = requestRuleSummary(rule, result.defaults || {});
   return `<article data-rule-key="${panel._e(rule.id)}" class="request-rule-card ${rule.enabled ? "" : "disabled"}"><div class="rule-card-heading"><div><span class="type-badge ${rule.action_type === "local_action" ? "local" : "routing"}">${rule.action_type === "local_action" ? "Local command" : "AI routing"}</span><h2>${panel._e(rule.name)}</h2></div><label class="switch-label"><span class="sr-only">Enable ${panel._e(rule.name)}</span><input class="rule-enabled" data-id="${panel._e(rule.id)}" type="checkbox" ${rule.enabled ? "checked" : ""}></label></div><div class="phrase-chips">${rule.phrases.slice(0,4).map((phrase) => `<span><b>${matchLabel(rule.match_type)}</b> ${panel._e(phrase)}</span>`).join("")}${summary.hiddenPhrases ? `<span class="eoc-more-phrases">+${summary.hiddenPhrases} more</span>` : ""}</div><p>${panel._e(summary.action)}</p><p class="meta">${panel._e(summary.matching)}</p>${rule.sensitive_matching_warning && rule.match_type !== "sentence_pattern" ? '<p class="sensitive-warning">Review tolerant matching carefully: this rule controls a potentially sensitive Home Assistant domain.</p>' : ""}<div class="actions">${result.diagnostics?.[rule.id] ? `<p class="sensitive-warning"><strong>Rule inactive:</strong> ${panel._e(result.diagnostics[rule.id])} Edit and save this rule to use the current sentence-pattern syntax.</p>` : ""}<button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="up" ${index === 0 ? "disabled" : ""}>Move up</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="down" ${index === rules.length - 1 ? "disabled" : ""}>Move down</button><button type="button" class="secondary rule-edit" data-id="${panel._e(rule.id)}">Edit</button><button type="button" class="secondary rule-duplicate" data-id="${panel._e(rule.id)}">Duplicate</button><button type="button" class="danger secondary-danger rule-delete" data-id="${panel._e(rule.id)}">Delete</button></div></article>`;
 }
 const EMPTY_RULES_MARKUP = '<section class="content-card empty-state"><h2>Create your first Request Rule</h2><p>Add a fast local command such as “good night”.</p><button type="button" id="rule-empty-add">Create rule</button></section>';
@@ -68,7 +68,7 @@ const SAFE_TESTER = '<section class="content-card" id="rule-match-tester"><h2>Pr
 const LIVE_TESTER = '<details id="eoc-rule-live-test" class="content-card eoc-live-request-test eoc-details-base"><summary><span>Run full request (live)</span><span class="eoc-live-label">Live</span></summary><div class="eoc-live-request-body"><p>Runs text through the same full processing path as a real request to this assistant.</p><div class="notice"><strong>This can have real effects</strong><p>Unlike the safe preview above, this may execute Home Assistant actions, change conversation routing, or call the AI provider. A confirmation is shown before it runs.</p></div><div class="search-row"><input id="eoc-rule-live-text" type="text" placeholder="Turn off the kitchen light" aria-label="Live request text"><button type="button" id="eoc-rule-live-run">Run live request</button></div><pre id="eoc-rule-live-result" class="eoc-live-request-result" aria-live="polite"></pre></div></details>';
 
 function renderRulesPage(panel, {query = panel._query || "", inPlaceSearch = false} = {}) {
-  const result = panel._result || {}, rules = result.rules || [];
+  const result = panel._result || {}, rules = presentedRules || [];
   const defaults = {...{word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90}, ...((panel._rulesSettingsDraft || result).defaults || {})};
   const search = inPlaceSearch ? "" : String(query).trim().toLowerCase();
   const filtered = rules.map((rule,index)=>({rule,index})).filter(({rule}) => !search || `${rule.name} ${rule.phrases.join(" ")} ${rule.action_type}`.toLowerCase().includes(search));
@@ -89,7 +89,7 @@ function prepareRequestRulesCollection(panel) {
 export function reconcileRequestRules(panel) {
   const list=panel.shadowRoot.querySelector(".rule-list"), state=ruleCollections.get(list);
   if (!state || state.settings !== ruleSettingsSignature(panel)) return false;
-  const result=panel._result || {}, rules=result.rules || [];
+  const result=panel._result || {}, rules=presentedRules || [];
   const nodes=rules.map((rule,index)=>{
     const presentation={...rule}; delete presentation.order;
     const record=keyedElement(state.cards,rule.id,JSON.stringify([presentation,result.defaults,result.diagnostics?.[rule.id]]),()=>requestRuleCard(panel,rule,index));
@@ -136,27 +136,35 @@ function finishMutation(panel,result,rules){
 export function applyRequestRuleMutation(panel, action, result, context={}) {
   if (!result || typeof result.revision !== "string") return false;
   let rules=[...(panel._result?.rules || [])];
-  const ruleId=context.ruleId || result.rule?.id;
+  const presentedRule = result.rule
+    ? {
+        ...presentedRule,
+        ...(Object.prototype.hasOwnProperty.call(result, "sensitive_matching_warning")
+          ? {sensitive_matching_warning: Boolean(result.sensitive_matching_warning)}
+          : {}),
+      }
+    : null;
+  const ruleId=context.ruleId || presentedRule?.id;
   if (action === "delete") {
     rules=rules.filter(rule=>rule.id!==ruleId);
   } else if (action === "move") {
     const index=rules.findIndex(rule=>rule.id===ruleId);
     const target=context.direction==="up" ? index-1 : index+1;
     if(index>=0 && target>=0 && target<rules.length) [rules[index],rules[target]]=[rules[target],rules[index]];
-    if(result.rule){const moved=rules.findIndex(rule=>rule.id===result.rule.id);if(moved>=0)rules[moved]={...rules[moved],...result.rule};}
+    if(presentedRule){const moved=rules.findIndex(rule=>rule.id===presentedRule.id);if(moved>=0)rules[moved]={...rules[moved],...presentedRule};}
   } else if (action === "create" || action === "duplicate") {
-    if (!result.rule) return false;
-    const existing=rules.findIndex(rule=>rule.id===result.rule.id);
-    if(existing>=0) rules[existing]=result.rule;
+    if (!presentedRule) return false;
+    const existing=rules.findIndex(rule=>rule.id===presentedRule.id);
+    if(existing>=0) rules[existing]=presentedRule;
     else {
-      const order=Number.isInteger(result.rule.order) ? Math.max(0,Math.min(result.rule.order,rules.length)) : rules.length;
-      rules.splice(order,0,result.rule);
+      const order=Number.isInteger(presentedRule.order) ? Math.max(0,Math.min(presentedRule.order,rules.length)) : rules.length;
+      rules.splice(order,0,presentedRule);
     }
   } else if (action === "update") {
-    if (!result.rule) return false;
-    const index=rules.findIndex(rule=>rule.id===result.rule.id);
+    if (!presentedRule) return false;
+    const index=rules.findIndex(rule=>rule.id===presentedRule.id);
     if(index<0) return false;
-    rules[index]=result.rule;
+    rules[index]=presentedRule;
   } else return false;
   rules=rules.map((rule,index)=>({...rule,order:index}));
   finishMutation(panel,result,rules);
