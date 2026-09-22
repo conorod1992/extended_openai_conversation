@@ -80,11 +80,21 @@ assert.match(panelSource, /stopDiagnosticsWatch\(this\)/);
 assert.match(source, /export function stopDiagnosticsWatch\(panel\)/);
 assert.match(source, /panel\._data\?\.is_admin === false/);
 assert.match(source, /reload_requested === false/);
-assert.match(source, /syncAuthenticationRecovery\(panel, \{authentication_rejected: false\}\)/);
+assert.match(source, /eoc-diagnostics-result/);
+assert.match(source, /event\?\.detail\?\.result/);
+assert.doesNotMatch(source, /MutationObserver/);
+assert.doesNotMatch(source, /JSON\.parse\(output\.textContent/);
 assert.doesNotMatch(source, /panel\.hass\.callWS/);
 assert.doesNotMatch(source, /subentry_id: agent\.subentry_id/);
 assert.doesNotMatch(source, /root\.append\(dialog\)/);
 assert.doesNotMatch(source, /slice\([^)]*apiKey|substring\([^)]*apiKey/);
+
+const featureStatusSource = await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-feature-status.js", import.meta.url),
+  "utf8",
+);
+assert.match(featureStatusSource, /eoc-diagnostics-result/);
+assert.match(featureStatusSource, /detail: \{result\}/);
 
 const bootstrap = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url),
