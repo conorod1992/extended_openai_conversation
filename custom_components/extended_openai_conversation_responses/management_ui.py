@@ -440,6 +440,12 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             if function_tool_enabled(tool) and not is_ha_tool(tool)
         ]
         return snapshot
+    if action == "settings":
+        return await rules.async_set_settings(
+            message.get("defaults"),
+            message.get("wording_groups"),
+            expected_revision=message.get("revision"),
+        )
     if action == "defaults":
         defaults = await rules.async_set_defaults(
             message.get("defaults"), expected_revision=message.get("revision")
@@ -462,7 +468,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         rule = await rules.async_create(
             candidate, expected_revision=message.get("revision")
         )
-        return {"rule": rule, "revision": rules.revision()}
+        return {"rule": {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}, "revision": rules.revision()}
     rule_id = message.get("rule_id")
     if not isinstance(rule_id, str):
         raise HomeAssistantError("rule_id is required")
@@ -477,7 +483,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         rule = await rules.async_update(
             rule_id, candidate, expected_revision=message.get("revision")
         )
-        return {"rule": rule, "revision": rules.revision()}
+        return {"rule": {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}, "revision": rules.revision()}
     if action == "delete":
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
@@ -489,7 +495,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         rule = await rules.async_duplicate(
             rule_id, expected_revision=message.get("revision")
         )
-        return {"rule": rule, "revision": rules.revision()}
+        return {"rule": {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}, "revision": rules.revision()}
     if action == "move":
         direction = message.get("direction")
         if not isinstance(direction, str):
@@ -499,7 +505,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             direction,
             expected_revision=message.get("revision"),
         )
-        return {"rule": rule, "revision": rules.revision()}
+        return {"rule": {**rule, "sensitive_matching_warning": rule_has_sensitive_actions(rule)}, "revision": rules.revision()}
     raise HomeAssistantError(f"Unknown Request Rules action: {action}")
 
 
@@ -2011,6 +2017,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("pin_repeat"): str,
         vol.Optional("text"): str,
         vol.Optional("defaults"): dict,
+        vol.Optional("wording_groups"): list,
         vol.Optional("enabled"): bool,
         vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),
