@@ -23,6 +23,7 @@ from .provider_errors import log_provider_failure, request_reauthentication
 
 _LOGGER = logging.getLogger(__name__)
 
+
 def parse_ai_task_structured_response(text: str) -> Any:
     """Parse AI Task JSON without exposing model content in logs."""
     try:
