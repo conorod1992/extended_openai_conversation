@@ -137,6 +137,10 @@ assert.deepEqual(usageCalls[0], {
   entry_id:"entry-a", subentry_id:"agent-a",
   start_date:"2026-08-09", end_date:"2026-09-07",
 });
+await loadUsageWindow(usagePanel, "30", "2026-09-07");
+assert.equal(usageCalls.length, 1, "in-page window revisits reuse the loaded aggregate range");
+await loadUsageWindow(usagePanel, "30", "2026-09-07", {useCache:false});
+assert.equal(usageCalls.length, 2, "route refreshes can bypass the in-page Usage cache");
 
 // The management-window feature must not replace or reinterpret Today / Month sensor semantics.
 const sensorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/sensor.py", import.meta.url), "utf8");
