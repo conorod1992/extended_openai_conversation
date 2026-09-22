@@ -162,17 +162,7 @@ export function applyRequestRuleSearch(panel, root = panel?.shadowRoot) {
   }
 
   const list = root.querySelector(".rule-list");
-  let empty = list?.querySelector("[data-eoc-rule-search-empty]");
-  if (!empty && list && rules.length) {
-    const documentRef = root.ownerDocument || globalThis.document;
-    if (documentRef?.createElement) {
-      empty = documentRef.createElement("section");
-      empty.className = "content-card empty-state";
-      empty.dataset.eocRuleSearchEmpty = "";
-      empty.innerHTML = "<h2>No rules match your search</h2><p>Try a different phrase or rule name.</p>";
-      list.append(empty);
-    }
-  }
+  const empty = list?.querySelector("[data-eoc-rule-search-empty]");
   if (empty) empty.hidden = !String(query).trim() || visible > 0 || !rules.length;
 
   const count = root.querySelector(".search-row .count");
