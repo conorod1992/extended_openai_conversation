@@ -116,6 +116,20 @@ def discover_satellite_capabilities(
                     if auto_wake
                     else None
                 ),
+                media_player_candidates=tuple(
+                    sorted(
+                        entry.entity_id
+                        for entry in same_device
+                        if entry.entity_id.startswith("media_player.")
+                    )
+                ),
+                wake_sound_candidates=tuple(
+                    sorted(
+                        entry.entity_id
+                        for entry in same_device
+                        if entry.entity_id.startswith("switch.")
+                    )
+                ),
             )
         )
     return result

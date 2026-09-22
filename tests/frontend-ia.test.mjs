@@ -209,6 +209,7 @@ const overview = (
   await Promise.all([
     "../custom_components/extended_openai_conversation_responses/frontend/overview-page.js",
     "../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/overview-broadcast.js",
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
 ).join("\n");
 const navigation = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js", import.meta.url), "utf8");
@@ -285,13 +286,15 @@ assert.match(capabilitiesIA, /capabilities\/web-skills/);
 configurationOwner._viewKey = () => "assistant/conversation";
 configurationOwner._configSections = ["conversation"];
 assert.doesNotMatch(renderConfiguration(configurationOwner), /id="config-local"/);
-assert.match(capabilitiesIA, /knowledge_enabled = desired/);
-assert.match(capabilitiesIA, /configuration", "validate"/);
+assert.match(capabilitiesIA, /_call\("knowledge", "set_enabled", \{enabled: desired\}\)/);
+assert.doesNotMatch(capabilitiesIA, /configuration", "validate"/);
 assert.doesNotMatch(capabilitiesIA, /from "\.\/agent-config-editor\.js"/);
 assert.match(navigationSearch, /Find a setting/);
-assert.match(navigationSearch, /subsection-nav/);
+assert.doesNotMatch(navigationSearch, /subsection-nav/);
+assert.match(panel, /_enhanceSubsectionNavigation\(\)/);
 assert.match(navigationSearch, /Current draft/);
 assert.match(navigationSearch, /configuration", "get"/);
 assert.match(navigationSearch, /_settingsSearchConfigAgentId === panel\._agentId/);
 assert.match(await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8"), /management-capabilities-ia\.js/);
-assert.match(panel, /from "\.\/management-navigation-search\.js"/);
+assert.doesNotMatch(panel, /from "\.\/management-navigation-search\.js"/);
+assert.match(panel, /import\("\.\/management-navigation-search\.js"\)/);

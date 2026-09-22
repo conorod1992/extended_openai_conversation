@@ -150,7 +150,7 @@ test("same-page search navigation focuses the setting without rebuilding the pag
   await expect(title).toBeVisible();
   await page.evaluate(() => { window.originalTitle = window.browserHarness.panel.shadowRoot.querySelector('[data-config="__title"]'); });
   await panel.locator("#settings-search").pressSequentially("assistant name");
-  await panel.locator(".settings-result").first().click();
+  await panel.locator(".settings-result").filter({hasText:"Agent name"}).click();
   await expect(title).toBeFocused();
   expect(await title.evaluate((node) => node === window.originalTitle)).toBe(true);
 });

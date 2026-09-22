@@ -342,9 +342,9 @@ test("Knowledge: retained availability control can save repeatedly without dupli
   const toggle = panel.locator("#knowledge-enabled-toggle");
   const initial = await toggle.isChecked();
   await toggle.setChecked(!initial);
-  await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "update").length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(call => call.section === "knowledge" && call.action === "set_enabled").length)).toBe(1);
   await expect(toggle).toBeEnabled();
   await toggle.setChecked(initial);
-  await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "update").length)).toBe(2);
+  await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(call => call.section === "knowledge" && call.action === "set_enabled").length)).toBe(2);
   await expect(toggle).toBeEnabled();
 });

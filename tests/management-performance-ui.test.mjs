@@ -118,7 +118,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   };
   panel._bindRouteAssetWarmup();
   panel._bindRouteAssetWarmup();
-  assert.deepEqual([...listeners.keys()].sort(), ["focusin", "pointerdown", "pointerover"]);
+  assert.deepEqual([...listeners.keys()].sort(), ["focusin", "pointerdown", "pointerout", "pointerover"]);
 
   const target = {
     dataset:{page:"guide"},
@@ -396,7 +396,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   }};
   const loading = panel._loadSection();
 
-  for (const action of ["summary", "daily", "runs", "retention"]) {
+  for (const action of ["summary", "runs", "retention"]) {
     assert.ok(
       started.includes(action),
       `${action} starts before the lazy Usage UI module resolves`,
@@ -405,8 +405,12 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.equal(
     routeFeaturesReady("usage-maintenance/usage"),
     false,
-    "Usage data starts while the chart feature is still cold",
+    "Usage requests start while the chart feature is still cold",
   );
+  for (let turn = 0; turn < 20 && !started.includes("daily"); turn++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.ok(started.includes("daily"), "daily starts after its lazy usage-data helper resolves");
 
   resolvers.get("summary")?.({});
   resolvers.get("daily")?.({days:[]});
@@ -473,7 +477,12 @@ const management = await readFile(new URL("../custom_components/extended_openai_
 const renderer = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js", import.meta.url), "utf8");
 const requestRules = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js", import.meta.url), "utf8");
 const managementRoute = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8");
-const overviewImplementation = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js", import.meta.url), "utf8");
+const overviewImplementation = (
+  await Promise.all([
+    "../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/overview-broadcast.js",
+  ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
+).join("\n");
 assert.match(management, /_loadServiceCatalog\(\)/);
 assert.equal(
   (management.match(/bindStateSafety\(this\)/g) || []).length,
