@@ -89,3 +89,7 @@ assert.match(panelSource, /Promise\.allSettled/);
 assert.match(usageSource, /_call\("usage", "requests"/);
 assert.match(usageSource, /usage-request-dialog/);
 assert.match(usageSource, /cached_input_tokens \/ summary\.input_tokens/);
+assert.match(usageSource, /const usageDateKeyFormatters = new Map\(\)/);
+assert.match(usageSource, /const usageDisplayFormatters = new Map\(\)/);
+assert.match(usageSource, /cachedDateTimeFormat\(usageDateKeyFormatters/);
+assert.match(usageSource, /cachedDateTimeFormat\(usageDisplayFormatters/);
