@@ -95,12 +95,11 @@ function resetDiagnosticsAfterCredentialUpdate(panel, result) {
   // If validation was explicitly skipped and the stored key did not change, the
   // previous diagnostic result is still the best evidence we have; keep it.
   if (result?.updated === false && result?.validation_performed === false) return;
+  syncAuthenticationRecovery(panel, {authentication_rejected: false});
   const output = panel.shadowRoot?.querySelector("#test-result");
   if (output) {
     output.textContent = "Credential updated or validated. Run the connection test again to verify this agent.";
-    return;
   }
-  panel.shadowRoot?.querySelector("#eoc-auth-recovery")?.remove();
 }
 
 function ensureApiKeyDialog(panel, agent) {
