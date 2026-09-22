@@ -118,7 +118,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   };
   panel._bindRouteAssetWarmup();
   panel._bindRouteAssetWarmup();
-  assert.deepEqual([...listeners.keys()].sort(), ["focusin", "pointerdown", "pointerover"]);
+  assert.deepEqual([...listeners.keys()].sort(), ["focusin", "pointerdown", "pointerout", "pointerover"]);
 
   const target = {
     dataset:{page:"guide"},
