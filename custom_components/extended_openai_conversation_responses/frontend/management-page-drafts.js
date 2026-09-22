@@ -154,7 +154,14 @@ export function bindPageDrafts(panel) {
   const root = panel.shadowRoot;
   if (!root || root.__eocPageDraftsBound) return;
   root.__eocPageDraftsBound = true;
-  const sync = () => queueMicrotask(() => { readRuleSettings(panel); refreshPageSaveBar(panel); });
+  const sync = () => {
+    if (![GUEST, QUIET, RULES].includes(panel._viewKey?.())) return;
+    queueMicrotask(() => {
+      if (![GUEST, QUIET, RULES].includes(panel._viewKey?.())) return;
+      readRuleSettings(panel);
+      refreshPageSaveBar(panel);
+    });
+  };
   for (const type of ["input", "change", "value-changed"]) root.addEventListener(type, sync);
   root.addEventListener("click", (event) => {
     const button = event.target?.closest?.("button");
