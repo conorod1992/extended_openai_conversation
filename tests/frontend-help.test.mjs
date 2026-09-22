@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import {
-  HELP_METADATA,
   helpSearchTerms,
 } from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-help.js";
+import {
+  HELP_METADATA,
+} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-help-content.js";
 
 const allowedFields = new Set([
   "title",
@@ -45,8 +47,22 @@ for (const [key, entry] of Object.entries(HELP_METADATA)) {
     assert.ok(item.term.trim() && item.text.trim(), `${key} has an empty help item`);
   }
   if (entry.href) assert.match(entry.href, /^https:\/\//, `${key} has an invalid documentation link`);
-  assert.ok(helpSearchTerms(key).includes(entry.title), `${key} is missing from help search text`);
+  const expectedSearch = [
+    entry.title,
+    ...(entry.paragraphs || []),
+    ...(entry.items || []).flatMap((item) => [item.term, item.text]),
+    entry.example || "",
+    entry.keywords || "",
+  ].join(" ");
+  assert.equal(helpSearchTerms(key), expectedSearch, `${key} help search text changed`);
   assert.ok(editorSource.includes(`"${key}"`), `${key} is not referenced by the UI`);
 }
 
 assert.equal(helpSearchTerms("missing_help_key"), "");
+
+const helpCoreSource = await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-help.js", import.meta.url),
+  "utf8",
+);
+assert.match(helpCoreSource, /import\("\.\/agent-config-help-content\.js"\)/);
+assert.doesNotMatch(helpCoreSource, /HELP_METADATA/);
