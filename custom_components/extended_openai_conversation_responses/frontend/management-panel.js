@@ -729,6 +729,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (loadToken !== this._loadToken) return;
       let result;
       let contentData = null;
+      let usageSecondary = null;
       if (view === "overview") {
         this._markColdLifecycle("overview-summary-start");
         const summary = await this._call("overview", "summary");
@@ -738,12 +739,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (agent) Object.assign(this._selectedAgent(), agent);
         result = overview;
       } else if (view === "usage-maintenance/usage") {
-        const entries = [["summary", "Usage summary"], ["days", "Daily usage"], ["runs", "Recent runs"], ["retention", "Usage retention"]];
-        const settled = await Promise.allSettled([
-          this._call("usage", "summary"), this._call("usage", "daily"),
-          this._call("usage", "runs", { limit: 30 }), this._call("usage", "retention"),
-        ]);
-        result = settledSectionResult(entries, settled);
+        const summaryPromise = this._call("usage", "summary");
+        const daysPromise = this._call("usage", "daily");
+        const runsPromise = this._call("usage", "runs", { limit: 30 });
+        const retentionPromise = this._call("usage", "retention");
+        const primary = await Promise.allSettled([summaryPromise, daysPromise]);
+        result = {
+          ...settledSectionResult([["summary", "Usage summary"], ["days", "Daily usage"]], primary),
+          loading: {runs: true, retention: true},
+        };
+        usageSecondary = Promise.allSettled([runsPromise, retentionPromise]);
       } else if (view === "data-memory/conversations") {
         const [sessions, prerequisiteResults] = await Promise.all([
           this._call("conversations", "list", { scope_id: this._scopeId, limit: 50 }),
@@ -785,6 +790,23 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._result = result;
       writeSectionCache(this, cacheKey, result);
       this._error = null;
+      if (usageSecondary) {
+        void usageSecondary.then((settled) => {
+          if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+              || this._viewKey() !== "usage-maintenance/usage") return;
+          const secondary = settledSectionResult(
+            [["runs", "Recent runs"], ["retention", "Usage retention"]],
+            settled,
+          );
+          this._result = {
+            ...(this._result || {}),
+            ...Object.fromEntries(Object.entries(secondary).filter(([key]) => key !== "load_errors")),
+            load_errors: [...(this._result?.load_errors || []), ...(secondary.load_errors || [])],
+            loading: {runs: false, retention: false},
+          };
+          this._render();
+        });
+      }
     } catch (err) {
       if (loadToken === this._loadToken) this._error = err.message || String(err);
     } finally {
