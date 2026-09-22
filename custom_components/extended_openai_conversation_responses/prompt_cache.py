@@ -12,8 +12,6 @@ from .const import CONF_PROMPT, DEFAULT_PROMPT
 from .model_catalog import model_metadata
 from .prompt import EffectivePrompt, _template_requires_render
 
-_EXPLICIT_CACHE_MIN_CHARACTERS = 4096
-
 
 @dataclass(frozen=True, slots=True)
 class PromptCacheContext:
@@ -62,9 +60,7 @@ def prompt_cache_context(
     if stable_count < len(sections):
         # Match the exact separator used when the next, volatile section is appended.
         prefix = prefix.rstrip() + "\n"
-    if len(
-        prefix
-    ) < _EXPLICIT_CACHE_MIN_CHARACTERS or not effective_prompt.text.startswith(prefix):
+    if not effective_prompt.text.startswith(prefix):
         return None
     digest = hashlib.sha256(prefix.encode()).hexdigest()[:48]
     return PromptCacheContext(prefix=prefix, key=f"eoc-{digest}")
@@ -86,12 +82,13 @@ def optimize_responses_kwargs(
     context = (
         cache_context if cache_context is not None else _PROMPT_CACHE_CONTEXT.get()
     )
-    if (
-        not direct_openai
-        or context is None
-        or not _supports_explicit_cache(kwargs.get("model"))
-    ):
+    if not direct_openai or context is None:
         return kwargs
+
+    if not _supports_explicit_cache(kwargs.get("model")):
+        optimized = dict(kwargs)
+        optimized.setdefault("prompt_cache_key", context.key)
+        return optimized
 
     input_items = kwargs.get("input")
     if not isinstance(input_items, list) or not input_items:

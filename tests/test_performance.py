@@ -122,7 +122,7 @@ def test_dynamic_user_prompt_is_not_misclassified_as_stable() -> None:
     assert prompt_cache_context(effective, {CONF_PROMPT: raw_prompt}) is None
 
 
-def test_explicit_cache_is_direct_openai_gpt56_only() -> None:
+def test_cache_optimization_is_direct_openai_and_explicit_cache_is_gpt56_only() -> None:
     raw_prompt = "A" * 5000
     effective = _effective_prompt(raw_prompt)
     context = prompt_cache_context(effective, {CONF_PROMPT: raw_prompt})
@@ -144,14 +144,15 @@ def test_explicit_cache_is_direct_openai_gpt56_only() -> None:
     )
 
     older_model = {**base, "model": "gpt-5.5"}
-    assert (
-        optimize_responses_kwargs(
-            older_model,
-            direct_openai=True,
-            cache_context=context,
-        )
-        is older_model
+    optimized = optimize_responses_kwargs(
+        older_model,
+        direct_openai=True,
+        cache_context=context,
     )
+    assert optimized is not older_model
+    assert optimized["prompt_cache_key"] == context.key
+    assert "prompt_cache_options" not in optimized
+    assert optimized["input"] == older_model["input"]
 
 
 def _section(
@@ -281,7 +282,7 @@ def test_template_cache_evicts_oldest_entry_and_reuses_compiled_template(
 
 
 def test_prompt_cache_context_rejects_unusable_prefixes() -> None:
-    """Explicit caching requires a stable, long prefix matching the effective prompt."""
+    """Caching requires a stable prefix matching the effective prompt."""
     assert performance.prompt_cache_context(EffectivePrompt("", ()), {}) is None
 
     volatile = EffectivePrompt(
@@ -291,7 +292,9 @@ def test_prompt_cache_context_rejects_unusable_prefixes() -> None:
     assert performance.prompt_cache_context(volatile, {}) is None
 
     short = EffectivePrompt("short", (_section("system", "short"),))
-    assert performance.prompt_cache_context(short, {}) is None
+    short_context = performance.prompt_cache_context(short, {})
+    assert short_context is not None
+    assert short_context.prefix == "short"
 
     long_text = "A" * 5000
     mismatched = EffectivePrompt(
