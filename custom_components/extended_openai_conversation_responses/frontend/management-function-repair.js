@@ -41,7 +41,7 @@ function invalidToolCards(panel, repair) {
   if (!invalidTools.length) return "";
   return `<article class="function-group-card function-repair-attention" data-group-search="needs attention invalid quarantined repair">
     <div class="function-group-heading"><div><div class="tool-title"><h3>Needs attention</h3><span class="availability-badge">${invalidTools.length} ${invalidTools.length === 1 ? "function" : "functions"}</span></div><p>These Function Tools are temporarily unavailable. Other valid functions and groups continue to work normally.</p></div></div>
-    <details open><summary>Show functions needing repair</summary><div class="list tool-list">
+    <details class="eoc-details-base" open><summary>Show functions needing repair</summary><div class="list tool-list">
       ${invalidTools.map((item) => {
         const label = item.name || `Function Tool ${Number(item.index) + 1}`;
         const groups = invalidToolGroups(repair, item);
