@@ -135,3 +135,13 @@ function button({id = "", classes = [], dataset = {}} = {}) {
     ["speech_regex_replacements"],
   );
 }
+
+const pageDraftSource = await (await import("node:fs/promises")).readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js", import.meta.url),
+  "utf8",
+);
+assert.match(
+  pageDraftSource,
+  /if \(!\[GUEST, QUIET, RULES\]\.includes\(panel\._viewKey\?\.\(\)\)\) return;/,
+  "global draft listeners should exit before queuing work outside page-draft routes",
+);

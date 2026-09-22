@@ -238,6 +238,90 @@ test("conversation configuration starts before a pending scope catalog finishes"
   expect(result).toEqual({concurrent:true, sessions:true, config:true});
 });
 
+test("conversation collection starts before a pending scope catalog finishes", async ({page}) => {
+  await page.goto(fixtureUrl("overview"));
+  await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const host = browserHarness.panel;
+    const original = host._hass.callWS;
+    const initialScope = host._scopeId;
+    let releaseScope;
+    let listStarted = false;
+    const listScopes = [];
+    host._hass.callWS = async message => {
+      if (message.section === "scopes") await new Promise(resolve => { releaseScope = resolve; });
+      if (message.section === "conversations" && message.action === "list") {
+        listStarted = true;
+        listScopes.push(message.scope_id);
+      }
+      return original(message);
+    };
+    const pending = host._navigate("data-memory", "conversations");
+    while (!releaseScope) await new Promise(resolve => setTimeout(resolve, 0));
+    const concurrent = listStarted;
+    releaseScope();
+    await pending;
+    host._hass.callWS = original;
+    return {concurrent, initialScope, selectedScope:host._scopeId, listScopes};
+  });
+  expect(result.concurrent).toBe(true);
+  expect(result.selectedScope).toBe(result.initialScope);
+  expect(result.listScopes).toEqual([result.initialScope]);
+});
+
+test("invalidated speculative Memory scope is discarded and refetched once", async ({page}) => {
+  await page.goto(fixtureUrl("overview"));
+  await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const host = browserHarness.panel;
+    const original = host._hass.callWS;
+    const initialScope = host._scopeId;
+    const replacementScope = "user:replacement";
+    let releaseScope;
+    const listScopes = [];
+    host._hass.callWS = async message => {
+      if (message.section === "scopes") {
+        await new Promise(resolve => { releaseScope = resolve; });
+        return {scopes:[{
+          scope_id:replacementScope,
+          scope_type:"user",
+          display_name:"Replacement user",
+          is_current_user:true,
+          memory_count:0,
+          conversation_count:0,
+        }]};
+      }
+      if (message.section === "memories" && message.action === "list") {
+        listScopes.push(message.scope_id);
+        if (message.scope_id === initialScope) throw new Error("stale scope");
+        return {memories:[], marker:message.scope_id};
+      }
+      return original(message);
+    };
+    const pending = host._navigate("data-memory", "memories");
+    while (!releaseScope) await new Promise(resolve => setTimeout(resolve, 0));
+    const speculativeStarted = listScopes.includes(initialScope);
+    releaseScope();
+    await pending;
+    host._hass.callWS = original;
+    return {
+      speculativeStarted,
+      initialScope,
+      selectedScope:host._scopeId,
+      listScopes,
+      marker:host._result?.marker,
+      error:host._error,
+    };
+  });
+  expect(result).toMatchObject({
+    speculativeStarted:true,
+    selectedScope:"user:replacement",
+    marker:"user:replacement",
+    error:null,
+  });
+  expect(result.listScopes).toEqual([result.initialScope, "user:replacement"]);
+});
+
 test("late conversation configuration cannot replace a newer route result", async ({page}) => {
   await page.goto(fixtureUrl("overview"));
   await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
@@ -333,6 +417,113 @@ test("overview uses the native registry and defers unrelated feature code", asyn
   await expectHarnessClean(page, errors);
 });
 
+test("Usage becomes usable before recent runs and retention settle", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+
+  await panel.evaluate(host => {
+    const original = host._hass.callWS;
+    window.progressiveUsage = {calls:[], releaseRuns:null, releaseRetention:null};
+    host._hass.callWS = async message => {
+      if (message.section !== "usage") return original(message);
+      window.progressiveUsage.calls.push(message.action);
+      if (message.action === "summary") {
+        return {today:{date:"2026-09-22", total_tokens:30}, lifetime:{total_tokens:300}, latest:{total_tokens:12}};
+      }
+      if (message.action === "daily") {
+        return {days:[{date:"2026-09-22", total_tokens:30, input_tokens:20, output_tokens:10, cached_input_tokens:5, api_request_count:1, run_count:1}]};
+      }
+      if (message.action === "runs") {
+        return new Promise(resolve => {
+          window.progressiveUsage.releaseRuns = () => resolve({runs:[{
+            run_id:"run-progressive",
+            completed_at:"2026-09-22T12:00:00+00:00",
+            total_tokens:30,
+            cached_input_tokens:5,
+            request_count:1,
+            duration_ms:250,
+            successful:true,
+          }]});
+        });
+      }
+      if (message.action === "retention") {
+        return new Promise(resolve => {
+          window.progressiveUsage.releaseRetention = () => resolve({detail_retention_days:30});
+        });
+      }
+      return original(message);
+    };
+  });
+
+  await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  await expect(panel.getByText("Loading recent runs…")).toBeVisible();
+  expect(await panel.evaluate(host => host._busy)).toBe(false);
+  expect(await page.evaluate(() => progressiveUsage.calls.sort())).toEqual(["daily", "retention", "runs", "summary"]);
+  expect(await panel.evaluate(host => host._result.loading)).toEqual({runs:true, retention:true});
+
+  await page.evaluate(() => progressiveUsage.releaseRuns());
+  await expect.poll(() => panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:true});
+  await expect(panel.getByText("Loading recent runs…")).toHaveCount(0);
+  await expect(panel.getByText("Success", {exact:true})).toBeVisible();
+  expect(await panel.evaluate(host => host._result.retention)).toBeUndefined();
+
+  await page.evaluate(() => progressiveUsage.releaseRetention());
+  await expect.poll(() => panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:false});
+  expect(await panel.evaluate(host => host._result.retention.detail_retention_days)).toBe(30);
+  await expectHarnessClean(page, errors);
+});
+
+test("secondary Usage failure does not replace the primary page", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+
+  await panel.evaluate(host => {
+    const original = host._hass.callWS;
+    window.progressiveUsageFailure = {releaseRuns:null, releaseRetention:null};
+    host._hass.callWS = async message => {
+      if (message.section !== "usage") return original(message);
+      if (message.action === "summary") {
+        return {today:{date:"2026-09-22", total_tokens:30}, lifetime:{total_tokens:300}};
+      }
+      if (message.action === "daily") {
+        return {days:[{date:"2026-09-22", total_tokens:30, input_tokens:20, output_tokens:10}]};
+      }
+      if (message.action === "runs") {
+        return new Promise((_, reject) => {
+          window.progressiveUsageFailure.releaseRuns = () => reject(new Error("runs unavailable"));
+        });
+      }
+      if (message.action === "retention") {
+        return new Promise(resolve => {
+          window.progressiveUsageFailure.releaseRetention = () => resolve({detail_retention_days:30});
+        });
+      }
+      return original(message);
+    };
+  });
+
+  await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  await expect(panel.getByText("Loading recent runs…")).toBeVisible();
+
+  await page.evaluate(() => progressiveUsageFailure.releaseRuns());
+  await expect(panel.getByText("Recent runs unavailable", {exact:true})).toBeVisible();
+  expect(await panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:true});
+  await page.evaluate(() => progressiveUsageFailure.releaseRetention());
+  await expect.poll(() => panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:false});
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  expect(await panel.evaluate(host => host._error)).toBe(null);
+  expect(await panel.evaluate(host => host._result.load_errors)).toEqual([
+    {key:"runs", label:"Recent runs", message:"runs unavailable"},
+  ]);
+  await expectHarnessClean(page, errors);
+});
+
 test("Quiet Hours and request debugging initialize on first entry without global loader wrappers", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("overview"));
@@ -345,7 +536,29 @@ test("Quiet Hours and request debugging initialize on first entry without global
     host._hass.callWS = async message => {
       if (message.section === "quiet_hours") {
         window.featureCalls.push(message);
-        return {config:message.config || {enabled:false, start:"22:00", end:"07:00", max_volume:0.3, wake_sound:"off"}, satellites:[]};
+        return {
+          config:message.config || {
+            enabled:false,
+            start:"22:00",
+            end:"07:00",
+            max_volume:0.3,
+            wake_sound:"off",
+            overrides:{
+              "assist_satellite.kitchen":{media_player_entity_id:"media_player.legacy"},
+            },
+          },
+          satellites:[{
+            satellite_entity_id:"assist_satellite.kitchen",
+            name:"Kitchen Voice",
+            device_id:"device-kitchen",
+            media_player_entity_id:"media_player.legacy",
+            wake_sound_entity_id:"switch.kitchen_wake",
+            media_player_source:"manual",
+            wake_sound_source:"auto",
+            media_player_candidates:["media_player.kitchen"],
+            wake_sound_candidates:["switch.kitchen_wake"],
+          }],
+        };
       }
       if (message.type.endsWith("/request_debug")) {
         window.featureCalls.push(message);
@@ -358,6 +571,35 @@ test("Quiet Hours and request debugging initialize on first entry without global
   await expect(panel.locator("#qh-enabled")).toBeVisible();
   await expect(panel.locator(".save-bar")).toHaveCount(0);
   await expect(panel.locator(".qh-grid").first()).toHaveCSS("display", "grid");
+  const pickerState = await panel.evaluate(host => {
+    const pickers = [...host.shadowRoot.querySelectorAll(".qh-override")];
+    return pickers.map(picker => ({
+      kind:picker.dataset.kind,
+      value:picker.value,
+      includeDomains:picker.includeDomains,
+      includeEntities:picker.includeEntities,
+      allowCustomEntity:picker.allowCustomEntity,
+      placeholder:picker.placeholder,
+    }));
+  });
+  expect(pickerState).toEqual([
+    {
+      kind:"media_player_entity_id",
+      value:"media_player.legacy",
+      includeDomains:["media_player"],
+      includeEntities:["media_player.kitchen", "media_player.legacy"],
+      allowCustomEntity:false,
+      placeholder:"Automatic",
+    },
+    {
+      kind:"wake_sound_entity_id",
+      value:"",
+      includeDomains:["switch"],
+      includeEntities:["switch.kitchen_wake"],
+      allowCustomEntity:false,
+      placeholder:"Automatic · switch.kitchen_wake",
+    },
+  ]);
   await panel.locator("#qh-enabled").check();
   await panel.locator("#save-page").click();
   await expect.poll(() => page.evaluate(() => featureCalls.filter(c => c.section === "quiet_hours" && c.action === "update").length)).toBe(1);

@@ -128,6 +128,16 @@ assert.match(
 );
 assert.match(
   editorSource,
+  /#local-intent-search[\s\S]*?const queryTokens = searchTokens\(event\.target\.value\)[\s\S]*?cachedFunctionSearchTokens/,
+  "Local Intent search should tokenize its query once and cache static choice tokens",
+);
+assert.match(
+  editorSource,
+  /#group-function-search[\s\S]*?queryTokens=searchTokens\(event\.target\.value\)[\s\S]*?cachedFunctionSearchTokens/,
+  "Function Group assignment search should tokenize its query once and cache static choice tokens",
+);
+assert.match(
+  editorSource,
   /cachedFunctionSearchTokens\(card, card\.dataset\.groupSearch\)/,
   "group search text should reuse cached static tokens",
 );
