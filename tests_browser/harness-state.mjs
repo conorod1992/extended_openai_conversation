@@ -166,20 +166,20 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       if (name && pendingToolYamls.has(name)) state.toolYamls[name] = pendingToolYamls.get(name);
       if (name) pendingToolYamls.delete(name);
       if (original && original !== tool.spec?.name) { for (const g of state.configuration.config.function_groups || []) g.functions = (g.functions || []).map((n) => n === original ? tool.spec.name : n); delete state.toolYamls[original]; pendingToolYamls.delete(original); }
-      counts(); state.configuration.revision = `${state.configuration.revision}x`; state.configuration.revision = `${state.configuration.revision}x`; save(); return tools();
+      counts(); state.configuration.revision = `${state.configuration.revision}x`; save(); return tools();
     }
     if (key === "tools/delete") {
       if (message.revision !== state.configuration.revision) throw new Error("Configuration changed in another tab. Reload the latest saved settings before saving.");
-       state.configuration.config.functions = (state.configuration.config.functions || []).filter((t) => t.spec?.name !== message.name); for (const g of state.configuration.config.function_groups || []) g.functions = (g.functions || []).filter((n) => n !== message.name); delete state.toolYamls[message.name]; pendingToolYamls.delete(message.name); counts(); state.configuration.revision = `${state.configuration.revision}x`; state.configuration.revision = `${state.configuration.revision}x`; save(); return tools(); }
+       state.configuration.config.functions = (state.configuration.config.functions || []).filter((t) => t.spec?.name !== message.name); for (const g of state.configuration.config.function_groups || []) g.functions = (g.functions || []).filter((n) => n !== message.name); delete state.toolYamls[message.name]; pendingToolYamls.delete(message.name); counts(); state.configuration.revision = `${state.configuration.revision}x`; save(); return tools(); }
     if (key === "tools/set_enabled") {
       if (message.revision !== state.configuration.revision) throw new Error("Configuration changed in another tab. Reload the latest saved settings before saving.");
        const tool = (state.configuration.config.functions || []).find((t) => t.spec?.name === message.name); if (tool) tool.enabled = message.enabled; state.configuration.revision = `${state.configuration.revision}x`; save(); return tools(); }
     if (key === "tools/save_group") {
       if (message.revision !== state.configuration.revision) throw new Error("Configuration changed in another tab. Reload the latest saved settings before saving.");
-       const group = clone(message.group), list = state.configuration.config.function_groups || [], original = message.original_id || group.id; for (const g of list) if (g.id !== original) g.functions = (g.functions || []).filter((n) => !(group.functions || []).includes(n)); const i = list.findIndex((g) => g.id === original); if (i >= 0) list[i] = group; else list.push(group); counts(); state.configuration.revision = `${state.configuration.revision}x`; state.configuration.revision = `${state.configuration.revision}x`; save(); return tools(); }
+       const group = clone(message.group), list = state.configuration.config.function_groups || [], original = message.original_id || group.id; for (const g of list) if (g.id !== original) g.functions = (g.functions || []).filter((n) => !(group.functions || []).includes(n)); const i = list.findIndex((g) => g.id === original); if (i >= 0) list[i] = group; else list.push(group); counts(); state.configuration.revision = `${state.configuration.revision}x`; save(); return tools(); }
     if (key === "tools/delete_group") {
       if (message.revision !== state.configuration.revision) throw new Error("Configuration changed in another tab. Reload the latest saved settings before saving.");
-       state.configuration.config.function_groups = (state.configuration.config.function_groups || []).filter((g) => g.id !== message.group_id); counts(); state.configuration.revision = `${state.configuration.revision}x`; state.configuration.revision = `${state.configuration.revision}x`; save(); return tools(); }
+       state.configuration.config.function_groups = (state.configuration.config.function_groups || []).filter((g) => g.id !== message.group_id); counts(); state.configuration.revision = `${state.configuration.revision}x`; save(); return tools(); }
     if (key === "tools/validate_current") return {valid: true, errors: []};
 
     if (key === "backup/create") return {json: backup(), filename: "browser-fixture-full-backup.json"};
