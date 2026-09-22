@@ -38,11 +38,12 @@ async def async_quiet_hours_command(
 def require_management_permission(is_admin: bool, message: dict[str, Any]) -> None:
     """Reject agent-global reads before agent lookup or feature-specific validation."""
     section = message.get("section", "overview")
-    if section in {"quiet_hours", "knowledge", "diagnostics", "function_repair"}:
-        _require_admin(is_admin)
-    if section == "request_rules" and message.get("action") in {"test", "test_match"}:
-        _require_admin(is_admin)
-    if section == "configuration" and message.get("action") == "save":
-        _require_admin(is_admin)
-    if section == "usage" and message.get("action") != "summary":
+    action = message.get("action")
+    admin_required = (
+        section in {"quiet_hours", "knowledge", "diagnostics", "function_repair"}
+        or (section == "request_rules" and action in {"test", "test_match"})
+        or (section == "configuration" and action == "save")
+        or (section == "usage" and action != "summary")
+    )
+    if admin_required:
         _require_admin(is_admin)
