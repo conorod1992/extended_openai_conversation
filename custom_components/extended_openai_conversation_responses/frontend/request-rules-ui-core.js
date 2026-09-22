@@ -177,6 +177,8 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
         catch(err){await recoverRequestRuleMutation(panel,err,"Unable to duplicate Request Rule");} finally{button.disabled=false;} return;
       }
       if(button.matches(".rule-delete")){
+        const deleting=(panel._result?.rules||[]).find((rule)=>rule.id===id);
+        panel._eocDecisionConfirmSubject=deleting?.name?`Request Rule “${deleting.name}”`:"Request Rule";
         if(!await panel._confirm("Delete Request Rule?","This cannot be undone.","Delete"))return;
         button.disabled=true;
         try{const result=await panel._call("request_rules","delete",{rule_id:id,confirm:true,revision:panel._result?.revision});applyRequestRuleMutation(panel,"delete",result,{ruleId:id});panel._toast("Request Rule deleted");}
