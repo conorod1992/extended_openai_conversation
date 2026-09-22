@@ -241,7 +241,13 @@ test("Guest activation remains immediate, coalesces requests, and preserves poli
 test("Function Tool stale revision rejects save and preserves unsaved YAML", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/functions")); const panel = panelFor(page);
-  await panel.locator(".edit-tool").first().click();
+  const editTool = panel.locator(".edit-tool").first();
+  await editTool.evaluate((button) => {
+    for (let parent = button.parentElement; parent; parent = parent.parentElement) {
+      if (parent.tagName === "DETAILS") parent.open = true;
+    }
+  });
+  await editTool.click();
   const yaml = panel.locator("#tool-yaml");
   const edited = (await yaml.inputValue()).replace("Baseline browser fixture", "Unsaved stale editor");
   await yaml.fill(edited);
@@ -275,7 +281,13 @@ test("Function Tool stale revision rejects save and preserves unsaved YAML", asy
 test("Function Group stale revision rejects save and preserves unsaved fields", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/functions")); const panel = panelFor(page);
-  await panel.locator(".edit-group").first().click();
+  const editGroup = panel.locator(".edit-group").first();
+  await editGroup.evaluate((button) => {
+    for (let parent = button.parentElement; parent; parent = parent.parentElement) {
+      if (parent.tagName === "DETAILS") parent.open = true;
+    }
+  });
+  await editGroup.click();
   const description = panel.locator("#group-description");
   await description.fill("Unsaved stale group description");
 
