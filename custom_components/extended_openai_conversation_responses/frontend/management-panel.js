@@ -662,7 +662,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         request_rules: new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate"]),
         knowledge: new Set(["create", "update", "delete"]),
         memories: new Set(["add", "update", "delete", "temporary_delete", "reassign_legacy"]),
-        conversations: new Set(["delete"]),
       };
       if (agentId && mutations[section]?.has(action)) {
         this._cacheGeneration += 1;
@@ -1254,7 +1253,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
     if (view === "data-memory/knowledge") return `${getRouteFeature("capabilities")?.knowledgeAvailabilityMarkup(this)}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
-    if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? ((getConfigurationEditor()?.renderConfiguration(this) || this._loading())) : ""}`; }
+    if (view === "data-memory/conversations") {
+      this._configSections = ["archive"];
+      const settings = this._data?.is_admin
+        ? (this._configData && this._draftAgentId === this._agentId
+          ? (getConfigurationEditor()?.renderConfiguration(this) || this._loading())
+          : `<section class="content-card"><div class="loading" role="status">Loading archive settings…</div></section>`)
+        : "";
+      return `${this._conversations()}${settings}`;
+    }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
     if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) {
@@ -1284,7 +1291,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _conversations() {
     const result = this._contentData || this._result || {};
     const active = result.active?.active || [];
-    const content = `${this._data?.is_admin ? `<p class="help">Recent context lets conversations continue; saved history is the archive you can review or search.</p>` : ""}${this._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${this._e(item.label)}</h3><p class="meta">Last active ${this._e(this._formatDate(item.last_active))} · Expires ${this._e(this._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${this._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}
+    const loading = result.loading || {};
+    const errors = result.load_errors || [];
+    const secondaryStatus = `${loading.active ? '<p class="help">Loading active conversations…</p>' : ""}${errors.map((issue) => `<div class="notice"><strong>${this._e(issue.label)} unavailable</strong><p>${this._e(issue.message)}</p></div>`).join("")}`;
+    const content = `${this._data?.is_admin ? `<p class="help">Recent context lets conversations continue; saved history is the archive you can review or search.</p>` : ""}${secondaryStatus}${this._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${this._e(item.label)}</h3><p class="meta">Last active ${this._e(this._formatDate(item.last_active))} · Expires ${this._e(this._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${this._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}
       <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-id="${this._e(item.session_id)}"><h3>${this._e(item.title || "Untitled conversation")}</h3><p class="meta">${this._e(this._formatDate(item.last_message_at))} · ${this._e(String(item.turn_count))} turns · ${this._e(item.scope_source)}</p></div><div class="actions"><button type="button" class="secondary view-session" data-id="${this._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${this._e(item.session_id)}">Delete</button></div></article>`).join("") || this._empty("No retained conversations in this scope.")}</div></section>`;
     return getRouteFeature("memory-browser")?.decorateConversations(this, content);
   }
@@ -1437,7 +1447,25 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
     if (view === "data-memory/conversations") {
-      root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => { if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return; await this._call("conversations", "end_active", { continuity_key: button.dataset.key }); await this._loadSection(); }));
+      root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => {
+        if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return;
+        try {
+          const response = await this._call("conversations", "end_active", { continuity_key: button.dataset.key });
+          if (response?.ended && this._contentData?.active?.active) {
+            this._contentData = {
+              ...this._contentData,
+              active: {
+                ...this._contentData.active,
+                active: this._contentData.active.active.filter((item) => item.key !== button.dataset.key),
+              },
+            };
+            this._render();
+          }
+          this._toast("Conversation will start fresh next time");
+        } catch (err) {
+          this._toast(`Unable to end conversation: ${err.message || String(err)}`, true);
+        }
+      }));
       root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id); }));
     }
     if (view === "usage-maintenance/usage") q("#clear-details")?.addEventListener("click", () => this._clearUsageDetails());
@@ -1643,10 +1671,43 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     } catch (err) { this._toast(`Unable to delete memory: ${err.message || String(err)}`, true); }
   }
 
+  _adjustConversationScopeCount(delta) {
+    const patch = (scopes) => (scopes || []).map((scope) => scope.scope_id === this._scopeId
+      ? {...scope, conversation_count: Math.max(0, Number(scope.conversation_count || 0) + delta)}
+      : scope);
+    if (this._data?.scopes) this._data.scopes = patch(this._data.scopes);
+    const key = this._scopeCatalogKey("data-memory/conversations");
+    if (key && this._scopeCatalogCache.has(key)) {
+      this._scopeCatalogCache.set(key, patch(this._scopeCatalogCache.get(key)));
+    }
+  }
+
   async _deleteSession(sessionId) {
     if (!await this._confirm("Delete conversation?", "This retained conversation and its turns will be permanently removed.", "Delete")) return;
-    try { await this._call("conversations", "delete", { scope_id: this._scopeId, session_id: sessionId }); await this._refreshAfterMutation(); this._toast("Conversation deleted"); }
-    catch (err) { this._toast(`Unable to delete conversation: ${err.message || String(err)}`, true); }
+    try {
+      const response = await this._call("conversations", "delete", { scope_id: this._scopeId, session_id: sessionId });
+      if (response?.deleted_sessions && this._contentData?.sessions) {
+        const current = this._contentData.sessions;
+        const sessions = (current.sessions || []).filter((item) => item.session_id !== sessionId);
+        const removed = (current.sessions || []).length - sessions.length;
+        this._contentData = {
+          ...this._contentData,
+          sessions: {
+            ...current,
+            sessions,
+            returned: Math.max(0, Number(current.returned ?? current.sessions?.length ?? 0) - removed),
+            ...(Number.isFinite(Number(current.total))
+              ? {total: Math.max(0, Number(current.total) - removed)}
+              : {}),
+          },
+        };
+        if (removed) this._adjustConversationScopeCount(-1);
+        this._render();
+      }
+      this._toast("Conversation deleted");
+    } catch (err) {
+      this._toast(`Unable to delete conversation: ${err.message || String(err)}`, true);
+    }
   }
 
   _openReassign(memoryId) {
