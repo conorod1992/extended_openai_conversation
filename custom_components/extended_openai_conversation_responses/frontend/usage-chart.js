@@ -357,6 +357,9 @@ export function renderUsagePage(panel, result = {}) {
     const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
     return `<tr><td><time datetime="${panel._e(completed.datetime)}" title="${panel._e(completed.datetime)}">${panel._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${panel._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${panel._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
   }).join("");
+  const recentRunsBody = result.loading?.runs
+    ? `<tr><td colspan="7">Loading recent runs…</td></tr>`
+    : recentRows || `<tr><td colspan="7">No retained recent runs.</td></tr>`;
   const completeHistory = result.days?.complete_history === true;
   const dailyMismatch = completeHistory && usageLifetimeDiffersFromDaily(lifetime, history.allSummary);
   const availableText = history.availableStart
@@ -390,7 +393,7 @@ export function renderUsagePage(panel, result = {}) {
     <section class="content-card"><div class="chart-heading"><h2>Tokens by ${chartByMonth ? "month" : "recorded day"}</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Token usage for the selected period; cached input tokens are included within each total">${buckets.map((bucket) => renderUsageBar(panel, bucket, chartMax)).join("") || panel._empty("No daily usage is recorded in this period.")}</div>${chartAxis}<p class="chart-note"><strong>Cached input</strong> is input recognised as cached by the provider. It is included in total tokens and may be billed at a lower rate.</p></section>
     <section class="notice usage-history-note"><strong>Daily aggregate history: ${panel._e(availableText)}</strong><p>The selected period is ${panel._e(selectedText)}.${panel._e(partialText)}${panel._e(gapText)} “All available” therefore means all stored daily aggregate history, not necessarily the same value as lifetime usage.</p></section>
     ${renderUsageDiagnostics(panel, result)}
-    <section class="content-card"><h2>Recent runs</h2><p class="help">This table uses retained run detail and is not expanded by the selected aggregate-history period.</p><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody>${recentRows || `<tr><td colspan="7">No retained recent runs.</td></tr>`}</tbody></table></div></section>
+    <section class="content-card"><h2>Recent runs</h2><p class="help">This table uses retained run detail and is not expanded by the selected aggregate-history period.</p><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody>${recentRunsBody}</tbody></table></div></section>
     ${panel._data?.is_admin ? `<section class="content-card"><h2>Manage usage history</h2><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, selected-period, and lifetime aggregates are never removed by detail pruning.</small></section>` : ""}`;
 }
 
