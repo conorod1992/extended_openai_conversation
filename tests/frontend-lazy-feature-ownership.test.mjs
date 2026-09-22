@@ -82,17 +82,18 @@ panel._hass = {callWS: async (message) => {
   return {days:[]};
 }};
 await panel._call("usage","daily");
-assert.equal(usageCalls.length,2);
-assert.deepEqual(usageCalls.map((call)=>[call.entry_id,call.subentry_id]), [["entry-a","agent-a"],["entry-a","agent-a"]]);
-assert.equal(usageCalls[1].start_date,"2025-01-01");
-assert.match(panel._usage(), /Input footprint/);
+assert.equal(usageCalls.length,1);
+assert.deepEqual(usageCalls.map((call)=>[call.entry_id,call.subentry_id]), [["entry-a","agent-a"]]);
+assert.match(usageCalls[0].start_date,/^\d{4}-\d{2}-\d{2}$/);
+assert.match(usageCalls[0].end_date,/^\d{4}-\d{2}-\d{2}$/);
 assert.match(panel._usage(), /Usage period/);
+assert.doesNotMatch(panel._usage(), /Input footprint/);
 assert.match(panel._dialogs(), /id="usage-request-dialog"/);
 
 // A deleted installer cannot accidentally be revived through a route import.
 const routeSource = await readFile(frontend("management-route.js"),"utf8");
 assert.doesNotMatch(routeSource,/panel\.constructor|\.install[A-Z]/);
-for (const name of ["quiet-hours-ui.js","management-function-repair.js","usage-chart.js","usage-input-footprint.js","management-provider-credentials.js","debug-management.js"]) {
+for (const name of ["quiet-hours-ui.js","management-function-repair.js","usage-chart.js","management-provider-credentials.js","debug-management.js"]) {
   const source = await readFile(frontend(name),"utf8");
   assert.doesNotMatch(source,/prototype\.|Symbol\.for\(|export function install[A-Z]/,name);
 }

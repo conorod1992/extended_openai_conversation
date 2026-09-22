@@ -112,7 +112,7 @@ for (const route of ["overview", "guide"]) {
         "agent-config-editor", "agent-config-model-presentation", "management-configuration-feature",
         "management-configuration-guidance", "management-configuration-clarity", "management-guest-feature",
         "guest-mode-ui", "management-knowledge-feature", "management-memory-feature", "keyed-collection", "management-temporary-memory", "request-rules-ui",
-        "usage-chart", "usage-input-footprint", "management-feature-status", "backup-transfer-ui",
+        "usage-chart", "management-feature-status", "backup-transfer-ui",
       ];
       for (const name of absent) {
         const matches = file => file === `${name}.js` || file.startsWith(`${name}-`);
@@ -252,7 +252,7 @@ test("visiting lazy routes keeps the panel prototype fixed and feature imports l
   await page.goto(fixtureUrl("guide"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".guide-search")).toBeVisible();
-  for (const name of ["quiet-hours-ui.js", "management-function-repair.js", "usage-chart.js", "usage-input-footprint.js", "debug-panel.js", "management-provider-credentials.js"]) {
+  for (const name of ["quiet-hours-ui.js", "management-function-repair.js", "usage-chart.js", "debug-panel.js", "management-provider-credentials.js"]) {
     expect(assets.some((url) => url.endsWith(`/${name}`)), name).toBe(false);
   }
   const unchanged = await page.evaluate(async () => {
@@ -322,7 +322,7 @@ test("embedded Debug pins its assistant and binds paged view/copy once", async (
   await expectHarnessClean(page, errors);
 });
 
-test("Usage retry and request details bind once after repeated explicit binding", async ({page}) => {
+test("Usage request details bind once after repeated explicit binding", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/usage"));
   const panel = page.locator("extended-openai-management-panel");
@@ -333,16 +333,11 @@ test("Usage retry and request details bind once after repeated explicit binding"
     const original = hass.callWS.bind(hass);
     window.lazyUsageCalls = [];
     hass.callWS = async (message) => { window.lazyUsageCalls.push(message); return original(message); };
-    panel._inputFootprintError = "Please retry";
     panel._result = {...panel._result,runs:{runs:[{run_id:"run-one",successful:false,error_type:"Example",request_count:1}]}};
     panel._render(); panel._render();
     const usage = getRouteFeature("usage-maintenance/usage");
     usage.bindUsageDiagnostics(panel); usage.bindUsageDiagnostics(panel);
-    usage.bindInputFootprint(panel); usage.bindInputFootprint(panel);
   }, frontend);
-  await panel.locator("#retry-input-footprint").click();
-  await expect(panel.locator("#retry-input-footprint")).toHaveCount(0);
-  expect(await page.evaluate(() => window.lazyUsageCalls.filter((call)=>call.section === "usage" && call.action === "footprint").length)).toBe(1);
   await panel.locator(".usage-run-details").click();
   await expect(panel.locator("#usage-request-dialog")).toHaveJSProperty("open",true);
   expect(await page.evaluate(() => window.lazyUsageCalls.filter((call)=>call.section === "usage" && call.action === "requests").length)).toBe(1);

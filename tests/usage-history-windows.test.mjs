@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-import {loadAllUsageDays} from "../custom_components/extended_openai_conversation_responses/frontend/usage-data.js";
+import {loadAllUsageDays, loadUsageWindow} from "../custom_components/extended_openai_conversation_responses/frontend/usage-data.js";
 
 import {
   addUsageCalendarDays,
@@ -110,21 +110,37 @@ assert.doesNotMatch(
   "ordered non-overlapping backend pages should not be deduplicated or resorted in the frontend",
 );
 
-// Range changes are local renders over one loaded aggregate snapshot. Agent loads are
-// still generation-guarded, and the paging helper captures one agent identity before
-// issuing any page so a mid-load selector change cannot mix agents.
+// The cold Usage load is bounded to 30 days; wider history is fetched only when selected.
 const panelSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const usageSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-chart.js", import.meta.url), "utf8");
 const usageDataSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-data.js", import.meta.url), "utf8");
-const footprintSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-input-footprint.js", import.meta.url), "utf8");
 assert.match(panelSource, /const loadToken = \+\+this\._loadToken/);
 assert.match(panelSource, /if \(loadToken !== this\._loadToken\) return/);
 assert.match(usageDataSource, /const agent = panel\._selectedAgent\?\.\(\)/);
 assert.match(usageDataSource, /entry_id: agent\.entry_id, subentry_id: agent\.subentry_id/);
-assert.match(usageSource, /panel\._usageHistoryWindow = normalizeUsageWindow\(event\.target\.value\);\s*panel\._render\(\)/);
-assert.doesNotMatch(usageSource, /panel\._call\("usage", "daily"/);
-assert.doesNotMatch(footprintSource, /panel\._call\("usage", "footprint"/);
-assert.match(usageDataSource, /panel\._call\("usage", "footprint"\)/);
+assert.match(usageSource, /await loadUsageWindow\(panel, next/);
+assert.match(usageDataSource, /const DEFAULT_USAGE_WINDOW = "30"/);
+assert.doesNotMatch(usageDataSource, /panel\._call\("usage", "footprint"\)/);
+
+const usageCalls = [];
+const usagePanel = {
+  _agentId:"agent-a",
+  _hass:{config:{time_zone:"Europe/Dublin"}},
+  _selectedAgent:() => ({entry_id:"entry-a", subentry_id:"agent-a"}),
+  _call:async (_section, _action, extra) => {
+    usageCalls.push(extra);
+    return {days:[]};
+  },
+};
+await loadUsageWindow(usagePanel, "30", "2026-09-07");
+assert.deepEqual(usageCalls[0], {
+  entry_id:"entry-a", subentry_id:"agent-a",
+  start_date:"2026-08-09", end_date:"2026-09-07",
+});
+await loadUsageWindow(usagePanel, "30", "2026-09-07");
+assert.equal(usageCalls.length, 1, "in-page window revisits reuse the loaded aggregate range");
+await loadUsageWindow(usagePanel, "30", "2026-09-07", {useCache:false});
+assert.equal(usageCalls.length, 2, "route refreshes can bypass the in-page Usage cache");
 
 // The management-window feature must not replace or reinterpret Today / Month sensor semantics.
 const sensorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/sensor.py", import.meta.url), "utf8");

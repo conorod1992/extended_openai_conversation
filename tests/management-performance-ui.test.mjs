@@ -396,19 +396,18 @@ function panelFor(page = "assistant", subsection = "basics") {
   }};
   const loading = panel._loadSection();
 
-  for (const action of ["footprint", "summary", "daily", "runs", "retention"]) {
+  for (const action of ["summary", "daily", "runs", "retention"]) {
     assert.ok(
       started.includes(action),
-      `${action} starts before lazy Usage UI modules resolve`,
+      `${action} starts before the lazy Usage UI module resolves`,
     );
   }
   assert.equal(
     routeFeaturesReady("usage-maintenance/usage"),
     false,
-    "Usage data starts while the chart/footprint feature is still cold",
+    "Usage data starts while the chart feature is still cold",
   );
 
-  resolvers.get("footprint")?.({baseline:{characters:0}});
   resolvers.get("summary")?.({});
   resolvers.get("daily")?.({days:[]});
   resolvers.get("runs")?.({runs:[]});

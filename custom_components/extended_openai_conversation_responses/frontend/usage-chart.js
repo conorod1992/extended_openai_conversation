@@ -1,4 +1,5 @@
 import {tokenCount, tokenBreakdown, formatUsageNumber, formatUsageTimestamp} from "./usage-format.js";
+import {loadUsageWindow} from "./usage-data.js";
 export {loadAllUsageDays} from "./usage-data.js";
 export {tokenBreakdown, formatUsageNumber, formatUsageTimestamp} from "./usage-format.js";
 
@@ -344,16 +345,19 @@ export function renderUsagePage(panel, result = {}) {
     const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
     return `<tr><td><time datetime="${panel._e(completed.datetime)}" title="${panel._e(completed.datetime)}">${panel._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${panel._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${panel._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
   }).join("");
-  const dailyMismatch = usageLifetimeDiffersFromDaily(lifetime, history.allSummary);
+  const completeHistory = result.days?.complete_history === true;
+  const dailyMismatch = completeHistory && usageLifetimeDiffersFromDaily(lifetime, history.allSummary);
   const availableText = history.availableStart
-    ? `${formatUsageDate(history.availableStart)} to ${formatUsageDate(history.availableEnd)}`
+    ? `${formatUsageDate(history.availableStart)} to ${formatUsageDate(history.availableEnd)}${completeHistory ? "" : " (loaded window)"}`
     : "No recorded daily aggregates yet";
   const selectedText = history.id === "all"
     ? availableText
     : `${formatUsageDate(history.startDate)} to ${formatUsageDate(history.endDate)}`;
-  const gapText = dailyMismatch
-    ? " Lifetime counters contain accounting that is not represented exactly by the stored daily aggregates; this can include usage recorded before daily aggregate history became available."
-    : " Lifetime counters are stored separately from daily history even when their current totals agree.";
+  const gapText = !completeHistory
+    ? " Older daily aggregates are loaded only when you select a wider history window."
+    : dailyMismatch
+      ? " Lifetime counters contain accounting that is not represented exactly by the stored daily aggregates; this can include usage recorded before daily aggregate history became available."
+      : " Lifetime counters are stored separately from daily history even when their current totals agree.";
   const partialText = history.partialStart
     ? ` The first stored daily aggregate is ${formatUsageDate(history.availableStart)}, after the selected period begins.`
     : "";
@@ -381,9 +385,25 @@ export function renderUsagePage(panel, result = {}) {
 export function bindUsageDiagnostics(panel) {
   const root = panel.shadowRoot;
   const window = root.querySelector("#usage-window");
-  if (window) window.onchange = (event) => {
-    panel._usageHistoryWindow = normalizeUsageWindow(event.target.value);
-    panel._render();
+  if (window) window.onchange = async (event) => {
+    const previous = normalizeUsageWindow(panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW);
+    const next = normalizeUsageWindow(event.target.value);
+    if (next === previous) return;
+    const agentId = panel._agentId;
+    event.target.disabled = true;
+    try {
+      const days = await loadUsageWindow(panel, next, resultToday(panel._result || {}, panel));
+      if (panel._agentId !== agentId || panel._viewKey?.() !== "usage-maintenance/usage") return;
+      panel._usageHistoryWindow = next;
+      panel._result = {...(panel._result || {}), days};
+      panel._render();
+    } catch (err) {
+      if (panel._agentId === agentId && panel._viewKey?.() === "usage-maintenance/usage") {
+        event.target.disabled = false;
+        event.target.value = previous;
+        panel._toast?.(`Unable to load usage history: ${err?.message || String(err)}`, true);
+      }
+    }
   };
   root.querySelectorAll(".close-usage-requests").forEach((button) => {
     button.onclick = () => root.querySelector("#usage-request-dialog")?.close();

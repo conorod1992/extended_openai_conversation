@@ -15,13 +15,13 @@ from custom_components.extended_openai_conversation_responses import (
     conversation as agent_module,
     debug,
     entity as entity_module,
-    input_footprint,
     request as request_module,
     request_static_cache as cache,
     skill_runtime_availability,
 )
 from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
     estimate_prepared_request,
+    measure_provider_input,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
@@ -312,12 +312,9 @@ def test_prepared_measurement_reuses_wire_artifacts_without_mutation(
         {"role": "system", "content": "system"},
         {"role": "user", "content": "hello"},
     ]
-    expected = input_footprint.input_footprint_metrics(measured, tools)
-    assert usage.input_tokens == expected["context_safety_estimate_tokens"]
-    stored = agent.hass.data[input_footprint._LATEST_FOOTPRINTS][("entry", "agent")]
-    assert stored["characters"] == expected["characters"]
-    assert stored["attachments_excluded"] is True
-    assert "private-image" not in str(stored)
+    expected = measure_provider_input(measured, tools)[2]
+    assert usage.input_tokens == expected
+    assert agent.hass.data == {}
     assert (payload, tools) == original
 
 

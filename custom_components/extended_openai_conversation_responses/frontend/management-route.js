@@ -1,4 +1,3 @@
-import {loadInputFootprintData} from "./usage-data.js";
 import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule, startOverviewBroadcastSnapshot} from "./overview-page.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
@@ -42,12 +41,7 @@ const featureLoaders = {
   "capabilities/quiet-hours": () => import("./quiet-hours-ui.js"),
   "capabilities/functions": () => import("./management-function-repair.js"),
   "data-memory/conversations": () => import("./management-history-pagination.js"),
-  "usage-maintenance/usage": async () => {
-    const [usage, footprint] = await Promise.all([
-      import("./usage-chart.js"), import("./usage-input-footprint.js"),
-    ]);
-    return {...usage, ...footprint};
-  },
+  "usage-maintenance/usage": () => import("./usage-chart.js"),
   "usage-maintenance/request-debug": () => import("./debug-management.js"),
   "usage-maintenance/diagnostics": () => import("./management-provider-credentials.js"),
   "assistant/voice": () => import("./voice-identity-ui.js"),
@@ -237,15 +231,6 @@ async function loadRouteData(panel, silent, view, token) {
     panel._eocHistoryMode = "list";
     panel._eocHistoryQuery = "";
   }
-  if (view === "usage-maintenance/usage" && isCurrentLazyLoad(panel, view, token)) {
-    if (panel._inputFootprintAgentId !== panel._agentId) {
-      panel._inputFootprint = null;
-      panel._inputFootprintError = null;
-    }
-    // Data acquisition is owned below the lazy Usage UI boundary so this starts
-    // immediately while chart/footprint modules are still downloading.
-    void loadInputFootprintData(panel);
-  }
   return panel._loadSectionData(silent);
 }
 
@@ -317,13 +302,16 @@ export function startStoredOverviewPrefetch(
       throw err;
     },
   );
+  // Broadcast is useful once Overview is interactive, but it is not required
+  // to render the initial summary. Start it eagerly without making it a
+  // first-paint prerequisite.
+  startOverviewBroadcastSnapshot(panel);
   return {
     entryId,
     subentryId,
     promise: Promise.allSettled([
       overviewAsset,
       overviewSummary,
-      startOverviewBroadcastSnapshot(panel),
     ]),
   };
 }
