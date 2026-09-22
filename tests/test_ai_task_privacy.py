@@ -6,7 +6,7 @@ import pytest
 
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.extended_openai_conversation_responses.structured_output import (
+from custom_components.extended_openai_conversation_responses.ai_task import (
     parse_ai_task_structured_response,
 )
 

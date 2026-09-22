@@ -159,9 +159,9 @@ def _totals_from_storage(stored: dict[str, Any] | None) -> UsageTotals:
     }
     if isinstance(values_source.get("details"), dict):
         values["details"] = {
-            str(key): _integer(value)
+            str(key): amount
             for key, value in values_source["details"].items()
-            if _integer(value)
+            if (amount := _integer(value))
         }
     return UsageTotals(**values)
 
