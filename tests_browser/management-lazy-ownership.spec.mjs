@@ -275,6 +275,43 @@ test("agent changes and reconnects during a shared lazy import keep the newest d
   await expectHarnessClean(page, errors);
 });
 
+test("route hover warming waits for intent while focus and pointerdown stay immediate", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+
+  const result = await panel.evaluate(async (host) => {
+    const target = host.shadowRoot.querySelector('.top-nav button[data-page="capabilities"]');
+    const outside = host.shadowRoot.querySelector(".page-heading");
+    const warmed = [];
+    host._warmNavigationTarget = (node) => warmed.push(node.dataset.page || node.dataset.subsection);
+
+    target.dispatchEvent(new PointerEvent("pointerover", {bubbles:true, composed:true}));
+    target.dispatchEvent(new PointerEvent("pointerout", {bubbles:true, composed:true, relatedTarget:outside}));
+    await new Promise((resolve) => setTimeout(resolve, 130));
+    const cancelled = warmed.length;
+
+    target.dispatchEvent(new PointerEvent("pointerover", {bubbles:true, composed:true}));
+    await new Promise((resolve) => setTimeout(resolve, 130));
+    const afterIntent = [...warmed];
+
+    target.dispatchEvent(new PointerEvent("pointerdown", {bubbles:true, composed:true}));
+    const afterPointerDown = [...warmed];
+
+    target.dispatchEvent(new FocusEvent("focusin", {bubbles:true, composed:true}));
+    const afterFocus = [...warmed];
+
+    return {cancelled, afterIntent, afterPointerDown, afterFocus};
+  });
+
+  expect(result.cancelled).toBe(0);
+  expect(result.afterIntent).toEqual(["capabilities"]);
+  expect(result.afterPointerDown).toEqual(["capabilities", "capabilities"]);
+  expect(result.afterFocus).toEqual(["capabilities", "capabilities", "capabilities"]);
+  await expectHarnessClean(page, errors);
+});
+
 test("Settings Search metadata loads only on first search interaction", async ({page}) => {
   const errors = trackPageErrors(page);
   const assets = [];
