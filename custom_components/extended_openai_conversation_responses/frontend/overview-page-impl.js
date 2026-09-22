@@ -24,6 +24,7 @@ function statusLabel(status) {
 function broadcastMarkup(panel, snapshot) {
   if (!snapshot) return `<p class="empty">Loading Broadcast…</p>`;
   const satellites = snapshot.catalog?.satellites || [];
+  const satellitesById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
   const areas = new Map((snapshot.catalog?.areas || []).map((area) => [area.id, area.name]));
   const selected = panel._broadcastSelected || new Set();
   const wholeHome = Boolean(panel._broadcastWholeHome);
@@ -60,7 +61,7 @@ function broadcastMarkup(panel, snapshot) {
       <h3>Recent broadcasts</h3>
       ${history.length ? history.slice(0, 10).map((item) => {
         const deliveries = Object.entries(item.deliveries || {}).map(([entityId, delivery]) => {
-          const satellite = satellites.find((sat) => sat.id === entityId);
+          const satellite = satellitesById.get(entityId);
           return `<li><span>${panel._e(satellite?.name || entityId)}</span><strong>${panel._e(statusLabel(delivery.status))}</strong></li>`;
         }).join("");
         return `<article class="broadcast-history-item"><div><strong>${panel._e(item.message)}</strong><small>${panel._e(new Date(item.created_at).toLocaleString())}</small></div><ul>${deliveries}</ul></article>`;
