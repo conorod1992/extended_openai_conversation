@@ -173,19 +173,22 @@ async def test_ha_default_never_restores_history_between_distinct_ids() -> None:
     assert first.resumed is False and second.resumed is False
 
 
-def test_default_service_tier_is_interactive_standard_without_overriding_explicit_flex() -> (
-    None
-):
-    """Missing service-tier settings use default while explicit flex remains valid."""
+def test_service_tier_request_respects_model_specific_options() -> None:
+    """Standard remains universal while Flex is sent only for supported models."""
     defaults = agent_config.agent_config_defaults()
     assert defaults[CONF_SERVICE_TIER] == "default"
 
     missing = build_provider_request_snapshot({}, {"api_provider": "openai"})
-    explicit = build_provider_request_snapshot(
+    unsupported_flex = build_provider_request_snapshot(
         {CONF_SERVICE_TIER: "flex"}, {"api_provider": "openai"}
     )
+    supported_flex = build_provider_request_snapshot(
+        {"chat_model": "gpt-5.6-terra", CONF_SERVICE_TIER: "flex"},
+        {"api_provider": "openai"},
+    )
     assert missing.api_kwargs.get("service_tier") == "default"
-    assert explicit.api_kwargs.get("service_tier") == "flex"
+    assert "service_tier" not in unsupported_flex.api_kwargs
+    assert supported_flex.api_kwargs.get("service_tier") == "flex"
 
 
 def test_debug_summary_exposes_mode_without_treating_cache_reuse_as_continuity() -> (

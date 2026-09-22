@@ -206,7 +206,7 @@ async def test_check_stages_update_without_changing_active_catalog(
     result = await check_manager.async_check(force=True)
 
     assert result["source"] == "bundled"
-    assert result["schema_version"] == 2
+    assert result["schema_version"] == 3
     assert result["update_available"] is True
     assert result["available_catalog_version"] == value["catalog_version"]
     assert result["last_error"] is None

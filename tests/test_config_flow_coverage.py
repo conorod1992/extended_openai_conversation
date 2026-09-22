@@ -461,7 +461,7 @@ async def test_ai_task_handler_covers_basic_and_advanced_lifecycle_paths() -> No
     handler.async_step_advanced = None
     metadata = {
         "reasoning": {"supported": True, "efforts": ["low", "high"]},
-        "service_tier": True,
+        "service_tiers": ["auto", "default", "flex", "fast", "priority"],
     }
 
     def allowed(_model, parameter, effort):
@@ -517,7 +517,7 @@ async def test_ai_task_handler_covers_basic_and_advanced_lifecycle_paths() -> No
     handler._is_new = False
     handler.options = {CONF_CHAT_MODEL: "reasoning-model"}
     handler._temp_data = {CONF_CHAT_MODEL: "reasoning-model"}
-    metadata = {"reasoning": {"supported": False, "efforts": []}, "service_tier": False}
+    metadata = {"reasoning": {"supported": False, "efforts": []}, "service_tiers": []}
     with (
         patch.object(config_flow, "get_model_capabilities", return_value=metadata),
         patch.object(config_flow, "recommended_reasoning_effort", return_value=None),
