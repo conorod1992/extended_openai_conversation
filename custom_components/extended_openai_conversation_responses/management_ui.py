@@ -1383,6 +1383,7 @@ async def async_scopes_command(request: _ManagementRequest) -> dict[str, Any]:
             request.is_admin,
             request.entry_id,
             request.subentry_id,
+            scope_kind=str(request.message.get("scope_kind", "all")),
         )
     return _unknown_management_action(request)
 
@@ -2013,6 +2014,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("entry_id"): str,
         vol.Optional("subentry_id"): str,
         vol.Optional("scope_id"): str,
+        vol.Optional("scope_kind"): vol.In(["all", "archive", "memory", "temporary"]),
         vol.Optional("target_scope_id"): str,
         vol.Optional("temporary_scope_id"): str,
         vol.Optional("continuity_key"): str,
