@@ -1,4 +1,4 @@
-import {dirtyConfigurationDestinations} from "./management-setting-metadata.js";
+import {dirtyConfigurationDestinations} from "./management-config-destinations.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 
 function ensureStyles(panel) {

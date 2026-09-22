@@ -289,9 +289,11 @@ assert.match(capabilitiesIA, /_call\("knowledge", "set_enabled", \{enabled: desi
 assert.doesNotMatch(capabilitiesIA, /configuration", "validate"/);
 assert.doesNotMatch(capabilitiesIA, /from "\.\/agent-config-editor\.js"/);
 assert.match(navigationSearch, /Find a setting/);
-assert.match(navigationSearch, /subsection-nav/);
+assert.doesNotMatch(navigationSearch, /subsection-nav/);
+assert.match(panel, /_enhanceSubsectionNavigation\(\)/);
 assert.match(navigationSearch, /Current draft/);
 assert.match(navigationSearch, /configuration", "get"/);
 assert.match(navigationSearch, /_settingsSearchConfigAgentId === panel\._agentId/);
 assert.match(await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-route.js", import.meta.url), "utf8"), /management-capabilities-ia\.js/);
-assert.match(panel, /from "\.\/management-navigation-search\.js"/);
+assert.doesNotMatch(panel, /from "\.\/management-navigation-search\.js"/);
+assert.match(panel, /import\("\.\/management-navigation-search\.js"\)/);

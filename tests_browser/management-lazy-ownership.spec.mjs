@@ -161,7 +161,7 @@ for (const route of ["overview", "guide"]) {
         "agent-config-editor", "agent-config-tools", "agent-config-model-presentation", "management-configuration-feature",
         "management-configuration-guidance", "management-configuration-clarity", "management-guest-feature",
         "guest-mode-ui", "management-knowledge-feature", "management-memory-feature", "keyed-collection", "management-temporary-memory", "request-rules-ui",
-        "usage-chart", "management-feature-status", "backup-transfer-ui",
+        "usage-chart", "usage-data", "management-navigation-search", "management-setting-metadata", "management-feature-status", "backup-transfer-ui",
       ];
       for (const name of absent) {
         const matches = file => file === `${name}.js` || file.startsWith(`${name}-`);
@@ -272,6 +272,95 @@ test("agent changes and reconnects during a shared lazy import keep the newest d
   await expect(panel.locator("#guest-controls-enabled")).toBeChecked();
   await expect(panel.locator("#agent")).toHaveValue("second");
   expect(requests).toBe(1);
+  await expectHarnessClean(page, errors);
+});
+
+test("route hover warming waits for intent while focus and pointerdown stay immediate", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+
+  const result = await panel.evaluate(async (host) => {
+    const target = host.shadowRoot.querySelector('.top-nav button[data-page="capabilities"]');
+    const outside = host.shadowRoot.querySelector(".page-heading");
+    const warmed = [];
+    host._warmNavigationTarget = (node) => warmed.push(node.dataset.page || node.dataset.subsection);
+
+    target.dispatchEvent(new PointerEvent("pointerover", {bubbles:true, composed:true}));
+    target.dispatchEvent(new PointerEvent("pointerout", {bubbles:true, composed:true, relatedTarget:outside}));
+    await new Promise((resolve) => setTimeout(resolve, 130));
+    const cancelled = warmed.length;
+
+    target.dispatchEvent(new PointerEvent("pointerover", {bubbles:true, composed:true}));
+    await new Promise((resolve) => setTimeout(resolve, 130));
+    const afterIntent = [...warmed];
+
+    target.dispatchEvent(new PointerEvent("pointerdown", {bubbles:true, composed:true}));
+    const afterPointerDown = [...warmed];
+
+    target.dispatchEvent(new FocusEvent("focusin", {bubbles:true, composed:true}));
+    const afterFocus = [...warmed];
+
+    return {cancelled, afterIntent, afterPointerDown, afterFocus};
+  });
+
+  expect(result.cancelled).toBe(0);
+  expect(result.afterIntent).toEqual(["capabilities"]);
+  expect(result.afterPointerDown).toEqual(["capabilities", "capabilities"]);
+  expect(result.afterFocus).toEqual(["capabilities", "capabilities", "capabilities"]);
+  await expectHarnessClean(page, errors);
+});
+
+test("Settings Search metadata loads only on first search interaction", async ({page}) => {
+  const errors = trackPageErrors(page);
+  const assets = [];
+  page.on("request", request => assets.push(new URL(request.url()).pathname.split("/").pop()));
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  await expect(panel.locator("#settings-search")).toBeVisible();
+
+  const matches = (name) => assets.filter(file => file === `${name}.js` || file.startsWith(`${name}-`));
+  expect(matches("management-navigation-search")).toEqual([]);
+  expect(matches("management-setting-metadata")).toEqual([]);
+
+  await panel.locator("#settings-search").focus();
+  await expect.poll(() => matches("management-navigation-search").length).toBeGreaterThan(0);
+  await expect.poll(() => matches("management-setting-metadata").length).toBeGreaterThan(0);
+  const firstSearchAssets = [...matches("management-navigation-search"), ...matches("management-setting-metadata")];
+
+  await panel.locator("#settings-search").fill("assistant name");
+  await expect(panel.locator(".settings-result").first()).toBeVisible();
+  await panel.evaluate(host => host._navigate("guide"));
+  await panel.locator("#settings-search").focus();
+  expect([
+    ...matches("management-navigation-search"),
+    ...matches("management-setting-metadata"),
+  ]).toEqual(firstSearchAssets);
+  await expectHarnessClean(page, errors);
+});
+
+test("Usage data loader remains behind the Usage route", async ({page}) => {
+  const errors = trackPageErrors(page);
+  const assets = [];
+  page.on("request", request => assets.push(new URL(request.url()).pathname.split("/").pop()));
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+
+  const usageData = () => assets.filter(file => file === "usage-data.js" || file.startsWith("usage-data-"));
+  expect(usageData()).toEqual([]);
+
+  await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  expect(usageData().length).toBeGreaterThan(0);
+  const first = [...usageData()];
+
+  await panel.evaluate(host => host._navigate("guide"));
+  await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  expect(usageData()).toEqual(first);
   await expectHarnessClean(page, errors);
 });
 

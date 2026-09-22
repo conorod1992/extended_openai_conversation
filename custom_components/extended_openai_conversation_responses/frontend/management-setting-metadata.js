@@ -1,9 +1,5 @@
 import {SETTINGS_INDEX} from "./frontend-navigation.js";
-
-const EXTRA_CONFIG_OWNERS = Object.freeze({
-  functions: ["capabilities", "functions"],
-  function_groups: ["capabilities", "functions"],
-});
+export {dirtyConfigurationKeys, configurationDestinations, dirtyConfigurationDestinations} from "./management-config-destinations.js";
 
 const FRIENDLY_LABEL_OVERRIDES = Object.freeze({
   memory_retrieval_mode: "Relevance matching",
@@ -42,8 +38,6 @@ const FRIENDLY_VALUE_LABELS = Object.freeze({
     high: "High detail",
   }),
 });
-
-const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 
 const SETTING_BY_KEY = new Map();
 for (const item of SETTINGS_INDEX) {
@@ -89,39 +83,6 @@ export function refreshSettingEffects(panel, control) {
   if (!["memory_retrieval_mode", "local_intents_enabled"].includes(key)) return;
   const region = control.closest?.("[data-field]")?.querySelector("[data-setting-effects]");
   if (region) region.innerHTML = settingEffectMarkup(panel, key, controlValue(control), Boolean(control.disabled));
-}
-
-export function dirtyConfigurationKeys(panel) {
-  if (!panel?._configData?.config || !panel?._draft || panel._draftAgentId !== panel._agentId) return new Set();
-  if (panel._eocDirtyConfigKeys instanceof Set) {
-    return new Set(panel._eocDirtyConfigKeys);
-  }
-  // Compatibility fallback for callers that do not install the management state
-  // layer. Normal management-panel edits use the authoritative changed-key set.
-  const baseline = panel._configData.config;
-  const draft = panel._draft;
-  const keys = new Set([...Object.keys(baseline), ...Object.keys(draft)]);
-  const changed = new Set([...keys].filter((key) => !same(baseline[key], draft[key])));
-  if (panel._draftTitle !== panel._configData.title) changed.add("__title");
-  return changed;
-}
-
-export function configurationDestinations(panel) {
-  const destinations = new Set();
-  const unknown = [];
-  for (const key of dirtyConfigurationKeys(panel)) {
-    const owner = ownerForKey(key);
-    if (owner) destinations.add(`${owner[0]}/${owner[1]}`);
-    else unknown.push(key);
-  }
-  if (unknown.length && panel?._configDirty && panel?._page && panel?._subsection) {
-    destinations.add(`${panel._page}/${panel._subsection}`);
-  }
-  return destinations;
-}
-
-export function dirtyConfigurationDestinations(panel) {
-  return new Set([...configurationDestinations(panel), ...(panel?._unsavedState?.destinations() || [])]);
 }
 
 export function controlValue(control) {
