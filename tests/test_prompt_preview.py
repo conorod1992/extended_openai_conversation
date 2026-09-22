@@ -42,6 +42,7 @@ from custom_components.extended_openai_conversation_responses.management_request
 )
 from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
 from custom_components.extended_openai_conversation_responses.prompt import (
+    _DEFAULT_PROMPT_STABLE_PREFIX,
     render_effective_prompt,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
@@ -53,6 +54,7 @@ from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
 )
+from homeassistant.helpers import template as ha_template
 
 
 def test_new_agent_defaults_use_first_class_volatile_context() -> None:
@@ -116,6 +118,76 @@ def _setup_area_template_registries(hass) -> None:
     )
     hass.data[dr.DATA_REGISTRY] = SimpleNamespace(async_get=lambda _value: None)
     hass.data[er.DATA_REGISTRY] = SimpleNamespace(async_get=lambda _value: None)
+
+
+@pytest.mark.parametrize(
+    ("skills", "device_id", "workspace", "extra_system_prompt"),
+    [
+        ([], None, "/config/extended_openai", ""),
+        (
+            [SimpleNamespace(name="lighting", description="Lighting guidance")],
+            None,
+            "/config/extended_openai",
+            "",
+        ),
+        ([], "device-1", "/config/custom-workspace", ""),
+        ([], None, "/config/extended_openai", "Prefer terse spoken responses."),
+    ],
+    ids=["baseline", "skills", "device-workspace", "extra-system-prompt"],
+)
+def test_default_prompt_segmentation_is_byte_identical(
+    hass,
+    skills,
+    device_id,
+    workspace,
+    extra_system_prompt,
+) -> None:
+    """Internal cache segmentation must not change the provider-visible prompt."""
+    _setup_area_template_registries(hass)
+    for key in (
+        "template.environment",
+        "template.environment_limited",
+        "template.environment_strict",
+    ):
+        hass.data[key].globals["extended_openai"] = {
+            "working_directory": lambda value=workspace: value,
+        }
+
+    user_input = SimpleNamespace(extra_system_prompt=extra_system_prompt)
+    variables = {
+        "ha_name": hass.config.location_name,
+        "exposed_entities": [],
+        "current_device_id": device_id,
+        "user_input": user_input,
+        "skills": skills,
+    }
+    legacy_rendered = str(
+        ha_template.Template(DEFAULT_PROMPT, hass).async_render(
+            variables,
+            parse_result=False,
+        )
+    )
+
+    options = agent_config_defaults()
+    options[CONF_CURRENT_DATETIME_ENABLED] = False
+    options[CONF_EXPOSED_ENTITIES_ENABLED] = False
+    result = render_effective_prompt(
+        hass,
+        options,
+        exposed_entities=[],
+        current_device_id=device_id,
+        user_input=user_input,
+        skills=skills,
+    )
+
+    assert result.text == legacy_rendered
+    assert [section.key for section in result.sections] == [
+        "default_prompt_static",
+        "user_prompt",
+    ]
+    assert result.sections[0].volatility == "stable"
+    assert result.sections[0].text == _DEFAULT_PROMPT_STABLE_PREFIX
+    assert result.sections[1].volatility == "mixed"
 
 
 def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last(

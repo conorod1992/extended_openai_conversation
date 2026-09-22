@@ -59,6 +59,8 @@ _DEFAULT_CURRENT_DATETIME_CONTEXT = """## Current date and time
 {{ now().isoformat(timespec='seconds') }}
 """
 
+_DEFAULT_PROMPT_STABLE_PREFIX = DEFAULT_PROMPT.split("{%- if skills %}", 1)[0].rstrip()
+
 
 @dataclass(frozen=True, slots=True)
 class PromptSection:
@@ -387,12 +389,43 @@ def render_effective_prompt(
             )
         )
 
-    # The user's template remains one indivisible block. Stable integration-owned
-    # guidance precedes it so volatile Jinja in this block does not invalidate the
-    # reusable provider prefix before that guidance.
-    sections.append(
-        PromptSection("user_prompt", "Rendered user prompt", rendered_prompt, "mixed")
-    )
+    # Keep arbitrary user templates indivisible: Jinja control flow makes generic
+    # segmentation unsafe. The integration-owned default has a known invariant
+    # leading block, so expose only that prefix as a stable internal section while
+    # preserving the exact rendered prompt text when the sections are reassembled.
+    if raw_prompt == DEFAULT_PROMPT and rendered_prompt.startswith(
+        _DEFAULT_PROMPT_STABLE_PREFIX
+    ):
+        remainder = rendered_prompt[len(_DEFAULT_PROMPT_STABLE_PREFIX) :]
+        if remainder.startswith("\n"):
+            sections.append(
+                PromptSection(
+                    "default_prompt_static",
+                    "Default prompt instructions",
+                    _DEFAULT_PROMPT_STABLE_PREFIX,
+                    "stable",
+                )
+            )
+            sections.append(
+                PromptSection(
+                    "user_prompt",
+                    "Rendered user prompt",
+                    remainder[1:],
+                    "mixed",
+                )
+            )
+        else:
+            sections.append(
+                PromptSection(
+                    "user_prompt", "Rendered user prompt", rendered_prompt, "mixed"
+                )
+            )
+    else:
+        sections.append(
+            PromptSection(
+                "user_prompt", "Rendered user prompt", rendered_prompt, "mixed"
+            )
+        )
 
     # Missing keys are treated as legacy/migrated data and remain off. New and
     # reset configurations persist the explicit integration default of True.
