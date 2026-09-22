@@ -170,7 +170,7 @@ export const MUTATIONS = new Map([
   ["guest_mode", new Set(["save_policy", "update", "disable"])],
   ["knowledge", new Set(["create", "update", "delete"])],
   ["memories", new Set(["add", "update", "delete", "temporary_delete", "temporary_update", "reassign_legacy"])],
-  ["request_rules", new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate", "move"])],
+  ["request_rules", new Set(["settings", "defaults", "wording_groups", "create", "update", "delete", "duplicate", "move"])],
   ["tools", new Set(["save", "delete", "set_enabled", "save_group", "delete_group"])],
   ["usage", new Set(["clear_details"])],
 ]);
