@@ -121,7 +121,7 @@ function renderGuideTopic(panel, topic) {
 function openGuideTopic(panel, topicId) {
   const root = panel.shadowRoot;
   const target = root.querySelector(`#guide-${CSS.escape(topicId)}`);
-  if (!target) return;
+  if (!target || target.hidden) return;
   const previous = panel._openGuideTopicElement;
   if (previous && previous !== target) previous.open = false;
   target.open = true;
