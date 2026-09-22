@@ -10,6 +10,7 @@ const editor = await import(frontend("agent-config-editor-base.js"));
 const editorSource = await readFile(frontend("agent-config-editor-base.js"), "utf8");
 const panelSource = await readFile(frontend("management-panel.js"), "utf8");
 const rulesSource = await readFile(frontend("request-rules-ui-impl.js"), "utf8");
+const rulesCoreSource = await readFile(frontend("request-rules-ui-core.js"), "utf8");
 const actionsSource = await readFile(frontend("management-actions.js"), "utf8");
 
 assert.deepEqual(
@@ -44,25 +45,30 @@ assert.match(
 
 assert.match(
   rulesSource,
-  /let editorRevision = result\.revision/,
-  "Request Rule edits must use the revision from the listed state",
+  /state\.revision=panel\._result\?\.revision/,
+  "Request Rule edits must capture the revision from the listed state",
 );
 for (const action of ["duplicate", "delete"]) {
   assert.match(
-    actionsSource,
-    new RegExp(`panel\\._call\\("request_rules", "${action}", [^\\n]*revision`),
+    rulesCoreSource,
+    new RegExp(`panel\\._call\\("request_rules","${action}",\\{[^\\n]*revision`),
     `${action} mutation must carry a Request Rule revision`,
   );
 }
 assert.match(
-  actionsSource,
-  /panel\._call\("request_rules", "update", [\s\S]{0,260}revision/,
+  rulesCoreSource,
+  /panel\._call\("request_rules","update",\{[^\n]*revision/,
   "enable/disable mutation must carry a Request Rule revision",
 );
 assert.match(
   rulesSource,
-  /panel\._editingRuleId \? "update" : "create"[\s\S]{0,220}rule,revision/,
-  "create/update form submission must carry a Request Rule revision",
+  /const action=panel\._editingRuleId\?"update":"create"[\s\S]{0,320}revision:state\.revision/,
+  "create/update form submission must carry the captured Request Rule revision",
+);
+assert.doesNotMatch(
+  actionsSource,
+  /rule-duplicate|rule-delete|rule-enabled/,
+  "Request Rule collection mutations should no longer live in the global correctness layer",
 );
 
 assert.match(
