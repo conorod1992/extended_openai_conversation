@@ -214,6 +214,64 @@ test("configuration live metadata is fetched only by routes that use it", async 
   await expectHarnessClean(page, errors);
 });
 
+test("Conversation History paints the selected scope before secondary data settles", async ({page}) => {
+  await page.goto(fixtureUrl("overview"));
+  await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const host = browserHarness.panel;
+    const original = host._hass.callWS;
+    const releases = {};
+    const started = new Set();
+    host._hass.callWS = async message => {
+      const key = message.section === "scopes"
+        ? "scopes"
+        : message.section === "configuration" && message.action === "get"
+          ? "config"
+          : message.section === "conversations" && message.action === "active"
+            ? "active"
+            : null;
+      if (key) {
+        started.add(key);
+        await new Promise(resolve => { releases[key] = resolve; });
+      }
+      return original(message);
+    };
+
+    const pending = host._navigate("data-memory", "conversations");
+    while (!["scopes", "config", "active"].every(key => started.has(key))) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const primaryVisible = Boolean(host.shadowRoot.querySelector("#archive-query")) && host._busy === false;
+    const loadingSettings = host.shadowRoot.textContent.includes("Loading archive settings");
+    const scopeKinds = browserHarness.calls
+      .filter(call => call.section === "scopes" && call.action === "catalog")
+      .map(call => call.scope_kind);
+
+    releases.scopes();
+    releases.config();
+    releases.active();
+    await pending;
+    for (let turn = 0; turn < 20 && host._contentData?.loading?.active; turn++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    host._hass.callWS = original;
+    return {
+      primaryVisible,
+      loadingSettings,
+      scopeKinds,
+      activeLoading: host._contentData?.loading?.active,
+      configReady: Boolean(host._configData),
+    };
+  });
+
+  expect(result.primaryVisible).toBe(true);
+  expect(result.loadingSettings).toBe(true);
+  expect(result.scopeKinds.at(-1)).toBe("archive");
+  expect(result.activeLoading).toBe(false);
+  expect(result.configReady).toBe(true);
+});
+
 test("conversation configuration starts before a pending scope catalog finishes", async ({page}) => {
   await page.goto(fixtureUrl("overview"));
   await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
