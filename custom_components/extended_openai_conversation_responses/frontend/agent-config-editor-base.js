@@ -6,7 +6,7 @@ import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
 import {saveBarMarkup} from "./unsaved-state.js";
 import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
-import {bindHelp, helpButton, helpPopover, helpSearchTerms} from "./agent-config-help.js";
+import {bindHelp, helpButton, helpPopover} from "./agent-config-help.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
@@ -37,7 +37,7 @@ const CHOICE_LABELS = Object.freeze({
   }),
 });
 export const configurationChoiceLabel = (key, item) => friendlySettingValue(key, item.value) || CHOICE_LABELS[key]?.[item.value] || item.label;
-const settingSearch = (label, description, key, helpKey = null) => `${label} ${description} ${key} ${helpKey ? helpSearchTerms(helpKey) : ""} ${settingSearchAliases(key)}`.toLowerCase();
+const settingSearch = (label, description, key) => `${label} ${description} ${key} ${settingSearchAliases(key)}`.toLowerCase();
 const labelRow = (panel, label, key, helpKey = null, strong = false, value = undefined, disabled = false) => {
   const text = panel._e(friendlySettingLabel(key) || label);
   return `<span class="setting-label-row"><label for="config-${key}">${strong ? `<strong>${text}</strong>` : text}</label>${helpKey ? helpButton(panel, helpKey) : ""}${settingBadgesMarkup(panel, key, value, disabled)}</span>`;

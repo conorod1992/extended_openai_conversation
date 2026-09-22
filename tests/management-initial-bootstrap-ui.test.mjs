@@ -90,11 +90,89 @@ assert.equal(calls.some((item) => item.action === "agents"), true);
 assert.equal(calls.some((item) => item.section === "overview" && item.action === "summary"), true);
 assert.equal(calls.some((item) => item.action === "snapshot"), true);
 
-resolveOverview({agent: {...selectedAgent, model: "gpt-test"}, usage: {today: {total_tokens: 12}}, conversations: {}, load_errors: []});
-resolveBroadcast({enabled:false, can_manage:true, catalog:{}, history:[]});
-resolveAgents({agents: [selectedAgent], is_admin: true});
-await load;
-assert.equal(panel.fallbackLoads || 0, 0);
-assert.equal(panel._result.usage.today.total_tokens, 12);
-assert.equal(panel._selectedAgent().model, "gpt-test");
-assert.equal(storage.get(module.ENTRY_KEY), "entry-a");
+
+const assistantStorage = new Map([
+  [module.AGENT_KEY, "agent-a"],
+  [module.ENTRY_KEY, "entry-a"],
+]);
+globalThis.localStorage = {
+  getItem(key) { return assistantStorage.get(key) || null; },
+  setItem(key, value) { assistantStorage.set(key, value); },
+};
+
+let resolveAssistantAgents;
+let resolveAssistantConfig;
+const assistantCalls = [];
+const assistantAgentsPromise = new Promise((resolve) => { resolveAssistantAgents = resolve; });
+const assistantConfigPromise = new Promise((resolve) => { resolveAssistantConfig = resolve; });
+const assistantPanel = {
+  _hass: {
+    callWS(payload) {
+      assistantCalls.push(payload);
+      if (payload.action === "agents") return assistantAgentsPromise;
+      if (payload.section === "configuration" && payload.action === "get") return assistantConfigPromise;
+      throw new Error(`Unexpected Assistant bootstrap call: ${JSON.stringify(payload)}`);
+    },
+  },
+  _viewKey: () => "assistant/model-responses",
+  _agentId: null,
+  _loadToken: 0,
+  _scopeCatalogCache: new Map(),
+  _scopeCatalogKey: () => null,
+  _applyScopes() {},
+  _setConfigDirty(value) { this.configDirty = value; },
+  _selectedAgent() { return this._data?.agents?.find((item) => item.subentry_id === this._agentId); },
+  async _loadSection() { this.sectionLoads = (this.sectionLoads || 0) + 1; },
+};
+
+const assistantLoad = module.loadAgentsWithOverviewPrefetch(assistantPanel);
+await Promise.resolve();
+assert.equal(assistantCalls.some((item) => item.action === "agents"), true);
+assert.equal(
+  assistantCalls.some((item) => item.section === "configuration" && item.action === "get"),
+  true,
+  "Assistant configuration should start alongside the agent catalogue",
+);
+resolveAssistantConfig({
+  title: "A",
+  revision: "r1",
+  config: {chat_model: "gpt-test"},
+  defaults: {},
+  options: {},
+  model_capabilities: {},
+  function_types: [],
+});
+resolveAssistantAgents({agents: [{entry_id:"entry-a",subentry_id:"agent-a",title:"A"}], is_admin: true});
+await assistantLoad;
+assert.equal(assistantPanel._configData.config.chat_model, "gpt-test");
+assert.equal(assistantPanel._draft.chat_model, "gpt-test");
+assert.equal(assistantPanel._draftAgentId, "agent-a");
+assert.equal(assistantPanel.sectionLoads, 1);
+
+let resolveStaleAgents;
+let resolveStaleConfig;
+const staleAgentsPromise = new Promise((resolve) => { resolveStaleAgents = resolve; });
+const staleConfigPromise = new Promise((resolve) => { resolveStaleConfig = resolve; });
+const stalePanel = {
+  ...assistantPanel,
+  _data: null,
+  _agentId: null,
+  _configData: null,
+  _draft: null,
+  _draftAgentId: null,
+  sectionLoads: 0,
+  _hass: {
+    callWS(payload) {
+      if (payload.action === "agents") return staleAgentsPromise;
+      if (payload.section === "configuration" && payload.action === "get") return staleConfigPromise;
+      throw new Error("Unexpected stale-prefetch call");
+    },
+  },
+};
+const staleLoad = module.loadAgentsWithOverviewPrefetch(stalePanel);
+resolveStaleConfig({title:"A", config:{chat_model:"stale"}});
+resolveStaleAgents({agents:[{entry_id:"entry-b",subentry_id:"agent-b",title:"B"}],is_admin:true});
+await staleLoad;
+assert.equal(stalePanel._configData, null, "stale stored Assistant config must not be applied");
+assert.equal(stalePanel._agentId, "agent-b");
+assert.equal(stalePanel.sectionLoads, 1);

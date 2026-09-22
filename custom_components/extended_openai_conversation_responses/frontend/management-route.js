@@ -310,11 +310,45 @@ export function startStoredOverviewPrefetch(
   return {
     entryId,
     subentryId,
+    overviewAsset,
+    overviewSummary,
     promise: Promise.allSettled([
       overviewAsset,
       overviewSummary,
     ]),
   };
+}
+
+export function startStoredAssistantConfigPrefetch(panel, preferredSubentryId) {
+  const view = panel._viewKey?.();
+  if (!String(view || "").startsWith("assistant/")) return null;
+  const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
+  const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
+  if (!subentryId || !entryId) return null;
+  const request = panel._hass.callWS({
+    type: WS_TYPE,
+    section: "configuration",
+    action: "get",
+    entry_id: entryId,
+    subentry_id: subentryId,
+  });
+  return {
+    view,
+    entryId,
+    subentryId,
+    promise: request.then(
+      (value) => ({status: "fulfilled", value}),
+      (reason) => ({status: "rejected", reason}),
+    ),
+  };
+}
+
+function applyPrefetchedAssistantConfig(panel, prefetch, configData) {
+  panel._configData = configData;
+  panel._draft = JSON.parse(JSON.stringify(configData.config));
+  panel._draftTitle = configData.title;
+  panel._draftAgentId = prefetch.subentryId;
+  panel._setConfigDirty?.(false);
 }
 
 export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
@@ -331,6 +365,7 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
     );
   }
   const prefetch = startStoredOverviewPrefetch(panel, preferred, routeAsset);
+  const assistantConfigPrefetch = startStoredAssistantConfigPrefetch(panel, preferred);
 
   panel._data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
   panel._baseScopes = panel._data.scopes || [];
@@ -345,22 +380,56 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   if (previousAgentId !== panel._agentId) panel._scopeId = null;
   panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
 
+  const overviewSelected = panel._viewKey?.() === "overview" && Boolean(selected);
+  if (overviewSelected) {
+    // The agent catalogue is enough for a useful first Overview. Do not hide it
+    // behind the full Overview module or storage-backed summary.
+    panel._contentData = null;
+    panel._result = null;
+    panel._error = null;
+    panel._busy = false;
+    panel._render();
+  }
+
+  if (
+    assistantConfigPrefetch
+    && selected?.subentry_id === assistantConfigPrefetch.subentryId
+    && selected?.entry_id === assistantConfigPrefetch.entryId
+    && panel._viewKey?.() === assistantConfigPrefetch.view
+  ) {
+    const settled = await assistantConfigPrefetch.promise;
+    if (
+      panel._viewKey?.() === assistantConfigPrefetch.view
+      && panel._agentId === assistantConfigPrefetch.subentryId
+      && settled.status === "fulfilled"
+    ) {
+      applyPrefetchedAssistantConfig(panel, assistantConfigPrefetch, settled.value);
+    }
+  }
+
   if (
     prefetch
     && selected?.subentry_id === prefetch.subentryId
     && selected?.entry_id === prefetch.entryId
-    && panel._viewKey?.() === "overview"
+    && overviewSelected
   ) {
-    const [assetResult, overviewResult] = await prefetch.promise;
+    const overviewResult = await prefetch.overviewSummary.then(
+      (value) => ({status: "fulfilled", value}),
+      (reason) => ({status: "rejected", reason}),
+    );
     if (panel._viewKey?.() !== "overview" || panel._loadToken !== initialToken
         || panel._agentId !== prefetch.subentryId) return;
-    if (assetResult.status === "fulfilled" && overviewResult.status === "fulfilled") {
+    if (overviewResult.status === "fulfilled") {
       applyOverviewResult(panel, overviewResult.value);
       return;
     }
+    // A speculative stored-ID request can fail after an agent was recreated.
+    // Keep the useful snapshot visible while the authoritative route load retries.
+    await panel._loadSection(true);
+    return;
   }
 
-  await panel._loadSection();
+  await panel._loadSection(overviewSelected);
 }
 
 
