@@ -6,7 +6,6 @@ const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
   "capabilities/web-skills",
   "data-memory/conversations",
-  "usage-maintenance/retention",
 ]);
 // These views consume the normal full configuration snapshot. Retention uses a
 // separate projection; unauthorised readers must never speculate on config.
@@ -72,6 +71,7 @@ const featureLoaders = {
   "capabilities/functions": () => import("./management-function-repair.js"),
   "data-memory/conversations": () => import("./management-history-pagination.js"),
   "usage-maintenance/usage": () => import("./usage-chart.js"),
+  "usage-maintenance/retention": () => import("./retention-settings-ui.js"),
   "usage-maintenance/request-debug": () => import("./debug-management.js"),
   "usage-maintenance/diagnostics": () => import("./management-provider-credentials.js"),
   "assistant/voice": () => import("./voice-identity-core.js"),
