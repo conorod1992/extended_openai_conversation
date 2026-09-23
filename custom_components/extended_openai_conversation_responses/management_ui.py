@@ -54,6 +54,8 @@ from .const import (
     CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
     CONF_SHARED_MEMORY_MODE,
+    CONF_USAGE_REQUEST_RETENTION_DAYS,
+    CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_SHARED_MEMORY_MODE,
     DOMAIN,
@@ -89,7 +91,12 @@ from .ha_llm_tools import (
 )
 from .helpers import get_exposed_entities
 from .knowledge import async_get_knowledge, knowledge_source_as_dict
-from .local_intents import CONF_LOCAL_INTENT_EXCLUSIONS, local_handling_snapshot
+from .local_intents import (
+    CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
+    CONF_LOCAL_INTENT_EXCLUSIONS,
+    CONF_LOCAL_INTENTS_ENABLED,
+    local_handling_snapshot,
+)
 from .management_browser import async_browse_memories
 from .management_configuration_guidance import (
     _configuration_action,
@@ -147,6 +154,23 @@ _UI_SETUP = f"{DOMAIN}.management_ui_setup"
 _LIVE_CONFIGURATION_METADATA = frozenset(
     {"local_handling", "exposed_attribute_catalog"}
 )
+# These are the persisted fields that can change the local handling projection.
+_LOCAL_HANDLING_CONFIG_FIELDS = frozenset(
+    {
+        CONF_LOCAL_INTENTS_ENABLED,
+        CONF_LOCAL_INTENT_EXCLUSIONS,
+        CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
+    }
+)
+
+
+def _local_handling_config_changed(
+    current: Mapping[str, Any], candidate: Mapping[str, Any], updates: Mapping[str, Any]
+) -> bool:
+    return any(
+        key in updates and current.get(key) != candidate.get(key)
+        for key in _LOCAL_HANDLING_CONFIG_FIELDS
+    )
 
 
 @lru_cache(maxsize=1)
@@ -745,6 +769,8 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     updates = message.get("config", {})
     if not isinstance(updates, dict):
         raise HomeAssistantError("config must be an object")
+    if message.get("revision") is not None:
+        _require_agent_config_revision(subentry, message["revision"])
 
     validation: dict[str, Any] = _validation_result(
         lambda: merge_agent_config(subentry.data, updates)
@@ -755,6 +781,9 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     normalized = validation["config"]
     persisted = preserve_legacy_guest_policy(dict(subentry.data), deepcopy(normalized))
     saved_title = title.strip() if isinstance(title, str) else subentry.title
+    refresh_local_handling = _local_handling_config_changed(
+        subentry.data, persisted, updates
+    )
     hass.config_entries.async_update_subentry(
         entry,
         subentry,
@@ -766,14 +795,16 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     saved = {
         "title": saved_title,
         "config": snapshot,
+        "revision": _agent_config_revision_from_snapshot(snapshot, saved_title),
         "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
-        "local_handling": local_handling_snapshot(
+    }
+    if refresh_local_handling:
+        saved["local_handling"] = local_handling_snapshot(
             hass,
             str(entry.entry_id),
             str(subentry.subentry_id),
             snapshot.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
-        ),
-    }
+        )
     return {
         "valid": True,
         "errors": {},
@@ -802,6 +833,17 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     _require_admin(is_admin)
     if action == "save":
         return await _async_save_configuration(request)
+    if action == "retention_get":
+        config = _cached_agent_config_snapshot_for_read(subentry.data)
+        fields = (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS)
+        options = _cached_configuration_options()
+        return {
+            "title": subentry.title,
+            "revision": _agent_config_revision_from_snapshot(config, subentry.title),
+            "config": {key: config[key] for key in fields},
+            "options": {key: deepcopy(options[key]) for key in fields},
+            "projection": "retention",
+        }
     if action == "get":
         started = perf_counter()
         phase = perf_counter()
@@ -894,22 +936,27 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             if requested_title is not None
             else validate_agent_title(subentry.title)
         )
+        refresh_local_handling = _local_handling_config_changed(
+            subentry.data, normalized, updates
+        )
         hass.config_entries.async_update_subentry(
             entry, subentry, data=normalized, title=saved_title
         )
         snapshot = agent_config_snapshot(normalized)
-        return {
+        result = {
             "title": saved_title,
             "revision": _agent_config_revision_from_snapshot(snapshot, saved_title),
             "config": snapshot,
             "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
-            "local_handling": local_handling_snapshot(
+        }
+        if refresh_local_handling:
+            result["local_handling"] = local_handling_snapshot(
                 hass,
                 entry_id,
                 subentry_id,
                 snapshot.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
-            ),
-        }
+            )
+        return result
     if action == "duplicate":
         _require_admin(is_admin)
         requested_title = message.get("title")

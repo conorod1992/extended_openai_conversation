@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 import yaml
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import (
     exposed_attributes as ea,
@@ -28,6 +29,33 @@ class _FakeConfigEntries:
         self, _entry: Any, subentry: Any, *, data: dict[str, Any], **_kwargs: Any
     ) -> None:
         subentry.data = data
+
+
+@pytest.mark.asyncio
+async def test_repair_configuration_patch_rejects_stale_revision_before_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry, subentry = _repairable_agent()
+    before = deepcopy(subentry.data)
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    monkeypatch.setattr(
+        management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
+    )
+    with pytest.raises(HomeAssistantError, match="changed"):
+        await management_ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            {
+                "section": "function_repair",
+                "action": "configuration_save",
+                "entry_id": entry.entry_id,
+                "subentry_id": subentry.subentry_id,
+                "revision": "stale",
+                "config": {"max_tokens": 700},
+            },
+        )
+    assert subentry.data == before
 
 
 class _States:

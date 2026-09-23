@@ -21,7 +21,6 @@ assert.equal(routeModule.routeAssetKind("assistant/basics"), "agent-config");
 assert.equal(routeModule.routeAssetKind("assistant/advanced"), "agent-config");
 assert.equal(routeModule.routeAssetKind("capabilities/functions"), "agent-config-tools");
 assert.equal(routeModule.routeAssetKind("data-memory/conversations"), "agent-config");
-assert.equal(routeModule.routeAssetKind("usage-maintenance/backup-restore"), "agent-config");
 assert.equal(routeModule.routeAssetKind("usage-maintenance/retention"), "agent-config");
 assert.equal(routeModule.routeAssetKind("capabilities/request-rules"), "request-rules");
 assert.equal(routeModule.routeAssetKind("overview"), null);

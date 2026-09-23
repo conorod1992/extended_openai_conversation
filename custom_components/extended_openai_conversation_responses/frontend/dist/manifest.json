@@ -1,13 +1,13 @@
 {
   "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js": {
-    "file": "assets/agent-config-editor-BKtf_mKe.js",
+    "file": "assets/agent-config-editor-DZ0DgJDV.js",
     "name": "agent-config-editor",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js",
     "isDynamicEntry": true,
     "imports": [
       "_management-core-BBNaLQ58.js",
-      "_management-state-safety-4hYI3sb6.js",
-      "_configuration-inputs-Dnv0K221.js",
+      "_management-state-safety-Cp4nBQNU.js",
+      "_configuration-inputs-DlDK9Wai.js",
       "_management-setting-metadata-B96Nj749.js",
       "_model-catalog-DnZxAzlR.js",
       "_management-decision-guidance-zYazqxmH.js"
@@ -29,13 +29,13 @@
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js": {
-    "file": "assets/agent-config-tools-C2vbYss3.js",
+    "file": "assets/agent-config-tools-CMt4KtW4.js",
     "name": "agent-config-tools",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js",
     "isDynamicEntry": true,
     "imports": [
       "_management-core-BBNaLQ58.js",
-      "_configuration-inputs-Dnv0K221.js",
+      "_configuration-inputs-DlDK9Wai.js",
       "_management-setting-metadata-B96Nj749.js",
       "_management-decision-guidance-zYazqxmH.js",
       "_tool-yaml-editor-adapter-BGSKTua7.js",
@@ -47,13 +47,28 @@
       "../custom_components/extended_openai_conversation_responses/frontend/ha-llm-tools.js"
     ]
   },
+  "../custom_components/extended_openai_conversation_responses/frontend/backup-route-ui.js": {
+    "file": "assets/backup-route-ui-BCXXJGgX.js",
+    "name": "backup-route-ui",
+    "src": "../custom_components/extended_openai_conversation_responses/frontend/backup-route-ui.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_management-core-BBNaLQ58.js",
+      "_backup-transfer-shell-DB0Wj8i4.js"
+    ],
+    "dynamicImports": [
+      "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js",
+      "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js"
+    ]
+  },
   "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js": {
-    "file": "assets/backup-transfer-ui-Cr1qQF39.js",
+    "file": "assets/backup-transfer-ui-DQXl0TdZ.js",
     "name": "backup-transfer-ui",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js",
     "isDynamicEntry": true,
     "imports": [
-      "_management-decision-guidance-zYazqxmH.js"
+      "_management-decision-guidance-zYazqxmH.js",
+      "_backup-transfer-shell-DB0Wj8i4.js"
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/debug-management.js": {
@@ -75,12 +90,12 @@
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/exposed-attributes-ui.js": {
-    "file": "assets/exposed-attributes-ui-DO2oUNpz.js",
+    "file": "assets/exposed-attributes-ui-DU6AIClp.js",
     "name": "exposed-attributes-ui",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/exposed-attributes-ui.js",
     "isDynamicEntry": true,
     "imports": [
-      "_management-state-safety-4hYI3sb6.js"
+      "_management-state-safety-Cp4nBQNU.js"
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/guest-mode-ui.js": {
@@ -109,23 +124,23 @@
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js": {
-    "file": "assets/management-capabilities-ia-CamzsP_d.js",
+    "file": "assets/management-capabilities-ia-DLmqWnEH.js",
     "name": "management-capabilities-ia",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js",
     "isDynamicEntry": true,
     "imports": [
-      "_management-route-D5SR6FN_.js"
+      "_management-route-CtJ7nnp7.js"
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/management-configuration-feature.js": {
-    "file": "assets/management-configuration-feature-D8CYEqrz.js",
+    "file": "assets/management-configuration-feature-d_gTLE2t.js",
     "name": "management-configuration-feature",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/management-configuration-feature.js",
     "isDynamicEntry": true,
     "imports": [
       "_management-core-BBNaLQ58.js",
-      "_management-route-D5SR6FN_.js",
-      "_configuration-inputs-Dnv0K221.js"
+      "_management-route-CtJ7nnp7.js",
+      "_configuration-inputs-DlDK9Wai.js"
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/management-decision-guidance.js": {
@@ -219,15 +234,15 @@
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js": {
-    "file": "assets/management-DDQOe1FF.js",
+    "file": "assets/management-2vSNB1u_.js",
     "name": "management",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js",
     "isEntry": true,
     "imports": [
       "_management-config-destinations-DxwItxVl.js",
       "_management-core-BBNaLQ58.js",
-      "_management-state-safety-4hYI3sb6.js",
-      "_management-route-D5SR6FN_.js"
+      "_management-state-safety-Cp4nBQNU.js",
+      "_management-route-CtJ7nnp7.js"
     ],
     "dynamicImports": [
       "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js",
@@ -249,13 +264,13 @@
     "src": "../custom_components/extended_openai_conversation_responses/frontend/management.css"
   },
   "../custom_components/extended_openai_conversation_responses/frontend/memory-settings-ui.js": {
-    "file": "assets/memory-settings-ui-BzgB0oid.js",
+    "file": "assets/memory-settings-ui-Du9Sf-Qe.js",
     "name": "memory-settings-ui",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/memory-settings-ui.js",
     "isDynamicEntry": true,
     "imports": [
-      "_management-state-safety-4hYI3sb6.js",
-      "_configuration-inputs-Dnv0K221.js",
+      "_management-state-safety-Cp4nBQNU.js",
+      "_configuration-inputs-DlDK9Wai.js",
       "_management-setting-metadata-B96Nj749.js",
       "_management-decision-guidance-zYazqxmH.js"
     ]
@@ -364,13 +379,17 @@
     "src": "../custom_components/extended_openai_conversation_responses/frontend/voice-identity-ui.js",
     "isDynamicEntry": true
   },
-  "_configuration-inputs-Dnv0K221.js": {
-    "file": "assets/configuration-inputs-Dnv0K221.js",
+  "_backup-transfer-shell-DB0Wj8i4.js": {
+    "file": "assets/backup-transfer-shell-DB0Wj8i4.js",
+    "name": "backup-transfer-shell"
+  },
+  "_configuration-inputs-DlDK9Wai.js": {
+    "file": "assets/configuration-inputs-DlDK9Wai.js",
     "name": "configuration-inputs",
     "imports": [
       "_management-config-destinations-DxwItxVl.js",
       "_management-core-BBNaLQ58.js",
-      "_management-state-safety-4hYI3sb6.js",
+      "_management-state-safety-Cp4nBQNU.js",
       "_management-setting-metadata-B96Nj749.js"
     ]
   },
@@ -424,8 +443,8 @@
     "file": "assets/management-feature-status-68CfvZrp.js",
     "name": "management-feature-status"
   },
-  "_management-route-D5SR6FN_.js": {
-    "file": "assets/management-route-D5SR6FN_.js",
+  "_management-route-CtJ7nnp7.js": {
+    "file": "assets/management-route-CtJ7nnp7.js",
     "name": "management-route",
     "imports": [
       "_management-core-BBNaLQ58.js"
@@ -436,7 +455,7 @@
       "../custom_components/extended_openai_conversation_responses/frontend/management-overview-health-clarity.js",
       "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js",
       "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js",
-      "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js",
+      "../custom_components/extended_openai_conversation_responses/frontend/backup-route-ui.js",
       "../custom_components/extended_openai_conversation_responses/frontend/management-feature-status.js",
       "../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js",
       "../custom_components/extended_openai_conversation_responses/frontend/management-configuration-feature.js",
@@ -462,12 +481,12 @@
       "_management-config-destinations-DxwItxVl.js"
     ]
   },
-  "_management-state-safety-4hYI3sb6.js": {
-    "file": "assets/management-state-safety-4hYI3sb6.js",
+  "_management-state-safety-Cp4nBQNU.js": {
+    "file": "assets/management-state-safety-Cp4nBQNU.js",
     "name": "management-state-safety",
     "imports": [
       "_management-core-BBNaLQ58.js",
-      "_management-route-D5SR6FN_.js"
+      "_management-route-CtJ7nnp7.js"
     ]
   },
   "_model-catalog-DnZxAzlR.js": {

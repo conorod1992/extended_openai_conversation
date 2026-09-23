@@ -17,6 +17,7 @@ function freshState() {
         chat_model: "gpt-5-mini", api_mode: "responses", max_tokens: 1200,
         max_function_calls_per_conversation: 8, function_tool_error_recovery: true,
         continue_conversation: "never",
+        usage_request_retention_days: 30, usage_run_retention_days: 30,
         functions: [{spec: {name: "baseline_tool", description: "Baseline browser fixture Function Tool", parameters: {type: "object", properties: {}}}, function: {type: "script", sequence: []}, enabled: true}],
         function_groups: [{id: "baseline-group", name: "Baseline group", description: "Baseline browser fixture Function Group", loading_mode: "on_demand", functions: ["baseline_tool"], guest_allowed: false, enabled: true}],
       },
@@ -25,6 +26,8 @@ function freshState() {
         continue_conversation: [{value: "never", label: "Never"}, {value: "always", label: "Always"}],
         reasoning_effort: [{value: "low", label: "Low"}, {value: "medium", label: "Medium"}, {value: "high", label: "High"}],
         memory_retrieval_mode: [{value: "lexical", label: "Lightweight lexical"}, {value: "hybrid", label: "Hybrid semantic"}],
+        usage_request_retention_days: [{value: 7, label: "7 days"}, {value: 30, label: "30 days"}],
+        usage_run_retention_days: [{value: 7, label: "7 days"}, {value: 30, label: "30 days"}],
       },
       defaults: {}, model_capabilities: {}, local_handling: {supported: true, intents: [], pipeline_conflicts: []},
     },
@@ -159,6 +162,10 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       delete result.exposed_attribute_catalog;
       return result;
     }
+    if (key === "configuration/retention_get") {
+      const {title, revision, config, options} = state.configuration;
+      return {title, revision, projection:"retention", config:{usage_request_retention_days:config.usage_request_retention_days, usage_run_retention_days:config.usage_run_retention_days}, options:{usage_request_retention_days:clone(options.usage_request_retention_days), usage_run_retention_days:clone(options.usage_run_retention_days)}};
+    }
     if (key === "configuration/live_metadata") {
       const requested = new Set(message.metadata_keys || []);
       return {
@@ -175,8 +182,11 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     if (key === "configuration/validate") return {valid: true, errors: {}, model_capabilities: {}};
     if (key === "configuration/update" || key === "configuration/save") {
       if (failConfigurationOnce && !state.failedConfigurationOnce) { state.failedConfigurationOnce = true; save(); throw new Error("Fixture rejected configuration save once"); }
-      state.configuration = {...state.configuration, title: message.title, revision: `${state.configuration.revision}x`, config: clone(message.config)};
-      state.agent.title = message.title; state.agent.model = message.config.chat_model; counts(); save();
+      if (message.revision && message.revision !== state.configuration.revision) throw new Error("Saved data changed; reload before saving.");
+      const updates = clone(message.config);
+      for (const field of ["usage_request_retention_days", "usage_run_retention_days"]) if (field in updates) updates[field] = Number(updates[field]);
+      state.configuration = {...state.configuration, title: message.title ?? state.configuration.title, revision: `${state.configuration.revision}x`, config: {...state.configuration.config, ...updates}};
+      state.agent.title = state.configuration.title; state.agent.model = state.configuration.config.chat_model; counts(); save();
       return {valid: true, errors: {}, ...clone(state.configuration), agent: clone(state.agent)};
     }
 
