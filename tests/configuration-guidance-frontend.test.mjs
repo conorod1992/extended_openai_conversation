@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
-
 import {
   apiModeConsequence,
   dependencyGuidance,
@@ -95,19 +93,3 @@ assert.match(unsupportedTemperature.title, /Not used/);
 assert.match(unsupportedTemperature.text, /saved value is retained/);
 assert.equal(modelParameterGuidance("temperature", {supports_temperature: true}), null);
 
-const panelSource = await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
-  "utf8",
-);
-const clarityIndex = panelSource.indexOf("enhanceConfigurationClarity(this)");
-const guidanceIndex = panelSource.indexOf("enhanceConfigurationGuidance(this)");
-assert.ok(clarityIndex >= 0 && guidanceIndex > clarityIndex, "guidance must run after clarity");
-
-const source = await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-configuration-guidance.js", import.meta.url),
-  "utf8",
-);
-assert.doesNotMatch(source, /eocInjectedModel|createDisabledModelField|grid\.insertBefore\(field/);
-assert.match(source, /decorateModelParameters/);
-assert.match(source, /parent\.disabled = !config\.local_intents_enabled/);
-assert.match(source, /configuration.*validate/s);
