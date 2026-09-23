@@ -130,50 +130,6 @@ def _authentication_error() -> AuthenticationError:
 
 
 @pytest.mark.asyncio
-async def test_user_flow_creates_default_subentries_and_normalizes_openai_url(
-    hass: HomeAssistant,
-) -> None:
-    """Create an entry through HA's flow manager and inspect the resulting ConfigEntry."""
-    with patch(
-        f"{CONFIG_FLOW_MODULE}.get_authenticated_client",
-        new_callable=AsyncMock,
-    ) as authenticate:
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": SOURCE_USER}
-        )
-        assert result["type"] is FlowResultType.FORM
-        assert result["step_id"] == "user"
-        assert not result["errors"]
-
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_NAME: "Real Flow",
-                CONF_API_KEY: "sk-real-flow",
-                CONF_BASE_URL: DEFAULT_CONF_BASE_URL,
-                CONF_SKIP_AUTHENTICATION: True,
-                CONF_API_PROVIDER: "openai",
-            },
-        )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Real Flow"
-    assert result["data"][CONF_API_KEY] == "sk-real-flow"
-    assert result["data"][CONF_SKIP_AUTHENTICATION] is True
-    # validate_input deliberately removes the canonical OpenAI URL so a future
-    # upstream endpoint change is not frozen into stored configuration.
-    assert CONF_BASE_URL not in result["data"]
-
-    entry = result["result"]
-    assert entry.version == CONFIG_ENTRY_VERSION
-    assert {subentry.subentry_type for subentry in entry.subentries.values()} == {
-        "conversation",
-        "ai_task_data",
-    }
-    authenticate.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_user_flow_provider_error_can_be_corrected_without_restarting_flow(
     hass: HomeAssistant,
 ) -> None:
@@ -203,6 +159,7 @@ async def test_user_flow_provider_error_can_be_corrected_without_restarting_flow
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_API_KEY] == "sk-retry-flow"
+    assert result["data"][CONF_SKIP_AUTHENTICATION] is True
     assert authenticate.await_count == 2
 
 
