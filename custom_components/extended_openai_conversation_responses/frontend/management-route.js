@@ -1,5 +1,5 @@
 import {ensureGuideModule} from "./guide-page.js";
-import {ensureOverviewModule, startOverviewBroadcastSnapshot} from "./overview-page.js";
+import {ensureOverviewModule} from "./overview-page.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
@@ -325,7 +325,6 @@ export function loadRoute(panel, silent = false) {
   const feature = routeFeaturePromise(view);
   const asset = coreAssetPromise(view);
   warmSupplementalRouteFeatures(panel, view, token);
-  if (view === "overview") startOverviewBroadcastSnapshot(panel);
   if (!feature && !asset) return loadRouteData(panel, silent, view, token);
   let loadData = () => loadRouteData(panel, silent, view, token);
   if (feature && DATA_FEATURES.has(view)) {
@@ -391,10 +390,6 @@ export function startStoredOverviewPrefetch(
       throw err;
     },
   );
-  // Broadcast is useful once Overview is interactive, but it is not required
-  // to render the initial summary. Start it eagerly without making it a
-  // first-paint prerequisite.
-  startOverviewBroadcastSnapshot(panel);
   return {
     entryId,
     subentryId,
@@ -433,6 +428,7 @@ export function startStoredConfigurationPrefetch(panel, preferredSubentryId) {
 
 function applyPrefetchedConfiguration(panel, prefetch, configData) {
   panel._configData = configData;
+  panel._rememberCleanConfiguration?.(configData, prefetch.subentryId);
   panel._draft = JSON.parse(JSON.stringify(configData.config));
   panel._draftTitle = configData.title;
   panel._draftAgentId = prefetch.subentryId;

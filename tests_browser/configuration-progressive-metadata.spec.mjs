@@ -49,6 +49,25 @@ test("production bundle paints resident configuration before metadata completes"
   await expect(panel.locator('[data-local-intent-exclusion][value="HassTurnOn"]')).toHaveCount(1);
 });
 
+test("same-revision live metadata survives unrelated navigation", async ({page}) => {
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+  await panel.evaluate(host => host._navigate("capabilities", "home-assistant"));
+  await expect(panel.locator('[data-config="local_intents_enabled"]')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(
+    call => call.section === "configuration" && call.action === "live_metadata",
+  ).length)).toBe(1);
+  await expect.poll(() => panel.evaluate(host => host._eocLiveMetadataCache?.has("local_handling"))).toBe(true);
+  await panel.locator('.top-nav button[data-page="usage-maintenance"]').click();
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  await panel.evaluate(host => host._navigate("capabilities", "home-assistant"));
+  await expect(panel.locator('[data-config="local_intents_enabled"]')).toBeVisible();
+  expect(await page.evaluate(() => browserHarness.calls.filter(
+    call => call.section === "configuration" && call.action === "live_metadata",
+  ).length)).toBe(1);
+});
+
 test("intent warming reuses one request when its route opens", async ({page}) => {
   await page.goto(fixtureUrl("assistant/basics"));
   const panel = page.locator("extended-openai-management-panel");

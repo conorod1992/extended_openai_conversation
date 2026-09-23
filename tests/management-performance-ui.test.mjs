@@ -89,6 +89,53 @@ function panelFor(page = "assistant", subsection = "basics") {
 
 {
   const panel = panelFor();
+  const reads = [];
+  panel._hass = {callWS: async (message) => {
+    reads.push(message.subentry_id);
+    return {title:message.subentry_id, revision:message.subentry_id === "agent-a" ? "r1" : "r2",
+      config:{model:message.subentry_id}};
+  }};
+  await panel._loadConfigDraft();
+  assert.deepEqual(reads, ["agent-a"]);
+  panel._draft.model = "unsaved";
+  panel._configDirty = true;
+  panel._clearConfigDraft();
+  await panel._loadConfigDraft();
+  assert.deepEqual(reads, ["agent-a"], "clean saved configuration is reused without another read");
+  assert.equal(panel._draft.model, "agent-a", "discarded edits never enter the clean snapshot");
+
+  panel._clearConfigDraft();
+  panel._agentId = "agent-b";
+  await panel._loadConfigDraft();
+  assert.deepEqual(reads, ["agent-a", "agent-b"], "another agent gets its own configuration");
+  panel._clearConfigDraft();
+  panel._agentId = "agent-a";
+  await panel._loadConfigDraft();
+  assert.deepEqual(reads, ["agent-a", "agent-b"], "the original agent can reuse its own revision");
+  panel._eocLiveMetadataCache = new Map([["local_handling", {
+    agentId:"agent-a", revision:"r1", epoch:panel._eocLiveMetadataEpoch || 0,
+    value:{intents:["cached"]},
+  }]]);
+  panel._clearConfigDraft();
+  await panel._loadConfigDraft();
+  assert.equal(panel._applyConfigurationLiveMetadata("capabilities/home-assistant"), true);
+  assert.deepEqual(panel._configData.local_handling.intents, ["cached"],
+    "same-revision live metadata survives unrelated navigation");
+
+  const key = panel._configurationSnapshotKey("agent-a", "full");
+  panel._cleanConfigSnapshots.get(key).loadedAt -= 31_000;
+  panel._eocLiveMetadataCache = new Map([["local_handling", {agentId:"agent-a", revision:"r1", epoch:0, value:{}}]]);
+  panel._clearConfigDraft();
+  panel._hass.callWS = async () => ({title:"A updated", revision:"r3", config:{model:"new"}});
+  await panel._loadConfigDraft();
+  assert.equal(panel._draft.model, "new");
+  assert.equal(panel._eocLiveMetadataCache.size, 0, "a new revision invalidates prior metadata");
+  panel._invalidateAfterMutation("agent-a", "tools", "save");
+  assert.equal(panel._cleanConfigSnapshots.has(key), false, "tool mutations invalidate config reuse");
+}
+
+{
+  const panel = panelFor();
   panel._configData = {title:"A", config:{model:"cached"}};
   panel._draft = {model:"cached"};
   panel._draftTitle = "A";
@@ -236,13 +283,15 @@ function panelFor(page = "assistant", subsection = "basics") {
   }};
   const loading = panel._loadAgents();
 
-  for (const action of ["summary", "snapshot", "agents"]) {
+  for (const action of ["summary", "agents"]) {
     assert.equal(
       calls.filter((call) => call.action === action).length,
       1,
       `${action} starts before agents resolves`,
     );
   }
+  assert.equal(calls.filter((call) => call.action === "snapshot").length, 0,
+    "Broadcast waits until the principal Overview is rendered");
 
   resolvers.get("agents")({agents, scopes:initialScopes, is_admin:true});
   resolvers.get("summary")({
@@ -250,12 +299,6 @@ function panelFor(page = "assistant", subsection = "basics") {
     usage:{today:{}, month:{}},
     conversations:{},
     load_errors:[],
-  });
-  resolvers.get("snapshot")({
-    enabled:false,
-    can_manage:true,
-    catalog:{satellites:[], areas:[]},
-    history:[],
   });
   await loading;
   assert.equal(panel._result?.load_errors?.length, 0);
@@ -552,6 +595,53 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.equal(panel._result.usage.today.total_tokens, 4);
   panel._invalidateAfterMutation("agent-a", "configuration", "save");
   assert.equal(panel._sectionCache.has(key), false, "configuration mutation invalidates Overview");
+}
+
+{
+  const panel = panelFor("usage-maintenance", "usage");
+  const reads = new Map();
+  let releaseSummary;
+  panel._hass = {callWS: async (message) => {
+    reads.set(message.action, (reads.get(message.action) || 0) + 1);
+    if (message.action === "summary") {
+      if (reads.get("summary") === 2) return new Promise((resolve) => { releaseSummary = resolve; });
+      return {lifetime:{total_tokens:10}};
+    }
+    if (message.action === "daily") return {days:[]};
+    if (message.action === "runs") return {runs:[]};
+    if (message.action === "retention") return {};
+    throw new Error(`Unexpected usage action ${message.action}`);
+  }};
+  await panel._loadSection();
+  const key = panel._sectionCacheKey();
+  const loadedAt = panel._eocSectionCacheTimes.get(key);
+  await panel._loadSection();
+  assert.equal(reads.get("summary"), 1, "fresh Usage summary is reused");
+  assert.equal(reads.get("daily"), 1, "fresh daily chart is reused");
+  assert.equal(reads.get("runs"), 2, "recent details still refresh on revisit");
+  assert.equal(panel._eocSectionCacheTimes.get(key), loadedAt, "cache visits do not slide its TTL");
+  panel._eocSectionCacheTimes.set(key, Date.now() - 31_000);
+  const refresh = panel._loadSection();
+  await Promise.resolve();
+  assert.equal(panel._busy, false, "stale aggregates remain visible while refreshing");
+  assert.equal(panel._result.summary.lifetime.total_tokens, 10);
+  while (!releaseSummary) await Promise.resolve();
+  releaseSummary({lifetime:{total_tokens:12}});
+  await refresh;
+  assert.equal(panel._result.summary.lifetime.total_tokens, 12);
+  panel._eocSectionCacheTimes.set(key, Date.now() - 31_000);
+  panel._hass.callWS = async (message) => {
+    if (message.action === "summary") throw new Error("summary unavailable");
+    if (message.action === "daily") return {days:[]};
+    if (message.action === "runs") return {runs:[]};
+    if (message.action === "retention") return {};
+  };
+  await panel._loadSection();
+  assert.equal(panel._result.summary.lifetime.total_tokens, 12,
+    "a failed revalidation does not erase useful cached aggregates");
+  assert.equal(panel._result.load_errors[0].key, "summary");
+  panel._invalidateAfterMutation("agent-a", "usage", "clear_details");
+  assert.equal(panel._sectionCache.has(key), false, "detail clearing invalidates the prior latest response");
 }
 
 {

@@ -8,7 +8,7 @@ import {
   refreshPageSaveBar,
   savePageChanges,
 } from "./management-page-drafts.js";
-import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS} from "./management-cache.js";
+import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} from "./management-dialogs.js";
 import {renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, isAgentMutation, syncAgentPicker} from "./management-actions.js";
@@ -234,6 +234,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._configDirty = false;
     this._configData = null;
     this._draft = null;
+    this._cleanConfigSnapshots = new Map();
     this._draftTitle = null;
     this._draftAgentId = null;
     this._sectionCache = new Map();
@@ -407,9 +408,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _clearConfigDraft() {
     this._setConfigDirty(false);
-    this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
-    this._eocLiveMetadataCache = new Map();
-    this._eocLiveMetadataPending = new Map();
     this._configData = null;
     this._draft = null;
     this._draftTitle = null;
@@ -419,6 +417,29 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._settingsSearchConfigAgentId = null;
     this._settingsSearchConfigError = null;
     this._settingsSearchConfigErrorAgentId = null;
+  }
+
+  _configurationSnapshotKey(agentId = this._agentId, projection = "full") {
+    const agent = this._data?.agents?.find((item) => item.subentry_id === agentId);
+    return agent ? `${agent.entry_id}|${agentId}|${projection}` : null;
+  }
+
+  _rememberCleanConfiguration(configData, agentId = this._agentId) {
+    if (!configData?.config || configData.revision == null) return;
+    const projection = configData.projection === "retention" ? "retention" : "full";
+    const key = this._configurationSnapshotKey(agentId, projection);
+    if (key) this._cleanConfigSnapshots.set(key, {result: configData, loadedAt: Date.now()});
+  }
+
+  _invalidateCleanConfiguration(agentId) {
+    if (!agentId) return;
+    for (const projection of ["full", "retention"]) {
+      const key = this._configurationSnapshotKey(agentId, projection);
+      if (key) this._cleanConfigSnapshots.delete(key);
+    }
+    this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
+    this._eocLiveMetadataCache?.clear();
+    this._eocLiveMetadataPending?.clear();
   }
 
   _configurationDirtyDestinations() {
@@ -669,6 +690,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _invalidateAfterMutation(agentId, section, action) {
+    if (agentId && ((section === "configuration" && ["save", "update", "import"].includes(action))
+        || (section === "function_repair" && action === "configuration_save")
+        || (section === "tools" && TOOL_MUTATIONS.has(action))
+        || (section === "backup" && action === "restore"))) {
+      this._invalidateCleanConfiguration(agentId);
+    }
+    if (agentId && section === "usage" && action === "clear_details") {
+      const key = `${agentId}|usage-maintenance/usage`;
+      this._sectionCache.delete(key);
+      this._eocSectionCacheTimes.delete(key);
+    }
     if (agentId && isAgentMutation(section, action)) {
       this._cacheGeneration += 1;
       this._sectionCache.delete(`${agentId}|overview`);
@@ -715,7 +747,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _sectionCacheKey(view = this._viewKey()) {
     const agentId = this._agentId;
     if (!agentId) return null;
-    if (["overview", "capabilities/request-rules", "data-memory/knowledge"].includes(view)) return `${agentId}|${view}`;
+    if (["overview", "capabilities/request-rules", "data-memory/knowledge", "usage-maintenance/usage"].includes(view)) return `${agentId}|${view}`;
     return null;
   }
 
@@ -829,14 +861,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const needsScopes = ["data-memory/memories", "data-memory/conversations"].includes(view);
     const cache = readSectionCache(this, view);
     const cacheKey = cache.key;
-    const showCached = cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge"].includes(view));
+    const showCached = cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge", "usage-maintenance/usage"].includes(view));
     if (showCached) {
       this._contentData = null;
-      this._result = cache.result;
+      this._result = view === "usage-maintenance/usage"
+        ? {...cache.result, loading: {runs: true, retention: true}} : cache.result;
       this._error = null;
       this._busy = false;
       this._render();
-      if (cache.fresh) return;
+      if (cache.fresh && view !== "usage-maintenance/usage") return;
       // Expired read-only summaries/lists remain useful while refreshing.
       silent = true;
     }
@@ -885,6 +918,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       let result;
       let contentData = null;
       let usageSecondary = null;
+      let usagePrimaryComplete = false;
       const usageDetailGeneration = this._usageDetailGeneration || 0;
       let guestDetailsSecondary = null;
       if (view === "overview") {
@@ -896,8 +930,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (agent) Object.assign(this._selectedAgent(), agent);
         result = overview;
       } else if (view === "usage-maintenance/usage") {
-        const summaryPromise = this._call("usage", "summary");
-        const daysPromise = this._call("usage", "daily");
+        const summaryPromise = cache.fresh && cache.result?.summary
+          ? Promise.resolve(cache.result.summary) : this._call("usage", "summary");
+        const daysPromise = cache.fresh && cache.result?.days
+          ? Promise.resolve(cache.result.days) : this._call("usage", "daily");
         const settle = (promise) => promise.then(
           (value) => ({status: "fulfilled", value}),
           (reason) => ({status: "rejected", reason}),
@@ -905,8 +941,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const runsPromise = settle(this._call("usage", "runs", { limit: 30 }));
         const retentionPromise = settle(this._call("usage", "retention"));
         const primary = await Promise.allSettled([summaryPromise, daysPromise]);
+        const settledPrimary = settledSectionResult([["summary", "Usage summary"], ["days", "Daily usage"]], primary);
+        usagePrimaryComplete = settledPrimary.load_errors.length === 0;
         result = {
-          ...settledSectionResult([["summary", "Usage summary"], ["days", "Daily usage"]], primary),
+          ...(showCached ? cache.result : {}),
+          ...settledPrimary,
           loading: {runs: true, retention: true},
         };
         usageSecondary = [
@@ -1023,7 +1062,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (cacheGeneration !== this._cacheGeneration) return;
       this._contentData = contentData;
       this._result = result;
-      writeSectionCache(this, cacheKey, result);
+      if (view === "usage-maintenance/usage") {
+        if (usagePrimaryComplete && result?.summary && result?.days && !cache.fresh) {
+          writeSectionCache(this, cacheKey, {summary: result.summary, days: result.days});
+        }
+      } else writeSectionCache(this, cacheKey, result);
       this._error = null;
       if (guestDetailsSecondary) {
         void guestDetailsSecondary.then((settled) => {
@@ -1134,8 +1177,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const record = {agentId, epoch, revision, activeToken, promise: null};
       record.promise = this._call("configuration", "live_metadata", {metadata_keys: [key]})
         .then(metadata => {
+          const cleanRevision = this._cleanConfigSnapshots.get(this._configurationSnapshotKey(agentId, "full"))?.result?.revision;
           if (agentId !== this._agentId || epoch !== (this._eocLiveMetadataEpoch || 0)
-              || revision !== this._configData?.revision || this._draftAgentId !== agentId
+              || (revision !== this._configData?.revision && revision !== cleanRevision)
               || !Object.hasOwn(metadata, key)) return;
           this._eocLiveMetadataCache.set(key, {agentId, epoch, revision, value: metadata[key]});
           if (this._viewKey() !== view || record.activeToken !== this._loadToken) return;
@@ -1160,12 +1204,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         || (this._configData.projection === "retention" && this._viewKey() !== "usage-maintenance/retention")) {
       const agentId = this._agentId;
       const loadToken = this._loadToken;
-      const configData = await this._call("configuration", this._viewKey() === "usage-maintenance/retention" ? "retention_get" : "get");
+      const projection = this._viewKey() === "usage-maintenance/retention" ? "retention" : "full";
+      const key = this._configurationSnapshotKey(agentId, projection);
+      const cached = key ? this._cleanConfigSnapshots.get(key) : null;
+      const fresh = cached && Date.now() - cached.loadedAt <= CLEAN_CONFIG_TTL_MS;
+      const configData = fresh ? cached.result
+        : await this._call("configuration", projection === "retention" ? "retention_get" : "get");
       if (agentId !== this._agentId || loadToken !== this._loadToken) return;
+      const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
+      if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);
       this._configData = configData;
-      this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
-      this._eocLiveMetadataCache = new Map();
-      this._eocLiveMetadataPending = new Map();
+      if (!fresh) this._rememberCleanConfiguration(configData, agentId);
       this._draft = JSON.parse(JSON.stringify(configData.config));
       this._draftTitle = configData.title;
       this._draftAgentId = agentId;
@@ -1981,6 +2030,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._result = {...this._result, summary: {...this._result.summary, latest: null},
         runs: {...this._result.runs, runs: [], total: 0},
         loading: {...this._result.loading, runs: false}};
+      writeSectionCache(this, this._sectionCacheKey(), {
+        summary: this._result.summary,
+        days: this._result.days,
+      });
       this.shadowRoot.querySelector("#usage-request-dialog")?.close();
       this._render();
       this._toast("Recent usage details cleared");

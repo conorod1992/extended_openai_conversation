@@ -90,10 +90,11 @@ const panel = {
 
 const load = module.loadAgentsWithOverviewPrefetch(panel);
 await Promise.resolve();
-assert.equal(calls.length, 3);
+assert.equal(calls.length, 2);
 assert.equal(calls.some((item) => item.action === "agents"), true);
 assert.equal(calls.some((item) => item.section === "overview" && item.action === "summary"), true);
-assert.equal(calls.some((item) => item.action === "snapshot"), true);
+assert.equal(calls.some((item) => item.action === "snapshot"), false,
+  "secondary Broadcast does not compete with the initial Overview reads");
 
 
 const assistantStorage = new Map([

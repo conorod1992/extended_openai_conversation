@@ -76,6 +76,7 @@ async function saveConfiguration(panel, button) {
     const {valid: _valid, errors: _errors, agent, ...saved} = result;
     panel._configData = {...panel._configData, ...saved};
     panel._result = panel._configData;
+    panel._rememberCleanConfiguration?.(panel._configData);
     if (same(panel._draft, submitted)) panel._draft = clone(saved.config);
     if (panel._draftTitle === submittedTitle) panel._draftTitle = saved.title;
     panel._draftAgentId = panel._agentId;

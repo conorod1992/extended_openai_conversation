@@ -117,6 +117,7 @@ export function bindOverview(panel, broadcastPromise) {
     panel._pendingSettingFocus = button.dataset.target || "";
     await panel._navigate(button.dataset.page, button.dataset.subsection || null);
   }));
+  if (!broadcastPromise) return;
   void import("./overview-broadcast.js")
     .then((module) => module.bindBroadcast(panel, broadcastPromise))
     .catch((err) => {

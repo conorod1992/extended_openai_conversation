@@ -52,6 +52,10 @@ test("leaving dirty configuration can be cancelled without losing the draft or d
   await page.goto(fixtureUrl("assistant/basics"));
 
   const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Jarvis");
+  const initialReads = await page.evaluate(() => browserHarness.calls.filter(
+    (call) => call.section === "configuration" && call.action === "get",
+  ).length);
   await panel.locator('[data-config="__title"]').fill("Unsaved navigation title");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
 
@@ -74,7 +78,28 @@ test("leaving dirty configuration can be cancelled without losing the draft or d
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);
   await expect(panel.locator('[data-config="__title"]')).toHaveValue("Jarvis");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
+  expect(await page.evaluate(() => browserHarness.calls.filter(
+    (call) => call.section === "configuration" && call.action === "get",
+  ).length)).toBe(initialReads);
   await expect(panel.locator('.top-nav button[data-page="assistant"]')).not.toHaveClass(/eoc-has-unsaved/);
 
+  await expectHarnessClean(page, pageErrors);
+});
+
+test("a clean Assistant snapshot is reusable after visiting Usage", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Jarvis");
+  const initialReads = await page.evaluate(() => browserHarness.calls.filter(
+    (call) => call.section === "configuration" && call.action === "get",
+  ).length);
+  await panel.locator('.top-nav button[data-page="usage-maintenance"]').click();
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  await panel.locator('.top-nav button[data-page="assistant"]').click();
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Jarvis");
+  expect(await page.evaluate(() => browserHarness.calls.filter(
+    (call) => call.section === "configuration" && call.action === "get",
+  ).length)).toBe(initialReads);
   await expectHarnessClean(page, pageErrors);
 });
