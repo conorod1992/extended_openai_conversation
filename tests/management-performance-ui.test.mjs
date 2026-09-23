@@ -75,6 +75,40 @@ const initialScopes = [{scope_id:"user:current", scope_type:"user", display_name
   assert.equal(prefetchIntentRead(panel, "usage-maintenance/usage"), null);
 }
 
+{
+  const panel = panelFor("overview", null);
+  let resolveRetention;
+  const calls = [];
+  panel._call = (section, action) => {
+    calls.push([section, action]);
+    return new Promise((resolve) => { resolveRetention = resolve; });
+  };
+  const prefetched = prefetchIntentRead(panel, "usage-maintenance/retention");
+  const consumed = consumeIntentRead(
+    panel,
+    "usage-maintenance/retention",
+    "configuration",
+    "retention_get",
+  );
+  assert.deepEqual(calls, [["configuration", "retention_get"]]);
+  resolveRetention({
+    title: "A",
+    revision: "r1",
+    projection: "retention",
+    config: {usage_request_retention_days: 30, usage_run_retention_days: 90},
+    options: {},
+  });
+  assert.deepEqual(await consumed, await prefetched);
+
+  panel._cleanConfigSnapshots.set(
+    panel._configurationSnapshotKey("agent-a", "retention"),
+    {result: {projection:"retention", config:{}}, loadedAt: Date.now()},
+  );
+  assert.equal(prefetchIntentRead(panel, "usage-maintenance/retention"), null,
+    "a fresh retention projection does not trigger speculative backend work");
+  assert.equal(calls.length, 1);
+}
+
 function panelFor(page = "assistant", subsection = "basics") {
   const panel = new ExtendedOpenAIManagementPanel();
   panel._page = page;
