@@ -1346,10 +1346,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _refreshGuestModeMutation(agentId, mutationResult) {
     this._patchGuestModeStatus(agentId, mutationResult?.status);
     if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
-    const result = await this._call("guest_mode", "get");
+    const [primary, details] = await Promise.all([
+      this._call("guest_mode", "get"),
+      this._call("guest_mode", "details"),
+    ]);
     if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
-    this._patchGuestModeStatus(agentId, result?.status);
-    this._result = result;
+    this._patchGuestModeStatus(agentId, primary?.status);
+    this._result = {...primary, ...details, loading:{details:false}, load_errors:[]};
     this._error = null;
     this._render();
   }
