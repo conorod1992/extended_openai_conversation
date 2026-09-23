@@ -36,10 +36,14 @@ export function parameterControlState(capability = {}, effort = null, configured
   };
 }
 
-export function apiPathSelectable(metadata = {}, api, toolsRequired = false) {
+export function apiPathSelectable(metadata = {}, api, toolsRequired = false, effort = null) {
   if (api === "auto") return true;
   if (!metadata?.api?.[api]) return false;
-  return !toolsRequired || Boolean(metadata?.function_calling?.[api]);
+  if (!toolsRequired) return true;
+  const support = metadata?.function_calling?.[api];
+  return typeof support === "boolean"
+    ? support
+    : support?.support === "conditional" && support.allowed_reasoning_efforts?.includes(effort);
 }
 
 export function pickerModels(result = {}, selectedModel = "") {

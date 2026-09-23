@@ -93,9 +93,9 @@ def test_web_search_facts_reuse_runtime_compatibility(monkeypatch) -> None:
     facts = _facts(config)
 
     assert facts["web_search"]["enabled"] is True
-    assert facts["web_search"]["effective_api_mode"] == "chat_completions"
-    assert facts["web_search"]["available"] is False
-    assert facts["web_search"]["reason"] == "requires_responses"
+    assert facts["web_search"]["effective_api_mode"] == "responses"
+    assert facts["web_search"]["available"] is True
+    assert facts["web_search"]["reason"] is None
 
 
 def test_unavailable_counts_remain_unknown_facts(monkeypatch) -> None:

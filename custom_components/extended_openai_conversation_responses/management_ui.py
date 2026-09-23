@@ -240,6 +240,40 @@ def _validation_result(callback) -> dict[str, Any]:
     return {"valid": True, "errors": {}, "config": value}
 
 
+def _validated_model_request(
+    config: dict[str, Any],
+    entry_data: Mapping[str, Any],
+    current: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Use the live resolver only at a configuration mutation boundary."""
+    relevant = {
+        "chat_model",
+        "api_mode",
+        "reasoning_effort",
+        "max_tokens",
+        "functions",
+        "function_groups",
+        "memory_enabled",
+        "knowledge_enabled",
+        "archive_enabled",
+        "guest_mode_enabled",
+        "web_search",
+    }
+    if current is not None:
+        defaults = agent_config_defaults()
+        if all(
+            config.get(key) == current.get(key, defaults.get(key)) for key in relevant
+        ):
+            return config
+    from .request import build_provider_request_snapshot
+
+    try:
+        build_provider_request_snapshot(config, entry_data)
+    except HomeAssistantError as err:
+        raise AgentConfigError("api_mode", str(err)) from err
+    return config
+
+
 def _persist_function_configuration(
     hass: HomeAssistant,
     entry: Any,
@@ -773,7 +807,9 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         _require_agent_config_revision(subentry, message["revision"])
 
     validation: dict[str, Any] = _validation_result(
-        lambda: merge_agent_config(subentry.data, updates)
+        lambda: _validated_model_request(
+            merge_agent_config(subentry.data, updates), entry.data, subentry.data
+        )
     )
     if not validation.get("valid"):
         return validation
@@ -913,7 +949,13 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
         result = _validation_result(
-            lambda: agent_config_snapshot(merge_agent_config(subentry.data, updates))
+            lambda: agent_config_snapshot(
+                _validated_model_request(
+                    merge_agent_config(subentry.data, updates),
+                    entry.data,
+                    subentry.data,
+                )
+            )
         )
         if result["valid"]:
             result["model_capabilities"] = model_capabilities(
@@ -927,6 +969,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             raise HomeAssistantError("config must be an object")
         _require_agent_config_revision(subentry, message.get("revision"))
         normalized = merge_agent_config(subentry.data, updates)
+        _validated_model_request(normalized, entry.data, subentry.data)
         if CONF_GUEST_POLICY_VERSION not in subentry.data:
             for key in GUEST_V2_FIELDS:
                 normalized.pop(key, None)

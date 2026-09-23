@@ -96,6 +96,7 @@ from .ha_tool_result_compat import (
     tool_result_data,
 )
 from .helpers import get_api_mode, get_model_config
+from .non_streaming import completed_chat_chunks, completed_responses_events
 from .provider_errors import provider_stream_error, provider_transport_error
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 from .request import (
@@ -544,6 +545,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             continuation_decision: bool | None = None
 
             if structure is not None:
+                if not provider_snapshot.structured_outputs:
+                    raise HomeAssistantError(
+                        f"{model} does not support native Structured Outputs."
+                    )
                 structured_schema = _format_structured_output(
                     structure, chat_log.llm_api
                 )
@@ -684,30 +689,37 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 web_search_used = False
                 provider_stream: AsyncStream[Any] | None = None
                 transformed_stream: AsyncGenerator[Any] | None = None
+                streaming = api_kwargs.get("stream", True)
                 try:
                     if api_mode == API_MODE_RESPONSES:
-                        provider_stream = cast(
-                            AsyncStream[Any],
-                            await self._client.responses.create(
-                                input=messages,
-                                **api_kwargs,
-                                **tool_kwargs,
-                            ),
+                        response = await self._client.responses.create(
+                            input=messages,
+                            **api_kwargs,
+                            **tool_kwargs,
                         )
+                        response_events = response
+                        if streaming:
+                            provider_stream = cast(AsyncStream[Any], response)
+                        else:
+                            response_events = completed_responses_events(response)
                         transformed_stream = self._transform_responses_stream(
-                            chat_log, provider_stream, request_usage
+                            chat_log, response_events, request_usage
                         )
                     else:
-                        provider_stream = cast(
-                            AsyncStream[ChatCompletionChunk],
-                            await self._client.chat.completions.create(
-                                messages=messages,
-                                **api_kwargs,
-                                **tool_kwargs,
-                            ),
+                        response = await self._client.chat.completions.create(
+                            messages=messages,
+                            **api_kwargs,
+                            **tool_kwargs,
                         )
+                        response_chunks = response
+                        if streaming:
+                            provider_stream = cast(
+                                AsyncStream[ChatCompletionChunk], response
+                            )
+                        else:
+                            response_chunks = completed_chat_chunks(response)
                         transformed_stream = self._transform_chat_stream(
-                            chat_log, provider_stream, request_usage
+                            chat_log, response_chunks, request_usage
                         )
 
                     with (

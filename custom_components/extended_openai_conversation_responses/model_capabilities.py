@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from typing import Any, cast
 
 from .const import API_MODE_AUTO, API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES
-from .model_catalog import model_metadata
+from .model_catalog import function_calling_allowed, model_metadata
 
 
 class ModelCapabilityError(ValueError):
@@ -77,14 +77,18 @@ def parameter_is_allowed(model: str, parameter: str, effort: str | None) -> bool
     return False
 
 
-def validate_api_path(model: str, api: str, tools_required: bool = False) -> str:
+def validate_api_path(
+    model: str, api: str, tools_required: bool = False, effort: str | None = None
+) -> str:
     """Validate API and function-calling support for one selected path."""
     if api not in {API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS}:
         raise ModelCapabilityError(f"Unknown API path: {api}")
     capabilities = _request_capabilities(model)
     if not capabilities["api"][api]:
         raise ModelCapabilityError(f"{model} does not support {api}.")
-    if tools_required and not capabilities["function_calling"][api]:
+    if tools_required and not function_calling_allowed(
+        capabilities["function_calling"][api], effort
+    ):
         raise ModelCapabilityError(
             f"{model} does not support function/tool calling through {api}."
         )
@@ -92,21 +96,26 @@ def validate_api_path(model: str, api: str, tools_required: bool = False) -> str
 
 
 def select_api_path(
-    model: str, configured_api: str, tools_required: bool = False
+    model: str,
+    configured_api: str,
+    tools_required: bool = False,
+    effort: str | None = None,
 ) -> str:
     """Resolve Auto entirely from exact model capability metadata."""
     capabilities = _request_capabilities(model)
     if configured_api != API_MODE_AUTO:
-        return validate_api_path(model, configured_api, tools_required)
+        return validate_api_path(model, configured_api, tools_required, effort)
 
     if tools_required:
         preferred = cast(str, capabilities["function_calling"]["preferred_api"])
-        if capabilities["api"].get(preferred) and capabilities["function_calling"].get(
-            preferred
+        if capabilities["api"].get(preferred) and function_calling_allowed(
+            capabilities["function_calling"][preferred], effort
         ):
             return preferred
         for api in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
-            if capabilities["api"][api] and capabilities["function_calling"][api]:
+            if capabilities["api"][api] and function_calling_allowed(
+                capabilities["function_calling"][api], effort
+            ):
                 return api
         raise ModelCapabilityError(
             f"{model} has no supported API path for function/tool calling."

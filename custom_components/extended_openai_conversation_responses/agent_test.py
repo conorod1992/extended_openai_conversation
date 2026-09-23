@@ -37,6 +37,8 @@ from .guest_mode import get_loaded_guest_mode, resolve_guest_policy
 from .ha_llm_tools import is_ha_tool, validate_reference
 from .helpers import get_api_mode, get_exposed_entities, supports_openai_hosted_tools
 from .memory import async_get_memory, memory_enabled
+from .model_capabilities import model_capability_snapshot
+from .model_catalog import model_metadata
 from .provider_errors import (
     classify_config_provider_error,
     ensure_successful_responses_result,
@@ -136,7 +138,9 @@ async def async_test_agent(
             _check("API mode", "Failed", f"Unsupported mode: {configured_mode}")
         )
         return AgentTestResult(_overall(checks), checks)
-    api_mode = get_api_mode(configured_mode, model)
+    metadata = model_metadata(model)
+    with model_capability_snapshot(model, metadata):
+        api_mode = get_api_mode(configured_mode, model)
     checks.append(_check("API mode", "Passed", api_mode.replace("_", " ").title()))
 
     try:
@@ -261,6 +265,7 @@ async def async_test_agent(
     web_search = subentry.data.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH)
     web_search_compatible = (
         api_mode == API_MODE_RESPONSES
+        and metadata["responses_web_search"]
         and supports_openai_hosted_tools(
             entry.data.get(CONF_API_PROVIDER), entry.data.get(CONF_BASE_URL)
         )

@@ -21,10 +21,14 @@ def test_web_search_guidance_reuses_runtime_compatibility_rules() -> None:
     config[CONF_API_MODE] = "auto"
 
     chat = configuration_guidance_snapshot({}, config)
-    assert chat["effective_api_mode"] == "chat_completions"
-    assert chat["web_search"]["available"] is False
-    assert chat["web_search"]["reason"] == "requires_responses"
-    assert "Responses API" in chat["web_search"]["message"]
+    assert chat["effective_api_mode"] == "responses"
+    assert chat["web_search"]["available"] is True
+
+    config[CONF_API_MODE] = "chat_completions"
+    explicit_chat = configuration_guidance_snapshot({}, config)
+    assert explicit_chat["web_search"]["available"] is False
+    assert explicit_chat["web_search"]["reason"] == "requires_responses"
+    assert "Responses API" in explicit_chat["web_search"]["message"]
 
     config[CONF_API_MODE] = "responses"
     direct = configuration_guidance_snapshot({}, config)

@@ -126,6 +126,7 @@ class ProviderRequestSnapshot:
     api_mode: str
     api_kwargs: dict[str, Any]
     provider_tools: tuple[dict[str, Any], ...]
+    structured_outputs: bool = False
 
 
 def canonical_json(value: Any) -> str:
@@ -152,6 +153,7 @@ def build_web_search_tool(
     options: Mapping[str, Any],
     api_mode: str,
     entry_data: Mapping[str, Any],
+    capabilities: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Build the native OpenAI Responses Web Search tool when enabled."""
     if not options.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH):
@@ -167,6 +169,13 @@ def build_web_search_tool(
         raise HomeAssistantError(
             "Web Search is available only with the direct OpenAI Responses API; "
             "Azure and custom base URLs are not supported."
+        )
+    model_capabilities = capabilities or get_model_capabilities(
+        str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+    )
+    if not model_capabilities["responses_web_search"]:
+        raise HomeAssistantError(
+            f"{options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)} does not support Responses Web Search."
         )
     return {
         "type": "web_search",
@@ -230,6 +239,7 @@ def build_provider_request_snapshot(
     entry_data: Mapping[str, Any],
     *,
     tools_required: bool | None = None,
+    model_capabilities: Mapping[str, Any] | None = None,
 ) -> ProviderRequestSnapshot:
     """Build validated/normalized settings used by the live OpenAI request."""
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
@@ -240,10 +250,33 @@ def build_provider_request_snapshot(
     )
     configured_api = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
     try:
-        capabilities = get_model_capabilities(model)
+        capabilities = (
+            model_capabilities
+            if model_capabilities is not None
+            else get_model_capabilities(model)
+        )
         with model_capability_snapshot(model, capabilities):
-            api_mode = select_api_path(model, configured_api, needs_tools)
-            api_kwargs: dict[str, Any] = {"model": model, "stream": True}
+            effort: str | None = None
+            if capabilities["reasoning"]["supported"]:
+                raw_effort = options.get(CONF_REASONING_EFFORT)
+                if raw_effort is None:
+                    raw_effort = recommended_reasoning_effort(model)
+                effort = validate_reasoning_effort(
+                    model, str(raw_effort) if raw_effort is not None else None
+                )
+            else:
+                stale_effort = options.get(CONF_REASONING_EFFORT)
+                if stale_effort not in {None, DEFAULT_REASONING_EFFORT}:
+                    _LOGGER.debug(
+                        "Ignoring stale reasoning_effort=%r for non-reasoning model %s",
+                        stale_effort,
+                        model,
+                    )
+            api_mode = select_api_path(model, configured_api, needs_tools, effort)
+            api_kwargs: dict[str, Any] = {
+                "model": model,
+                "stream": capabilities["streaming"],
+            }
 
             max_tokens = options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
             normalized_limit = normalize_output_token_limit(model, api_mode, max_tokens)
@@ -264,31 +297,15 @@ def build_provider_request_snapshot(
 
             if api_mode == API_MODE_RESPONSES:
                 api_kwargs["store"] = False
-            else:
+            elif capabilities["streaming"]:
                 api_kwargs["stream_options"] = {"include_usage": True}
 
-            effort: str | None = None
-            if capabilities["reasoning"]["supported"]:
-                raw_effort = options.get(CONF_REASONING_EFFORT)
-                if raw_effort is None:
-                    raw_effort = recommended_reasoning_effort(model)
-                effort = validate_reasoning_effort(
-                    model, str(raw_effort) if raw_effort is not None else None
-                )
-                if effort is not None:
-                    if api_mode == API_MODE_RESPONSES:
-                        api_kwargs["reasoning"] = {"effort": effort}
-                        api_kwargs["include"] = ["reasoning.encrypted_content"]
-                    else:
-                        api_kwargs["reasoning_effort"] = effort
-            else:
-                stale_effort = options.get(CONF_REASONING_EFFORT)
-                if stale_effort not in {None, DEFAULT_REASONING_EFFORT}:
-                    _LOGGER.debug(
-                        "Ignoring stale reasoning_effort=%r for non-reasoning model %s",
-                        stale_effort,
-                        model,
-                    )
+            if effort is not None:
+                if api_mode == API_MODE_RESPONSES:
+                    api_kwargs["reasoning"] = {"effort": effort}
+                    api_kwargs["include"] = ["reasoning.encrypted_content"]
+                else:
+                    api_kwargs["reasoning_effort"] = effort
 
             temperature = _sampling_value(options, model, CONF_TEMPERATURE, effort)
             if temperature is not None:
@@ -303,11 +320,12 @@ def build_provider_request_snapshot(
     except ModelCapabilityError as err:
         raise HomeAssistantError(str(err)) from err
 
-    provider_tool = build_web_search_tool(options, api_mode, entry_data)
+    provider_tool = build_web_search_tool(options, api_mode, entry_data, capabilities)
     return ProviderRequestSnapshot(
         api_mode,
         api_kwargs,
         (provider_tool,) if provider_tool is not None else (),
+        capabilities["structured_outputs"],
     )
 
 
