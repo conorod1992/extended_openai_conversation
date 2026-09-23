@@ -374,8 +374,13 @@ test("voice and memory settings implementations load only when their routes are 
   expect(await featureLoaded("assistant/voice")).toBe(false);
   expect(await featureLoaded("data-memory/memory-settings")).toBe(false);
   await panel.evaluate(host => host._navigate("assistant", "voice"));
+  expect(loaded.some(url => url.endsWith("/voice-identity-core.js"))).toBe(true);
+  expect(loaded.some(url => url.endsWith("/voice-identity-ui.js"))).toBe(false);
   await expect(panel.locator(".voice-identity-flow")).toBeVisible();
   expect(await featureLoaded("assistant/voice")).toBe(true);
+  await panel.locator('[data-config="voice_scope_policy"]').selectOption("device_mapping");
+  await expect(panel.locator("#voice-mappings")).toBeVisible();
+  expect(loaded.some(url => url.endsWith("/voice-identity-ui.js"))).toBe(true);
   await panel.evaluate(host => host._navigate("data-memory", "memory-settings"));
   await expect(panel.locator("[data-memory-config]").first()).toBeVisible();
   expect(await featureLoaded("data-memory/memory-settings")).toBe(true);

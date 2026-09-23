@@ -11,6 +11,7 @@ import {
   voiceUserLabel,
   voiceUsers,
 } from "../../custom_components/extended_openai_conversation_responses/frontend/voice-identity-ui.js";
+import {renderVoiceIdentityCore} from "../../custom_components/extended_openai_conversation_responses/frontend/voice-identity-core.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
 const panel = {
@@ -60,6 +61,17 @@ describe("Voice & identity management UX", () => {
     expect(html).not.toContain("<textarea");
   });
 
+  it("renders policy controls and a mapping placeholder without mapping picker code", () => {
+    const html = renderVoiceIdentityCore(panel);
+    expect(html).toContain('data-config="voice_scope_policy"');
+    expect(html).toContain('id="config-voice_default_user_picker"');
+    expect(html).toContain("Loading saved assignments");
+    expect(html).not.toContain("<ha-entity-picker");
+    expect(html).not.toContain('value="device-kitchen"');
+    expect(panel._result.config.voice_device_mappings).toEqual({"device-kitchen":"user:user-1","device-hall":"shared"});
+    expect(renderVoiceIdentityCore({...panel, _draft:{...panel._result.config, voice_scope_policy:"shared"}})).not.toContain("Loading saved assignments");
+  });
+
   it("translates Assist satellite entity IDs to the existing stored device IDs", () => {
     const registry = [
       {entity_id:"assist_satellite.kitchen",device_id:"device-kitchen"},
@@ -90,6 +102,9 @@ describe("Voice & identity management UX", () => {
 
   it("loads route-owned Voice Identity UI lazily", async () => {
     const route = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-route.js",import.meta.url),"utf8");
-    expect(route).toContain('"assistant/voice": () => import("./voice-identity-ui.js")');
+    expect(route).toContain('"assistant/voice": () => import("./voice-identity-core.js")');
+    const core = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/voice-identity-core.js",import.meta.url),"utf8");
+    expect(core).toContain('await import("./voice-identity-ui.js")');
+    expect(route).not.toContain('"assistant/prompt-context": () => import("./exposed-attributes-ui.js")');
   });
 });
