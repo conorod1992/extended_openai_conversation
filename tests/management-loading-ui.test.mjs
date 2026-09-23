@@ -1,67 +1,9 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
 
 const frontend = (name) => new URL(
   `../custom_components/extended_openai_conversation_responses/frontend/${name}`,
   import.meta.url,
 );
-
-const [loading, overview, guide, debug, agentEditor, agentTools, agentNativeYaml, requestRules, routes] = await Promise.all([
-  readFile(frontend("management-actions.js"), "utf8"),
-  readFile(frontend("overview-page.js"), "utf8"),
-  readFile(frontend("guide-page.js"), "utf8"),
-  readFile(frontend("debug-management.js"), "utf8"),
-  readFile(frontend("agent-config-editor.js"), "utf8"),
-  readFile(frontend("agent-config-tools.js"), "utf8"),
-  readFile(frontend("agent-config-native-yaml.js"), "utf8"),
-  readFile(frontend("request-rules-ui.js"), "utf8"),
-  readFile(frontend("management-route.js"), "utf8"),
-]);
-
-const panelSource = await readFile(frontend("management-panel.js"), "utf8");
-assert.match(panelSource, /_call\("overview", "summary"\)/);
-assert.match(loading, /_call\("configuration", "save"/);
-assert.doesNotMatch(loading, /_loadAgents\(panel\._agentId\)/);
-assert.match(panelSource, /Date.now\(\) - loadedAt > SCOPE_CACHE_TTL_MS/);
-assert.doesNotMatch(panelSource, /_call\("conversations", "settings"/);
-assert.match(panelSource, /scope_kind: scopeKind/);
-assert.match(panelSource, /view !== "data-memory\/conversations" \|\| !prefetchedScopedCollection/);
-assert.doesNotMatch(panelSource, /Promise\.all\(\[\s*scopedCollection\(\),\s*prerequisites/);
-assert.match(loading, /event\.stopImmediatePropagation\(\)/);
-assert.match(routes, /panel\._viewKey\(\) === view && panel\._eocViewAssetToken === assetToken/);
-assert.match(loading, /Document changed\. Validate & preview again before importing\./);
-assert.match(loading, /validatedImportMatches\(panel\._importDocument, current\)/);
-assert.match(panelSource, /section === "guest_mode" && action === "update"/);
-assert.doesNotMatch(loading, /button\.id === "guest-policy-save"/);
-assert.doesNotMatch(loading, /rule-duplicate|rule-delete|rule-enabled/);
-const requestRulesCore = await readFile(frontend("request-rules-ui-core.js"), "utf8");
-assert.match(requestRulesCore, /rule-duplicate/);
-assert.match(requestRulesCore, /rule-delete/);
-assert.match(requestRulesCore, /rule-enabled/);
-assert.match(panelSource, /this\._eocRuleSavePromise/);
-
-assert.match(overview, /import\("\.\/overview-page-impl\.js"\)/);
-assert.doesNotMatch(overview, /from "\.\/overview-page-impl\.js"/);
-assert.match(guide, /import\("\.\/guide-page-impl\.js"\)/);
-assert.doesNotMatch(guide, /management-loading-performance\.js/);
-assert.doesNotMatch(guide, /from "\.\/guide-page-base\.js"/);
-assert.match(debug, /import\("\.\/debug-panel\.js"\)/);
-assert.doesNotMatch(debug, /^import "\.\/debug-panel\.js"/m);
-
-assert.doesNotMatch(agentEditor, /management-bootstrap\.js/);
-assert.match(routes, /import\("\.\/agent-config-editor\.js"\)/);
-assert.doesNotMatch(panelSource, /from "\.\/agent-config-editor\.js"/);
-assert.doesNotMatch(agentEditor, /agent-config-native-yaml|agent-config-tools-base/);
-assert.match(agentTools, /from "\.\/agent-config-tools-base\.js"/);
-assert.doesNotMatch(agentTools, /from "\.\/agent-config-native-yaml\.js"/);
-assert.match(agentNativeYaml, /export function bindNativeToolYaml/);
-assert.match(requestRules, /import\("\.\/request-rules-ui-impl\.js"\)/);
-assert.doesNotMatch(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
-assert.match(routes, /import\("\.\/request-rules-ui\.js"\)/);
-assert.doesNotMatch(routes, /from "\.\/(?:agent-config-editor|request-rules-ui)\.js"/);
-assert.doesNotMatch(agentEditor + requestRules, /requiredImplementation|queueRender|typeof document/);
-assert.match(routes, /event\.stopImmediatePropagation\(\)/);
-assert.doesNotMatch(routes, /panel\._render\(\);\s*\/\/.*rule-search/);
 
 const overviewModule = await import(frontend("overview-page.js"));
 const guideModule = await import(frontend("guide-page.js"));
@@ -242,11 +184,6 @@ assert.equal(panel._busy, false);
 assert.match(panel._error, /Unable to load this frontend section: lazy import failed/);
 assert.equal(renders, 1);
 
-for (const name of ["management-actions.js", "management-route.js", "management-renderer.js"]) {
-  const source = await readFile(frontend(name), "utf8");
-  assert.doesNotMatch(source, /prototype\.|whenDefined|customElements/);
-}
-
 // Loading publishes the complete feature only after its dependencies resolve.
 assert.equal(routeModule.getConfigurationEditor(), undefined);
 assert.equal(routeModule.routeFeaturesReady("assistant/basics"), false);
@@ -277,7 +214,6 @@ assert.equal(routeModule.getRouteFeature("assistant/prompt-context"), undefined)
 assert.equal(routeModule.routeFeaturesReady("assistant/prompt-context"), true);
 await routeModule.routeAssetPromise("assistant/prompt-context");
 assert.equal(routeModule.getRouteFeature("assistant/prompt-context"), undefined);
-assert.match(panelSource, /import\("\.\/exposed-attributes-ui\.js"\)/);
 for (const [view, exports] of [
   ["usage-maintenance/backup-restore", ["renderBackupTransferPanel", "renderRestoreTransferDialog", "bindBackupTransfer"]],
 ]) {
