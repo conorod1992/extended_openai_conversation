@@ -855,6 +855,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       let result;
       let contentData = null;
       let usageSecondary = null;
+      let guestDetailsSecondary = null;
       if (view === "overview") {
         this._markColdLifecycle("overview-summary-start");
         const summary = await this._call("overview", "summary");
@@ -901,7 +902,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       } else if (view === "data-memory/knowledge") {
         result = await this._call("knowledge", "list");
       } else if (view === "capabilities/guest-mode") {
+        const detailsPromise = this._call("guest_mode", "details").then(
+          (value) => ({status: "fulfilled", value}),
+          (reason) => ({status: "rejected", reason}),
+        );
         result = await this._call("guest_mode", "get");
+        result = {
+          ...result,
+          loading: {...(result.loading || {}), details: true},
+          load_errors: result.load_errors || [],
+        };
+        guestDetailsSecondary = detailsPromise;
         if (this._unsavedState?.scopes.get("capabilities/guest-mode")?.agent !== this._agentId) this._guestDraft = JSON.parse(JSON.stringify(result.config || {}));
         if (!result.legacy_policy) {
           this._guestMigrationReview = false;
@@ -922,6 +933,33 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._result = result;
       writeSectionCache(this, cacheKey, result);
       this._error = null;
+      if (guestDetailsSecondary) {
+        void guestDetailsSecondary.then((settled) => {
+          if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+              || this._viewKey() !== "capabilities/guest-mode") return;
+          const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== "details");
+          const loading = {...(this._result?.loading || {}), details: false};
+          if (settled.status === "fulfilled") {
+            this._result = {
+              ...(this._result || {}),
+              ...settled.value,
+              load_errors: errors,
+              loading,
+            };
+          } else {
+            this._result = {
+              ...(this._result || {}),
+              load_errors: [...errors, {
+                key: "details",
+                label: "Guest Mode capabilities",
+                message: settled.reason?.message || String(settled.reason || "Unknown error"),
+              }],
+              loading,
+            };
+          }
+          this._render();
+        });
+      }
       if (usageSecondary) {
         for (const [key, label, pending] of usageSecondary) {
           void pending.then((settled) => {
@@ -1193,7 +1231,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "usage-maintenance/request-debug") return getRouteFeature(view)?.renderManagementDebug(this) || this._loading();
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
-    if (view === "data-memory/knowledge") return `${getRouteFeature("capabilities")?.knowledgeAvailabilityMarkup(this)}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
+    if (view === "data-memory/knowledge") return `${getRouteFeature(view)?.knowledgeAvailabilityMarkup(this) || ""}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
     if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? ((getConfigurationEditor()?.renderConfiguration(this) || this._loading())) : ""}`; }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
@@ -1411,7 +1449,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     if (view === "data-memory/memories") getRouteFeature(view)?.bindTemporaryMemory(this);
     if (view === "data-memory/memory-settings") getRouteFeature(view)?.bindMemorySettings(this);
-    if (["capabilities/home-assistant", "capabilities/web-skills", "data-memory/knowledge"].includes(view)) {
+    if (["capabilities/home-assistant", "capabilities/web-skills"].includes(view)) {
       getRouteFeature("capabilities")?.bindCapabilities(this);
     }
     if (view === "assistant/voice") getRouteFeature(view)?.bindVoiceIdentity(this);
