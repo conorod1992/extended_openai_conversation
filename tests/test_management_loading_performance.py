@@ -318,7 +318,50 @@ async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatc
     assert first["revision"] == second["revision"]
 
 
-async def test_guest_mode_get_reuses_one_exposed_entity_projection(monkeypatch) -> None:
+async def test_guest_mode_primary_get_skips_heavy_catalogues(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data[management_ui.CONF_GUEST_POLICY_VERSION] = (
+        management_ui.GUEST_POLICY_VERSION
+    )
+    guest = SimpleNamespace(
+        status=lambda: {"state": "inactive", "currently_active": False}
+    )
+    monkeypatch.setattr(management_ui, "async_get_guest_mode", AsyncMock(return_value=guest))
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_knowledge",
+        AsyncMock(side_effect=AssertionError("Knowledge must stay off the primary path")),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "get_exposed_entities",
+        MagicMock(side_effect=AssertionError("entity catalog must stay off primary path")),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "configured_function_tools_from_data",
+        MagicMock(side_effect=AssertionError("tool catalog must stay off primary path")),
+    )
+
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "guest_mode",
+            "action": "get",
+        },
+    )
+
+    assert result["status"]["state"] == "inactive"
+    assert result["legacy_policy"] is False
+    assert "policy" not in result
+    assert "knowledge_sources" not in result
+
+
+async def test_guest_mode_details_reuses_one_exposed_entity_projection(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
     guest = SimpleNamespace(
         status=lambda: {"state": "inactive", "currently_active": False}
@@ -338,12 +381,7 @@ async def test_guest_mode_get_reuses_one_exposed_entity_projection(monkeypatch) 
         assert exposed_entities is exposed
         return policy
 
-    def editor_snapshot(_hass, _options, _tools, *, exposed_entities=None):
-        assert exposed_entities is exposed
-        return {}
-
     monkeypatch.setattr(management_ui, "resolve_guest_policy", resolve_policy)
-    monkeypatch.setattr(management_ui, "guest_policy_editor_snapshot", editor_snapshot)
 
     result = await management_ui.async_management_command(
         hass,
@@ -353,12 +391,13 @@ async def test_guest_mode_get_reuses_one_exposed_entity_projection(monkeypatch) 
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
             "section": "guest_mode",
-            "action": "get",
+            "action": "details",
         },
     )
 
     exposed_loader.assert_called_once_with(hass)
     assert result["domains"] == ["light", "switch"]
+    assert result["policy"]["guest_active"] is False
     assert result["_performance"]["total_ms"] >= 0
 
 
@@ -975,6 +1014,76 @@ async def test_cached_debug_setup_respects_completed_step_markers(monkeypatch) -
     static_paths.assert_not_awaited()
     websocket_register.assert_not_called()
 
+
+
+async def test_scope_catalog_archive_only_skips_memory_managers(monkeypatch) -> None:
+    """Archive scope requests must not initialize persistent or temporary memory."""
+    archive_counts = {"user:admin": 3}
+    archive = SimpleNamespace(scope_counts=lambda: archive_counts)
+    projection = AsyncMock(return_value=[{"scope_id": "user:admin"}])
+    archive_loader = AsyncMock(return_value=archive)
+    memory_loader = AsyncMock(side_effect=AssertionError("persistent memory should stay cold"))
+    temporary_loader = AsyncMock(side_effect=AssertionError("temporary memory should stay cold"))
+    monkeypatch.setattr(loading, "async_get_archive", archive_loader)
+    monkeypatch.setattr(loading, "async_get_memory", memory_loader)
+    monkeypatch.setattr(loading, "async_get_temporary_memory", temporary_loader)
+    monkeypatch.setattr(loading, "async_scope_catalog_projection", projection)
+
+    hass = SimpleNamespace()
+    result = await loading.async_scope_catalog(
+        hass,
+        "admin",
+        True,
+        "entry-1",
+        "agent-1",
+        scope_kind="archive",
+    )
+
+    assert result == {"scopes": [{"scope_id": "user:admin"}]}
+    archive_loader.assert_awaited_once_with(hass, "entry-1", "agent-1")
+    memory_loader.assert_not_awaited()
+    temporary_loader.assert_not_awaited()
+    projection.assert_awaited_once_with(
+        hass,
+        "admin",
+        True,
+        {},
+        archive_counts,
+        {},
+    )
+
+
+async def test_scope_catalog_memory_kinds_load_only_requested_manager(monkeypatch) -> None:
+    """Persistent and Temporary Memory scope requests stay independent."""
+    persistent = SimpleNamespace(scope_counts=lambda: {"admin": 2})
+    temporary = SimpleNamespace(owner_counts=lambda: {"user:admin": 4})
+    memory_loader = AsyncMock(return_value=persistent)
+    temporary_loader = AsyncMock(return_value=temporary)
+    archive_loader = AsyncMock(side_effect=AssertionError("archive should stay cold"))
+    projection = AsyncMock(side_effect=[
+        [{"scope_id": "persistent"}],
+        [{"scope_id": "temporary"}],
+    ])
+    monkeypatch.setattr(loading, "async_get_memory", memory_loader)
+    monkeypatch.setattr(loading, "async_get_temporary_memory", temporary_loader)
+    monkeypatch.setattr(loading, "async_get_archive", archive_loader)
+    monkeypatch.setattr(loading, "async_scope_catalog_projection", projection)
+
+    hass = SimpleNamespace()
+    persistent_result = await loading.async_scope_catalog(
+        hass, "admin", True, "entry-1", "agent-1", scope_kind="memory"
+    )
+    temporary_result = await loading.async_scope_catalog(
+        hass, "admin", True, "entry-1", "agent-1", scope_kind="temporary"
+    )
+
+    assert persistent_result == {"scopes": [{"scope_id": "persistent"}]}
+    assert temporary_result == {"scopes": [{"scope_id": "temporary"}]}
+    memory_loader.assert_awaited_once_with(hass, "entry-1", "agent-1")
+    temporary_loader.assert_awaited_once_with(hass, "entry-1", "agent-1")
+    archive_loader.assert_not_awaited()
+    assert projection.await_args_list[0].args[3:] == ({"admin": 2}, {}, {})
+    assert projection.await_args_list[1].args[3:] == ({}, {}, {"user:admin": 4})
 
 
 async def test_scope_catalog_loads_all_scope_managers_concurrently(monkeypatch) -> None:
