@@ -1,5 +1,6 @@
 import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
 import {featureStatusMarkup, selectedFeatureStatus} from "./management-feature-status-core.js";
+import {knowledgeSourceAvailabilityBadge} from "./knowledge-presentation.js";
 import {formatUsageNumber} from "./usage-format.js";
 
 const collections = new WeakMap();
@@ -9,11 +10,6 @@ const matches = (source, query) => `${source.title || ""} ${source.description |
 const countText = sources => `${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"}`;
 const statusMarkup = panel => featureStatusMarkup(panel, "Knowledge Library", selectedFeatureStatus(panel, "knowledge"));
 
-
-export function knowledgeSourceAvailabilityBadge(source) {
-  const enabled = source?.enabled !== false;
-  return `<span class="${enabled ? "availability-badge" : "disabled-badge"} knowledge-source-availability-badge">${enabled ? "Available" : "Unavailable"}</span>`;
-}
 
 export function knowledgeAvailabilityMarkup(panel) {
   if (panel._data?.is_admin === false) return "";
