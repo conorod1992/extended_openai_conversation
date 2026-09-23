@@ -9,7 +9,7 @@ import {
   savePageChanges,
 } from "./management-page-drafts.js";
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS} from "./management-cache.js";
-import {bindPanelDialogs, knowledgeSourceAvailabilityControl} from "./management-dialogs.js";
+import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} from "./management-dialogs.js";
 import {renderManagement} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, isAgentMutation, syncAgentPicker} from "./management-actions.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset} from "./management-route.js";
@@ -1532,16 +1532,36 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return getRouteFeature("status")?.diagnosticsMarkup(this, agent);
   }
 
+  _dialogOwnership() {
+    const owner = `${this._data?.entry_id || ""}|${this._agentId}|${this._viewKey()}|${this._memoryKind || ""}`;
+    if (this._eocDialogOwner !== owner) {
+      this._eocDialogOwner = owner;
+      this._eocOwnedDialogs = new Set();
+    }
+    return this._eocOwnedDialogs;
+  }
+
   _dialogs() {
-    const content = `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" maxlength="${KNOWLEDGE_TITLE_LIMIT}" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}" spellcheck="true"></textarea></label>${knowledgeSourceAvailabilityControl()}<label>Content<textarea id="knowledge-content" class="knowledge-editor" maxlength="${KNOWLEDGE_LIMIT}" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>
-      <dialog id="memory-dialog" class="editor-dialog" aria-labelledby="memory-dialog-title"><form id="memory-form"><div class="dialog-header"><h2 id="memory-dialog-title">Add memory</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Memory<textarea id="memory-content" required spellcheck="true" placeholder="What should the agent remember?"></textarea></label><label>Category<input id="memory-category" value="general" required></label><div id="memory-metadata"></div><p id="memory-meta" class="meta"></p><div id="memory-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="memory-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="memory-save">Save</button></div></form></dialog>
-      <dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>
-      <dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope">${this._scopeOptions("memories", true, true)}</select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>
+    const owned = this._dialogOwnership();
+    const view = this._viewKey();
+    const content = `${view === "data-memory/knowledge" && owned.has("knowledge-dialog") ? `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" maxlength="${KNOWLEDGE_TITLE_LIMIT}" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}" spellcheck="true"></textarea></label>${knowledgeSourceAvailabilityControl()}<label>Content<textarea id="knowledge-content" class="knowledge-editor" maxlength="${KNOWLEDGE_LIMIT}" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>` : ""}
+      ${view === "data-memory/memories" && this._memoryKind !== "temporary" && owned.has("memory-dialog") ? `<dialog id="memory-dialog" class="editor-dialog" aria-labelledby="memory-dialog-title"><form id="memory-form"><div class="dialog-header"><h2 id="memory-dialog-title">Add memory</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Memory<textarea id="memory-content" required spellcheck="true" placeholder="What should the agent remember?"></textarea></label><label>Category<input id="memory-category" value="general" required></label><div id="memory-metadata"></div><p id="memory-meta" class="meta"></p><div id="memory-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="memory-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="memory-save">Save</button></div></form></dialog>` : ""}
+      ${view === "data-memory/conversations" && owned.has("session-dialog") ? `<dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>` : ""}
+      ${view === "data-memory/memories" && this._memoryKind !== "temporary" && owned.has("reassign-dialog") ? `<dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope"></select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>` : ""}
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
       ${this._viewKey() === "capabilities/request-rules" ? (getRouteFeature("capabilities/request-rules")?.requestRulesDialog(this) || "") : ""}${routeAssetKind(this._viewKey()) === "agent-config" ? getConfigurationEditor()?.configurationDialogs(this) || "" : this._viewKey() === "capabilities/functions" ? getConfigurationTools()?.configurationDialogs(this) || "" : ""}${this._viewKey() === "usage-maintenance/backup-restore" ? getRouteFeature("usage-maintenance/backup-restore")?.renderRestoreTransferDialog(this) || "" : ""}`;
     const usageDialog = this._viewKey() === "usage-maintenance/usage"
       ? getRouteFeature("usage-maintenance/usage")?.requestDetailsDialog() || "" : "";
-    return `${content}${getRouteFeature("data-memory/memories")?.temporaryDialog(this) || ""}${usageDialog}`;
+    return `${content}${view === "data-memory/memories" && this._memoryKind === "temporary" && owned.has("temporary-memory-dialog") ? getRouteFeature(view)?.temporaryDialog(this) || "" : ""}${usageDialog}`;
+  }
+
+  _ensureOwnedDialog(id) {
+    this._dialogOwnership().add(id);
+    const markup = this._dialogs();
+    if (markup !== this._eocDialogMarkup || !this.shadowRoot.querySelector(`#${id}`)) {
+      updateDialogs(this, markup, {preserveEditors: true});
+      this._eocDialogMarkup = markup;
+    }
   }
 
   _bindActions() {
@@ -1661,6 +1681,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _openKnowledge(sourceId = null) {
+    this._ensureOwnedDialog("knowledge-dialog");
     const availability = this.shadowRoot?.querySelector("#knowledge-source-enabled");
     if (availability) availability.checked = true;
     const root = this.shadowRoot;
@@ -1708,6 +1729,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _openMemory(memoryId = null) {
+    this._ensureOwnedDialog("memory-dialog");
     const root = this.shadowRoot;
     const memory = getRouteFeature("memory-browser")?.findPersistentMemory(this, memoryId) || null;
     this._editingMemory = memory ? {...memory} : null;
@@ -1906,6 +1928,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _openReassign(memoryId) {
+    this._ensureOwnedDialog("reassign-dialog");
+    this.shadowRoot.querySelector("#reassign-scope").innerHTML = this._scopeOptions("memories", true, true);
     this._reassignMemoryId = memoryId;
     this.shadowRoot.querySelector("#reassign-dialog").showModal();
   }

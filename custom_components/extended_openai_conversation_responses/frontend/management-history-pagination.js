@@ -178,6 +178,7 @@ async function searchArchive(panel, offset = 0) {
 }
 
 async function openSession(panel, sessionId, startTurn = 0) {
+  panel._ensureOwnedDialog("session-dialog");
   const root = panel.shadowRoot;
   const dialog = root.querySelector("#session-dialog");
   const title = root.querySelector("#session-title");

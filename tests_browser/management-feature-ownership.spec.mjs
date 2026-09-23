@@ -6,6 +6,7 @@ test("memory kinds, scope ownership and load-more survive rerenders without dupl
   await page.goto(fixtureUrl("data-memory/memories"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#add-memory")).toBeVisible();
+  await expect(panel.locator("#memory-dialog,#temporary-memory-dialog,#reassign-dialog")).toHaveCount(0);
   await page.evaluate(async () => {
     const {panel, hass} = window.browserHarness;
     const original = hass.callWS.bind(hass);
@@ -34,6 +35,7 @@ test("memory kinds, scope ownership and load-more survive rerenders without dupl
   expect(await page.evaluate(() => window.featureCalls.filter((c) => c.action === "list" && c.offset === 1).length)).toBe(1);
   await panel.locator('.memory-kind[data-kind="temporary"]').click();
   await expect(panel.getByText("Temporary visitor", {exact:true})).toBeVisible();
+  await expect(panel.locator("#memory-dialog,#temporary-memory-dialog,#reassign-dialog")).toHaveCount(0);
   await expect(panel.locator('#scope option[value="__anonymous__"]')).toHaveCount(0);
   await panel.locator("#scope").selectOption("shared:household");
   await expect.poll(() => page.evaluate(() => window.featureCalls.filter((c) => c.action === "temporary_list").at(-1)?.scope_id)).toBe("shared:household");
@@ -44,6 +46,7 @@ test("memory kinds, scope ownership and load-more survive rerenders without dupl
   await expect(panel.locator("#temporary-memory-dialog")).toHaveJSProperty("open", false);
   await panel.locator('.memory-kind[data-kind="persistent"]').click();
   await expect(panel.locator("#add-memory")).toBeVisible();
+  await expect(panel.locator("#temporary-memory-dialog")).toHaveCount(0);
   await expect(panel.locator("#scope")).toHaveValue("shared:household");
   await expectHarnessClean(page, errors);
 });
