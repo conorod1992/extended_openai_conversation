@@ -1377,13 +1377,18 @@ async def async_scopes_command(request: _ManagementRequest) -> dict[str, Any]:
     from .management_loading_performance import async_scope_catalog
 
     if request.message["action"] == "catalog":
-        return await async_scope_catalog(
+        args = (
             request.hass,
             request.user_id,
             request.is_admin,
             request.entry_id,
             request.subentry_id,
-            scope_kind=str(request.message.get("scope_kind", "all")),
+        )
+        if "scope_kind" not in request.message:
+            return await async_scope_catalog(*args)
+        return await async_scope_catalog(
+            *args,
+            scope_kind=str(request.message["scope_kind"]),
         )
     return _unknown_management_action(request)
 
