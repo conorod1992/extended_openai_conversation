@@ -1,6 +1,7 @@
 // Read-heavy route caches deliberately exclude live memory/history and drafts.
 export const SECTION_CACHE_TTL_MS = 30_000;
 export const SCOPE_CACHE_TTL_MS = 30_000;
+export const CLEAN_CONFIG_TTL_MS = 30_000;
 
 export function readSectionCache(panel, view) {
   const key = panel._sectionCacheKey(view);

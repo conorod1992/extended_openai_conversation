@@ -78,5 +78,15 @@ test("Configuration save sends dirty fields and consumes the normalized response
   expect(save).toMatchObject({config:{max_tokens:760}, revision:"fixture-7"});
   expect(Object.keys(save.config)).toEqual(["max_tokens"]);
   expect(save).not.toHaveProperty("title");
+  const reads = await page.evaluate(() => browserHarness.calls.filter(
+    call => call.section === "configuration" && call.action === "get",
+  ).length);
+  await panel.locator('.top-nav button[data-page="usage-maintenance"]').click();
+  await expect(panel.locator("#usage-window")).toBeVisible();
+  await panel.locator('.top-nav button[data-page="assistant"]').click();
+  await expect(panel.locator('[data-config="max_tokens"]')).toHaveValue("777");
+  expect(await page.evaluate(() => browserHarness.calls.filter(
+    call => call.section === "configuration" && call.action === "get",
+  ).length)).toBe(reads);
   await expectHarnessClean(page, errors);
 });

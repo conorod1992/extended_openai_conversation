@@ -95,11 +95,15 @@ export function renderOverview(panel, agent) {
 }
 
 export function bindOverview(panel) {
-  const broadcast = panel._eocOverviewBroadcastPromise || startOverviewBroadcastSnapshot(panel);
   if (!implementation) {
     bindSnapshotOverview(panel);
     return;
   }
+  // The agent snapshot and summary are the first useful Overview. Broadcast
+  // starts after the summary is mounted so its request cannot contend for it.
+  const broadcast = panel._result
+    ? panel._eocOverviewBroadcastPromise || startOverviewBroadcastSnapshot(panel)
+    : null;
   implementation.bindOverview(panel, broadcast);
   implementation.bindGettingStarted(panel);
 }
