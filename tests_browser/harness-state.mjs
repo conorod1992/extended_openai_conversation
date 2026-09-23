@@ -88,6 +88,42 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
         load_errors: partialOverview ? [{key: "knowledge", label: "Knowledge", message: "Knowledge fixture unavailable"}] : [],
       };
     }
+    if (key === "overview/primary") {
+      return {
+        agent: clone(state.agent),
+        usage: {},
+        conversations: {archive_enabled: true, archive_retention_days: 30},
+        load_errors: [],
+        loading: {usage: true, memory: true, knowledge: true, guest_mode: true},
+        setup_health: {
+          provider_runtime: {client_loaded: true, provider: state.agent.provider, model: state.agent.model},
+          function_tools: {usable_count: state.agent.function_count || 0, invalid_count: 0},
+          prompt_state: "custom",
+          exposed_entity_count: 2,
+          memory: {mode: state.agent.memory_mode || "manual", available: false, loading: true},
+          knowledge: {enabled: true, source_count: 0, available: false, loading: true},
+          web_search: {enabled: false},
+          can_manage: true,
+          live_provider_tested: false,
+        },
+      };
+    }
+    if (key === "overview/detail") {
+      if (message.kind === "usage") {
+        return {kind: "usage", usage: {today: {total_tokens: 1234}, month: {total_tokens: 5678}, lifetime: {total_tokens: 9999}}, agent: {tokens_today: 1234}};
+      }
+      if (message.kind === "memory") {
+        return {kind: "memory", agent: {memory_count: state.memories.length}, setup_health: {memory: {available: true, loading: false}}};
+      }
+      if (message.kind === "knowledge") {
+        if (partialOverview) throw new Error("Knowledge fixture unavailable");
+        const sourceCount = state.knowledgeSources?.length || 0;
+        return {kind: "knowledge", agent: {knowledge_source_count: sourceCount}, setup_health: {knowledge: {source_count: sourceCount, available: true, loading: false}}};
+      }
+      if (message.kind === "guest_mode") {
+        return {kind: "guest_mode", agent: {guest_mode: {state: "inactive", currently_active: false}}};
+      }
+    }
     if (key === "usage/summary") return {today: {total_tokens: 1234}, month: {total_tokens: 5678}, lifetime: {total_tokens: 9999}};
     if (key === "conversations/settings") return {archive_enabled: true, archive_retention_days: 30, archive_model_search_enabled: false};
     if (key === "knowledge/list") {
