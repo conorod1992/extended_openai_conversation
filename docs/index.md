@@ -41,7 +41,7 @@ You do **not** need to configure all of these features. For most users, the best
 - [Conversation continuity](features/conversation-continuity.md) and [context management](features/context-management.md)
 - [Persistent memory](features/persistent-memory.md), [temporary memory](features/temporary-memory.md), [Knowledge Library](features/knowledge-library.md), and [conversation archive](features/conversation-archive.md)
 - [Voice Identity](features/voice-identity.md), [voice follow-ups](features/voice-followups.md), [speech processing](features/speech-processing.md), and [Quiet Hours](features/quiet-hours.md)
-- [Request Rules](features/request-rules.md), [Function Groups](features/function-groups.md), [delayed Function Tools](features/delayed-function-tools.md), and [custom functions](functions/overview.mdx)
+- [Request Rules](features/request-rules.md), [Function Groups](features/function-groups.md), [delayed Function Tools](features/delayed-function-tools.md), and [custom functions](functions/index.md)
 - [Guest Mode](features/guest-mode.md), [model data](features/model-data.md), [usage statistics](features/usage-statistics.md), [request debugging](features/request-debugging.md), and [Backup & Restore](features/backup-restore.md)
 
 The left-hand documentation navigation is organised by the kind of task you are trying to accomplish: Assistant behaviour, Voice & Speech, Home Assistant access, Automation & Tools, Memory & Data, Usage & Maintenance, Functions, Skills, and Help & Reference.

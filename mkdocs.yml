@@ -42,28 +42,49 @@ nav:
   - Configuration: configuration.md
   - Features:
       - Responses API: features/responses-api.md
-      - Model data: features/model-data.md
+      - Model data catalogue: features/model-data.md
       - Web Search: features/web-search.md
+      - AI Task: features/ai-task.md
+      - Home Assistant access: features/home-assistant-access.md
       - Exposed entity attributes: features/exposed-entity-attributes.md
+      - Guest Mode: features/guest-mode.md
+      - Local handling: features/local-handling.md
+      - Broadcast: features/broadcast.md
+      - Request Rules: features/request-rules.md
+      - Function Groups: features/function-groups.md
+      - Delayed Function Tools: features/delayed-function-tools.md
+      - Skills: features/skills.md
+      - Voice Identity: features/voice-identity.md
+      - Quiet Hours: features/quiet-hours.md
+      - Speech processing: features/speech-processing.md
+      - Voice follow-ups: features/voice-followups.md
       - Persistent memory: features/persistent-memory.md
       - Temporary memory: features/temporary-memory.md
       - Knowledge Library: features/knowledge-library.md
-      - Voice follow-ups: features/voice-followups.md
       - Conversation continuity: features/conversation-continuity.md
       - Conversation archive: features/conversation-archive.md
       - Context management: features/context-management.md
-      - Skills: features/skills.md
-      - Function groups: features/function-groups.md
-      - Request Rules: features/request-rules.md
-      - Guest Mode: features/guest-mode.md
-      - Usage statistics: features/usage-statistics.md
-      - AI Task: features/ai-task.md
-  - Custom functions:
+      - Request debugging: features/request-debugging.md
+      - Usage: features/usage-statistics.md
+      - Backup & Restore: features/backup-restore.md
+  - Function Tools:
       - Overview: functions/index.md
       - Function types and examples: functions/function-types.md
+      - Native Function Tools: functions/native-details.md
+      - Scrape Function Tool: functions/scrape.md
+      - File Function Tools: functions/file-tools.md
+      - Bash Function Tool: functions/bash.md
+      - SQLite Function Tool: functions/sqlite.md
       - Home Assistant LLM Tools: functions/home-assistant-llm-tools.md
+  - Home Assistant actions: services.md
+  - Skills:
+      - Skills overview: features/skills.md
+      - Discover and install: skills/discover-skills.md
+      - Create a Skill: skills/creating-skills.md
   - Reference:
       - Compatibility: reference/compatibility.md
       - Logging: reference/logging.md
-  - Migration: migration.md
-  - Troubleshooting: troubleshooting.md
+      - Migration: migration.md
+  - Help:
+      - FAQ: help/faq.md
+      - Troubleshooting: troubleshooting.md

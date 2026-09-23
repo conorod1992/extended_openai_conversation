@@ -18,7 +18,7 @@ function:
   name: execute_service
 ```
 
-Use native functions when the integration already provides the operation you need rather than rebuilding it as a script or REST function.
+Use native functions when the integration already provides the operation you need rather than rebuilding it as a script or REST function. See [Native Function Tools](native-details.md).
 
 ## `script`
 
@@ -189,3 +189,5 @@ Use generated SQL only when you accept that trade-off. For ordinary history ques
 A function schema can expose hours, minutes, and seconds as non-negative integers. The integration can then execute the function after the requested delay.
 
 For normal reminders or time-based automation, consider whether a Home Assistant automation, timer, calendar event, or dedicated reminder system is a better fit before relying on delayed tool execution.
+
+For file permissions and safe configuration, see [File Function Tools](file-tools.md). Bash execution requires an explicit unsafe-shell opt-in; see [Bash Function Tool](bash.md). For query limits and privacy considerations, see [SQLite Function Tool](sqlite.md).

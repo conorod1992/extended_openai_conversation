@@ -16,10 +16,9 @@ Each conversation agent can choose which installed skills it is allowed to load.
 
 ## Enable skills
 
-1. Open **Settings > Voice assistants**.
-2. Edit the assistant/conversation agent.
-3. Open **Options**.
-4. Select the skills the agent should be allowed to use.
+1. Open **Extended OpenAI** in the Home Assistant sidebar.
+2. Select the conversation agent and open **Configuration → Skills**.
+3. Select the installed Skills this agent may use and save the configuration.
 
 The Skills option is hidden when no skills are installed.
 
@@ -60,7 +59,7 @@ Use `source_ref` only when you intentionally want Skill files from a different b
 
 Downloads are completed in a staging area outside the installed-Skills directory. A completed Skill is then published into the installed directory as one managed operation and the Skill catalogue is refreshed. Reloads, publication/removal, and canonical Skill reads share the same concurrency boundary, so a request does not discover a half-downloaded directory or cross a Skill replacement/removal halfway through reading it. A failed or cancelled publication is brought back to a stable old-or-new state before the boundary is released.
 
-After installation, enable the skill for the relevant conversation agent in Options.
+After installation, select the Skill for the relevant agent in **Extended OpenAI → Configuration → Skills**.
 
 ## Skills versus custom functions
 

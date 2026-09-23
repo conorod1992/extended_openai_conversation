@@ -189,7 +189,7 @@ export const HELP_METADATA = Object.freeze({
       { term: "Enabled", text: "Uses the same saved state in the Functions page and Home Assistant enable/disable actions. Disabled is a capability boundary, not a prompt preference." },
     ],
     keywords: "group on demand load when needed tokens catalogue yaml spec schema validate execute built in enabled disabled",
-    href: `${DOCS_ROOT}/functions/overview.mdx`,
+    href: `${DOCS_ROOT}/functions/index.md`,
   }),
 });
 

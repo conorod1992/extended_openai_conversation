@@ -1,6 +1,6 @@
 # Function groups
 
-Function groups let an agent keep related configured functions **always available** or **load them only when needed**. They are optional: every existing ungrouped function keeps the previous behaviour and sends its full schema on each model request.
+Function groups let an agent keep related configured functions **always available** or **load them only when needed**. They are optional: enabled, executable ungrouped functions remain available without an on-demand group.
 
 This feature is useful when an agent has many functions whose names, descriptions, parameters, and examples would otherwise consume input on unrelated requests.
 
