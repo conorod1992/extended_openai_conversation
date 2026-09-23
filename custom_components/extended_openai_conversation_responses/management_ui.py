@@ -538,7 +538,9 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
     guest_manager = await async_get_guest_mode(hass, entry_id, subentry_id)
 
     if action == "get":
-        legacy_policy = subentry.data.get(CONF_GUEST_POLICY_VERSION) != GUEST_POLICY_VERSION
+        legacy_policy = (
+            subentry.data.get(CONF_GUEST_POLICY_VERSION) != GUEST_POLICY_VERSION
+        )
         configured_tools: list[dict[str, Any]] = []
         exposed_entities = None
         if legacy_policy and is_admin:
