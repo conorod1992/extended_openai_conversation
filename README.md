@@ -123,7 +123,7 @@ The built-in **Guide** provides concise in-app orientation. The repository docum
 | Give the agent larger reference material | [Knowledge Library](docs/features/knowledge-library.md) |
 | Keep/search previous conversations | [Conversation Archive](docs/features/conversation-archive.md) |
 | Handle predictable requests specially | [Request Rules](docs/features/request-rules.md) |
-| Add or organise model-callable tools | [Functions](docs/functions/overview.mdx) and [Function Groups](docs/features/function-groups.md) |
+| Add or organise model-callable tools | [Functions](docs/functions/index.md) and [Function Groups](docs/features/function-groups.md) |
 | Delay a configured Function Tool safely | [Delayed Function Tools](docs/features/delayed-function-tools.md) |
 | Understand entity exposure and permissions | [Home Assistant access](docs/features/home-assistant-access.md) |
 | Associate voice requests with individual users | [Voice Identity](docs/features/voice-identity.md) |

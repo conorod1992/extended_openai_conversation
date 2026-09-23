@@ -63,8 +63,10 @@ The integration supports several implementation types:
 - **scrape** — extracts data from a web page
 - **composite** — chains multiple function implementations
 - **sqlite** — performs a database query
+- **bash** — runs explicitly enabled shell commands with Home Assistant privileges
+- **read_file**, **write_file**, **edit_file** — access bounded files under allowed directories
 
-See [Function types and examples](function-types.md) for details.
+See [Function types and examples](function-types.md), [Native Function Tools](native-details.md), [File Function Tools](file-tools.md), [Bash Function Tool](bash.md), [SQLite Function Tool](sqlite.md), and [Scrape Function Tool](scrape.md) for details.
 
 Use **Add LLM Tools** to select capabilities supplied by Home Assistant or installed
 services, including registered MCP APIs. These are live references, with the same

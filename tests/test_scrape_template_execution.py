@@ -243,9 +243,8 @@ def test_published_scrape_examples_validate(hass):
     root = Path(__file__).resolve().parents[1]
     count = 0
     for relative in (
-        "docs/functions/scrape.mdx",
+        "docs/functions/scrape.md",
         "docs/functions/function-types.md",
-        "docs/functions/composite.mdx",
         "examples/function/kakao_bus/README.md",
         "tests/fixtures/functions/scrape_example.yaml",
     ):
