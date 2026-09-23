@@ -1,7 +1,7 @@
 ARG PYTHON_VERSION=3.14.7
 FROM python:${PYTHON_VERSION}-slim-bookworm
 
-ARG HA_CORE_SHA
+ARG TYPECHECK_ENV_KEY
 ARG OPENAI_VERSION
 ARG HASSIL_VERSION
 ARG HA_INTENTS_VERSION
@@ -14,7 +14,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN test -n "$HA_CORE_SHA" \
+RUN test -n "$TYPECHECK_ENV_KEY" \
     && test -n "$OPENAI_VERSION" \
     && test -n "$HASSIL_VERSION" \
     && test -n "$HA_INTENTS_VERSION" \
@@ -38,12 +38,12 @@ RUN python -m pip install --upgrade pip \
         "mypy==2.3.1" \
     && pip check \
     && mkdir -p /opt/eoai-ci \
-    && printf '%s\n' "$HA_CORE_SHA" > /opt/eoai-ci/ha-core-sha \
+    && printf '%s\n' "$TYPECHECK_ENV_KEY" > /opt/eoai-ci/typecheck-image-key \
     && pip freeze | sort > /opt/eoai-ci/typecheck-environment.txt
 
 WORKDIR /workspace
 
-RUN test -s /opt/eoai-ci/ha-core-sha \
+RUN test -s /opt/eoai-ci/typecheck-image-key \
     && test -s /opt/eoai-ci/typecheck-environment.txt \
     && mypy --version \
     && pip check

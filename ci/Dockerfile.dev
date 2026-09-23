@@ -5,7 +5,9 @@ ARG HA_CORE_SHA
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}"
 
 RUN test -n "$HA_CORE_SHA" \
     && apt-get update \
@@ -20,7 +22,8 @@ COPY ci/install_ha_media_dependencies.py ci/install_ha_media_dependencies.py
 COPY ci/reconcile_ha_dev_environment.sh ci/reconcile_ha_dev_environment.sh
 COPY ci/check_ha_dev_environment.py ci/check_ha_dev_environment.py
 
-RUN python -m pip install --upgrade pip \
+RUN /usr/local/bin/python -m venv "$VIRTUAL_ENV" \
+    && python -m pip install --upgrade pip \
     && mkdir -p /tmp/ha-dev-wheel /opt/eoai-ci \
     && pip wheel --no-deps "git+https://github.com/home-assistant/core.git@${HA_CORE_SHA}" --wheel-dir /tmp/ha-dev-wheel \
     && pip install /tmp/ha-dev-wheel/homeassistant-*.whl \
@@ -33,19 +36,27 @@ RUN python -m pip install --upgrade pip \
     && cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json \
         | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
 
+RUN find "$VIRTUAL_ENV/lib" -type d -name __pycache__ -prune -exec rm -rf {} +
+
 ARG PYTHON_VERSION=3.14.5
 FROM python:${PYTHON_VERSION}-slim-bookworm AS ha-dev
 
+ARG HA_CORE_SHA
+ARG IMAGE_BUILT_AT
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ha-dev-builder /usr/local /usr/local
+COPY --from=ha-dev-builder /opt/venv /opt/venv
 COPY --from=ha-dev-builder /opt/eoai-ci /opt/eoai-ci
 
 WORKDIR /workspace
@@ -54,4 +65,6 @@ RUN python /opt/eoai-ci/check_ha_dev_environment.py \
     && test -s /opt/eoai-ci/environment.sha256
 
 LABEL org.opencontainers.image.source="https://github.com/conorod1992/extended_openai_conversation" \
+      org.opencontainers.image.revision="${HA_CORE_SHA}" \
+      org.opencontainers.image.created="${IMAGE_BUILT_AT}" \
       org.opencontainers.image.description="Pinned Home Assistant dev CI environment for EOAI"
