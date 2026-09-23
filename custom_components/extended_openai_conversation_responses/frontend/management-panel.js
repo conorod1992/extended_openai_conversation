@@ -1696,7 +1696,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
             ...current,
             sessions,
             returned: Math.max(0, Number(current.returned ?? current.sessions?.length ?? 0) - removed),
-            ...(Number.isFinite(Number(current.total))
+            ...(this._eocHistoryMode !== "search" && Number.isFinite(Number(current.total))
               ? {total: Math.max(0, Number(current.total) - removed)}
               : {}),
           },
