@@ -154,26 +154,26 @@ test("unchanged route retains controls and core dialog edits across updates and 
   await expectHarnessClean(page, errors);
 });
 
-test("scope catalog is shared across data routes with a fixed TTL and mutation invalidation", async ({page}) => {
+test("scope catalogs are route-specific with independent TTL and mutation invalidation", async ({page}) => {
   await page.goto(fixtureUrl("data-memory/memories"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#add-memory")).toBeVisible();
   const counts = await panel.evaluate(async host => {
     const calls = window.browserHarness.calls;
     const count = () => calls.filter(c => c.section === "scopes").length;
-    const key = host._scopeCatalogKey();
-    const fetchedAt = host._eocScopeCatalogTimes.get(key);
+    const memoryKey = host._scopeCatalogKey();
+    const fetchedAt = host._eocScopeCatalogTimes.get(memoryKey);
     await host._navigate("data-memory", "conversations");
-    const shared = count();
-    const unchangedTimestamp = host._eocScopeCatalogTimes.get(key) === fetchedAt;
-    host._eocScopeCatalogTimes.set(key, Date.now() - 31_000);
+    const archiveSeparate = count();
+    const memoryTimestampUnchanged = host._eocScopeCatalogTimes.get(memoryKey) === fetchedAt;
+    host._eocScopeCatalogTimes.set(memoryKey, Date.now() - 31_000);
     await host._navigate("data-memory", "memories");
     const expired = count();
     await host._call("memories", "add", {scope_id:host._scopeId, content:"Cache invalidation test", category:"general"});
     await host._loadSection();
-    return {shared, unchangedTimestamp, expired, mutated:count()};
+    return {archiveSeparate, memoryTimestampUnchanged, expired, mutated:count()};
   });
-  expect(counts).toEqual({shared:1, unchangedTimestamp:true, expired:2, mutated:3});
+  expect(counts).toEqual({archiveSeparate:2, memoryTimestampUnchanged:true, expired:3, mutated:4});
 });
 
 test("configuration live metadata is fetched only by routes that use it", async ({page}) => {
@@ -241,7 +241,9 @@ test("Conversation History paints the selected scope before secondary data settl
     while (!["scopes", "config", "active"].every(key => started.has(key))) {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
-    await new Promise(resolve => setTimeout(resolve, 0));
+    for (let turn = 0; turn < 40 && (!host.shadowRoot.querySelector("#archive-query") || host._busy); turn++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
     const primaryVisible = Boolean(host.shadowRoot.querySelector("#archive-query")) && host._busy === false;
     const loadingSettings = host.shadowRoot.textContent.includes("Loading archive settings");
     const scopeKinds = browserHarness.calls
