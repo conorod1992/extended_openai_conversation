@@ -114,10 +114,15 @@ jobs:
           PAYLOAD_ROOT="${RUNNER_TEMP}/release-payload"
           rm -rf "$PAYLOAD_ROOT"
           mkdir -p "$PAYLOAD_ROOT"
+          # The checkout is owned by the runner user, not the container user.
+          git -c safe.directory="$GITHUB_WORKSPACE" ls-files -z \
+            custom_components/extended_openai_conversation_responses \
+            > "${RUNNER_TEMP}/release-files"
           while IFS= read -r -d '' file; do
             mkdir -p "$PAYLOAD_ROOT/$(dirname "$file")"
             cp "$file" "$PAYLOAD_ROOT/$file"
-          done < <(git ls-files -z custom_components/extended_openai_conversation_responses)
+          done < "${RUNNER_TEMP}/release-files"
+          test -f "$PAYLOAD_ROOT/custom_components/extended_openai_conversation_responses/manifest.json"
 
           VERSION="$(python scripts/set_release_version.py --check)"
           echo "root=$PAYLOAD_ROOT" >> "$GITHUB_OUTPUT"
