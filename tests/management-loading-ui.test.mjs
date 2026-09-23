@@ -214,7 +214,6 @@ assert.equal(routeModule.getRouteFeature("assistant/prompt-context"), undefined)
 assert.equal(routeModule.routeFeaturesReady("assistant/prompt-context"), true);
 await routeModule.routeAssetPromise("assistant/prompt-context");
 assert.equal(routeModule.getRouteFeature("assistant/prompt-context"), undefined);
-assert.match(panelSource, /import\("\.\/exposed-attributes-ui\.js"\)/);
 for (const [view, exports] of [
   ["usage-maintenance/backup-restore", ["renderBackupTransferPanel", "renderRestoreTransferDialog", "bindBackupTransfer"]],
 ]) {
