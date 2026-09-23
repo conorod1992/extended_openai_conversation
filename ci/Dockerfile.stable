@@ -28,6 +28,8 @@ RUN python /opt/eoai-ci/install_ha_dependencies.py \
     && python /opt/eoai-ci/install_ha_media_dependencies.py \
         --marker /opt/eoai-ci/media-dependencies.ready \
     && pip check \
+    && find /usr/local/lib/python3.14/site-packages -type d -name __pycache__ \
+        -prune -exec rm -rf {} + \
     && cat /opt/eoai-ci/requirements_test.txt /opt/eoai-ci/manifest.json \
         | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
 
@@ -48,7 +50,10 @@ RUN apt-get update \
         git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ha-stable-builder /usr/local /usr/local
+# Both stages use the same Python base image. Copy installed packages and their
+# command entry points without duplicating the base interpreter and standard library.
+COPY --from=ha-stable-builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
+COPY --from=ha-stable-builder /usr/local/bin /usr/local/bin
 COPY --from=ha-stable-builder /opt/eoai-ci /opt/eoai-ci
 
 WORKDIR /workspace
@@ -68,6 +73,7 @@ FROM ha-stable AS browser-stable
 
 ARG NODE_VERSION=24.20.0
 ARG PLAYWRIGHT_VERSION=1.63.0
+ARG PLAYWRIGHT_CHROMIUM_INSTALL_FLAGS="--with-deps --only-shell"
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
@@ -79,7 +85,7 @@ RUN apt-get update \
     && node --version \
     && npm --version \
     && npm install --global "@playwright/test@${PLAYWRIGHT_VERSION}" \
-    && npx playwright install --with-deps chromium \
+    && npx playwright install ${PLAYWRIGHT_CHROMIUM_INSTALL_FLAGS} chromium \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
 
