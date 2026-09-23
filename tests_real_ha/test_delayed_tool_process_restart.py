@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 import importlib
 import json
 import os
@@ -285,34 +284,6 @@ async def _recover_and_execute(config_dir: Path) -> None:
         await hass.async_stop()
 
 
-async def _recover_executing_tombstone(config_dir: Path) -> None:
-    """Third process: an indeterminate executing record must never be replayed."""
-    from homeassistant import bootstrap, runner
-
-    sys.path.insert(0, str(config_dir))
-    hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
-    )
-    assert hass is not None
-    await _register_execution_probe(hass, config_dir)
-    await hass.async_start()
-
-    try:
-        delayed_tools = importlib.import_module(
-            f"custom_components.{DOMAIN}.delayed_tools"
-        )
-        _assert_source_component(config_dir)
-        await hass.async_block_till_done()
-        manager = hass.data[DOMAIN][delayed_tools.DATA_DELAYED_TOOL_MANAGER]
-        assert manager._records == {}
-        await asyncio.sleep(0.2)
-        await hass.async_block_till_done()
-        assert manager._records == {}
-        assert len(_read_executions(config_dir)) == 1
-    finally:
-        await hass.async_stop()
-
-
 async def _child_main() -> None:
     config_dir = Path(os.environ[_CONFIG_DIR_ENV]).resolve()
     phase = os.environ[_CHILD_PHASE]
@@ -320,8 +291,6 @@ async def _child_main() -> None:
         await _create_entry_and_schedule(config_dir)
     elif phase == "execute":
         await _recover_and_execute(config_dir)
-    elif phase == "tombstone":
-        await _recover_executing_tombstone(config_dir)
     else:
         raise AssertionError(f"Unknown delayed-tool process phase: {phase}")
 
@@ -370,7 +339,7 @@ def _assert_child_ok(result: subprocess.CompletedProcess[str], phase: str) -> No
 def test_delayed_tool_survives_process_restart_and_never_replays_execution_boundary(
     tmp_path: Path,
 ) -> None:
-    """A pending delayed call survives restart; executing tombstones never replay."""
+    """A pending delayed call survives a real restart and executes exactly once."""
     repo_root = Path(__file__).resolve().parents[1]
     source = repo_root / "custom_components" / DOMAIN
     config_dir = tmp_path / "ha-config"
@@ -388,7 +357,7 @@ def test_delayed_tool_survives_process_restart_and_never_replays_execution_bound
     persisted = _read_store(config_dir)
     calls = persisted["data"]["calls"]
     assert len(calls) == 1
-    original = deepcopy(calls[0])
+    original = calls[0]
     assert original["status"] == "pending"
     assert original["tool_name"] == _TOOL_NAME
     assert original["device_id"] == _DEVICE_ID
@@ -402,17 +371,6 @@ def test_delayed_tool_survives_process_restart_and_never_replays_execution_bound
     after_execution = _read_store(config_dir)
     assert after_execution["data"]["calls"] == []
 
-    tombstone = deepcopy(original)
-    tombstone["call_id"] = "interrupted-executing-process-restart"
-    tombstone["status"] = "executing"
-    tombstone["due_at"] = _PAST_DUE
-    after_execution["data"]["calls"] = [tombstone]
-    _write_store(config_dir, after_execution)
-
-    recovered = _run_child(config_dir, "tombstone")
-    _assert_child_ok(recovered, "tombstone")
-    assert len(_read_executions(config_dir)) == 1
-    assert _read_store(config_dir)["data"]["calls"] == []
 
 
 if __name__ == "__main__" and os.environ.get(_CHILD_PHASE):

@@ -34,6 +34,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.changes.outputs.backend }}
+      process_restart_a: ${{ steps.changes.outputs.process_restart_a }}
+      process_restart_b: ${{ steps.changes.outputs.process_restart_b }}
+      process_restart_c: ${{ steps.changes.outputs.process_restart_c }}
+      shards: ${{ steps.changes.outputs.shards }}
     steps:
       - name: Checkout repository history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -49,6 +53,8 @@ jobs:
           # Pushes, schedules, and manual runs deliberately keep full coverage.
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
+            for shard in a b c; do echo "process_restart_${shard}=true" >> "$GITHUB_OUTPUT"; done
+            echo 'shards=["parallel-safe","stateful-serial","process-restart-a","process-restart-b","process-restart-c"]' >> "$GITHUB_OUTPUT"
             echo "Non-PR event: running the full suite." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -79,6 +85,8 @@ jobs:
           fi
 
           echo "backend=$backend" >> "$GITHUB_OUTPUT"
+          python ci/classify_real_ha_specialists.py \
+            "$RUNNER_TEMP/changed-files.txt" --output "$GITHUB_OUTPUT"
           {
             echo "### PR path classification"
             echo
@@ -117,12 +125,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard:
-          - parallel-safe
-          - process-restart-a
-          - process-restart-b
-          - process-restart-c
-          - stateful-serial
+        shard: ${{ fromJSON(needs.classify.outputs.shards) }}
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
