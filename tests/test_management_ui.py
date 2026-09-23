@@ -1079,13 +1079,17 @@ async def test_guest_backup_and_service_dispatch_edges(monkeypatch) -> None:
     )
     monkeypatch.setattr(management_ui, "resolve_guest_policy", lambda *_: policy)
 
-    result = await management_ui.async_management_command(
+    primary = await management_ui.async_management_command(
         hass, "user", False, _residual_message("guest_mode", "get")
     )
-    assert result == {
-        "status": {"state": "inactive"},
-        "policy": {"guest_active": False},
-    }
+    assert primary["status"] == {"state": "inactive"}
+    assert primary["config"] == {}
+    assert "policy" not in primary
+
+    details = await management_ui.async_management_command(
+        hass, "user", False, _residual_message("guest_mode", "details")
+    )
+    assert details["policy"] == {"guest_active": False}
 
     with pytest.raises(HomeAssistantError, match="config must be an object"):
         await management_ui.async_management_command(
