@@ -73,7 +73,7 @@ for (const admin of [true, false]) {
       escaped: true,
     })));
     expect(result.usage.hasContent).toBe(true);
-    expect(result.usage.hasChartNote).toBe(admin);
+    expect(result.usage.hasChartNote).toBe(true);
     for (const overview of result.overview) {
       expect(overview.hasIntro).toBe(true);
       expect(overview.hasFootnote).toBe(true);
