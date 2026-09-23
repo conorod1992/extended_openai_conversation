@@ -23,7 +23,7 @@ try {
     const actions = renderConfigurationActions(owner, owner._configSections);
     assert.doesNotMatch(html, /agent-actions-menu|config-toolbar|action-help/);
     assert.match(actions, /class="[^"]*\bagent-actions-menu\b[^"]*"/);
-    assert.equal((html.match(/class="notice local-handling-explainer"/g) || []).length, 1);
+    assert.equal((html.match(/<details class="local-handling-help">/g) || []).length, 1);
     assert.doesNotMatch(html, /data-field="local_intent_delayed_commands_to_ai"/);
     const choice = html.match(/<div id="local-intent-list"[^>]*><label[^>]*><input[^>]+>/)?.[0];
     assert.ok(choice, "delayed device commands belong first in the exception list");
