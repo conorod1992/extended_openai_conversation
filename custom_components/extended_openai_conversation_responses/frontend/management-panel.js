@@ -530,7 +530,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _configurationActions() {
     const sections = this._configSectionsForView();
-    if (!sections.length) return "";
+    if (!sections.length || this._viewKey() === "usage-maintenance/retention") return "";
     if (this._viewKey() === "data-memory/conversations" && !this._data?.is_admin) return "";
     return getConfigurationEditor()?.renderConfigurationActions?.(this, sections) || "";
   }
@@ -1461,11 +1461,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "usage-maintenance/backup-restore") return getRouteFeature(view)?.renderBackupTransferPanel(Boolean(this._configDirty)) || this._loading();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
     if (view === "usage-maintenance/retention") {
-      this._configSections = this._configSectionsForView();
-      const specialized = getRouteFeature(view);
-      return (getConfigurationEditor()?.renderConfiguration(this, {
-        renderBackup: specialized?.renderBackupTransferPanel,
-      }) || this._loading());
+      return getRouteFeature(view)?.renderRetentionSettings(this) || this._loading();
     }
     return this._empty("This section is not available.");
   }
@@ -1709,7 +1705,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       root.querySelectorAll("[data-guest-mode]").forEach((element) => element.addEventListener("change", () => { this._guestDraft[element.dataset.guestMode] = element.value; this._render(); }));
       this._setupGuestSelectors();
     }
-    if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/retention"].includes(view)) getConfigurationEditor()?.bindConfiguration(this);
+    if (this._page === "assistant" || view === "data-memory/conversations") getConfigurationEditor()?.bindConfiguration(this);
+    if (view === "usage-maintenance/retention") getRouteFeature(view)?.bindRetentionSettings(this);
     if (view === "assistant/prompt-context") this._hydrateExposedAttributes();
     if (view === "usage-maintenance/backup-restore") getRouteFeature(view)?.bindBackupTransfer(this);
     if (view === "capabilities/functions") getConfigurationTools()?.bindTools(this);
