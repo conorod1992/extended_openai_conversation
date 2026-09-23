@@ -10,13 +10,23 @@ Extended OpenAI Conversation (Responses) is a Home Assistant custom component th
 
 ### Lint & Format
 ```bash
-# Run before final testing or handing off changes:
+# Mandatory before final testing or handing off changes. This normalizes
+# repository text hygiene, applies Ruff autofixes, and formats Python:
 python scripts/fix.py
 
 # CI-equivalent, non-mutating verification:
 ruff check custom_components/
 ruff format --check custom_components/
 ```
+
+### Frontend generated assets
+```bash
+# After changing frontend source, regenerate the tracked production bundle:
+npm --prefix frontend ci --no-audit --no-fund
+npm --prefix frontend run build
+```
+
+Files under `custom_components/extended_openai_conversation_responses/frontend/dist/` are generated build output. Never edit them manually; change frontend source and rebuild instead.
 
 ### Type Check
 ```bash
