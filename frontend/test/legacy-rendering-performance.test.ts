@@ -53,8 +53,9 @@ describe("native management rendering", () => {
 
   it("keeps loaded main content mounted only during navigation busy renders", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
-    expect(source).toContain('main.setAttribute("aria-busy", "true")');
-    expect(source).toContain("main.inert = true;");
+    const renderer = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js", import.meta.url), "utf8");
+    expect(renderer).toContain('main.setAttribute("aria-busy", "true")');
+    expect(renderer).toContain("main.inert = true;");
     expect(source).toContain("main.inert = false;");
     expect(source).toContain("panel._eocNavigationDepth = (panel._eocNavigationDepth || 0) + 1;");
     expect(source).toContain("trackAsync(this, NAVIGATION_MARK_PREFIX");

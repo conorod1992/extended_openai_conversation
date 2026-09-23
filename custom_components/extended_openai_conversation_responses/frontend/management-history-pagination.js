@@ -215,13 +215,25 @@ export {
   searchSessionRows,
 };
 
-export function renderConversations(panel, decorateConversations) {
-  const result = panel._contentData || panel._result || {};
+function activeConversationMarkup(panel, result) {
   const active = result.active?.active || [];
   const loading = result.loading || {};
   const errors = result.load_errors || [];
-  const secondaryStatus = `${loading.active ? '<p class="help">Loading active conversations…</p>' : ""}${errors.map((issue) => `<div class="notice"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)}</p></div>`).join("")}`;
-  const content = `${panel._data?.is_admin ? `<p class="help">Recent context lets conversations continue; saved history is the archive you can review or search.</p>` : ""}${secondaryStatus}${panel._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${panel._e(item.label)}</h3><p class="meta">Last active ${panel._e(panel._formatDate(item.last_active))} · Expires ${panel._e(panel._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${panel._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}
+  return `${loading.active ? '<p class="help">Loading active conversations…</p>' : ""}${errors.map((issue) => `<div class="notice"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)}</p></div>`).join("")}${panel._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${panel._e(item.label)}</h3><p class="meta">Last active ${panel._e(panel._formatDate(item.last_active))} · Expires ${panel._e(panel._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${panel._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}`;
+}
+
+export function reconcileActiveConversations(panel) {
+  if (panel._viewKey?.() !== "data-memory/conversations" || panel._busy) return false;
+  const host = panel.shadowRoot?.querySelector?.("[data-eoc-active-conversations]");
+  if (!host) return false;
+  host.innerHTML = activeConversationMarkup(panel, panel._contentData || {});
+  panel._bindActiveConversationActions?.();
+  return true;
+}
+
+export function renderConversations(panel, decorateConversations) {
+  const result = panel._contentData || panel._result || {};
+  const content = `${panel._data?.is_admin ? `<p class="help">Recent context lets conversations continue; saved history is the archive you can review or search.</p>` : ""}<div data-eoc-active-conversations>${activeConversationMarkup(panel, result)}</div>
     <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-id="${panel._e(item.session_id)}"><h3>${panel._e(item.title || "Untitled conversation")}</h3><p class="meta">${panel._e(panel._formatDate(item.last_message_at))} · ${panel._e(String(item.turn_count))} turns · ${panel._e(item.scope_source)}</p></div><div class="actions"><button type="button" class="secondary view-session" data-id="${panel._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${panel._e(item.session_id)}">Delete</button></div></article>`).join("") || panel._empty("No retained conversations in this scope.")}</div></section>`;
   return decorateConversations?.(panel, content) || content;
 }

@@ -57,6 +57,34 @@ function updateNavigation(panel, navigation) {
   if (mobile) mobile.value = panel._page;
 }
 
+// A pending route keeps its previous main content, but its destination controls
+// must acknowledge the navigation before either code or data arrives.
+export function showPendingDestination(panel) {
+  const root = panel.shadowRoot;
+  if (!root?.querySelector("[data-eoc-persistent-shell]")) return;
+  updateNavigation(panel, navigationFor(panel));
+  const local = panel._visibleSubsections();
+  const nav = root.querySelector(".subsection-nav");
+  if (nav) {
+    const markup = local.map((item) => `<button type="button" data-subsection="${panel._e(item.id)}" class="${item.id === panel._subsection ? "active" : ""}" ${item.id === panel._subsection ? 'aria-current="page"' : ""}>${panel._e(item.label)}</button>`).join("");
+    if (nav._eocMarkup !== markup) {
+      nav.innerHTML = markup;
+      nav._eocMarkup = markup;
+    }
+    nav.hidden = local.length <= 1;
+    nav.setAttribute("aria-label", `${pageMetadata(panel._page).label} sections`);
+  }
+  const current = local.find((item) => item.id === panel._subsection);
+  const sectionHost = root.querySelector("#eoc-section-host");
+  updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label><p>${panel._e(current?.description || "")}</p></div>` : "");
+  const main = root.querySelector("[data-eoc-main]");
+  if (main) {
+    main.setAttribute("aria-busy", "true");
+    main.inert = true;
+    main.classList.add("eoc-loading-in-background");
+  }
+}
+
 function bindDynamicBase(panel) {
   const root = panel.shadowRoot;
   if (root.__eocRouteControlsBound) return;
@@ -141,6 +169,31 @@ function updateAgentActions(panel) {
     : "";
   updateRegion(host, markup);
   host.hidden = !markup;
+}
+
+export function reconcileScopePicker(panel) {
+  const host = panel.shadowRoot?.querySelector?.("#eoc-scope-host");
+  if (!host) return false;
+  const markup = panel._scopePicker();
+  if (host.innerHTML === markup) return true;
+  const activeId = host.contains(panel.shadowRoot.activeElement)
+    ? panel.shadowRoot.activeElement?.id : null;
+  updateRegion(host, markup);
+  if (activeId) host.querySelector(`#${activeId}`)?.focus();
+  return true;
+}
+
+export function reconcileHistoryConfiguration(panel, markup) {
+  if (panel._viewKey?.() !== "data-memory/conversations" || panel._busy
+      || panel.shadowRoot?.querySelector?.("dialog[open]")) return false;
+  const host = panel.shadowRoot?.querySelector?.("[data-eoc-history-config]");
+  if (!host) return false;
+  host.innerHTML = markup;
+  updateAgentActions(panel);
+  const dialogs = panel._dialogs();
+  updateDialogs(panel, dialogs, {preserveEditors: true});
+  panel._eocDialogMarkup = dialogs;
+  return true;
 }
 
 function renderDynamicRegions(panel) {

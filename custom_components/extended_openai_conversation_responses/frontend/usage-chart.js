@@ -340,6 +340,37 @@ function renderUsageBar(panel, bucket, max) {
   return `<span class="chart-column" tabindex="0" aria-label="${panel._e(details)}" data-tooltip="${panel._e(details)}" style="height:${height}%"><span class="chart-segment cached" style="height:${cachedShare}%"></span><span class="chart-segment uncached" style="height:${uncachedShare}%"></span></span>`;
 }
 
+function usageWarnings(panel, result) {
+  return (result.load_errors || []).map((issue) => `<div class="notice"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
+}
+
+function usageRecentRows(panel, result) {
+  const rows = (result.runs?.runs || []).map((run) => {
+    const tokens = tokenBreakdown(run.total_tokens, run.cached_input_tokens);
+    const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
+    return `<tr><td><time datetime="${panel._e(completed.datetime)}" title="${panel._e(completed.datetime)}">${panel._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${panel._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${panel._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
+  }).join("");
+  return result.loading?.runs ? `<tr><td colspan="7">Loading recent runs…</td></tr>`
+    : rows || `<tr><td colspan="7">No retained recent runs.</td></tr>`;
+}
+
+export function reconcileUsageSecondary(panel, key) {
+  if (panel._viewKey?.() !== "usage-maintenance/usage" || panel._busy) return false;
+  const root = panel.shadowRoot;
+  const warnings = root?.querySelector?.("[data-eoc-usage-warnings]");
+  if (!warnings) return false;
+  warnings.innerHTML = usageWarnings(panel, panel._result || {});
+  if (key === "runs") {
+    const diagnostics = root.querySelector("[data-eoc-usage-diagnostics]");
+    const rows = root.querySelector("[data-eoc-usage-runs]");
+    if (!diagnostics || !rows) return false;
+    diagnostics.innerHTML = renderUsageDiagnostics(panel, panel._result || {});
+    rows.innerHTML = usageRecentRows(panel, panel._result || {});
+    bindUsageDiagnostics(panel);
+  }
+  return true;
+}
+
 export function renderUsagePage(panel, result = {}) {
   const today = resultToday(result, panel);
   const history = selectUsageHistory(result.days?.days || [], panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW, today);
@@ -351,15 +382,6 @@ export function renderUsagePage(panel, result = {}) {
   const chartByMonth = ["year", "all"].includes(history.id);
   const chartAxis = buckets.length ? `<div class="chart-axis" aria-hidden="true"><span>${panel._e(formatUsageDate(buckets[0].label, undefined, chartByMonth))}</span><span>${panel._e(formatUsageDate(buckets[Math.floor((buckets.length - 1) / 2)].label, undefined, chartByMonth))}</span><span>${panel._e(formatUsageDate(buckets.at(-1).label, undefined, chartByMonth))}</span></div>` : "";
   const cachedMeta = (value) => `${formatUsageNumber(value || 0)} cached input`;
-  const loadWarnings = (result.load_errors || []).map((issue) => `<div class="notice"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
-  const recentRows = (result.runs?.runs || []).map((run) => {
-    const tokens = tokenBreakdown(run.total_tokens, run.cached_input_tokens);
-    const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
-    return `<tr><td><time datetime="${panel._e(completed.datetime)}" title="${panel._e(completed.datetime)}">${panel._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${panel._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${panel._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
-  }).join("");
-  const recentRunsBody = result.loading?.runs
-    ? `<tr><td colspan="7">Loading recent runs…</td></tr>`
-    : recentRows || `<tr><td colspan="7">No retained recent runs.</td></tr>`;
   const completeHistory = result.days?.complete_history === true;
   const dailyMismatch = completeHistory && usageLifetimeDiffersFromDaily(lifetime, history.allSummary);
   const availableText = history.availableStart
@@ -381,7 +403,7 @@ export function renderUsagePage(panel, result = {}) {
   return `<style>
       .usage-range-card{display:flex;align-items:end;justify-content:space-between;gap:20px}.usage-range-copy{display:grid;gap:6px}.usage-range-copy h2,.usage-range-copy p{margin:0}.usage-range-copy p{color:var(--secondary-text-color)}.usage-range-control{min-width:190px}.usage-range-control select{width:100%;min-height:42px}.usage-history-note{line-height:1.5}.usage-history-note strong{display:block;margin-bottom:4px}
       @media(max-width:680px){.usage-range-card{display:grid}.usage-range-control{min-width:0;width:100%}}
-    </style>${loadWarnings}
+    </style><div data-eoc-usage-warnings>${usageWarnings(panel, result)}</div>
     <section class="content-card usage-range-card"><div class="usage-range-copy"><h2>Usage period</h2><p>Totals, chart data, and model/provider/API-mode breakdowns use this same Home Assistant local-calendar period.</p><small>${panel._e(historyRangeLabel(history))}</small></div><label class="usage-range-control">History window<select id="usage-window">${options}</select></label></section>
     <section class="metric-grid compact">
       ${panel._metric(history.label, summary.total_tokens || 0, cachedMeta(summary.cached_input_tokens))}
@@ -392,8 +414,8 @@ export function renderUsagePage(panel, result = {}) {
     </section>
     <section class="content-card"><div class="chart-heading"><h2>Tokens by ${chartByMonth ? "month" : "recorded day"}</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Token usage for the selected period; cached input tokens are included within each total">${buckets.map((bucket) => renderUsageBar(panel, bucket, chartMax)).join("") || panel._empty("No daily usage is recorded in this period.")}</div>${chartAxis}<p class="chart-note"><strong>Cached input</strong> is input recognised as cached by the provider. It is included in total tokens and may be billed at a lower rate.</p></section>
     <section class="notice usage-history-note"><strong>Daily aggregate history: ${panel._e(availableText)}</strong><p>The selected period is ${panel._e(selectedText)}.${panel._e(partialText)}${panel._e(gapText)} “All available” therefore means all stored daily aggregate history, not necessarily the same value as lifetime usage.</p></section>
-    ${renderUsageDiagnostics(panel, result)}
-    <section class="content-card"><h2>Recent runs</h2><p class="help">This table uses retained run detail and is not expanded by the selected aggregate-history period.</p><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody>${recentRunsBody}</tbody></table></div></section>
+    <div data-eoc-usage-diagnostics>${renderUsageDiagnostics(panel, result)}</div>
+    <section class="content-card"><h2>Recent runs</h2><p class="help">This table uses retained run detail and is not expanded by the selected aggregate-history period.</p><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody data-eoc-usage-runs>${usageRecentRows(panel, result)}</tbody></table></div></section>
     ${panel._data?.is_admin ? `<section class="content-card"><h2>Manage usage history</h2><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, selected-period, and lifetime aggregates are never removed by detail pruning.</small></section>` : ""}`;
 }
 
