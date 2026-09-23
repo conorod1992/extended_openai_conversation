@@ -21,10 +21,11 @@ test("Request Rules UI exposes revision-safe move controls", async () => {
 test("Request Rules UI explains AI-routing command semantics", async () => {
   const source = renderRequestRules(panel);
 
-  assert.match(source, /rest of the current conversation/i);
-  assert.match(source, /original request/i);
-  assert.match(source, /provider/i);
-  assert.match(source, /first matching rule/i);
+  assert.match(source, /routing command by default/i);
+  assert.match(source, /Continue to AI/i);
+  assert.match(source, /routing hints inside a normal request/i);
+  assert.match(source, /Reset for this request only/i);
+  assert.match(source, /first match is used/i);
 });
 
 test("Guide explains broad versus complete AI-routing matches", async () => {
