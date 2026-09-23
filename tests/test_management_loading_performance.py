@@ -318,7 +318,50 @@ async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatc
     assert first["revision"] == second["revision"]
 
 
-async def test_guest_mode_get_reuses_one_exposed_entity_projection(monkeypatch) -> None:
+async def test_guest_mode_primary_get_skips_heavy_catalogues(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data[management_ui.CONF_GUEST_POLICY_VERSION] = (
+        management_ui.GUEST_POLICY_VERSION
+    )
+    guest = SimpleNamespace(
+        status=lambda: {"state": "inactive", "currently_active": False}
+    )
+    monkeypatch.setattr(management_ui, "async_get_guest_mode", AsyncMock(return_value=guest))
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_knowledge",
+        AsyncMock(side_effect=AssertionError("Knowledge must stay off the primary path")),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "get_exposed_entities",
+        MagicMock(side_effect=AssertionError("entity catalog must stay off primary path")),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "configured_function_tools_from_data",
+        MagicMock(side_effect=AssertionError("tool catalog must stay off primary path")),
+    )
+
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "guest_mode",
+            "action": "get",
+        },
+    )
+
+    assert result["status"]["state"] == "inactive"
+    assert result["legacy_policy"] is False
+    assert "policy" not in result
+    assert "knowledge_sources" not in result
+
+
+async def test_guest_mode_details_reuses_one_exposed_entity_projection(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
     guest = SimpleNamespace(
         status=lambda: {"state": "inactive", "currently_active": False}
@@ -338,12 +381,7 @@ async def test_guest_mode_get_reuses_one_exposed_entity_projection(monkeypatch) 
         assert exposed_entities is exposed
         return policy
 
-    def editor_snapshot(_hass, _options, _tools, *, exposed_entities=None):
-        assert exposed_entities is exposed
-        return {}
-
     monkeypatch.setattr(management_ui, "resolve_guest_policy", resolve_policy)
-    monkeypatch.setattr(management_ui, "guest_policy_editor_snapshot", editor_snapshot)
 
     result = await management_ui.async_management_command(
         hass,
@@ -353,12 +391,13 @@ async def test_guest_mode_get_reuses_one_exposed_entity_projection(monkeypatch) 
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
             "section": "guest_mode",
-            "action": "get",
+            "action": "details",
         },
     )
 
     exposed_loader.assert_called_once_with(hass)
     assert result["domains"] == ["light", "switch"]
+    assert result["policy"]["guest_active"] is False
     assert result["_performance"]["total_ms"] >= 0
 
 

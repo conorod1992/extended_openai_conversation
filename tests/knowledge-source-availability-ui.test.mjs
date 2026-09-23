@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-import {knowledgeSourceAvailabilityBadge} from "../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js";
+import {knowledgeSourceAvailabilityBadge} from "../custom_components/extended_openai_conversation_responses/frontend/knowledge-presentation.js";
 
 assert.match(knowledgeSourceAvailabilityBadge({enabled:true}), /availability-badge[^>]*>Available</);
 assert.match(knowledgeSourceAvailabilityBadge({enabled:false}), /disabled-badge[^>]*>Unavailable</);
 assert.match(knowledgeSourceAvailabilityBadge({}), /availability-badge[^>]*>Available/);
 
 const source = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-dialogs.js", import.meta.url), "utf8") + await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js", import.meta.url),
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-knowledge-feature.js", import.meta.url),
   "utf8",
 );
 assert.match(source, /id=\"knowledge-source-enabled\" type=\"checkbox\" role=\"switch\" checked/);
