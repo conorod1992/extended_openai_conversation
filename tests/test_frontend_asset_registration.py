@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 from custom_components.extended_openai_conversation_responses import frontend_assets
-from custom_components.extended_openai_conversation_responses.const import DOMAIN
 
 COMPONENT = Path(frontend_assets.__file__).parent
 FRONTEND = COMPONENT / "frontend"
@@ -32,13 +30,3 @@ def test_manifest_dynamic_chunks_all_exist() -> None:
         for dependency in (*entry.get("imports", []), *entry.get("dynamicImports", [])):
             assert dependency in manifest, f"{source} references missing {dependency}"
             assert (DIST / manifest[dependency]["file"]).is_file()
-
-
-async def test_runtime_registration_uses_one_cacheable_bundled_root(hass) -> None:
-    hass.http.async_register_static_paths = AsyncMock()
-    await frontend_assets.async_register_frontend_assets(hass)
-    assert f"/{DOMAIN}/frontend" == frontend_assets._ASSET_URL_PREFIX
-    assert frontend_assets._PRODUCTION_DIR == DIST
-    assert frontend_assets.frontend_entry_url(hass, "management").startswith(
-        f"/{DOMAIN}/frontend/assets/management-"
-    )

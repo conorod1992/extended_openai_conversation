@@ -2,10 +2,36 @@
 
 from __future__ import annotations
 
-from custom_components.extended_openai_conversation_responses import model_tool_results
+from types import SimpleNamespace
+
+from custom_components.extended_openai_conversation_responses import (
+    model_tool_results,
+    runtime_hardening,
+)
+from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    tool_result_data,
+)
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
+
+
+async def test_tool_result_guard_bounds_outermost_string_result() -> None:
+    """A model-facing tool result remains bounded after dispatch."""
+
+    class FakeEntity(ExtendedOpenAIAgentEntity):
+        async def _async_dispatch_function_tool(self, *_args):
+            return SimpleNamespace(
+                tool_result={
+                    "result": "x"
+                    * (runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS + 100)
+                }
+            )
+
+    content = await object.__new__(FakeEntity)._execute_function_tool({}, {}, None, [])
+    result = tool_result_data(content)["result"]
+    assert len(result) <= runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS
+    assert runtime_hardening._TOOL_RESULT_TRUNCATION_LABEL in result
 
 
 def test_compact_memory_result_preserves_non_mapping_list_items() -> None:

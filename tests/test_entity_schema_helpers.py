@@ -1,5 +1,6 @@
 """Focused coverage for Responses entity normalization and schema helpers."""
 
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -147,6 +148,49 @@ def test_adjust_schema_handles_compositions_arrays_and_explicit_settings() -> No
     assert item_schema["additionalProperties"] is True
     assert item_schema["required"] == ["label"]
     assert item_schema["properties"]["label"] == {"type": ["string", "null"]}
+
+    # Nested oneOf/allOf branches and composed optional properties must be
+    # normalized without adding a second null wrapper on repeat passes.
+    nested = {
+        "type": "object",
+        "properties": {
+            "choice": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+            "entries": {
+                "type": "array",
+                "items": {
+                    "oneOf": [
+                        {"type": "object", "properties": {"name": {"type": "string"}}},
+                        {"allOf": [{"type": "object", "properties": {"count": {"type": "integer"}}}]},
+                    ]
+                },
+            },
+            "composed": {
+                "allOf": [{"type": "object", "properties": {"flag": {"type": "boolean"}}}]
+            },
+        },
+    }
+    _adjust_schema(nested)
+    assert nested["required"] == ["choice", "entries", "composed"]
+    properties = nested["properties"]
+    assert properties["choice"]["anyOf"][-1] == {"type": "null"}
+    assert properties["choice"]["anyOf"][0]["anyOf"] == [
+        {"type": "string"}, {"type": "integer"}
+    ]
+    assert properties["entries"]["type"] == ["array", "null"]
+    variants = properties["entries"]["items"]["oneOf"]
+    assert variants[0]["required"] == ["name"]
+    assert variants[0]["properties"]["name"]["type"] == ["string", "null"]
+    all_of_object = variants[1]["allOf"][0]
+    assert all_of_object["required"] == ["count"]
+    assert all_of_object["properties"]["count"]["type"] == ["integer", "null"]
+    assert properties["composed"]["anyOf"][-1] == {"type": "null"}
+    composed_object = properties["composed"]["anyOf"][0]["allOf"][0]
+    assert composed_object["required"] == ["flag"]
+    assert composed_object["properties"]["flag"]["type"] == ["boolean", "null"]
+
+    adjusted_once = deepcopy(nested)
+    _adjust_schema(nested)
+    assert nested == adjusted_once
 
 
 def test_normalize_url_citation_accepts_mapping_and_sdk_style_object() -> None:

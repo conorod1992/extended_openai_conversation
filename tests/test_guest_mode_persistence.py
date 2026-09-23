@@ -167,9 +167,11 @@ async def test_guest_mode_cancellation_waits_for_known_persistence_outcome(hass)
             }
         },
         {"schedule": {"unexpected": "shape"}},
+        {"schedule": {"active_from": "2026-09-13T10:00:00+00:00", "extra": True}},
+        ["legacy", "payload"],
     ],
 )
-async def test_initialize_ignores_malformed_persisted_schedule(hass, stored) -> None:
+async def test_initialize_ignores_malformed_persisted_schedule(hass, caplog, stored) -> None:
     manager = GuestModeManager(hass, "entry", "agent")
     manager._store = SimpleNamespace(async_load=AsyncMock(return_value=stored))
 
@@ -177,6 +179,8 @@ async def test_initialize_ignores_malformed_persisted_schedule(hass, stored) -> 
 
     assert manager.schedule is None
     assert manager._initialized is True
+    if isinstance(stored, dict) and isinstance(stored.get("schedule"), dict):
+        assert "Ignoring malformed Guest Mode state" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -198,6 +202,33 @@ async def test_initialize_loads_valid_persisted_schedule_only_once(hass) -> None
 
     assert manager.schedule == GuestModeSchedule(**stored["schedule"])
     load.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_initialize_retries_failed_load_then_restores_valid_schedule_once(hass) -> None:
+    stored = {
+        "schedule": {
+            "active_from": "2026-09-14T10:00:00+00:00",
+            "active_until": None,
+            "source": "home_assistant",
+            "updated_at": "2026-09-14T09:00:00+00:00",
+        }
+    }
+    load = AsyncMock(side_effect=[OSError("store unavailable"), stored])
+    manager = GuestModeManager(hass, "entry", "agent")
+    manager._store = SimpleNamespace(async_load=load)
+
+    with pytest.raises(OSError, match="store unavailable"):
+        await manager.async_initialize()
+    assert manager._initialized is False
+    assert manager.schedule is None
+
+    await manager.async_initialize()
+    assert manager._initialized is True
+    assert manager.schedule == GuestModeSchedule(**stored["schedule"])
+
+    await manager.async_initialize()
+    assert load.await_count == 2
 
 
 @pytest.mark.asyncio

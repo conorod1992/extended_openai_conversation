@@ -24,39 +24,6 @@ def _utc(value: str) -> datetime:
     return datetime.fromisoformat(value).replace(tzinfo=UTC)
 
 
-async def test_initialize_restores_valid_schedule_once(hass) -> None:
-    loaded = {
-        "schedule": {
-            "active_from": "2026-09-13T10:00:00+00:00",
-            "active_until": "2026-09-13T12:00:00+00:00",
-            "source": "home_assistant",
-            "updated_at": "2026-09-13T09:00:00+00:00",
-        }
-    }
-    manager = _manager(hass, loaded=loaded)
-
-    await manager.async_initialize()
-    await manager.async_initialize()
-
-    assert manager.schedule is not None
-    assert manager.schedule.source == "home_assistant"
-    manager._store.async_load.assert_awaited_once()
-
-
-@pytest.mark.parametrize(
-    "loaded",
-    [
-        {"schedule": {"active_from": "not-a-date"}},
-        {"schedule": {"active_from": "2026-09-13T10:00:00+00:00", "extra": True}},
-    ],
-)
-async def test_initialize_ignores_malformed_persisted_state(hass, loaded) -> None:
-    manager = _manager(hass, loaded=loaded)
-    await manager.async_initialize()
-    assert manager.schedule is None
-    assert manager._initialized is True
-
-
 async def test_restrict_and_trusted_update_reject_reverse_intervals(hass) -> None:
     manager = _manager(hass)
     manager._initialized = True
