@@ -307,17 +307,15 @@ function panelFor(page = "assistant", subsection = "basics") {
   panel._hass = {callWS: (message) => {
     calls.push(message);
     return new Promise((resolve) => {
-      const key = message.action === "summary"
-        ? "summary"
-        : message.action === "snapshot"
-          ? "snapshot"
-          : message.action;
+      const key = message.action === "detail"
+        ? `detail:${message.kind}`
+        : message.action;
       resolvers.set(key, resolve);
     });
   }};
   const loading = panel._loadAgents();
 
-  for (const action of ["summary", "agents"]) {
+  for (const action of ["primary", "agents"]) {
     assert.equal(
       calls.filter((call) => call.action === action).length,
       1,
@@ -328,14 +326,28 @@ function panelFor(page = "assistant", subsection = "basics") {
     "Broadcast waits until the principal Overview is rendered");
 
   resolvers.get("agents")({agents, scopes:initialScopes, is_admin:true});
-  resolvers.get("summary")({
+  resolvers.get("primary")({
     agent:{...agents[0], guest_mode:{}},
-    usage:{today:{}, month:{}},
+    usage:{},
     conversations:{},
     load_errors:[],
+    loading:{usage:true,memory:true,knowledge:true,guest_mode:true},
+    setup_health:{memory:{loading:true},knowledge:{loading:true}},
   });
   await loading;
   assert.equal(panel._result?.load_errors?.length, 0);
+  for (const kind of ["usage", "memory", "knowledge", "guest_mode"]) {
+    assert.equal(calls.some((call) => call.action === "detail" && call.kind === kind), true);
+  }
+  resolvers.get("detail:memory")({kind:"memory",agent:{memory_count:4},setup_health:{memory:{available:true,loading:false}}});
+  await Promise.resolve();
+  assert.equal(panel._selectedAgent().memory_count, 4,
+    "a fast detail patches Overview without waiting for slower peers");
+  resolvers.get("detail:usage")({kind:"usage",usage:{today:{total_tokens:7},month:{total_tokens:20}},agent:{tokens_today:7}});
+  resolvers.get("detail:knowledge")({kind:"knowledge",agent:{knowledge_source_count:2},setup_health:{knowledge:{source_count:2,available:true,loading:false}}});
+  resolvers.get("detail:guest_mode")({kind:"guest_mode",agent:{guest_mode:{state:"inactive"}}});
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 {
