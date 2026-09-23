@@ -159,6 +159,7 @@ assert.deepEqual([...base64ToBytes(bytesToBase64(new Uint8Array([0, 1, 127, 128,
     new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
     "utf8",
   );
-  assert.match(panelSource, /renderBackup: specialized\?\.renderBackupTransferPanel/);
+  assert.match(panelSource, /getRouteFeature\(view\)\?\.renderRetentionSettings\(this\)/);
+  assert.doesNotMatch(panelSource, /renderBackup: specialized\?\.renderBackupTransferPanel/);
   assert.match(panelSource, /getRouteFeature\("usage-maintenance\/backup-restore"\)\?\.renderRestoreTransferDialog/);
 }
