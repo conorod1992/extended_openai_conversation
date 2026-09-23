@@ -53,7 +53,15 @@ test("Guest Mode schedule mutations refresh only the selected agent and route", 
         return {
           ...host._result,
           status:{...status},
+        };
+      }
+      if (message.action === "details") {
+        return {
           policy:{guest_active:status.currently_active, marker:status.state},
+          knowledge_sources:[],
+          functions:[],
+          function_groups:[],
+          domains:[],
         };
       }
       return original(message);
@@ -85,7 +93,7 @@ test("Guest Mode schedule mutations refresh only the selected agent and route", 
   });
 
   expect(result.finalAgentCalls).toBe(result.initialAgentCalls);
-  expect(result.guestCalls).toEqual(["update", "get", "disable", "get"]);
+  expect(result.guestCalls).toEqual(["update", "get", "details", "disable", "get", "details"]);
   expect(result.afterUpdate.agent).toMatchObject({
     state:"active_indefinitely",
     currently_active:true,
@@ -119,6 +127,9 @@ test("late Guest Mode refresh does not replace a newer route", async ({page}) =>
       if (message.section === "guest_mode" && message.action === "get") {
         await new Promise((resolve) => { releaseGet = resolve; });
         return {...host._result, status:{state:"active_indefinitely", currently_active:true, indefinite:true}};
+      }
+      if (message.section === "guest_mode" && message.action === "details") {
+        return {policy:{guest_active:true}, knowledge_sources:[], functions:[], function_groups:[], domains:[]};
       }
       return original(message);
     };
