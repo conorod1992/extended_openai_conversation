@@ -2,7 +2,8 @@
 import {describe, expect, it} from "vitest";
 import {readFile} from "node:fs/promises";
 
-import {NAVIGATION, searchSettings} from "../../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
+import {NAVIGATION} from "../../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
+import {searchSettings} from "../../custom_components/extended_openai_conversation_responses/frontend/management-settings-index.js";
 import {
   deviceIdForSatellite,
   renderVoiceIdentity,

@@ -1,6 +1,7 @@
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
-import {SETTINGS_INDEX, pageMetadata} from "./frontend-navigation.js";
+import {pageMetadata} from "./frontend-navigation.js";
+import {SETTINGS_INDEX} from "./management-settings-index.js";
 
 export function buildSettingsSearchProjection(settings = SETTINGS_INDEX) {
   return settings.map((item, index) => {

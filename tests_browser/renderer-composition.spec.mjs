@@ -59,7 +59,7 @@ test("configuration emits the shipped local, exposed-attribute, group and transf
   await page.goto(fixtureUrl("assistant/basics"));
   await expect(page.locator('extended-openai-management-panel [data-config="chat_model"]')).toBeVisible();
   const result = await page.evaluate(async (path) => {
-    const editor = await import(`${path}agent-config-editor.js`);
+    const editor = await import(`${path}agent-config-editor-base.js`);
     const toolsEditor = await import(`${path}agent-config-tools.js`);
     const backup = await import(`${path}backup-transfer-ui.js`);
     const exposedAttributes = await import(`${path}exposed-attributes-ui.js`);
@@ -100,7 +100,7 @@ test("render owners emit final markup without creating a template in a browser",
   await page.goto(fixtureUrl("assistant/basics"));
   await expect(page.locator('extended-openai-management-panel [data-config="chat_model"]')).toBeVisible();
   const result = await page.evaluate(async (path) => {
-    const editor = await import(`${path}agent-config-editor.js`);
+    const editor = await import(`${path}agent-config-editor-base.js`);
     const toolsEditor = await import(`${path}agent-config-tools.js`);
     const backup = await import(`${path}backup-transfer-ui.js`);
     const exposedAttributes = await import(`${path}exposed-attributes-ui.js`);

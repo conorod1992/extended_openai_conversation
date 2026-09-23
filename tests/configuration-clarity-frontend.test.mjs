@@ -10,7 +10,8 @@ import {
   buildSettingsSearchProjection,
   searchProjectedSettings,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
-import {SETTINGS_INDEX} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
+import {SETTINGS_INDEX} from "../custom_components/extended_openai_conversation_responses/frontend/management-settings-index.js";
+import {CONFIG_OWNER_BY_KEY} from "../custom_components/extended_openai_conversation_responses/frontend/management-config-owners.js";
 
 assert.equal(friendlySettingLabel("memory_retrieval_mode"), "Relevance matching");
 assert.equal(friendlySettingLabel("temperature"), "Response creativity (temperature)");
@@ -23,6 +24,10 @@ assert.deepEqual(settingEffectBadges("local_intents_enabled", true), ["No AI cal
 assert.deepEqual(settingEffectBadges("archive_enabled", true), []);
 assert.deepEqual(settingEffectBadges("temperature", 0.8), []);
 assert.deepEqual(settingEffectBadges("local_intents_enabled", true, {disabled:true}), []);
+
+for (const {configKey, page, section} of SETTINGS_INDEX) {
+  if (configKey) assert.equal(CONFIG_OWNER_BY_KEY[configKey], `${page}/${section}`);
+}
 
 const projection = buildSettingsSearchProjection(SETTINGS_INDEX);
 assert.equal(

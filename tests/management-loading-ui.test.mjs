@@ -210,8 +210,9 @@ assert.equal(routeModule.getRouteFeature("capabilities/request-rules"), rules);
 // Specialized configuration modules stay cold until their owning route loads.
 assert.equal(editor.restoreDialog, undefined);
 assert.equal(routeModule.getRouteFeature("assistant/prompt-context"), undefined);
-assert.equal(routeModule.routeFeaturesReady("assistant/prompt-context"), true);
+assert.equal(routeModule.routeFeaturesReady("assistant/prompt-context"), false);
 await routeModule.routeAssetPromise("assistant/prompt-context");
+assert.equal(routeModule.routeFeaturesReady("assistant/prompt-context"), true);
 assert.equal(routeModule.getRouteFeature("assistant/prompt-context"), undefined);
 for (const [view, exports] of [
   ["usage-maintenance/backup-restore", ["renderBackupTransferPanel", "renderRestoreTransferDialog", "bindBackupTransfer"]],

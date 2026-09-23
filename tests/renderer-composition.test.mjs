@@ -5,6 +5,8 @@ import {renderRequestRules} from "../custom_components/extended_openai_conversat
 import {requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 import {renderGuide} from "../custom_components/extended_openai_conversation_responses/frontend/guide-page.js";
 
+import {routeAssetPromise} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
+await Promise.all(["assistant/basics", "assistant/voice", "capabilities/home-assistant", "data-memory/conversations", "usage-maintenance/retention"].map((view) => routeAssetPromise(view)));
 const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"})[c]);
 const panel = (config = {}) => ({_e:escape, _titleCase:String, _empty:escape,
   _agentId:"a", _draft:config, _result:{config, options:{}, defaults:{}}});

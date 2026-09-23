@@ -1,5 +1,6 @@
-import {renderConfiguration as renderConfigurationMarkup, renderConfigurationActions as renderConfigurationActionsMarkup, backupSummaryLines as summaryLines} from "./agent-config-editor-base.js";
+import {prepareConfigurationSections, renderConfigurationShell, renderConfigurationActions as renderConfigurationActionsMarkup, backupSummaryLines as summaryLines} from "./agent-config-editor-base.js";
 import {bindConfiguration as bindModelConfiguration} from "./agent-config-editor-model-v2.js";
+import {configurationSectionFamily, getRouteFeature} from "./management-route.js";
 export {configurationDialogs} from "./agent-config-editor-base.js";
 
 export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
@@ -47,7 +48,12 @@ export function renderConfiguration(panel, presentation) {
   const cacheKey = configRenderCacheKey(panel);
   const cached = getCachedConfigurationMarkup(panel, cacheKey, presentation?.voiceIdentity);
   if (cached !== null) return cached;
-  return rememberConfigurationMarkup(panel, cacheKey, renderConfigurationMarkup(panel, presentation), presentation?.voiceIdentity);
+  const family = configurationSectionFamily(panel._viewKey?.(), panel._configSections);
+  const renderer = getRouteFeature(family);
+  if (!renderer) return "";
+  prepareConfigurationSections(panel);
+  const sections = renderer.renderConfigurationSections(panel, presentation);
+  return rememberConfigurationMarkup(panel, cacheKey, renderConfigurationShell(panel, sections), presentation?.voiceIdentity);
 }
 
 export function renderConfigurationActions(panel, sections) {

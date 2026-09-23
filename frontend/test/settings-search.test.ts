@@ -2,7 +2,7 @@
 import {readFile} from "node:fs/promises";
 import {describe, expect, it} from "vitest";
 
-import {searchSettings} from "../../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
+import {searchSettings} from "../../custom_components/extended_openai_conversation_responses/frontend/management-settings-index.js";
 import {
   SETTINGS_SEARCH_PROJECTION,
   buildSettingsSearchProjection,

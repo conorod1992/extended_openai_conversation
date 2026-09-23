@@ -22,6 +22,7 @@ export default defineConfig({
             "management-dialogs.js",
             "agent-config-help.js",
             "usage-format.js",
+            "frontend-navigation.js",
           ];
           if (coreHelpers.some((name) => id.endsWith(`/frontend/${name}`))) {
             return "management-core";

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-import {NAVIGATION, routeFromPath, searchSettings, shouldShowGlobalSettingsSearch} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
+import {routeAssetPromise} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
+await Promise.all(["assistant/basics", "assistant/voice", "capabilities/home-assistant", "data-memory/conversations", "usage-maintenance/retention"].map((view) => routeAssetPromise(view)));
+import {NAVIGATION, routeFromPath, shouldShowGlobalSettingsSearch} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
+import {searchSettings} from "../custom_components/extended_openai_conversation_responses/frontend/management-settings-index.js";
 import {GUIDE_TOPICS, MEMORY_COMPARISON} from "../custom_components/extended_openai_conversation_responses/frontend/guide-content.js";
 import {renderGuide} from "../custom_components/extended_openai_conversation_responses/frontend/guide-page.js";
 import {knowledgeAvailabilityMarkup} from "../custom_components/extended_openai_conversation_responses/frontend/management-knowledge-feature.js";
