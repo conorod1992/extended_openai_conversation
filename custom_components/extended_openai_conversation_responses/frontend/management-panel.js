@@ -1231,11 +1231,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "guide") return renderGuide(this);
     if (this._page === "assistant") {
       this._configSections = this._configSectionsForView();
-      const voiceIdentity = view === "assistant/voice" ? getRouteFeature(view)?.renderVoiceIdentity : null;
+      const voiceIdentity = view === "assistant/voice" ? getRouteFeature(view)?.renderVoiceIdentityCore : null;
       const specialized = getRouteFeature(view);
       return (getConfigurationEditor()?.renderConfiguration(this, {
         voiceIdentity,
-        renderExposedAttributes: specialized?.renderExposedAttributeSettings,
+        renderExposedAttributes: view === "assistant/prompt-context" ? () => `<div class="exposed-attribute-settings" data-exposed-feature style="min-height:96px;padding:16px 0 4px;border-top:1px solid var(--divider-color)"><h3>Additional entity attributes</h3><p class="help">Loading Assist-exposed entity choices…</p></div>` : specialized?.renderExposedAttributeSettings,
       }) || this._loading());
     }
     if (view === "capabilities/request-rules") return getRouteFeature("capabilities/request-rules")?.renderRequestRules(this) || this._loading();
@@ -1452,7 +1452,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._setupGuestSelectors();
     }
     if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) getConfigurationEditor()?.bindConfiguration(this);
-    if (view === "assistant/prompt-context") getRouteFeature(view)?.bindExposedAttributeSettings(this);
+    if (view === "assistant/prompt-context") this._hydrateExposedAttributes();
     if (view === "usage-maintenance/backup-restore") getRouteFeature(view)?.bindBackupTransfer(this, getConfigurationEditor()?.backupSummaryLines);
     if (view === "capabilities/functions") getConfigurationTools()?.bindTools(this);
     if (view === "capabilities/request-rules") getRouteFeature(view)?.bindRequestRules(this);
@@ -1471,10 +1471,33 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (["capabilities/home-assistant", "capabilities/web-skills", "data-memory/knowledge"].includes(view)) {
       getRouteFeature("capabilities")?.bindCapabilities(this);
     }
-    if (view === "assistant/voice") getRouteFeature(view)?.bindVoiceIdentity(this);
+    if (view === "assistant/voice") getRouteFeature(view)?.bindVoiceIdentityCore(this);
     if (view === "capabilities/quiet-hours") getRouteFeature(view)?.bindQuietHours(this);
     if (view === "usage-maintenance/usage") {
       getRouteFeature(view)?.bindUsageDiagnostics(this);
+    }
+  }
+
+  async _hydrateExposedAttributes() {
+    const target = this.shadowRoot?.querySelector("[data-exposed-feature]");
+    if (!target) return;
+    const agentId = this._agentId;
+    const revision = this._configData?.revision;
+    try {
+      const [feature] = await Promise.all([
+        import("./exposed-attributes-ui.js"),
+        this._loadConfigurationLiveMetadata("assistant/prompt-context"),
+      ]);
+      if (!target.isConnected || agentId !== this._agentId
+          || revision !== this._configData?.revision
+          || this._viewKey() !== "assistant/prompt-context") return;
+      target.outerHTML = feature.renderExposedAttributeSettings(this);
+      feature.bindExposedAttributeSettings(this);
+    } catch (error) {
+      if (target.isConnected && agentId === this._agentId
+          && this._viewKey() === "assistant/prompt-context") {
+        target.querySelector(".help").textContent = `Unable to load entity choices: ${error.message || String(error)}`;
+      }
     }
   }
 
