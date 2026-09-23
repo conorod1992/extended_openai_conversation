@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-import {loadAllUsageDays, loadUsageWindow} from "../custom_components/extended_openai_conversation_responses/frontend/usage-data.js";
+import {loadAllUsageDays, loadUsageWindow, loadUsageDaily} from "../custom_components/extended_openai_conversation_responses/frontend/usage-data.js";
 
 import {
   addUsageCalendarDays,
@@ -141,6 +141,13 @@ await loadUsageWindow(usagePanel, "30", "2026-09-07");
 assert.equal(usageCalls.length, 1, "in-page window revisits reuse the loaded aggregate range");
 await loadUsageWindow(usagePanel, "30", "2026-09-07", {useCache:false});
 assert.equal(usageCalls.length, 2, "route refreshes can bypass the in-page Usage cache");
+usagePanel._usageHistoryWindow = "7";
+await loadUsageDaily(usagePanel);
+assert.equal(usageCalls.at(-1).end_date >= usageCalls.at(-1).start_date, true);
+const sevenDayStart = usageCalls.at(-1).start_date;
+const sevenDayEnd = usageCalls.at(-1).end_date;
+assert.equal((Date.parse(sevenDayEnd) - Date.parse(sevenDayStart)) / 86_400_000, 6,
+  "initial route read uses the selected seven-day window");
 
 // The management-window feature must not replace or reinterpret Today / Month sensor semantics.
 const sensorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/sensor.py", import.meta.url), "utf8");

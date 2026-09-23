@@ -12,7 +12,7 @@ import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} from "./management-dialogs.js";
 import {renderManagement} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, isAgentMutation, syncAgentPicker} from "./management-actions.js";
-import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset} from "./management-route.js";
+import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath} from "./frontend-navigation.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
@@ -369,8 +369,21 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (target) {
         cancelHover();
         this._warmNavigationTarget(target);
+        prefetchIntentRead(this, this._navigationTargetView(target));
       }
     });
+    root.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const target = event.target?.closest?.("[data-page],[data-subsection]");
+      if (target) prefetchIntentRead(this, this._navigationTargetView(target));
+    });
+  }
+
+  _navigationTargetView(target) {
+    const page = target?.dataset?.page || this._page;
+    const subsection = target?.dataset?.subsection
+      || (target?.dataset?.page ? this._visibleSubsections(page)[0]?.id || null : null);
+    return this._viewKey(page, subsection);
   }
 
   _setConfigDirty(value) {
@@ -655,6 +668,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _invalidateAfterMutation(agentId, section, action) {
+    if (agentId && isAgentMutation(section, action)) {
+      this._cacheGeneration += 1;
+      this._sectionCache.delete(`${agentId}|overview`);
+      this._eocSectionCacheTimes.delete(`${agentId}|overview`);
+      this._eocPendingRouteReads?.clear();
+    }
     if (agentId && section === "backup" && action === "restore") {
       this._cacheGeneration += 1;
       const prefix = `${agentId}|`;
@@ -695,7 +714,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _sectionCacheKey(view = this._viewKey()) {
     const agentId = this._agentId;
     if (!agentId) return null;
-    if (["capabilities/request-rules", "data-memory/knowledge"].includes(view)) return `${agentId}|${view}`;
+    if (["overview", "capabilities/request-rules", "data-memory/knowledge"].includes(view)) return `${agentId}|${view}`;
     return null;
   }
 
@@ -809,7 +828,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const needsScopes = ["data-memory/memories", "data-memory/conversations"].includes(view);
     const cache = readSectionCache(this, view);
     const cacheKey = cache.key;
-    const showCached = cache.result !== undefined && (cache.fresh || view === "data-memory/knowledge");
+    const showCached = cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge"].includes(view));
     if (showCached) {
       this._contentData = null;
       this._result = cache.result;
@@ -817,8 +836,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._busy = false;
       this._render();
       if (cache.fresh) return;
-      // Knowledge records are fetched again when opened for editing. Show the
-      // expired read-only list immediately while refreshing its current revision.
+      // Expired read-only summaries/lists remain useful while refreshing.
       silent = true;
     }
     if (!silent) {
@@ -870,7 +888,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       let guestDetailsSecondary = null;
       if (view === "overview") {
         this._markColdLifecycle("overview-summary-start");
-        const summary = await this._call("overview", "summary");
+        const summary = await consumeIntentRead(this, view, "overview", "summary");
         this._markColdLifecycle("overview-summary-complete");
         if (loadToken !== this._loadToken) return;
         const {agent, ...overview} = summary;
@@ -965,7 +983,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       } else if (view === "data-memory/memories") {
         result = await scopedCollection();
       } else if (view === "data-memory/knowledge") {
-        result = await this._call("knowledge", "list");
+        result = await consumeIntentRead(this, view, "knowledge", "list");
       } else if (view === "capabilities/guest-mode") {
         const detailsPromise = this._call("guest_mode", "details").then(
           (value) => ({status: "fulfilled", value}),
@@ -984,7 +1002,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           this._guestStartingFresh = false;
         }
       } else if (view === "capabilities/request-rules") {
-        result = await this._call("request_rules", "list");
+        result = await consumeIntentRead(this, view, "request_rules", "list");
       } else if (this._isDraftView() && view !== "usage-maintenance/backup-restore") {
         await this._loadConfigDraft();
         result = this._configData;

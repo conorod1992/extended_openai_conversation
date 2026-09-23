@@ -312,6 +312,23 @@ test("route hover warming waits for intent while focus and pointerdown stay imme
   await expectHarnessClean(page, errors);
 });
 
+test("Overview navigation reuses a strong-intent read without reading on hover", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("guide"));
+  const panel = page.locator("extended-openai-management-panel");
+  const overview = panel.locator('.top-nav button[data-page="overview"]');
+  await overview.hover();
+  await page.waitForTimeout(150);
+  const reads = () => page.evaluate(() => window.browserHarness.calls.filter(
+    (call) => call.section === "overview" && call.action === "summary",
+  ).length);
+  expect(await reads()).toBe(0);
+  await overview.click();
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  expect(await reads()).toBe(1);
+  await expectHarnessClean(page, errors);
+});
+
 test("Settings Search metadata loads only on first search interaction", async ({page}) => {
   const errors = trackPageErrors(page);
   const assets = [];

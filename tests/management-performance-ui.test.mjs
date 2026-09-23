@@ -40,6 +40,8 @@ const {
   requestRuleSearchText,
   routeAssetPromise,
   routeFeaturesReady,
+  prefetchIntentRead,
+  consumeIntentRead,
 } = await import("../custom_components/extended_openai_conversation_responses/frontend/management-route.js");
 await routeAssetPromise("assistant/basics");
 
@@ -48,6 +50,30 @@ const agents = [
   {entry_id:"entry-b", subentry_id:"agent-b", title:"B"},
 ];
 const initialScopes = [{scope_id:"user:current", scope_type:"user", display_name:"Current", is_current_user:true}];
+
+{
+  const panel = panelFor("assistant", "basics");
+  let resolveRead;
+  let reads = 0;
+  panel._call = () => { reads++; return new Promise((resolve) => { resolveRead = resolve; }); };
+  const prefetched = prefetchIntentRead(panel, "overview");
+  const consumed = consumeIntentRead(panel, "overview", "overview", "summary");
+  assert.equal(reads, 1, "navigation consumes its in-flight read");
+  resolveRead({usage:{today:{total_tokens:7}}});
+  assert.deepEqual(await consumed, await prefetched);
+  panel._agentId = "agent-b";
+  const next = consumeIntentRead(panel, "overview", "overview", "summary");
+  assert.equal(reads, 2, "a different agent cannot consume the previous read");
+  resolveRead({usage:{today:{total_tokens:9}}});
+  await next;
+  const overviewKey = panel._sectionCacheKey("overview");
+  panel._sectionCache.set(overviewKey, {usage:{today:{total_tokens:9}}});
+  panel._eocSectionCacheTimes.set(overviewKey, Date.now());
+  assert.equal(prefetchIntentRead(panel, "overview"), null,
+    "a fresh Overview summary does not trigger speculative backend work");
+  assert.equal(reads, 2);
+  assert.equal(prefetchIntentRead(panel, "usage-maintenance/usage"), null);
+}
 
 function panelFor(page = "assistant", subsection = "basics") {
   const panel = new ExtendedOpenAIManagementPanel();
@@ -119,7 +145,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   };
   panel._bindRouteAssetWarmup();
   panel._bindRouteAssetWarmup();
-  assert.deepEqual([...listeners.keys()].sort(), ["focusin", "pointerdown", "pointerout", "pointerover"]);
+  assert.deepEqual([...listeners.keys()].sort(), ["focusin", "keydown", "pointerdown", "pointerout", "pointerover"]);
 
   const target = {
     dataset:{page:"guide"},
@@ -500,6 +526,34 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.ok(idReads <= size * 3, `broadcast history performed ${idReads} satellite ID reads for ${size} deliveries`);
 }
 // Exercise cache ownership through the actual host, with no performance installer.
+{
+  const panel = panelFor("overview", null);
+  const key = panel._sectionCacheKey();
+  let resolveRefresh;
+  let reads = 0;
+  panel._hass = {callWS: (message) => {
+    if (message.section !== "overview") return Promise.resolve({});
+    reads++;
+    return reads === 1
+      ? Promise.resolve({usage:{today:{total_tokens:3}}})
+      : new Promise((resolve) => { resolveRefresh = resolve; });
+  }};
+  await panel._loadSection();
+  assert.equal(panel._sectionCache.get(key).usage.today.total_tokens, 3);
+  await panel._loadSection();
+  assert.equal(reads, 1, "a recent Overview return reuses its summary");
+  panel._eocSectionCacheTimes.set(key, Date.now() - 31_000);
+  const refresh = panel._loadSection();
+  await Promise.resolve();
+  assert.equal(panel._busy, false, "expired Overview stays visible while refreshing");
+  assert.equal(panel._result.usage.today.total_tokens, 3);
+  resolveRefresh({usage:{today:{total_tokens:4}}});
+  await refresh;
+  assert.equal(panel._result.usage.today.total_tokens, 4);
+  panel._invalidateAfterMutation("agent-a", "configuration", "save");
+  assert.equal(panel._sectionCache.has(key), false, "configuration mutation invalidates Overview");
+}
+
 {
   const panel = panelFor("capabilities", "request-rules");
   const key = panel._sectionCacheKey();

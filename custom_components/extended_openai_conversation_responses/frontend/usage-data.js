@@ -116,5 +116,6 @@ export function loadUsageDaily(panel, extra = {}) {
       : {};
     return panel._call("usage", "daily", {...extra, ...identity});
   }
-  return loadUsageWindow(panel, DEFAULT_USAGE_WINDOW, localUsageDateKey(panel), {useCache: false});
+  return loadUsageWindow(panel, panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW,
+    localUsageDateKey(panel), {useCache: false});
 }
