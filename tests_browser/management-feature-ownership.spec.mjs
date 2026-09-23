@@ -11,6 +11,12 @@ test("memory kinds, scope ownership and load-more survive rerenders without dupl
     const original = hass.callWS.bind(hass);
     window.featureCalls = [];
     hass.callWS = async (message) => {
+      if (message.section === "scopes" && message.scope_kind === "temporary") {
+        return {scopes:[
+          {scope_id:"user:test-user", scope_type:"user", display_name:"Test User", is_current_user:true, temporary_memory_count:1},
+          {scope_id:"shared:household", scope_type:"shared", display_name:"Shared household", temporary_memory_count:1},
+        ]};
+      }
       if (message.section === "memories") {
         window.featureCalls.push(message);
         if (message.action === "list") return {memories:[{memory_id:`m-${message.offset || 0}`, content:`Memory ${message.offset || 0}`, category:"general", source:"manual"}], has_more: !message.offset};
