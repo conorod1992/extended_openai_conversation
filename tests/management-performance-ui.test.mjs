@@ -179,16 +179,17 @@ function panelFor(page = "assistant", subsection = "basics") {
   const loading = panel._loadSection();
   assert.deepEqual(
     calls.map((call) => [call.section, call.action]),
-    [["configuration", "get"], ["scopes", "catalog"], ["conversations", "active"]],
-    "Conversations prerequisites start before its lazy UI module resolves",
+    [["configuration", "get"], ["scopes", "catalog"], ["conversations", "list"], ["conversations", "active"]],
+    "History primary and secondary requests start together for a known scope",
   );
+  assert.equal(calls.find((call) => call.section === "scopes")?.scope_kind, "archive");
+  await loading;
+  assert.equal(panel._busy, false);
+  assert.ok(panel._contentData?.sessions);
   resolveConfig({title:"A", config:{}, revision:"r1"});
   resolveScopes({scopes:initialScopes});
-  await loading;
-  assert.deepEqual(
-    calls.filter((call) => call.section === "conversations").map((call) => call.action),
-    ["active", "list"],
-  );
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 {
@@ -271,8 +272,10 @@ function panelFor(page = "assistant", subsection = "basics") {
   await panel._loadSection();
   panel._scopeId = "shared";
   await panel._loadSection();
-  assert.deepEqual(calls.map((call) => call.section), ["scopes", "memories", "memories", "memories", "memories"]);
-  assert.deepEqual(calls.slice(3, 5).map((call) => [call.action, call.scope_id]), [
+  assert.deepEqual(calls.map((call) => call.section), ["scopes", "memories", "memories", "scopes", "memories", "memories"]);
+  assert.equal(calls[0].scope_kind, "memory");
+  assert.equal(calls[3].scope_kind, "temporary");
+  assert.deepEqual(calls.slice(4, 6).map((call) => [call.action, call.scope_id]), [
     ["temporary_list", "user:current"],
     ["temporary_list", "shared"],
   ]);
@@ -283,13 +286,13 @@ function panelFor(page = "assistant", subsection = "basics") {
   panel._page = "data-memory";
   panel._subsection = "memories";
   await panel._loadSection();
-  assert.deepEqual(calls.slice(5).map((call) => call.section), ["memories"]);
+  assert.deepEqual(calls.slice(6).map((call) => call.section), ["memories"]);
 
   panel._agentId = "agent-b";
   panel._scopeId = "user:current";
   panel._applyScopes(initialScopes);
   await panel._loadSection();
-  assert.deepEqual(calls.slice(6).map((call) => [call.section, call.subentry_id]), [
+  assert.deepEqual(calls.slice(7).map((call) => [call.section, call.subentry_id]), [
     ["scopes", "agent-b"],
     ["memories", "agent-b"],
   ]);
@@ -311,12 +314,12 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.equal(panel._sectionCache.has("agent-a|data-memory/knowledge"), false);
   assert.equal(panel._sectionCache.has("agent-b|data-memory/knowledge"), true);
 
-  panel._scopeCatalogCache.set("agent-a|data-memory/memories", initialScopes);
-  panel._scopeCatalogCache.set("agent-b|data-memory/memories", initialScopes);
-  panel._scopeCatalogVisitKey = "agent-a|data-memory/memories";
+  panel._scopeCatalogCache.set("agent-a|scopes|memory", initialScopes);
+  panel._scopeCatalogCache.set("agent-b|scopes|memory", initialScopes);
+  panel._scopeCatalogVisitKey = "agent-a|scopes|memory";
   panel._invalidateAfterMutation("agent-a", "memories", "delete");
-  assert.equal(panel._scopeCatalogCache.has("agent-a|data-memory/memories"), false);
-  assert.equal(panel._scopeCatalogCache.has("agent-b|data-memory/memories"), true);
+  assert.equal(panel._scopeCatalogCache.has("agent-a|scopes|memory"), false);
+  assert.equal(panel._scopeCatalogCache.has("agent-b|scopes|memory"), true);
   assert.equal(panel._scopeCatalogVisitKey, null);
 }
 
