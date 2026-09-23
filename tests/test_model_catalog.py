@@ -113,11 +113,7 @@ def test_required_current_models_and_invalid_aliases():
         "gpt-4o-mini",
         "o3",
     }
-    current = {
-        item["id"]
-        for item in data.BUNDLED_CATALOG["models"]
-        if item["status"] == "current"
-    }
+    current = {item["id"] for item in data.catalog_picker_models()}
     assert expected <= current
     assert not {"o2", "o4", "gpt-5.3"} & current
 
@@ -143,7 +139,8 @@ def test_unknown_model_is_preserved_with_conservative_capabilities():
 
 
 def test_current_models_have_exact_non_streaming_exceptions():
-    for item in data.BUNDLED_CATALOG["models"]:
+    for raw in data.BUNDLED_CATALOG["models"]:
+        item = data.model_metadata(raw["id"])
         if item["status"] == "current":
             assert item["streaming"] is (item["id"] not in {"gpt-5.5-pro", "o3-pro"}), (
                 item["id"]
@@ -452,6 +449,9 @@ def test_validate_or_migrate_marks_legacy_schemas_as_migrated() -> None:
     assert migrated["schema_version"] == 4
 
     legacy_v2 = deepcopy(data.BUNDLED_CATALOG)
+    legacy_v2["models"] = [
+        deepcopy(item) for item in data.BUNDLED_CATALOG.resolved.values()
+    ]
     legacy_v2["schema_version"] = 2
     legacy_v2["catalog_version"] = 2
     legacy_v2["defaults"]["service_tier"] = bool(

@@ -1,6 +1,6 @@
 # Model data catalogue
 
-Extended OpenAI ships a descriptive JSON catalogue of the model metadata it already uses. Configuration, Request Rules, request parameter support, API Auto selection, and explicit prompt-cache support read the same active metadata. Existing helper interfaces and the bundled behaviour remain unchanged.
+Extended OpenAI ships a JSON catalogue for OpenAI conversational and reasoning models and the provider capabilities this integration uses. Configuration, Request Rules, previews, and live requests use the same active capabilities. This is deliberately narrower than OpenAI's full model and product directory.
 
 ## Updating and resetting
 
@@ -14,7 +14,7 @@ The fixed HTTPS source is this repository's `develop` branch:
 
 `custom_components/extended_openai_conversation_responses/model_catalog.json`
 
-The update source becomes available when this change is merged. Updates are independent of an installed integration release: maintainers can publish a validated catalogue change to `develop` without users reinstalling the integration. A failed download (including a missing file) keeps the current metadata.
+Updates are independent of an installed integration release: maintainers can publish a validated catalogue change to `develop` without users reinstalling the integration. A failed download (including a missing file) keeps the current metadata.
 
 Downloaded data is stored in HA's `.storage/extended_openai_conversation_responses.model_catalog`. Files under `custom_components` are never overwritten. The bundled catalogue remains the fallback. Reloading an entry retains the shared catalogue; restarting HA validates and restores the stored override. An older downloaded version cannot override a newer bundled catalogue after an integration upgrade.
 
@@ -22,26 +22,28 @@ Downloaded data is stored in HA's `.storage/extended_openai_conversation_respons
 
 The root has exactly `schema_version`, `catalog_version`, `defaults`, and `models`:
 
-- `schema_version` is currently the integer **1**. Unsupported schemas are rejected.
+- `schema_version` is currently the integer **4**. Unsupported schemas are rejected. Stored older documents are migrated by the integration.
 - `catalog_version` is a positive, monotonically increasing integer. Increment it for any data change. Older versions and changed content with the same version are rejected.
-- `defaults` describes the integration's existing unknown-model compatibility metadata.
-- Each model has `id`, `display_name`, `kind` (`alias` or `snapshot`), and the same metadata fields as `defaults`. Optional `deprecated` and `replacement` are descriptive only; they never rewrite a configured model ID. The initial catalogue adds no new deprecation claims.
+- `defaults` gives conservative metadata for unknown exact IDs.
+- Each model has `id`, `display_name`, and `kind` (`alias` or `snapshot`). Full records declare the capability fields below. A snapshot with `alias_of` can instead declare only its actual overrides. Its parent must be an explicit catalogue ID; there is no family-name or date-pattern inference. Nested capability objects can override individual fields. The effective record is validated when the catalogue is loaded or applied.
 
 Metadata fields:
 
 | Field | Meaning |
 | --- | --- |
-| `parameters` | Six boolean support flags: `supports_top_p`, `supports_temperature`, `supports_max_tokens`, `supports_max_completion_tokens`, `supports_reasoning_effort`, `supports_service_tier` |
-| `reasoning_efforts` | Nonempty, unique list drawn from `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
-| `completion_token_limit` | Completion-token parameter support used by the legacy token helper |
-| `chat_reasoning_tools` | Compatibility metadata consumed by Python's existing Auto API decision |
-| `explicit_prompt_cache` | Support used by Python's existing explicit-cache optimization |
+| `api`, `function_calling` | API support and tool support, including effort-limited Chat tool calling |
+| `reasoning`, `temperature`, `top_p` | Reasoning choices and effort-dependent sampling support |
+| `limits`, `output_tokens`, `streaming` | Token ceilings, output-token parameters, and streaming support |
+| `structured_outputs`, `responses_web_search` | Provider features EOAI currently uses |
+| `service_tiers` | Provider-accepted request values; account entitlement is separate |
+| `recommended_profile`, `auto_api` | EOAI application policy, rather than provider facts |
+| `explicit_prompt_cache` | Whether EOAI uses its explicit cache-breakpoint optimization; `false` does not imply a lack of implicit provider caching |
 
-The catalogue represents **the integration's existing compatibility knowledge**, not an exhaustive provider model inventory or an account-access guarantee. For parity it retains historical differences between the token helper and the parameter profile, as well as the usual reasoning choice list for non-reasoning/unknown models. Parameter support still determines whether reasoning is actually sent.
+The catalogue is compatibility knowledge for EOAI's current request paths, not an account-access guarantee. It does not mirror unrelated hosted tools or specialized audio, image, embedding, and moderation products.
 
-Exact IDs take precedence. Dated snapshot IDs inherit a matching alias unless explicitly described. Unspecified models retain bundled metadata; unknown family/provider-name compatibility matching remains Python code. Remote data cannot supply regexes, matching expressions, request templates, executable code, endpoints, tool/security rules, Guest Mode policy, or request-building instructions. Adding a new kind of capability requires a code/schema change.
+Exact IDs take precedence. Only snapshots that explicitly name a parent inherit capabilities. Unspecified IDs receive conservative unknown metadata. Parent chains are resolved once into an exact-ID index at catalogue activation; runtime requests never search or merge a family tree. Remote data cannot supply regexes, matching expressions, request templates, executable code, endpoints, tool/security rules, Guest Mode policy, or request-building instructions. Adding a new kind of capability requires a code/schema change.
 
-Data-only catalogue updates may broaden the reasoning-effort choices available for a model or add reasoning support, but they cannot remove a previously accepted reasoning choice or reasoning capability. Agent configuration and Request Rules persist reasoning values, so narrowing them without a migration could make previously valid durable state fail validation on reload. Such a narrowing therefore requires an integration release with an explicit compatibility/migration decision rather than a hot catalogue-only update.
+Data-only catalogue updates cannot silently narrow previously accepted durable request choices. Transition checks compare effective inherited capabilities, including API paths, function calling, reasoning choices, sampling, service tiers, streaming, and output ceilings. Narrowing requires an integration release with an explicit compatibility/migration decision.
 
 ## Failure handling and maintenance
 
