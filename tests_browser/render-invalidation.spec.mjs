@@ -76,7 +76,8 @@ test("unrelated routes omit feature editors; page changes still refresh and bind
     renderManagement(panel);
     const main = root.querySelector("main").firstElementChild;
     renderManagement(panel);
-    const dialogOnly = {mainStable:root.querySelector("main").firstElementChild === main, featureEditors:root.querySelectorAll("#knowledge-dialog,#memory-dialog,#temporary-memory-dialog,#session-dialog,#reassign-dialog").length, confirmation:Boolean(root.querySelector("#confirm-dialog"))};
+    const featureEditorDialogs = [...root.querySelectorAll("#knowledge-dialog,#memory-dialog,#temporary-memory-dialog,#session-dialog,#reassign-dialog")];
+    const dialogOnly = {mainStable:root.querySelector("main").firstElementChild === main, featureEditors:featureEditorDialogs.filter((dialog) => dialog.open).length, confirmation:Boolean(root.querySelector("#confirm-dialog"))};
     panel._error = "Page refresh regression marker";
     renderManagement(panel);
     const pageUpdated = root.querySelector("main").textContent.includes(panel._error);
