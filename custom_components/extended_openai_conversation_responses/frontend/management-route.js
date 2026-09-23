@@ -30,7 +30,6 @@ const DATA_FEATURES = new Set([
 const featureLoaders = {
   "agent-config": () => import("./agent-config-editor.js"),
   "agent-config-tools": () => import("./agent-config-tools.js"),
-  "assistant/prompt-context": () => import("./exposed-attributes-ui.js"),
   "usage-maintenance/backup-restore": () => import("./backup-transfer-ui.js"),
   "status": () => import("./management-feature-status.js"),
   "capabilities": () => import("./management-capabilities-ia.js"),
@@ -46,7 +45,7 @@ const featureLoaders = {
   "usage-maintenance/usage": () => import("./usage-chart.js"),
   "usage-maintenance/request-debug": () => import("./debug-management.js"),
   "usage-maintenance/diagnostics": () => import("./management-provider-credentials.js"),
-  "assistant/voice": () => import("./voice-identity-ui.js"),
+  "assistant/voice": () => import("./voice-identity-core.js"),
   "data-memory/memory-settings": () => import("./memory-settings-ui.js"),
 };
 export function getRouteFeature(view) { return featureModules.get(view); }

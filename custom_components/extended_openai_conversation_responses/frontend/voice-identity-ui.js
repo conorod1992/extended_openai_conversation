@@ -90,6 +90,12 @@ function mappingRow(panel,deviceId="",owner=UNRETAINED_SCOPE) {
   </article>`;
 }
 
+// Loaded only after the policy core has painted and device assignment is active.
+export function renderVoiceMappings(panel) {
+  const entries = mappingEntries(panel?._draft || panel?._result?.config || {});
+  return `<section id="voice-mappings" class="voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h3>Voice device assignments</h3><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no retained personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(([deviceId,owner]) => mappingRow(panel,deviceId,owner)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the unmapped-device fallback will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span><small>Choose friendly Assist satellite entities here; EOAI continues to store and match Home Assistant device IDs internally.</small></section>`;
+}
+
 export function voiceIdentitySummary(config={},users=[]) {
   const userName = (value) => users.find((user) => user.id === rawUserId(value))?.name || "the selected Home Assistant user";
   const target = (policy) => {
@@ -239,7 +245,9 @@ async function bindSatellitePicker(panel,row) {
   if (!picker || !hidden) return;
   configureEntityPicker(panel,picker);
   const storedDeviceId = hidden.value.trim();
+  const agentId = panel._agentId;
   const entries = await entityRegistry(panel);
+  if (!row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
   const entityId = satelliteForDeviceId(entries,storedDeviceId);
   if (entityId) {
     picker.value = entityId;
@@ -257,6 +265,7 @@ async function bindSatellitePicker(panel,row) {
       return;
     }
     const registry = await entityRegistry(panel);
+    if (!row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
     const deviceId = deviceIdForSatellite(registry,selectedEntity);
     if (!deviceId) {
       setWarning(warning,"That Assist satellite is not linked to a Home Assistant device, so it cannot be used for a device assignment.");
@@ -319,6 +328,23 @@ export function bindVoiceIdentity(panel) {
     const list = root.querySelector("#voice-mapping-list");
     list.querySelector(".voice-mapping-empty")?.remove();
     list.insertAdjacentHTML("beforeend",mappingRow(panel));
+    bindRows(panel);
+    updateDependencies(panel);
+    list.querySelector("[data-voice-mapping-row]:last-child .voice-satellite-picker")?.focus?.();
+  });
+  bindRows(panel);
+  updateDependencies(panel);
+}
+
+export function bindVoiceMappings(panel) {
+  const root = panel.shadowRoot;
+  const mappings = root.querySelector("#voice-mappings");
+  if (!mappings) return;
+  mappings.value = JSON.stringify(rowsToMapping(root).mapping, null, 2);
+  root.querySelector("#add-voice-mapping")?.addEventListener("click", () => {
+    const list = root.querySelector("#voice-mapping-list");
+    list.querySelector(".voice-mapping-empty")?.remove();
+    list.insertAdjacentHTML("beforeend", mappingRow(panel));
     bindRows(panel);
     updateDependencies(panel);
     list.querySelector("[data-voice-mapping-row]:last-child .voice-satellite-picker")?.focus?.();
