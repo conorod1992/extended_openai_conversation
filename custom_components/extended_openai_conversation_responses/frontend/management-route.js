@@ -1,5 +1,6 @@
 import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule, startOverviewBroadcastSnapshot} from "./overview-page.js";
+import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
@@ -7,6 +8,13 @@ const CONFIG_VIEWS = new Set([
   "data-memory/conversations",
   "usage-maintenance/retention",
 ]);
+// These views consume the normal full configuration snapshot. Retention uses a
+// separate projection; unauthorised readers must never speculate on config.
+export function needsFullConfiguration(view, isAdmin = true) {
+  return isAdmin && (String(view || "").startsWith("assistant/")
+    || ["capabilities/home-assistant", "capabilities/web-skills", "capabilities/functions",
+      "data-memory/conversations", "data-memory/memory-settings"].includes(view));
+}
 
 export function getConfigurationEditor() { return getRouteFeature("agent-config"); }
 export function getConfigurationTools() { return getRouteFeature("agent-config-tools"); }
@@ -102,6 +110,55 @@ export function warmRouteAsset(view) {
   const pending = routeAssetPromise(view);
   pending?.catch?.(() => {});
   return pending;
+}
+
+const INTENT_READS = new Map([
+  ["overview", ["overview", "summary"]],
+  ["data-memory/knowledge", ["knowledge", "list"]],
+  ["capabilities/request-rules", ["request_rules", "list"]],
+]);
+const INTENT_READ_TTL_MS = 3_000;
+
+// Only read-only, parameter-free route requests enter this registry. The
+// generation and agent identity prevent a pre-mutation or other-agent result
+// from being reused by a later navigation.
+export function prefetchIntentRead(panel, view) {
+  const operation = INTENT_READS.get(view);
+  const agent = panel._selectedAgent?.();
+  if (!operation || !agent || panel._viewKey?.() === view || panel._configDirty) return null;
+  const cacheKey = panel._sectionCacheKey?.(view);
+  const loadedAt = panel._eocSectionCacheTimes?.get(cacheKey);
+  if (loadedAt && Date.now() - loadedAt < SECTION_CACHE_TTL_MS
+      && panel._sectionCache?.has(cacheKey)) return null;
+  const key = `${agent.entry_id}|${agent.subentry_id}|${panel._cacheGeneration || 0}|${view}`;
+  panel._eocPendingRouteReads ||= new Map();
+  const pending = panel._eocPendingRouteReads.get(key);
+  if (pending && Date.now() - pending.started < INTENT_READ_TTL_MS) return pending.promise;
+  const record = {started: Date.now(), promise: null};
+  record.promise = panel._call(...operation).catch((error) => {
+    if (panel._eocPendingRouteReads.get(key) === record) panel._eocPendingRouteReads.delete(key);
+    throw error;
+  });
+  // A speculative read may fail without a navigation ever consuming it.
+  record.promise.catch(() => {});
+  panel._eocPendingRouteReads.set(key, record);
+  return record.promise;
+}
+
+export function consumeIntentRead(panel, view, section, action) {
+  const operation = INTENT_READS.get(view);
+  const agent = panel._selectedAgent?.();
+  if (!operation || operation[0] !== section || operation[1] !== action || !agent) {
+    return panel._call(section, action);
+  }
+  const key = `${agent.entry_id}|${agent.subentry_id}|${panel._cacheGeneration || 0}|${view}`;
+  const pending = panel._eocPendingRouteReads?.get(key);
+  if (!pending || Date.now() - pending.started >= INTENT_READ_TTL_MS) {
+    panel._eocPendingRouteReads?.delete(key);
+    return panel._call(section, action);
+  }
+  panel._eocPendingRouteReads.delete(key);
+  return pending.promise;
 }
 
 function coreAssetPromise(view) {
@@ -270,6 +327,13 @@ export function applyOverviewResult(panel, result) {
   const {agent: _agent, ...overview} = result;
   panel._contentData = null;
   panel._result = overview;
+  if (panel._sectionCacheKey && panel._sectionCache) {
+    const key = panel._sectionCacheKey("overview");
+    if (key) {
+      panel._sectionCache.set(key, overview);
+      panel._eocSectionCacheTimes?.set(key, Date.now());
+    }
+  }
   panel._error = null;
   panel._busy = false;
   panel._render();
@@ -318,9 +382,9 @@ export function startStoredOverviewPrefetch(
   };
 }
 
-export function startStoredAssistantConfigPrefetch(panel, preferredSubentryId) {
+export function startStoredConfigurationPrefetch(panel, preferredSubentryId) {
   const view = panel._viewKey?.();
-  if (!String(view || "").startsWith("assistant/")) return null;
+  if (!needsFullConfiguration(view)) return null;
   const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
   const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
   if (!subentryId || !entryId) return null;
@@ -342,7 +406,7 @@ export function startStoredAssistantConfigPrefetch(panel, preferredSubentryId) {
   };
 }
 
-function applyPrefetchedAssistantConfig(panel, prefetch, configData) {
+function applyPrefetchedConfiguration(panel, prefetch, configData) {
   panel._configData = configData;
   panel._draft = JSON.parse(JSON.stringify(configData.config));
   panel._draftTitle = configData.title;
@@ -364,7 +428,7 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
     );
   }
   const prefetch = startStoredOverviewPrefetch(panel, preferred, routeAsset);
-  const assistantConfigPrefetch = startStoredAssistantConfigPrefetch(panel, preferred);
+  const configurationPrefetch = startStoredConfigurationPrefetch(panel, preferred);
 
   panel._data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
   panel._baseScopes = panel._data.scopes || [];
@@ -391,18 +455,21 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   }
 
   if (
-    assistantConfigPrefetch
-    && selected?.subentry_id === assistantConfigPrefetch.subentryId
-    && selected?.entry_id === assistantConfigPrefetch.entryId
-    && panel._viewKey?.() === assistantConfigPrefetch.view
+    configurationPrefetch
+    && panel._data?.is_admin !== false
+    && selected?.subentry_id === configurationPrefetch.subentryId
+    && selected?.entry_id === configurationPrefetch.entryId
+    && panel._viewKey?.() === configurationPrefetch.view
   ) {
-    const settled = await assistantConfigPrefetch.promise;
+    const settled = await configurationPrefetch.promise;
     if (
-      panel._viewKey?.() === assistantConfigPrefetch.view
-      && panel._agentId === assistantConfigPrefetch.subentryId
+      panel._viewKey?.() === configurationPrefetch.view
+      && panel._loadToken === initialToken
+      && panel._agentId === configurationPrefetch.subentryId
       && settled.status === "fulfilled"
+      && settled.value?.config && typeof settled.value.config === "object"
     ) {
-      applyPrefetchedAssistantConfig(panel, assistantConfigPrefetch, settled.value);
+      applyPrefetchedConfiguration(panel, configurationPrefetch, settled.value);
     }
   }
 

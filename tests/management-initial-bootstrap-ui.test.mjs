@@ -17,6 +17,11 @@ assert.match(source, /type: WS_TYPE, action: "agents"/);
 assert.match(source, /extended-openai-agent-entry/);
 
 const module = {...await import(frontend("management-route.js")), ...await import(frontend("management-renderer.js"))};
+assert.equal(module.needsFullConfiguration("data-memory/memory-settings"), true);
+assert.equal(module.needsFullConfiguration("capabilities/home-assistant"), true);
+assert.equal(module.needsFullConfiguration("data-memory/conversations", false), false);
+assert.equal(module.needsFullConfiguration("usage-maintenance/retention"), false);
+assert.equal(module.needsFullConfiguration("overview"), false);
 
 const loadingMain = {
   innerHTML: "<div class=\"empty\">No conversation agents configured.</div>",
@@ -148,6 +153,31 @@ assert.equal(assistantPanel._configData.config.chat_model, "gpt-test");
 assert.equal(assistantPanel._draft.chat_model, "gpt-test");
 assert.equal(assistantPanel._draftAgentId, "agent-a");
 assert.equal(assistantPanel.sectionLoads, 1);
+
+// A Memory Settings deep link begins the same full configuration read before
+// the catalogue settles, then reuses that authoritative selected-agent result.
+const memoryCalls = [];
+let finishMemoryAgents;
+const memoryPanel = {
+  ...assistantPanel,
+  _viewKey: () => "data-memory/memory-settings",
+  _data: null,
+  _agentId: null,
+  _configData: null,
+  sectionLoads: 0,
+  _hass: {callWS(payload) {
+    memoryCalls.push(payload);
+    if (payload.action === "agents") return new Promise((resolve) => { finishMemoryAgents = resolve; });
+    if (payload.section === "configuration") return Promise.resolve({title:"Memory", config:{memory_mode:"manual"}});
+    throw new Error("Unexpected Memory request");
+  }},
+};
+const memoryLoad = module.loadAgentsWithOverviewPrefetch(memoryPanel);
+assert.equal(memoryCalls.some((item) => item.section === "configuration" && item.action === "get"), true);
+finishMemoryAgents({agents:[selectedAgent], is_admin:true});
+await memoryLoad;
+assert.equal(memoryPanel._draft.memory_mode, "manual");
+assert.equal(memoryPanel.sectionLoads, 1);
 
 let resolveStaleAgents;
 let resolveStaleConfig;
