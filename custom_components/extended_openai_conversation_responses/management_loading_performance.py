@@ -38,7 +38,7 @@ from .knowledge import async_get_knowledge, get_loaded_knowledge
 from .management_function_repair import management_function_tool_health
 from .management_history_queries import usage_summary
 from .management_projections import async_scope_catalog_projection, settings_snapshot
-from .management_setup_health import add_setup_health
+from .management_setup_health import add_setup_health, build_setup_health_facts
 from .memory import async_get_memory, get_memory_mode
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
@@ -214,6 +214,148 @@ async def async_scope_catalog(
             temporary_counts,
         )
     }
+
+
+async def async_overview_primary(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    *,
+    is_admin: bool,
+) -> dict[str, Any]:
+    """Return the cheap authoritative Overview shell without Store initialization."""
+    started = perf_counter()
+    options = dict(subentry.data)
+    function_tools_started = perf_counter()
+    function_tools_health = management_function_tool_health(options)
+    function_tools_ms = _ms(function_tools_started)
+
+    agent_timing: dict[str, float] = {}
+    projection_started = perf_counter()
+    agent = _agent_snapshot(
+        hass,
+        entry,
+        subentry,
+        function_tools_health=function_tools_health,
+        function_tools_ms=function_tools_ms,
+        performance=agent_timing,
+    )
+    result = {
+        "agent": agent,
+        "usage": {},
+        "conversations": settings_snapshot(options),
+        "load_errors": [],
+        "loading": {
+            "usage": True,
+            "memory": True,
+            "knowledge": True,
+            "guest_mode": True,
+        },
+    }
+    projection_ms = _ms(projection_started)
+
+    health_started = perf_counter()
+    try:
+        facts = build_setup_health_facts(
+            hass,
+            entry,
+            subentry,
+            memory_available=False,
+            knowledge_source_count=int(agent.get("knowledge_source_count", 0)),
+            knowledge_available=False,
+            is_admin=is_admin,
+            function_tools_health=function_tools_health,
+        )
+        facts["memory"] = {**dict(facts.get("memory", {})), "loading": True}
+        facts["knowledge"] = {**dict(facts.get("knowledge", {})), "loading": True}
+        result["setup_health"] = facts
+    except Exception:
+        result["setup_health"] = {
+            "unavailable": True,
+            "provider_runtime": {
+                "client_loaded": getattr(entry, "runtime_data", None) is not None,
+                "provider": str(
+                    entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER)
+                ),
+                "model": str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip(),
+            },
+            "can_manage": is_admin,
+            "live_provider_tested": False,
+        }
+
+    result["_performance"] = {
+        "projection_ms": projection_ms,
+        "agent_snapshot": agent_timing,
+        "setup_health_ms": _ms(health_started),
+        "total_ms": _ms(started),
+    }
+    return result
+
+
+async def async_overview_detail(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    *,
+    is_admin: bool,
+    kind: str,
+) -> dict[str, Any]:
+    """Load one independent storage-backed Overview detail."""
+    entry_id = str(entry.entry_id)
+    subentry_id = str(subentry.subentry_id)
+    started = perf_counter()
+
+    if kind == "usage":
+        usage = usage_summary(await async_get_usage(hass, entry_id, subentry_id))
+        if not is_admin:
+            usage["latest"] = None
+        tokens_today = int(usage["today"].get("total_tokens", 0))
+        return {
+            "kind": kind,
+            "usage": usage,
+            "agent": {"tokens_today": tokens_today},
+            "_performance": {"total_ms": _ms(started)},
+        }
+
+    if kind == "memory":
+        memory = await async_get_memory(hass, entry_id, subentry_id)
+        return {
+            "kind": kind,
+            "agent": {"memory_count": int(memory.memory_count)},
+            "setup_health": {"memory": {"available": True, "loading": False}},
+            "_performance": {"total_ms": _ms(started)},
+        }
+
+    if kind == "knowledge":
+        knowledge = await async_get_knowledge(hass, entry_id, subentry_id)
+        source_count = int(knowledge.source_count)
+        return {
+            "kind": kind,
+            "agent": {
+                "knowledge_source_count": source_count,
+                "feature_status": management_feature_status(
+                    dict(subentry.data), knowledge_source_count=source_count
+                ),
+            },
+            "setup_health": {
+                "knowledge": {
+                    "source_count": source_count,
+                    "available": True,
+                    "loading": False,
+                }
+            },
+            "_performance": {"total_ms": _ms(started)},
+        }
+
+    if kind == "guest_mode":
+        guest = await async_get_guest_mode(hass, entry_id, subentry_id)
+        return {
+            "kind": kind,
+            "agent": {"guest_mode": guest.status()},
+            "_performance": {"total_ms": _ms(started)},
+        }
+
+    raise ValueError("kind must be usage, memory, knowledge, or guest_mode")
 
 
 async def async_overview_summary(
