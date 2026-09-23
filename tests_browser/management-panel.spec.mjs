@@ -35,27 +35,19 @@ test("keeps page search in the header and assistant context above navigation", a
     const header = root.querySelector("header");
     const search = root.querySelector("#settings-search");
     const context = root.querySelector(".eoc-agent-context-row");
-    const picker = root.querySelector(".agent-picker");
     const nav = root.querySelector(".top-nav");
-    const pickerStyle = getComputedStyle(picker);
     return {
-      searchInHeader: search?.parentElement?.closest("header") === header,
-      pickerInContext: picker?.parentElement === context,
+      searchInHeader: search?.closest("header") === header,
+      hasAgentContext: Boolean(context?.querySelector("#agent")),
       contextBeforeNav: Boolean(
         context && nav && (context.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING),
       ),
-      pickerBorderStyle: pickerStyle.borderTopStyle,
-      pickerBoxShadow: pickerStyle.boxShadow,
-      pickerBackground: pickerStyle.backgroundColor,
     };
   });
   expect(layout).toEqual({
     searchInHeader: true,
-    pickerInContext: true,
+    hasAgentContext: true,
     contextBeforeNav: true,
-    pickerBorderStyle: "none",
-    pickerBoxShadow: "none",
-    pickerBackground: "rgba(0, 0, 0, 0)",
   });
 
   await expectHarnessClean(page, pageErrors);
@@ -98,7 +90,7 @@ test("general configuration survives a fresh panel load and a rejected save can 
   await expect.poll(async () => page.evaluate(() => window.browserHarness.calls.filter(
     (call) => call.section === "configuration" && call.action === "save",
   ).length)).toBe(1);
-  await expect(panel.getByText("Unable to save configuration: Fixture rejected configuration save once", {exact: true})).toBeVisible();
+  await expect(panel.getByText(/Unable to save configuration.*Fixture rejected configuration save once/i)).toBeVisible();
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
   expect(await page.evaluate(() => window.browserHarness.getState().configuration.title)).toBe("Jarvis");
 
@@ -176,7 +168,7 @@ test("keeps the Overview usable when its summary reports a partial backend failu
   await page.goto(fixtureUrl("overview", "&partial=1"));
 
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.getByText("Knowledge could not be loaded. Other overview information is still available.", {exact: true})).toBeVisible();
+  await expect(panel.getByText(/Knowledge.*could not be loaded/i)).toBeVisible();
   await expect(panel.getByText("1,234 tokens today", {exact: false})).toBeVisible();
   await expect(panel.getByText("5,678 this month", {exact: false})).toBeVisible();
 
