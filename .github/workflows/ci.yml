@@ -27,9 +27,70 @@ env:
   HA_CORE_BRANCH: "dev"
 
 jobs:
+  classify:
+    name: Classify PR changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.changes.outputs.backend }}
+    steps:
+      - name: Checkout repository history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Pushes, schedules, and manual runs deliberately keep full coverage.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "Non-PR event: running the full suite." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/changed-files.txt"
+
+          backend=false
+          seen=false
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            seen=true
+            case "$path" in
+              frontend/*|custom_components/extended_openai_conversation_responses/frontend/*|tests/*.test.mjs|tests_browser/*|playwright*.config.mjs)
+                ;;
+              *)
+                # Fail safe: mixed, backend, dependency, workflow, or unknown
+                # changes keep the complete Python/HA checks.
+                backend=true
+                ;;
+            esac
+          done < "$RUNNER_TEMP/changed-files.txt"
+
+          # An unexpected empty diff should never suppress validation.
+          if [ "$seen" != "true" ]; then
+            backend=true
+          fi
+
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+          {
+            echo "### PR path classification"
+            echo
+            echo "Backend/HA checks required: `$backend`"
+            echo
+            echo "Changed files:"
+            sed 's/^/- `/; s/$/`/' "$RUNNER_TEMP/changed-files.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   prepare:
     name: Prepare versions from HA core
     runs-on: ubuntu-latest
+    needs: classify
+    if: needs.classify.outputs.backend == 'true'
     outputs:
       python-version: ${{ steps.get-versions.outputs.python-version }}
       ha-core-sha: ${{ steps.get-versions.outputs.ha-core-sha }}
@@ -235,6 +296,8 @@ jobs:
   stable-test:
     name: Test (HA stable)
     runs-on: ubuntu-latest
+    needs: classify
+    if: needs.classify.outputs.backend == 'true'
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
