@@ -597,12 +597,14 @@ async def test_management_api_crud_and_list_omits_content() -> None:
                 True,
                 {**base, "action": "delete", "source_id": source_id},
             )
-        assert await async_management_command(
+        deleted = await async_management_command(
             hass,
             "admin",
             True,
             {**base, "action": "delete", "source_id": source_id, "confirm": True},
-        ) == {"deleted": 1}
+        )
+        assert deleted["deleted"] == 1
+        assert deleted["stats"]["knowledge_source_count"] == 0
 
 
 async def test_management_api_rejects_invalid_entry_and_subentry() -> None:

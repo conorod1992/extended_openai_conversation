@@ -148,6 +148,7 @@ async function saveTemporaryMemory(panel) {
   const category = panel.shadowRoot.querySelector("#temporary-memory-category")?.value ?? "";
   const expiresAt = panel.shadowRoot.querySelector("#temporary-memory-expiry")?.value ?? "";
   const error = panel.shadowRoot.querySelector("#temporary-memory-error");
+  const owner = panel._retainedMutationOwner();
   if (!content.trim() || !category.trim() || !expiresAt.trim()) {
     error.textContent = "Memory, category, and expiry are required.";
     return;
@@ -156,18 +157,23 @@ async function saveTemporaryMemory(panel) {
   const save = panel.shadowRoot.querySelector("#temporary-memory-save");
   panel._setSaving(save, true);
   try {
-    await panel._call("memories", "temporary_update", {
-      scope_id: panel._scopeId,
+    const response = await panel._call("memories", "temporary_update", {
+      scope_id: owner.scope,
       memory_id: draft.memory_id,
       content,
       category,
       expires_at: expiresAt,
     });
+    if (!panel._ownsRetainedMutation(owner)) return;
+    if (!response?.memory?.memory_id) throw new Error("The saved memory response was incomplete.");
+    panel._result = {...panel._result, memories: (panel._result.memories || []).map(item =>
+      item.memory_id === response.memory.memory_id ? response.memory : item)};
     await closeTemporaryMemory(panel, true);
-    await panel._refreshAfterMutation();
+    panel._patchScopeCount(owner.scope, "temporary_memory_count", 0);
+    panel._render();
     panel._toast("Short-term memory updated");
   } catch (err) {
-    error.textContent = err.message || String(err);
+    if (panel._ownsRetainedMutation(owner)) error.textContent = err.message || String(err);
   } finally { panel._temporaryMemorySaving = false; panel._setSaving(save, false); }
 }
 
@@ -177,15 +183,20 @@ async function deleteTemporaryMemory(panel, memoryId) {
     "This short-lived fact will no longer be included in later requests.",
     "Delete",
   )) return false;
+  const owner = panel._retainedMutationOwner();
   try {
-    await panel._call("memories", "temporary_delete", {
-      scope_id: panel._scopeId,
+    const response = await panel._call("memories", "temporary_delete", {
+      scope_id: owner.scope,
       memory_id: memoryId,
     });
+    if (!panel._ownsRetainedMutation(owner)) return false;
+    if (response?.deleted !== 1) return false;
+    panel._result = {...panel._result, memories: (panel._result.memories || []).filter(item => item.memory_id !== memoryId)};
     if (panel._temporaryMemoryDraft?.memory_id === memoryId) {
       await closeTemporaryMemory(panel, true);
     }
-    await panel._refreshAfterMutation();
+    panel._patchScopeCount(owner.scope, "temporary_memory_count", -1);
+    panel._render();
     panel._toast("Temporary memory deleted");
     return true;
   } catch (err) {
@@ -244,8 +255,13 @@ export async function clearTemporaryMemories(panel) {
   if (!await panel._confirm("Clear short-term memories?", `All short-term memories belonging to ${ownerLabel(panel, scope)} for the selected agent will be permanently removed. Search does not limit this action. Long-term memories are unchanged.`, "Clear memories")) return;
   if (scope !== panel._scopeId || agent !== panel._agentId || panel._memoryKind !== "temporary") return;
   try {
-    await panel._call("memories", "temporary_clear", {scope_id: scope, confirm: true});
-    await panel._refreshAfterMutation();
+    const owner = panel._retainedMutationOwner();
+    const response = await panel._call("memories", "temporary_clear", {scope_id: scope, confirm: true});
+    if (!panel._ownsRetainedMutation(owner)) return;
+    if (!Number.isFinite(response?.deleted)) throw new Error("The clear response was incomplete.");
+    panel._result = {...panel._result, memories: []};
+    panel._patchScopeCount(scope, "temporary_memory_count", -response.deleted);
+    panel._render();
     panel._toast("Short-term memories cleared");
   } catch (err) { panel._toast(`Unable to clear short-term memories: ${err.message || String(err)}`, true); }
 }

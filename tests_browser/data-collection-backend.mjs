@@ -19,14 +19,22 @@ export function createDataCollectionBackend(size = 100) {
     if (section === "knowledge") {
       if (action === "list") return {sources: clone(state.sources)};
       if (action === "get") return {source: clone(state.sources.find(source => source.source_id === message.source_id))};
+      let source;
       if (action === "create") {
-        state.sources.push({source_id: `source-${nextId++}`, title: message.title, description: message.description, content: message.content, character_count: message.content.length, enabled: message.enabled, updated_at: timestamp()});
+        source = {source_id: `source-${nextId++}`, title: message.title, description: message.description, content: message.content, character_count: message.content.length, enabled: message.enabled, updated_at: timestamp()};
+        state.sources.push(source);
       } else if (action === "update") {
-        const source = state.sources.find(item => item.source_id === message.source_id);
+        source = state.sources.find(item => item.source_id === message.source_id);
         if (!source) throw new Error("Source not found");
         Object.assign(source, {title: message.title, description: message.description, content: message.content, character_count: message.content.length, enabled: message.enabled, updated_at: timestamp()});
-      } else if (action === "delete") state.sources = state.sources.filter(item => item.source_id !== message.source_id);
-      return {};
+      } else if (action === "delete") {
+        const before = state.sources.length;
+        state.sources = state.sources.filter(item => item.source_id !== message.source_id);
+        return {deleted: before - state.sources.length, stats: {knowledge_source_count: state.sources.length},
+          feature_status: {source_count: state.sources.length, enabled: true}};
+      }
+      return {source: clone(source), summary: clone(source), stats: {knowledge_source_count: state.sources.length},
+        feature_status: {source_count: state.sources.length, enabled: true}};
     }
     if (section !== "memories") throw new Error(`Unhandled fixture section: ${section}`);
     if (action === "list" || action === "search") {
@@ -39,16 +47,17 @@ export function createDataCollectionBackend(size = 100) {
       return {memories: clone(items.slice(offset, offset + limit)), total: items.length, has_more: next !== null, next_offset: next};
     }
     if (action === "temporary_list") return {memories: clone(scoped(state.temporary, message)), stats: {}};
-    if (action === "temporary_delete") { state.temporary = state.temporary.filter(item => item.memory_id !== message.memory_id); return {}; }
-    if (action === "temporary_clear") { if (!message.confirm) throw new Error("Confirmation required"); state.temporary = state.temporary.filter(item => item.scope_id !== message.scope_id || (item.subentry_id || "agent-1") !== message.subentry_id); return {}; }
+    if (action === "temporary_delete") { const before = state.temporary.length; state.temporary = state.temporary.filter(item => item.memory_id !== message.memory_id); return {deleted: before - state.temporary.length}; }
+    if (action === "temporary_clear") { if (!message.confirm) throw new Error("Confirmation required"); const before = state.temporary.length; state.temporary = state.temporary.filter(item => item.scope_id !== message.scope_id || (item.subentry_id || "agent-1") !== message.subentry_id); return {deleted: before - state.temporary.length}; }
     if (action === "temporary_update") {
       const item = state.temporary.find(item => item.memory_id === message.memory_id);
       Object.assign(item, {content: message.content, category: message.category, expires_at: message.expires_at, updated_at: timestamp()});
-      return {};
+      return {memory: clone(item)};
     }
     if (action === "add") {
-      state.memories.push({memory_id: `memory-${nextId++}`, scope_id: message.scope_id || "user:test-user", content: message.content, category: message.category, scope: message.scope === "household" ? "Shared household" : "Personal", importance: message.importance || "normal", source: "manual", revision: 1, updated_at: timestamp()});
-      return {};
+      const memory = {memory_id: `memory-${nextId++}`, scope_id: message.target_scope_id || message.scope_id || "user:test-user", content: message.content, category: message.category, scope: message.scope === "household" ? "Shared household" : "Personal", importance: message.importance || "normal", source: "manual", revision: 1, updated_at: timestamp()};
+      state.memories.push(memory);
+      return {status: "created", scope_id: memory.scope_id, memory: clone(memory)};
     }
     if (action === "update") {
       const memory = scoped(state.memories, message).find(item => item.memory_id === message.memory_id);
@@ -60,9 +69,9 @@ export function createDataCollectionBackend(size = 100) {
       if (message.scope) memory.scope = message.scope === "household" ? "Shared household" : "Personal";
       for (const key of message.clear_fields || []) delete memory[key];
       memory.revision++; memory.updated_at = timestamp();
-      return {};
+      return {status: "updated", scope_id: memory.scope_id, memory: clone(memory)};
     }
-    if (action === "delete") { state.memories = state.memories.filter(item => item.memory_id !== message.memory_id); return {}; }
+    if (action === "delete") { const before = state.memories.length; state.memories = state.memories.filter(item => item.memory_id !== message.memory_id); return {deleted: before - state.memories.length}; }
     if (action === "clear") {
       state.memories = state.memories.filter(item => (message.category && item.category !== message.category) || (message.scope && item.scope !== (message.scope === "household" ? "Shared household" : "Personal")));
       return {};

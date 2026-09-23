@@ -179,7 +179,8 @@ async def test_only_unified_memory_and_knowledge_commands_are_registered(
         source_id=source_id,
         confirm=True,
     )
-    assert deleted == {"deleted": 1}
+    assert deleted["deleted"] == 1
+    assert deleted["stats"]["knowledge_source_count"] == 0
 
 
 def _entry(title: str = "Management Backend Acceptance") -> MockConfigEntry:
