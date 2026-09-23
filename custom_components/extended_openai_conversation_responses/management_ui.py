@@ -1729,13 +1729,22 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
                 ):
                     raise HomeAssistantError("Shared household memory is disabled")
         if action == "add":
-            return await memory.async_add(
+            added = await memory.async_add(
                 _memory_scope(target),
                 str(message.get("content", "")),
                 str(message.get("category", "general")),
                 "explicit",
                 **metadata,
             )
+            records = await memory.async_get_many(
+                [(_memory_scope(target), added["memory"]["memory_id"])],
+                [_memory_scope(target)],
+            )
+            return {
+                "status": added["status"],
+                "scope_id": target,
+                "memory": management_memory_dict(records[0], include_scope=is_admin),
+            }
         refresh_confirmation = message.get("refresh_confirmation", False)
         if not isinstance(refresh_confirmation, bool):
             raise HomeAssistantError("refresh_confirmation must be true or false")
@@ -1752,6 +1761,7 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
         )
         return {
             "status": "updated",
+            "scope_id": target,
             "memory": management_memory_dict(record, include_scope=is_admin),
         }
     if action == "delete":
@@ -1839,6 +1849,9 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             )
         }
     if action == "create":
+        from .feature_status import management_feature_status
+        from .knowledge import source_summary
+
         knowledge_source = await library.async_create(
             message.get("title", ""),
             message.get("description", ""),
@@ -1848,8 +1861,16 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         return {
             "status": "created",
             "source": knowledge_source_as_dict(knowledge_source),
+            "summary": source_summary(knowledge_source),
+            "stats": library.stats(),
+            "feature_status": management_feature_status(
+                request.subentry.data, knowledge_source_count=library.total_source_count
+            )["knowledge"],
         }
     if action == "update":
+        from .feature_status import management_feature_status
+        from .knowledge import source_summary
+
         knowledge_source = await library.async_update(
             str(message.get("source_id", "")),
             message.get("title"),
@@ -1860,14 +1881,24 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         return {
             "status": "updated",
             "source": knowledge_source_as_dict(knowledge_source),
+            "summary": source_summary(knowledge_source),
+            "stats": library.stats(),
+            "feature_status": management_feature_status(
+                request.subentry.data, knowledge_source_count=library.total_source_count
+            )["knowledge"],
         }
     if action == "delete":
+        from .feature_status import management_feature_status
+
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
+        deleted = int(await library.async_delete(str(message.get("source_id", ""))))
         return {
-            "deleted": int(
-                await library.async_delete(str(message.get("source_id", "")))
-            )
+            "deleted": deleted,
+            "stats": library.stats(),
+            "feature_status": management_feature_status(
+                request.subentry.data, knowledge_source_count=library.total_source_count
+            )["knowledge"],
         }
 
     return _unknown_management_action(request)

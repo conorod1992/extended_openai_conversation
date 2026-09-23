@@ -150,7 +150,7 @@ test("Guest Mode schedule mutations refresh only the selected agent and route", 
   });
 
   expect(result.finalAgentCalls).toBe(result.initialAgentCalls);
-  expect(result.guestCalls).toEqual(["update", "get", "details", "disable", "get", "details"]);
+  expect(result.guestCalls).toEqual(["update", "details", "disable", "details"]);
   expect(result.afterUpdate.agent).toMatchObject({
     state:"active_indefinitely",
     currently_active:true,
@@ -176,26 +176,23 @@ test("late Guest Mode refresh does not replace a newer route", async ({page}) =>
 
   const result = await panel.evaluate(async (host) => {
     const original = host._hass.callWS;
-    let releaseGet;
+    let releaseDetails;
     host._hass.callWS = async (message) => {
       if (message.section === "guest_mode" && message.action === "update") {
         return {status:{state:"active_indefinitely", currently_active:true, indefinite:true}};
       }
-      if (message.section === "guest_mode" && message.action === "get") {
-        await new Promise((resolve) => { releaseGet = resolve; });
-        return {...host._result, status:{state:"active_indefinitely", currently_active:true, indefinite:true}};
-      }
       if (message.section === "guest_mode" && message.action === "details") {
+        await new Promise((resolve) => { releaseDetails = resolve; });
         return {policy:{guest_active:true}, knowledge_sources:[], functions:[], function_groups:[], domains:[]};
       }
       return original(message);
     };
 
     const pending = host._updateGuestMode(true);
-    while (!releaseGet) await new Promise((resolve) => setTimeout(resolve, 0));
+    while (!releaseDetails) await new Promise((resolve) => setTimeout(resolve, 0));
     await host._navigate("guide");
     const guideResult = host._result;
-    releaseGet();
+    releaseDetails();
     await pending;
     host._hass.callWS = original;
     return {
