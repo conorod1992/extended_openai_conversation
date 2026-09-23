@@ -56,12 +56,15 @@ async function runFrontendMutation(panel, control, label, operation) {
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
   const submitted = clone(panel._draft), submittedTitle = panel._draftTitle;
+  panel._syncConfigDirty?.();
+  const dirty = panel._eocDirtyConfigKeys || new Set();
+  const changed = Object.fromEntries([...dirty].filter(key => key !== "__title" && Object.hasOwn(submitted, key)).map(key => [key, submitted[key]]));
   panel._configurationSaving = true;
   panel._setSaving(button, true);
   try {
     const result = await panel._call("configuration", "save", {
-      config: submitted,
-      title: submittedTitle,
+      config: changed,
+      ...(dirty.has("__title") ? {title: submittedTitle} : {}),
       revision: panel._configData?.revision,
     });
     showErrors(panel, result.errors || {});

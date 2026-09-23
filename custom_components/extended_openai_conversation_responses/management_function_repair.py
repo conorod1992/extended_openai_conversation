@@ -479,6 +479,8 @@ async def async_function_repair(
         return result
 
     if action == "configuration_save":
+        if message.get("revision") is not None:
+            require_repair_revision(subentry, message["revision"])
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")

@@ -1,4 +1,6 @@
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
+import {TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
+export {TRANSFER_SECTIONS, renderBackupTransferPanel} from "./backup-transfer-shell.js";
 export const WS_BACKUP_TRANSFER = "extended_openai_conversation_responses/management/backup_transfer";
 
 const CREATE_ID = "create-backup-transfer";
@@ -10,17 +12,6 @@ const EXPORT_MODE_ID = "transfer-export-mode";
 const CUSTOM_OPTIONS_ID = "transfer-custom-options";
 const RESTORE_SECTIONS_ID = "restore-transfer-sections";
 const RESTORE_STATUS_ID = "restore-transfer-status";
-
-export const TRANSFER_SECTIONS = Object.freeze([
-  ["configuration", "Agent configuration and Function Tools"],
-  ["request_rules", "Request Rules"],
-  ["persistent_memory", "Persistent memories"],
-  ["temporary_memory", "Active temporary memories"],
-  ["knowledge", "Knowledge sources"],
-  ["conversation_archive", "Conversation archive"],
-  ["usage", "Usage history"],
-  ["guest_mode", "Guest Mode schedule"],
-]);
 
 const SECTION_LABELS = Object.freeze(Object.fromEntries(TRANSFER_SECTIONS));
 
@@ -197,21 +188,6 @@ function sectionChoices(panel, {className, checked = true, available = null} = {
     .filter(([key]) => !allowed || allowed.has(key))
     .map(([key, label]) => `<label class="group-function-choice"><input type="checkbox" class="${className}" value="${panel?._e ? panel._e(key) : key}" ${checked ? "checked" : ""}><span><strong>${panel?._e ? panel._e(label) : label}</strong></span></label>`)
     .join("");
-}
-
-export function renderBackupTransferPanel(disabled = false) {
-  return `<div class="backup-panel transfer-panel" data-setting data-search="export backup import restore share setup custom memories knowledge usage archive request rules">
-    <div class="subheading"><h3>Export / Backup</h3><p>Choose a shareable setup, a complete disaster-recovery backup, or only the sections you need.</p></div>
-    <label class="setting"><span class="setting-copy"><strong>Export type</strong><small><strong>Shareable Setup</strong> includes reusable configuration, Function Tools and Request Rules but excludes private histories and real secret values. <strong>Full Backup</strong> includes all durable agent data. <strong>Custom</strong> lets you choose sections.</small></span><select id="${EXPORT_MODE_ID}" ${disabled ? "disabled" : ""}><option value="setup">Shareable Setup</option><option value="full">Full Backup</option><option value="custom">Custom</option></select></label>
-    <div id="${CUSTOM_OPTIONS_ID}" class="setting-group" hidden><div class="subheading"><h3>Custom backup sections</h3><p>Selected sections are self-contained replacement sections when imported later.</p></div><div class="group-function-choices">${TRANSFER_SECTIONS.map(([key, label]) => `<label class="group-function-choice"><input type="checkbox" class="transfer-custom-section" value="${key}" checked><span><strong>${label}</strong></span></label>`).join("")}</div></div>
-    <p class="privacy-warning"><strong>Privacy:</strong> Full and custom backups can contain private memories, Knowledge content, archived conversations and usage metadata. Secret-looking values in configuration and Request Rules are replaced by placeholders; review files before sharing them.</p>
-    <div class="backup-actions"><button type="button" id="${CREATE_ID}" ${disabled ? "disabled" : ""}>Create export</button></div>
-    ${disabled ? "<small>Save or revert configuration changes before exporting so the file matches the saved agent.</small>" : ""}
-    <hr>
-    <div class="subheading"><h3>Import / Restore</h3><p>Select any current or legacy Extended OpenAI setup export, custom backup or full backup. The file is validated before anything changes.</p></div>
-    <div class="backup-actions"><button type="button" class="secondary" id="${RESTORE_ID}">Choose file</button><input id="${FILE_ID}" type="file" accept="application/zip,.zip,application/json,.json" hidden></div>
-    <small>For backups with multiple sections, you can restore everything or choose individual sections. Selected sections replace the destination section; they are never silently merged.</small>
-  </div>`;
 }
 
 export function renderRestoreTransferDialog(panel) {

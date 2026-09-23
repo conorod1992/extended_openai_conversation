@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 import yaml
@@ -709,6 +709,148 @@ async def test_configuration_save_normalizes_once(monkeypatch) -> None:
     assert subentry.data["chat_model"] == "gpt-5-mini"
     assert hass.config_entries.updates == 1
     assert merge_calls == 1
+
+
+async def test_retention_projection_reads_only_needed_fields(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        management_ui,
+        "_configuration_defaults",
+        Mock(side_effect=AssertionError("retention does not need full defaults")),
+    )
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "retention_get",
+        },
+    )
+    fields = {"usage_request_retention_days", "usage_run_retention_days"}
+    assert result["projection"] == "retention"
+    assert set(result["config"]) == fields
+    assert set(result["options"]) == fields
+    assert result["title"] == subentry.title
+    assert isinstance(result["revision"], str)
+    assert "defaults" not in result
+    assert "model_capabilities" not in result
+
+
+async def test_configuration_patch_preserves_omitted_fields_and_skips_local_snapshot(
+    monkeypatch,
+) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    before = agent_config_snapshot(subentry.data)
+    local = Mock(return_value={"supported": True})
+    monkeypatch.setattr(management_ui, "local_handling_snapshot", local)
+    revision = management_ui._agent_config_revision(subentry.data, subentry.title)
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "save",
+            "revision": revision,
+            "config": {"max_tokens": 750},
+        },
+    )
+    assert result["valid"] is True
+    assert result["config"]["max_tokens"] == 750
+    assert result["config"]["chat_model"] == before["chat_model"]
+    assert subentry.data["chat_model"] == before["chat_model"]
+    assert result["revision"] != revision
+    assert "local_handling" not in result
+    local.assert_not_called()
+    assert hass.config_entries.updates == 1
+
+    with pytest.raises(HomeAssistantError, match="changed"):
+        await management_ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            {
+                "entry_id": "entry-1",
+                "subentry_id": "agent-1",
+                "section": "configuration",
+                "action": "save",
+                "revision": revision,
+                "config": {"max_tokens": 800},
+            },
+        )
+    assert subentry.data["max_tokens"] == 750
+    assert hass.config_entries.updates == 1
+
+    await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "save",
+            "config": {"local_intent_exclusions": ["HassTurnOn"]},
+        },
+    )
+    local.assert_called_once()
+
+    updated = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "update",
+            "revision": management_ui._agent_config_revision(
+                subentry.data, subentry.title
+            ),
+            "config": {"max_tokens": 900},
+        },
+    )
+    assert updated["config"]["max_tokens"] == 900
+    assert "local_handling" not in updated
+    local.assert_called_once()
+    await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "save",
+            "config": {"local_intent_exclusions": ["HassTurnOn"]},
+        },
+    )
+    local.assert_called_once()
+
+
+async def test_configuration_patch_validates_complete_merged_candidate() -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data["speech_regex_replacements"] = [{"pattern": "[", "replacement": ""}]
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "save",
+            "config": {"max_tokens": 750},
+        },
+    )
+    assert result["valid"] is False
+    assert "speech_regex_replacements[0].pattern" in result["errors"]
+    assert hass.config_entries.updates == 0
 
 
 async def test_configuration_save_validation_failure_does_not_persist(

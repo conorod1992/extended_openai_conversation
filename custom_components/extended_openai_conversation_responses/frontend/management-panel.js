@@ -471,7 +471,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       "assistant/speech": ["speech"],
       "assistant/advanced": ["capabilities"],
       "data-memory/conversations": ["archive"],
-      "usage-maintenance/backup-restore": ["backup"],
       "usage-maintenance/retention": ["retention"],
     }[this._viewKey()] || [];
   }
@@ -615,7 +614,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     // Configuration remains editable even when persisted Function Tools need repair.
     const issue = this._selectedAgent()?.configuration_issue;
     if (section === "configuration" && issue?.field === "functions" && issue.repairable === true) {
-      const repairAction = {get:"configuration_get", validate:"configuration_validate", save:"configuration_save", update:"configuration_save"}[action];
+      const repairAction = {get:"configuration_get", retention_get:"configuration_get", validate:"configuration_validate", save:"configuration_save", update:"configuration_save"}[action];
       if (repairAction) return this._request("function_repair", repairAction, extra);
     }
     let payload = extra;
@@ -789,8 +788,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const loadToken = ++this._loadToken;
     const cacheGeneration = this._cacheGeneration;
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
-    const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules"].includes(view);
-    if (configOnly && this._configData && this._draftAgentId === this._agentId) {
+    const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules", "usage-maintenance/backup-restore"].includes(view);
+    if (configOnly && this._configData && this._draftAgentId === this._agentId
+        && (this._configData.projection !== "retention" || view === "usage-maintenance/retention")) {
       this._applyConfigurationLiveMetadata(view);
       this._contentData = null;
       this._result = this._configData;
@@ -925,7 +925,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }
       } else if (view === "capabilities/request-rules") {
         result = await this._call("request_rules", "list");
-      } else if (this._isDraftView()) {
+      } else if (this._isDraftView() && view !== "usage-maintenance/backup-restore") {
         await this._loadConfigDraft();
         result = this._configData;
       } else {
@@ -1068,10 +1068,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _loadConfigDraft() {
-    if (!this._configData || this._draftAgentId !== this._agentId) {
+    if (!this._configData || this._draftAgentId !== this._agentId
+        || (this._configData.projection === "retention" && this._viewKey() !== "usage-maintenance/retention")) {
       const agentId = this._agentId;
       const loadToken = this._loadToken;
-      const configData = await this._call("configuration", "get");
+      const configData = await this._call("configuration", this._viewKey() === "usage-maintenance/retention" ? "retention_get" : "get");
       if (agentId !== this._agentId || loadToken !== this._loadToken) return;
       this._configData = configData;
       this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
@@ -1291,8 +1292,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "data-memory/knowledge") return `${getRouteFeature(view)?.knowledgeAvailabilityMarkup(this) || ""}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
     if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? ((getConfigurationEditor()?.renderConfiguration(this) || this._loading())) : ""}`; }
     if (view === "usage-maintenance/usage") return this._usage();
+    if (view === "usage-maintenance/backup-restore") return getRouteFeature(view)?.renderBackupTransferPanel(Boolean(this._configDirty)) || this._loading();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
-    if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) {
+    if (view === "usage-maintenance/retention") {
       this._configSections = this._configSectionsForView();
       const specialized = getRouteFeature(view);
       return (getConfigurationEditor()?.renderConfiguration(this, {
@@ -1492,9 +1494,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       root.querySelectorAll("[data-guest-mode]").forEach((element) => element.addEventListener("change", () => { this._guestDraft[element.dataset.guestMode] = element.value; this._render(); }));
       this._setupGuestSelectors();
     }
-    if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) getConfigurationEditor()?.bindConfiguration(this);
+    if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/retention"].includes(view)) getConfigurationEditor()?.bindConfiguration(this);
     if (view === "assistant/prompt-context") this._hydrateExposedAttributes();
-    if (view === "usage-maintenance/backup-restore") getRouteFeature(view)?.bindBackupTransfer(this, getConfigurationEditor()?.backupSummaryLines);
+    if (view === "usage-maintenance/backup-restore") getRouteFeature(view)?.bindBackupTransfer(this);
     if (view === "capabilities/functions") getConfigurationTools()?.bindTools(this);
     if (view === "capabilities/request-rules") getRouteFeature(view)?.bindRequestRules(this);
     if (view === "overview") bindOverview(this);

@@ -5,7 +5,6 @@ const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
   "capabilities/web-skills",
   "data-memory/conversations",
-  "usage-maintenance/backup-restore",
   "usage-maintenance/retention",
 ]);
 
@@ -14,6 +13,7 @@ export function getConfigurationTools() { return getRouteFeature("agent-config-t
 
 export function routeAssetKind(view) {
   if (view === "capabilities/functions") return "agent-config-tools";
+  if (view === "usage-maintenance/backup-restore") return null;
   if (String(view || "").startsWith("assistant/") || CONFIG_VIEWS.has(view)) return "agent-config";
   if (view === REQUEST_RULES_VIEW) return "request-rules";
   return null;
@@ -30,7 +30,7 @@ const DATA_FEATURES = new Set([
 const featureLoaders = {
   "agent-config": () => import("./agent-config-editor.js"),
   "agent-config-tools": () => import("./agent-config-tools.js"),
-  "usage-maintenance/backup-restore": () => import("./backup-transfer-ui.js"),
+  "usage-maintenance/backup-restore": () => import("./backup-route-ui.js"),
   "status": () => import("./management-feature-status.js"),
   "capabilities": () => import("./management-capabilities-ia.js"),
   "configuration": () => import("./management-configuration-feature.js"),
