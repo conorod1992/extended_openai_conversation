@@ -688,6 +688,16 @@ async def test_configuration_save_normalizes_once(monkeypatch) -> None:
 
     monkeypatch.setattr(management_ui, "merge_agent_config", counted_merge)
     monkeypatch.setattr(
+        loading,
+        "validate_function_tools",
+        Mock(side_effect=AssertionError("save response revalidated Function Tools")),
+    )
+    monkeypatch.setattr(
+        loading,
+        "validate_function_groups",
+        Mock(side_effect=AssertionError("save response revalidated Function Groups")),
+    )
+    monkeypatch.setattr(
         management_ui,
         "local_handling_snapshot",
         lambda _hass, _entry, _subentry, _snapshot: {},
@@ -709,6 +719,7 @@ async def test_configuration_save_normalizes_once(monkeypatch) -> None:
 
     assert result["valid"] is True
     assert result["config"]["chat_model"] == "gpt-5-mini"
+    assert isinstance(result["config"]["functions"], list)
     assert result["title"] == "Updated Jarvis"
     assert subentry.data["chat_model"] == "gpt-5-mini"
     assert hass.config_entries.updates == 1
@@ -896,6 +907,28 @@ async def test_configuration_save_validation_failure_does_not_persist(
     assert "speech_regex_replacements[0].pattern" in result["errors"]
     assert hass.config_entries.updates == 0
     assert merge_calls == 1
+
+
+@pytest.mark.parametrize("field", ["functions", "function_groups"])
+async def test_configuration_save_rejects_malformed_function_configuration(field) -> None:
+    hass, _entry, _subentry = _hass_with_agent()
+
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "save",
+            "config": {field: "not a list"},
+        },
+    )
+
+    assert result["valid"] is False
+    assert field in result["errors"]
+    assert hass.config_entries.updates == 0
 
 
 async def test_management_setup_retry_resumes_after_panel_failure(monkeypatch) -> None:

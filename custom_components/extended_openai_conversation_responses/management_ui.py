@@ -827,7 +827,9 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         **({"title": saved_title} if isinstance(title, str) else {}),
     )
 
-    snapshot = _snapshot_normalized_configuration(persisted)
+    # merge_agent_config validated both fields before persistence. Decode the
+    # normalized YAML for the editor without repeating schema validation.
+    snapshot = _snapshot_normalized_configuration(persisted, validated=True)
     saved = {
         "title": saved_title,
         "config": snapshot,

@@ -8,6 +8,8 @@ from copy import deepcopy
 from time import perf_counter
 from typing import Any, TypeVar
 
+import yaml
+
 from homeassistant.core import HomeAssistant
 
 from .agent_config import (
@@ -326,8 +328,10 @@ async def async_overview_summary(
     return result
 
 
-def _snapshot_normalized_configuration(config: dict[str, Any]) -> dict[str, Any]:
-    """Build the frontend config shape without normalizing an already-valid config."""
+def _snapshot_normalized_configuration(
+    config: dict[str, Any], *, validated: bool = False
+) -> dict[str, Any]:
+    """Build a frontend snapshot, trusting tools only after a successful save."""
     snapshot = agent_config_defaults()
     snapshot.update(
         {
@@ -336,9 +340,15 @@ def _snapshot_normalized_configuration(config: dict[str, Any]) -> dict[str, Any]
             if key in AGENT_CONFIG_FIELDS
         }
     )
-    function_tools = validate_function_tools(snapshot[CONF_FUNCTION_TOOLS])
+    if validated:
+        function_tools = snapshot[CONF_FUNCTION_TOOLS]
+        if isinstance(function_tools, str):
+            function_tools = yaml.safe_load(function_tools) or []
+    else:
+        function_tools = validate_function_tools(snapshot[CONF_FUNCTION_TOOLS])
     snapshot[CONF_FUNCTION_TOOLS] = function_tools
-    snapshot[CONF_FUNCTION_GROUPS] = validate_function_groups(
-        snapshot[CONF_FUNCTION_GROUPS], function_tools
-    )
+    if not validated:
+        snapshot[CONF_FUNCTION_GROUPS] = validate_function_groups(
+            snapshot[CONF_FUNCTION_GROUPS], function_tools
+        )
     return snapshot
