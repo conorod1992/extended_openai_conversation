@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import {knowledgeAvailabilityMarkup} from "../custom_components/extended_openai_conversation_responses/frontend/management-capabilities-ia.js";
+import {knowledgeAvailabilityMarkup} from "../custom_components/extended_openai_conversation_responses/frontend/management-knowledge-feature.js";
 import {
   diagnosticResultMarkup,
   diagnosticStatusMeta,

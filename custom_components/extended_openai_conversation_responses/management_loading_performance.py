@@ -172,21 +172,44 @@ async def async_scope_catalog(
     is_admin: bool,
     entry_id: str,
     subentry_id: str,
+    *,
+    scope_kind: str = "all",
 ) -> dict[str, Any]:
-    """Load scopes for the already-validated Management agent concurrently."""
-    memory, archive, temporary_memory = await asyncio.gather(
-        async_get_memory(hass, entry_id, subentry_id),
-        async_get_archive(hass, entry_id, subentry_id),
-        async_get_temporary_memory(hass, entry_id, subentry_id),
-    )
+    """Load only the count family needed by the current Management route."""
+    if scope_kind not in {"all", "archive", "memory", "temporary"}:
+        raise ValueError("scope_kind must be all, archive, memory, or temporary")
+
+    memory_counts: dict[str, int] = {}
+    conversation_counts: dict[str, int] = {}
+    temporary_counts: dict[str, int] = {}
+
+    if scope_kind == "all":
+        memory, archive, temporary_memory = await asyncio.gather(
+            async_get_memory(hass, entry_id, subentry_id),
+            async_get_archive(hass, entry_id, subentry_id),
+            async_get_temporary_memory(hass, entry_id, subentry_id),
+        )
+        memory_counts = memory.scope_counts()
+        conversation_counts = archive.scope_counts()
+        temporary_counts = temporary_memory.owner_counts()
+    elif scope_kind == "archive":
+        archive = await async_get_archive(hass, entry_id, subentry_id)
+        conversation_counts = archive.scope_counts()
+    elif scope_kind == "memory":
+        memory = await async_get_memory(hass, entry_id, subentry_id)
+        memory_counts = memory.scope_counts()
+    else:
+        temporary_memory = await async_get_temporary_memory(hass, entry_id, subentry_id)
+        temporary_counts = temporary_memory.owner_counts()
+
     return {
         "scopes": await async_scope_catalog_projection(
             hass,
             user_id,
             is_admin,
-            memory.scope_counts(),
-            archive.scope_counts(),
-            temporary_memory.owner_counts(),
+            memory_counts,
+            conversation_counts,
+            temporary_counts,
         )
     }
 
