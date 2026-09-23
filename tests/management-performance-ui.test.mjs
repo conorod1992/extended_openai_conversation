@@ -177,24 +177,17 @@ function panelFor(page = "assistant", subsection = "basics") {
     return Promise.resolve({});
   }};
   const loading = panel._loadSection();
-  for (const [section, action] of [
-    ["configuration", "get"],
-    ["scopes", "catalog"],
-    ["conversations", "active"],
-  ]) {
-    assert.equal(
-      calls.filter((call) => call.section === section && call.action === action).length,
-      1,
-      `${section}/${action} starts before the lazy Conversations UI resolves`,
-    );
-  }
+  assert.deepEqual(
+    calls.map((call) => [call.section, call.action]),
+    [["configuration", "get"], ["scopes", "catalog"], ["conversations", "list"], ["conversations", "active"]],
+    "History primary and secondary requests start together for a known scope",
+  );
+  assert.equal(calls.find((call) => call.section === "scopes")?.scope_kind, "archive");
   resolveConfig({title:"A", config:{}, revision:"r1"});
   resolveScopes({scopes:initialScopes});
   await loading;
-  assert.deepEqual(
-    calls.filter((call) => call.section === "conversations").map((call) => call.action),
-    ["active", "list"],
-  );
+  assert.equal(panel._busy, false);
+  assert.ok(panel._contentData?.sessions);
 }
 
 {
@@ -278,8 +271,10 @@ function panelFor(page = "assistant", subsection = "basics") {
   await panel._loadSection();
   panel._scopeId = "shared";
   await panel._loadSection();
-  assert.deepEqual(calls.map((call) => call.section), ["scopes", "memories", "memories", "memories", "memories"]);
-  assert.deepEqual(calls.slice(3, 5).map((call) => [call.action, call.scope_id]), [
+  assert.deepEqual(calls.map((call) => call.section), ["scopes", "memories", "memories", "scopes", "memories", "memories"]);
+  assert.equal(calls[0].scope_kind, "memory");
+  assert.equal(calls[3].scope_kind, "temporary");
+  assert.deepEqual(calls.slice(4, 6).map((call) => [call.action, call.scope_id]), [
     ["temporary_list", "user:current"],
     ["temporary_list", "shared"],
   ]);
@@ -290,13 +285,13 @@ function panelFor(page = "assistant", subsection = "basics") {
   panel._page = "data-memory";
   panel._subsection = "memories";
   await panel._loadSection();
-  assert.deepEqual(calls.slice(5).map((call) => call.section), ["memories"]);
+  assert.deepEqual(calls.slice(6).map((call) => call.section), ["memories"]);
 
   panel._agentId = "agent-b";
   panel._scopeId = "user:current";
   panel._applyScopes(initialScopes);
   await panel._loadSection();
-  assert.deepEqual(calls.slice(6).map((call) => [call.section, call.subentry_id]), [
+  assert.deepEqual(calls.slice(7).map((call) => [call.section, call.subentry_id]), [
     ["scopes", "agent-b"],
     ["memories", "agent-b"],
   ]);
@@ -318,12 +313,12 @@ function panelFor(page = "assistant", subsection = "basics") {
   assert.equal(panel._sectionCache.has("agent-a|data-memory/knowledge"), false);
   assert.equal(panel._sectionCache.has("agent-b|data-memory/knowledge"), true);
 
-  panel._scopeCatalogCache.set("agent-a|data-memory/memories", initialScopes);
-  panel._scopeCatalogCache.set("agent-b|data-memory/memories", initialScopes);
-  panel._scopeCatalogVisitKey = "agent-a|data-memory/memories";
+  panel._scopeCatalogCache.set("agent-a|scopes|memory", initialScopes);
+  panel._scopeCatalogCache.set("agent-b|scopes|memory", initialScopes);
+  panel._scopeCatalogVisitKey = "agent-a|scopes|memory";
   panel._invalidateAfterMutation("agent-a", "memories", "delete");
-  assert.equal(panel._scopeCatalogCache.has("agent-a|data-memory/memories"), false);
-  assert.equal(panel._scopeCatalogCache.has("agent-b|data-memory/memories"), true);
+  assert.equal(panel._scopeCatalogCache.has("agent-a|scopes|memory"), false);
+  assert.equal(panel._scopeCatalogCache.has("agent-b|scopes|memory"), true);
   assert.equal(panel._scopeCatalogVisitKey, null);
 }
 
@@ -520,4 +515,20 @@ function panelFor(page = "assistant", subsection = "basics") {
   panel._eocSectionCacheTimes.set(key, Date.now() - 31_000);
   await panel._loadSection();
   assert.equal(loads, 2);
+}
+
+{
+  const panel = panelFor("data-memory", "conversations");
+  panel._contentData = {sessions:{sessions:[{session_id:"one"}], returned:1, total:1}};
+  panel._confirm = async () => true;
+  panel._toast = () => {};
+  let resolveDelete;
+  panel._call = () => new Promise((resolve) => { resolveDelete = resolve; });
+  const deleting = panel._deleteSession("one");
+  await Promise.resolve();
+  panel._scopeId = "user:other";
+  resolveDelete({deleted_sessions:1});
+  await deleting;
+  assert.equal(panel._contentData.sessions.sessions.length, 1,
+    "late deletion cannot patch a different History scope");
 }
