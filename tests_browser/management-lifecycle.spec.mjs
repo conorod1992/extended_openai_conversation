@@ -271,6 +271,7 @@ test("Conversation History paints the selected scope before secondary data settl
       await new Promise(resolve => setTimeout(resolve, 0));
     }
     const primaryVisible = Boolean(host.shadowRoot.querySelector("#archive-query")) && host._busy === false;
+    const searchInput = host.shadowRoot.querySelector("#archive-query");
     const loadingSettings = host.shadowRoot.textContent.includes("Loading archive settings");
     const scopeKinds = observedScopeKinds;
 
@@ -288,6 +289,7 @@ test("Conversation History paints the selected scope before secondary data settl
       scopeKinds,
       activeLoading: host._contentData?.loading?.active,
       configReady: Boolean(host._configData),
+      searchPreserved: host.shadowRoot.querySelector("#archive-query") === searchInput,
     };
   });
 
@@ -296,6 +298,7 @@ test("Conversation History paints the selected scope before secondary data settl
   expect(result.scopeKinds.at(-1)).toBe("archive");
   expect(result.activeLoading).toBe(false);
   expect(result.configReady).toBe(true);
+  expect(result.searchPreserved).toBe(true);
 });
 
 test("conversation configuration starts before a pending scope catalog finishes", async ({page}) => {
@@ -571,6 +574,7 @@ test("Usage becomes usable before recent runs and retention settle", async ({pag
 
   await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));
   await expect(panel.locator("#usage-window")).toBeVisible();
+  await panel.evaluate(host => { window.usageChartNode = host.shadowRoot.querySelector(".chart"); });
   await expect(panel.getByText("Loading recent runs…")).toBeVisible();
   expect(await panel.evaluate(host => host._busy)).toBe(false);
   expect(await page.evaluate(() => progressiveUsage.calls.sort())).toEqual(["daily", "retention", "runs", "summary"]);
@@ -580,11 +584,50 @@ test("Usage becomes usable before recent runs and retention settle", async ({pag
   await expect.poll(() => panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:true});
   await expect(panel.getByText("Loading recent runs…")).toHaveCount(0);
   await expect(panel.getByText("Success", {exact:true})).toBeVisible();
+  expect(await panel.evaluate(host => host.shadowRoot.querySelector(".chart") === window.usageChartNode)).toBe(true);
   expect(await panel.evaluate(host => host._result.retention)).toBeUndefined();
 
   await page.evaluate(() => progressiveUsage.releaseRetention());
   await expect.poll(() => panel.evaluate(host => host._result.loading)).toEqual({runs:false, retention:false});
   expect(await panel.evaluate(host => host._result.retention.detail_retention_days)).toBe(30);
+  expect(await panel.evaluate(host => host.shadowRoot.querySelector(".chart") === window.usageChartNode)).toBe(true);
+  await expectHarnessClean(page, errors);
+});
+
+test("navigation acknowledges the destination while keeping useful content mounted", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  await panel.evaluate(host => {
+    const original = host._hass.callWS;
+    window.previousMain = host.shadowRoot.querySelector("main").firstElementChild;
+    host._hass.callWS = message => {
+      if (message.section === "usage" && message.action === "summary") {
+        return new Promise(resolve => { window.releaseUsage = () => resolve(original(message)); });
+      }
+      return original(message);
+    };
+    window.pendingNavigation = host._navigate("usage-maintenance", "usage");
+  });
+  await expect.poll(() => panel.evaluate(host => host._viewKey())).toBe("usage-maintenance/usage");
+  const pending = await panel.evaluate(host => {
+    const root = host.shadowRoot;
+    const main = root.querySelector("main");
+    return {
+      page: root.querySelector(".top-nav button.active")?.dataset.page,
+      subsection: root.querySelector(".subsection-nav button.active")?.dataset.subsection,
+      mobilePage: root.querySelector("#top-section-mobile")?.value,
+      mobileSection: root.querySelector("#local-section")?.value,
+      retained: main.firstElementChild === window.previousMain,
+      busy: main.getAttribute("aria-busy"),
+      inert: main.inert,
+    };
+  });
+  expect(pending).toEqual({page:"usage-maintenance", subsection:"usage", mobilePage:"usage-maintenance", mobileSection:"usage", retained:true, busy:"true", inert:true});
+  await page.evaluate(() => releaseUsage());
+  await page.evaluate(() => pendingNavigation);
+  await expect(panel.locator("#usage-window")).toBeVisible();
   await expectHarnessClean(page, errors);
 });
 

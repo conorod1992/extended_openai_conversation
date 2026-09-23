@@ -291,8 +291,11 @@ export function loadSectionAlongsideAsset(
         : null;
     if (!failure) {
       // A route-owned feature can become available after the data renderer ran.
-      // The renderer skips unchanged markup, retaining controls and listeners.
-      panel._render();
+      // If the settled data already rendered with its feature loaded, another
+      // full render would only rebuild the same route markup.
+      if (panel._eocRenderedRoute !== `${panel._agentId}|${view}`
+          || !panel._eocRenderedFeatureReady || panel._busy
+          || panel._eocDeferredEditorRender) panel._render();
       return sectionResult.value;
     }
     panel._busy = false;

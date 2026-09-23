@@ -10,7 +10,7 @@ import {
 } from "./management-page-drafts.js";
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} from "./management-dialogs.js";
-import {renderManagement} from "./management-renderer.js";
+import {renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, isAgentMutation, syncAgentPicker} from "./management-actions.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
@@ -456,6 +456,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._subsection = route.section;
     this._query = "";
     this._result = null;
+    showPendingDestination(this);
     await this._loadSection();
   }
 
@@ -947,6 +948,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
             if (key === "active") this._contentData.active = settled.value;
             if (key === "config") this._result = this._configData;
           }
+          if (key === "active" && getRouteFeature("data-memory/conversations")?.reconcileActiveConversations(this)) return;
+          if (key === "config" && settled.status === "fulfilled" && this._configData) {
+            const markup = getConfigurationEditor()?.renderConfiguration(this);
+            if (markup && reconcileHistoryConfiguration(this, markup)) {
+              getConfigurationEditor()?.bindConfiguration(this);
+              return;
+            }
+          }
           this._render();
         };
 
@@ -966,6 +975,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
                 ...(refreshedSessions ? {sessions: refreshedSessions} : {}),
                 loading: {...(this._contentData.loading || {}), scopes: false},
               };
+              if (!refreshedSessions && reconcileScopePicker(this)) return;
               this._render();
             }
           }).catch((reason) => patchHistory("scopes", {status: "rejected", reason}, "Scope catalogue"));
@@ -1012,7 +1022,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (loadToken !== this._loadToken) return;
       if (cacheGeneration !== this._cacheGeneration) return;
       this._contentData = contentData;
-      if (showCached && JSON.stringify(result) === JSON.stringify(cache.result)) result = cache.result;
       this._result = result;
       writeSectionCache(this, cacheKey, result);
       this._error = null;
@@ -1064,7 +1073,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
                 loading,
               };
             }
-            this._render();
+            if (!getRouteFeature("usage-maintenance/usage")?.reconcileUsageSecondary(this, key)) this._render();
           });
         }
       }
@@ -1186,6 +1195,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._query = "";
       history.pushState({}, "", routePath(page, resolvedSubsection));
       this._result = null;
+      showPendingDestination(this);
       await this._loadSection();
     }, true);
   }
@@ -1208,9 +1218,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       );
       let result;
       if (preserve) {
-        main.setAttribute("aria-busy", "true");
-        main.inert = true;
-        main.classList.add("eoc-loading-in-background");
+        showPendingDestination(this);
       } else {
         result = this._renderContent(...args);
         if (view === "data-memory/conversations") {
@@ -1241,6 +1249,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const ownsPageDraft = ["capabilities/guest-mode", "capabilities/quiet-hours", "capabilities/request-rules"].includes(view);
     if (ownsPageDraft) initializePageDraft(this);
     renderManagement(this);
+    this._eocRenderedFeatureReady = routeFeaturesReady(view);
     const main = this.shadowRoot?.querySelector?.("[data-eoc-main]") || this.shadowRoot?.querySelector?.("main");
     const routeTitle = main?.querySelector?.(".page-intro h1");
     if (routeTitle && this._markColdLifecycle("route-title-present", {view: this._viewKey()})) {
@@ -1376,7 +1385,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           ? (getConfigurationEditor()?.renderConfiguration(this) || this._loading())
           : `<section class="content-card"><div class="loading" role="status">Loading archive settings…</div></section>`)
         : "";
-      return `${this._conversations()}${settings}`;
+      return `${this._conversations()}<div data-eoc-history-config>${settings}</div>`;
     }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/backup-restore") return getRouteFeature(view)?.renderBackupTransferPanel(Boolean(this._configDirty)) || this._loading();
@@ -1577,6 +1586,33 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
   }
 
+  _bindActiveConversationActions() {
+    this.shadowRoot.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => {
+      const agentId = this._agentId;
+      const loadToken = this._loadToken;
+      if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return;
+      if (agentId !== this._agentId || loadToken !== this._loadToken
+          || this._viewKey() !== "data-memory/conversations") return;
+      try {
+        const response = await this._call("conversations", "end_active", { continuity_key: button.dataset.key });
+        if (response?.ended && agentId === this._agentId && loadToken === this._loadToken
+            && this._viewKey() === "data-memory/conversations" && this._contentData?.active?.active) {
+          this._contentData = {
+            ...this._contentData,
+            active: {
+              ...this._contentData.active,
+              active: this._contentData.active.active.filter((item) => item.key !== button.dataset.key),
+            },
+          };
+          getRouteFeature("data-memory/conversations")?.reconcileActiveConversations(this);
+        }
+        this._toast("Conversation will start fresh next time");
+      } catch (err) {
+        this._toast(`Unable to end conversation: ${err.message || String(err)}`, true);
+      }
+    }));
+  }
+
   _bindActions() {
     const root = this.shadowRoot;
     const q = (selector) => root.querySelector(selector);
@@ -1587,30 +1623,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
     if (view === "data-memory/conversations") {
-      root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => {
-        const agentId = this._agentId;
-        const loadToken = this._loadToken;
-        if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return;
-        if (agentId !== this._agentId || loadToken !== this._loadToken
-            || this._viewKey() !== "data-memory/conversations") return;
-        try {
-          const response = await this._call("conversations", "end_active", { continuity_key: button.dataset.key });
-          if (response?.ended && agentId === this._agentId && loadToken === this._loadToken
-              && this._viewKey() === "data-memory/conversations" && this._contentData?.active?.active) {
-            this._contentData = {
-              ...this._contentData,
-              active: {
-                ...this._contentData.active,
-                active: this._contentData.active.active.filter((item) => item.key !== button.dataset.key),
-              },
-            };
-            this._render();
-          }
-          this._toast("Conversation will start fresh next time");
-        } catch (err) {
-          this._toast(`Unable to end conversation: ${err.message || String(err)}`, true);
-        }
-      }));
+      this._bindActiveConversationActions();
       root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id); }));
     }
     if (view === "usage-maintenance/usage") q("#clear-details")?.addEventListener("click", () => this._clearUsageDetails());

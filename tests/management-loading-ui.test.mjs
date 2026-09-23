@@ -183,6 +183,28 @@ assert.equal(panel._busy, false);
 assert.match(panel._error, /Unable to load this frontend section: lazy import failed/);
 assert.equal(renders, 1);
 
+// Settling an asset just after data rendered must not rebuild an already usable
+// route. A data render that still showed a lazy feature placeholder must retry.
+currentView = "guide";
+panel._eocViewAssetToken += 1;
+panel._agentId = "agent-a";
+panel._busy = false;
+panel._eocRenderedRoute = "agent-a|guide";
+panel._eocRenderedFeatureReady = true;
+await routeModule.loadSectionAlongsideAsset(panel, false, () => Promise.resolve("ready"),
+  currentView, Promise.resolve(), panel._eocViewAssetToken);
+assert.equal(renders, 1);
+panel._eocRenderedFeatureReady = false;
+await routeModule.loadSectionAlongsideAsset(panel, false, () => Promise.resolve("ready"),
+  currentView, Promise.resolve(), panel._eocViewAssetToken);
+assert.equal(renders, 2);
+panel._eocRenderedFeatureReady = true;
+panel._eocDeferredEditorRender = true;
+await routeModule.loadSectionAlongsideAsset(panel, false, () => Promise.resolve("ready"),
+  currentView, Promise.resolve(), panel._eocViewAssetToken);
+assert.equal(renders, 3, "a protected open editor still gets its deferred render opportunity");
+panel._eocDeferredEditorRender = false;
+
 // Loading publishes the complete feature only after its dependencies resolve.
 assert.equal(routeModule.getConfigurationEditor(), undefined);
 assert.equal(routeModule.routeFeaturesReady("assistant/basics"), false);
