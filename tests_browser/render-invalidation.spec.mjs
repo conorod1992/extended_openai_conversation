@@ -95,7 +95,7 @@ test("search configuration retry updates results without rendering or stealing f
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("overview"));
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  await expect(panel.locator(".dashboard-grid:not([aria-busy='true'])")).toBeVisible();
   await page.evaluate(() => {
     const {panel} = window.browserHarness;
     const call = panel._call.bind(panel);
