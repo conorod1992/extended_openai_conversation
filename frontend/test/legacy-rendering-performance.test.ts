@@ -101,7 +101,7 @@ describe("native management rendering", () => {
         renderBackup: renderBackupTransferPanel,
         renderExposedAttributes: renderExposedAttributeSettings,
       });
-      expect(html).toContain("local-handling-explainer");
+      expect(html).toContain("local-handling-help");
       expect(html).toContain("exposed-attribute");
       expect(html).toContain("transfer-panel");
       expect(html).not.toContain("config-jumps");
