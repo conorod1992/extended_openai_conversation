@@ -547,7 +547,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             configured_tools = configured_function_tools_from_data(subentry.data)
             exposed_entities = get_exposed_entities(hass)
 
-        result: dict[str, Any] = {
+        primary_result: dict[str, Any] = {
             "revision": _agent_config_revision(subentry.data, subentry.title),
             "status": guest_manager.status(),
             "config": (
@@ -569,7 +569,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 else None
             ),
         }
-        return result
+        return primary_result
 
     if action == "details":
         started = perf_counter()
@@ -598,7 +598,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         )
         policy_ms = _elapsed_ms(phase)
 
-        result: dict[str, Any] = {
+        details_result: dict[str, Any] = {
             "policy": policy.as_diagnostics(),
         }
         timings = {
@@ -622,7 +622,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             knowledge_sources = await library.async_list()
             knowledge_list_ms = _elapsed_ms(phase)
 
-            result.update(
+            details_result.update(
                 {
                     "knowledge_sources": knowledge_sources,
                     "functions": [
@@ -661,11 +661,11 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 }
             )
 
-        result["_performance"] = {
+        details_result["_performance"] = {
             **timings,
             "total_ms": _elapsed_ms(started),
         }
-        return result
+        return details_result
 
     _require_admin(is_admin)
     if action == "save_policy":
