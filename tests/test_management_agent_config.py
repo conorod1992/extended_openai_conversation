@@ -292,7 +292,7 @@ async def test_guest_management_marks_unscopable_functions_unsafe(
         True,
         {
             "section": "guest_mode",
-            "action": "get",
+            "action": "details",
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
         },
