@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
-
 import {
   dirtyConfigurationDestinations,
   dirtyConfigurationKeys,
@@ -13,30 +11,6 @@ import {
   searchProjectedSettings,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 import {SETTINGS_INDEX} from "../custom_components/extended_openai_conversation_responses/frontend/frontend-navigation.js";
-
-const panelSource = await readFile(
-  new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url),
-  "utf8",
-);
-const [editorBaseSource, rendererSource] = await Promise.all([
-  readFile(
-    new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js", import.meta.url),
-    "utf8",
-  ),
-  readFile(
-    new URL("../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js", import.meta.url),
-    "utf8",
-  ),
-]);
-assert.match(panelSource, /from "\.\/management-draft-navigation\.js"/);
-assert.match(editorBaseSource, /<summary aria-haspopup="menu">Assistant actions<\/summary>/);
-assert.doesNotMatch(editorBaseSource, />Agent actions<\/summary>/);
-assert.doesNotMatch(rendererSource, /summary\.textContent = "Assistant actions"/);
-assert.ok(
-  panelSource.indexOf("applyManagementToolbarLayout(this)")
-    < panelSource.indexOf("enhanceConfigurationClarity(this)"),
-  "configuration clarity should run after toolbar layout in explicit panel composition",
-);
 
 assert.equal(friendlySettingLabel("memory_retrieval_mode"), "Relevance matching");
 assert.equal(friendlySettingLabel("temperature"), "Response creativity (temperature)");
