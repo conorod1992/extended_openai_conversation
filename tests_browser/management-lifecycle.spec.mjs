@@ -222,6 +222,7 @@ test("Conversation History paints the selected scope before secondary data settl
     const original = host._hass.callWS;
     const releases = {};
     const started = new Set();
+    const observedScopeKinds = [];
     host._hass.callWS = async message => {
       const key = message.section === "scopes"
         ? "scopes"
@@ -232,6 +233,7 @@ test("Conversation History paints the selected scope before secondary data settl
             : null;
       if (key) {
         started.add(key);
+        if (key === "scopes") observedScopeKinds.push(message.scope_kind);
         await new Promise(resolve => { releases[key] = resolve; });
       }
       return original(message);
@@ -246,9 +248,7 @@ test("Conversation History paints the selected scope before secondary data settl
     }
     const primaryVisible = Boolean(host.shadowRoot.querySelector("#archive-query")) && host._busy === false;
     const loadingSettings = host.shadowRoot.textContent.includes("Loading archive settings");
-    const scopeKinds = browserHarness.calls
-      .filter(call => call.section === "scopes" && call.action === "catalog")
-      .map(call => call.scope_kind);
+    const scopeKinds = observedScopeKinds;
 
     releases.scopes();
     releases.config();
