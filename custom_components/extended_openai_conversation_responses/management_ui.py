@@ -541,11 +541,11 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         legacy_policy = subentry.data.get(CONF_GUEST_POLICY_VERSION) != GUEST_POLICY_VERSION
         configured_tools: list[dict[str, Any]] = []
         exposed_entities = None
-        if legacy_policy:
+        if legacy_policy and is_admin:
             # Migration translation is safety-sensitive: retain the existing
-            # conservative legacy projection on the primary response.
+            # conservative legacy projection on the admin primary response.
             configured_tools = configured_function_tools_from_data(subentry.data)
-            exposed_entities = get_exposed_entities(hass) if is_admin else None
+            exposed_entities = get_exposed_entities(hass)
 
         result: dict[str, Any] = {
             "revision": _agent_config_revision(subentry.data, subentry.title),
