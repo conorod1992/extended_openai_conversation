@@ -1,4 +1,3 @@
-export {bindGettingStarted} from "./overview-onboarding.js";
 import {buildSetupHealth} from "./overview-health.js";
 
 function card(panel, title, status, detail, page, section, action, icon, tone = "neutral") {
@@ -72,6 +71,7 @@ export function renderOverview(panel, agent) {
   const warnings = [];
   if (["active", "active_indefinitely"].includes(guest.state) && !guest.has_home_assistant_exclusions) warnings.push("Guest Mode is active without configured Home Assistant exclusions.");
   for (const issue of result.load_errors || []) warnings.push(`${issue.label} could not be loaded. Other overview information is still available.`);
+  const loading = result.loading || {};
   const memoryCount = Number(agent.memory_count || 0).toLocaleString();
   const knowledgeCount = Number(agent.knowledge_source_count || 0).toLocaleString();
   const archiveTone = agent.archive_enabled ? "positive" : "neutral";
@@ -103,10 +103,10 @@ export function renderOverview(panel, agent) {
     <section class="dashboard-grid" aria-label="Assistant overview">
       ${card(panel,"Assistant",`${agent.provider} · ${agent.model}`,"Model, responses, conversation behavior, prompt, and voice.","assistant","basics","Configure","mdi:robot-outline")}
       ${card(panel,"Capabilities",`${Number(agent.function_count || 0).toLocaleString()} functions · ${Number(agent.function_group_count || 0).toLocaleString()} groups`,"Home Assistant access, custom functions, and visitor restrictions.","capabilities","home-assistant","Manage","mdi:tools")}
-      ${card(panel,"Memory & Knowledge",panel._titleCase(agent.memory_mode),`${memoryCount} memories · ${knowledgeCount} Knowledge sources`,"data-memory","memories","Manage","mdi:brain")}
+      ${card(panel,"Memory & Knowledge",panel._titleCase(agent.memory_mode),loading.memory || loading.knowledge ? "Stored-data counts are loading." : `${memoryCount} memories · ${knowledgeCount} Knowledge sources`,"data-memory","memories","Manage","mdi:brain")}
       ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",result.load_errors?.some((issue) => issue.key === "conversations") ? "Retention unavailable" : `Retention: ${conversations.archive_retention_days || 30} days`,"data-memory","conversations","View","mdi:message-text-clock-outline",archiveTone)}
-      ${card(panel,"Guest Mode",panel._titleCase(String(guest.state || "inactive").replaceAll("_"," ")),"Integration-enforced visitor access and data restrictions.","capabilities","guest-mode","Configure","mdi:account-lock-outline",guestTone)}
-      ${card(panel,"Usage",result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View","mdi:chart-line")}
+      ${card(panel,"Guest Mode",loading.guest_mode ? "Loading…" : panel._titleCase(String(guest.state || "inactive").replaceAll("_"," ")),loading.guest_mode ? "Loading current Guest Mode status." : "Integration-enforced visitor access and data restrictions.","capabilities","guest-mode","Configure","mdi:account-lock-outline",guestTone)}
+      ${card(panel,"Usage",loading.usage ? "Loading usage…" : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage unavailable" : `${Number(usage.today?.total_tokens || 0).toLocaleString()} tokens today`,loading.usage ? "Loading today and monthly totals." : result.load_errors?.some((issue) => issue.key === "usage") ? "Usage summary could not be loaded." : `${Number(usage.month?.total_tokens || 0).toLocaleString()} this month`,"usage-maintenance","usage","View","mdi:chart-line")}
     </section>
     <section id="broadcast-card" class="content-card" aria-label="Broadcast"><p class="empty">Loading Broadcast…</p></section>`;
 }
