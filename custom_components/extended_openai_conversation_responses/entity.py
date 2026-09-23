@@ -689,7 +689,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 web_search_used = False
                 provider_stream: AsyncStream[Any] | None = None
                 transformed_stream: AsyncGenerator[Any] | None = None
-                streaming = api_kwargs["stream"]
+                streaming = api_kwargs.get("stream", True)
                 try:
                     if api_mode == API_MODE_RESPONSES:
                         response = await self._client.responses.create(

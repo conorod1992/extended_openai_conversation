@@ -470,7 +470,7 @@ def model_metadata(model: str) -> dict[str, Any]:
     item = _active_by_id.get(model_id)
     if item is not None:
         return deepcopy(item)
-    result = deepcopy(_active["defaults"])
+    result = cast(dict[str, Any], deepcopy(_active["defaults"]))
     result.update({"id": model_id, "display_name": model_id, "kind": "custom"})
     return result
 
