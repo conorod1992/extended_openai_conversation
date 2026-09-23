@@ -282,11 +282,12 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest tests/ \
-            -n 2 \
+            -n 3 \
             --dist=loadscope \
             -v \
             --asyncio-mode=auto \
             --timeout=30 \
+            --durations=50 \
             --cov=custom_components/extended_openai_conversation_responses \
             --cov-branch \
             --cov-report=xml \
