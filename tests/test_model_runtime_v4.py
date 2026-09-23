@@ -45,6 +45,9 @@ def conditional_catalog():
 
 def test_v3_migration_retains_boolean_function_semantics():
     old = deepcopy(model_catalog.BUNDLED_CATALOG)
+    old["models"] = [
+        deepcopy(item) for item in model_catalog.BUNDLED_CATALOG.resolved.values()
+    ]
     old["schema_version"] = 3
     old["catalog_version"] = 3
     for item in [old["defaults"], *old["models"]]:

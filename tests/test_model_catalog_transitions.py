@@ -44,8 +44,10 @@ class MemoryStore:
         self.saved = deepcopy(saved)
         self.fail = False
         self.save_calls = 0
+        self.load_calls = 0
 
     async def async_load(self):
+        self.load_calls += 1
         return deepcopy(self.saved)
 
     async def async_save(self, value):
@@ -236,6 +238,7 @@ async def test_apply_activates_staged_catalog_and_clears_pending_state(
     assert check_manager.available_catalog is None
     assert check_manager.store.saved["catalog"] == value
     assert check_manager.store.saved["available_catalog"] is None
+    assert check_manager.store.load_calls == 0
     assert (
         data.model_metadata("gpt-6-astra")["display_name"] == "Astra (catalog update)"
     )
@@ -257,6 +260,7 @@ async def test_restoring_bundled_data_is_persistent_across_restart(
     assert check_manager.available_catalog == value
     assert check_manager.store.saved["catalog"] is None
     assert check_manager.store.saved["available_catalog"] == value
+    assert check_manager.store.load_calls == 0
     assert data.model_metadata("gpt-6-astra")["display_name"] == "gpt-6-astra"
 
     restarted = runtime.ModelCatalogManager(check_manager.hass)

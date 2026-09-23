@@ -1,6 +1,6 @@
 {
   "schema_version": 4,
-  "catalog_version": 5,
+  "catalog_version": 6,
   "defaults": {
     "status": "unknown",
     "api": {
@@ -556,6 +556,12 @@
       "structured_outputs": false,
       "responses_web_search": false,
       "auto_api": "responses"
+    },
+    {
+      "id": "gpt-4o-2024-08-06",
+      "display_name": "gpt-4o-2024-08-06",
+      "kind": "snapshot",
+      "alias_of": "gpt-4o"
     },
     {
       "id": "gpt-4-turbo",

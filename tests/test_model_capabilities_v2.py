@@ -248,7 +248,7 @@ def test_unknown_custom_model_is_conservative_and_does_not_crash_request_builder
 # T. Only the explicitly documented Pro models lack streaming.
 @pytest.mark.parametrize(
     "model",
-    [item["id"] for item in model_catalog.BUNDLED_CATALOG["models"] if item["status"] == "current"],
+    [item["id"] for item in model_catalog.catalog_picker_models()],
 )
 def test_every_current_model_streaming(model):
     assert get_model_capabilities(model)["streaming"] is (

@@ -35,6 +35,21 @@ _MODEL_WRAPPER_KEYS = {"id", "display_name", "kind"}
 _METADATA_OPTIONAL = {"alias_of", "lifecycle_note", "auto_api"}
 
 
+class _PreparedCatalog(dict[str, Any]):
+    """Raw catalogue document with resolved records kept out of persistence."""
+
+    def __init__(
+        self, raw: dict[str, Any], resolved: dict[str, dict[str, Any]]
+    ) -> None:
+        super().__init__(raw)
+        self.resolved = resolved
+        self.merged: dict[str, Any] | None = None
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> dict[str, Any]:
+        # Copies are editable candidate documents and must be validated again.
+        return deepcopy(dict(self), memo)
+
+
 def _keys(value: Any, required: set[str], optional: set[str] | None = None) -> None:
     if (
         not isinstance(value, dict)
@@ -185,8 +200,19 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
         raise ValueError("Invalid lifecycle note")
 
 
-def validate_catalog(value: Any) -> dict[str, Any]:
-    """Validate one strict model-capability catalogue v4 document."""
+def _merge_snapshot(parent: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Copy inherited metadata and apply only explicitly declared overrides."""
+    result = deepcopy(parent)
+    for key, override in snapshot.items():
+        if isinstance(override, dict) and isinstance(result.get(key), dict):
+            result[key] = {**result[key], **deepcopy(override)}
+        else:
+            result[key] = deepcopy(override)
+    return result
+
+
+def validate_catalog(value: Any) -> _PreparedCatalog:
+    """Validate raw catalogue data and prepare exact snapshot capabilities."""
     _keys(value, {"schema_version", "catalog_version", "defaults", "models"})
     if (
         value.get("schema_version") != 4
@@ -203,8 +229,9 @@ def validate_catalog(value: Any) -> dict[str, Any]:
     if not isinstance(models, list) or not 1 <= len(models) <= 512:
         raise ValueError("Invalid model list")
     ids: set[str] = set()
+    by_id: dict[str, dict[str, Any]] = {}
     for model in models:
-        _keys(model, _MODEL_WRAPPER_KEYS | _METADATA_REQUIRED, _METADATA_OPTIONAL)
+        _keys(model, _MODEL_WRAPPER_KEYS, _METADATA_OPTIONAL | _METADATA_REQUIRED)
         model_id = model["id"]
         if (
             not isinstance(model_id, str)
@@ -213,6 +240,7 @@ def validate_catalog(value: Any) -> dict[str, Any]:
         ):
             raise ValueError("Invalid or duplicate model ID")
         ids.add(model_id)
+        by_id[model_id] = model
         if (
             not isinstance(model["display_name"], str)
             or not 1 <= len(model["display_name"]) <= 128
@@ -220,12 +248,55 @@ def validate_catalog(value: Any) -> dict[str, Any]:
             raise ValueError("Invalid display name")
         if model["kind"] not in {"alias", "snapshot"}:
             raise ValueError("Invalid model kind")
-        _validate_metadata(model, model_entry=True)
-    for model in models:
-        alias_of = model.get("alias_of")
-        if alias_of is not None and (alias_of == model["id"] or alias_of not in ids):
-            raise ValueError("Alias target must reference another catalogue model")
-    return deepcopy(value)
+        if model["kind"] != "snapshot" or "alias_of" not in model:
+            _keys(model, _MODEL_WRAPPER_KEYS | _METADATA_REQUIRED, _METADATA_OPTIONAL)
+
+    bundled = globals().get("BUNDLED_CATALOG")
+    bundled_by_id = bundled.resolved if isinstance(bundled, _PreparedCatalog) else {}
+    resolved: dict[str, dict[str, Any]] = {}
+    resolving: set[str] = set()
+
+    def resolve(model_id: str) -> dict[str, Any]:
+        if model_id in resolved:
+            return resolved[model_id]
+        if model_id in resolving:
+            raise ValueError("Snapshot inheritance cycle")
+        model = by_id[model_id]
+        resolving.add(model_id)
+        parent_id = model.get("alias_of") if model["kind"] == "snapshot" else None
+        if parent_id is not None:
+            if not isinstance(parent_id, str) or not _ID.fullmatch(parent_id):
+                raise ValueError("Invalid snapshot parent")
+            if parent_id in by_id:
+                parent = resolve(parent_id)
+            elif parent_id in bundled_by_id:
+                parent = bundled_by_id[parent_id]
+            else:
+                raise ValueError("Snapshot parent is missing")
+            if (
+                parent["kind"] not in {"alias", "snapshot"}
+                or parent["status"] == "unknown"
+            ):
+                raise ValueError("Invalid snapshot parent kind or status")
+            effective = _merge_snapshot(parent, model)
+            if effective["status"] == "current" and parent["status"] == "deprecated":
+                raise ValueError("Current snapshot cannot inherit a deprecated model")
+        else:
+            effective = deepcopy(model)
+        _validate_metadata(effective, model_entry=True)
+        if model["kind"] == "alias" and model.get("alias_of") is not None:
+            alias_of = model["alias_of"]
+            if alias_of == model_id or (
+                alias_of not in by_id and alias_of not in bundled_by_id
+            ):
+                raise ValueError("Alias target must reference another catalogue model")
+        resolved[model_id] = effective
+        resolving.remove(model_id)
+        return effective
+
+    for model_id in by_id:
+        resolve(model_id)
+    return _PreparedCatalog(deepcopy(dict(value)), resolved)
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -237,15 +308,19 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def parse_catalog(raw: bytes) -> dict[str, Any]:
+def parse_catalog(raw: bytes) -> _PreparedCatalog:
     if len(raw) > MAX_CATALOG_BYTES:
         raise ValueError("Model catalogue too large")
     return validate_catalog(json.loads(raw, object_pairs_hook=_unique_object))
 
 
 BUNDLED_CATALOG = parse_catalog(Path(__file__).with_suffix(".json").read_bytes())
-_active = BUNDLED_CATALOG
-_active_by_id = {item["id"]: item for item in BUNDLED_CATALOG["models"]}
+_bundled_effective = {
+    **BUNDLED_CATALOG,
+    "models": list(BUNDLED_CATALOG.resolved.values()),
+}
+_active = _bundled_effective
+_active_by_id = BUNDLED_CATALOG.resolved
 
 
 def migrate_catalog_v1(value: Any) -> dict[str, Any]:
@@ -267,7 +342,8 @@ def migrate_catalog_v2(value: Any) -> dict[str, Any]:
     migrated["schema_version"] = 3
     migrated["catalog_version"] = max(3, int(migrated.get("catalog_version", 0)))
     bundled_tiers = {
-        item["id"]: list(item["service_tiers"]) for item in BUNDLED_CATALOG["models"]
+        item["id"]: list(item["service_tiers"])
+        for item in BUNDLED_CATALOG.resolved.values()
     }
 
     def migrate_metadata(metadata: dict[str, Any], model_id: str | None = None) -> None:
@@ -309,11 +385,20 @@ def validate_or_migrate_catalog(value: Any) -> tuple[dict[str, Any], bool]:
 
 def _effective_catalog(catalog: dict[str, Any] | None) -> dict[str, Any]:
     if catalog is None:
-        return BUNDLED_CATALOG
-    catalog = validate_catalog(catalog)
-    models = {item["id"]: deepcopy(item) for item in BUNDLED_CATALOG["models"]}
-    models.update({item["id"]: deepcopy(item) for item in catalog["models"]})
-    return {**deepcopy(catalog), "models": list(models.values())}
+        return _bundled_effective
+    prepared = (
+        catalog if isinstance(catalog, _PreparedCatalog) else validate_catalog(catalog)
+    )
+    if prepared.merged is None:
+        raw_models = {item["id"]: item for item in BUNDLED_CATALOG["models"]}
+        raw_models.update({item["id"]: item for item in prepared["models"]})
+        if raw_models.keys() == prepared.resolved.keys():
+            resolved = prepared.resolved
+        else:
+            merged = validate_catalog({**prepared, "models": list(raw_models.values())})
+            resolved = merged.resolved
+        prepared.merged = {**prepared, "models": list(resolved.values())}
+    return prepared.merged
 
 
 def _model_metadata_from(catalog: dict[str, Any], model: str) -> dict[str, Any]:
@@ -403,7 +488,7 @@ def validate_catalog_transition(
 ) -> None:
     """Prevent downloaded metadata from silently narrowing durable capabilities."""
     before = _effective_catalog(current)
-    after = _effective_catalog(validate_catalog(candidate))
+    after = _effective_catalog(candidate)
     ids = {item["id"] for item in before["models"]} | {
         item["id"] for item in after["models"]
     }
@@ -452,7 +537,7 @@ def validate_catalog_transition(
 
 def activate_catalog(catalog: dict[str, Any] | None) -> None:
     global _active, _active_by_id
-    _active = BUNDLED_CATALOG if catalog is None else _effective_catalog(catalog)
+    _active = _effective_catalog(catalog)
     _active_by_id = {item["id"]: item for item in _active["models"]}
 
 
