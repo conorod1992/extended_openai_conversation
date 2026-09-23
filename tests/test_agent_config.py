@@ -7,6 +7,7 @@ import yaml
 
 from custom_components.extended_openai_conversation_responses import agent_config
 from custom_components.extended_openai_conversation_responses.agent_config import (
+    MAX_AGENT_TITLE_LENGTH,
     AgentConfigError,
     agent_config_defaults,
     agent_config_options,
@@ -18,6 +19,7 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     model_capabilities,
     normalize_agent_config,
     starter_function_tool_yaml,
+    validate_agent_title,
     validate_function_groups,
     validate_function_tools,
     validate_single_function_tool,
@@ -614,3 +616,17 @@ def test_normalize_agent_config_rejects_non_object() -> None:
     """Reject non-object persisted agent configuration payloads."""
     with pytest.raises(agent_config.AgentConfigError, match="config: must be an object"):
         agent_config.normalize_agent_config([])  # type: ignore[arg-type]
+
+
+def test_agent_title_contract_is_shared_and_bounded() -> None:
+    assert validate_agent_title("  Jarvis  ") == "Jarvis"
+    assert validate_agent_title(None, default="Imported conversation agent") == (
+        "Imported conversation agent"
+    )
+    assert validate_agent_title("x" * MAX_AGENT_TITLE_LENGTH) == (
+        "x" * MAX_AGENT_TITLE_LENGTH
+    )
+    with pytest.raises(AgentConfigError, match="must not be empty"):
+        validate_agent_title("   ")
+    with pytest.raises(AgentConfigError, match="at most 255"):
+        validate_agent_title("x" * (MAX_AGENT_TITLE_LENGTH + 1))

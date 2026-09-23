@@ -125,8 +125,8 @@ function panelFor(page = "assistant", subsection = "basics") {
     dataset:{page:"guide"},
     closest() { return this; },
   };
-  listeners.get("pointerover")({target});
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  listeners.get("pointerdown")({target});
+  await routeAssetPromise("guide");
   assert.equal(routeFeaturesReady("guide"), true,
     "navigation intent warms the target asset");
 }
@@ -415,10 +415,8 @@ function panelFor(page = "assistant", subsection = "basics") {
     false,
     "Usage requests start while the chart feature is still cold",
   );
-  for (let turn = 0; turn < 20 && !started.includes("daily"); turn++) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  assert.ok(started.includes("daily"), "daily starts after its lazy usage-data helper resolves");
+  await routeAssetPromise("usage-maintenance/usage");
+  assert.ok(started.includes("daily"), "daily starts once its lazy usage-data helper resolves");
 
   resolvers.get("summary")?.({});
   resolvers.get("daily")?.({days:[]});
