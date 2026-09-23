@@ -666,8 +666,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const mutations = {
         request_rules: new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate"]),
         knowledge: new Set(["create", "update", "delete"]),
-        memories: new Set(["add", "update", "delete", "temporary_delete", "reassign_legacy"]),
-        conversations: new Set(["delete"]),
+        memories: new Set(["add", "update", "delete", "temporary_update", "temporary_delete", "temporary_clear", "reassign_legacy"]),
       };
       if (agentId && mutations[section]?.has(action)) {
         this._cacheGeneration += 1;
@@ -701,9 +700,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return null;
   }
 
+  _scopeCatalogKind(view = this._viewKey()) {
+    if (view === "data-memory/conversations") return "archive";
+    if (view === "data-memory/memories") return this._memoryKind === "temporary" ? "temporary" : "memory";
+    return null;
+  }
+
   _scopeCatalogKey(view = this._viewKey(), agentId = this._agentId) {
-    if (!agentId || !["data-memory/memories", "data-memory/conversations"].includes(view)) return null;
-    return `${agentId}|scopes`;
+    const kind = this._scopeCatalogKind(view);
+    if (!agentId || !kind) return null;
+    return `${agentId}|scopes|${kind}`;
   }
 
   _prepareScopeCatalogVisit(view) {
@@ -745,8 +751,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
   }
 
-  async _loadScopes(scopeCatalogKey) {
-    if (!this._selectedAgent() || !scopeCatalogKey) return;
+  async _loadScopes(scopeCatalogKey, scopeKind = this._scopeCatalogKind()) {
+    if (!this._selectedAgent() || !scopeCatalogKey || !scopeKind) return;
     const agentId = this._agentId;
     const loadedAt = this._eocScopeCatalogTimes.get(scopeCatalogKey);
     if (!loadedAt || Date.now() - loadedAt > SCOPE_CACHE_TTL_MS) {
@@ -759,7 +765,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     const generation = this._cacheGeneration;
     const loadToken = this._loadToken;
-    const response = await this._call("scopes", "catalog");
+    const response = await this._call("scopes", "catalog", {scope_kind: scopeKind});
     const scopes = response.scopes || [];
     if (scopeCatalogKey !== this._scopeCatalogVisitKey || agentId !== this._agentId
         || generation !== this._cacheGeneration || loadToken !== this._loadToken) return;
@@ -826,14 +832,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const cachedScopeLoadedAt = scopeCatalogKey ? this._eocScopeCatalogTimes.get(scopeCatalogKey) : null;
       const cachedScopes = cachedScopeLoadedAt && Date.now() - cachedScopeLoadedAt <= SCOPE_CACHE_TTL_MS
         ? this._scopeCatalogCache.get(scopeCatalogKey) : null;
-      const knownScopes = cachedScopes || this._baseScopes || [];
+      const knownScopes = cachedScopes || this._data?.scopes || this._baseScopes || [];
       const canPrefetchScopedCollection = Boolean(
         initialScopeId && knownScopes.some((scope) => scope.scope_id === initialScopeId),
       );
       const loadScopedCollection = (scopeId) => view === "data-memory/conversations"
         ? this._call("conversations", "list", { scope_id: scopeId, limit: 50 })
         : this._call("memories", this._memoryKind === "temporary" ? "temporary_list" : "list", { scope_id: scopeId, limit: 100 });
-      const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey) : Promise.resolve();
+      const scopeCatalogKind = this._scopeCatalogKind(view);
+      const scopePromise = needsScopes ? this._loadScopes(scopeCatalogKey, scopeCatalogKind) : Promise.resolve();
       const prefetchedScopedCollection = canPrefetchScopedCollection
         ? loadScopedCollection(initialScopeId).then(
           (value) => ({status: "fulfilled", value}),
@@ -842,12 +849,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         : null;
       const activeConversationsPromise = view === "data-memory/conversations" && this._data?.is_admin
         ? this._call("conversations", "active") : Promise.resolve({active: []});
-      // Attach rejection handlers immediately so independent History work can run
-      // while the selected archive scope is still resolving.
-      const prerequisites = Promise.allSettled([
-        scopePromise, configPromise, activeConversationsPromise,
-      ]);
-      if (needsScopes) await scopePromise;
+      // Memory still waits for an authoritative scope selection. History may
+      // render a known selected scope immediately while its archive counts refresh.
+      if (needsScopes && (view !== "data-memory/conversations" || !prefetchedScopedCollection)) {
+        await scopePromise;
+      }
       if (loadToken !== this._loadToken) return;
       const scopedCollection = async () => {
         if (prefetchedScopedCollection && initialScopeId === this._scopeId) {
@@ -860,6 +866,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       let result;
       let contentData = null;
       let usageSecondary = null;
+      const usageDetailGeneration = this._usageDetailGeneration || 0;
       let guestDetailsSecondary = null;
       if (view === "overview") {
         this._markColdLifecycle("overview-summary-start");
@@ -888,20 +895,73 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           ["retention", "Usage retention", retentionPromise],
         ];
       } else if (view === "data-memory/conversations") {
-        const [sessions, prerequisiteResults] = await Promise.all([
-          scopedCollection(),
-          prerequisites,
-        ]);
-        if (prerequisiteResults[1].status === "rejected") {
-          throw prerequisiteResults[1].reason;
+        const sessions = await scopedCollection();
+        const admin = Boolean(this._data?.is_admin);
+        contentData = {
+          sessions,
+          active: {active: []},
+          loading: {
+            scopes: Boolean(prefetchedScopedCollection),
+            active: admin,
+            config: admin,
+          },
+          load_errors: [],
+        };
+        result = admin ? (this._configData || null) : contentData;
+
+        const patchHistory = (key, settled, label) => {
+          if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+              || this._viewKey() !== "data-memory/conversations" || !this._contentData) return;
+          const loadErrors = (this._contentData.load_errors || []).filter((issue) => issue.key !== key);
+          const loading = {...(this._contentData.loading || {}), [key]: false};
+          if (settled.status === "rejected") {
+            this._contentData = {
+              ...this._contentData,
+              loading,
+              load_errors: [...loadErrors, {
+                key,
+                label,
+                message: settled.reason?.message || String(settled.reason || "Unknown error"),
+              }],
+            };
+          } else {
+            this._contentData = {...this._contentData, loading, load_errors: loadErrors};
+            if (key === "active") this._contentData.active = settled.value;
+            if (key === "config") this._result = this._configData;
+          }
+          this._render();
+        };
+
+        if (prefetchedScopedCollection) {
+          void scopePromise.then(async () => {
+            if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+                || this._viewKey() !== "data-memory/conversations") return;
+            let refreshedSessions = null;
+            if (this._scopeId !== initialScopeId) {
+              refreshedSessions = await loadScopedCollection(this._scopeId);
+              if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+                  || this._viewKey() !== "data-memory/conversations") return;
+            }
+            if (this._contentData) {
+              this._contentData = {
+                ...this._contentData,
+                ...(refreshedSessions ? {sessions: refreshedSessions} : {}),
+                loading: {...(this._contentData.loading || {}), scopes: false},
+              };
+              this._render();
+            }
+          }).catch((reason) => patchHistory("scopes", {status: "rejected", reason}, "Scope catalogue"));
         }
-        if (prerequisiteResults[2].status === "rejected") {
-          throw prerequisiteResults[2].reason;
+        if (admin) {
+          void Promise.resolve(activeConversationsPromise).then(
+            (value) => patchHistory("active", {status: "fulfilled", value}, "Active conversations"),
+            (reason) => patchHistory("active", {status: "rejected", reason}, "Active conversations"),
+          );
+          void Promise.resolve(configPromise).then(
+            () => patchHistory("config", {status: "fulfilled", value: this._configData}, "Archive settings"),
+            (reason) => patchHistory("config", {status: "rejected", reason}, "Archive settings"),
+          );
         }
-        const active = prerequisiteResults[2].value;
-        contentData = { sessions, active };
-        if (this._data?.is_admin) result = this._configData;
-        else result = contentData;
       } else if (view === "data-memory/memories") {
         result = await scopedCollection();
       } else if (view === "data-memory/knowledge") {
@@ -969,6 +1029,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         for (const [key, label, pending] of usageSecondary) {
           void pending.then((settled) => {
             if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+                || (key === "runs" && usageDetailGeneration !== (this._usageDetailGeneration || 0))
                 || this._viewKey() !== "usage-maintenance/usage") return;
             const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== key);
             const loading = {...(this._result?.loading || {}), [key]: false};
@@ -1289,7 +1350,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
     if (view === "data-memory/knowledge") return `${getRouteFeature(view)?.knowledgeAvailabilityMarkup(this) || ""}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
-    if (view === "data-memory/conversations") { this._configSections = ["archive"]; return `${this._conversations()}${this._data?.is_admin ? ((getConfigurationEditor()?.renderConfiguration(this) || this._loading())) : ""}`; }
+    if (view === "data-memory/conversations") {
+      this._configSections = ["archive"];
+      const settings = this._data?.is_admin
+        ? (this._configData && this._draftAgentId === this._agentId
+          ? (getConfigurationEditor()?.renderConfiguration(this) || this._loading())
+          : `<section class="content-card"><div class="loading" role="status">Loading archive settings…</div></section>`)
+        : "";
+      return `${this._conversations()}${settings}`;
+    }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/diagnostics") return this._diagnostics(agent);
     if (["usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) {
@@ -1319,7 +1388,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _conversations() {
     const result = this._contentData || this._result || {};
     const active = result.active?.active || [];
-    const content = `${this._data?.is_admin ? `<p class="help">Recent context lets conversations continue; saved history is the archive you can review or search.</p>` : ""}${this._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${this._e(item.label)}</h3><p class="meta">Last active ${this._e(this._formatDate(item.last_active))} · Expires ${this._e(this._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${this._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}
+    const loading = result.loading || {};
+    const errors = result.load_errors || [];
+    const secondaryStatus = `${loading.active ? '<p class="help">Loading active conversations…</p>' : ""}${errors.map((issue) => `<div class="notice"><strong>${this._e(issue.label)} unavailable</strong><p>${this._e(issue.message)}</p></div>`).join("")}`;
+    const content = `${this._data?.is_admin ? `<p class="help">Recent context lets conversations continue; saved history is the archive you can review or search.</p>` : ""}${secondaryStatus}${this._data?.is_admin && active.length ? `<section class="content-card"><div class="section-heading"><div><h2>Active conversations</h2><p>Recent conversations that can continue when the same user or voice device speaks again.</p></div></div><div class="list">${active.map((item) => `<article class="list-card"><div class="card-main"><h3>${this._e(item.label)}</h3><p class="meta">Last active ${this._e(this._formatDate(item.last_active))} · Expires ${this._e(this._formatDate(item.expires_at))}</p></div><div class="actions"><button type="button" class="danger end-active" data-key="${this._e(item.key)}">Start fresh next time</button></div></article>`).join("")}</div></section>` : ""}
       <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-id="${this._e(item.session_id)}"><h3>${this._e(item.title || "Untitled conversation")}</h3><p class="meta">${this._e(this._formatDate(item.last_message_at))} · ${this._e(String(item.turn_count))} turns · ${this._e(item.scope_source)}</p></div><div class="actions"><button type="button" class="secondary view-session" data-id="${this._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${this._e(item.session_id)}">Delete</button></div></article>`).join("") || this._empty("No retained conversations in this scope.")}</div></section>`;
     return getRouteFeature("memory-browser")?.decorateConversations(this, content);
   }
@@ -1401,16 +1473,23 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _refreshGuestModeMutation(agentId, mutationResult) {
+    if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
+    const loadToken = ++this._loadToken;
     this._patchGuestModeStatus(agentId, mutationResult?.status);
-    if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
-    const [primary, details] = await Promise.all([
-      this._call("guest_mode", "get"),
-      this._call("guest_mode", "details"),
-    ]);
-    if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
-    this._patchGuestModeStatus(agentId, primary?.status);
-    this._result = {...primary, ...details, loading:{details:false}, load_errors:[]};
+    this._result = {...this._result, loading: {...(this._result?.loading || {}), details: true}};
     this._error = null;
+    this._render();
+    try {
+      const details = await this._call("guest_mode", "details");
+      if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode" || this._loadToken !== loadToken) return;
+      this._result = {...this._result, ...details, loading: {...this._result.loading, details: false},
+        load_errors: (this._result.load_errors || []).filter(issue => issue.key !== "details")};
+    } catch (err) {
+      if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode" || this._loadToken !== loadToken) return;
+      this._result = {...this._result, loading: {...this._result.loading, details: false},
+        load_errors: [...(this._result.load_errors || []).filter(issue => issue.key !== "details"),
+          {key: "details", label: "Guest Mode capabilities", message: err.message || String(err)}]};
+    }
     this._render();
   }
 
@@ -1495,7 +1574,30 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
     if (view === "data-memory/conversations") {
-      root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => { if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return; await this._call("conversations", "end_active", { continuity_key: button.dataset.key }); await this._loadSection(); }));
+      root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => {
+        const agentId = this._agentId;
+        const loadToken = this._loadToken;
+        if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return;
+        if (agentId !== this._agentId || loadToken !== this._loadToken
+            || this._viewKey() !== "data-memory/conversations") return;
+        try {
+          const response = await this._call("conversations", "end_active", { continuity_key: button.dataset.key });
+          if (response?.ended && agentId === this._agentId && loadToken === this._loadToken
+              && this._viewKey() === "data-memory/conversations" && this._contentData?.active?.active) {
+            this._contentData = {
+              ...this._contentData,
+              active: {
+                ...this._contentData.active,
+                active: this._contentData.active.active.filter((item) => item.key !== button.dataset.key),
+              },
+            };
+            this._render();
+          }
+          this._toast("Conversation will start fresh next time");
+        } catch (err) {
+          this._toast(`Unable to end conversation: ${err.message || String(err)}`, true);
+        }
+      }));
       root.querySelectorAll(".delete-session").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); this._deleteSession(button.dataset.id); }));
     }
     if (view === "usage-maintenance/usage") q("#clear-details")?.addEventListener("click", () => this._clearUsageDetails());
@@ -1669,16 +1771,48 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return { content: root.querySelector("#memory-content").value, category: root.querySelector("#memory-category").value, ...getRouteFeature("data-memory/memories").memoryMetadataValues(this) };
   }
 
+  _retainedMutationOwner() {
+    return {agent: this._agentId, entry: this._selectedAgent()?.entry_id,
+      user: this._hass?.user?.id, route: this._viewKey(), scope: this._scopeId,
+      kind: this._memoryKind, loadToken: this._loadToken};
+  }
+
+  _ownsRetainedMutation(owner) {
+    return this._agentId === owner.agent && this._selectedAgent()?.entry_id === owner.entry
+      && this._hass?.user?.id === owner.user && this._viewKey() === owner.route
+      && this._scopeId === owner.scope && this._memoryKind === owner.kind
+      && this._loadToken === owner.loadToken;
+  }
+
+  _patchScopeCount(scopeId, field, delta) {
+    const scopes = this._data?.scopes;
+    if (!Array.isArray(scopes)) return;
+    this._data.scopes = scopes.map(scope => scope.scope_id === scopeId
+      ? {...scope, [field]: Math.max(0, Number(scope[field] || 0) + delta)} : scope);
+    const key = this._scopeCatalogKey();
+    if (key) {
+      this._scopeCatalogCache.set(key, this._data.scopes);
+      this._eocScopeCatalogTimes.set(key, Date.now());
+      this._scopeCatalogVisitKey = key;
+    }
+  }
+
   async _saveKnowledge() {
     const button = this.shadowRoot.querySelector("#knowledge-save");
     if (button.disabled || !["create", "edit"].includes(this._knowledgeMode)) return;
     const values = this._knowledgeValues();
     const editing = this._knowledgeMode === "edit";
+    const owner = this._retainedMutationOwner();
     this._setSaving(button, true);
     try {
-      await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id } : {}), ...values });
+      const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id } : {}), ...values });
+      if (!this._ownsRetainedMutation(owner)) return;
+      if (!getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source response was incomplete.");
       this.shadowRoot.querySelector("#knowledge-dialog").close();
-      await this._refreshAfterMutation();
+      writeSectionCache(this, this._sectionCacheKey(), this._result);
+      const agent = this._selectedAgent();
+      if (agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
+      this._render();
       this._toast(editing ? "Knowledge source updated" : "Knowledge source saved");
     } catch (err) {
       this._setDialogError("knowledge", `Unable to save source: ${err.message || String(err)}`);
@@ -1689,17 +1823,27 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const button = this.shadowRoot.querySelector("#memory-save");
     if (button.disabled) return;
     const values = this._memoryValues();
+    const owner = this._retainedMutationOwner();
     this._setSaving(button, true);
     try {
       if (this._memoryEditorAgent !== this._agentId || this._memoryEditorScope !== this._scopeId) throw new Error("The selected agent or scope changed. Close and reopen this editor.");
       if (this._editingMemory && !this._editingMemory.revision) throw new Error("Refresh the Memory list and reopen this editor before saving.");
-      await this._call("memories", this._editingMemory ? "update" : "add", {
+      const response = await this._call("memories", this._editingMemory ? "update" : "add", {
         scope_id: this._memoryEditorScope,
         ...(this._editingMemory ? {memory_id: this._editingMemory.memory_id, expected_revision: this._editingMemory.revision} : {}),
         ...getRouteFeature("data-memory/memories").memoryMutationValues(values, this._editingMemory),
       });
+      if (!this._ownsRetainedMutation(owner)) return;
+      if (!getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
       this.shadowRoot.querySelector("#memory-dialog").close();
-      await this._refreshAfterMutation();
+      if (response.status === "created") this._patchScopeCount(response.scope_id, "memory_count", 1);
+      else if (this._editingMemory && response.scope_id !== owner.scope) {
+        this._patchScopeCount(owner.scope, "memory_count", -1);
+        this._patchScopeCount(response.scope_id, "memory_count", 1);
+      }
+      this._patchScopeCount(owner.scope, "memory_count", 0);
+      if (response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
+      this._render();
       this._toast(this._editingMemory ? "Memory updated" : "Memory added");
     } catch (err) {
       this._setDialogError("memory", `Unable to save memory: ${err.message || String(err)}`);
@@ -1708,28 +1852,79 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _deleteSource(sourceId, fromDialog = false) {
     if (!sourceId || !await this._confirm("Delete Knowledge source?", "This permanently removes the selected source from this agent's local Knowledge Library.", "Delete")) return;
+    const owner = this._retainedMutationOwner();
     try {
-      await this._call("knowledge", "delete", { source_id: sourceId, confirm: true });
+      const response = await this._call("knowledge", "delete", { source_id: sourceId, confirm: true });
+      if (!this._ownsRetainedMutation(owner)) return;
+      if (!getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response, sourceId)) throw new Error("The deleted source response was incomplete.");
       if (fromDialog) this.shadowRoot.querySelector("#knowledge-dialog").close();
-      await this._refreshAfterMutation();
+      writeSectionCache(this, this._sectionCacheKey(), this._result);
+      const agent = this._selectedAgent();
+      if (agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
+      this._render();
       this._toast("Knowledge source deleted");
     } catch (err) { this._toast(`Unable to delete source: ${err.message || String(err)}`, true); }
   }
 
   async _deleteMemory(memoryId, fromDialog = false) {
     if (!memoryId || !await this._confirm("Delete memory?", "This memory will be permanently removed from the selected scope.", "Delete")) return;
+    const owner = this._retainedMutationOwner();
     try {
-      await this._call("memories", "delete", { scope_id: this._scopeId, memory_id: memoryId });
+      const response = await this._call("memories", "delete", { scope_id: owner.scope, memory_id: memoryId });
+      if (!this._ownsRetainedMutation(owner)) return;
+      if (!getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {deletedId: memoryId, sourceScope: owner.scope})) throw new Error("The deleted memory response was incomplete.");
       if (fromDialog) this.shadowRoot.querySelector("#memory-dialog").close();
-      await this._refreshAfterMutation();
+      this._patchScopeCount(owner.scope, "memory_count", -1);
+      this._selectedAgent().memory_count = Math.max(0, Number(this._selectedAgent().memory_count || 0) - 1);
+      this._render();
       this._toast("Memory deleted");
     } catch (err) { this._toast(`Unable to delete memory: ${err.message || String(err)}`, true); }
   }
 
+  _adjustConversationScopeCount(delta) {
+    const patch = (scopes) => (scopes || []).map((scope) => scope.scope_id === this._scopeId
+      ? {...scope, conversation_count: Math.max(0, Number(scope.conversation_count || 0) + delta)}
+      : scope);
+    if (this._data?.scopes) this._data.scopes = patch(this._data.scopes);
+    const key = this._scopeCatalogKey("data-memory/conversations");
+    if (key && this._scopeCatalogCache.has(key)) {
+      this._scopeCatalogCache.set(key, patch(this._scopeCatalogCache.get(key)));
+    }
+  }
+
   async _deleteSession(sessionId) {
+    const agentId = this._agentId;
+    const scopeId = this._scopeId;
+    const loadToken = this._loadToken;
     if (!await this._confirm("Delete conversation?", "This retained conversation and its turns will be permanently removed.", "Delete")) return;
-    try { await this._call("conversations", "delete", { scope_id: this._scopeId, session_id: sessionId }); await this._refreshAfterMutation(); this._toast("Conversation deleted"); }
-    catch (err) { this._toast(`Unable to delete conversation: ${err.message || String(err)}`, true); }
+    if (agentId !== this._agentId || scopeId !== this._scopeId || loadToken !== this._loadToken
+        || this._viewKey() !== "data-memory/conversations") return;
+    try {
+      const response = await this._call("conversations", "delete", { scope_id: scopeId, session_id: sessionId });
+      if (response?.deleted_sessions && agentId === this._agentId && scopeId === this._scopeId
+          && loadToken === this._loadToken && this._viewKey() === "data-memory/conversations"
+          && this._contentData?.sessions) {
+        const current = this._contentData.sessions;
+        const sessions = (current.sessions || []).filter((item) => item.session_id !== sessionId);
+        const removed = (current.sessions || []).length - sessions.length;
+        this._contentData = {
+          ...this._contentData,
+          sessions: {
+            ...current,
+            sessions,
+            returned: Math.max(0, Number(current.returned ?? current.sessions?.length ?? 0) - removed),
+            ...(this._eocHistoryMode !== "search" && Number.isFinite(Number(current.total))
+              ? {total: Math.max(0, Number(current.total) - removed)}
+              : {}),
+          },
+        };
+        if (removed) this._adjustConversationScopeCount(-1);
+        this._render();
+      }
+      this._toast("Conversation deleted");
+    } catch (err) {
+      this._toast(`Unable to delete conversation: ${err.message || String(err)}`, true);
+    }
   }
 
   _openReassign(memoryId) {
@@ -1752,7 +1947,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _clearUsageDetails() {
     if (!await this._confirm("Clear recent usage details?", "Request and run details will be removed. Daily, monthly, and lifetime totals remain.", "Clear details")) return;
-    try { await this._call("usage", "clear_details", { confirm: true }); await this._loadSection(); this._toast("Recent usage details cleared"); }
+    const owner = this._retainedMutationOwner();
+    try {
+      await this._call("usage", "clear_details", { confirm: true });
+      if (!this._ownsRetainedMutation(owner)) return;
+      this._usageDetailGeneration = (this._usageDetailGeneration || 0) + 1;
+      this._result = {...this._result, summary: {...this._result.summary, latest: null},
+        runs: {...this._result.runs, runs: [], total: 0},
+        loading: {...this._result.loading, runs: false}};
+      this.shadowRoot.querySelector("#usage-request-dialog")?.close();
+      this._render();
+      this._toast("Recent usage details cleared");
+    }
     catch (err) { this._toast(`Unable to clear details: ${err.message || String(err)}`, true); }
   }
 

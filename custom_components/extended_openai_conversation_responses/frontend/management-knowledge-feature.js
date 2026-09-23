@@ -10,6 +10,22 @@ const matches = (source, query) => `${source.title || ""} ${source.description |
 const countText = sources => `${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"}`;
 const statusMarkup = panel => featureStatusMarkup(panel, "Knowledge Library", selectedFeatureStatus(panel, "knowledge"));
 
+export function applyKnowledgeMutation(panel, response, deletedId = null) {
+  if (!panel._result || !Array.isArray(panel._result.sources)) return false;
+  if (deletedId && response?.deleted !== 1) return false;
+  const summary = response?.summary;
+  if (!deletedId && !summary?.source_id) return false;
+  const sources = panel._result.sources.filter(source => source.source_id !== (deletedId || summary.source_id));
+  if (summary) sources.push(summary);
+  sources.sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)));
+  panel._result = {
+    ...panel._result, sources,
+    ...(response.stats ? {stats: response.stats} : {}),
+    ...(response.feature_status ? {feature_status: response.feature_status} : {}),
+  };
+  return true;
+}
+
 
 export function knowledgeAvailabilityMarkup(panel) {
   if (panel._data?.is_admin === false) return "";
@@ -29,10 +45,11 @@ export function knowledgeAvailabilityMarkup(panel) {
 async function saveKnowledgeAvailability(panel, input) {
   const desired = input.checked;
   const agentId = panel._agentId;
+  const loadToken = panel._loadToken;
   input.disabled = true;
   try {
     const result = await panel._call("knowledge", "set_enabled", {enabled: desired});
-    if (panel._agentId !== agentId) return;
+    if (panel._agentId !== agentId || panel._viewKey?.() !== "data-memory/knowledge" || panel._loadToken !== loadToken) return;
     const agent = panel._selectedAgent?.();
     if (agent) {
       agent.knowledge_enabled = result.knowledge_enabled;

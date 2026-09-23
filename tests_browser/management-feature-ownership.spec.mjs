@@ -12,6 +12,12 @@ test("memory kinds, scope ownership and load-more survive rerenders without dupl
     const original = hass.callWS.bind(hass);
     window.featureCalls = [];
     hass.callWS = async (message) => {
+      if (message.section === "scopes" && message.scope_kind === "temporary") {
+        return {scopes:[
+          {scope_id:"user:test-user", scope_type:"user", display_name:"Test User", is_current_user:true, temporary_memory_count:1},
+          {scope_id:"shared:household", scope_type:"shared", display_name:"Shared household", temporary_memory_count:1},
+        ]};
+      }
       if (message.section === "memories") {
         window.featureCalls.push(message);
         if (message.action === "list") return {memories:[{memory_id:`m-${message.offset || 0}`, content:`Memory ${message.offset || 0}`, category:"general", source:"manual"}], has_more: !message.offset};
@@ -60,7 +66,7 @@ test("Knowledge availability loads, edits and submits once after normal rerender
         window.featureCalls.push(message);
         if (message.action === "list") return {sources:[source]};
         if (message.action === "get") return {source};
-        if (message.action === "update") { Object.assign(source, message); return {source}; }
+        if (message.action === "update") { Object.assign(source, message, {character_count: message.content.length, updated_at: "2026-09-23T01:00:00Z"}); return {status:"updated", source:structuredClone(source), summary:structuredClone(source), stats:{source_count:1}, feature_status:{state:"available",enabled:true,source_count:1}}; }
       }
       return original(message);
     };

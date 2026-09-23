@@ -15,6 +15,13 @@ for (const kind of ["knowledge", "persistent"]) {
   for (const bundled of [false, true]) {
     test(`${kind}: edit, delete and add preserve unrelated cards (${bundled ? "bundle" : "source"})`, async ({page}) => {
       const panel = await openDataCollection(page, kind, 80, bundled);
+      if (kind === "persistent") await panel.evaluate(host => {
+        host._data.scopes.find(scope => scope.scope_id === host._scopeId).memory_count = 80;
+      });
+      const initialReads = await page.evaluate(() => ({
+        lists: dataCollectionBackend.calls.filter(call => ["list", "search", "temporary_list"].includes(call.action)).length,
+        scopes: browserHarness.calls.filter(call => call.section === "scopes" && call.action === "catalog").length,
+      }));
       await card(panel, kind, 30).locator(action(kind, "edit")).click();
       await expect(panel.locator(field(kind))).toBeEnabled();
       await panel.locator(field(kind)).fill("Changed one record");
@@ -34,7 +41,12 @@ for (const kind of ["knowledge", "persistent"]) {
       await panel.locator(`#${editor(kind)}-save`).click();
       await expect(list(panel, kind).getByText("Brand new record", {exact: true})).toBeVisible();
       if (kind === "knowledge") await expect(panel.locator("[data-source-count]")).toHaveText("80 sources");
+      else expect(await panel.evaluate(host => host._data.scopes.find(scope => scope.scope_id === host._scopeId).memory_count)).toBe(80);
       expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 79, initialCards: 79, mainChildReplacements: 0});
+      expect(await page.evaluate(() => ({
+        lists: dataCollectionBackend.calls.filter(call => ["list", "search", "temporary_list"].includes(call.action)).length,
+        scopes: browserHarness.calls.filter(call => call.section === "scopes" && call.action === "catalog").length,
+      }))).toEqual(initialReads);
     });
   }
 

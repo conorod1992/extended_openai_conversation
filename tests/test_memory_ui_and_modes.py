@@ -157,7 +157,9 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
     memory = SimpleNamespace(
         async_list_page=AsyncMock(return_value=([record], False)),
         async_get_many=AsyncMock(return_value=[record]),
-        async_add=AsyncMock(return_value={"status": "created"}),
+        async_add=AsyncMock(
+            return_value={"status": "created", "memory": {"memory_id": "memory-1"}}
+        ),
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),
         async_clear=AsyncMock(return_value=1),

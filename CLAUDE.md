@@ -21,9 +21,10 @@ ruff format --check custom_components/
 
 ### Frontend generated assets
 ```bash
-# After changing frontend source, regenerate the tracked production bundle:
+# One finishing command for frontend source and test changes. It checks shipped
+# JS, runs standalone tests, typecheck and Vitest, then rebuilds tracked dist/:
 npm --prefix frontend ci --no-audit --no-fund
-npm --prefix frontend run build
+node scripts/finish-frontend.mjs
 ```
 
 Files under `custom_components/extended_openai_conversation_responses/frontend/dist/` are generated build output. Never edit them manually; change frontend source and rebuild instead.
