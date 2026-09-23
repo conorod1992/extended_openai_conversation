@@ -25,6 +25,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONFIG_ENTRY_VERSION,
     DEFAULT_AI_TASK_OPTIONS,
     DEFAULT_API_PROVIDER,
+    DEFAULT_CONF_BASE_URL,
     DOMAIN,
 )
 
@@ -63,6 +64,7 @@ async def _start_user_flow(hass: HomeAssistant) -> dict:
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
+    assert not result["errors"]
     return result
 
 
@@ -106,7 +108,7 @@ async def test_user_flow_persists_exact_provider_data_and_default_subentries(
 
 
 @pytest.mark.asyncio
-async def test_user_flow_omitted_optional_values_use_schema_defaults(
+async def test_user_flow_canonical_url_and_omitted_values_use_defaults(
     hass: HomeAssistant,
 ) -> None:
     """Omitted optionals use current form defaults instead of falsey fallbacks."""
@@ -115,7 +117,8 @@ async def test_user_flow_omitted_optional_values_use_schema_defaults(
     ) as authenticate:
         result = await _start_user_flow(hass)
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_API_KEY: "sk-defaults"}
+            result["flow_id"],
+            {CONF_API_KEY: "sk-defaults", CONF_BASE_URL: DEFAULT_CONF_BASE_URL},
         )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -125,6 +128,7 @@ async def test_user_flow_omitted_optional_values_use_schema_defaults(
     assert result["data"][CONF_SKIP_AUTHENTICATION] is False
     # validate_input intentionally avoids persisting the canonical OpenAI endpoint.
     assert CONF_BASE_URL not in result["data"]
+    assert result["result"].version == CONFIG_ENTRY_VERSION
 
     authenticate.assert_awaited_once()
     assert authenticate.await_args.kwargs["base_url"] is None

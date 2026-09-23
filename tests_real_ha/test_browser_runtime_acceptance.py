@@ -40,7 +40,7 @@ async def _run_runtime_browser(
     repo_root: Path,
     backend_url: str,
     *,
-    spec: str = "tests_browser/real-ha-runtime.spec.mjs",
+    spec: str,
     extra_env: dict[str, str] | None = None,
     failure_label: str = "Playwright browser-to-live-runtime setup failed",
 ) -> None:
@@ -85,63 +85,6 @@ async def _run_reload_browser_phase(
 
 
 @pytest.mark.asyncio
-async def test_browser_created_request_rule_changes_live_provider_request(
-    hass: HomeAssistant,
-    hass_ws_client: Any,
-    monkeypatch: Any,
-) -> None:
-    """A browser save must reach the live agent and alter its provider request."""
-    entry = _make_entry(
-        "Browser Runtime Acceptance",
-        include_ai_task=False,
-        conversation_options={
-            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
-            CONF_CHAT_MODEL: "gpt-5.6",
-            CONF_REASONING_EFFORT: "medium",
-            CONF_FUNCTION_TOOLS: [],
-            CONF_FUNCTION_GROUPS: [],
-        },
-    )
-    await _setup_entry(hass, entry)
-    client = await _admin_client(hass, hass_ws_client)
-    runner, backend_url = await _start_ws_bridge(client)
-
-    repo_root = Path(__file__).resolve().parent.parent
-    try:
-        await _run_runtime_browser(repo_root, backend_url)
-    finally:
-        await runner.cleanup()
-
-    # The browser has finished. Exercise Home Assistant's public conversation API
-    # against the actual currently-loaded agent; do not read the management store
-    # directly as a substitute for proving that runtime consumption is current.
-    await hass.async_block_till_done()
-    agent = conversation.async_get_agent(hass, entry.entry_id)
-    assert agent is not None
-    wire = _install_wire(
-        monkeypatch,
-        agent,
-        [_chat_sse_text("Browser-created route reached the live agent.")],
-    )
-
-    result = await conversation.async_converse(
-        hass=hass,
-        text="browser runtime route",
-        conversation_id=None,
-        context=Context(),
-        language="en",
-        agent_id=entry.entry_id,
-    )
-
-    assert _speech(result) == "Browser-created route reached the live agent."
-    assert len(wire.requests) == 1
-    request = wire.requests[0]
-    assert request["path"] == "/v1/chat/completions"
-    assert request["body"]["model"] == "gpt-6-astra"
-    assert request["body"]["reasoning_effort"] == "xhigh"
-
-
-@pytest.mark.asyncio
 async def test_browser_created_request_rule_survives_unload_reload_and_stays_live(
     hass: HomeAssistant,
     hass_ws_client: Any,
@@ -172,6 +115,28 @@ async def test_browser_created_request_rule_survives_unload_reload_and_stays_liv
     await hass.async_block_till_done()
     original_agent = conversation.async_get_agent(hass, entry.entry_id)
     assert original_agent is not None
+
+    # Prove the browser-authored route reaches the currently loaded agent before
+    # testing that the same contract survives a genuine unload/reload.
+    before_wire = _install_wire(
+        monkeypatch,
+        original_agent,
+        [_chat_sse_text("Browser-created route reached the live agent.")],
+    )
+    before = await conversation.async_converse(
+        hass=hass,
+        text="browser reload runtime route",
+        conversation_id=None,
+        context=Context(),
+        language="en",
+        agent_id=entry.entry_id,
+    )
+    assert _speech(before) == "Browser-created route reached the live agent."
+    assert len(before_wire.requests) == 1
+    before_request = before_wire.requests[0]
+    assert before_request["path"] == "/v1/chat/completions"
+    assert before_request["body"]["model"] == "gpt-6-astra"
+    assert before_request["body"]["reasoning_effort"] == "xhigh"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -211,5 +176,4 @@ async def test_browser_created_request_rule_survives_unload_reload_and_stays_liv
     assert request["path"] == "/v1/chat/completions"
     assert request["body"]["model"] == "gpt-6-astra"
     assert request["body"]["reasoning_effort"] == "xhigh"
-
 
