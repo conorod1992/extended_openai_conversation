@@ -74,9 +74,8 @@ export function showPendingDestination(panel) {
     nav.hidden = local.length <= 1;
     nav.setAttribute("aria-label", `${pageMetadata(panel._page).label} sections`);
   }
-  const current = local.find((item) => item.id === panel._subsection);
   const sectionHost = root.querySelector("#eoc-section-host");
-  updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label><p>${panel._e(current?.description || "")}</p></div>` : "");
+  updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
   const main = root.querySelector("[data-eoc-main]");
   if (main) {
     main.setAttribute("aria-busy", "true");
@@ -200,7 +199,6 @@ function renderDynamicRegions(panel) {
   const root = panel.shadowRoot;
   const agent = panel._selectedAgent();
   const local = panel._visibleSubsections();
-  const currentSection = local.find((item) => item.id === panel._subsection);
 
   updateAgentPicker(panel, agent);
   updateNavigation(panel, navigationFor(panel));
@@ -211,7 +209,7 @@ function renderDynamicRegions(panel) {
 
   const sectionHost = root.querySelector("#eoc-section-host");
   if (sectionHost) {
-    updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section">${local.map((item) => `<option value="${item.id}" ${item.id === panel._subsection ? "selected" : ""}>${item.label}</option>`).join("")}</select></label><p>${panel._e(currentSection?.description || "")}</p></div>` : "");
+    updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
   }
 
   const main = root.querySelector("[data-eoc-main]") || root.querySelector("main");

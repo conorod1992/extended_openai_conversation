@@ -21,7 +21,8 @@ for (const admin of [true, false]) {
         panel._result = {settings: {archive_enabled: enabled}, sessions: {sessions: []}, active: {active: [{label: "<escaped>", key: "one"}]}};
         const root = dom(panel._conversations());
         return {
-          hasHelp: Boolean(root.querySelector("p.help")?.textContent.trim()),
+          hasIntro: Boolean(root.querySelector(".page-intro h1")?.textContent.trim()),
+          hasOrphanHelp: Boolean(root.querySelector(":scope > p.help")),
           notices: root.querySelectorAll("section.notice").length,
           escaped: !root.querySelector("escaped"),
         };
@@ -65,7 +66,8 @@ for (const admin of [true, false]) {
     for (const conversation of result.conversations) {
       expect(conversation.notices).toBe(0);
       expect(conversation.escaped).toBe(true);
-      expect(conversation.hasHelp).toBe(admin);
+      expect(conversation.hasIntro).toBe(true);
+      expect(conversation.hasOrphanHelp).toBe(false);
     }
     expect(result.knowledge).toEqual([0, 1, 2].map(count => ({
       hasHeading: true,

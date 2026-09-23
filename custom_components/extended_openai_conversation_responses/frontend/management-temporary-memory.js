@@ -45,7 +45,7 @@ function temporaryDiagnostics(panel) {
 function renderTemporaryMemories(panel) {
   const items = panel._result?.memories || [];
   return `<section class="content-card" data-temporary-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}">
-    <div class="section-heading"><div><h2>Memories</h2><p>Short-term details that are removed automatically at their expiry time.</p></div><button type="button" class="danger" id="clear-temporary">Clear short-term memories</button></div>
+    <div class="section-heading"><div><h2>Memories</h2><p>Short-term details that are removed automatically at their expiry time. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><button type="button" class="danger" id="clear-temporary">Clear short-term memories</button></div>
     <div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent">Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary" disabled>Short-term</button></div>
     <p class="help">Short-term memories belong to a Personal or Shared scope. Conversation and device continuity do not determine ownership. Existing records remain manageable until they expire even when Temporary Memory is turned off.</p>
     <div data-temporary-diagnostics>${temporaryDiagnostics(panel)}</div>

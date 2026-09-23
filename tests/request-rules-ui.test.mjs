@@ -24,10 +24,17 @@ const panel = {
 };
 
 const html = renderRequestRules(panel);
-assert.match(html, /Local commands skip the AI\/API call/);
+assert.match(html, /local commands that skip the AI call/);
+assert.doesNotMatch(html, /class="notice on"/);
+assert.match(html, /<summary>How routing rules work<\/summary>/);
+assert.match(html, /<h2>Test rules<\/h2>/);
+assert.match(html, /id="eoc-rule-live-test"/);
+assert.match(html, /class="eoc-live-label">Live/);
 assert.match(html, /Good night/);
 assert.match(html, /Default matching/);
 assert.match(html, /Create rule/);
+assert.match(html, /id="rule-search"/);
+assert.match(html, /class="count">2 rules/);
 assert.match(html, /Fuzzy matching/);
 assert.match(html, /Wording alternatives/);
 assert.match(html, /These settings apply to rules unless a rule has its own custom matching settings\./);
@@ -41,6 +48,10 @@ assert.match(html, /Controls how close a phrase must be before fuzzy matching is
 assert.match(html, /Main phrase/);
 assert.match(html, /Other ways to say it/);
 assert.doesNotMatch(html, /Save wording alternatives|Save defaults/);
+const zeroHtml = renderRequestRules({...panel, _result: {...panel._result, rules: []}});
+assert.match(zeroHtml, /Create your first Request Rule/);
+assert.match(zeroHtml, /class="search-row rule-toolbar" hidden/);
+assert.match(zeroHtml, /id="rule-empty-add"/);
 assert.match(html, /Model: gpt-5 · High reasoning · rest of conversation/);
 const resetHtml = renderRequestRules({...panel,_result:{...panel._result,rules:[{...panel._result.rules[1],action:{...panel._result.rules[1].action,reset:true}}]}});
 assert.match(resetHtml, /Returns model and reasoning to the assistant's configured defaults for the active conversation/);

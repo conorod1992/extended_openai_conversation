@@ -71,7 +71,9 @@ test("Conversation history loads scoped archive state through the management UI"
   await expect(panel.getByText("Conversation archive enabled", {exact: true})).toHaveCount(0);
   await expect(panel.getByRole("heading", {name: "Retained conversations", exact: true})).toBeVisible();
   await expect(panel.getByText("No retained conversations in this scope.", {exact: true})).toBeVisible();
-  await expect(panel.getByText("Recent context lets conversations continue; saved history is the archive you can review or search.", {exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Conversation history", exact: true})).toBeVisible();
+  await expect(panel.locator('.scope-bar[aria-label="Conversation scope"]')).toBeVisible();
+  await expect(panel.locator(".section-selector p")).toHaveCount(0);
 
   const calls = await page.evaluate(() => window.browserHarness.calls.map(
     (call) => `${call.section || "root"}/${call.action}`,

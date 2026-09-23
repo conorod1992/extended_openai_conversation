@@ -58,9 +58,9 @@ test("direct Request Rule testers bind once through repeated binding and normal 
     bindRequestRules(panel); bindRequestRules(panel);
     return renderRequestRules(panel);
   }, frontend);
-  expect(markup).toContain("Preview rule match (safe)");
-  expect(markup).toContain("Safe preview — nothing executes");
-  expect(markup).toContain("Run full request (live)");
+  expect(markup).toContain('id="rule-match-tester"');
+  expect(markup).toContain("No Home Assistant action executes");
+  expect(markup).toContain('id="eoc-rule-live-test"');
   await panel.locator("#eoc-rule-live-test summary").click();
   await panel.locator("#eoc-rule-live-text").fill("hello");
   await panel.locator("#eoc-rule-live-run").click();

@@ -104,8 +104,7 @@ const CRITICAL_STYLE = `
   .subsection-nav button{min-height:38px;padding:8px 13px;border:1px solid var(--divider-color);border-radius:999px;background:var(--card-background-color);color:var(--secondary-text-color)}
   .subsection-nav button.active{border-color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 10%,var(--card-background-color));color:var(--primary-color)}
   .section-layout{display:block}
-  .section-selector{display:grid;grid-template-columns:minmax(240px,420px) minmax(0,620px);align-items:end;gap:18px;margin:0 0 28px}
-  .section-selector p{margin:0 0 10px;color:var(--secondary-text-color);line-height:1.45}
+  .section-selector{margin:0 0 20px}
   main{display:grid;gap:30px}
   .page-intro{display:grid;gap:7px;max-width:780px}
   .page-intro h1,.page-intro p{margin:0}
@@ -118,7 +117,7 @@ const CRITICAL_STYLE = `
   @media (min-width:680px) and (max-width:1100px){.dashboard-grid{grid-template-columns:1fr}}
   .loading{display:flex;align-items:center;justify-content:center;gap:10px;min-height:130px;color:var(--secondary-text-color)}
   .spinner{width:20px;height:20px;border:2px solid var(--divider-color);border-top-color:var(--primary-color);border-radius:50%}
-  @media (min-width:801px){.section-selector>label{display:none}.section-selector{margin-top:0}}
+  @media (min-width:801px){.section-selector{display:none}}
   @media (max-width:800px){
     header{flex-direction:column;align-items:stretch;gap:18px}
     header .global-search.eoc-global-search{width:100%;min-width:0;align-self:stretch}
@@ -1375,7 +1374,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         <nav class="top-nav" aria-label="Management sections">${navigation.map((item) => `<button type="button" data-page="${item.id}" class="${item.id === this._page ? "active" : ""}" ${item.id === this._page ? 'aria-current="page"' : ""}>${item.label}</button>`).join("")}</nav>
         <nav class="subsection-nav" aria-label="${this._e(pageMetadata(this._page).label)} sections" ${local.length > 1 ? "" : "hidden"}>${local.length > 1 ? local.map((item) => `<button type="button" data-subsection="${this._e(item.id)}" class="${item.id === this._subsection ? "active" : ""}" ${item.id === this._subsection ? 'aria-current="page"' : ""}>${this._e(item.label)}</button>`).join("") : ""}</nav>
         <div id="eoc-scope-host">${["data-memory/conversations", "data-memory/memories"].includes(this._viewKey()) ? this._scopePicker() : ""}</div>
-        <div id="eoc-section-host">${local.length > 1 ? `<div class="section-selector"><label><span>${this._e(pageMetadata(this._page).label)} section</span><select id="local-section">${local.map((item) => `<option value="${item.id}" ${item.id === this._subsection ? "selected" : ""}>${item.label}</option>`).join("")}</select></label><p>${this._e(currentSection?.description || "")}</p></div>` : ""}</div>
+        <div id="eoc-section-host">${local.length > 1 ? `<div class="section-selector"><label><span>${this._e(pageMetadata(this._page).label)} section</span><select id="local-section" aria-description="${this._e(currentSection?.description || "")}">${local.map((item) => `<option value="${this._e(item.id)}" ${item.id === this._subsection ? "selected" : ""}>${this._e(item.label)}</option>`).join("")}</select></label></div>` : ""}</div>
         <div class="section-layout">
           <main data-eoc-main ${this._page === "guide" ? 'data-eoc-guide-layout=""' : ""}>${this._eocMainMarkup}</main>
         </div>
@@ -1442,13 +1441,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const issue = repair?.repairIssue(this);
       if (issue && repair.repairMetadata(this)?.isolatable === false) return repair.renderFallbackRepair(this, issue);
       const repairCards = issue ? repair.renderFunctionRepairCards(this) : "";
-      return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="functions">What are Function Groups?</button>${(getConfigurationTools()?.renderTools(this, {repairCards}) || this._loading())}`;
+      return getConfigurationTools()?.renderTools(this, {repairCards}) || this._loading();
     }
     if (view === "capabilities/quiet-hours") return getRouteFeature(view)?.renderQuietHours(this) || this._loading();
     if (view === "usage-maintenance/request-debug") return getRouteFeature(view)?.renderManagementDebug(this) || this._loading();
     if (view === "capabilities/guest-mode") return this._guestMode();
-    if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
-    if (view === "data-memory/knowledge") return `${getRouteFeature(view)?.knowledgeAvailabilityMarkup(this) || ""}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
+    if (view === "data-memory/memories") return this._memories();
+    if (view === "data-memory/knowledge") return `<section class="page-intro"><h1>Knowledge Library</h1><p>Manage reference sources the assistant can search when needed. <button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn more</button></p></section>${getRouteFeature(view)?.knowledgeAvailabilityMarkup(this) || ""}${this._knowledge()}`;
     if (view === "data-memory/conversations") {
       this._configSections = ["archive"];
       const settings = this._data?.is_admin
@@ -2120,7 +2119,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._viewKey() === "data-memory/memories" && this._memoryKind === "temporary") return getRouteFeature("data-memory/memories")?.renderTemporaryScopePicker(this);
     const memories = this._viewKey() === "data-memory/memories";
     const hasEmpty = (this._data?.scopes || []).some((scope) => (memories ? scope.memory_count : scope.conversation_count) === 0 && scope.scope_type === "user" && !scope.is_current_user);
-    return `<section class="scope-bar"><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
+    return `<section class="scope-bar" aria-label="${memories ? "Memory scope" : "Conversation scope"}"><span class="scope-title">${memories ? "Memory scope" : "Conversation scope"}</span><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
   }
 
   _scopeOptions(section, includeEmpty = this._showEmptyScopes, excludeLegacy = false) {

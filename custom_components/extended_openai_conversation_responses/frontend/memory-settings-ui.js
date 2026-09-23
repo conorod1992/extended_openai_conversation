@@ -31,10 +31,9 @@ function saveBar(panel) {
 export function renderMemorySettings(panel) {
   const config = panel._draft || panel._result?.config || {};
   const hybrid = config.memory_retrieval_mode === "hybrid";
-  return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>
+  return `<section class="page-intro"><h1>Memory settings</h1><p>Choose what the assistant may remember, how relevant memories are found, and whether household memories are available. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></section>
     <div class="content-card config-surface">
       <section id="config-memory" class="config-section" data-config-section data-search="memory persistent temporary short term long term automatic retrieval embeddings shared household">
-        <div class="config-section-heading"><p class="eyebrow">Memory settings</p><p>Choose what the assistant may remember, how relevant memories are found, and whether household memories are available.</p></div>
         <div class="config-stack">
           <div class="setting-group"><div class="subheading"><h3>Personal memory</h3><p>Control durable memories and automatically expiring short-term details.</p></div>
             ${select(panel, "memory_mode", "Long-term memory", config.memory_mode, "Choose whether durable memories are off, saved only when explicitly requested, or may also be created automatically.")}
