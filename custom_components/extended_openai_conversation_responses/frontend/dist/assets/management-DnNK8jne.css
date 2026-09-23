@@ -249,3 +249,15 @@
 .eoc-guidance-note .eoc-guidance-route{min-height:30px;padding:4px 9px}
 .eoc-unavailable-model-setting{opacity:.82}
 .eoc-unavailable-model-setting:focus{outline:2px solid var(--primary-color);outline-offset:3px}
+
+
+/* Home Assistant access/local handling hierarchy */
+.home-assistant-boundary{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 16px;border:1px solid var(--divider-color);border-radius:11px;background:color-mix(in srgb,var(--secondary-background-color) 28%,var(--card-background-color))}
+.home-assistant-boundary>div{display:grid;gap:3px;min-width:0}.home-assistant-boundary p{margin:0;color:var(--secondary-text-color);font-size:12px;line-height:1.45}.home-assistant-boundary .compact-button{flex:0 0 auto}
+.local-handling-layout{gap:18px}
+.local-handling-help{border-top:1px solid var(--divider-color);border-bottom:1px solid var(--divider-color);padding:2px 0}
+.local-handling-help>summary{cursor:pointer;padding:11px 0;color:var(--primary-color);font-weight:600}
+.local-handling-help-body{display:grid;gap:8px;padding:0 0 13px}.local-handling-help-body p{margin:0;color:var(--secondary-text-color);line-height:1.5}
+.local-handling-warning{background:color-mix(in srgb,var(--warning-color,#f9ab00) 6%,var(--card-background-color))}
+.local-handling-warning-title{display:flex;align-items:center;gap:8px}.local-handling-warning-title ha-icon{--mdc-icon-size:20px;color:var(--warning-color,#b26a00)}
+@media(max-width:600px){.home-assistant-boundary{align-items:stretch;flex-direction:column}.home-assistant-boundary .compact-button{width:100%}}
