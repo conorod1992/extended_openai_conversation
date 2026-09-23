@@ -1,3 +1,36 @@
+const ROUTE_STYLE = `/* Overview Broadcast */
+#broadcast-card{background:color-mix(in srgb,var(--secondary-background-color) 20%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color))}
+.broadcast-toggle-row{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:16px 0;border-bottom:1px solid var(--divider-color)}
+.broadcast-toggle-row p{margin:4px 0 0;color:var(--secondary-text-color);line-height:1.45}
+.status-pill{padding:5px 10px;border-radius:999px;background:var(--secondary-background-color);font-size:13px}.status-on{color:var(--success-color,#0f9d58)}
+.broadcast-compose{display:grid;gap:18px;margin-top:18px}
+.broadcast-message>span,.broadcast-destination legend{display:block;font-weight:600;margin-bottom:8px}
+.broadcast-message textarea{box-sizing:border-box;width:100%;resize:vertical;padding:10px 12px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color);font:inherit}
+.broadcast-destination{border:0;padding:0;margin:0;min-width:0}
+.broadcast-mode-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.broadcast-mode-option,.broadcast-target{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--divider-color);border-radius:10px;background:var(--card-background-color);cursor:pointer}
+.broadcast-mode-option.is-selected,.broadcast-target.is-selected{border-color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 6%,var(--card-background-color))}
+.broadcast-mode-option input,.broadcast-target input{width:18px!important;height:18px!important;min-width:18px;flex:0 0 18px;margin:2px 0 0;padding:0}
+.broadcast-mode-option span,.broadcast-target span{display:grid;gap:3px;min-width:0}
+.broadcast-mode-option small,.broadcast-target small,.broadcast-target-heading small{color:var(--secondary-text-color);font-weight:400}
+.broadcast-target-section{display:grid;gap:8px;margin-top:14px}
+.broadcast-target-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.broadcast-targets{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:9px}
+.broadcast-actions{justify-content:flex-end}
+.broadcast-history{margin-top:24px}.broadcast-history h3{margin:0 0 8px}
+.broadcast-history-item{display:grid;gap:8px;padding:12px 0;border-top:1px solid var(--divider-color)}
+.broadcast-history-item>div{display:flex;justify-content:space-between;gap:14px}.broadcast-history-item small{color:var(--secondary-text-color)}
+.broadcast-history-item ul{list-style:none;padding:0;margin:0;display:grid;gap:4px}.broadcast-history-item li{display:flex;justify-content:space-between;gap:12px}
+@media (max-width:700px){.broadcast-mode-options{grid-template-columns:1fr}.broadcast-actions{justify-content:stretch}.broadcast-actions button{flex:1}}`;
+function ensureRouteStyle(panel) {
+  if (typeof document === "undefined") return;
+  if (panel.shadowRoot.querySelector('style[data-eoc-feature-style="broadcast"]')) return;
+  const style = document.createElement("style");
+  style.dataset.eocFeatureStyle = "broadcast";
+  style.textContent = ROUTE_STYLE;
+  panel.shadowRoot.append(style);
+}
+
 const WS_BROADCAST = "extended_openai_conversation_responses/broadcast";
 
 function statusLabel(status) {
@@ -143,6 +176,7 @@ async function loadBroadcast(panel) {
 }
 
 export function bindBroadcast(panel, broadcastPromise) {
+  ensureRouteStyle(panel);
   return Promise.resolve(broadcastPromise)
     .then((snapshot) => applyBroadcastSnapshot(panel, snapshot))
     .catch((err) => applyBroadcastError(panel, err))

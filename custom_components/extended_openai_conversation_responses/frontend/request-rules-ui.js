@@ -1,3 +1,13 @@
+const ROUTE_STYLE = `.rule-list{display:grid;gap:14px}.request-rule-card{border:1px solid var(--divider-color);border-radius:14px;padding:18px;background:var(--card-background-color)}.request-rule-card.disabled{opacity:.62}.rule-card-heading{display:flex;justify-content:space-between;gap:16px;align-items:start}.rule-card-heading h2{font-size:18px;margin:6px 0 0}.type-badge{display:inline-flex;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:700}.type-badge.local{color:var(--success-color,#0f9d58);background:color-mix(in srgb,var(--success-color,#0f9d58) 14%,transparent)}.type-badge.routing{color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 14%,transparent)}.phrase-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px}.phrase-chips span{padding:6px 9px;border-radius:8px;background:var(--secondary-background-color);font-size:13px}.phrase-chips b{font-weight:700;margin-right:4px}.sensitive-warning{color:var(--warning-color,#b26a00);font-weight:600}.request-rule-card>.actions{display:flex;gap:8px;justify-content:flex-end}.rule-settings details{padding-block:8px}.rule-settings details+details{border-top:1px solid var(--divider-color)}.rule-settings details>summary{font-weight:700;cursor:pointer}.matching-settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}.fuzzy-sensitivity.is-disabled{opacity:.5}.wording-group{display:grid;grid-template-columns:1fr 2fr auto;gap:10px;align-items:end;margin-top:10px}.ha-action-row{display:grid;grid-template-columns:2fr 1fr 2fr auto;gap:10px;align-items:end;border:1px solid var(--divider-color);border-radius:10px;padding:12px;margin-bottom:10px}.ha-action-row label{margin:0}.ha-action-row ha-selector{display:block;min-width:0}.ha-service-fields{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ha-action-advanced{grid-column:1/-1}.ha-action-advanced summary{cursor:pointer;font-weight:600}.ha-action-advanced textarea{min-height:140px;font-family:var(--code-font-family,ui-monospace,monospace)}.request-rule-dialog section{border-top:1px solid var(--divider-color);margin-top:20px;padding-top:16px}.request-rule-dialog h3{margin:0 0 8px}@media(max-width:679px){.request-rule-card>.actions{display:grid;grid-template-columns:1fr 1fr}.matching-settings,.ha-service-fields{grid-template-columns:1fr}.wording-group{grid-template-columns:1fr auto}.ha-action-row{grid-template-columns:1fr}}`;
+function ensureRouteStyle(panel) {
+  if (typeof document === "undefined") return;
+  if (panel.shadowRoot.querySelector("style[data-eoc-feature-style=\"request-rules\"]")) return;
+  const style = document.createElement("style");
+  style.dataset.eocFeatureStyle = "request-rules";
+  style.textContent = ROUTE_STYLE;
+  panel.shadowRoot.append(style);
+}
+
 import {
   applyRequestRuleMutation,
   bindRequestRulesCore,
@@ -105,6 +115,7 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
 }
 
 export function bindRequestRules(panel) {
+  ensureRouteStyle(panel);
   bindRequestRulesCore(panel, {
     openEditor: async (id) => {
       const module = await ensureEditorModule();

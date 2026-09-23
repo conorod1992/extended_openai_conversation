@@ -1,3 +1,13 @@
+const ROUTE_STYLE = `.function-groups-help{margin-bottom:18px}.tool-search{display:block;margin-bottom:18px}.function-groups{display:grid;gap:18px}.function-group-card{border:1px solid var(--divider-color);border-radius:12px;padding:18px;background:var(--card-background-color)}.function-group-heading{display:flex;justify-content:space-between;align-items:start;gap:20px}.function-group-heading h3,.tool-title h4{margin:0}.function-group-heading p{margin:7px 0;color:var(--secondary-text-color);line-height:1.45}.function-group-heading code{font-size:12px;color:var(--secondary-text-color)}.availability-badge,.function-count{display:inline-flex;padding:4px 9px;border-radius:999px;background:color-mix(in srgb,var(--success-color,#0f9d58) 15%,transparent);color:var(--success-color,#0f9d58);font-size:11px;font-weight:600}.availability-badge.on-demand{background:color-mix(in srgb,var(--primary-color) 14%,transparent);color:var(--primary-color)}.function-count{background:var(--secondary-background-color);color:var(--secondary-text-color)}.function-group-card details{margin-top:14px;padding-top:10px}.function-group-card summary{min-height:40px}.function-group-card .tool-list{padding-top:10px}.group-dialog{width:min(820px,calc(100vw - 28px))}.group-dialog-body{max-height:calc(100vh - 170px)}.group-functions-fieldset{margin:0;padding-top:18px}.group-function-choices{display:grid;gap:8px;max-height:300px;overflow:auto;margin-top:12px}.group-function-choice{display:grid;grid-template-columns:auto 1fr;align-items:start;gap:11px;padding:11px;border:1px solid var(--divider-color);border-radius:9px;color:var(--primary-text-color);cursor:pointer}.group-function-choice.is-disabled{opacity:.58}.group-function-choice:hover{background:var(--secondary-background-color)}.group-function-choice input{width:18px;min-height:18px;margin-top:2px}.group-function-choice span{display:grid;gap:3px}.group-function-choice small{overflow-wrap:anywhere}@media(max-width:679px){.group-dialog{width:calc(100vw - 12px)}.function-group-heading{display:grid}.group-function-choices{max-height:34vh}}`;
+function ensureRouteStyle(panel) {
+  if (typeof document === "undefined") return;
+  if (panel.shadowRoot.querySelector("style[data-eoc-feature-style=\"function-groups\"]")) return;
+  const style = document.createElement("style");
+  style.dataset.eocFeatureStyle = "function-groups";
+  style.textContent = ROUTE_STYLE;
+  panel.shadowRoot.append(style);
+}
+
 import {readConfigurationDraft as readConfig} from "./configuration-controls.js";
 import {bindConfigurationInputs, updateConfigurationControl} from "./configuration-inputs.js";
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys, setAttribute, setText} from "./keyed-collection.js";
@@ -926,6 +936,7 @@ async function assignToolToGroup(panel, select) {
 }
 
 export function bindTools(panel) {
+  ensureRouteStyle(panel);
   const root=panel.shadowRoot;
   const host = root.querySelector(".tools-surface");
   if (host && !host.__eocAssignmentBound) {

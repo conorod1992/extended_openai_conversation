@@ -219,6 +219,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    // The URL is known at construction. Start its request before agent data and
+    // route code settle, and keep the same link connected through shell renders.
+    if (typeof document !== "undefined") {
+      const criticalStyle = document.createElement("style");
+      criticalStyle.dataset.eocCriticalStyles = "";
+      criticalStyle.textContent = CRITICAL_STYLE;
+      const stylesheet = document.createElement("link");
+      stylesheet.rel = "stylesheet";
+      stylesheet.href = MANAGEMENT_STYLESHEET_URL;
+      stylesheet.dataset.eocPersistentStyles = "";
+      this.shadowRoot.append(criticalStyle, stylesheet);
+    }
     this._eocColdLifecycleMarks = new Set();
     this._markColdLifecycle("constructed");
     const route = routeFromPath(window.location.pathname);
@@ -279,7 +291,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._route = value;
     const route = routeFromPath(window.location.pathname);
     if (route.page !== this._page || route.section !== this._subsection) this._handleRouteChange(route);
-    else if (!this.shadowRoot.hasChildNodes()) this._render();
+    else if (!this.shadowRoot.querySelector("[data-eoc-persistent-shell]")) this._render();
   }
 
   connectedCallback() {
@@ -319,6 +331,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     void this._loadConfigurationLiveMetadata(view);
   }
 
+  _currentRouteUsableForSpeculation() {
+    return !!this._data && !this._busy && !this._error
+      && this._eocRenderedRoute === `${this._agentId}|${this._viewKey()}`
+      && this._eocRenderedFeatureReady
+      && !this.shadowRoot.querySelector("[data-eoc-main][aria-busy='true']");
+  }
+
   _bindSettingsSearchLazyLoad() {
     const root = this.shadowRoot;
     if (!root || root.__eocSettingsSearchLazyBound) return;
@@ -354,7 +373,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       hoverTarget = target;
       hoverTimer = setTimeout(() => {
         hoverTimer = null;
-        if (hoverTarget === target) this._warmNavigationTarget(target);
+        if (hoverTarget === target && this._currentRouteUsableForSpeculation()) this._warmNavigationTarget(target);
       }, 100);
     });
     root.addEventListener("pointerout", (event) => {
@@ -1341,9 +1360,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const configurationActions = agent && !this._busy && !this._error ? this._configurationActions() : "";
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
-    this.shadowRoot.innerHTML = `
-      <style data-eoc-critical-styles>${CRITICAL_STYLE}</style>
-      <link rel="stylesheet" href="${MANAGEMENT_STYLESHEET_URL}" data-eoc-persistent-styles>
+    const shell = document.createElement("template");
+    shell.innerHTML = `
       <div class="page-shell" data-eoc-persistent-shell>
         <header>
           <div class="page-heading"><h1>Extended OpenAI</h1><p>Configure your assistant, capabilities, retained data, and maintenance.</p></div>
@@ -1364,6 +1382,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       </div>
       <div id="eoc-dialog-host">${this._eocDialogMarkup}</div>
       <div id="toast" class="toast" role="status" aria-live="polite"></div>`;
+    for (const child of [...this.shadowRoot.children]) {
+      if (!child.matches("style[data-eoc-critical-styles],link[data-eoc-persistent-styles]")) child.remove();
+    }
+    this.shadowRoot.append(shell.content);
     this._bindActions();
     this._markColdLifecycle("shell-complete");
     if (this.shadowRoot.querySelector(".page-heading h1")

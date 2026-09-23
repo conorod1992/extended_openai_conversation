@@ -120,6 +120,71 @@ for (const bundled of [false, true]) {
   });
 }
 
+test("the stylesheet starts with the panel and survives a shell render without another request", async ({page}) => {
+  const requested = [];
+  page.on("request", request => {
+    if (/\/management[^/]*\.css$/.test(new URL(request.url()).pathname)) requested.push(request.url());
+  });
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  const stable = await panel.evaluate(host => {
+    const link = host.shadowRoot.querySelector("link[data-eoc-persistent-styles]");
+    const fresh = document.createElement("extended-openai-management-panel");
+    const eager = !!fresh.shadowRoot.querySelector("link[data-eoc-persistent-styles]")
+      && !fresh.shadowRoot.querySelector("[data-eoc-persistent-shell]");
+    host._renderShell();
+    return {eager, sameLink:link === host.shadowRoot.querySelector("link[data-eoc-persistent-styles]"),
+      links:host.shadowRoot.querySelectorAll("link[data-eoc-persistent-styles]").length};
+  });
+  expect(stable).toEqual({eager:true, sameLink:true, links:1});
+  expect(requested).toHaveLength(1);
+});
+
+test("large route styles arrive with their lazy feature and keep mobile layouts", async ({page}) => {
+  await page.setViewportSize({width:600, height:850});
+  await page.goto(fixtureUrl("overview", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  const coldRadius = await panel.evaluate(host => {
+    const sample = document.createElement("div");
+    sample.className = "function-group-card";
+    host.shadowRoot.append(sample);
+    const radius = getComputedStyle(sample).borderTopLeftRadius;
+    sample.remove();
+    return radius;
+  });
+  expect(coldRadius).toBe("0px");
+
+  await panel.evaluate(host => host._navigate("capabilities", "functions"));
+  await expect(panel.locator(".function-group-card").first()).toBeVisible();
+  const functions = await panel.evaluate(host => ({
+    radius:getComputedStyle(host.shadowRoot.querySelector(".function-group-card")).borderTopLeftRadius,
+    heading:getComputedStyle(host.shadowRoot.querySelector(".function-group-heading")).display,
+  }));
+  expect(functions).toEqual({radius:"12px", heading:"grid"});
+
+  await panel.evaluate(host => host._navigate("capabilities", "request-rules"));
+  await expect(panel.locator(".request-rule-card").first()).toBeVisible();
+  const rules = await panel.evaluate(host => ({
+    radius:getComputedStyle(host.shadowRoot.querySelector(".request-rule-card")).borderTopLeftRadius,
+    actions:getComputedStyle(host.shadowRoot.querySelector(".request-rule-card>.actions")).display,
+  }));
+  expect(rules).toEqual({radius:"14px", actions:"grid"});
+
+  await panel.evaluate(host => host._navigate("guide"));
+  await expect(panel.locator(".guide-quick-card").first()).toBeVisible();
+  expect(await panel.evaluate(host => getComputedStyle(
+    host.shadowRoot.querySelector(".guide-quick-tasks"),
+  ).display)).toBe("grid");
+
+  await panel.evaluate(host => host._navigate("overview"));
+  await expect(panel.locator(".broadcast-toggle-row")).toBeVisible();
+  expect(await panel.evaluate(host => getComputedStyle(
+    host.shadowRoot.querySelector(".broadcast-toggle-row"),
+  ).display)).toBe("flex");
+});
+
 test("Knowledge editor retains drafts on rerender and releases ownership on navigation", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("data-memory/knowledge"));

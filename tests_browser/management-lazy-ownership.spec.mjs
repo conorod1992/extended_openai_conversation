@@ -312,6 +312,24 @@ test("route hover warming waits for intent while focus and pointerdown stay imme
   await expectHarnessClean(page, errors);
 });
 
+test("hover does not compete with a cold route but pointerdown still warms the destination", async ({page}) => {
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  const warmed = await panel.evaluate(async host => {
+    const target = host.shadowRoot.querySelector('.top-nav button[data-page="capabilities"]');
+    const calls = [];
+    host._warmNavigationTarget = () => calls.push("warm");
+    host.shadowRoot.querySelector("[data-eoc-main]").setAttribute("aria-busy", "true");
+    target.dispatchEvent(new PointerEvent("pointerover", {bubbles:true, composed:true}));
+    await new Promise(resolve => setTimeout(resolve, 130));
+    const hover = calls.length;
+    target.dispatchEvent(new PointerEvent("pointerdown", {bubbles:true, composed:true}));
+    return {hover, intent:calls.length};
+  });
+  expect(warmed).toEqual({hover:0, intent:1});
+});
+
 test("Overview navigation reuses a strong-intent read without reading on hover", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("guide"));
