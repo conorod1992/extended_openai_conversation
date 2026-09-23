@@ -476,11 +476,14 @@ def model_metadata(model: str) -> dict[str, Any]:
 
 
 def compatibility_capabilities(
-    model: str, *, effort: str | None = None
+    model: str,
+    *,
+    effort: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Expose legacy projections without making them authoritative."""
     del effort
-    metadata = model_metadata(model)
+    metadata = metadata if metadata is not None else model_metadata(model)
     return {
         "supports_top_p": metadata["top_p"]["support"] in {"always", "conditional"},
         "supports_temperature": metadata["temperature"]["support"]

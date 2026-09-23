@@ -467,7 +467,7 @@ async def websocket_catalog(
             return
 
     metadata = model_metadata(msg["model"])
-    capabilities = compatibility_capabilities(msg["model"])
+    capabilities = compatibility_capabilities(msg["model"], metadata=metadata)
     connection.send_result(
         msg["id"],
         {
