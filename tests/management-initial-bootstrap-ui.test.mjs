@@ -180,6 +180,50 @@ await memoryLoad;
 assert.equal(memoryPanel._draft.memory_mode, "manual");
 assert.equal(memoryPanel.sectionLoads, 1);
 
+// A Retention deep link starts its small projection alongside the agent catalogue
+// instead of waiting for the catalogue and then beginning another round trip.
+const retentionCalls = [];
+let finishRetentionAgents;
+let finishRetentionConfig;
+const retentionPanel = {
+  ...assistantPanel,
+  _viewKey: () => "usage-maintenance/retention",
+  _data: null,
+  _agentId: null,
+  _configData: null,
+  _draft: null,
+  _draftAgentId: null,
+  sectionLoads: 0,
+  _hass: {callWS(payload) {
+    retentionCalls.push(payload);
+    if (payload.action === "agents") return new Promise((resolve) => { finishRetentionAgents = resolve; });
+    if (payload.section === "configuration" && payload.action === "retention_get") {
+      return new Promise((resolve) => { finishRetentionConfig = resolve; });
+    }
+    throw new Error(`Unexpected Retention request: ${JSON.stringify(payload)}`);
+  }},
+};
+const retentionLoad = module.loadAgentsWithOverviewPrefetch(retentionPanel);
+await Promise.resolve();
+assert.equal(retentionCalls.some((item) => item.action === "agents"), true);
+assert.equal(
+  retentionCalls.some((item) => item.section === "configuration" && item.action === "retention_get"),
+  true,
+  "Retention projection should start alongside the agent catalogue",
+);
+finishRetentionConfig({
+  title: "A",
+  revision: "retention-r1",
+  projection: "retention",
+  config: {usage_request_retention_days:30, usage_run_retention_days:90},
+  options: {},
+});
+finishRetentionAgents({agents:[selectedAgent], is_admin:true});
+await retentionLoad;
+assert.equal(retentionPanel._configData.projection, "retention");
+assert.equal(retentionPanel._draft.usage_request_retention_days, 30);
+assert.equal(retentionPanel.sectionLoads, 1);
+
 let resolveStaleAgents;
 let resolveStaleConfig;
 const staleAgentsPromise = new Promise((resolve) => { resolveStaleAgents = resolve; });
