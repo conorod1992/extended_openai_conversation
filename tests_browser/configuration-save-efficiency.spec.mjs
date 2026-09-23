@@ -40,7 +40,7 @@ test("Retention reads a narrow projection and saves only its changed field", asy
   await panel.locator('[data-config="usage_request_retention_days"]').selectOption("7");
   await panel.locator("#save-config").click();
   const save = await page.evaluate(() => browserHarness.calls.find(call => call.section === "configuration" && call.action === "save"));
-  expect(save).toMatchObject({config:{usage_request_retention_days:"7"}, revision:"fixture-7"});
+  expect(save).toMatchObject({config:{usage_request_retention_days:7}, revision:"fixture-7"});
   expect(Object.keys(save.config)).toEqual(["usage_request_retention_days"]);
   expect(save).not.toHaveProperty("title");
   await expect(panel.locator('[data-config="usage_request_retention_days"]')).toHaveValue("7");

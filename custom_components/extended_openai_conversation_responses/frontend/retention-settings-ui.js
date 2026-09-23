@@ -17,7 +17,7 @@ function selectMarkup(panel, key, label) {
   const choices = panel._result?.options?.[key] || [];
   return `<div class="setting" data-field="${key}" data-setting data-search="${panel._e(`${label} usage history retention details ${key}`.toLowerCase())}">
     <label for="config-${key}">${panel._e(label)}</label>
-    <select id="config-${key}" data-retention-config="${key}">${choices.map((item) => optionMarkup(panel, item, value)).join("")}</select>
+    <select id="config-${key}" data-config="${key}" data-retention-config="${key}">${choices.map((item) => optionMarkup(panel, item, value)).join("")}</select>
     <span class="field-error" data-error="${key}"></span>
   </div>`;
 }
