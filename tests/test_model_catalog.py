@@ -142,24 +142,30 @@ def test_unknown_model_is_preserved_with_conservative_capabilities():
     assert metadata["function_calling"]["chat_completions"] is False
 
 
-def test_every_current_model_supports_streaming():
+def test_current_models_have_exact_non_streaming_exceptions():
     for item in data.BUNDLED_CATALOG["models"]:
         if item["status"] == "current":
-            assert item["streaming"] is True, item["id"]
+            assert item["streaming"] is (item["id"] not in {"gpt-5.5-pro", "o3-pro"}), (
+                item["id"]
+            )
 
 
 def test_bundled_service_tiers_match_current_openai_support() -> None:
     expected_latest = {
         "gpt-6-astra": ["auto", "default", "flex", "fast", "priority"],
+        "gpt-6-sol": ["auto", "default", "flex", "fast", "priority"],
+        "gpt-6-luna": ["auto", "default", "flex", "fast", "priority"],
         "gpt-5.6": ["auto", "default", "flex", "fast", "priority", "ultrafast"],
         "gpt-5.6-sol": ["auto", "default", "flex", "fast", "priority", "ultrafast"],
         "gpt-5.6-terra": ["auto", "default", "flex", "fast", "priority"],
         "gpt-5.6-luna": ["auto", "default", "flex", "fast", "priority"],
+        "gpt-5.5": ["auto", "default", "flex"],
+        "gpt-5.4": ["auto", "default", "flex"],
     }
     by_id = {item["id"]: item for item in data.BUNDLED_CATALOG["models"]}
     for model_id, tiers in expected_latest.items():
         assert by_id[model_id]["service_tiers"] == tiers
-    for model_id in ("gpt-5.5", "gpt-5-mini", "gpt-4.1", "gpt-4o", "o3"):
+    for model_id in ("gpt-5-mini", "gpt-4.1", "gpt-4o", "o3"):
         assert by_id[model_id]["service_tiers"] == ["auto", "default"]
 
 
@@ -456,7 +462,10 @@ def test_validate_or_migrate_marks_legacy_schemas_as_migrated() -> None:
     migrated, changed = data.validate_or_migrate_catalog(legacy_v2)
     assert changed is True
     assert migrated["schema_version"] == 4
-    assert migrated["models"][0]["service_tiers"] == data.BUNDLED_CATALOG["models"][0]["service_tiers"]
+    assert (
+        migrated["models"][0]["service_tiers"]
+        == data.BUNDLED_CATALOG["models"][0]["service_tiers"]
+    )
 
     current = _catalog()
     validated, changed = data.validate_or_migrate_catalog(current)

@@ -245,13 +245,15 @@ def test_unknown_custom_model_is_conservative_and_does_not_crash_request_builder
     assert "top_p" not in result.api_kwargs
 
 
-# T. All current catalog models stream.
+# T. Only the explicitly documented Pro models lack streaming.
 @pytest.mark.parametrize(
     "model",
     [item["id"] for item in model_catalog.BUNDLED_CATALOG["models"] if item["status"] == "current"],
 )
 def test_every_current_model_streaming(model):
-    assert get_model_capabilities(model)["streaming"] is True
+    assert get_model_capabilities(model)["streaming"] is (
+        model not in {"gpt-5.5-pro", "o3-pro"}
+    )
 
 
 # Required production request-shape spot checks.
