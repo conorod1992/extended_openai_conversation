@@ -59,11 +59,13 @@ for (const bundled of [false, true]) {
     await expect(card).toContainText("Saved once");
     expect(await page.evaluate(() => browserHarness.panel._temporaryMemoryDraft)).toBeNull();
     await card.locator("button.edit-temporary-memory").click();
+    const readsBeforeDelete = await page.evaluate(() => dataCollectionBackend.calls.filter(c => c.action === "temporary_list").length);
     await panel.locator("#temporary-memory-delete").click();
     await acceptConfirmation(panel);
     await expect(dialog).toHaveJSProperty("open", false);
     await expect(card).toHaveCount(0);
     expect(await page.evaluate(() => dataCollectionBackend.calls.filter(c => c.action === "temporary_delete"))).toHaveLength(1);
+    expect(await page.evaluate(() => dataCollectionBackend.calls.filter(c => c.action === "temporary_list").length)).toBe(readsBeforeDelete);
     await expectHarnessClean(page, errors);
   });
 }

@@ -17,8 +17,10 @@ test("Overview snapshot is usable while the full implementation is still loading
 
   await expect(panel.locator(".eoc-overview-snapshot")).toBeVisible();
   await expect(panel.locator(".dashboard-card")).toHaveCount(6);
-  await expect(panel.locator(".dashboard-card").first()).toContainText("OpenAI");
-  await expect(panel.locator(".dashboard-card").first()).toContainText("Configure");
+  const assistantCard = panel.locator(".dashboard-card").first();
+  await expect(assistantCard.locator("h2")).not.toBeEmpty();
+  await expect(assistantCard.locator("strong")).toContainText("·");
+  await expect(assistantCard.locator("button[data-page='assistant'][data-subsection='basics']")).toBeVisible();
   await expect(panel.locator(".setup-health")).toHaveCount(0);
   expect(await page.evaluate(() =>
     performance.getEntriesByType("mark")

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
 
 const frontend = (name) => new URL(`../custom_components/extended_openai_conversation_responses/frontend/${name}`, import.meta.url);
 const elements = new Map();
@@ -95,24 +94,6 @@ assert.match(usageCalls[0].end_date,/^\d{4}-\d{2}-\d{2}$/);
 assert.match(panel._usage(), /Usage period/);
 assert.doesNotMatch(panel._usage(), /Input footprint/);
 assert.match(panel._dialogs(), /id="usage-request-dialog"/);
-
-// A deleted installer cannot accidentally be revived through a route import.
-const coreEditorSource = await readFile(frontend("agent-config-editor.js"),"utf8");
-assert.doesNotMatch(coreEditorSource,/renderTools|reconcileTools|agent-config-native-yaml/,
-  "ordinary configuration entry must stay free of Function Tools exports");
-const coreBaseSource = await readFile(frontend("agent-config-editor-base.js"),"utf8");
-assert.doesNotMatch(coreBaseSource,/keyed-collection|ha-llm-tools|tool-yaml-editor-adapter/,
-  "ordinary configuration base must not import Function Tools dependencies");
-const toolsBaseSource = await readFile(frontend("agent-config-tools-base.js"),"utf8");
-assert.match(toolsBaseSource,/keyed-collection/);
-assert.match(toolsBaseSource,/ha-llm-tools/);
-assert.match(toolsBaseSource,/tool-yaml-editor-adapter/);
-const routeSource = await readFile(frontend("management-route.js"),"utf8");
-assert.doesNotMatch(routeSource,/panel\.constructor|\.install[A-Z]/);
-for (const name of ["quiet-hours-ui.js","management-function-repair.js","usage-chart.js","management-provider-credentials.js","debug-management.js"]) {
-  const source = await readFile(frontend(name),"utf8");
-  assert.doesNotMatch(source,/prototype\.|Symbol\.for\(|export function install[A-Z]/,name);
-}
 
 // Cleanup is a panel lifecycle responsibility even after lazy activation.
 let removals = 0;

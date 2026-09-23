@@ -1417,7 +1417,8 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
     memory = SimpleNamespace(
         _memories={record.memory_id: record},
         async_list_page=AsyncMock(return_value=([record], False)),
-        async_add=AsyncMock(return_value={"status": "created"}),
+        async_add=AsyncMock(return_value={"status": "created", "memory": {"memory_id": "memory-1"}}),
+        async_get_many=AsyncMock(return_value=[record]),
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),
         async_clear=AsyncMock(return_value=2),
@@ -1430,9 +1431,12 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
         hass, "user", False, _residual_message("memories", "list")
     )
     assert listed["memories"][0]["content"] == "Remember this"
-    assert await management_ui.async_management_command(
+    added = await management_ui.async_management_command(
         hass, "user", False, _residual_message("memories", "add", content="New")
-    ) == {"status": "created"}
+    )
+    assert added["status"] == "created"
+    assert added["memory"]["memory_id"] == "memory-1"
+    assert added["memory"]["revision"]
     assert (
         await management_ui.async_management_command(
             hass, "user", False, _residual_message("memories", "update", memory_id="memory-1")
@@ -1489,6 +1493,7 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
         updated_at="2026-01-01",
     )
     library = SimpleNamespace(
+        total_source_count=1,
         async_list=AsyncMock(return_value=[{"source_id": "source-1"}]),
         stats=lambda: {"source_count": 1},
         async_get=AsyncMock(return_value=source),
@@ -1512,9 +1517,11 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
         await management_ui.async_management_command(
             hass, "user", True, _residual_message("knowledge", "delete")
         )
-    assert await management_ui.async_management_command(
+    deleted = await management_ui.async_management_command(
         hass, "user", True, _residual_message("knowledge", "delete", confirm=True)
-    ) == {"deleted": 1}
+    )
+    assert deleted["deleted"] == 1
+    assert deleted["feature_status"]["source_count"] == 1
 
     with pytest.raises(HomeAssistantError, match="settings must be an object"):
         await management_ui.async_management_command(

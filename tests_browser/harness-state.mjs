@@ -32,6 +32,7 @@ function freshState() {
       defaults: {}, model_capabilities: {}, local_handling: {supported: true, intents: [], pipeline_conflicts: []},
     },
     memories: [{revision: 1, memory_id: "memory-1", scope_id: "user:test-user", content: "Baseline browser fixture memory", category: "general", source: "manual", created_at: "2026-09-01T12:00:00Z", updated_at: "2026-09-01T12:00:00Z"}],
+    knowledgeSources: [],
     guest: {config: {guest_mode_enabled: false, guest_web_search: false}, revision: "guest-1", legacy_policy: false},
     quiet: {config: {enabled: false, start: "22:00", end: "07:00", max_volume: 0.2, wake_sound: "off", overrides: {}}, active: false, satellites: []},
     requestRules: {
@@ -39,7 +40,7 @@ function freshState() {
       rules: [{id: "rule-1", name: "Baseline rule", enabled: true, phrases: ["baseline route"], match_type: "contains", action_type: "model_routing", action: {model: "gpt-5-mini", reasoning_effort: "", scope: "request", reset: false, success_response: "Updated"}, matching_behavior: "defaults", matching: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, order: 0}],
     },
     toolYamls: {baseline_tool: "spec:\n  name: baseline_tool\n  description: Baseline browser fixture Function Tool\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: script\n  sequence: []\n"},
-    nextMemoryId: 2, nextRuleId: 2, failedConfigurationOnce: false,
+    nextMemoryId: 2, nextKnowledgeId: 1, nextRuleId: 2, failedConfigurationOnce: false,
   };
 }
 
@@ -56,6 +57,7 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     state.agent.function_count = state.configuration.config.functions?.length || 0;
     state.agent.function_group_count = state.configuration.config.function_groups?.length || 0;
     state.agent.memory_count = state.memories.length;
+    state.agent.knowledge_source_count = state.knowledgeSources?.length || 0;
     state.scopes[0].memory_count = state.memories.filter((m) => m.scope_id === state.scopes[0].scope_id).length;
   };
   const tools = () => ({functions: clone(state.configuration.config.functions || []), function_groups: clone(state.configuration.config.function_groups || []), references: {}, revision: state.configuration.revision});
@@ -88,14 +90,46 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     }
     if (key === "usage/summary") return {today: {total_tokens: 1234}, month: {total_tokens: 5678}, lifetime: {total_tokens: 9999}};
     if (key === "conversations/settings") return {archive_enabled: true, archive_retention_days: 30, archive_model_search_enabled: false};
-    if (key === "knowledge/list") { if (partialOverview) throw new Error("Knowledge fixture unavailable"); return {sources: [], stats: {source_count: 0}, feature_status: {state: state.configuration.config.knowledge_enabled === false ? "disabled" : "empty", enabled: state.configuration.config.knowledge_enabled !== false, source_count: 0}}; }
+    if (key === "knowledge/list") {
+      if (partialOverview) throw new Error("Knowledge fixture unavailable");
+      const sources = clone(state.knowledgeSources || []);
+      const sourceCount = sources.length;
+      return {sources, stats: {source_count: sourceCount}, feature_status: {state: state.configuration.config.knowledge_enabled === false ? "disabled" : sourceCount ? "available" : "empty", enabled: state.configuration.config.knowledge_enabled !== false, source_count: sourceCount}};
+    }
+    if (key === "knowledge/get") {
+      const source = (state.knowledgeSources || []).find((item) => item.source_id === message.source_id);
+      if (!source) throw new Error("Knowledge source not found");
+      return {source: clone(source)};
+    }
+    if (key === "knowledge/create" || key === "knowledge/update") {
+      state.knowledgeSources ||= [];
+      let source;
+      if (key.endsWith("create")) {
+        source = {source_id: `source-${state.nextKnowledgeId++}`, title: message.title, description: message.description || "", content: message.content || "", character_count: String(message.content || "").length, enabled: message.enabled !== false, updated_at: now()};
+        state.knowledgeSources.push(source);
+      } else {
+        source = state.knowledgeSources.find((item) => item.source_id === message.source_id);
+        if (!source) throw new Error("Knowledge source not found");
+        Object.assign(source, {title: message.title, description: message.description || "", content: message.content || "", character_count: String(message.content || "").length, enabled: message.enabled !== false, updated_at: now()});
+      }
+      counts(); save();
+      const sourceCount = state.knowledgeSources.length;
+      return {status: key.endsWith("create") ? "created" : "updated", source: clone(source), summary: clone(source), stats: {source_count: sourceCount}, feature_status: {state: state.configuration.config.knowledge_enabled === false ? "disabled" : "available", enabled: state.configuration.config.knowledge_enabled !== false, source_count: sourceCount}};
+    }
+    if (key === "knowledge/delete") {
+      const before = (state.knowledgeSources || []).length;
+      state.knowledgeSources = (state.knowledgeSources || []).filter((item) => item.source_id !== message.source_id);
+      counts(); save();
+      const sourceCount = state.knowledgeSources.length;
+      return {deleted: before - sourceCount, stats: {source_count: sourceCount}, feature_status: {state: state.configuration.config.knowledge_enabled === false ? "disabled" : sourceCount ? "available" : "empty", enabled: state.configuration.config.knowledge_enabled !== false, source_count: sourceCount}};
+    }
     if (key === "knowledge/set_enabled") {
       state.configuration.config.knowledge_enabled = message.enabled;
       state.configuration.revision = `${state.configuration.revision}x`;
       state.agent.knowledge_enabled = message.enabled;
       state.agent.feature_status = {
         ...(state.agent.feature_status || {}),
-        knowledge: {state: message.enabled ? "empty" : "disabled", enabled: message.enabled, source_count: 0},
+        knowledge: {state: message.enabled ? ((state.knowledgeSources?.length || 0) ? "available" : "empty") : "disabled", enabled: message.enabled, source_count: state.knowledgeSources?.length || 0},
       };
       save();
       return {
@@ -159,13 +193,20 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     if (key === "memories/list") return {memories: clone(state.memories.filter((m) => !message.scope_id || m.scope_id === message.scope_id)), total: state.memories.length};
     if (key === "memories/add") {
       const memory = {revision: 1, memory_id: `memory-${state.nextMemoryId++}`, scope_id: message.scope_id, content: message.content, category: message.category || "general", source: "manual", created_at: now(), updated_at: now()};
-      state.memories.push(memory); counts(); save(); return {memory: clone(memory)};
+      state.memories.push(memory); counts(); save(); return {status: "created", scope_id: memory.scope_id, memory: clone(memory)};
     }
     if (key === "memories/update") {
       const memory = state.memories.find((m) => m.memory_id === message.memory_id && m.scope_id === message.scope_id); if (!memory) throw new Error("Memory not found");
-      memory.content = message.content; memory.category = message.category || "general"; memory.updated_at = now(); save(); return {memory: clone(memory)};
+      memory.content = message.content; memory.category = message.category || "general";
+      if (message.target_scope_id) memory.scope_id = message.target_scope_id;
+      memory.revision = Number(memory.revision || 0) + 1; memory.updated_at = now(); counts(); save();
+      return {status: "updated", scope_id: memory.scope_id, memory: clone(memory)};
     }
-    if (key === "memories/delete") { state.memories = state.memories.filter((m) => !(m.memory_id === message.memory_id && m.scope_id === message.scope_id)); counts(); save(); return {deleted: true}; }
+    if (key === "memories/delete") {
+      const before = state.memories.length;
+      state.memories = state.memories.filter((m) => !(m.memory_id === message.memory_id && m.scope_id === message.scope_id));
+      counts(); save(); return {deleted: before - state.memories.length};
+    }
 
     if (key === "request_rules/list") return clone(state.requestRules);
     if (key === "request_rules/create") { const rule = {...clone(message.rule), id: `rule-${state.nextRuleId++}`}; state.requestRules.rules.push(rule); normalizeRules(); state.requestRules.revision++; save(); return {rule: clone(rule), revision: state.requestRules.revision}; }

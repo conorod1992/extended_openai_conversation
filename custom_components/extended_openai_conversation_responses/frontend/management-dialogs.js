@@ -1,8 +1,9 @@
-// Core dialogs have host lifetime. Handlers read current panel state at dispatch,
-// so refreshing a route neither discards an editor nor adds duplicate listeners.
+// Core dialog handlers are delegated from the host so owned dialogs can be
+// created on demand and removed when their route or agent changes.
 export const PERSISTENT_DIALOGS = new Set([
   "knowledge-dialog", "memory-dialog", "session-dialog", "reassign-dialog", "confirm-dialog",
 ]);
+const RETAINED_DIALOGS = new Set([...PERSISTENT_DIALOGS, "temporary-memory-dialog"]);
 
 export function bindPanelDialogs(panel) {
   const root = panel.shadowRoot;
@@ -46,58 +47,18 @@ export function bindPanelDialogs(panel) {
   }, true);
 }
 
-// Same-route dialog data refreshes retain editor nodes and their existing listeners.
-// Compare against the last template, not live form values or imperative status text.
-function patchDialog(current, previous, next) {
-  if (previous.isEqualNode(next)) return;
-  if (current.nodeType === Node.TEXT_NODE && next.nodeType === Node.TEXT_NODE) {
-    current.textContent = next.textContent;
-    return;
-  }
-  if (current.nodeName !== next.nodeName) { current.replaceWith(next.cloneNode(true)); return; }
-  if (next.nodeType !== Node.ELEMENT_NODE) return;
-  for (const attr of previous.attributes) {
-    if (!next.hasAttribute(attr.name)) current.removeAttribute(attr.name);
-  }
-  for (const attr of next.attributes) {
-    if (previous.getAttribute(attr.name) !== attr.value) current.setAttribute(attr.name, attr.value);
-  }
-  const children = [...current.childNodes];
-  const before = [...previous.childNodes];
-  const after = [...next.childNodes];
-  for (let index = 0; index < Math.max(before.length, after.length); index += 1) {
-    if (!after[index]) children[index]?.remove();
-    else if (!before[index] || !children[index]) current.append(after[index].cloneNode(true));
-    else patchDialog(children[index], before[index], after[index]);
-  }
-}
-
 export function updateDialogs(panel, markup, {preserveEditors = false} = {}) {
   const root = panel.shadowRoot;
   const host = root.querySelector("#eoc-dialog-host");
   if (!host) return;
   const template = document.createElement("template");
   template.innerHTML = markup;
-  const previous = panel._eocDialogTemplate;
-  panel._eocDialogTemplate = template.content.cloneNode(true);
-  if (preserveEditors && previous) {
-    for (const next of template.content.children) {
-      const current = host.querySelector(`#${next.id}`);
-      const before = previous.querySelector(`#${next.id}`);
-      if (current && before && !current.open) patchDialog(current, before, next);
-    }
-    return;
-  }
-  // Feature editors still have per-render bindings. Replace those until their
-  // owners migrate; never replace or detach a core dialog, particularly an open one.
+  const desired = new Set([...template.content.children].map(child => child.id));
   for (const child of [...host.children]) {
-    if (!PERSISTENT_DIALOGS.has(child.id)) child.remove();
+    if (!desired.has(child.id) || (!preserveEditors && !RETAINED_DIALOGS.has(child.id))) child.remove();
   }
   for (const child of [...template.content.children]) {
-    if (!PERSISTENT_DIALOGS.has(child.id) || !host.querySelector(`#${child.id}`)) host.append(child);
-    else if (child.id === "reassign-dialog" && !host.querySelector("#reassign-dialog").open) {
-      host.querySelector("#reassign-scope").innerHTML = child.querySelector("#reassign-scope").innerHTML;
-    }
+    if (!host.querySelector(`#${child.id}`)) host.append(child);
   }
 }
 

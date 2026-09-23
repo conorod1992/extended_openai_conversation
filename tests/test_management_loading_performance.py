@@ -1162,6 +1162,76 @@ async def test_cached_debug_setup_respects_completed_step_markers(monkeypatch) -
 
 
 
+async def test_scope_catalog_archive_only_skips_memory_managers(monkeypatch) -> None:
+    """Archive scope requests must not initialize persistent or temporary memory."""
+    archive_counts = {"user:admin": 3}
+    archive = SimpleNamespace(scope_counts=lambda: archive_counts)
+    projection = AsyncMock(return_value=[{"scope_id": "user:admin"}])
+    archive_loader = AsyncMock(return_value=archive)
+    memory_loader = AsyncMock(side_effect=AssertionError("persistent memory should stay cold"))
+    temporary_loader = AsyncMock(side_effect=AssertionError("temporary memory should stay cold"))
+    monkeypatch.setattr(loading, "async_get_archive", archive_loader)
+    monkeypatch.setattr(loading, "async_get_memory", memory_loader)
+    monkeypatch.setattr(loading, "async_get_temporary_memory", temporary_loader)
+    monkeypatch.setattr(loading, "async_scope_catalog_projection", projection)
+
+    hass = SimpleNamespace()
+    result = await loading.async_scope_catalog(
+        hass,
+        "admin",
+        True,
+        "entry-1",
+        "agent-1",
+        scope_kind="archive",
+    )
+
+    assert result == {"scopes": [{"scope_id": "user:admin"}]}
+    archive_loader.assert_awaited_once_with(hass, "entry-1", "agent-1")
+    memory_loader.assert_not_awaited()
+    temporary_loader.assert_not_awaited()
+    projection.assert_awaited_once_with(
+        hass,
+        "admin",
+        True,
+        {},
+        archive_counts,
+        {},
+    )
+
+
+async def test_scope_catalog_memory_kinds_load_only_requested_manager(monkeypatch) -> None:
+    """Persistent and Temporary Memory scope requests stay independent."""
+    persistent = SimpleNamespace(scope_counts=lambda: {"admin": 2})
+    temporary = SimpleNamespace(owner_counts=lambda: {"user:admin": 4})
+    memory_loader = AsyncMock(return_value=persistent)
+    temporary_loader = AsyncMock(return_value=temporary)
+    archive_loader = AsyncMock(side_effect=AssertionError("archive should stay cold"))
+    projection = AsyncMock(side_effect=[
+        [{"scope_id": "persistent"}],
+        [{"scope_id": "temporary"}],
+    ])
+    monkeypatch.setattr(loading, "async_get_memory", memory_loader)
+    monkeypatch.setattr(loading, "async_get_temporary_memory", temporary_loader)
+    monkeypatch.setattr(loading, "async_get_archive", archive_loader)
+    monkeypatch.setattr(loading, "async_scope_catalog_projection", projection)
+
+    hass = SimpleNamespace()
+    persistent_result = await loading.async_scope_catalog(
+        hass, "admin", True, "entry-1", "agent-1", scope_kind="memory"
+    )
+    temporary_result = await loading.async_scope_catalog(
+        hass, "admin", True, "entry-1", "agent-1", scope_kind="temporary"
+    )
+
+    assert persistent_result == {"scopes": [{"scope_id": "persistent"}]}
+    assert temporary_result == {"scopes": [{"scope_id": "temporary"}]}
+    memory_loader.assert_awaited_once_with(hass, "entry-1", "agent-1")
+    temporary_loader.assert_awaited_once_with(hass, "entry-1", "agent-1")
+    archive_loader.assert_not_awaited()
+    assert projection.await_args_list[0].args[3:] == ({"admin": 2}, {}, {})
+    assert projection.await_args_list[1].args[3:] == ({}, {}, {"user:admin": 4})
+
+
 async def test_scope_catalog_loads_all_scope_managers_concurrently(monkeypatch) -> None:
     """Independent scope managers must start together rather than as a waterfall."""
     memory_started = asyncio.Event()

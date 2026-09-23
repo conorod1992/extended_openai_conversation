@@ -12,9 +12,6 @@ function preparePersistentShell(panel) {
   const dialogHost = root.querySelector("#eoc-dialog-host");
   if (!shell || !main || !dialogHost) return false;
 
-  const template = document.createElement("template");
-  template.innerHTML = panel._eocDialogMarkup;
-  panel._eocDialogTemplate = template.content;
   bindDynamicBase(panel);
   return true;
 }
@@ -231,4 +228,3 @@ export function showInitialLoading(panel) {
   main.dataset.eocInitialLoading = "";
   return true;
 }
-

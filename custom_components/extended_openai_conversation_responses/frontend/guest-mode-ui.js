@@ -65,6 +65,39 @@ export function findPersistentMemory(panel, id) {
   return collectionState(panel).items.get(String(id));
 }
 
+export function applyPersistentMemoryMutation(panel, response, {deletedId = null, sourceScope = panel._scopeId} = {}) {
+  if (!panel._result || !Array.isArray(panel._result.memories)) return false;
+  if (deletedId && response?.deleted !== 1) return false;
+  const memory = response?.memory;
+  if (!deletedId && !memory?.memory_id) return false;
+  const id = String(deletedId || memory.memory_id);
+  const collection = collectionState(panel);
+  const search = browserState(panel);
+  clearTimeout(search.memorySearchTimer);
+  search.memorySearchSequence++;
+  const remainsHere = !deletedId && response.scope_id === sourceScope;
+  if (remainsHere) collection.items.set(id, memory);
+  else collection.items.delete(id);
+  const query = browserState(panel).memoryQuery;
+  const matchesQuery = !query || memorySearchProjection(memory).includes(query);
+  const oldPage = panel._result.memories || [];
+  const wasInPage = oldPage.some(item => String(item.memory_id) === id);
+  let page = oldPage.filter(item => String(item.memory_id) !== id);
+  if (remainsHere && matchesQuery) page.push(memory);
+  page.sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)));
+  const limit = Number(panel._result.limit) || MEMORY_PAGE_SIZE;
+  const hasMore = Boolean(panel._result.has_more || page.length > limit);
+  page = page.slice(0, Math.max(limit, oldPage.length));
+  const pageDelta = Number(remainsHere && matchesQuery) - Number(wasInPage);
+  panel._result = {
+    ...panel._result, memories: page, has_more: hasMore,
+    ...(Number.isFinite(panel._result.total) ? {total: Math.max(0, panel._result.total + pageDelta)} : {}),
+  };
+  collection.result = panel._result;
+  if (panel._query.trim().toLocaleLowerCase() !== search.memoryQuery) scheduleMemorySearch(panel);
+  return true;
+}
+
 function memoryCard(panel, memory) {
   return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}" ${memorySearchProjection(memory).includes(panel._query.trim().toLocaleLowerCase()) ? "" : "hidden"}><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}"><p class="primary-copy">${panel._e(memory.content)}</p><p class="meta">${panel._e(memory.category)} · ${panel._e(memory.source)} · Updated ${panel._e(panel._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${panel._e(memory.memory_id)}">Edit</button>${panel._data?.is_admin && panel._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${panel._e(memory.memory_id)}">Assign to user</button>` : ""}<button type="button" class="danger delete-memory" data-id="${panel._e(memory.memory_id)}">Delete</button></div></article>`;
 }

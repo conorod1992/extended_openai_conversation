@@ -65,7 +65,7 @@ test("unchanged renders retain toolbar, navigation, guidance and main nodes", as
   expect(result.records).toBe(0);
 });
 
-test("dialog data invalidates independently; page changes still refresh and bind controls", async ({page}) => {
+test("unrelated routes omit feature editors; page changes still refresh and bind controls", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));
   await expect(page.locator('extended-openai-management-panel [data-config="chat_model"]')).toBeVisible();
@@ -75,11 +75,8 @@ test("dialog data invalidates independently; page changes still refresh and bind
     const root = panel.shadowRoot;
     renderManagement(panel);
     const main = root.querySelector("main").firstElementChild;
-    const dialog = root.querySelector("#reassign-dialog");
-    const original = panel._dialogs.bind(panel);
-    panel._dialogs = () => original().replace('id="reassign-scope"', 'data-regression="updated" id="reassign-scope"');
     renderManagement(panel);
-    const dialogOnly = {mainStable:root.querySelector("main").firstElementChild === main, dialogStable:root.querySelector("#reassign-dialog") === dialog, updated:root.querySelector("#reassign-scope").dataset.regression};
+    const dialogOnly = {mainStable:root.querySelector("main").firstElementChild === main, featureEditors:root.querySelectorAll("#knowledge-dialog,#memory-dialog,#temporary-memory-dialog,#session-dialog,#reassign-dialog").length, confirmation:Boolean(root.querySelector("#confirm-dialog"))};
     panel._error = "Page refresh regression marker";
     renderManagement(panel);
     const pageUpdated = root.querySelector("main").textContent.includes(panel._error);
@@ -87,7 +84,7 @@ test("dialog data invalidates independently; page changes still refresh and bind
     renderManagement(panel);
     return {dialogOnly, pageUpdated, restored:Boolean(root.querySelector('[data-config="chat_model"]'))};
   }, frontend);
-  expect(result).toEqual({dialogOnly:{mainStable:true, dialogStable:true, updated:"updated"}, pageUpdated:true, restored:true});
+  expect(result).toEqual({dialogOnly:{mainStable:true, featureEditors:0, confirmation:true}, pageUpdated:true, restored:true});
   await page.locator('extended-openai-management-panel [data-config="__title"]').fill("Changed title");
   await expect(page.locator("extended-openai-management-panel .save-bar")).toBeVisible();
   await expectHarnessClean(page, errors);
