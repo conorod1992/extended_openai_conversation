@@ -7,6 +7,22 @@ import pytest
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import model_catalog
+from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_AUTO,
+    API_MODE_CHAT_COMPLETIONS,
+    API_MODE_RESPONSES,
+    CONF_API_MODE,
+    CONF_CHAT_MODEL,
+    CONF_MAX_TOKENS,
+    CONF_TEMPERATURE,
+    CONF_TOP_P,
+    DEFAULT_AI_TASK_OPTIONS,
+)
+from custom_components.extended_openai_conversation_responses.helpers import (
+    get_api_mode,
+    get_model_config,
+    get_token_param_for_model,
+)
 from custom_components.extended_openai_conversation_responses.model_capabilities import (
     ModelCapabilityError,
     get_model_capabilities,
@@ -301,3 +317,104 @@ def test_request_shape_o3_token_field_by_api():
 
 def test_select_api_path_prefers_responses_for_astra_tools():
     assert select_api_path("gpt-6-astra", "auto", True) == "responses"
+
+
+MODEL = "gpt-6-astra"
+
+
+def test_gpt6_astra_uses_reasoning_model_parameter_profile() -> None:
+    """Astra should expose its exact v2 reasoning, sampling, and API capabilities."""
+    config = get_model_config(MODEL)
+
+    assert config["reasoning"] == {
+        "supported": True,
+        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "openai_default": None,
+    }
+    assert config["temperature"]["support"] == "never"
+    assert config["top_p"]["support"] == "never"
+    assert config["api"] == {
+        "responses": True,
+        "chat_completions": True,
+        "completions_legacy": False,
+    }
+    assert config["function_calling"] == {
+        "responses": True,
+        "chat_completions": False,
+        "preferred_api": "responses",
+    }
+    assert config["limits"] == {
+        "context_tokens": 1_050_000,
+        "max_output_tokens": 128_000,
+    }
+    assert config["recommended_profile"]["reasoning_effort"] == "low"
+    assert get_token_param_for_model(MODEL) == "max_completion_tokens"
+
+
+@pytest.mark.parametrize(
+    ("configured_mode", "expected"),
+    [
+        (API_MODE_AUTO, API_MODE_RESPONSES),
+        (API_MODE_CHAT_COMPLETIONS, API_MODE_CHAT_COMPLETIONS),
+        (API_MODE_RESPONSES, API_MODE_RESPONSES),
+    ],
+)
+def test_gpt6_astra_api_mode_selection(configured_mode: str, expected: str) -> None:
+    """Auto should prefer Responses without overriding an explicit API choice."""
+    assert get_api_mode(configured_mode, MODEL) == expected
+
+
+@pytest.mark.parametrize(
+    "base_options",
+    [
+        {CONF_API_MODE: API_MODE_AUTO},
+        DEFAULT_AI_TASK_OPTIONS,
+    ],
+    ids=["conversation", "ai-task"],
+)
+def test_gpt6_astra_auto_payloads_use_responses_fields(
+    base_options: dict[str, object],
+) -> None:
+    """Conversation and AI Task options should build the same compatible payload."""
+    options = {
+        **base_options,
+        CONF_CHAT_MODEL: MODEL,
+        CONF_API_MODE: API_MODE_AUTO,
+        CONF_MAX_TOKENS: 1234,
+        CONF_TEMPERATURE: 0.2,
+        CONF_TOP_P: 0.7,
+    }
+
+    snapshot = build_provider_request_snapshot(options, {})
+    kwargs = snapshot.api_kwargs
+
+    assert snapshot.api_mode == API_MODE_RESPONSES
+    assert kwargs["model"] == MODEL
+    assert kwargs["max_output_tokens"] == 1234
+    assert kwargs["store"] is False
+    assert "max_completion_tokens" not in kwargs
+    assert "max_tokens" not in kwargs
+    assert "temperature" not in kwargs
+    assert "top_p" not in kwargs
+
+
+def test_gpt6_astra_chat_completions_uses_max_completion_tokens() -> None:
+    """An explicit Chat Completions choice should use Astra's compatible token field."""
+    snapshot = build_provider_request_snapshot(
+        {
+            CONF_CHAT_MODEL: MODEL,
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_MAX_TOKENS: 640,
+            CONF_TEMPERATURE: 0.2,
+            CONF_TOP_P: 0.7,
+        },
+        {},
+    )
+    kwargs = snapshot.api_kwargs
+
+    assert snapshot.api_mode == API_MODE_CHAT_COMPLETIONS
+    assert kwargs["max_completion_tokens"] == 640
+    assert "max_output_tokens" not in kwargs
+    assert "max_tokens" not in kwargs
+    assert "temperature" not in kwargs
+    assert "top_p" not in kwargs

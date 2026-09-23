@@ -10,7 +10,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_MEMORY_ENABLED,
+    CONF_MEMORY_RETRIEVAL_MODE,
     CONF_SHARED_MEMORY_MODE,
+    MEMORY_RETRIEVAL_HYBRID,
     SHARED_MEMORY_EXPLICIT,
 )
 from custom_components.extended_openai_conversation_responses.continuity import (
@@ -592,3 +594,33 @@ def test_scope_composition_and_strict_write_destinations() -> None:
         assert entity._current_readable_memory_scope_ids(context) == []
     finally:
         _ACTIVE_SCOPE.reset(token)
+
+
+async def test_explicit_memory_search_uses_configured_hybrid_semantics() -> None:
+    """Model-facing search shares the same Hybrid preparation path as auto retrieval."""
+    entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
+    entity.subentry = SimpleNamespace(
+        data={CONF_MEMORY_RETRIEVAL_MODE: MEMORY_RETRIEVAL_HYBRID}
+    )
+    expected = [SimpleNamespace(memory_id="one")]
+    entity._memory = SimpleNamespace(
+        async_prepare_hybrid=AsyncMock(return_value=[1.0, 0.0]),
+        async_search=AsyncMock(return_value=expected),
+    )
+
+    result = await entity._async_search_memories(
+        ["alice"], "Oscar breed", 5, "pets"
+    )
+
+    assert result == expected
+    entity._memory.async_prepare_hybrid.assert_awaited_once_with(
+        ["alice"], "Oscar breed"
+    )
+    entity._memory.async_search.assert_awaited_once_with(
+        ["alice"],
+        "Oscar breed",
+        "pets",
+        5,
+        query_embedding=[1.0, 0.0],
+        hybrid=True,
+    )
