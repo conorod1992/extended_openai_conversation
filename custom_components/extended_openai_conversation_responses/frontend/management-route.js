@@ -1,5 +1,5 @@
 import {ensureGuideModule} from "./guide-page.js";
-import {ensureOverviewModule} from "./overview-page.js";
+import {ensureOverviewModule, startOverviewDetailReads} from "./overview-page.js";
 import {SECTION_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
@@ -353,14 +353,14 @@ const WS_TYPE = "extended_openai_conversation_responses/management";
 export const AGENT_KEY = "extended-openai-agent";
 export const ENTRY_KEY = "extended-openai-agent-entry";
 
-export function applyOverviewResult(panel, result) {
+export function applyOverviewResult(panel, result, {cache = true} = {}) {
   const agent = panel._selectedAgent?.();
   if (!agent || !result) return false;
   if (result.agent) Object.assign(agent, result.agent);
   const {agent: _agent, ...overview} = result;
   panel._contentData = null;
   panel._result = overview;
-  if (panel._sectionCacheKey && panel._sectionCache) {
+  if (cache && panel._sectionCacheKey && panel._sectionCache) {
     const key = panel._sectionCacheKey("overview");
     if (key) {
       panel._sectionCache.set(key, overview);
@@ -383,10 +383,10 @@ export function startStoredOverviewPrefetch(
   const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
   if (!subentryId || !entryId) return null;
   panel._markColdLifecycle?.("overview-summary-start");
-  const overviewSummary = panel._hass.callWS({
+  const overviewPrimary = panel._hass.callWS({
     type: WS_TYPE,
     section: "overview",
-    action: "summary",
+    action: "primary",
     entry_id: entryId,
     subentry_id: subentryId,
   }).then(
@@ -403,10 +403,10 @@ export function startStoredOverviewPrefetch(
     entryId,
     subentryId,
     overviewAsset,
-    overviewSummary,
+    overviewPrimary,
     promise: Promise.allSettled([
       overviewAsset,
-      overviewSummary,
+      overviewPrimary,
     ]),
   };
 }
@@ -512,14 +512,18 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
     && selected?.entry_id === prefetch.entryId
     && overviewSelected
   ) {
-    const overviewResult = await prefetch.overviewSummary.then(
+    const overviewResult = await prefetch.overviewPrimary.then(
       (value) => ({status: "fulfilled", value}),
       (reason) => ({status: "rejected", reason}),
     );
     if (panel._viewKey?.() !== "overview" || panel._loadToken !== initialToken
         || panel._agentId !== prefetch.subentryId) return;
     if (overviewResult.status === "fulfilled") {
-      applyOverviewResult(panel, overviewResult.value);
+      applyOverviewResult(panel, overviewResult.value, {cache: false});
+      void startOverviewDetailReads(panel, {
+        loadToken: initialToken,
+        cacheGeneration: panel._cacheGeneration,
+      });
       return;
     }
     // A speculative stored-ID request can fail after an agent was recreated.

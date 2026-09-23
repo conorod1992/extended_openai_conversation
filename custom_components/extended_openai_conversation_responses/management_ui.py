@@ -2021,11 +2021,31 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
 
 async def async_overview_command(request: _ManagementRequest) -> dict[str, Any]:
     """Load and project the selected agent's bounded Overview."""
-    from .management_loading_performance import async_overview_summary
+    from .management_loading_performance import (
+        async_overview_detail,
+        async_overview_primary,
+        async_overview_summary,
+    )
 
-    if request.message["action"] == "summary":
+    action = request.message["action"]
+    if action == "summary":
         return await async_overview_summary(
             request.hass, request.entry, request.subentry, is_admin=request.is_admin
+        )
+    if action == "primary":
+        return await async_overview_primary(
+            request.hass, request.entry, request.subentry, is_admin=request.is_admin
+        )
+    if action == "detail":
+        kind = request.message.get("kind")
+        if not isinstance(kind, str):
+            raise HomeAssistantError("kind is required")
+        return await async_overview_detail(
+            request.hass,
+            request.entry,
+            request.subentry,
+            is_admin=request.is_admin,
+            kind=kind,
         )
     return _unknown_management_action(request)
 
@@ -2219,6 +2239,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("title"): str,
         vol.Optional("description"): str,
         vol.Optional("category"): str,
+        vol.Optional("kind"): str,
         vol.Optional("start_date"): str,
         vol.Optional("end_date"): str,
         vol.Optional("active_from"): str,

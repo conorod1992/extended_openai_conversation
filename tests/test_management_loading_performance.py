@@ -995,6 +995,50 @@ from custom_components.extended_openai_conversation_responses import (
 )
 
 
+async def test_overview_primary_does_not_initialize_storage_managers(monkeypatch) -> None:
+    hass, entry, subentry = _hass_with_agent()
+    for name in ("async_get_usage", "async_get_memory", "async_get_knowledge", "async_get_guest_mode"):
+        monkeypatch.setattr(
+            loading,
+            name,
+            AsyncMock(side_effect=AssertionError(f"{name} should stay cold")),
+        )
+
+    result = await loading.async_overview_primary(
+        hass, entry, subentry, is_admin=True
+    )
+
+    assert result["loading"] == {
+        "usage": True,
+        "memory": True,
+        "knowledge": True,
+        "guest_mode": True,
+    }
+    assert result["usage"] == {}
+
+
+async def test_overview_detail_loads_only_requested_manager(monkeypatch) -> None:
+    hass, entry, subentry = _hass_with_agent()
+    usage = AsyncMock(side_effect=AssertionError("usage should stay cold"))
+    memory = AsyncMock(return_value=SimpleNamespace(memory_count=3))
+    knowledge = AsyncMock(side_effect=AssertionError("knowledge should stay cold"))
+    guest = AsyncMock(side_effect=AssertionError("guest should stay cold"))
+    monkeypatch.setattr(loading, "async_get_usage", usage)
+    monkeypatch.setattr(loading, "async_get_memory", memory)
+    monkeypatch.setattr(loading, "async_get_knowledge", knowledge)
+    monkeypatch.setattr(loading, "async_get_guest_mode", guest)
+
+    result = await loading.async_overview_detail(
+        hass, entry, subentry, is_admin=True, kind="memory"
+    )
+
+    assert result["agent"]["memory_count"] == 3
+    memory.assert_awaited_once_with(hass, "entry-1", "agent-1")
+    usage.assert_not_awaited()
+    knowledge.assert_not_awaited()
+    guest.assert_not_awaited()
+
+
 async def test_overview_summary_isolates_each_manager_failure(monkeypatch) -> None:
     """A failed optional manager must degrade the summary instead of failing it."""
     hass, entry, subentry = _hass_with_agent()

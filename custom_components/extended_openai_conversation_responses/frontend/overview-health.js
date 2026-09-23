@@ -128,6 +128,16 @@ function memoryCheck(facts) {
       action: action("data-memory", "memory-settings"),
     };
   }
+  if (memory.loading === true) {
+    return {
+      id: "memory",
+      state: "unknown",
+      title: "Persistent memory",
+      value: "Loading…",
+      detail: "Loading the current persistent-memory status.",
+      action: action("data-memory", "memory-settings"),
+    };
+  }
   if (memory.available === false) {
     return {
       id: "memory",
@@ -157,6 +167,16 @@ function knowledgeCheck(facts) {
       title: "Knowledge Library",
       value: "Off by choice",
       detail: "Knowledge Library access is optional and is currently disabled.",
+      action: action("data-memory", "knowledge"),
+    };
+  }
+  if (knowledge.loading === true) {
+    return {
+      id: "knowledge",
+      state: "unknown",
+      title: "Knowledge Library",
+      value: "Loading…",
+      detail: "Loading the stored Knowledge source count.",
       action: action("data-memory", "knowledge"),
     };
   }

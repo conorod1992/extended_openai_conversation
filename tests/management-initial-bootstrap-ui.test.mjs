@@ -12,7 +12,7 @@ assert.match(source, /main\.dataset\.eocInitialLoading/);
 assert.match(source, /panel\._loading\?\.\(\)/);
 assert.match(source, /Promise\.allSettled\(\[/);
 assert.match(source, /section: "overview"/);
-assert.match(source, /action: "summary"/);
+assert.match(source, /action: "primary"/);
 assert.match(source, /type: WS_TYPE, action: "agents"/);
 assert.match(source, /extended-openai-agent-entry/);
 
@@ -92,7 +92,7 @@ const load = module.loadAgentsWithOverviewPrefetch(panel);
 await Promise.resolve();
 assert.equal(calls.length, 2);
 assert.equal(calls.some((item) => item.action === "agents"), true);
-assert.equal(calls.some((item) => item.section === "overview" && item.action === "summary"), true);
+assert.equal(calls.some((item) => item.section === "overview" && item.action === "primary"), true);
 assert.equal(calls.some((item) => item.action === "snapshot"), false,
   "secondary Broadcast does not compete with the initial Overview reads");
 
