@@ -62,7 +62,12 @@ jobs:
         run: |
           for tag in ha-stable "bench-ha-${GITHUB_SHA}" browser-stable \
             "bench-browser-full-${GITHUB_SHA}" "bench-browser-shell-${GITHUB_SHA}"; do
-            bytes="$(docker buildx imagetools inspect --raw "${IMAGE}:${tag}" | jq '[.layers[].size] | add')"
+            manifest="$(docker buildx imagetools inspect --raw "${IMAGE}:${tag}")"
+            digest="$(jq -r '.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' <<< "$manifest" | head -n 1)"
+            if [ -n "$digest" ]; then
+              manifest="$(docker buildx imagetools inspect --raw "${IMAGE}@${digest}")"
+            fi
+            bytes="$(jq '[.layers[].size] | add' <<< "$manifest")"
             echo "${tag} ${bytes} bytes"
           done
 
