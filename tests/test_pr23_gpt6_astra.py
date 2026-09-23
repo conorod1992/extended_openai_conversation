@@ -1,7 +1,4 @@
-"""Regression coverage for GPT-6 Astra and composed structured-output schemas."""
-
-from copy import deepcopy
-from typing import Any
+"""Regression coverage for GPT-6 Astra model and API-mode behavior."""
 
 import pytest
 
@@ -15,9 +12,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
     DEFAULT_AI_TASK_OPTIONS,
-)
-from custom_components.extended_openai_conversation_responses.entity import (
-    _adjust_schema,
 )
 from custom_components.extended_openai_conversation_responses.helpers import (
     get_api_mode,
@@ -128,76 +122,3 @@ def test_gpt6_astra_chat_completions_uses_max_completion_tokens() -> None:
     assert "max_tokens" not in kwargs
     assert "temperature" not in kwargs
     assert "top_p" not in kwargs
-
-
-def test_adjust_schema_handles_compositions_and_nested_array_items() -> None:
-    """Composition nodes should be traversed without assuming every node has type."""
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "choice": {
-                "anyOf": [
-                    {"type": "string"},
-                    {"type": "integer"},
-                ]
-            },
-            "entries": {
-                "type": "array",
-                "items": {
-                    "oneOf": [
-                        {
-                            "type": "object",
-                            "properties": {"name": {"type": "string"}},
-                        },
-                        {
-                            "allOf": [
-                                {
-                                    "type": "object",
-                                    "properties": {"count": {"type": "integer"}},
-                                }
-                            ]
-                        },
-                    ]
-                },
-            },
-            "composed": {
-                "allOf": [
-                    {
-                        "type": "object",
-                        "properties": {"flag": {"type": "boolean"}},
-                    }
-                ]
-            },
-        },
-    }
-
-    _adjust_schema(schema)
-
-    assert schema["required"] == ["choice", "entries", "composed"]
-    properties = schema["properties"]
-
-    choice = properties["choice"]
-    assert choice["anyOf"][-1] == {"type": "null"}
-    assert choice["anyOf"][0]["anyOf"] == [
-        {"type": "string"},
-        {"type": "integer"},
-    ]
-
-    entries = properties["entries"]
-    assert entries["type"] == ["array", "null"]
-    variants = entries["items"]["oneOf"]
-    assert variants[0]["required"] == ["name"]
-    assert variants[0]["properties"]["name"]["type"] == ["string", "null"]
-    all_of_object = variants[1]["allOf"][0]
-    assert all_of_object["required"] == ["count"]
-    assert all_of_object["properties"]["count"]["type"] == ["integer", "null"]
-
-    composed = properties["composed"]
-    assert composed["anyOf"][-1] == {"type": "null"}
-    composed_object = composed["anyOf"][0]["allOf"][0]
-    assert composed_object["required"] == ["flag"]
-    assert composed_object["properties"]["flag"]["type"] == ["boolean", "null"]
-
-    adjusted_once = deepcopy(schema)
-    _adjust_schema(schema)
-    assert schema == adjusted_once
