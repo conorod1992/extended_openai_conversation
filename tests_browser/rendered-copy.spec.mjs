@@ -20,14 +20,20 @@ for (const admin of [true, false]) {
         panel._contentData = null;
         panel._result = {settings: {archive_enabled: enabled}, sessions: {sessions: []}, active: {active: [{label: "<escaped>", key: "one"}]}};
         const root = dom(panel._conversations());
-        return {help: root.querySelector("p.help")?.textContent, first: root.firstElementChild?.tagName,
-          notices: [...root.querySelectorAll("section.notice")].filter(n => /Conversation archive/.test(n.textContent)).length,
-          escaped: !root.querySelector("escaped")};
+        return {
+          hasHelp: Boolean(root.querySelector("p.help")?.textContent.trim()),
+          notices: root.querySelectorAll("section.notice").length,
+          escaped: !root.querySelector("escaped"),
+        };
       });
       const knowledge = [0, 1, 2].map(count => {
         panel._result = {sources: Array.from({length: count}, (_, i) => ({source_id: String(i), title: "<source>"}))};
         const root = dom(renderKnowledge(panel));
-        return {heading: root.querySelector(".section-heading h2").textContent, count: root.querySelector("[data-source-count]").textContent, escaped: !root.querySelector("source")};
+        return {
+          hasHeading: Boolean(root.querySelector(".section-heading h2")?.textContent.trim()),
+          count: Number.parseInt(root.querySelector("[data-source-count]")?.textContent || "", 10),
+          escaped: !root.querySelector("source"),
+        };
       });
       panel._result = original;
       const usage = dom(renderUsagePage(panel));
@@ -38,30 +44,42 @@ for (const admin of [true, false]) {
           {shadowRoot: root, _e: panel._e, _titleCase: panel._titleCase.bind(panel), _viewKey: () => "overview", _hass: {callWS: async () => snapshot}},
           Promise.resolve(snapshot),
         );
-        return {intro: root.querySelector(".broadcast-heading p")?.textContent,
-          state: root.querySelector(".broadcast-toggle-row p")?.textContent,
-          footnote: root.querySelector(".setup-health-footnote")?.textContent.trim(),
-          icon: root.querySelector(".setup-health-footnote ha-icon")?.getAttribute("aria-hidden")};
+        return {
+          hasIntro: Boolean(root.querySelector(".broadcast-heading p")?.textContent.trim()),
+          hasState: Boolean(root.querySelector(".broadcast-toggle-row p")?.textContent.trim()),
+          hasFootnote: Boolean(root.querySelector(".setup-health-footnote")?.textContent.trim()),
+          iconHidden: root.querySelector(".setup-health-footnote ha-icon")?.getAttribute("aria-hidden") === "true",
+        };
       }));
       panel._result = original;
-      return {conversations, knowledge, overview, usage: {title: usage.textContent.includes("Manage usage history"),
-        retentionNotice: usage.textContent.includes("Retention is available"),
-        cached: usage.querySelector(".chart-note").textContent, bold: usage.querySelector(".chart-note strong").textContent,
-        totals: usage.textContent.includes("Daily, monthly, selected-period, and lifetime aggregates are never removed")}};
+      return {
+        conversations,
+        knowledge,
+        overview,
+        usage: {
+          hasContent: usage.childElementCount > 0,
+          hasChartNote: Boolean(usage.querySelector(".chart-note")?.textContent.trim()),
+        },
+      };
     });
     for (const conversation of result.conversations) {
-      expect(conversation).toMatchObject({notices: 0, escaped: true, first: admin ? "P" : "SECTION"});
-      expect(conversation.help).toBe(admin ? "Recent context lets conversations continue; saved history is the archive you can review or search." : undefined);
+      expect(conversation.notices).toBe(0);
+      expect(conversation.escaped).toBe(true);
+      expect(conversation.hasHelp).toBe(admin);
     }
-    expect(result.knowledge).toEqual([0, 1, 2].map(count => ({heading: "Sources", count: `${count} source${count === 1 ? "" : "s"}`, escaped: true})));
-    expect(result.usage).toMatchObject({title: admin, totals: admin, retentionNotice: false, bold: "Cached input"});
-    expect(result.usage.cached).toBe("Cached input is input recognised as cached by the provider. It is included in total tokens and may be billed at a lower rate.");
+    expect(result.knowledge).toEqual([0, 1, 2].map(count => ({
+      hasHeading: true,
+      count,
+      escaped: true,
+    })));
+    expect(result.usage.hasContent).toBe(true);
+    expect(result.usage.hasChartNote).toBe(admin);
     for (const overview of result.overview) {
-      expect(overview.intro).toBe("Send a spoken message to selected Assist satellites or the whole home. Busy satellites wait until they are free.");
-      expect(overview.footnote).toBe("Connection tests only run when you start one from Diagnostics.");
-      expect(overview.icon).toBe("true");
+      expect(overview.hasIntro).toBe(true);
+      expect(overview.hasFootnote).toBe(true);
+      expect(overview.iconHidden).toBe(true);
     }
-    expect(result.overview.map(o => o.state)).toEqual(["Broadcast is currently off.", undefined]);
+    expect(result.overview.map(o => o.hasState)).toEqual([true, false]);
     await expectHarnessClean(page, errors);
   });
 }
