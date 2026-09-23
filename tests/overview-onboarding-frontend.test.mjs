@@ -200,8 +200,9 @@ const overviewPage = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page.js", import.meta.url),
   "utf8",
 );
-assert.match(await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js", import.meta.url), "utf8"), /overview-onboarding\.js/);
-assert.match(overviewPage, /bindGettingStarted\(panel\)/);
+assert.doesNotMatch(await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js", import.meta.url), "utf8"), /overview-onboarding\.js/);
+assert.match(overviewPage, /import\("\.\/overview-onboarding\.js"\)/);
+assert.match(overviewPage, /module\.bindGettingStarted\(panel\)/);
 assert.match(overviewPage, /startOverviewBroadcastSnapshot\(panel\)/);
 const overviewImpl = await readFile(
   new URL("../custom_components/extended_openai_conversation_responses/frontend/overview-page-impl.js", import.meta.url),
