@@ -439,16 +439,17 @@ async def _child_main() -> None:
         auth_data = json.loads((sync_dir / _AUTH_FILE).read_text(encoding="utf-8"))
         assert hass.auth.async_validate_access_token(auth_data["access_token"]) is not None
 
-    # HA's delayed writes must contain this actual entry and refresh token before
-    # the parent may SIGKILL the first generation.
     await hass.async_block_till_done()
-    auth_data = json.loads((sync_dir / _AUTH_FILE).read_text(encoding="utf-8"))
-    await _wait_for_stored_values(
-        config_dir / ".storage" / "auth", auth_data["refresh_token"]
-    )
-    await _wait_for_stored_values(
-        config_dir / ".storage" / "core.config_entries", entry.entry_id
-    )
+    if generation == 1:
+        # Only this generation is SIGKILLed. Its entry and refresh token must
+        # reach disk before the browser begins the crash/recovery journey.
+        auth_data = json.loads((sync_dir / _AUTH_FILE).read_text(encoding="utf-8"))
+        await _wait_for_stored_values(
+            config_dir / ".storage" / "auth", auth_data["refresh_token"]
+        )
+        await _wait_for_stored_values(
+            config_dir / ".storage" / "core.config_entries", entry.entry_id
+        )
 
     (sync_dir / f"ha-ready-{generation}").write_text("ready\n", encoding="utf-8")
     await asyncio.Event().wait()
