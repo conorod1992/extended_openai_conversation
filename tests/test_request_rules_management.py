@@ -136,6 +136,7 @@ async def test_revision_guard_rejects_bad_or_stale_writer_without_saving() -> No
 
     assert rules.revision() == revision
     assert store.saves == 0
+    assert "revision" not in await rules.async_backup_data()
 
 
 async def test_revision_guard_accepts_current_revision_and_changes_after_save() -> None:
