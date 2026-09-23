@@ -1,4 +1,4 @@
-"""Model capability catalogue v2 and conservative compatibility helpers."""
+"""Versioned model capabilities and conservative compatibility helpers."""
 
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ _METADATA_REQUIRED = {
     "recommended_profile",
     "service_tiers",
     "explicit_prompt_cache",
+    "structured_outputs",
+    "responses_web_search",
 }
 _MODEL_WRAPPER_KEYS = {"id", "display_name", "kind"}
 _METADATA_OPTIONAL = {"alias_of", "lifecycle_note", "auto_api"}
@@ -58,6 +60,7 @@ def _validate_sampling(value: Any, efforts: list[str], label: str) -> None:
         if (
             not isinstance(allowed, list)
             or not allowed
+            or any(not isinstance(item, str) for item in allowed)
             or len(set(allowed)) != len(allowed)
             or any(item not in efforts for item in allowed)
         ):
@@ -88,11 +91,6 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
     functions = value["function_calling"]
     _keys(functions, {"responses", "chat_completions", "preferred_api"})
     if (
-        type(functions["responses"]) is not bool
-        or type(functions["chat_completions"]) is not bool
-    ):
-        raise ValueError("Function-calling values must be boolean")
-    if (
         functions["preferred_api"] not in _APIS
         or not value["api"][functions["preferred_api"]]
     ):
@@ -115,6 +113,22 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
         and reasoning["openai_default"] not in efforts
     ):
         raise ValueError("Invalid OpenAI reasoning default")
+    for api in _APIS:
+        support = functions[api]
+        if type(support) is bool:
+            continue
+        _keys(support, {"support", "allowed_reasoning_efforts"})
+        if support["support"] != "conditional":
+            raise ValueError("Invalid function-calling support")
+        allowed = support["allowed_reasoning_efforts"]
+        if (
+            not isinstance(allowed, list)
+            or not allowed
+            or any(not isinstance(item, str) for item in allowed)
+            or len(set(allowed)) != len(allowed)
+            or any(item not in efforts for item in allowed)
+        ):
+            raise ValueError("Invalid conditional function-calling efforts")
 
     _validate_sampling(value["temperature"], efforts, "temperature")
     _validate_sampling(value["top_p"], efforts, "top_p")
@@ -156,6 +170,8 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
             for item in service_tiers
         )
         or type(value["explicit_prompt_cache"]) is not bool
+        or type(value["structured_outputs"]) is not bool
+        or type(value["responses_web_search"]) is not bool
     ):
         raise ValueError("Invalid service-tier or compatibility metadata")
 
@@ -170,15 +186,15 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
 
 
 def validate_catalog(value: Any) -> dict[str, Any]:
-    """Validate one strict model-capability catalogue v3 document."""
+    """Validate one strict model-capability catalogue v4 document."""
     _keys(value, {"schema_version", "catalog_version", "defaults", "models"})
     if (
-        value.get("schema_version") != 3
+        value.get("schema_version") != 4
         or type(value.get("catalog_version")) is not int
     ):
         raise ValueError("Unsupported model catalogue schema")
-    if value["catalog_version"] < 3:
-        raise ValueError("catalog_version must be at least 2")
+    if value["catalog_version"] < 4:
+        raise ValueError("catalog_version must be at least 4")
     _validate_metadata(value["defaults"])
     if value["defaults"]["status"] != "unknown":
         raise ValueError("Catalogue defaults must describe unknown models")
@@ -229,10 +245,11 @@ def parse_catalog(raw: bytes) -> dict[str, Any]:
 
 BUNDLED_CATALOG = parse_catalog(Path(__file__).with_suffix(".json").read_bytes())
 _active = BUNDLED_CATALOG
+_active_by_id = {item["id"]: item for item in BUNDLED_CATALOG["models"]}
 
 
 def migrate_catalog_v1(value: Any) -> dict[str, Any]:
-    """Replace ambiguous v1 booleans with authoritative bundled v2 metadata."""
+    """Replace ambiguous v1 booleans with authoritative bundled metadata."""
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         raise ValueError("Not a model catalogue v1 document")
     migrated = deepcopy(BUNDLED_CATALOG)
@@ -262,6 +279,21 @@ def migrate_catalog_v2(value: Any) -> dict[str, Any]:
     migrate_metadata(migrated["defaults"])
     for model in migrated["models"]:
         migrate_metadata(model, model.get("id"))
+    return migrate_catalog_v3(migrated)
+
+
+def migrate_catalog_v3(value: Any) -> dict[str, Any]:
+    """Retain v3 function booleans and prior hosted/structured behavior."""
+    if not isinstance(value, dict) or value.get("schema_version") != 3:
+        raise ValueError("Not a model catalogue v3 document")
+    migrated = deepcopy(value)
+    migrated["schema_version"] = 4
+    migrated["catalog_version"] = max(4, migrated["catalog_version"])
+    migrated["defaults"]["structured_outputs"] = False
+    migrated["defaults"]["responses_web_search"] = False
+    for model in migrated["models"]:
+        model.setdefault("structured_outputs", True)
+        model.setdefault("responses_web_search", bool(model["api"]["responses"]))
     return validate_catalog(migrated)
 
 
@@ -270,6 +302,8 @@ def validate_or_migrate_catalog(value: Any) -> tuple[dict[str, Any], bool]:
         return migrate_catalog_v1(value), True
     if isinstance(value, dict) and value.get("schema_version") == 2:
         return migrate_catalog_v2(value), True
+    if isinstance(value, dict) and value.get("schema_version") == 3:
+        return migrate_catalog_v3(value), True
     return validate_catalog(value), False
 
 
@@ -347,6 +381,23 @@ def _sampling_rank(capability: dict[str, Any]) -> tuple[int, frozenset[str]]:
     return 0, frozenset()
 
 
+def function_calling_allowed(
+    support: bool | dict[str, Any], effort: str | None
+) -> bool:
+    """Evaluate the small function capability shape for one resolved effort."""
+    if type(support) is bool:
+        return support
+    return effort in support["allowed_reasoning_efforts"]
+
+
+def _function_support_set(support: bool | dict[str, Any]) -> frozenset[str] | None:
+    if support is True:
+        return None  # All efforts.
+    if support is False:
+        return frozenset()
+    return frozenset(support["allowed_reasoning_efforts"])
+
+
 def validate_catalog_transition(
     current: dict[str, Any] | None, candidate: dict[str, Any]
 ) -> None:
@@ -359,15 +410,28 @@ def validate_catalog_transition(
     for model_id in ids:
         old = _model_metadata_from(before, model_id)
         new = _model_metadata_from(after, model_id)
+        if old["status"] == "unknown":
+            # Newly documented models may legitimately be narrower than the
+            # conservative unknown defaults. The manager checks saved choices.
+            continue
         if not set(old["reasoning"]["efforts"]).issubset(new["reasoning"]["efforts"]):
             raise ValueError("Catalogue update cannot remove reasoning effort choices")
         for api in _APIS:
             if old["api"][api] and not new["api"][api]:
                 raise ValueError("Catalogue update cannot remove an API path")
-            if old["function_calling"][api] and not new["function_calling"][api]:
+            old_allowed = _function_support_set(old["function_calling"][api])
+            new_allowed = _function_support_set(new["function_calling"][api])
+            if (old_allowed is None and new_allowed is not None) or (
+                old_allowed is not None
+                and new_allowed is not None
+                and not old_allowed.issubset(new_allowed)
+            ):
                 raise ValueError(
                     "Catalogue update cannot remove function-calling support"
                 )
+        for capability in ("structured_outputs", "responses_web_search", "streaming"):
+            if old[capability] and not new[capability]:
+                raise ValueError(f"Catalogue update cannot remove {capability} support")
         if old["limits"]["max_output_tokens"] > new["limits"]["max_output_tokens"]:
             raise ValueError(
                 "Catalogue update cannot lower max output without migration"
@@ -387,8 +451,9 @@ def validate_catalog_transition(
 
 
 def activate_catalog(catalog: dict[str, Any] | None) -> None:
-    global _active
+    global _active, _active_by_id
     _active = BUNDLED_CATALOG if catalog is None else _effective_catalog(catalog)
+    _active_by_id = {item["id"]: item for item in _active["models"]}
 
 
 def all_reasoning_efforts() -> list[str]:
@@ -401,13 +466,19 @@ def all_reasoning_efforts() -> list[str]:
 
 def model_metadata(model: str) -> dict[str, Any]:
     """Return exact-ID metadata; unknown IDs receive conservative capabilities."""
-    return _model_metadata_from(_active, model)
+    model_id = str(model or "").lower()
+    item = _active_by_id.get(model_id)
+    if item is not None:
+        return deepcopy(item)
+    result = deepcopy(_active["defaults"])
+    result.update({"id": model_id, "display_name": model_id, "kind": "custom"})
+    return result
 
 
 def compatibility_capabilities(
     model: str, *, effort: str | None = None
 ) -> dict[str, Any]:
-    """Expose legacy booleans derived from v2 without making them authoritative."""
+    """Expose legacy projections without making them authoritative."""
     del effort
     metadata = model_metadata(model)
     return {
@@ -428,6 +499,8 @@ def compatibility_capabilities(
         "top_p": deepcopy(metadata["top_p"]),
         "limits": deepcopy(metadata["limits"]),
         "streaming": metadata["streaming"],
+        "structured_outputs": metadata["structured_outputs"],
+        "responses_web_search": metadata["responses_web_search"],
         "output_tokens": deepcopy(metadata["output_tokens"]),
         "recommended_profile": deepcopy(metadata["recommended_profile"]),
         "status": metadata["status"],

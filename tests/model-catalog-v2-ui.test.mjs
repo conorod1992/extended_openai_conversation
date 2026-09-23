@@ -54,6 +54,21 @@ import {
 }
 
 {
+  const selectedModelMetadata = {
+    api: {responses: true, chat_completions: true},
+    function_calling: {
+      responses: true,
+      chat_completions: {support: "conditional", allowed_reasoning_efforts: ["none"]},
+    },
+  };
+  assert.equal(apiPathSelectable(selectedModelMetadata, "chat_completions", true, "none"), true);
+  assert.equal(apiPathSelectable(selectedModelMetadata, "chat_completions", true, "high"), false);
+  assert.equal(apiPathSelectable(selectedModelMetadata, "chat_completions", false, "high"), true);
+  // Reasoning changes project the metadata already held by the Configuration view.
+  assert.equal(apiPathSelectable(selectedModelMetadata, "responses", true, "high"), true);
+}
+
+{
   const result = {
     catalog_models: [
       {id: "gpt-6-astra", status: "current"},

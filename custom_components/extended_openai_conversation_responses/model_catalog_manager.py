@@ -112,8 +112,8 @@ class ModelCatalogManager:
                 self.last_checked = checked
                 if migrated:
                     _LOGGER.debug(
-                        "Migrated stored model capability catalogue v1 to schema v2; "
-                        "v2 bundled model data is authoritative"
+                        "Migrated stored model capability catalogue to schema v4; "
+                        "bundled model data is authoritative"
                     )
                     try:
                         await self._save(candidate, available, etag, checked)
@@ -181,8 +181,63 @@ class ModelCatalogManager:
         except Exception:
             _LOGGER.warning("Unable to persist model catalogue check time")
 
+    async def _candidate_preserves_saved_requests(
+        self, candidate: dict[str, Any]
+    ) -> bool:
+        """Check concrete saved agent and routing choices before publication."""
+        from .request import build_provider_request_snapshot
+
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            for subentry in entry.subentries.values():
+                if subentry.subentry_type != "conversation":
+                    continue
+                options = subentry.data
+                model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+                try:
+                    build_provider_request_snapshot(
+                        options,
+                        getattr(entry, "data", {}),
+                        model_capabilities=catalog_model_metadata(candidate, model),
+                    )
+                except Exception:
+                    return False
+                rules = await async_get_request_rules(
+                    self.hass, entry.entry_id, subentry.subentry_id
+                )
+                for rule in rules.snapshot()["rules"]:
+                    if rule.get("action_type") != "model_routing":
+                        continue
+                    action = rule.get("action", {})
+                    if action.get("reset"):
+                        continue
+                    routed_model = action.get("model")
+                    routed_effort = action.get("reasoning_effort")
+                    if routed_model and SLOT_REFERENCE.search(str(routed_model)):
+                        continue
+                    if routed_effort and SLOT_REFERENCE.search(str(routed_effort)):
+                        continue
+                    if not routed_model and not routed_effort:
+                        continue
+                    effective = dict(options)
+                    if routed_model:
+                        effective[CONF_CHAT_MODEL] = routed_model
+                    if routed_effort:
+                        effective[CONF_REASONING_EFFORT] = routed_effort
+                    try:
+                        build_provider_request_snapshot(
+                            effective,
+                            getattr(entry, "data", {}),
+                            model_capabilities=catalog_model_metadata(
+                                candidate,
+                                str(effective[CONF_CHAT_MODEL]),
+                            ),
+                        )
+                    except Exception:
+                        return False
+        return True
+
     async def async_check(self, *, force: bool = False) -> dict[str, Any]:
-        """Check trusted v2 data without changing the active catalogue."""
+        """Check trusted catalogue data without changing the active catalogue."""
         async with self._lock:
             now = time.time()
             if not force and now - self.last_checked < UPDATE_INTERVAL:
@@ -235,6 +290,8 @@ class ModelCatalogManager:
                     available = None
                 else:
                     validate_catalog_transition(self.catalog, candidate)
+                    if not await self._candidate_preserves_saved_requests(candidate):
+                        raise ValueError("Catalogue update invalidates saved requests")
                     available = candidate
 
                 await self._save(self.catalog, available, etag, now)
@@ -261,6 +318,8 @@ class ModelCatalogManager:
                 return self.status()
             try:
                 validate_catalog_transition(self.catalog, candidate)
+                if not await self._candidate_preserves_saved_requests(candidate):
+                    raise ValueError("Catalogue update invalidates saved requests")
                 await self._save(candidate, None, self.etag, self.last_checked)
             except Exception:
                 self.last_error = "Model data update could not be applied; the current catalogue was kept."
@@ -383,7 +442,7 @@ class ModelCatalogManager:
 async def websocket_catalog(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
-    """Expose the same v2 capability data used by request validation."""
+    """Expose the same capability data used by request validation."""
     manager: ModelCatalogManager = hass.data[DATA_MANAGER]
     if msg["action"] in {"check", "update"}:
         status = await manager.async_check(force=True)

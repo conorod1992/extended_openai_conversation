@@ -40,7 +40,8 @@ export function modelFieldPresentation(panel, key, value) {
   }
   if (key === "api_mode") {
     const needsTools = toolsRequired(config);
-    const disabledOption = (api) => !apiPathSelectable(metadata, api, needsTools);
+    const effort = config.reasoning_effort ?? metadata.recommended_profile?.reasoning_effort ?? null;
+    const disabledOption = (api) => !apiPathSelectable(metadata, api, needsTools, effort);
     // A select with no matching configured value selects its first option.
     const options = panel?._result?.options?.api_mode || [];
     const selected = options.some((item) => item.value === value) ? value : options[0]?.value;

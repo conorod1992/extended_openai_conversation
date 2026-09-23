@@ -20,7 +20,7 @@ from custom_components.extended_openai_conversation_responses import (
 @pytest.fixture(autouse=True)
 def isolated_catalog(monkeypatch):
     """Keep catalogue publication local to each test."""
-    monkeypatch.setattr(data, "_active", data.BUNDLED_CATALOG)
+    data.activate_catalog(None)
 
 
 def _label_candidate():
@@ -84,11 +84,11 @@ def _websocket_handler():
     return inspect.unwrap(runtime.websocket_catalog)
 
 
-def test_bundled_catalog_is_schema_v3_and_parses_exactly():
+def test_bundled_catalog_is_schema_v4_and_parses_exactly():
     parsed = data.parse_catalog(Path(data.__file__).with_suffix(".json").read_bytes())
     assert parsed == data.BUNDLED_CATALOG
-    assert parsed["schema_version"] == 3
-    assert parsed["catalog_version"] >= 3
+    assert parsed["schema_version"] == 4
+    assert parsed["catalog_version"] >= 4
 
 
 def test_required_current_models_and_invalid_aliases():
@@ -179,14 +179,14 @@ def test_bundled_service_tiers_match_current_openai_support() -> None:
         lambda v: v["models"][0]["limits"].update(max_output_tokens=0),
     ],
 )
-def test_invalid_schema_v3_catalog_is_rejected(mutate):
+def test_invalid_schema_v4_catalog_is_rejected(mutate):
     value = _label_candidate()
     mutate(value)
     with pytest.raises(ValueError):
         data.validate_catalog(value)
 
 
-async def test_stored_v1_catalog_is_migrated_to_authoritative_v3(check_manager):
+async def test_stored_v1_catalog_is_migrated_to_authoritative_v4(check_manager):
     check_manager.store.saved = {
         "catalog": {
             "schema_version": 1,
@@ -198,7 +198,7 @@ async def test_stored_v1_catalog_is_migrated_to_authoritative_v3(check_manager):
         "last_checked": 0,
     }
     await check_manager.async_load()
-    assert check_manager.status()["schema_version"] == 3
+    assert check_manager.status()["schema_version"] == 4
     assert data.model_metadata("gpt-5.6")["reasoning"]["efforts"] == [
         "none",
         "low",
@@ -213,7 +213,7 @@ async def test_corrupt_storage_falls_back_to_bundled(check_manager):
     check_manager.store.saved = {"catalog": {"schema_version": 99}}
     await check_manager.async_load()
     assert check_manager.status()["source"] == "bundled"
-    assert check_manager.status()["schema_version"] == 3
+    assert check_manager.status()["schema_version"] == 4
     assert check_manager.last_error
 
 
@@ -283,7 +283,7 @@ def test_function_calling_flags_must_be_real_booleans() -> None:
     value = _catalog()
     _model(value)["function_calling"]["responses"] = 1
 
-    with pytest.raises(ValueError, match="Function-calling values must be boolean"):
+    with pytest.raises(ValueError, match="Unexpected or missing catalogue fields"):
         data.validate_catalog(value)
 
 
@@ -436,14 +436,14 @@ def test_v1_migration_rejects_non_v1_and_preserves_monotonic_version() -> None:
             "catalog_version": data.BUNDLED_CATALOG["catalog_version"] + 5,
         }
     )
-    assert migrated["schema_version"] == 3
+    assert migrated["schema_version"] == 4
     assert migrated["catalog_version"] == data.BUNDLED_CATALOG["catalog_version"] + 6
 
 
 def test_validate_or_migrate_marks_legacy_schemas_as_migrated() -> None:
     migrated, changed = data.validate_or_migrate_catalog({"schema_version": 1})
     assert changed is True
-    assert migrated["schema_version"] == 3
+    assert migrated["schema_version"] == 4
 
     legacy_v2 = deepcopy(data.BUNDLED_CATALOG)
     legacy_v2["schema_version"] = 2
@@ -455,7 +455,7 @@ def test_validate_or_migrate_marks_legacy_schemas_as_migrated() -> None:
         model["service_tier"] = bool(model.pop("service_tiers"))
     migrated, changed = data.validate_or_migrate_catalog(legacy_v2)
     assert changed is True
-    assert migrated["schema_version"] == 3
+    assert migrated["schema_version"] == 4
     assert migrated["models"][0]["service_tiers"] == data.BUNDLED_CATALOG["models"][0]["service_tiers"]
 
     current = _catalog()

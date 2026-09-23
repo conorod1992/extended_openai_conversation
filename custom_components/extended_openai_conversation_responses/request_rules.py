@@ -1672,7 +1672,7 @@ async def async_evaluate_rule(
     combined_override = {**conversation_override, **override}
     combined_model = combined_override.get(CONF_CHAT_MODEL, configured_model)
     combined_effort = combined_override.get(CONF_REASONING_EFFORT)
-    if combined_effort:
+    if combined_effort and (not effort or combined_model != selected_model):
         _validate_effective_reasoning(combined_model, combined_effort)
     if action["scope"] == "conversation":
         runtime.set(session_id, override, timeout_minutes)

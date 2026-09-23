@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -13,14 +14,12 @@ from .const import (
     CONF_API_MODE,
     CONF_API_PROVIDER,
     CONF_BASE_URL,
-    CONF_CHAT_MODEL,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
-    DEFAULT_CHAT_MODEL,
 )
 from .exposed_attributes import exposed_attribute_catalog
-from .helpers import get_api_mode, supports_openai_hosted_tools
-from .request import build_web_search_tool
+from .helpers import supports_openai_hosted_tools
+from .request import build_provider_request_snapshot
 
 _CONFIGURATION_ACTIONS = {"get", "validate", "update", "save"}
 _FUNCTION_REPAIR_CONFIGURATION_ACTIONS = {
@@ -34,25 +33,28 @@ def configuration_guidance_snapshot(
     entry_data: Mapping[str, Any], options: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Return runtime-derived configuration facts without making provider calls."""
-    model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
     configured_api_mode = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
-    effective_api_mode = get_api_mode(configured_api_mode, model)
+    effective_api_mode = configured_api_mode
     hosted_tools_supported = supports_openai_hosted_tools(
         entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
     )
 
-    # Reuse the production request builder as the authority for whether Web Search
-    # can actually be attached. Force the feature on only in this local probe; the
-    # function is pure and performs no network request.
+    # This is the production resolver with only the hosted feature forced on.
     probe = dict(options)
     probe[CONF_WEB_SEARCH] = True
     web_search_available = True
     web_search_message: str | None = None
     try:
-        build_web_search_tool(probe, effective_api_mode, entry_data)
+        effective_api_mode = build_provider_request_snapshot(probe, entry_data).api_mode
     except HomeAssistantError as err:
         web_search_available = False
         web_search_message = str(err)
+        with suppress(HomeAssistantError):
+            effective_api_mode = build_provider_request_snapshot(
+                {**options, CONF_WEB_SEARCH: False},
+                entry_data,
+                tools_required=True,
+            ).api_mode
 
     reason: str | None
     if web_search_available:

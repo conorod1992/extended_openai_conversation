@@ -1,6 +1,6 @@
 {
-  "schema_version": 3,
-  "catalog_version": 3,
+  "schema_version": 4,
+  "catalog_version": 4,
   "defaults": {
     "status": "unknown",
     "api": {
@@ -45,7 +45,9 @@
       "top_p": "omit"
     },
     "service_tiers": [],
-    "explicit_prompt_cache": false
+    "explicit_prompt_cache": false,
+    "structured_outputs": false,
+    "responses_web_search": false
   },
   "models": [
     {
@@ -64,7 +66,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default","flex","fast","priority"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5.6",
@@ -83,6 +87,8 @@
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default","flex","fast","priority","ultrafast"],
       "explicit_prompt_cache": true,
+      "structured_outputs": true,
+      "responses_web_search": true,
       "alias_of": "gpt-5.6-sol"
     },
     {
@@ -101,7 +107,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default","flex","fast","priority","ultrafast"],
-      "explicit_prompt_cache": true
+      "explicit_prompt_cache": true,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5.6-terra",
@@ -119,7 +127,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default","flex","fast","priority"],
-      "explicit_prompt_cache": true
+      "explicit_prompt_cache": true,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5.6-luna",
@@ -137,7 +147,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default","flex","fast","priority"],
-      "explicit_prompt_cache": true
+      "explicit_prompt_cache": true,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5.5",
@@ -154,7 +166,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5.4",
@@ -171,7 +185,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5.4-mini",
@@ -188,7 +204,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5.4-nano",
@@ -205,7 +223,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5.2",
@@ -222,7 +242,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5.1",
@@ -239,7 +261,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5",
@@ -256,7 +280,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "minimal", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5-mini",
@@ -273,7 +299,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "minimal", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-5-nano",
@@ -290,7 +318,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "minimal", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-4.1",
@@ -307,7 +337,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-4.1-mini",
@@ -324,7 +356,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-4o",
@@ -341,7 +375,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-4o-mini",
@@ -358,7 +394,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "o3",
@@ -375,7 +413,9 @@
       "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
       "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
       "service_tiers": ["auto","default"],
-      "explicit_prompt_cache": false
+      "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true
     },
     {
       "id": "gpt-4-turbo",
@@ -393,6 +433,8 @@
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
       "service_tiers": [],
       "explicit_prompt_cache": false,
+      "structured_outputs": true,
+      "responses_web_search": true,
       "lifecycle_note": "Deprecated legacy alias retained for existing configurations."
     }
   ]
