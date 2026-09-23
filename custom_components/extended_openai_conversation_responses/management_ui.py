@@ -536,7 +536,42 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
     subentry_id = request.subentry_id
     action = request.message["action"]
     guest_manager = await async_get_guest_mode(hass, entry_id, subentry_id)
+
     if action == "get":
+        legacy_policy = subentry.data.get(CONF_GUEST_POLICY_VERSION) != GUEST_POLICY_VERSION
+        configured_tools: list[dict[str, Any]] = []
+        exposed_entities = None
+        if legacy_policy:
+            # Migration translation is safety-sensitive: retain the existing
+            # conservative legacy projection on the primary response.
+            configured_tools = configured_function_tools_from_data(subentry.data)
+            exposed_entities = get_exposed_entities(hass) if is_admin else None
+
+        result: dict[str, Any] = {
+            "revision": _agent_config_revision(subentry.data, subentry.title),
+            "status": guest_manager.status(),
+            "config": (
+                guest_policy_editor_snapshot(
+                    hass,
+                    subentry.data,
+                    configured_tools,
+                    exposed_entities=exposed_entities,
+                )
+                if is_admin
+                else {}
+            ),
+            "legacy_policy": legacy_policy,
+            "migration_notice": (
+                "This agent still uses the legacy Guest allow-list. Review the "
+                "conservative exclusion draft below; the legacy policy remains "
+                "enforced until you save."
+                if legacy_policy
+                else None
+            ),
+        }
+        return result
+
+    if action == "details":
         started = perf_counter()
 
         phase = perf_counter()
@@ -562,95 +597,76 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             )
         )
         policy_ms = _elapsed_ms(phase)
-        if not is_admin:
-            return {
-                "status": guest_manager.status(),
-                "policy": policy.as_diagnostics(),
-            }
-        phase = perf_counter()
-        library = await async_get_knowledge(hass, entry_id, subentry_id)
-        knowledge_manager_ms = _elapsed_ms(phase)
 
-        phase = perf_counter()
-        groups = validate_function_groups(
-            subentry.data.get(CONF_FUNCTION_GROUPS, []), configured_tools
-        )
-        groups_ms = _elapsed_ms(phase)
-
-        phase = perf_counter()
-        revision = _agent_config_revision(subentry.data, subentry.title)
-        revision_ms = _elapsed_ms(phase)
-
-        phase = perf_counter()
-        editor_config = guest_policy_editor_snapshot(
-            hass,
-            subentry.data,
-            configured_tools,
-            exposed_entities=exposed_entities,
-        )
-        editor_snapshot_ms = _elapsed_ms(phase)
-
-        phase = perf_counter()
-        knowledge_sources = await library.async_list()
-        knowledge_list_ms = _elapsed_ms(phase)
-
+        result: dict[str, Any] = {
+            "policy": policy.as_diagnostics(),
+        }
         timings = {
             "configured_tools_ms": configured_tools_ms,
             "exposed_entities_ms": exposed_entities_ms,
             "policy_ms": policy_ms,
-            "knowledge_manager_ms": knowledge_manager_ms,
-            "groups_ms": groups_ms,
-            "revision_ms": revision_ms,
-            "editor_snapshot_ms": editor_snapshot_ms,
-            "knowledge_list_ms": knowledge_list_ms,
         }
-        result = {
-            "revision": revision,
-            "status": guest_manager.status(),
-            "policy": policy.as_diagnostics(),
-            "config": editor_config,
-            "legacy_policy": subentry.data.get(CONF_GUEST_POLICY_VERSION)
-            != GUEST_POLICY_VERSION,
-            "migration_notice": (
-                "This agent still uses the legacy Guest allow-list. Review the "
-                "conservative exclusion draft below; the legacy policy remains "
-                "enforced until you save."
-                if subentry.data.get(CONF_GUEST_POLICY_VERSION) != GUEST_POLICY_VERSION
-                else None
-            ),
-            "knowledge_sources": knowledge_sources,
-            "functions": [
+
+        if is_admin:
+            phase = perf_counter()
+            library = await async_get_knowledge(hass, entry_id, subentry_id)
+            knowledge_manager_ms = _elapsed_ms(phase)
+
+            phase = perf_counter()
+            groups = validate_function_groups(
+                subentry.data.get(CONF_FUNCTION_GROUPS, []), configured_tools
+            )
+            groups_ms = _elapsed_ms(phase)
+
+            phase = perf_counter()
+            knowledge_sources = await library.async_list()
+            knowledge_list_ms = _elapsed_ms(phase)
+
+            result.update(
                 {
-                    "name": tool["spec"]["name"],
-                    "description": tool["spec"].get("description", ""),
-                    "enabled": function_tool_enabled(tool),
-                    "unsafe_in_guest_mode": classify_tool(tool)
-                    > FunctionSecurity.CONTROL,
+                    "knowledge_sources": knowledge_sources,
+                    "functions": [
+                        {
+                            "name": tool["spec"]["name"],
+                            "description": tool["spec"].get("description", ""),
+                            "enabled": function_tool_enabled(tool),
+                            "unsafe_in_guest_mode": classify_tool(tool)
+                            > FunctionSecurity.CONTROL,
+                        }
+                        for tool in configured_tools
+                    ],
+                    "function_groups": [
+                        {
+                            "id": group["id"],
+                            "name": group["name"],
+                            "description": group["description"],
+                            "functions": group["functions"],
+                        }
+                        for group in groups
+                    ],
+                    "domains": sorted(
+                        {
+                            item["entity_id"].partition(".")[0]
+                            for item in exposed_entities or ()
+                            if isinstance(item.get("entity_id"), str)
+                        }
+                    ),
                 }
-                for tool in configured_tools
-            ],
-            "function_groups": [
+            )
+            timings.update(
                 {
-                    "id": group["id"],
-                    "name": group["name"],
-                    "description": group["description"],
-                    "functions": group["functions"],
+                    "knowledge_manager_ms": knowledge_manager_ms,
+                    "groups_ms": groups_ms,
+                    "knowledge_list_ms": knowledge_list_ms,
                 }
-                for group in groups
-            ],
-            "domains": sorted(
-                {
-                    item["entity_id"].partition(".")[0]
-                    for item in exposed_entities or ()
-                    if isinstance(item.get("entity_id"), str)
-                }
-            ),
-            "_performance": {
-                **timings,
-                "total_ms": _elapsed_ms(started),
-            },
+            )
+
+        result["_performance"] = {
+            **timings,
+            "total_ms": _elapsed_ms(started),
         }
         return result
+
     _require_admin(is_admin)
     if action == "save_policy":
         _require_agent_config_revision(subentry, message.get("revision"))
