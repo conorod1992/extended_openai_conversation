@@ -1546,10 +1546,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
     if (view === "data-memory/conversations") {
       root.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => {
+        const agentId = this._agentId;
+        const loadToken = this._loadToken;
         if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return;
+        if (agentId !== this._agentId || loadToken !== this._loadToken
+            || this._viewKey() !== "data-memory/conversations") return;
         try {
           const response = await this._call("conversations", "end_active", { continuity_key: button.dataset.key });
-          if (response?.ended && this._contentData?.active?.active) {
+          if (response?.ended && agentId === this._agentId && loadToken === this._loadToken
+              && this._viewKey() === "data-memory/conversations" && this._contentData?.active?.active) {
             this._contentData = {
               ...this._contentData,
               active: {
@@ -1804,10 +1809,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _deleteSession(sessionId) {
+    const agentId = this._agentId;
+    const scopeId = this._scopeId;
+    const loadToken = this._loadToken;
     if (!await this._confirm("Delete conversation?", "This retained conversation and its turns will be permanently removed.", "Delete")) return;
+    if (agentId !== this._agentId || scopeId !== this._scopeId || loadToken !== this._loadToken
+        || this._viewKey() !== "data-memory/conversations") return;
     try {
-      const response = await this._call("conversations", "delete", { scope_id: this._scopeId, session_id: sessionId });
-      if (response?.deleted_sessions && this._contentData?.sessions) {
+      const response = await this._call("conversations", "delete", { scope_id: scopeId, session_id: sessionId });
+      if (response?.deleted_sessions && agentId === this._agentId && scopeId === this._scopeId
+          && loadToken === this._loadToken && this._viewKey() === "data-memory/conversations"
+          && this._contentData?.sessions) {
         const current = this._contentData.sessions;
         const sessions = (current.sessions || []).filter((item) => item.session_id !== sessionId);
         const removed = (current.sessions || []).length - sessions.length;

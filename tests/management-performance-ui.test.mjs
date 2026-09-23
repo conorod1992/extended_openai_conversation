@@ -516,3 +516,19 @@ function panelFor(page = "assistant", subsection = "basics") {
   await panel._loadSection();
   assert.equal(loads, 2);
 }
+
+{
+  const panel = panelFor("data-memory", "conversations");
+  panel._contentData = {sessions:{sessions:[{session_id:"one"}], returned:1, total:1}};
+  panel._confirm = async () => true;
+  panel._toast = () => {};
+  let resolveDelete;
+  panel._call = () => new Promise((resolve) => { resolveDelete = resolve; });
+  const deleting = panel._deleteSession("one");
+  await Promise.resolve();
+  panel._scopeId = "user:other";
+  resolveDelete({deleted_sessions:1});
+  await deleting;
+  assert.equal(panel._contentData.sessions.sessions.length, 1,
+    "late deletion cannot patch a different History scope");
+}
