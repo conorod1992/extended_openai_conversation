@@ -415,11 +415,13 @@ jobs:
         if: github.event_name != 'schedule'
         id: dev-image
         run: |
-          if docker pull "$HA_DEV_IMAGE"; then
+          if docker pull "$HA_DEV_IMAGE" \
+            && python ci/check_ha_dev_image.py \
+              "$HA_DEV_IMAGE" "${{ needs.prepare.outputs.ha-core-sha }}"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Prebuilt HA dev image is not available yet; using live fallback."
+            echo "No fresh HA dev image is available; using the current Core commit in the live fallback."
           fi
 
       - name: Run upcoming acceptance in prebuilt HA dev environment

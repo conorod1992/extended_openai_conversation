@@ -5,6 +5,8 @@ on:
     paths:
       - "ci/Dockerfile.dev"
       - "ci/Dockerfile.typecheck"
+      - "ci/typecheck_image_key.py"
+      - "ci/check_ha_dev_image.py"
       - "ci/install_ha_dependencies.py"
       - "ci/install_ha_media_dependencies.py"
       - "ci/reconcile_ha_dev_environment.sh"
@@ -18,6 +20,8 @@ on:
     paths:
       - "ci/Dockerfile.dev"
       - "ci/Dockerfile.typecheck"
+      - "ci/typecheck_image_key.py"
+      - "ci/check_ha_dev_image.py"
       - "ci/install_ha_dependencies.py"
       - "ci/install_ha_media_dependencies.py"
       - "ci/reconcile_ha_dev_environment.sh"
@@ -97,6 +101,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve Type Check image key
+        id: typecheck-key
+        env:
+          PYTHON_VERSION: ${{ steps.ha.outputs.python-version }}
+          OPENAI_VERSION: ${{ steps.ha.outputs.openai-version }}
+          HASSIL_VERSION: ${{ steps.ha.outputs.hassil-version }}
+          HA_INTENTS_VERSION: ${{ steps.ha.outputs.home-assistant-intents-version }}
+          XMLTODICT_VERSION: ${{ steps.ha.outputs.xmltodict-version }}
+          BEAUTIFULSOUP4_VERSION: ${{ steps.ha.outputs.beautifulsoup4-version }}
+          LXML_VERSION: ${{ steps.ha.outputs.lxml-version }}
+        run: echo "key=$(python ci/typecheck_image_key.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Record image build time
+        id: image-time
+        run: echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -109,6 +129,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           build-args: |
             HA_CORE_SHA=${{ steps.ha.outputs.sha }}
+            IMAGE_BUILT_AT=${{ steps.image-time.outputs.created }}
             PYTHON_VERSION=${{ steps.ha.outputs.python-version }}
           tags: |
             ${{ env.IMAGE_NAME }}:ha-dev
@@ -123,7 +144,7 @@ jobs:
           file: ci/Dockerfile.typecheck
           push: ${{ github.event_name != 'pull_request' }}
           build-args: |
-            HA_CORE_SHA=${{ steps.ha.outputs.sha }}
+            TYPECHECK_ENV_KEY=${{ steps.typecheck-key.outputs.key }}
             PYTHON_VERSION=${{ steps.ha.outputs.python-version }}
             OPENAI_VERSION=${{ steps.ha.outputs.openai-version }}
             HASSIL_VERSION=${{ steps.ha.outputs.hassil-version }}
@@ -133,7 +154,7 @@ jobs:
             LXML_VERSION=${{ steps.ha.outputs.lxml-version }}
           tags: |
             ${{ env.IMAGE_NAME }}:typecheck
-            ${{ env.IMAGE_NAME }}:typecheck-${{ steps.ha.outputs.sha }}
+            ${{ env.IMAGE_NAME }}:typecheck-${{ steps.typecheck-key.outputs.key }}
           cache-from: type=gha,scope=typecheck-ci-image
           cache-to: type=gha,mode=max,scope=typecheck-ci-image
 
@@ -146,9 +167,10 @@ jobs:
             test "$(cat /opt/eoai-ci/ha-core-sha)" = "${{ steps.ha.outputs.sha }}"
             python -c "from importlib.metadata import version; print(\"homeassistant=\" + version(\"homeassistant\")); print(\"pytest-homeassistant-custom-component=\" + version(\"pytest-homeassistant-custom-component\"))"
           '
-          docker pull "${IMAGE_NAME}:typecheck-${{ steps.ha.outputs.sha }}"
-          docker run --rm "${IMAGE_NAME}:typecheck-${{ steps.ha.outputs.sha }}" bash -lc '
-            test "$(cat /opt/eoai-ci/ha-core-sha)" = "${{ steps.ha.outputs.sha }}"
+          python ci/check_ha_dev_image.py "${IMAGE_NAME}:ha-dev" "${{ steps.ha.outputs.sha }}"
+          docker pull "${IMAGE_NAME}:typecheck-${{ steps.typecheck-key.outputs.key }}"
+          docker run --rm "${IMAGE_NAME}:typecheck-${{ steps.typecheck-key.outputs.key }}" bash -lc '
+            test "$(cat /opt/eoai-ci/typecheck-image-key)" = "${{ steps.typecheck-key.outputs.key }}"
             test -s /opt/eoai-ci/typecheck-environment.txt
             mypy --version
             pip check
@@ -161,7 +183,7 @@ jobs:
             echo "### HA dev CI image"
             echo
             echo "HA dev image: `${IMAGE_NAME}:ha-dev`"
-            echo "Type Check image: `${IMAGE_NAME}:typecheck-${{ steps.ha.outputs.sha }}`"
+            echo "Type Check image: `${IMAGE_NAME}:typecheck-${{ steps.typecheck-key.outputs.key }}`"
             echo "HA Core: `${{ steps.ha.outputs.sha }}`"
             echo "Python: `${{ steps.ha.outputs.python-version }}`"
           } >> "$GITHUB_STEP_SUMMARY"

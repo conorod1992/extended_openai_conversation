@@ -188,11 +188,23 @@ jobs:
     name: Type Check
     runs-on: ubuntu-latest
     needs: prepare
-    env:
-      TYPECHECK_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:typecheck-${{ needs.prepare.outputs.ha-core-sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve Type Check image key
+        env:
+          PYTHON_VERSION: ${{ needs.prepare.outputs.python-version }}
+          OPENAI_VERSION: ${{ needs.prepare.outputs.openai-version }}
+          HASSIL_VERSION: ${{ needs.prepare.outputs.hassil-version }}
+          HA_INTENTS_VERSION: ${{ needs.prepare.outputs.home-assistant-intents-version }}
+          XMLTODICT_VERSION: ${{ needs.prepare.outputs.xmltodict-version }}
+          BEAUTIFULSOUP4_VERSION: ${{ needs.prepare.outputs.beautifulsoup4-version }}
+          LXML_VERSION: ${{ needs.prepare.outputs.lxml-version }}
+        run: |
+          KEY="$(python ci/typecheck_image_key.py)"
+          echo "TYPECHECK_IMAGE=ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:typecheck-${KEY}" >> "$GITHUB_ENV"
+          echo "TYPECHECK_ENV_KEY=${KEY}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -243,6 +255,7 @@ jobs:
       - name: Fingerprint prebuilt Type Check environment
         if: steps.type-image.outputs.available == 'true'
         run: |
+          test "$(docker run --rm "$TYPECHECK_IMAGE" cat /opt/eoai-ci/typecheck-image-key)" = "$TYPECHECK_ENV_KEY"
           docker run --rm "$TYPECHECK_IMAGE" cat /opt/eoai-ci/typecheck-environment.txt > .typecheck-environment.txt
           cat .typecheck-environment.txt
 
@@ -375,11 +388,13 @@ jobs:
       - name: Try prebuilt HA dev environment
         id: dev-image
         run: |
-          if docker pull "$HA_DEV_IMAGE"; then
+          if docker pull "$HA_DEV_IMAGE" \
+            && python ci/check_ha_dev_image.py \
+              "$HA_DEV_IMAGE" "${{ needs.prepare.outputs.ha-core-sha }}"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Prebuilt HA dev image is not available yet; using live fallback."
+            echo "No fresh HA dev image is available; using the current Core commit in the live fallback."
           fi
 
       - name: Run compatibility tests in prebuilt HA dev environment
