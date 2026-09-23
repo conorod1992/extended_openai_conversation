@@ -30,9 +30,10 @@ function saveBar(panel) {
 
 export function renderRetentionSettings(panel) {
   return `<div class="content-card config-surface">
-    <section class="config-section" id="section-retention" data-section="retention">
-      <div class="section-heading">
-        <div><h2>Usage history retention</h2><p>Choose how long detailed usage records are kept. Overall totals are kept separately.</p></div>
+    <section id="config-retention" class="config-section" data-config-section data-search="usage history retention request run details totals">
+      <div class="config-section-heading">
+        <p class="eyebrow">Usage history retention</p>
+        <p>Choose how long detailed usage records are kept. Overall totals are kept separately.</p>
       </div>
       <div class="form-grid">
         ${FIELDS.map(([key, label]) => selectMarkup(panel, key, label)).join("")}
