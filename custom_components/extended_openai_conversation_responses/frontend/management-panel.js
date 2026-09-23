@@ -1227,7 +1227,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const cached = key ? this._cleanConfigSnapshots.get(key) : null;
       const fresh = cached && Date.now() - cached.loadedAt <= CLEAN_CONFIG_TTL_MS;
       const configData = fresh ? cached.result
-        : await this._call("configuration", projection === "retention" ? "retention_get" : "get");
+        : projection === "retention"
+          ? await consumeIntentRead(this, this._viewKey(), "configuration", "retention_get")
+          : await this._call("configuration", "get");
       if (agentId !== this._agentId || loadToken !== this._loadToken) return;
       const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
       if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);

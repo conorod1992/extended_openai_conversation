@@ -1,6 +1,6 @@
 import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule} from "./overview-page.js";
-import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
+import {SECTION_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
@@ -138,6 +138,7 @@ const INTENT_READS = new Map([
   ["overview", ["overview", "summary"]],
   ["data-memory/knowledge", ["knowledge", "list"]],
   ["capabilities/request-rules", ["request_rules", "list"]],
+  ["usage-maintenance/retention", ["configuration", "retention_get"]],
 ]);
 const INTENT_READ_TTL_MS = 3_000;
 
@@ -148,6 +149,14 @@ export function prefetchIntentRead(panel, view) {
   const operation = INTENT_READS.get(view);
   const agent = panel._selectedAgent?.();
   if (!operation || !agent || panel._viewKey?.() === view || panel._configDirty) return null;
+  if (view === "usage-maintenance/retention") {
+    const active = panel._configData;
+    if (panel._draftAgentId === agent.subentry_id && active?.config
+        && active.projection !== "retention") return null;
+    const retentionKey = panel._configurationSnapshotKey?.(agent.subentry_id, "retention");
+    const cachedRetention = retentionKey ? panel._cleanConfigSnapshots?.get(retentionKey) : null;
+    if (cachedRetention && Date.now() - cachedRetention.loadedAt <= CLEAN_CONFIG_TTL_MS) return null;
+  }
   const cacheKey = panel._sectionCacheKey?.(view);
   const loadedAt = panel._eocSectionCacheTimes?.get(cacheKey);
   if (loadedAt && Date.now() - loadedAt < SECTION_CACHE_TTL_MS
@@ -404,14 +413,17 @@ export function startStoredOverviewPrefetch(
 
 export function startStoredConfigurationPrefetch(panel, preferredSubentryId) {
   const view = panel._viewKey?.();
-  if (!needsFullConfiguration(view)) return null;
+  const action = view === "usage-maintenance/retention"
+    ? "retention_get"
+    : needsFullConfiguration(view) ? "get" : null;
+  if (!action) return null;
   const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
   const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
   if (!subentryId || !entryId) return null;
   const request = panel._hass.callWS({
     type: WS_TYPE,
     section: "configuration",
-    action: "get",
+    action,
     entry_id: entryId,
     subentry_id: subentryId,
   });
