@@ -103,6 +103,13 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     }
     if (key === "scopes/catalog") return {scopes: clone(state.scopes)};
     if (key === "guest_mode/get") return clone(state.guest);
+    if (key === "guest_mode/details") return {
+      policy: {guest_active:false, readable_entity_count:0, controllable_entity_count:0, configured_tool_count:0},
+      knowledge_sources: [],
+      functions: [],
+      function_groups: [],
+      domains: [],
+    };
     if (key === "guest_mode/save_policy") {
       if (message.revision !== state.guest.revision) throw new Error("Saved data changed; reload before saving.");
       state.guest.config = clone(message.config); state.guest.revision += "x"; save(); return clone(state.guest);

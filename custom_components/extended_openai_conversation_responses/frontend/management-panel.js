@@ -313,7 +313,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const page = target?.dataset?.page || this._page;
     const subsection = target?.dataset?.subsection
       || (target?.dataset?.page ? this._visibleSubsections(page)[0]?.id || null : null);
-    warmRouteAsset(this._viewKey(page, subsection));
+    const view = this._viewKey(page, subsection);
+    warmRouteAsset(view);
+    void this._loadConfigurationLiveMetadata(view);
   }
 
   _bindSettingsSearchLazyLoad() {
@@ -392,6 +394,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _clearConfigDraft() {
     this._setConfigDirty(false);
+    this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
+    this._eocLiveMetadataCache = new Map();
+    this._eocLiveMetadataPending = new Map();
     this._configData = null;
     this._draft = null;
     this._draftTitle = null;
@@ -792,13 +797,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules"].includes(view);
     if (configOnly && this._configData && this._draftAgentId === this._agentId) {
-      await this._loadConfigurationLiveMetadata();
-      if (loadToken !== this._loadToken) return;
+      this._applyConfigurationLiveMetadata(view);
       this._contentData = null;
       this._result = this._configData;
       this._error = null;
       this._busy = false;
       this._render();
+      void this._loadConfigurationLiveMetadata(view);
       return;
     }
     const needsScopes = ["data-memory/memories", "data-memory/conversations"].includes(view);
@@ -861,6 +866,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       let result;
       let contentData = null;
       let usageSecondary = null;
+      let guestDetailsSecondary = null;
       if (view === "overview") {
         this._markColdLifecycle("overview-summary-start");
         const summary = await this._call("overview", "summary");
@@ -960,7 +966,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       } else if (view === "data-memory/knowledge") {
         result = await this._call("knowledge", "list");
       } else if (view === "capabilities/guest-mode") {
+        const detailsPromise = this._call("guest_mode", "details").then(
+          (value) => ({status: "fulfilled", value}),
+          (reason) => ({status: "rejected", reason}),
+        );
         result = await this._call("guest_mode", "get");
+        result = {
+          ...result,
+          loading: {...(result.loading || {}), details: true},
+          load_errors: result.load_errors || [],
+        };
+        guestDetailsSecondary = detailsPromise;
         if (this._unsavedState?.scopes.get("capabilities/guest-mode")?.agent !== this._agentId) this._guestDraft = JSON.parse(JSON.stringify(result.config || {}));
         if (!result.legacy_policy) {
           this._guestMigrationReview = false;
@@ -981,6 +997,33 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._result = result;
       writeSectionCache(this, cacheKey, result);
       this._error = null;
+      if (guestDetailsSecondary) {
+        void guestDetailsSecondary.then((settled) => {
+          if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+              || this._viewKey() !== "capabilities/guest-mode") return;
+          const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== "details");
+          const loading = {...(this._result?.loading || {}), details: false};
+          if (settled.status === "fulfilled") {
+            this._result = {
+              ...(this._result || {}),
+              ...settled.value,
+              load_errors: errors,
+              loading,
+            };
+          } else {
+            this._result = {
+              ...(this._result || {}),
+              load_errors: [...errors, {
+                key: "details",
+                label: "Guest Mode capabilities",
+                message: settled.reason?.message || String(settled.reason || "Unknown error"),
+              }],
+              loading,
+            };
+          }
+          this._render();
+        });
+      }
       if (usageSecondary) {
         for (const [key, label, pending] of usageSecondary) {
           void pending.then((settled) => {
@@ -1011,26 +1054,76 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (loadToken === this._loadToken) {
         this._busy = false;
         this._render();
+        if (this._isDraftView() && this._configData && this._draftAgentId === this._agentId) {
+          void this._loadConfigurationLiveMetadata(view);
+        }
       }
     }
   }
 
-  _configurationLiveMetadataKeys() {
+  _configurationLiveMetadataKeys(view = this._viewKey()) {
     return {
       "capabilities/home-assistant": ["local_handling"],
       "assistant/prompt-context": ["exposed_attribute_catalog"],
-    }[this._viewKey()] || [];
+    }[view] || [];
   }
 
-  async _loadConfigurationLiveMetadata() {
-    const requested = this._configurationLiveMetadataKeys();
-    const missing = requested.filter((key) => this._configData?.[key] === undefined);
-    if (!missing.length) return;
+  _applyConfigurationLiveMetadata(view = this._viewKey()) {
+    const cache = this._eocLiveMetadataCache;
+    if (!cache || !this._configData) return false;
+    let changed = false;
+    for (const key of this._configurationLiveMetadataKeys(view)) {
+      const record = cache.get(key);
+      if (!record || record.agentId !== this._agentId
+          || record.epoch !== (this._eocLiveMetadataEpoch || 0)
+          || record.revision !== this._configData.revision
+          || this._configData[key] !== undefined) continue;
+      this._configData = {...this._configData, [key]: record.value};
+      changed = true;
+    }
+    return changed;
+  }
+
+  async _loadConfigurationLiveMetadata(view = this._viewKey()) {
+    if (!this._configData || this._draftAgentId !== this._agentId) return;
+    const requested = this._configurationLiveMetadataKeys(view);
+    if (!requested.length) return;
+    this._eocLiveMetadataCache ||= new Map();
+    this._eocLiveMetadataPending ||= new Map();
     const agentId = this._agentId;
-    const loadToken = this._loadToken;
-    const metadata = await this._call("configuration", "live_metadata", {metadata_keys: missing});
-    if (agentId !== this._agentId || loadToken !== this._loadToken) return;
-    this._configData = {...this._configData, ...metadata};
+    const epoch = this._eocLiveMetadataEpoch || 0;
+    const revision = this._configData.revision;
+    const activeToken = this._viewKey() === view ? this._loadToken : null;
+    const pending = requested.filter(key => this._configData[key] === undefined).map(key => {
+      const cached = this._eocLiveMetadataCache.get(key);
+      if (cached?.agentId === agentId && cached.epoch === epoch && cached.revision === revision) return null;
+      const existing = this._eocLiveMetadataPending.get(key);
+      if (existing?.agentId === agentId && existing.epoch === epoch && existing.revision === revision) {
+        if (activeToken !== null) existing.activeToken = activeToken;
+        return existing.promise;
+      }
+      const record = {agentId, epoch, revision, activeToken, promise: null};
+      record.promise = this._call("configuration", "live_metadata", {metadata_keys: [key]})
+        .then(metadata => {
+          if (agentId !== this._agentId || epoch !== (this._eocLiveMetadataEpoch || 0)
+              || revision !== this._configData?.revision || this._draftAgentId !== agentId
+              || !Object.hasOwn(metadata, key)) return;
+          this._eocLiveMetadataCache.set(key, {agentId, epoch, revision, value: metadata[key]});
+          if (this._viewKey() !== view || record.activeToken !== this._loadToken) return;
+          const previous = this._configData;
+          if (this._applyConfigurationLiveMetadata(view) && this._result === previous) {
+            this._result = this._configData;
+            this._render();
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (this._eocLiveMetadataPending.get(key) === record) this._eocLiveMetadataPending.delete(key);
+        });
+      this._eocLiveMetadataPending.set(key, record);
+      return record.promise;
+    }).filter(Boolean);
+    await Promise.all(pending);
   }
 
   async _loadConfigDraft() {
@@ -1040,12 +1133,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const configData = await this._call("configuration", "get");
       if (agentId !== this._agentId || loadToken !== this._loadToken) return;
       this._configData = configData;
+      this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
+      this._eocLiveMetadataCache = new Map();
+      this._eocLiveMetadataPending = new Map();
       this._draft = JSON.parse(JSON.stringify(configData.config));
       this._draftTitle = configData.title;
       this._draftAgentId = agentId;
       this._setConfigDirty(false);
     }
-    await this._loadConfigurationLiveMetadata();
     this._result = this._configData;
   }
 
@@ -1233,11 +1328,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "guide") return renderGuide(this);
     if (this._page === "assistant") {
       this._configSections = this._configSectionsForView();
-      const voiceIdentity = view === "assistant/voice" ? getRouteFeature(view)?.renderVoiceIdentity : null;
+      const voiceIdentity = view === "assistant/voice" ? getRouteFeature(view)?.renderVoiceIdentityCore : null;
       const specialized = getRouteFeature(view);
       return (getConfigurationEditor()?.renderConfiguration(this, {
         voiceIdentity,
-        renderExposedAttributes: specialized?.renderExposedAttributeSettings,
+        renderExposedAttributes: view === "assistant/prompt-context" ? () => `<div class="exposed-attribute-settings" data-exposed-feature style="min-height:96px;padding:16px 0 4px;border-top:1px solid var(--divider-color)"><h3>Additional entity attributes</h3><p class="help">Loading Assist-exposed entity choices…</p></div>` : specialized?.renderExposedAttributeSettings,
       }) || this._loading());
     }
     if (view === "capabilities/request-rules") return getRouteFeature("capabilities/request-rules")?.renderRequestRules(this) || this._loading();
@@ -1252,7 +1347,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "usage-maintenance/request-debug") return getRouteFeature(view)?.renderManagementDebug(this) || this._loading();
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return `<button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn about memory</button>${this._memories()}`;
-    if (view === "data-memory/knowledge") return `${getRouteFeature("capabilities")?.knowledgeAvailabilityMarkup(this)}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
+    if (view === "data-memory/knowledge") return `${getRouteFeature(view)?.knowledgeAvailabilityMarkup(this) || ""}<button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn about Knowledge</button>${this._knowledge()}`;
     if (view === "data-memory/conversations") {
       this._configSections = ["archive"];
       const settings = this._data?.is_admin
@@ -1378,10 +1473,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _refreshGuestModeMutation(agentId, mutationResult) {
     this._patchGuestModeStatus(agentId, mutationResult?.status);
     if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
-    const result = await this._call("guest_mode", "get");
+    const [primary, details] = await Promise.all([
+      this._call("guest_mode", "get"),
+      this._call("guest_mode", "details"),
+    ]);
     if (this._agentId !== agentId || this._viewKey() !== "capabilities/guest-mode") return;
-    this._patchGuestModeStatus(agentId, result?.status);
-    this._result = result;
+    this._patchGuestModeStatus(agentId, primary?.status);
+    this._result = {...primary, ...details, loading:{details:false}, load_errors:[]};
     this._error = null;
     this._render();
   }
@@ -1483,7 +1581,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._setupGuestSelectors();
     }
     if (this._page === "assistant" || ["data-memory/conversations", "usage-maintenance/backup-restore", "usage-maintenance/retention"].includes(view)) getConfigurationEditor()?.bindConfiguration(this);
-    if (view === "assistant/prompt-context") getRouteFeature(view)?.bindExposedAttributeSettings(this);
+    if (view === "assistant/prompt-context") this._hydrateExposedAttributes();
     if (view === "usage-maintenance/backup-restore") getRouteFeature(view)?.bindBackupTransfer(this, getConfigurationEditor()?.backupSummaryLines);
     if (view === "capabilities/functions") getConfigurationTools()?.bindTools(this);
     if (view === "capabilities/request-rules") getRouteFeature(view)?.bindRequestRules(this);
@@ -1499,13 +1597,36 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     if (view === "data-memory/memories") getRouteFeature(view)?.bindTemporaryMemory(this);
     if (view === "data-memory/memory-settings") getRouteFeature(view)?.bindMemorySettings(this);
-    if (["capabilities/home-assistant", "capabilities/web-skills", "data-memory/knowledge"].includes(view)) {
+    if (["capabilities/home-assistant", "capabilities/web-skills"].includes(view)) {
       getRouteFeature("capabilities")?.bindCapabilities(this);
     }
-    if (view === "assistant/voice") getRouteFeature(view)?.bindVoiceIdentity(this);
+    if (view === "assistant/voice") getRouteFeature(view)?.bindVoiceIdentityCore(this);
     if (view === "capabilities/quiet-hours") getRouteFeature(view)?.bindQuietHours(this);
     if (view === "usage-maintenance/usage") {
       getRouteFeature(view)?.bindUsageDiagnostics(this);
+    }
+  }
+
+  async _hydrateExposedAttributes() {
+    const target = this.shadowRoot?.querySelector("[data-exposed-feature]");
+    if (!target) return;
+    const agentId = this._agentId;
+    const revision = this._configData?.revision;
+    try {
+      const [feature] = await Promise.all([
+        import("./exposed-attributes-ui.js"),
+        this._loadConfigurationLiveMetadata("assistant/prompt-context"),
+      ]);
+      if (!target.isConnected || agentId !== this._agentId
+          || revision !== this._configData?.revision
+          || this._viewKey() !== "assistant/prompt-context") return;
+      target.outerHTML = feature.renderExposedAttributeSettings(this);
+      feature.bindExposedAttributeSettings(this);
+    } catch (error) {
+      if (target.isConnected && agentId === this._agentId
+          && this._viewKey() === "assistant/prompt-context") {
+        target.querySelector(".help").textContent = `Unable to load entity choices: ${error.message || String(error)}`;
+      }
     }
   }
 

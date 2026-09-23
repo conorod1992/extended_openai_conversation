@@ -6,6 +6,12 @@ function deferred() {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return {promise, resolve, reject};
 }
+async function waitForLoads(loads, count) {
+  for (let attempt = 0; loads.length < count && attempt < 100; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  assert.ok(loads.length >= count, `expected ${count} editor requests`);
+}
 class Control {
   constructor(id) {
     this.id = id; this.value = ""; this.dataset = {}; this.listeners = new Map();
@@ -63,6 +69,7 @@ function harness() {
   assert.equal(c["tool-cancel"].disabled, false);
   await c["tool-save"].emit("click");
   assert.equal(calls.filter((call) => call.action === "save").length, 0);
+  await waitForLoads(loads, 1);
   loads[0].resolve({yaml: "original YAML"});
   await opened;
   assert.equal(c["tool-yaml"].value, "original YAML");
@@ -79,8 +86,10 @@ function harness() {
 for (const staleFails of [false, true]) {
   const {controls: c, edit, loads} = harness();
   const first = edit.emit("click");
+  await waitForLoads(loads, 1);
   c["tool-dialog"].close();
   const second = edit.emit("click");
+  await waitForLoads(loads, 2);
   loads[1].resolve({yaml: "second session YAML"});
   await second;
   c["tool-yaml"].value = "second session user edit";
@@ -96,6 +105,7 @@ for (const staleFails of [false, true]) {
 {
   const {controls: c, edit, loads} = harness();
   const opened = edit.emit("click");
+  await waitForLoads(loads, 1);
   loads[0].reject(new Error("Unable to load YAML"));
   await opened;
   assert.equal(c["tool-error"].textContent, "Unable to load YAML");
@@ -112,6 +122,7 @@ for (const change of ["agent", "dialog"]) {
   const {panel, controls: c, edit, loads} = harness();
   const oldEditor = c["tool-yaml"];
   const opened = edit.emit("click");
+  await waitForLoads(loads, 1);
   if (change === "agent") panel._agentId = "agent-b";
   else c["tool-dialog"] = new Control("tool-dialog");
   loads[0].resolve({yaml: "wrong session"});
@@ -124,6 +135,7 @@ for (const change of ["removed", "replaced", "reopened"]) {
   const {panel, controls: c, edit, loads} = harness();
   const oldDialog = c["tool-dialog"];
   const opened = edit.emit("click");
+  await waitForLoads(loads, 1);
   const currentToken = panel._toolEditorLoad;
   if (change === "removed") {
     delete c["tool-dialog"];
@@ -142,6 +154,7 @@ for (const change of ["removed", "replaced", "reopened"]) {
 {
   const {controls: c, loads} = harness();
   const opened = c["add-tool"].emit("click");
+  await waitForLoads(loads, 2);
   loads.find((load) => load.action === "starter").resolve({yaml: "starter YAML"});
   await Promise.resolve();
   assert.equal(c["tool-save"].disabled, true);

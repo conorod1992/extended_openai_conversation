@@ -29,6 +29,7 @@ from custom_components.extended_openai_conversation_responses.function_groups im
     reset_function_group_runtime,
 )
 from custom_components.extended_openai_conversation_responses.management_ui import (
+    _agent_config_revision,
     async_management_command,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
@@ -292,7 +293,7 @@ async def test_guest_management_marks_unscopable_functions_unsafe(
         True,
         {
             "section": "guest_mode",
-            "action": "get",
+            "action": "details",
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
         },
@@ -628,3 +629,30 @@ async def test_function_tool_yaml_operations_require_admin(hass) -> None:
                 "subentry_id": "agent-1",
             },
         )
+
+
+async def test_stale_agent_configuration_revision_is_rejected(hass) -> None:
+    _entry, subentry = _setup_entry(hass)
+    get_message = {
+        "section": "configuration",
+        "action": "get",
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+    }
+    snapshot = await async_management_command(hass, "admin", True, get_message)
+    assert snapshot["revision"] == _agent_config_revision(subentry.data, subentry.title)
+
+    subentry.data = {**subentry.data, "max_tokens": 900}
+    with pytest.raises(HomeAssistantError, match="changed in another tab"):
+        await async_management_command(
+            hass,
+            "admin",
+            True,
+            {
+                **get_message,
+                "action": "update",
+                "config": {"max_tokens": 700},
+                "revision": snapshot["revision"],
+            },
+        )
+    hass.config_entries.async_update_subentry.assert_not_called()

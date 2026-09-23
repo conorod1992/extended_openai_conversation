@@ -73,6 +73,10 @@ async def test_add_all_is_explicit_snapshot_idempotent_and_preserves_groups(
     added = await command(hass, "ha_add", tools=selected)
     assert len(added["functions"]) == 1
     assert added["functions"][0]["function"]["tool_name"] == "echo"
+    saved_name = added["functions"][0]["spec"]["name"]
+    assert added["ha_saved"][saved_name]["available"] is True
+    assert added["ha_saved"][saved_name]["name"] == "echo"
+    assert added["ha_saved"][saved_name]["description"] == catalog["tools"][0]["description"]
     again = await command(hass, "ha_add", tools=selected)
     assert again == added
     refreshed = await command(hass, "ha_catalog")

@@ -7,7 +7,7 @@ import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
 import {saveBarMarkup} from "./unsaved-state.js";
 import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
-import { bindHALlmTools, haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools.js";
+import { haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools-list.js";
 import { bindHelp, helpButton, helpPopover } from "./agent-config-help.js";
 import {getToolYamlEditor} from "./tool-yaml-editor-adapter.js";
 
@@ -774,7 +774,7 @@ export async function openTool(panel, index = null, initialTool = null) {
   panel._toolOriginalName = index === null ? null : tool?.spec?.name || null;
   const root = panel.shadowRoot;
   const dialog = root.querySelector("#tool-dialog");
-  const editor = getToolYamlEditor(panel);
+  let editor = getToolYamlEditor(panel);
   const status = root.querySelector("#tool-error");
   const agentId = panel._agentId;
   const loadToken = {};
@@ -793,6 +793,10 @@ export async function openTool(panel, index = null, initialTool = null) {
   panel._toolInitialYaml = null;
   dialog.showModal();
   try {
+    const nativeYaml = await import("./agent-config-native-yaml.js");
+    if (!isCurrent()) return;
+    nativeYaml.bindNativeToolYaml(panel);
+    editor = getToolYamlEditor(panel);
     let response;
     if (tool) {
       response = await panel._call("tools", "serialize", {tool});
@@ -894,9 +898,69 @@ async function saveFunctionGroup(panel) {
   finally { panel._setSaving(button, false); }
 }
 
+async function assignToolToGroup(panel, select) {
+  const config = panel._draft || panel._result?.config || {};
+  const tools = config.functions || [];
+  const groups = config.function_groups || [];
+  const name = select.closest?.("[data-tool-key]")?.dataset.toolKey;
+  const current = groups.find(group => (group.functions || []).includes(name));
+  const targetId = select.value;
+  if (!name || (current?.id || "") === targetId) return;
+  select.disabled = true;
+  try {
+    const target = targetId ? groups.find(group => group.id === targetId) : current;
+    if (!target) throw new Error("The selected Function Group no longer exists");
+    const functions = targetId
+      ? [...new Set([...(target.functions || []), name])]
+      : (target.functions || []).filter(item => item !== name);
+    const result = await panel._call("tools", "save_group", {
+      group: {...target, functions}, original_id: target.id,
+    });
+    synchronizePersistedFunctions(panel, result);
+    panel._toast(targetId ? `${name} moved to ${target.name}` : `${name} is now available on every request`);
+    panel._render();
+  } catch (err) {
+    select.value = current?.id || "";
+    panel._toast(`Unable to change Function Group: ${err.message || String(err)}`, true);
+  } finally { select.disabled = false; }
+}
+
 export function bindTools(panel) {
-  bindHALlmTools(panel, synchronizePersistedFunctions);
   const root=panel.shadowRoot;
+  const host = root.querySelector(".tools-surface");
+  if (host && !host.__eocAssignmentBound) {
+    host.__eocAssignmentBound = true;
+    host.addEventListener("change", event => {
+      if (event.target.matches?.(".function-group-assignment") && !event.target.disabled) void assignToolToGroup(panel, event.target);
+    });
+  }
+  // Catalogue discovery and its dialog code are optional for the initial list.
+  const attachHA = () => import("./ha-llm-tools.js").then(({bindHALlmTools}) => {
+    if (panel.shadowRoot === root && root.querySelector(".tools-surface") === host) {
+      bindHALlmTools(panel, synchronizePersistedFunctions);
+    }
+  });
+  if ((panel._draft?.functions || []).some(isHALlmTool)) void attachHA().catch(() => {});
+  for (const id of ["add-ha-tools", "refresh-ha-tools"]) {
+    const button = root.querySelector(`#${id}`);
+    if (!button) continue;
+    const firstClick = async () => {
+      button.removeEventListener("click", firstClick);
+      button.disabled = true;
+      try {
+        await attachHA();
+        if (button.isConnected) {
+          button.disabled = false;
+          button.click();
+        }
+      } catch (err) {
+        button.disabled = false;
+        button.addEventListener("click", firstClick);
+        panel._toast(err.message || String(err), true);
+      }
+    };
+    button.addEventListener("click", firstClick);
+  }
   bindHelp(panel);
   prepareToolsCollection(panel);
   bindToolCollection(panel);

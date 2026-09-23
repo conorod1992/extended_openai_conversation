@@ -93,12 +93,14 @@ test("failed editor loading is visible and can be retried without saving a blank
   const errors = trackPageErrors(page);
   const panel = await openFunctions(page);
   await panel.locator(".edit-tool").first().click();
+  await expect.poll(() => page.evaluate(() => window.toolEditorLoads.length)).toBe(1);
   await page.evaluate(() => window.toolEditorLoads[0].reject(new Error("YAML temporarily unavailable")));
   await expect(panel.locator("#tool-error")).toHaveText("YAML temporarily unavailable");
   await expect(panel.locator("#tool-dialog")).toHaveAttribute("aria-busy", "false");
   await expect(panel.locator("#tool-save")).toBeDisabled();
   await panel.locator("#tool-cancel").click();
   await panel.locator(".edit-tool").first().click();
+  await expect.poll(() => page.evaluate(() => window.toolEditorLoads.length)).toBe(2);
   await page.evaluate(() => window.toolEditorLoads[1].resolve());
   await expect(panel.locator("#tool-yaml")).toBeEditable();
   await expect(panel.locator("#tool-save")).toBeEnabled();

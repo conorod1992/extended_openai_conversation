@@ -30,7 +30,6 @@ const DATA_FEATURES = new Set([
 const featureLoaders = {
   "agent-config": () => import("./agent-config-editor.js"),
   "agent-config-tools": () => import("./agent-config-tools.js"),
-  "assistant/prompt-context": () => import("./exposed-attributes-ui.js"),
   "usage-maintenance/backup-restore": () => import("./backup-transfer-ui.js"),
   "status": () => import("./management-feature-status.js"),
   "capabilities": () => import("./management-capabilities-ia.js"),
@@ -46,7 +45,7 @@ const featureLoaders = {
   "usage-maintenance/usage": () => import("./usage-chart.js"),
   "usage-maintenance/request-debug": () => import("./debug-management.js"),
   "usage-maintenance/diagnostics": () => import("./management-provider-credentials.js"),
-  "assistant/voice": () => import("./voice-identity-ui.js"),
+  "assistant/voice": () => import("./voice-identity-core.js"),
   "data-memory/memory-settings": () => import("./memory-settings-ui.js"),
 };
 export function getRouteFeature(view) { return featureModules.get(view); }
@@ -57,8 +56,8 @@ function routeFeatureKeys(view) {
   if (assetKind === "agent-config" || assetKind === "agent-config-tools") keys.push(assetKind);
   // Configuration guidance is additive and never blocks route readiness.
   if (["data-memory/memories", "data-memory/conversations", "capabilities/guest-mode"].includes(view)) keys.push("memory-browser");
-  if (["capabilities/home-assistant", "capabilities/web-skills", "data-memory/knowledge"].includes(view)) keys.push("capabilities");
-  if (["data-memory/memories", "data-memory/knowledge", "usage-maintenance/diagnostics"].includes(view)) keys.push("status");
+  if (["capabilities/home-assistant", "capabilities/web-skills"].includes(view)) keys.push("capabilities");
+  if (["data-memory/memories", "usage-maintenance/diagnostics"].includes(view)) keys.push("status");
   return keys;
 }
 

@@ -337,7 +337,12 @@ async def test_ha_tool_add_validation_refresh_and_group_assignment(
     reference = {"source_id": "assist", "tool_name": "Light"}
     monkeypatch.setattr(management_ui, "validate_reference", lambda _value: reference)
     monkeypatch.setattr(management_ui, "reference_key", lambda _value: "assist:Light")
-    snapshot = SimpleNamespace(tools={"assist:Light": object()})
+    snapshot = SimpleNamespace(tools={
+        "assist:Light": SimpleNamespace(
+            source_label="Assist",
+            tool=SimpleNamespace(description="Control lights"),
+        )
+    })
     monkeypatch.setattr(
         management_ui, "async_discover", AsyncMock(return_value=snapshot)
     )
@@ -362,6 +367,12 @@ async def test_ha_tool_add_validation_refresh_and_group_assignment(
         )
 
     added = _tool("ha_light")
+    added["function"] = {
+        "type": "ha_llm",
+        "source_id": "assist",
+        "api_id": "assist",
+        "tool_name": "Light",
+    }
     monkeypatch.setattr(management_ui, "new_reference_tool", lambda *_args: added)
     persist = Mock(return_value={"status": "saved"})
     monkeypatch.setattr(management_ui, "_persist_function_configuration", persist)
@@ -371,7 +382,15 @@ async def test_ha_tool_add_validation_refresh_and_group_assignment(
         True,
         _message("tools", "ha_add", tools=[reference], group_id="group"),
     )
-    assert result == {"status": "saved"}
+    assert result == {
+        "status": "saved",
+        "ha_saved": {"ha_light": {
+            "available": True,
+            "name": "Light",
+            "source": "Assist",
+            "description": "Control lights",
+        }},
+    }
     assert group["functions"] == ["ha_light"]
 
 
@@ -1060,13 +1079,17 @@ async def test_guest_backup_and_service_dispatch_edges(monkeypatch) -> None:
     )
     monkeypatch.setattr(management_ui, "resolve_guest_policy", lambda *_: policy)
 
-    result = await management_ui.async_management_command(
+    primary = await management_ui.async_management_command(
         hass, "user", False, _residual_message("guest_mode", "get")
     )
-    assert result == {
-        "status": {"state": "inactive"},
-        "policy": {"guest_active": False},
-    }
+    assert primary["status"] == {"state": "inactive"}
+    assert primary["config"] == {}
+    assert "policy" not in primary
+
+    details = await management_ui.async_management_command(
+        hass, "user", False, _residual_message("guest_mode", "details")
+    )
+    assert details["policy"] == {"guest_active": False}
 
     with pytest.raises(HomeAssistantError, match="config must be an object"):
         await management_ui.async_management_command(

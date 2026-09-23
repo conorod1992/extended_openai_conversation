@@ -1,6 +1,63 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+test("Guest Mode primary UI paints before capability details settle", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".dashboard-grid")).toBeVisible();
+
+  const result = await panel.evaluate(async (host) => {
+    const original = host._hass.callWS;
+    let releaseDetails;
+    host._hass.callWS = async (message) => {
+      if (message.section === "guest_mode" && message.action === "details") {
+        await new Promise((resolve) => { releaseDetails = resolve; });
+      }
+      return original(message);
+    };
+
+    let navigationResolved = false;
+    const pending = host._navigate("capabilities", "guest-mode").then(() => {
+      navigationResolved = true;
+    });
+    while (!releaseDetails) await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let turn = 0; turn < 30 && !navigationResolved; turn++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const primaryVisible = Boolean(
+      host.shadowRoot.querySelector(".guest-intro")
+      && host.shadowRoot.querySelector("#guest-now")
+    );
+    const loadingDetails = host._result?.loading?.details === true
+      && host.shadowRoot.textContent.includes("Loading Guest capability details");
+
+    releaseDetails();
+    await pending;
+    for (let turn = 0; turn < 30 && host._result?.loading?.details; turn++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    host._hass.callWS = original;
+    return {
+      navigationResolved,
+      primaryVisible,
+      loadingDetails,
+      detailsLoaded: host._result?.loading?.details === false,
+      policyPresent: Boolean(host._result?.policy),
+    };
+  });
+
+  expect(result).toEqual({
+    navigationResolved:true,
+    primaryVisible:true,
+    loadingDetails:true,
+    detailsLoaded:true,
+    policyPresent:true,
+  });
+  await expectHarnessClean(page, errors);
+});
+
 test("Guest Mode schedule mutations refresh only the selected agent and route", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/guest-mode"));
@@ -53,7 +110,15 @@ test("Guest Mode schedule mutations refresh only the selected agent and route", 
         return {
           ...host._result,
           status:{...status},
+        };
+      }
+      if (message.action === "details") {
+        return {
           policy:{guest_active:status.currently_active, marker:status.state},
+          knowledge_sources:[],
+          functions:[],
+          function_groups:[],
+          domains:[],
         };
       }
       return original(message);
@@ -85,7 +150,7 @@ test("Guest Mode schedule mutations refresh only the selected agent and route", 
   });
 
   expect(result.finalAgentCalls).toBe(result.initialAgentCalls);
-  expect(result.guestCalls).toEqual(["update", "get", "disable", "get"]);
+  expect(result.guestCalls).toEqual(["update", "get", "details", "disable", "get", "details"]);
   expect(result.afterUpdate.agent).toMatchObject({
     state:"active_indefinitely",
     currently_active:true,
@@ -119,6 +184,9 @@ test("late Guest Mode refresh does not replace a newer route", async ({page}) =>
       if (message.section === "guest_mode" && message.action === "get") {
         await new Promise((resolve) => { releaseGet = resolve; });
         return {...host._result, status:{state:"active_indefinitely", currently_active:true, indefinite:true}};
+      }
+      if (message.section === "guest_mode" && message.action === "details") {
+        return {policy:{guest_active:true}, knowledge_sources:[], functions:[], function_groups:[], domains:[]};
       }
       return original(message);
     };

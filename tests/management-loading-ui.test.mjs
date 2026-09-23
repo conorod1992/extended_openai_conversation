@@ -52,8 +52,9 @@ assert.doesNotMatch(agentEditor, /management-bootstrap\.js/);
 assert.match(routes, /import\("\.\/agent-config-editor\.js"\)/);
 assert.doesNotMatch(panelSource, /from "\.\/agent-config-editor\.js"/);
 assert.doesNotMatch(agentEditor, /agent-config-native-yaml|agent-config-tools-base/);
-assert.match(agentTools, /from "\.\/agent-config-native-yaml\.js"/);
-assert.match(agentNativeYaml, /from "\.\/agent-config-tools-base\.js"/);
+assert.match(agentTools, /from "\.\/agent-config-tools-base\.js"/);
+assert.doesNotMatch(agentTools, /from "\.\/agent-config-native-yaml\.js"/);
+assert.match(agentNativeYaml, /export function bindNativeToolYaml/);
 assert.match(requestRules, /import\("\.\/request-rules-ui-impl\.js"\)/);
 assert.doesNotMatch(requestRules, /from "\.\/request-rules-ui-impl\.js"/);
 assert.match(routes, /import\("\.\/request-rules-ui\.js"\)/);
@@ -272,8 +273,12 @@ assert.equal(routeModule.getRouteFeature("capabilities/request-rules"), rules);
 
 // Specialized configuration modules stay cold until their owning route loads.
 assert.equal(editor.restoreDialog, undefined);
+assert.equal(routeModule.getRouteFeature("assistant/prompt-context"), undefined);
+assert.equal(routeModule.routeFeaturesReady("assistant/prompt-context"), true);
+await routeModule.routeAssetPromise("assistant/prompt-context");
+assert.equal(routeModule.getRouteFeature("assistant/prompt-context"), undefined);
+assert.match(panelSource, /import\("\.\/exposed-attributes-ui\.js"\)/);
 for (const [view, exports] of [
-  ["assistant/prompt-context", ["renderExposedAttributeSettings", "bindExposedAttributeSettings"]],
   ["usage-maintenance/backup-restore", ["renderBackupTransferPanel", "renderRestoreTransferDialog", "bindBackupTransfer"]],
 ]) {
   assert.equal(routeModule.getRouteFeature(view), undefined);

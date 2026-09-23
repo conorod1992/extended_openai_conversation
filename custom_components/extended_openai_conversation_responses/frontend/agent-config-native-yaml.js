@@ -1,4 +1,3 @@
-import {bindTools as bindBaseTools, synchronizePersistedFunctions} from "./agent-config-tools-base.js";
 import {
   getToolYamlEditor,
   installToolYamlEditor,
@@ -120,62 +119,6 @@ function installNativeStyle(root) {
   style.dataset.nativeToolYaml = "";
   style.textContent = NATIVE_STYLE;
   root.append(style);
-}
-
-function currentGroupForTool(groups, name) {
-  return (groups || []).find((group) => (group.functions || []).includes(name)) || null;
-}
-
-async function assignToolToGroup(panel, select) {
-  const config = panel?._draft || panel?._result?.config || {};
-  const tools = config.functions || [];
-  const groups = config.function_groups || [];
-  const key = select.closest?.("[data-tool-key]")?.dataset.toolKey;
-  const index = key === undefined ? Number(select.dataset.index) : tools.findIndex(tool => tool.spec?.name === key);
-  const tool = tools[index];
-  const name = tool?.spec?.name;
-  if (!name) return;
-
-  const current = currentGroupForTool(groups, name);
-  const targetId = select.value;
-  if ((current?.id || "") === targetId) return;
-  select.disabled = true;
-
-  try {
-    let response;
-    if (targetId) {
-      const target = groups.find((group) => group.id === targetId);
-      if (!target) throw new Error("The selected Function Group no longer exists");
-      response = await panel._call("tools", "save_group", {
-        group: {
-          ...target,
-          functions: [...new Set([...(target.functions || []).filter((item) => item !== name), name])],
-        },
-        original_id: target.id,
-      });
-      synchronizePersistedFunctions(panel, response);
-      panel._toast(`${name} moved to ${target.name}`);
-    } else {
-      if (!current) {
-        select.disabled = false;
-        return;
-      }
-      response = await panel._call("tools", "save_group", {
-        group: {
-          ...current,
-          functions: (current.functions || []).filter((item) => item !== name),
-        },
-        original_id: current.id,
-      });
-      synchronizePersistedFunctions(panel, response);
-      panel._toast(`${name} is now available on every request`);
-    }
-    panel._render();
-  } catch (err) {
-    select.value = current?.id || "";
-    select.disabled = false;
-    panel._toast(`Unable to change Function Group: ${err.message || String(err)}`, true);
-  } finally { select.disabled = false; }
 }
 
 export function bindNativeToolYaml(panel) {
@@ -320,15 +263,4 @@ export function bindNativeToolYaml(panel) {
         if (isCurrent()) showFallback();
       });
   }
-}
-
-export function bindTools(panel) {
-  bindBaseTools(panel);
-  bindNativeToolYaml(panel);
-  const host = panel?.shadowRoot?.querySelector(".tools-surface");
-  if (!host || host.__eocAssignmentBound) return;
-  host.__eocAssignmentBound = true;
-  host.addEventListener("change", event => {
-    if (event.target.matches?.(".function-group-assignment") && !event.target.disabled) void assignToolToGroup(panel, event.target);
-  });
 }
