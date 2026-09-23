@@ -71,6 +71,28 @@ async def _wait_for_port(port: int, *, available: bool, timeout: float = 60) -> 
             await asyncio.sleep(0.1)
 
 
+def _contains_value(value: Any, expected: str) -> bool:
+    """Find an exact durable ID/token in HA's versioned storage envelope."""
+    if isinstance(value, dict):
+        return any(_contains_value(item, expected) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_value(item, expected) for item in value)
+    return value == expected
+
+
+async def _wait_for_stored_values(path: Path, *values: str) -> None:
+    """Wait for a complete atomic Store generation containing required values."""
+    async with asyncio.timeout(15):
+        while True:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if all(_contains_value(payload, value) for value in values):
+                    return
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+            await asyncio.sleep(0.05)
+
+
 async def _start_ha_child(
     *,
     test_file: Path,
@@ -245,10 +267,12 @@ async def test_open_browser_survives_true_home_assistant_process_restart(
         # still-valid browser journey halfway through that diagnostic window.
         await _wait_for_process_marker(browser, sync_dir / "browser-ready", timeout=130)
 
-        # The browser's management save has completed. Let HA's delayed atomic
-        # config-entry write settle so this test kills a normally-saved runtime,
-        # not an intentionally interrupted write transaction.
-        await asyncio.sleep(2)
+        # The browser save must be durable before SIGKILL. Waiting for the exact
+        # subentry title keeps the crash boundary after HA's atomic Store commit.
+        await _wait_for_stored_values(
+            config_dir / ".storage" / "core.config_entries",
+            "Before real HA restart",
+        )
 
         # Hard-kill the HA process rather than invoking hass.async_stop(), unloading
         # the config entry, or restarting only the integration.
@@ -415,13 +439,17 @@ async def _child_main() -> None:
         auth_data = json.loads((sync_dir / _AUTH_FILE).read_text(encoding="utf-8"))
         assert hass.auth.async_validate_access_token(auth_data["access_token"]) is not None
 
-    # Home Assistant's auth/config-entry stores use delayed atomic writes. Give
-    # first-boot mutations time to hit disk before announcing that SIGKILL is safe.
     await hass.async_block_till_done()
-    await asyncio.sleep(2)
-    assert (config_dir / ".storage" / "auth").exists()
-    assert (config_dir / ".storage" / "core.config_entries").exists()
-    assert entry.entry_id
+    if generation == 1:
+        # Only this generation is SIGKILLed. Its entry and refresh token must
+        # reach disk before the browser begins the crash/recovery journey.
+        auth_data = json.loads((sync_dir / _AUTH_FILE).read_text(encoding="utf-8"))
+        await _wait_for_stored_values(
+            config_dir / ".storage" / "auth", auth_data["refresh_token"]
+        )
+        await _wait_for_stored_values(
+            config_dir / ".storage" / "core.config_entries", entry.entry_id
+        )
 
     (sync_dir / f"ha-ready-{generation}").write_text("ready\n", encoding="utf-8")
     await asyncio.Event().wait()

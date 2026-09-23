@@ -201,10 +201,30 @@ async def _crash_phase(config_dir: Path) -> None:
     entry = await _ensure_entry(hass)
     agent = await _configure_tool(hass, entry)
 
-    # Ensure config-entry/auth writes are durable before the intentional crash.
+    # Wait for the exact entry and Function Tool configuration needed on reboot.
+    # HA writes config entries on a delayed schedule; an in-memory loaded entry
+    # alone does not prove the recovery process will see the tool.
     await hass.async_block_till_done()
-    await asyncio.sleep(2)
-    assert (config_dir / ".storage" / "core.config_entries").exists()
+    const = importlib.import_module(f"custom_components.{DOMAIN}.const")
+    storage_path = config_dir / ".storage" / "core.config_entries"
+    async with asyncio.timeout(15):
+        while True:
+            try:
+                payload = json.loads(storage_path.read_text(encoding="utf-8"))
+                entries = payload["data"]["entries"]
+                persisted = next(
+                    item for item in entries if item["entry_id"] == entry.entry_id
+                )
+                subentries = persisted["subentries"]
+                if any(
+                    item["subentry_type"] == "conversation"
+                    and _TOOL_NAME in item["data"].get(const.CONF_FUNCTION_TOOLS, "")
+                    for item in subentries
+                ):
+                    break
+            except (FileNotFoundError, json.JSONDecodeError, KeyError, StopIteration):
+                pass
+            await asyncio.sleep(0.05)
 
     await _execute_tool(hass, agent, _FIRST_MARKER)
     raise AssertionError("immediate tool unexpectedly returned past crash boundary")
