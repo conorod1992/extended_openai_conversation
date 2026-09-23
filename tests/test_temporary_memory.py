@@ -15,15 +15,19 @@ from custom_components.extended_openai_conversation_responses.const import (
     TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
+    _ACTIVE_TEMPORARY_SCOPE,
     ExtendedOpenAIAgentEntity,
 )
+from custom_components.extended_openai_conversation_responses.scope import unretained_scope
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     MAX_ACTIVE_RECORDS,
     MAX_CONTENT_LENGTH,
     MAX_INJECT_CHARACTERS,
     MAX_INJECT_RECORDS,
+    MAX_DELETE_RECORDS,
     TemporaryMemory,
     TemporaryMemoryRecord,
+    temporary_memory_tools,
 )
 from homeassistant.util import dt as dt_util
 
@@ -634,3 +638,50 @@ async def test_get_temporary_memory_caches_and_initializes_manager(monkeypatch) 
     assert len(created) == 1
     assert first.store is store
     assert first.async_initialize.await_count == 2
+
+
+async def test_temporary_memory_rejects_oversized_delete_without_partial_success() -> None:
+    """The model contract and runtime reject more than 50 delete IDs."""
+    storage = Storage()
+    storage.async_save = AsyncMock(wraps=storage.async_save)
+    memory = TemporaryMemory(storage)
+    await memory.async_initialize()
+    ids = [f"memory-{index}" for index in range(MAX_DELETE_RECORDS + 1)]
+
+    with pytest.raises(ValueError, match="1 to 50"):
+        await memory.async_delete(
+            "scope", ids, owner_scope_id="user:test-owner"
+        )
+
+    delete_tool = next(
+        tool
+        for tool in temporary_memory_tools()
+        if tool["spec"]["name"] == "temporary_memory_delete"
+    )
+    ids_schema = delete_tool["spec"]["parameters"]["properties"]["memory_ids"]
+    assert ids_schema["minItems"] == 1
+    assert ids_schema["maxItems"] == MAX_DELETE_RECORDS
+    storage.async_save.assert_not_awaited()
+
+
+async def test_unretained_request_has_no_active_temporary_memory_scope(monkeypatch) -> None:
+    """Temporary retrieval is inert when the request lifecycle supplies no scope."""
+    scope = unretained_scope(device_id="voice-device")
+    assert scope.allows_retention is False
+
+    entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
+    entity.subentry = SimpleNamespace(data={"temporary_memory": "conversation"})
+    active = AsyncMock(return_value=[])
+    entity._temporary_memory = SimpleNamespace(async_active=active)
+    monkeypatch.setattr(
+        ExtendedOpenAIAgentEntity,
+        "_effective_guest_policy",
+        lambda self: SimpleNamespace(temporary_memory=True),
+    )
+    token = _ACTIVE_TEMPORARY_SCOPE.set(None)
+    try:
+        assert await entity._async_retrieve_temporary_memories() == []
+    finally:
+        _ACTIVE_TEMPORARY_SCOPE.reset(token)
+
+    active.assert_not_awaited()

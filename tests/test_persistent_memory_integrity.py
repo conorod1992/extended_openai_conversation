@@ -16,12 +16,14 @@ class FakeStorage:
 
     def __init__(self, data=None) -> None:
         self.data = deepcopy(data)
+        self.save_count = 0
 
     async def async_load(self):
         return deepcopy(self.data)
 
     async def async_save(self, data) -> None:
         self.data = deepcopy(data)
+        self.save_count += 1
 
 
 async def _memory(data=None, cache=None) -> PersistentMemory:
@@ -260,3 +262,84 @@ async def test_hybrid_status_reports_configuration_fallback_and_recovery() -> No
         "status": "active",
         "model": "second-model",
     }
+
+
+async def test_memory_metadata_can_be_explicitly_cleared() -> None:
+    """Omitted metadata remains unchanged while clear_fields can remove it."""
+    memory = await _memory()
+    created = await memory.async_add(
+        "alice",
+        "Oscar is a Cavachon.",
+        "pets",
+        "explicit",
+        subject="Oscar",
+        key="pet.oscar.breed",
+        valid_from="2026-01-01T00:00:00+00:00",
+    )
+    memory_id = created["memory"]["memory_id"]
+
+    unchanged = await memory.async_update("alice", memory_id, importance="high")
+    assert unchanged.subject == "Oscar"
+    assert unchanged.key == "pet.oscar.breed"
+    assert unchanged.valid_from == "2026-01-01T00:00:00+00:00"
+
+    cleared = await memory.async_update(
+        "alice",
+        memory_id,
+        clear_fields=["subject", "key", "valid_from"],
+    )
+    assert cleared.subject is None
+    assert cleared.key is None
+    assert cleared.valid_from is None
+
+    replacement = await memory.async_add(
+        "alice",
+        "Oscar's breed record was replaced.",
+        "pets",
+        "explicit",
+        key="pet.oscar.breed",
+    )
+    assert replacement["status"] == "created"
+
+
+async def test_memory_startup_canonical_validation_self_heals_bad_records() -> None:
+    """Malformed and duplicate-key records are dropped and the clean set is saved."""
+    timestamp = "2026-09-01T12:00:00+00:00"
+    valid = {
+        "memory_id": "valid",
+        "user_id": "alice",
+        "content": "Oscar is a Cavachon.",
+        "category": "pets",
+        "source": "explicit",
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "importance": "normal",
+        "subject": "Oscar",
+        "key": "pet.oscar.breed",
+        "valid_from": None,
+        "last_confirmed_at": timestamp,
+    }
+    malformed = {
+        **valid,
+        "memory_id": "malformed",
+        "content": "   ",
+        "key": "pet.oscar.other",
+    }
+    duplicate_key = {
+        **valid,
+        "memory_id": "duplicate",
+        "content": "A second record reuses the canonical key.",
+    }
+    storage = FakeStorage({"memories": [valid, malformed, duplicate_key]})
+
+    memory = PersistentMemory(storage)
+    await memory.async_initialize()
+
+    assert [item.memory_id for item in await memory.async_list("alice")] == ["valid"]
+    assert storage.save_count == 1
+    assert storage.data == {"memories": [valid]}
+
+    reloaded = PersistentMemory(storage)
+    await reloaded.async_initialize()
+    assert [item.memory_id for item in await reloaded.async_list("alice")] == ["valid"]
+    assert storage.save_count == 1
