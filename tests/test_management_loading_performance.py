@@ -41,6 +41,10 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
 )
 
 
+class _HashableNamespace(SimpleNamespace):
+    __hash__ = object.__hash__
+
+
 class _Auth:
     async def async_get_users(self):
         return [SimpleNamespace(id="admin", name="Admin")]
@@ -83,7 +87,7 @@ def _hass_with_agent():
         data={},
         subentries={subentry.subentry_id: subentry},
     )
-    hass = SimpleNamespace(
+    hass = _HashableNamespace(
         data={},
         auth=_Auth(),
         config_entries=_ConfigEntries(entry),
