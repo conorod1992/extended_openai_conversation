@@ -1,4 +1,4 @@
-import {SETTINGS_INDEX} from "./frontend-navigation.js";
+import {SETTING_LOOKUP} from "./management-setting-lookup.js";
 export {dirtyConfigurationKeys, configurationDestinations, dirtyConfigurationDestinations} from "./management-config-destinations.js";
 
 const FRIENDLY_LABEL_OVERRIDES = Object.freeze({
@@ -39,19 +39,8 @@ const FRIENDLY_VALUE_LABELS = Object.freeze({
   }),
 });
 
-const SETTING_BY_KEY = new Map();
-for (const item of SETTINGS_INDEX) {
-  if (item.configKey && !SETTING_BY_KEY.has(item.configKey)) SETTING_BY_KEY.set(item.configKey, item);
-}
-
-function ownerForKey(key) {
-  const item = SETTING_BY_KEY.get(key);
-  if (item) return [item.page, item.section];
-  return EXTRA_CONFIG_OWNERS[key] || null;
-}
-
 export function friendlySettingLabel(key) {
-  return FRIENDLY_LABEL_OVERRIDES[key] || SETTING_BY_KEY.get(key)?.label || null;
+  return FRIENDLY_LABEL_OVERRIDES[key] || SETTING_LOOKUP[key]?.label || null;
 }
 
 export function friendlySettingValue(key, value) {
@@ -69,8 +58,8 @@ export function settingEffectBadges(key, value, {disabled = false} = {}) {
 }
 
 export function settingSearchAliases(key) {
-  const item = SETTING_BY_KEY.get(key);
-  return item ? `${item.label || ""} ${item.description || ""} ${item.terms || ""} ${item.configKey || ""} ${TECHNICAL_SEARCH_ALIASES[key] || ""}`.toLowerCase() : "";
+  const aliases = SETTING_LOOKUP[key]?.aliases;
+  return aliases ? `${aliases} ${TECHNICAL_SEARCH_ALIASES[key] || ""}` : "";
 }
 
 export function settingEffectMarkup(panel, key, value, disabled = false) {

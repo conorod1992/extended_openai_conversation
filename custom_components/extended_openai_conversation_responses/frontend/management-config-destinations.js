@@ -1,4 +1,4 @@
-import {SETTINGS_INDEX} from "./frontend-navigation.js";
+import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
 
 const EXTRA_CONFIG_OWNERS = Object.freeze({
   functions: ["capabilities", "functions"],
@@ -7,15 +7,8 @@ const EXTRA_CONFIG_OWNERS = Object.freeze({
 
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 
-const SETTING_OWNER_BY_KEY = new Map();
-for (const item of SETTINGS_INDEX) {
-  if (item.configKey && !SETTING_OWNER_BY_KEY.has(item.configKey)) {
-    SETTING_OWNER_BY_KEY.set(item.configKey, [item.page, item.section]);
-  }
-}
-
 function ownerForKey(key) {
-  return SETTING_OWNER_BY_KEY.get(key) || EXTRA_CONFIG_OWNERS[key] || null;
+  return CONFIG_OWNER_BY_KEY[key] || EXTRA_CONFIG_OWNERS[key]?.join("/") || null;
 }
 
 export function dirtyConfigurationKeys(panel) {
@@ -34,7 +27,7 @@ export function configurationDestinations(panel) {
   const unknown = [];
   for (const key of dirtyConfigurationKeys(panel)) {
     const owner = ownerForKey(key);
-    if (owner) destinations.add(`${owner[0]}/${owner[1]}`);
+    if (owner) destinations.add(owner);
     else unknown.push(key);
   }
   if (unknown.length && panel?._configDirty && panel?._page && panel?._subsection) {

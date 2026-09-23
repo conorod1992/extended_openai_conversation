@@ -19,6 +19,23 @@ export function needsFullConfiguration(view, isAdmin = true) {
 export function getConfigurationEditor() { return getRouteFeature("agent-config"); }
 export function getConfigurationTools() { return getRouteFeature("agent-config-tools"); }
 
+const CONFIG_SECTION_FAMILIES = {
+  general: "primary", conversation: "primary", context: "primary", model: "primary",
+  local: "capabilities", capabilities: "capabilities", archive: "capabilities",
+  prompt: "media", voice: "media", speech: "media",
+  retention: "maintenance", backup: "maintenance",
+};
+export function configurationSectionFamily(view, sections = null) {
+  const section = sections?.find((item) => CONFIG_SECTION_FAMILIES[item]);
+  if (section) return `agent-config-sections-${CONFIG_SECTION_FAMILIES[section]}`;
+  if (view === "assistant/advanced") return "agent-config-sections-capabilities";
+  if (String(view || "").startsWith("assistant/")) {
+    return `agent-config-sections-${["prompt-context", "voice", "speech"].includes(view.split("/")[1]) ? "media" : "primary"}`;
+  }
+  if (view === "usage-maintenance/retention") return "agent-config-sections-maintenance";
+  return "agent-config-sections-capabilities";
+}
+
 export function routeAssetKind(view) {
   if (view === "capabilities/functions") return "agent-config-tools";
   if (view === "usage-maintenance/backup-restore") return null;
@@ -37,6 +54,10 @@ const DATA_FEATURES = new Set([
 ]);
 const featureLoaders = {
   "agent-config": () => import("./agent-config-editor.js"),
+  "agent-config-sections-primary": () => import("./agent-config-sections-primary.js"),
+  "agent-config-sections-capabilities": () => import("./agent-config-sections-capabilities.js"),
+  "agent-config-sections-media": () => import("./agent-config-sections-media.js"),
+  "agent-config-sections-maintenance": () => import("./agent-config-sections-maintenance.js"),
   "agent-config-tools": () => import("./agent-config-tools.js"),
   "usage-maintenance/backup-restore": () => import("./backup-route-ui.js"),
   "status": () => import("./management-feature-status.js"),
@@ -62,6 +83,7 @@ function routeFeatureKeys(view) {
   const keys = [view];
   const assetKind = routeAssetKind(view);
   if (assetKind === "agent-config" || assetKind === "agent-config-tools") keys.push(assetKind);
+  if (assetKind === "agent-config") keys.push(configurationSectionFamily(view));
   // Configuration guidance is additive and never blocks route readiness.
   if (["data-memory/memories", "data-memory/conversations", "capabilities/guest-mode"].includes(view)) keys.push("memory-browser");
   if (["capabilities/home-assistant", "capabilities/web-skills"].includes(view)) keys.push("capabilities");

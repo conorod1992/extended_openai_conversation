@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {renderConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
 
+import {routeAssetPromise} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
+await Promise.all(["assistant/basics", "assistant/voice", "capabilities/home-assistant", "data-memory/conversations", "usage-maintenance/retention"].map((view) => routeAssetPromise(view)));
 let escapes = 0;
 const panel = {_e: value => { escapes++; return String(value ?? ""); }, _titleCase: String,
   _agentId: "one", _draft: {}, _result: {config: {}, options: {}, defaults: {}},

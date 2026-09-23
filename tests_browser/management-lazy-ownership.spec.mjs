@@ -329,6 +329,28 @@ test("Overview navigation reuses a strong-intent read without reading on hover",
   await expectHarnessClean(page, errors);
 });
 
+for (const bundled of [false, true]) {
+  test(`Assistant loads only the selected section family (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const assets = [];
+    page.on("request", request => assets.push(new URL(request.url()).pathname.split("/").pop()));
+    const fetched = name => assets.some(file => file === `${name}.js` || file.startsWith(`${name}-`));
+    await page.goto(fixtureUrl("assistant/basics", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator('[data-config="chat_model"]')).toBeVisible();
+    expect(fetched("agent-config-sections-primary")).toBe(true);
+    expect(fetched("management-settings-index")).toBe(false);
+    for (const family of ["media", "capabilities", "maintenance"]) {
+      expect(fetched(`agent-config-sections-${family}`)).toBe(false);
+    }
+    await panel.evaluate(host => host._navigate("assistant", "speech"));
+    await expect(panel.locator('[data-config="speech_processing_enabled"]')).toBeVisible();
+    expect(fetched("agent-config-sections-media")).toBe(true);
+    expect(assets.filter(file => file === "agent-config-sections-primary.js" || file.startsWith("agent-config-sections-primary-"))).toHaveLength(1);
+    await expectHarnessClean(page, errors);
+  });
+}
+
 test("Settings Search metadata loads only on first search interaction", async ({page}) => {
   const errors = trackPageErrors(page);
   const assets = [];
@@ -341,11 +363,13 @@ test("Settings Search metadata loads only on first search interaction", async ({
   const matches = (name) => assets.filter(file => file === `${name}.js` || file.startsWith(`${name}-`));
   expect(matches("management-navigation-search")).toEqual([]);
   expect(matches("management-setting-metadata")).toEqual([]);
+  expect(matches("management-settings-index")).toEqual([]);
 
   await panel.locator("#settings-search").focus();
   await expect.poll(() => matches("management-navigation-search").length).toBeGreaterThan(0);
   await expect.poll(() => matches("management-setting-metadata").length).toBeGreaterThan(0);
-  const firstSearchAssets = [...matches("management-navigation-search"), ...matches("management-setting-metadata")];
+  await expect.poll(() => matches("management-settings-index").length).toBeGreaterThan(0);
+  const firstSearchAssets = [...matches("management-navigation-search"), ...matches("management-setting-metadata"), ...matches("management-settings-index")];
 
   await panel.locator("#settings-search").fill("assistant name");
   await expect(panel.locator(".settings-result").first()).toBeVisible();
@@ -354,6 +378,7 @@ test("Settings Search metadata loads only on first search interaction", async ({
   expect([
     ...matches("management-navigation-search"),
     ...matches("management-setting-metadata"),
+    ...matches("management-settings-index"),
   ]).toEqual(firstSearchAssets);
   await expectHarnessClean(page, errors);
 });

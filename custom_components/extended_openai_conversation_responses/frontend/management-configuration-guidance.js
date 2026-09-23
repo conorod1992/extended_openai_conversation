@@ -1,12 +1,6 @@
 import {enhancementChanged} from "./management-enhancement-state.js";
-import {SETTINGS_INDEX} from "./frontend-navigation.js";
+import {MODEL_PARAMETERS} from "./management-model-parameters.js";
 import {storeRuntimeGuidance} from "./management-data-state.js";
-
-const MODEL_PARAMETERS = Object.freeze(
-  SETTINGS_INDEX
-    .filter((item) => item.page === "assistant" && item.section === "model-responses" && item.capability)
-    .map((item) => Object.freeze({key: item.configKey, capability: item.capability})),
-);
 
 function activeConfig(panel) {
   if (panel?._draft && panel._draftAgentId === panel._agentId) return panel._draft;

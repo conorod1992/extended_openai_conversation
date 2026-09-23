@@ -5,6 +5,9 @@ import {readFile} from "node:fs/promises";
 import {applyConfigurationControl} from "../../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 import {settingsResultsMarkup, SEARCH_DEBOUNCE_MS} from "../../custom_components/extended_openai_conversation_responses/frontend/management-navigation-search.js";
 import {renderConfiguration} from "../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import {renderConfiguration as renderAllConfiguration} from "../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
+import {routeAssetPromise} from "../../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
+await Promise.all(["assistant/basics", "assistant/voice", "capabilities/home-assistant"].map((view) => routeAssetPromise(view)));
 import {renderTools} from "../../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js";
 import {renderBackupTransferPanel} from "../../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
 import {renderExposedAttributeSettings} from "../../custom_components/extended_openai_conversation_responses/frontend/exposed-attributes-ui.js";
@@ -65,24 +68,13 @@ describe("native management rendering", () => {
     expect(source).not.toContain("initializeManagementPanel");
   });
 
-  it("builds only configuration section bodies that pass the active filter", async () => {
-    const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js", import.meta.url), "utf8");
-    const filterGuard = 'if (panel._configSectionFilter && !panel._configSectionFilter.has(id)) return "";';
-    const bodyEvaluation = 'const content = typeof body === "function" ? body() : body;';
-    expect(source).toContain(filterGuard);
-    expect(source).toContain(bodyEvaluation);
-    expect(source.indexOf(filterGuard)).toBeLessThan(source.indexOf(bodyEvaluation));
-    for (const section of ["general", "conversation", "prompt", "capabilities", "archive", "voice", "speech", "context", "model", "retention", "backup"]) {
-      expect(source).toContain(`section(panel,"${section}"`);
-      const start = source.indexOf(`section(panel,"${section}"`);
-      expect(source.slice(start, source.indexOf("\n", start))).toContain(",() => ");
-    }
-    expect(source).toContain('section(panel,"local","Local handling"');
-    expect(source).toContain('() => renderLocalHandling(panel,config)');
+  it("builds only the selected configuration body", () => {
     const panel = owner();
     panel._configSections = ["general"];
     Object.defineProperty(panel._draft, "prompt", {get() {throw new Error("Unselected prompt body evaluated");}});
-    expect(renderConfiguration(panel)).toContain('id="config-general"');
+    const html = renderConfiguration(panel);
+    expect(html).toContain('id="config-general"');
+    expect(html).not.toContain('id="config-prompt"');
   });
 
   it("renders model decisions directly and only loads catalog data for model controls", async () => {
@@ -104,7 +96,7 @@ describe("native management rendering", () => {
     try {
       const panel = owner();
       panel._configSections = ["local","prompt","backup"];
-      const html = renderConfiguration(panel, {
+      const html = renderAllConfiguration(panel, {
         renderBackup: renderBackupTransferPanel,
         renderExposedAttributes: renderExposedAttributeSettings,
       });

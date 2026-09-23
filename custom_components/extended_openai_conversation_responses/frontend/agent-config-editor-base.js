@@ -7,6 +7,8 @@ import {bindSingleRequestSave} from "./management-actions.js";
 import {saveBarMarkup} from "./unsaved-state.js";
 import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import {bindHelp, helpButton, helpPopover} from "./agent-config-help.js";
+export {modelDataControls} from "./model-catalog.js";
+export {helpButton} from "./agent-config-help.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
@@ -16,7 +18,7 @@ export function invalidateImportPreview(panel, applyButton, summary) {
   if (applyButton) applyButton.disabled = true;
   if (summary) summary.textContent = "Validate the document to preview it.";
 }
-const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${value === selected ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
+export const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${value === selected ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
 const CHOICE_LABELS = Object.freeze({
   conversation_continuity: Object.freeze({
     ha_default: "Use Home Assistant sessions",
@@ -37,12 +39,12 @@ const CHOICE_LABELS = Object.freeze({
   }),
 });
 export const configurationChoiceLabel = (key, item) => friendlySettingValue(key, item.value) || CHOICE_LABELS[key]?.[item.value] || item.label;
-const settingSearch = (label, description, key) => `${label} ${description} ${key} ${settingSearchAliases(key)}`.toLowerCase();
-const labelRow = (panel, label, key, helpKey = null, strong = false, value = undefined, disabled = false) => {
+export const settingSearch = (label, description, key) => `${label} ${description} ${key} ${settingSearchAliases(key)}`.toLowerCase();
+export const labelRow = (panel, label, key, helpKey = null, strong = false, value = undefined, disabled = false) => {
   const text = panel._e(friendlySettingLabel(key) || label);
   return `<span class="setting-label-row"><label for="config-${key}">${strong ? `<strong>${text}</strong>` : text}</label>${helpKey ? helpButton(panel, helpKey) : ""}${settingBadgesMarkup(panel, key, value, disabled)}</span>`;
 };
-const field = (panel, key, label, value, type = "text", description = "", disabled = false, helpKey = null, forceVisible = false) => {
+export const field = (panel, key, label, value, type = "text", description = "", disabled = false, helpKey = null, forceVisible = false) => {
   if (key === "memory_auto_retrieve_limit") {
     label = "Automatically include memories";
     description = "Select up to this many relevant memories when a new conversation starts. The same memories remain available for that conversation. Set to 0 to use memory only on demand.";
@@ -60,7 +62,7 @@ const field = (panel, key, label, value, type = "text", description = "", disabl
   }
   return result;
 };
-const select = (panel, key, label, value, options, description = "", disabled = false, helpKey = null, forceVisible = false) => {
+export const select = (panel, key, label, value, options, description = "", disabled = false, helpKey = null, forceVisible = false) => {
   let presentation = modelFieldPresentation(panel, key, value);
   if (presentation.visible === false && !forceVisible) return "";
   if (presentation.visible === false) presentation = {};
@@ -72,7 +74,7 @@ const select = (panel, key, label, value, options, description = "", disabled = 
     return option(panel, choice, value, friendlySettingValue(key, choice) || (typeof item === "string" ? null : item.label), presentation.disabledOption?.(choice));
   }).join("")}</select>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span>${modelFieldNotes(panel, presentation)}</div>`;
 };
-const toggle = (panel, key, label, value, description = "", disabled = false, helpKey = null) => `<div class="config-toggle setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}"><span class="setting-copy">${labelRow(panel, label, key, helpKey, true, value, disabled)}${description ? `<small>${description}</small>` : ""}</span><label class="switch-control" for="config-${key}"><input id="config-${key}" data-config="${key}" data-type="boolean" type="checkbox" role="switch" ${bool(value)} ${disabled ? "disabled" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>`;
+export const toggle = (panel, key, label, value, description = "", disabled = false, helpKey = null) => `<div class="config-toggle setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}"><span class="setting-copy">${labelRow(panel, label, key, helpKey, true, value, disabled)}${description ? `<small>${description}</small>` : ""}</span><label class="switch-control" for="config-${key}"><input id="config-${key}" data-config="${key}" data-type="boolean" type="checkbox" role="switch" ${bool(value)} ${disabled ? "disabled" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>`;
 
 export async function copyTextToClipboard(text, clipboardNavigator = globalThis.navigator, clipboardDocument = globalThis.document) {
   const writeText = clipboardNavigator?.clipboard?.writeText;
@@ -144,13 +146,13 @@ export function matchesFunctionSearch(query, searchableText) {
   return matchesFunctionSearchTokens(searchTokens(query), searchTokens(searchableText));
 }
 
-function section(panel, id, title, description, keywords, body, includeHeading = true) {
+export function section(panel, id, title, description, keywords, body, includeHeading = true) {
   if (panel._configSectionFilter && !panel._configSectionFilter.has(id)) return "";
   const content = typeof body === "function" ? body() : body;
   return `<section id="config-${id}" class="config-section" data-config-section data-search="${panel._e(`${title} ${description} ${keywords}`.toLowerCase())}">${includeHeading ? `<div class="config-section-heading"><p class="eyebrow">${title}</p><p>${description}</p></div>` : ""}${content}</section>`;
 }
 
-function renderLocalHandling(panel, config) {
+export function renderLocalHandling(panel, config) {
   const state = panel._result?.local_handling || {};
   const intents = state.intents || [];
   const excluded = new Set(config.local_intent_exclusions || []);
@@ -221,7 +223,22 @@ export function renderConfiguration(panel, {voiceIdentity = null, renderExposedA
     </div>`;
 }
 
-function regexRow(panel, rule, index, disabled = false) {
+// Production routes load one cohesive section family alongside the editor
+// shell. Keep the draft, save bar and section visibility in this shared core.
+export function prepareConfigurationSections(panel) {
+  const view = panel._viewKey?.();
+  panel._configSectionFilter = new Set(panel._configSections || []);
+  if (panel._configSectionFilter.has("conversation") && view !== "assistant/conversation") {
+    panel._configSectionFilter.add("local");
+  }
+}
+
+export function renderConfigurationShell(panel, sections) {
+  const defaults = panel._result?.defaults || {};
+  return `<div class="content-card config-surface">${sections}${saveBar(panel)}<span id="save-bar-anchor" class="sr-only" data-defaults="${panel._e(JSON.stringify(defaults))}"></span></div>`;
+}
+
+export function regexRow(panel, rule, index, disabled = false) {
   return `<article class="rule-row" data-regex-index="${index}"><label><span class="mobile-label">Pattern</span><input class="regex-pattern" value="${panel._e(rule.pattern || "")}" spellcheck="false" ${disabled ? "disabled" : ""}><span class="field-error" data-error="speech_regex_replacements[${index}].pattern"></span></label><label><span class="mobile-label">Replacement</span><input class="regex-replacement" value="${panel._e(rule.replacement || "")}" spellcheck="false" ${disabled ? "disabled" : ""}><span class="field-error" data-error="speech_regex_replacements[${index}].replacement"></span></label><div class="rule-actions"><button type="button" class="secondary move-regex" data-direction="-1" aria-label="Move rule up" ${disabled || index === 0 ? "disabled" : ""}>&uarr;</button><button type="button" class="secondary move-regex" data-direction="1" aria-label="Move rule down" ${disabled ? "disabled" : ""}>&darr;</button><button type="button" class="danger delete-regex" ${disabled ? "disabled" : ""}>Delete</button></div></article>`;
 }
 
