@@ -17,6 +17,8 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
 )
 from custom_components.extended_openai_conversation_responses.secret_redaction import (
     REDACTED_SECRET_SENTINEL,
+    redact_secrets,
+    restore_redacted_secrets,
 )
 
 
@@ -131,3 +133,62 @@ def test_import_rejects_versions_unknown_fields_and_credentials() -> None:
                 "config": {"api_key": "secret"},
             }
         )
+
+
+def test_import_uses_title_contract_and_removes_redaction_sentinel() -> None:
+    config = agent_config_defaults()
+    config["voice_device_mappings"] = {"device": None}
+    assert restore_redacted_secrets(config)["voice_device_mappings"]["device"] is None
+
+    valid_config = agent_config_defaults()
+    valid_config["api_key"] = REDACTED_SECRET_SENTINEL
+    parsed = _parse_import_document(
+        {
+            "schema": "extended_openai_conversation.agent",
+            "version": 1,
+            "title": "  Imported  ",
+            "config": valid_config,
+        }
+    )
+    assert parsed["title"] == "Imported"
+    assert "api_key" not in parsed["config"]
+
+    with pytest.raises(AgentConfigError, match="must not be empty"):
+        _parse_import_document(
+            {
+                "schema": "extended_openai_conversation.agent",
+                "version": 1,
+                "title": "   ",
+                "config": agent_config_defaults(),
+            }
+        )
+
+
+def test_redaction_preserves_structure_but_restore_drops_only_sentinel() -> None:
+    original = {
+        "actions": [
+            {
+                "action": "rest.call",
+                "data": {
+                    "Authorization": "Bearer secret",
+                    "payload": None,
+                    "nested": [None, {"api-key": "credential"}],
+                },
+            }
+        ],
+        "parameters": {
+            "type": "object",
+            "properties": {"api_key": {"type": "string"}},
+        },
+    }
+    redacted = redact_secrets(original)
+    data = redacted["actions"][0]["data"]
+    assert data["Authorization"] == REDACTED_SECRET_SENTINEL
+    assert data["nested"][1]["api-key"] == REDACTED_SECRET_SENTINEL
+    assert "api_key" in redacted["parameters"]["properties"]
+
+    restored = restore_redacted_secrets(redacted)
+    restored_data = restored["actions"][0]["data"]
+    assert "Authorization" not in restored_data
+    assert restored_data["payload"] is None
+    assert restored_data["nested"] == [None, {}]
