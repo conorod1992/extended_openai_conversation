@@ -1409,12 +1409,18 @@ async def async_scopes_command(request: _ManagementRequest) -> dict[str, Any]:
     from .management_loading_performance import async_scope_catalog
 
     if request.message["action"] == "catalog":
-        return await async_scope_catalog(
+        args = (
             request.hass,
             request.user_id,
             request.is_admin,
             request.entry_id,
             request.subentry_id,
+        )
+        if "scope_kind" not in request.message:
+            return await async_scope_catalog(*args)
+        return await async_scope_catalog(
+            *args,
+            scope_kind=str(request.message["scope_kind"]),
         )
     return _unknown_management_action(request)
 
@@ -2045,6 +2051,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("entry_id"): str,
         vol.Optional("subentry_id"): str,
         vol.Optional("scope_id"): str,
+        vol.Optional("scope_kind"): vol.In(["all", "archive", "memory", "temporary"]),
         vol.Optional("target_scope_id"): str,
         vol.Optional("temporary_scope_id"): str,
         vol.Optional("continuity_key"): str,

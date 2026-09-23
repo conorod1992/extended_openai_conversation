@@ -154,26 +154,26 @@ test("unchanged route retains controls and core dialog edits across updates and 
   await expectHarnessClean(page, errors);
 });
 
-test("scope catalog is shared across data routes with a fixed TTL and mutation invalidation", async ({page}) => {
+test("scope catalogs are route-specific with independent TTL and mutation invalidation", async ({page}) => {
   await page.goto(fixtureUrl("data-memory/memories"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#add-memory")).toBeVisible();
   const counts = await panel.evaluate(async host => {
     const calls = window.browserHarness.calls;
     const count = () => calls.filter(c => c.section === "scopes").length;
-    const key = host._scopeCatalogKey();
-    const fetchedAt = host._eocScopeCatalogTimes.get(key);
+    const memoryKey = host._scopeCatalogKey();
+    const fetchedAt = host._eocScopeCatalogTimes.get(memoryKey);
     await host._navigate("data-memory", "conversations");
-    const shared = count();
-    const unchangedTimestamp = host._eocScopeCatalogTimes.get(key) === fetchedAt;
-    host._eocScopeCatalogTimes.set(key, Date.now() - 31_000);
+    const archiveSeparate = count();
+    const memoryTimestampUnchanged = host._eocScopeCatalogTimes.get(memoryKey) === fetchedAt;
+    host._eocScopeCatalogTimes.set(memoryKey, Date.now() - 31_000);
     await host._navigate("data-memory", "memories");
     const expired = count();
     await host._call("memories", "add", {scope_id:host._scopeId, content:"Cache invalidation test", category:"general"});
     await host._loadSection();
-    return {shared, unchangedTimestamp, expired, mutated:count()};
+    return {archiveSeparate, memoryTimestampUnchanged, expired, mutated:count()};
   });
-  expect(counts).toEqual({shared:1, unchangedTimestamp:true, expired:2, mutated:3});
+  expect(counts).toEqual({archiveSeparate:2, memoryTimestampUnchanged:true, expired:3, mutated:4});
 });
 
 test("configuration live metadata is fetched only by routes that use it", async ({page}) => {
@@ -212,6 +212,66 @@ test("configuration live metadata is fetched only by routes that use it", async 
     ["exposed_attribute_catalog"],
   ]);
   await expectHarnessClean(page, errors);
+});
+
+test("Conversation History paints the selected scope before secondary data settles", async ({page}) => {
+  await page.goto(fixtureUrl("overview"));
+  await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const host = browserHarness.panel;
+    const original = host._hass.callWS;
+    const releases = {};
+    const started = new Set();
+    const observedScopeKinds = [];
+    host._hass.callWS = async message => {
+      const key = message.section === "scopes"
+        ? "scopes"
+        : message.section === "configuration" && message.action === "get"
+          ? "config"
+          : message.section === "conversations" && message.action === "active"
+            ? "active"
+            : null;
+      if (key) {
+        started.add(key);
+        if (key === "scopes") observedScopeKinds.push(message.scope_kind);
+        await new Promise(resolve => { releases[key] = resolve; });
+      }
+      return original(message);
+    };
+
+    const pending = host._navigate("data-memory", "conversations");
+    while (!["scopes", "config", "active"].every(key => started.has(key))) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    for (let turn = 0; turn < 40 && (!host.shadowRoot.querySelector("#archive-query") || host._busy); turn++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const primaryVisible = Boolean(host.shadowRoot.querySelector("#archive-query")) && host._busy === false;
+    const loadingSettings = host.shadowRoot.textContent.includes("Loading archive settings");
+    const scopeKinds = observedScopeKinds;
+
+    releases.scopes();
+    releases.config();
+    releases.active();
+    await pending;
+    for (let turn = 0; turn < 20 && host._contentData?.loading?.active; turn++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    host._hass.callWS = original;
+    return {
+      primaryVisible,
+      loadingSettings,
+      scopeKinds,
+      activeLoading: host._contentData?.loading?.active,
+      configReady: Boolean(host._configData),
+    };
+  });
+
+  expect(result.primaryVisible).toBe(true);
+  expect(result.loadingSettings).toBe(true);
+  expect(result.scopeKinds.at(-1)).toBe("archive");
+  expect(result.activeLoading).toBe(false);
+  expect(result.configReady).toBe(true);
 });
 
 test("conversation configuration starts before a pending scope catalog finishes", async ({page}) => {
