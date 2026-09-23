@@ -73,7 +73,6 @@ FROM ha-stable AS browser-stable
 
 ARG NODE_VERSION=24.20.0
 ARG PLAYWRIGHT_VERSION=1.63.0
-ARG PLAYWRIGHT_CHROMIUM_INSTALL_FLAGS="--with-deps --only-shell"
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
@@ -85,7 +84,7 @@ RUN apt-get update \
     && node --version \
     && npm --version \
     && npm install --global "@playwright/test@${PLAYWRIGHT_VERSION}" \
-    && npx playwright install ${PLAYWRIGHT_CHROMIUM_INSTALL_FLAGS} chromium \
+    && npx playwright install --with-deps --only-shell chromium \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
 
