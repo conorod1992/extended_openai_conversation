@@ -747,6 +747,11 @@ async def test_configuration_patch_preserves_omitted_fields_and_skips_local_snap
     monkeypatch,
 ) -> None:
     hass, _entry, subentry = _hass_with_agent()
+    from custom_components.extended_openai_conversation_responses import (
+        management_configuration_guidance as guidance,
+    )
+
+    monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
     before = agent_config_snapshot(subentry.data)
     local = Mock(return_value={"supported": True})
     monkeypatch.setattr(management_ui, "local_handling_snapshot", local)
