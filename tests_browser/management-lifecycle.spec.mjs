@@ -120,11 +120,12 @@ for (const bundled of [false, true]) {
   });
 }
 
-test("unchanged route retains controls and core dialog edits across updates and navigation", async ({page}) => {
+test("Knowledge editor retains drafts on rerender and releases ownership on navigation", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("data-memory/knowledge"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#add-source")).toBeVisible();
+  await expect(panel.locator("#knowledge-dialog")).toHaveCount(0);
   await panel.locator("#add-source").click();
   await panel.locator("#knowledge-title").fill("Retained draft");
   await panel.locator("#knowledge-content").fill("An editor must survive unrelated renders.");
@@ -146,9 +147,32 @@ test("unchanged route retains controls and core dialog edits across updates and 
   expect(await panel.evaluate(async host => {
     const dialog = host.shadowRoot.querySelector("#knowledge-dialog");
     await host._navigate("overview");
+    const removed = !host.shadowRoot.querySelector("#knowledge-dialog");
     await host._navigate("data-memory", "knowledge");
-    return dialog === host.shadowRoot.querySelector("#knowledge-dialog");
+    return removed && !dialog.isConnected && !host.shadowRoot.querySelector("#knowledge-dialog");
   })).toBe(true);
+  await panel.locator("#add-source").click();
+  await expect(panel.locator("#knowledge-title")).toHaveValue("");
+  await expectHarnessClean(page, errors);
+});
+
+test("Knowledge editor does not carry form state to another agent", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("data-memory/knowledge"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#add-source")).toBeVisible();
+  await panel.locator("#add-source").click();
+  await panel.locator("#knowledge-title").fill("First agent draft");
+  await panel.locator("#knowledge-dialog .close-editor.icon").click();
+  await panel.locator("#confirm-accept").click();
+  const previous = await panel.evaluate(host => {
+    const dialog = host.shadowRoot.querySelector("#knowledge-dialog");
+    host._data.agents.push({...host._selectedAgent(), subentry_id:"second-agent", title:"Second agent"});
+    host._agentId = "second-agent";
+    host._render();
+    return {removed:!dialog.isConnected, absent:!host.shadowRoot.querySelector("#knowledge-dialog")};
+  });
+  expect(previous).toEqual({removed:true, absent:true});
   await panel.locator("#add-source").click();
   await expect(panel.locator("#knowledge-title")).toHaveValue("");
   await expectHarnessClean(page, errors);

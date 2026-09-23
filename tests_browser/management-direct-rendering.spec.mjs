@@ -26,7 +26,6 @@ test("configuration and Knowledge return final markup before any enhancement can
     try {
       panel._result = {sources:[{source_id:"direct",title:"Notes",enabled:false}]};
       initial.knowledge = panel._knowledge();
-      initial.dialog = panel._dialogs();
     } finally { panel._result = old; }
     return initial;
   }, frontend);
@@ -37,7 +36,10 @@ test("configuration and Knowledge return final markup before any enhancement can
   expect(result.selected).toBe("Semantic + keyword matching (Hybrid)");
   expect(result).toMatchObject({disabled:true,hidden:true,available:true,update:"Apply v3 update"});
   expect(result.knowledge).toContain("Unavailable");
-  expect(result.dialog).toContain('id="knowledge-source-enabled"');
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#knowledge-dialog")).toHaveCount(0);
+  await panel.locator("#add-source").click();
+  await expect(panel.locator("#knowledge-source-enabled")).toBeChecked();
   await expectHarnessClean(page, errors);
 });
 
