@@ -222,13 +222,17 @@ test("conversation configuration starts before a pending scope catalog finishes"
     const original = host._hass.callWS;
     let releaseScope;
     let configStarted = false;
+    let markScopeStarted;
+    const scopeStarted = new Promise(resolve => { markScopeStarted = resolve; });
     host._hass.callWS = async message => {
-      if (message.section === "scopes") await new Promise(resolve => { releaseScope = resolve; });
+      if (message.section === "scopes") {
+        await new Promise(resolve => { releaseScope = resolve; markScopeStarted(); });
+      }
       if (message.section === "configuration") configStarted = true;
       return original(message);
     };
     const pending = host._navigate("data-memory", "conversations");
-    while (!releaseScope) await new Promise(resolve => setTimeout(resolve, 0));
+    await scopeStarted;
     const concurrent = configStarted;
     releaseScope();
     await pending;
@@ -247,9 +251,13 @@ test("conversation collection starts before a pending scope catalog finishes", a
     const initialScope = host._scopeId;
     let releaseScope;
     let listStarted = false;
+    let markScopeStarted;
+    const scopeStarted = new Promise(resolve => { markScopeStarted = resolve; });
     const listScopes = [];
     host._hass.callWS = async message => {
-      if (message.section === "scopes") await new Promise(resolve => { releaseScope = resolve; });
+      if (message.section === "scopes") {
+        await new Promise(resolve => { releaseScope = resolve; markScopeStarted(); });
+      }
       if (message.section === "conversations" && message.action === "list") {
         listStarted = true;
         listScopes.push(message.scope_id);
@@ -257,7 +265,7 @@ test("conversation collection starts before a pending scope catalog finishes", a
       return original(message);
     };
     const pending = host._navigate("data-memory", "conversations");
-    while (!releaseScope) await new Promise(resolve => setTimeout(resolve, 0));
+    await scopeStarted;
     const concurrent = listStarted;
     releaseScope();
     await pending;
@@ -278,10 +286,12 @@ test("invalidated speculative Memory scope is discarded and refetched once", asy
     const initialScope = host._scopeId;
     const replacementScope = "user:replacement";
     let releaseScope;
+    let markScopeStarted;
+    const scopeStarted = new Promise(resolve => { markScopeStarted = resolve; });
     const listScopes = [];
     host._hass.callWS = async message => {
       if (message.section === "scopes") {
-        await new Promise(resolve => { releaseScope = resolve; });
+        await new Promise(resolve => { releaseScope = resolve; markScopeStarted(); });
         return {scopes:[{
           scope_id:replacementScope,
           scope_type:"user",
@@ -299,7 +309,7 @@ test("invalidated speculative Memory scope is discarded and refetched once", asy
       return original(message);
     };
     const pending = host._navigate("data-memory", "memories");
-    while (!releaseScope) await new Promise(resolve => setTimeout(resolve, 0));
+    await scopeStarted;
     const speculativeStarted = listScopes.includes(initialScope);
     releaseScope();
     await pending;
@@ -329,12 +339,16 @@ test("late conversation configuration cannot replace a newer route result", asyn
     const host = browserHarness.panel;
     const original = host._hass.callWS;
     let release;
+    let markConfigStarted;
+    const configStarted = new Promise(resolve => { markConfigStarted = resolve; });
     host._hass.callWS = async message => {
-      if (message.section === "configuration") await new Promise(resolve => { release = resolve; });
+      if (message.section === "configuration") {
+        await new Promise(resolve => { release = resolve; markConfigStarted(); });
+      }
       return original(message);
     };
     const pending = host._navigate("data-memory", "conversations");
-    while (!release) await new Promise(resolve => setTimeout(resolve, 0));
+    await configStarted;
     await host._navigate("data-memory", "knowledge");
     const current = host._result;
     release();
@@ -354,12 +368,17 @@ test("voice and memory settings implementations load only when their routes are 
   await expect(panel.locator(".dashboard-grid")).toBeVisible();
   expect(loaded.some(url => url.endsWith("/voice-identity-ui.js"))).toBe(false);
   expect(loaded.some(url => url.endsWith("/memory-settings-ui.js"))).toBe(false);
+  const featureLoaded = view => page.evaluate(async name => Boolean(
+    (await import("/custom_components/extended_openai_conversation_responses/frontend/management-route.js")).getRouteFeature(name)
+  ), view);
+  expect(await featureLoaded("assistant/voice")).toBe(false);
+  expect(await featureLoaded("data-memory/memory-settings")).toBe(false);
   await panel.evaluate(host => host._navigate("assistant", "voice"));
-  expect(loaded.some(url => url.endsWith("/voice-identity-ui.js"))).toBe(true);
   await expect(panel.locator(".voice-identity-flow")).toBeVisible();
+  expect(await featureLoaded("assistant/voice")).toBe(true);
   await panel.evaluate(host => host._navigate("data-memory", "memory-settings"));
-  expect(loaded.some(url => url.endsWith("/memory-settings-ui.js"))).toBe(true);
   await expect(panel.locator("[data-memory-config]").first()).toBeVisible();
+  expect(await featureLoaded("data-memory/memory-settings")).toBe(true);
   await expectHarnessClean(page, errors);
 });
 
@@ -373,12 +392,16 @@ test("expired Knowledge list renders immediately and unchanged refresh preserves
     host._eocSectionCacheTimes.set(key, Date.now() - 31_000);
     const original = host._hass.callWS;
     let release;
+    let markListStarted;
+    const listStarted = new Promise(resolve => { markListStarted = resolve; });
     host._hass.callWS = async message => {
-      if (message.section === "knowledge" && message.action === "list") await new Promise(resolve => { release = resolve; });
+      if (message.section === "knowledge" && message.action === "list") {
+        await new Promise(resolve => { release = resolve; markListStarted(); });
+      }
       return original(message);
     };
     const pending = host._navigate("data-memory", "knowledge");
-    while (!release) await new Promise(resolve => setTimeout(resolve, 0));
+    await listStarted;
     const button = host.shadowRoot.querySelector("#add-source");
     const immediate = !!button && !host._busy;
     release();

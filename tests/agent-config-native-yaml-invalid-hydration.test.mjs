@@ -1,26 +1,25 @@
 import assert from "node:assert/strict";
+import {TestEventTarget} from "./frontend-test-helpers.mjs";
 
-class FakeTextArea {
+class FakeTextArea extends TestEventTarget {
   constructor(value) {
+    super();
     this._value = value;
     this.hidden = false;
   }
   get value() { return this._value; }
   set value(value) { this._value = String(value ?? ""); }
-  addEventListener() {}
-  dispatchEvent() { return true; }
   focus() {}
 }
 
-class FakeEditor {
+class FakeEditor extends TestEventTarget {
   constructor() {
+    super();
     this.hidden = true;
     this.isConnected = true;
-    this.listeners = new Map();
     this.values = [];
   }
   setValue(value) { this.values.push(structuredClone(value)); }
-  addEventListener(type, listener) { this.listeners.set(type, listener); }
 }
 
 const originalDocument = globalThis.document;
