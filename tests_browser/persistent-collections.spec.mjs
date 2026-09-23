@@ -242,17 +242,15 @@ test("Functions: adding HA tools refreshes saved metadata without rebinding exis
   await page.evaluate(() => {
     const hass = browserHarness.hass, original = hass.callWS.bind(hass);
     const reference = {type: "ha_llm", source_id: "fixture", api_id: "assist", tool_name: "new_ha_tool"};
-    let added = false;
     window.catalogReads = 0;
     hass.callWS = message => {
       if (message.section === "tools" && message.action === "ha_catalog") {
         catalogReads++;
-        return Promise.resolve({tools: [{name: "new_ha_tool", source: "fixture", description: "Fixture live tool", reference}], saved: added ? {new_ha_tool: {description: "Refreshed saved tool metadata", available: false}} : {}});
+        return Promise.resolve({tools: [{name: "new_ha_tool", source: "fixture", description: "Fixture live tool", reference}], saved: {}});
       }
       if (message.section === "tools" && message.action === "ha_add") {
-        added = true;
         const config = browserHarness.panel._draft;
-        return Promise.resolve({functions: [...structuredClone(config.functions), {spec: {name: "new_ha_tool"}, function: reference}], function_groups: structuredClone(config.function_groups)});
+        return Promise.resolve({functions: [...structuredClone(config.functions), {spec: {name: "new_ha_tool"}, function: reference}], function_groups: structuredClone(config.function_groups), ha_saved: {new_ha_tool: {description: "Saved tool metadata", available: true, source: "fixture"}}});
       }
       return original(message);
     };
@@ -262,10 +260,9 @@ test("Functions: adding HA tools refreshes saved metadata without rebinding exis
   await dialog.locator("[data-tools] input").check();
   await dialog.locator("[data-add]").click();
   await expect(dialog).toHaveCount(0);
-  await expect(tool(panel, "new_ha_tool")).toContainText("Refreshed saved tool metadata");
-  await expect(tool(panel, "new_ha_tool")).toContainText("Unavailable");
+  await expect(tool(panel, "new_ha_tool")).toContainText("Saved tool metadata");
   await expectRetained(page, '[data-tool-key="tool_0"]');
-  expect(await page.evaluate(() => catalogReads)).toBe(2);
+  expect(await page.evaluate(() => catalogReads)).toBe(1);
 });
 
 

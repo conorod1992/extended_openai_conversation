@@ -74,7 +74,7 @@ function renderFunctionRepairCards(panel) {
   return invalidToolCards(panel, repair);
 }
 
-function openInvalidToolEditor(panel, item) {
+async function openInvalidToolEditor(panel, item) {
   const root = panel.shadowRoot;
   const dialog = root?.querySelector("#tool-dialog");
   const editor = getToolYamlEditor(panel);
@@ -91,13 +91,19 @@ function openInvalidToolEditor(panel, item) {
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.open = true;
   editor.focus?.();
+  try {
+    const {bindNativeToolYaml} = await import("./agent-config-native-yaml.js");
+    if (dialog.open && panel._repairToolIndex === Number(item.index)
+        && root.querySelector("#tool-dialog") === dialog) bindNativeToolYaml(panel);
+  } catch (_err) {
+    // The textarea stays usable when the optional native editor cannot load.
+  }
 }
 
-async function refreshAfterRepair(panel, message) {
+export async function refreshAfterRepair(panel, message) {
   const selectedId = panel._agentId;
-  await panel._loadAgents(selectedId);
   panel._clearConfigDraft?.();
-  await panel._loadSection?.();
+  await panel._loadAgents(selectedId);
   panel._toast(message);
 }
 

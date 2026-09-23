@@ -1094,7 +1094,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             ha_existing[key] = ha_added_tool
             if ha_target_group is not None:
                 ha_target_group["functions"].append(ha_added_tool["spec"]["name"])
-        return _persist_function_configuration(
+        result = _persist_function_configuration(
             hass,
             entry,
             subentry,
@@ -1102,6 +1102,20 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             groups,
             expected_revision=message.get("revision"),
         )
+        result["ha_saved"] = {
+            tool["spec"]["name"]: {
+                "available": key in ha_catalog_snapshot.tools,
+                "name": tool["function"]["tool_name"],
+                "source": ha_catalog_snapshot.tools[key].source_label
+                if key in ha_catalog_snapshot.tools
+                else tool["function"]["source_id"],
+                "description": ha_catalog_snapshot.tools[key].tool.description or ""
+                if key in ha_catalog_snapshot.tools
+                else "Unavailable in this preview context",
+            }
+            for key, tool in ha_existing.items()
+        }
+        return result
     if action == "validate":
         return _validation_result(lambda: validate_function_tools(message.get("tools")))
     if action == "serialize":
