@@ -348,6 +348,9 @@ async def test_real_ha_fall_back_duplicate_time_is_one_quiet_period(
                 "overrides": {},
             }
         )
+        # Setup can run during today's quiet period. Establish an outside-period
+        # baseline before counting the simulated autumn transition's actions.
+        await manager.async_reconcile(now=datetime(2026, 10, 24, 20, tzinfo=UTC))
         calls.clear()
 
         # 01:30 occurs twice on 25 October 2026: first in IST, then in GMT.
