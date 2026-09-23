@@ -12,6 +12,12 @@ from pathlib import Path
 
 COMPONENT = "custom_components/extended_openai_conversation_responses/"
 ALL = frozenset("abc")
+SPECIALIST_SHARDS = {
+    "a": ("process-restart-a",),
+    # These cases have isolated tmp_path directories and independent HA children.
+    "b": ("process-restart-b-active-request", "process-restart-b-immediate-tool"),
+    "c": ("process-restart-c-before-commit", "process-restart-c-after-commit"),
+}
 
 # These modules have no request, delayed-tool, Store, or shutdown ownership.
 # Broad parallel-safe Real-HA still runs for their backend PRs.
@@ -94,6 +100,14 @@ def classify(paths: list[str], *, pull_request: bool) -> frozenset[str]:
     return frozenset(required)
 
 
+def matrix_shards(required: frozenset[str]) -> list[str]:
+    """Expand logical coverage categories to the independently scheduled jobs."""
+    return ["parallel-safe", "stateful-serial"] + [
+        shard for category in "abc" if category in required
+        for shard in SPECIALIST_SHARDS[category]
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("paths_file", type=Path)
@@ -104,9 +118,7 @@ def main() -> None:
     with args.output.open("a", encoding="utf-8") as output:
         for shard in "abc":
             output.write(f"process_restart_{shard}={str(shard in required).lower()}\n")
-        shards = ["parallel-safe", "stateful-serial"] + [
-            f"process-restart-{shard}" for shard in "abc" if shard in required
-        ]
+        shards = matrix_shards(required)
         output.write("shards=" + json.dumps(shards, separators=(",", ":")) + "\n")
     print("Specialist process-restart shards: " + (", ".join(sorted(required)) or "none"))
 
