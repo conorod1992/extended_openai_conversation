@@ -251,6 +251,7 @@ test("Function Tool stale revision rejects save and preserves unsaved YAML", asy
   });
   await editTool.click();
   const yaml = panel.locator("#tool-yaml");
+  await expect(yaml).toBeEditable();
   const edited = (await yaml.inputValue()).replace("Baseline browser fixture", "Unsaved stale editor");
   await yaml.fill(edited);
 

@@ -313,7 +313,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const page = target?.dataset?.page || this._page;
     const subsection = target?.dataset?.subsection
       || (target?.dataset?.page ? this._visibleSubsections(page)[0]?.id || null : null);
-    warmRouteAsset(this._viewKey(page, subsection));
+    const view = this._viewKey(page, subsection);
+    warmRouteAsset(view);
+    void this._loadConfigurationLiveMetadata(view);
   }
 
   _bindSettingsSearchLazyLoad() {
@@ -392,6 +394,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _clearConfigDraft() {
     this._setConfigDirty(false);
+    this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
+    this._eocLiveMetadataCache = new Map();
+    this._eocLiveMetadataPending = new Map();
     this._configData = null;
     this._draft = null;
     this._draftTitle = null;
@@ -786,13 +791,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules"].includes(view);
     if (configOnly && this._configData && this._draftAgentId === this._agentId) {
-      await this._loadConfigurationLiveMetadata();
-      if (loadToken !== this._loadToken) return;
+      this._applyConfigurationLiveMetadata(view);
       this._contentData = null;
       this._result = this._configData;
       this._error = null;
       this._busy = false;
       this._render();
+      void this._loadConfigurationLiveMetadata(view);
       return;
     }
     const needsScopes = ["data-memory/memories", "data-memory/conversations"].includes(view);
@@ -952,26 +957,76 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (loadToken === this._loadToken) {
         this._busy = false;
         this._render();
+        if (this._isDraftView() && this._configData && this._draftAgentId === this._agentId) {
+          void this._loadConfigurationLiveMetadata(view);
+        }
       }
     }
   }
 
-  _configurationLiveMetadataKeys() {
+  _configurationLiveMetadataKeys(view = this._viewKey()) {
     return {
       "capabilities/home-assistant": ["local_handling"],
       "assistant/prompt-context": ["exposed_attribute_catalog"],
-    }[this._viewKey()] || [];
+    }[view] || [];
   }
 
-  async _loadConfigurationLiveMetadata() {
-    const requested = this._configurationLiveMetadataKeys();
-    const missing = requested.filter((key) => this._configData?.[key] === undefined);
-    if (!missing.length) return;
+  _applyConfigurationLiveMetadata(view = this._viewKey()) {
+    const cache = this._eocLiveMetadataCache;
+    if (!cache || !this._configData) return false;
+    let changed = false;
+    for (const key of this._configurationLiveMetadataKeys(view)) {
+      const record = cache.get(key);
+      if (!record || record.agentId !== this._agentId
+          || record.epoch !== (this._eocLiveMetadataEpoch || 0)
+          || record.revision !== this._configData.revision
+          || this._configData[key] !== undefined) continue;
+      this._configData = {...this._configData, [key]: record.value};
+      changed = true;
+    }
+    return changed;
+  }
+
+  async _loadConfigurationLiveMetadata(view = this._viewKey()) {
+    if (!this._configData || this._draftAgentId !== this._agentId) return;
+    const requested = this._configurationLiveMetadataKeys(view);
+    if (!requested.length) return;
+    this._eocLiveMetadataCache ||= new Map();
+    this._eocLiveMetadataPending ||= new Map();
     const agentId = this._agentId;
-    const loadToken = this._loadToken;
-    const metadata = await this._call("configuration", "live_metadata", {metadata_keys: missing});
-    if (agentId !== this._agentId || loadToken !== this._loadToken) return;
-    this._configData = {...this._configData, ...metadata};
+    const epoch = this._eocLiveMetadataEpoch || 0;
+    const revision = this._configData.revision;
+    const activeToken = this._viewKey() === view ? this._loadToken : null;
+    const pending = requested.filter(key => this._configData[key] === undefined).map(key => {
+      const cached = this._eocLiveMetadataCache.get(key);
+      if (cached?.agentId === agentId && cached.epoch === epoch && cached.revision === revision) return null;
+      const existing = this._eocLiveMetadataPending.get(key);
+      if (existing?.agentId === agentId && existing.epoch === epoch && existing.revision === revision) {
+        if (activeToken !== null) existing.activeToken = activeToken;
+        return existing.promise;
+      }
+      const record = {agentId, epoch, revision, activeToken, promise: null};
+      record.promise = this._call("configuration", "live_metadata", {metadata_keys: [key]})
+        .then(metadata => {
+          if (agentId !== this._agentId || epoch !== (this._eocLiveMetadataEpoch || 0)
+              || revision !== this._configData?.revision || this._draftAgentId !== agentId
+              || !Object.hasOwn(metadata, key)) return;
+          this._eocLiveMetadataCache.set(key, {agentId, epoch, revision, value: metadata[key]});
+          if (this._viewKey() !== view || record.activeToken !== this._loadToken) return;
+          const previous = this._configData;
+          if (this._applyConfigurationLiveMetadata(view) && this._result === previous) {
+            this._result = this._configData;
+            this._render();
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (this._eocLiveMetadataPending.get(key) === record) this._eocLiveMetadataPending.delete(key);
+        });
+      this._eocLiveMetadataPending.set(key, record);
+      return record.promise;
+    }).filter(Boolean);
+    await Promise.all(pending);
   }
 
   async _loadConfigDraft() {
@@ -981,12 +1036,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const configData = await this._call("configuration", "get");
       if (agentId !== this._agentId || loadToken !== this._loadToken) return;
       this._configData = configData;
+      this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
+      this._eocLiveMetadataCache = new Map();
+      this._eocLiveMetadataPending = new Map();
       this._draft = JSON.parse(JSON.stringify(configData.config));
       this._draftTitle = configData.title;
       this._draftAgentId = agentId;
       this._setConfigDirty(false);
     }
-    await this._loadConfigurationLiveMetadata();
     this._result = this._configData;
   }
 
