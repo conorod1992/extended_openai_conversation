@@ -38,6 +38,7 @@ def _broken_config() -> dict:
             "id": "mixed",
             "name": "Mixed",
             "description": "Contains a quarantined member",
+            "loading_mode": "always",
             "functions": [tools[0]["spec"]["name"], "unavailable_reminder"],
         }
     ]
