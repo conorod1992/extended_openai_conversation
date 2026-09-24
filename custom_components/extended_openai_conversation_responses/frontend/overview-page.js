@@ -62,7 +62,7 @@ export function renderOverviewSnapshot(panel, sourceAgent) {
   return `<section class="page-intro eoc-overview-snapshot-intro"><h1>${panel._e(agent?.title || "Assistant")}</h1><p>Your assistant at a glance. Detailed health, usage, and stored-data counts are still loading.</p></section>
     <section class="dashboard-grid eoc-overview-snapshot" aria-label="Assistant overview" aria-busy="true">
       ${snapshotCard(panel, "Assistant", `${agent?.provider || "Unknown"} · ${agent?.model || "Unknown"}`, "Model, responses, conversation behavior, prompt, and voice.", "assistant", "basics", "Configure")}
-      ${snapshotCard(panel, "Capabilities", `${Number(agent?.function_count || 0).toLocaleString()} functions · ${Number(agent?.function_group_count || 0).toLocaleString()} groups`, "Home Assistant access, custom functions, and visitor restrictions.", "capabilities", "home-assistant", "Manage")}
+      ${snapshotCard(panel, "Capabilities", `${agent?.function_count == null ? "Loading…" : `${Number(agent.function_count).toLocaleString()} functions`} · ${Number(agent?.function_group_count || 0).toLocaleString()} groups`, "Home Assistant access, custom functions, and visitor restrictions.", "capabilities", "home-assistant", "Manage")}
       ${snapshotCard(panel, "Memory & Knowledge", memoryMode, "Stored memory and Knowledge counts are loading.", "data-memory", "memories", "Manage")}
       ${snapshotCard(panel, "Conversation history", agent?.archive_enabled ? "Archive enabled" : "Archive disabled", "Retention details are loading.", "data-memory", "conversations", "View")}
       ${snapshotCard(panel, "Guest Mode", guestState, "Integration-enforced visitor access and data restrictions.", "capabilities", "guest-mode", "Configure")}
@@ -144,6 +144,7 @@ const OVERVIEW_DETAIL_LABELS = {
   memory: "Memory",
   knowledge: "Knowledge",
   guest_mode: "Guest Mode",
+  setup_health: "Setup health",
 };
 
 function mergeSetupHealthFacts(current = {}, patch = {}) {
@@ -197,6 +198,11 @@ export function startOverviewDetailReads(panel, {loadToken, cacheGeneration} = {
       if (kind === "memory" || kind === "knowledge") {
         next.setup_health = mergeSetupHealthFacts(next.setup_health, {
           [kind]: {available: false, loading: false},
+        });
+      } else if (kind === "setup_health") {
+        next.setup_health = mergeSetupHealthFacts(next.setup_health, {
+          function_tools: {unavailable: true, loading: false},
+          exposed_entity_count_loading: false,
         });
       }
     }

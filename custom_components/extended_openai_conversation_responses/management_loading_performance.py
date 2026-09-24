@@ -35,7 +35,10 @@ from .conversation_archive import async_get_archive
 from .feature_status import management_feature_status
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge, get_loaded_knowledge
-from .management_function_repair import management_function_tool_health
+from .management_function_repair import (
+    management_function_tool_health,
+    peek_function_tool_health,
+)
 from .management_history_queries import usage_summary
 from .management_projections import async_scope_catalog_projection, settings_snapshot
 from .management_setup_health import add_setup_health, build_setup_health_facts
@@ -81,14 +84,21 @@ def _agent_snapshot(
     started = perf_counter()
     options = config if config is not None else dict(subentry.data)
     if function_tools_health is None:
-        phase = perf_counter()
-        function_tools_health = management_function_tool_health(options)
-        measured_function_tools_ms = _ms(phase)
-    else:
-        measured_function_tools_ms = function_tools_ms or 0.0
+        function_tools_health = peek_function_tool_health(options)
+    if function_tools_health is None and config is not None:
+        tools = config.get(CONF_FUNCTION_TOOLS)
+        if isinstance(tools, list):
+            function_tools_health = {
+                "enabled_count": sum(
+                    tool.get("enabled", True) is True
+                    for tool in tools
+                    if isinstance(tool, dict)
+                ),
+            }
+    measured_function_tools_ms = function_tools_ms or 0.0
     if performance is not None:
         performance["function_tools_ms"] = measured_function_tools_ms
-    function_issue = function_tools_health.get("validation_error")
+    function_issue = (function_tools_health or {}).get("validation_error")
     phase = perf_counter()
     if guest_status is None:
         loaded_guest = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
@@ -113,7 +123,11 @@ def _agent_snapshot(
         "memory_count": memory_count,
         "knowledge_enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
         "knowledge_source_count": knowledge_source_count,
-        "function_count": int(function_tools_health.get("enabled_count", 0)),
+        "function_count": (
+            int(function_tools_health["enabled_count"])
+            if function_tools_health is not None
+            else None
+        ),
         "function_group_count": len(
             options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
         ),
@@ -158,7 +172,17 @@ async def async_agent_catalog(
             if subentry.subentry_type != "conversation":
                 continue
             timing: dict[str, float] = {}
-            agents.append(_agent_snapshot(hass, entry, subentry, performance=timing))
+            agents.append(
+                _agent_snapshot(
+                    hass,
+                    entry,
+                    subentry,
+                    function_tools_health=peek_function_tool_health(
+                        dict(subentry.data)
+                    ),
+                    performance=timing,
+                )
+            )
             snapshot_timings.append(timing)
     timings: dict[str, Any] = {
         "total_ms": _ms(started),
@@ -227,7 +251,7 @@ async def async_overview_primary(
     started = perf_counter()
     options = dict(subentry.data)
     function_tools_started = perf_counter()
-    function_tools_health = management_function_tool_health(options)
+    function_tools_health = peek_function_tool_health(options)
     function_tools_ms = _ms(function_tools_started)
 
     agent_timing: dict[str, float] = {}
@@ -250,6 +274,7 @@ async def async_overview_primary(
             "memory": True,
             "knowledge": True,
             "guest_mode": True,
+            "setup_health": True,
         },
     }
     projection_ms = _ms(projection_started)
@@ -265,13 +290,24 @@ async def async_overview_primary(
             knowledge_available=False,
             is_admin=is_admin,
             function_tools_health=function_tools_health,
+            include_exposed_entities=False,
+            include_function_tools=False,
         )
         facts["memory"] = {**dict(facts.get("memory", {})), "loading": True}
         facts["knowledge"] = {**dict(facts.get("knowledge", {})), "loading": True}
+        if function_tools_health is None:
+            facts["function_tools"] = {"loading": True}
+        facts["exposed_entity_count_loading"] = True
         result["setup_health"] = facts
     except Exception:
         result["setup_health"] = {
             "unavailable": True,
+            "function_tools": (
+                function_tools_health
+                if function_tools_health is not None
+                else {"loading": True}
+            ),
+            "exposed_entity_count_loading": True,
             "provider_runtime": {
                 "client_loaded": getattr(entry, "runtime_data", None) is not None,
                 "provider": str(
@@ -355,7 +391,47 @@ async def async_overview_detail(
             "_performance": {"total_ms": _ms(started)},
         }
 
-    raise ValueError("kind must be usage, memory, knowledge, or guest_mode")
+    if kind == "setup_health":
+        phase = perf_counter()
+        options = dict(subentry.data)
+        health = management_function_tool_health(options)
+        function_tools_ms = _ms(phase)
+        try:
+            from .management_setup_health import _exposed_entity_count
+
+            exposure = _exposed_entity_count(hass)
+        except Exception:
+            exposure = None
+        return {
+            "kind": kind,
+            "agent": {
+                "function_count": int(health.get("enabled_count", 0)),
+                **(
+                    {
+                        "configuration_issue": {
+                            "field": CONF_FUNCTION_TOOLS,
+                            "message": health["validation_error"],
+                            "repairable": True,
+                        }
+                    }
+                    if health.get("validation_error")
+                    else {}
+                ),
+            },
+            "setup_health": {
+                "function_tools": health,
+                "exposed_entity_count": exposure,
+                "exposed_entity_count_loading": False,
+            },
+            "_performance": {
+                "function_tools_ms": function_tools_ms,
+                "total_ms": _ms(started),
+            },
+        }
+
+    raise ValueError(
+        "kind must be usage, memory, knowledge, guest_mode, or setup_health"
+    )
 
 
 async def async_overview_summary(

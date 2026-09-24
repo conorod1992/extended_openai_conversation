@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import Any
 
 from homeassistant.components import conversation
@@ -49,6 +50,8 @@ def build_setup_health_facts(
     knowledge_available: bool,
     is_admin: bool,
     function_tools_health: dict[str, Any] | None = None,
+    include_exposed_entities: bool = True,
+    include_function_tools: bool = True,
 ) -> dict[str, Any]:
     """Return only runtime facts the frontend cannot safely derive itself."""
     options = dict(subentry.data)
@@ -61,10 +64,10 @@ def build_setup_health_facts(
         else "custom"
     )
 
-    try:
-        exposed_entity_count: int | None = _exposed_entity_count(hass)
-    except Exception:
-        exposed_entity_count = None
+    exposed_entity_count: int | None = None
+    if include_exposed_entities:
+        with suppress(Exception):
+            exposed_entity_count = _exposed_entity_count(hass)
 
     guidance = configuration_guidance_snapshot(entry.data, options)
     return {
@@ -80,6 +83,8 @@ def build_setup_health_facts(
             function_tools_health
             if function_tools_health is not None
             else _function_health(options)
+            if include_function_tools
+            else {"loading": True}
         ),
         "prompt_state": prompt_state,
         "exposed_entity_count": exposed_entity_count,
