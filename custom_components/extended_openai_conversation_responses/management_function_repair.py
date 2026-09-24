@@ -483,6 +483,17 @@ def _safe_configuration_payload(
     }
 
 
+def safe_configuration_payload(
+    hass: HomeAssistant, entry: Any, subentry: Any
+) -> dict[str, Any]:
+    """Share the existing quarantine read with normal configuration callers."""
+    from . import management_loading_performance, management_ui
+
+    return _safe_configuration_payload(
+        hass, management_ui, management_loading_performance, entry, subentry
+    )
+
+
 def _function_fields_unchanged(
     updates: dict[str, Any], safe_config: dict[str, Any]
 ) -> bool:

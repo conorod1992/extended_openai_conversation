@@ -112,6 +112,7 @@ from .management_function_quarantine import (
 )
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,
+    function_tools_issue,
     normalized_persisted_config_snapshot,
     persisted_config_projection,
     require_agent_config_revision as _require_agent_config_revision,
@@ -898,7 +899,20 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         projection = persisted_config_projection(subentry, projection_diagnostics)
         projection_ms = _elapsed_ms(phase)
         phase = perf_counter()
-        config, snapshot_cache_hit = normalized_persisted_config_snapshot(projection)
+        try:
+            config, snapshot_cache_hit = normalized_persisted_config_snapshot(
+                projection
+            )
+        except AgentConfigError:
+            # Retain the normal cached fast path for valid tools. A malformed
+            # Function Tool snapshot can still be served through quarantine,
+            # including on cold reads before the catalogue is available.
+            _tools, issue = function_tools_issue(dict(subentry.data))
+            if issue is None:
+                raise
+            from .management_function_repair import safe_configuration_payload
+
+            return safe_configuration_payload(hass, entry, subentry)
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
