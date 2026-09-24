@@ -149,6 +149,45 @@ async def test_only_when_uses_first_eligible_text_match_and_preview_trace(
     assert checks == ["input_boolean.first", "input_boolean.second"] * 2
 
 
+async def test_condition_checker_is_rebuilt_after_edit_and_restore(
+    hass, monkeypatch
+) -> None:
+    rule = local_rule("Conditional", phrases=["hello"])
+    rule["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.old", "state": "on"}
+    ]
+    built = []
+
+    async def validate(_hass, config):
+        return config
+
+    async def build(_hass, config):
+        built.append(config["entity_id"])
+        return SimpleNamespace(async_check=lambda **_kwargs: True)
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_validate_condition_config",
+        validate,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_from_config",
+        build,
+    )
+    rules = await manager(rule)
+    await rules.async_match(hass, "hello")
+    await rules.async_match(hass, "hello")
+    assert built == ["input_boolean.old"]
+    edited = deepcopy(rules.snapshot()["rules"][0])
+    edited["conditions"][0]["entity_id"] = "input_boolean.new"
+    await rules.async_update(edited["id"], edited)
+    await rules.async_match(hass, "hello")
+    assert built == ["input_boolean.old", "input_boolean.new"]
+    backup = await rules.async_backup_data()
+    await rules.async_replace_backup(backup)
+    await rules.async_match(hass, "hello")
+    assert built == ["input_boolean.old", "input_boolean.new", "input_boolean.new"]
+
+
 async def test_only_when_does_not_check_nonmatching_rule_and_stops_on_error(
     hass, monkeypatch
 ) -> None:
@@ -324,7 +363,7 @@ async def test_guest_denial_after_passing_condition_never_continues_to_ai(
     assert hass.services.calls == []
 
 
-def test_result_alias_validation_and_substitution() -> None:
+async def test_result_alias_validation_and_substitution() -> None:
     rule = local_rule(phrases=["Battery of {device}"], match_type="sentence_pattern")
     rule["action"]["actions"] = [
         {
@@ -342,7 +381,10 @@ def test_result_alias_validation_and_substitution() -> None:
     ]
     rule["action"]["success_response"] = "{battery.name} is at {battery.level}%"
     validated = validate_rule(rule)
-    assert validated["action"]["actions"][0]["data"]["step_id"]
+    assert "step_id" not in validated["action"]["actions"][0]["data"]
+    assert validate_rule(rule) == validated
+    saved = await (await manager()).async_create(rule)
+    assert saved["action"]["actions"][0]["data"]["step_id"]
     assert (
         resolve_result_values(
             validated["action"]["success_response"],
@@ -377,7 +419,7 @@ def test_result_alias_validation_and_substitution() -> None:
         validate_rule(rule)
 
 
-def test_result_dependencies_and_bounds() -> None:
+async def test_result_dependencies_and_bounds() -> None:
     rule = local_rule()
     rule["action"]["actions"] = [
         {
@@ -394,7 +436,7 @@ def test_result_dependencies_and_bounds() -> None:
         },
     ]
     rule["action"]["success_response"] = "{two.value}"
-    validated = validate_rule(rule)
+    validated = await (await manager()).async_create(rule)
     assert len(validated["action"]["actions"]) == 2
     assert (
         validated["action"]["actions"][0]["data"]["step_id"]
@@ -445,6 +487,20 @@ async def test_groups_preserve_global_order_and_revision() -> None:
     moved = await rules.async_move("two", "top", expected_revision=rules.revision())
     assert moved["order"] == 0
     assert rules.match("good night").rule["name"] == "Two"
+
+
+async def test_group_creation_assigns_stable_backend_id() -> None:
+    rules = await manager(local_rule())
+    created = await rules.async_set_groups(
+        [{"name": "Kitchen"}], expected_revision=rules.revision()
+    )
+    group = created["groups"][0]
+    assert len(group["id"]) == 32
+    assert rules.snapshot()["groups"] == [group]
+    repeated = await rules.async_set_groups(
+        [group], expected_revision=created["revision"]
+    )
+    assert repeated["groups"] == [group]
 
 
 async def test_group_and_reorder_mutations_keep_compiled_sentence_patterns(

@@ -174,9 +174,9 @@ Function execution success is determined by the execution outcome, not the truth
 
 ## Groups and priority
 
-Groups organize Request Rules and can be created, renamed, collapsed, expanded, or deleted. Assign a rule to a group in its editor. Deleting a group moves its rules to **Ungrouped** and preserves their priority. Group definitions and membership are included in backups.
+Groups organize Request Rules in visible, collapsible sections, including **Ungrouped** where needed. Create, rename, or delete a group under **Manage groups**, and assign a rule to a group in its editor. Collapsing a section only changes what is shown. Deleting a group moves its rules to **Ungrouped** and preserves their priority. Group definitions and membership are included in backups.
 
-Groups do not create separate precedence lanes. The numbered global top-to-bottom rule order remains authoritative, including across groups. Use **Move up**, **Move down**, **Move to top**, and **Move to bottom** to change that order. The server checks the current revision when saving a reorder, so an older tab cannot silently overwrite a newer order.
+Groups do not create separate precedence lanes. Each card shows its **global priority** number, which determines matching order even when the cards appear in different group sections. Use **Move up**, **Move down**, **Move to top**, and **Move to bottom** to change the single global sequence across group boundaries. A moved rule remains in its assigned section, and every priority number updates. The server checks the current revision when saving a reorder, so an older tab cannot silently overwrite a newer order.
 
 ## Request Rules compared with native automations
 

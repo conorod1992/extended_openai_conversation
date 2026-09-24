@@ -90,6 +90,7 @@ def _snapshot(kind: str, manager: Any) -> Any:
         value = {
             "defaults": manager._defaults,
             "wording_groups": manager._wording_groups,
+            "groups": manager._groups,
             "rules": manager._rules,
         }
     else:  # pragma: no cover - protected by parametrization

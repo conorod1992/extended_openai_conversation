@@ -299,6 +299,7 @@ class RequestRules:
                         candidate, scope_migrated = (
                             _normalize_legacy_consumed_request_scope(raw)
                         )
+                        candidate = _assign_missing_result_step_ids(candidate)
                         if scope_migrated:
                             _LOGGER.warning(
                                 "Migrating stored complete Request Rule %s from request "
@@ -452,7 +453,13 @@ class RequestRules:
             self._defaults = prepared["defaults"]
             self._wording_groups = prepared["wording_groups"]
             self._groups = prepared["groups"]
-            self._rules = prepared["rules"]
+            self._rules = [
+                validate_rule(
+                    _assign_missing_result_step_ids(rule),
+                    validate_sentence_pattern=False,
+                )
+                for rule in prepared["rules"]
+            ]
             self._condition_checkers.clear()
             self._sort_and_compile()
             self._initialized = True
@@ -518,7 +525,7 @@ class RequestRules:
             raw = dict(value)
             raw.setdefault("id", uuid4().hex)
             raw.setdefault("order", len(self._rules))
-            rule = validate_rule(raw)
+            rule = validate_rule(_assign_missing_result_step_ids(raw))
             self._require_group(rule)
             if any(item["id"] == rule["id"] for item in self._rules):
                 raise ValueError("rule id already exists")
@@ -553,7 +560,10 @@ class RequestRules:
                 and raw.get("match_type", "equals") == previous["match_type"]
                 and not raw.get("enabled", True)
             )
-            rule = validate_rule(raw, validate_sentence_pattern=not preserve_inactive)
+            rule = validate_rule(
+                _assign_missing_result_step_ids(raw),
+                validate_sentence_pattern=not preserve_inactive,
+            )
             self._require_group(rule)
             prospective = [*self._rules]
             prospective[index] = rule
@@ -831,9 +841,18 @@ class RequestRules:
         self, value: Any, *, expected_revision: str | None = None
     ) -> dict[str, Any]:
         """Update organization without changing the global rule order."""
-        groups = validate_rule_groups(value)
+        if not isinstance(value, list):
+            raise ValueError("groups must be a list")
         async with self._lock:
             self._require_revision_locked(expected_revision)
+            groups = validate_rule_groups(
+                [
+                    {**item, "id": item.get("id") or uuid4().hex}
+                    if isinstance(item, Mapping)
+                    else item
+                    for item in value
+                ]
+            )
             valid_ids = {group["id"] for group in groups}
             for rule in self._rules:
                 if rule["group_id"] not in valid_ids:
@@ -1542,30 +1561,46 @@ def _legacy_action_slots(value: Any) -> set[str]:
 
 def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
     """Validate native HA script syntax and enforce conservative size bounds."""
-    migrated = [
-        _validate_local_action(item)
-        if isinstance(item, Mapping)
-        and ("domain" in item or item.get("type") in {"function", "home_assistant"})
-        else item
-        for item in value
-    ]
-    for item in migrated:
+    migrated: list[dict[str, Any]] = []
+    for item in value:
         if not isinstance(item, Mapping):
-            continue
-        data = item.get("data")
-        if (
-            item.get("action") == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
-            and isinstance(data, Mapping)
-            and data.get("result_alias")
-            and not data.get("step_id")
-        ):
-            item["data"] = {**data, "step_id": uuid4().hex}
+            raise ValueError("each Home Assistant action must be an object")
+        if "domain" in item or item.get("type") in {"function", "home_assistant"}:
+            migrated.append(_validate_local_action(item))
+        else:
+            migrated.append(dict(deepcopy(item)))
     _validate_script_complexity(migrated)
     try:
         cv.SCRIPT_SCHEMA(_mask_script_templates(migrated))
     except Exception as err:
         raise ValueError(f"invalid Home Assistant action sequence: {err}") from err
-    return cast(list[dict[str, Any]], migrated)
+    return migrated
+
+
+def _assign_missing_result_step_ids(value: Any) -> Any:
+    """Give newly saved result-producing steps identities once at a write boundary."""
+    if not isinstance(value, Mapping):
+        return value
+    rule = deepcopy(dict(value))
+    action = rule.get("action")
+    if not isinstance(action, dict) or not isinstance(action.get("actions"), list):
+        return rule
+    for step in action["actions"]:
+        if not isinstance(step, dict):
+            continue
+        if step.get("type") == "function":
+            if step.get("result_alias") and not step.get("step_id"):
+                step["step_id"] = uuid4().hex
+            continue
+        data = step.get("data")
+        if (
+            step.get("action") == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+            and isinstance(data, dict)
+            and data.get("result_alias")
+            and not data.get("step_id")
+        ):
+            data["step_id"] = uuid4().hex
+    return rule
 
 
 def _result_references(value: Any) -> set[str]:
@@ -1633,13 +1668,14 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
         if alias in produced:
             raise ValueError("Function result aliases must be unique within a rule")
         step_id = data.get("step_id")
-        if (
+        if step_id is not None and (
             not isinstance(step_id, str)
             or not re.fullmatch(r"[0-9a-f]{32}", step_id)
             or step_id in step_ids
         ):
             raise ValueError("Function result step IDs must be unique")
-        step_ids.add(step_id)
+        if step_id is not None:
+            step_ids.add(step_id)
         produced.add(alias)
     missing = (
         _result_references(action["success_response"])
@@ -1856,6 +1892,7 @@ def _bounded_function_result(
         raise HomeAssistantError("Function result contains too many values")
     if depth > MAX_RESULT_DEPTH:
         raise HomeAssistantError("Function result is too deeply nested")
+    result: Any
     if isinstance(value, Mapping):
         result = {}
         for key, item in value.items():
