@@ -112,8 +112,7 @@ from .management_function_quarantine import (
 )
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,
-    agent_config_revision_from_snapshot as _agent_config_revision_from_snapshot,
-    cached_agent_config_snapshot as _cached_agent_config_snapshot_for_read,
+    normalized_persisted_config_snapshot,
     persisted_config_projection,
     require_agent_config_revision as _require_agent_config_revision,
     seed_persisted_config_projection,
@@ -832,7 +831,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     # merge_agent_config validated both fields before persistence. Decode the
     # normalized YAML for the editor without repeating schema validation.
     snapshot = _snapshot_normalized_configuration(persisted, validated=True)
-    revision = _agent_config_revision_from_snapshot(snapshot, saved_title)
+    revision = _agent_config_revision(persisted, saved_title)
     saved = {
         "title": saved_title,
         "config": snapshot,
@@ -876,10 +875,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     if action == "save":
         return await _async_save_configuration(request)
     if action == "retention_get":
-        projection = persisted_config_projection(subentry)
-        if projection.snapshot is None:
-            # Keep the established malformed-tool repair boundary.
-            _cached_agent_config_snapshot_for_read(subentry.data)
+        started = perf_counter()
+        projection_diagnostics: dict[str, Any] = {}
+        projection = persisted_config_projection(subentry, projection_diagnostics)
         fields = (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS)
         options = _cached_configuration_options()
         return {
@@ -888,16 +886,19 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "config": {key: deepcopy(projection.retention[key]) for key in fields},
             "options": {key: deepcopy(options[key]) for key in fields},
             "projection": "retention",
+            "_performance": {
+                **projection_diagnostics,
+                "projection_ms": _elapsed_ms(started),
+            },
         }
     if action == "get":
         started = perf_counter()
         phase = perf_counter()
-        projection = persisted_config_projection(subentry)
-        config = (
-            deepcopy(projection.snapshot)
-            if projection.snapshot is not None
-            else _cached_agent_config_snapshot_for_read(subentry.data)
-        )
+        projection_diagnostics = {}
+        projection = persisted_config_projection(subentry, projection_diagnostics)
+        projection_ms = _elapsed_ms(phase)
+        phase = perf_counter()
+        config, snapshot_cache_hit = normalized_persisted_config_snapshot(projection)
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
@@ -917,6 +918,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         model_capabilities_ms = _elapsed_ms(phase)
 
         timings = {
+            **projection_diagnostics,
+            "projection_ms": projection_ms,
+            "snapshot_cache_hit": snapshot_cache_hit,
             "config_snapshot_ms": config_ms,
             "revision_ms": revision_ms,
             "defaults_snapshot_ms": defaults_ms,
@@ -1002,7 +1006,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         snapshot = agent_config_snapshot(normalized)
         result = {
             "title": saved_title,
-            "revision": _agent_config_revision_from_snapshot(snapshot, saved_title),
+            "revision": _agent_config_revision(normalized, saved_title),
             "config": snapshot,
             "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
         }
@@ -1088,7 +1092,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             snapshot = _snapshot_normalized_configuration(
                 parsed["config"], validated=True
             )
-            revision = _agent_config_revision_from_snapshot(snapshot, parsed["title"])
+            revision = _agent_config_revision(parsed["config"], parsed["title"])
             seed_persisted_config_projection(entry, subentry, snapshot, revision)
             return {
                 "status": "updated",

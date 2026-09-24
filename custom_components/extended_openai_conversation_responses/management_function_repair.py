@@ -7,7 +7,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
-import json
 from typing import Any
 
 import yaml
@@ -300,33 +299,20 @@ def safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
 
 
 def agent_config_revision_from_snapshot(config: dict[str, Any], title: str) -> str:
-    """Hash one already-normalized frontend configuration snapshot."""
+    """Hash authoritative persisted configuration and title for all writers."""
     document = canonical_json({"title": title, "config": config})
     return sha256(document.encode("utf-8")).hexdigest()
 
 
-@lru_cache(maxsize=128)
-def _cached_agent_config_snapshot(raw_json: str) -> dict[str, Any]:
-    """Normalize one persisted agent revision once."""
-    return agent_config_snapshot(json.loads(raw_json))
-
-
-def cached_agent_config_snapshot(data: Any) -> dict[str, Any]:
-    """Return an isolated normalized snapshot for unchanged persisted state."""
-    raw_json = canonical_json(dict(data))
-    return deepcopy(_cached_agent_config_snapshot(raw_json))
-
-
 def agent_config_revision(data: Any, title: str) -> str:
-    """Hash normalized valid state or unchanged raw state while tools need repair."""
-    raw = dict(data)
-    if function_tools_issue(raw)[1] is not None:
-        return agent_config_revision_from_snapshot(raw, title)
-    return agent_config_revision_from_snapshot(cached_agent_config_snapshot(raw), title)
+    """Hash persisted state without validating or normalizing unrelated fields."""
+    return agent_config_revision_from_snapshot(dict(data), title)
 
 
-def persisted_config_projection(subentry: Any) -> _PersistedProjection:
-    """Reuse normalized reads while the authoritative subentry state is unchanged.
+def persisted_config_projection(
+    subentry: Any, diagnostics: dict[str, Any] | None = None
+) -> _PersistedProjection:
+    """Reuse lightweight persisted reads while authoritative state is unchanged.
 
     Home Assistant replaces subentry data through async_update_subentry. Identity,
     owner, and title together cover updates, deletion/recreation, and title edits
@@ -340,31 +326,40 @@ def persisted_config_projection(subentry: Any) -> _PersistedProjection:
         and cached.data is subentry.data
         and cached.title == subentry.title
     ):
+        if diagnostics is not None:
+            diagnostics["projection_cache_hit"] = True
         _persisted_projections.move_to_end(key)
         return cached
 
-    raw = dict(subentry.data)
-    issue = function_tools_issue(raw)[1]
-    snapshot = None if issue is not None else agent_config_snapshot(raw)
-    revision = agent_config_revision_from_snapshot(
-        raw if snapshot is None else snapshot, subentry.title
-    )
+    if diagnostics is not None:
+        diagnostics["projection_cache_hit"] = False
+    revision = agent_config_revision(subentry.data, subentry.title)
     defaults = {
         CONF_USAGE_REQUEST_RETENTION_DAYS: DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
         CONF_USAGE_RUN_RETENTION_DAYS: DEFAULT_USAGE_RUN_RETENTION_DAYS,
     }
     retention = {
-        key: deepcopy((snapshot or raw).get(key, defaults[key]))
+        key: deepcopy(subentry.data.get(key, defaults[key]))
         for key in _RETENTION_FIELDS
     }
     projection = _PersistedProjection(
-        subentry, subentry.data, subentry.title, snapshot, revision, retention
+        subentry, subentry.data, subentry.title, None, revision, retention
     )
     _persisted_projections[key] = projection
     _persisted_projections.move_to_end(key)
     if len(_persisted_projections) > _PROJECTION_CACHE_LIMIT:
         _persisted_projections.popitem(last=False)
     return projection
+
+
+def normalized_persisted_config_snapshot(
+    projection: _PersistedProjection,
+) -> tuple[dict[str, Any], bool]:
+    """Lazily normalize a full read and isolate the returned frontend data."""
+    hit = projection.snapshot is not None
+    if projection.snapshot is None:
+        projection.snapshot = agent_config_snapshot(dict(projection.data))
+    return deepcopy(projection.snapshot), hit
 
 
 def seed_persisted_config_projection(
@@ -442,7 +437,7 @@ def persist_valid_function_configuration(
     )
     hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
     snapshot = agent_config_snapshot(normalized)
-    revision = agent_config_revision_from_snapshot(snapshot, subentry.title)
+    revision = agent_config_revision(normalized, subentry.title)
     seed_persisted_config_projection(entry, subentry, snapshot, revision)
     return {
         "functions": snapshot[CONF_FUNCTION_TOOLS],
