@@ -1,6 +1,7 @@
 """Tests for management frontend bootstrap and network optimizations."""
 
 import asyncio
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -115,6 +116,27 @@ def _persisted_invalid_function_tools() -> str:
         ],
         sort_keys=False,
     )
+
+
+def _unavailable_native_tools() -> tuple[str, list[dict]]:
+    """A valid sibling plus unavailable native implementations and references."""
+    valid = yaml.safe_load(_persisted_invalid_function_tools())[0]
+    valid["spec"]["name"] = "valid_phone_tool"
+    valid["spec"]["parameters"]["properties"]["phone"]["minLength"] = 1
+    missing = []
+    for index in range(3):
+        tool = deepcopy(valid)
+        tool["spec"]["name"] = f"unavailable_phone_tool_{index}"
+        tool["function"]["name"] = f"removed_native_implementation_{index}"
+        missing.append(tool)
+    groups = [
+        {
+            "id": "phone_tools", "name": "Phone Tools",
+            "description": "Phone-related tools", "loading_mode": "always",
+            "functions": [valid["spec"]["name"], missing[0]["spec"]["name"]],
+        }
+    ]
+    return yaml.safe_dump([valid, *missing], sort_keys=False), groups
 
 
 def test_runtime_function_quarantine_keeps_valid_siblings() -> None:
@@ -746,6 +768,171 @@ async def test_full_get_recovers_from_malformed_tools_and_repair(monkeypatch) ->
     assert "function_repair" not in normal
     assert normal["config"]["functions"] == []
     assert normal["revision"] == repaired["revision"]
+
+
+async def test_unavailable_native_full_get_reuses_one_quarantine_state(monkeypatch) -> None:
+    hass, entry, subentry = _hass_with_agent()
+    raw_tools, groups = _unavailable_native_tools()
+    subentry.data = {
+        **subentry.data, "functions": raw_tools, "function_groups": groups,
+    }
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    function_repair._cached_isolated_function_tools.cache_clear()
+    isolate = Mock(wraps=function_repair._isolate_function_tools_uncached)
+    monkeypatch.setattr(function_repair, "_isolate_function_tools_uncached", isolate)
+    strict = Mock(side_effect=AssertionError("repairable native tools must skip strict snapshot"))
+    monkeypatch.setattr(function_repair, "agent_config_snapshot", strict)
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1",
+        "section": "configuration", "action": "get",
+    }
+
+    cold = await management_ui.async_management_command(hass, "admin", True, message)
+    repeated = await management_ui.async_management_command(hass, "admin", True, message)
+    legacy = function_repair._safe_configuration_payload(
+        hass, management_ui, loading, entry, subentry
+    )
+    for field in ("config", "defaults", "options", "function_repair"):
+        assert cold[field] == legacy[field]
+
+    strict.assert_not_called()
+    assert isolate.call_count == 1
+    assert cold["_performance"]["strict_snapshot_skipped_for_repair"] is True
+    assert cold["_performance"]["repair_state_cache_hit"] is False
+    assert repeated["_performance"]["repair_state_cache_hit"] is True
+    assert cold["function_repair"]["invalid_count"] == 3
+    assert [tool["spec"]["name"] for tool in cold["config"]["functions"]] == [
+        "valid_phone_tool"
+    ]
+    assert cold["function_repair"]["group_issues"][0]["unavailable_functions"] == [
+        "unavailable_phone_tool_0"
+    ]
+    assert cold["function_repair"]["persisted_groups"] == groups
+    assert subentry.data["functions"] == raw_tools
+    cold["function_repair"]["invalid_tools"].clear()
+    cold["config"]["functions"].clear()
+    assert len(repeated["function_repair"]["invalid_tools"]) == 3
+    assert len(repeated["config"]["functions"]) == 1
+
+    # A non-Function replacement keeps the validated quarantine state.
+    subentry.data = {**subentry.data, "max_tokens": 777}
+    unrelated = await management_ui.async_management_command(hass, "admin", True, message)
+    assert unrelated["_performance"]["repair_state_cache_hit"] is True
+    assert unrelated["config"]["max_tokens"] == 777
+    assert isolate.call_count == 1
+
+    # Both authoritative Function fields cause a fresh isolation when changed.
+    updated_tools = yaml.safe_load(raw_tools)
+    updated_tools[-1]["spec"]["name"] = "renamed_unavailable"
+    subentry.data = {
+        **subentry.data,
+        "functions": yaml.safe_dump(updated_tools, sort_keys=False),
+    }
+    await management_ui.async_management_command(hass, "admin", True, message)
+    assert isolate.call_count == 2
+    subentry.data = {**subentry.data, "function_groups": []}
+    regrouped = await management_ui.async_management_command(hass, "admin", True, message)
+    assert regrouped["_performance"]["repair_state_cache_hit"] is False
+    assert regrouped["function_repair"]["group_issues"] == []
+    assert isolate.call_count == 2  # Tool isolation is keyed only to Function Tools.
+
+
+async def test_valid_native_full_get_keeps_strict_snapshot_path(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    raw_tools, _groups = _unavailable_native_tools()
+    subentry.data = {
+        **subentry.data,
+        "functions": yaml.safe_dump(yaml.safe_load(raw_tools)[:1], sort_keys=False),
+        "function_groups": [],
+    }
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    strict = Mock(wraps=function_repair.agent_config_snapshot)
+    monkeypatch.setattr(function_repair, "agent_config_snapshot", strict)
+    monkeypatch.setattr(
+        management_ui, "repair_state_for_projection",
+        Mock(side_effect=AssertionError("valid tools must not enter repair isolation")),
+    )
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1",
+        "section": "configuration", "action": "get",
+    }
+
+    cold = await management_ui.async_management_command(hass, "admin", True, message)
+    warm = await management_ui.async_management_command(hass, "admin", True, message)
+
+    strict.assert_called_once()
+    assert "function_repair" not in cold
+    assert cold["_performance"]["snapshot_cache_hit"] is False
+    assert warm["_performance"]["snapshot_cache_hit"] is True
+    assert cold["config"] == warm["config"]
+
+
+async def test_repair_preflight_keeps_valid_sibling_collection_checks(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    raw_tools, _groups = _unavailable_native_tools()
+    tools = yaml.safe_load(raw_tools)
+    duplicate = deepcopy(tools[0])
+    tools.insert(1, duplicate)
+    subentry.data = {
+        **subentry.data,
+        "functions": yaml.safe_dump(tools, sort_keys=False),
+        "function_groups": [],
+    }
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    function_repair._cached_isolated_function_tools.cache_clear()
+
+    with pytest.raises(agent_config.AgentConfigError, match="duplicate tool name"):
+        await management_ui.async_management_command(
+            hass, "admin", True,
+            {
+                "entry_id": "entry-1", "subentry_id": "agent-1",
+                "section": "configuration", "action": "get",
+            },
+        )
+
+
+async def test_delete_quarantined_tools_immediately_restores_normal_get(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    raw_tools, groups = _unavailable_native_tools()
+    subentry.data = {
+        **subentry.data, "functions": raw_tools, "function_groups": groups,
+    }
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1",
+        "section": "configuration", "action": "get",
+    }
+    current = await management_ui.async_management_command(hass, "admin", True, message)
+    for remaining in (2, 1, 0):
+        await management_ui.async_management_command(
+            hass, "admin", True,
+            {
+                **message, "section": "function_repair", "action": "delete_one",
+                "index": 1, "revision": current["revision"],
+            },
+        )
+        next_read = await management_ui.async_management_command(
+            hass, "admin", True, message
+        )
+        assert next_read["revision"] != current["revision"]
+        if remaining:
+            assert next_read["function_repair"]["invalid_count"] == remaining
+            assert next_read["_performance"]["repair_state_cache_hit"] is False
+        else:
+            assert "function_repair" not in next_read
+            assert next_read["config"]["functions"][0]["spec"]["name"] == "valid_phone_tool"
+            assert next_read["config"]["function_groups"][0]["functions"] == [
+                "valid_phone_tool"
+            ]
+        current = next_read
 
 
 async def test_function_repair_rejects_still_invalid_tools_without_persisting() -> None:

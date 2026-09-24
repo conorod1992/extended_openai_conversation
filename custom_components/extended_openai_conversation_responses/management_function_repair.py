@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
+    NATIVE_FUNCTION_IMPLEMENTATIONS,
     agent_config_defaults,
     agent_config_snapshot,
     configured_function_tool_metadata_from_data,
@@ -44,6 +45,7 @@ _health_cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
 _HEALTH_CACHE_LIMIT = 128
 _PROJECTION_CACHE_LIMIT = 128
 _RETENTION_FIELDS = (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS)
+_MISSING = object()
 
 
 @dataclass
@@ -54,6 +56,20 @@ class _PersistedProjection:
     snapshot: dict[str, Any] | None
     revision: str
     retention: dict[str, Any]
+    repair_state: _RepairState | None = None
+    repair_snapshot: dict[str, Any] | None = None
+
+
+@dataclass
+class _RepairState:
+    """Validated quarantine data for exact persisted Functions and Groups."""
+
+    valid: list[dict[str, Any]]
+    invalid: list[dict[str, Any]]
+    issue: str
+    groups: list[dict[str, Any]]
+    group_issues: list[dict[str, Any]]
+    raw_groups: Any
 
 
 _persisted_projections: OrderedDict[int, _PersistedProjection] = OrderedDict()
@@ -254,6 +270,17 @@ def effective_function_configuration(
     safe[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         valid, sort_keys=False, allow_unicode=True
     )
+    effective_groups, group_issues, raw_groups = _effective_function_groups(
+        options, valid
+    )
+    safe[CONF_FUNCTION_GROUPS] = effective_groups
+    return safe, invalid, group_issues, raw_groups, issue
+
+
+def _effective_function_groups(
+    options: dict[str, Any], valid: list[dict[str, Any]]
+) -> tuple[Any, list[dict[str, Any]], Any]:
+    """Remove unavailable members from the editor copy, preserving persisted groups."""
     valid_names = {
         tool["spec"]["name"]
         for tool in valid
@@ -287,8 +314,49 @@ def effective_function_configuration(
             group["functions"] = [
                 name for name in persisted_functions if name in valid_names
             ]
-    safe[CONF_FUNCTION_GROUPS] = effective_groups
-    return safe, invalid, group_issues, raw_groups, issue
+    return effective_groups, group_issues, raw_groups
+
+
+def has_unavailable_native_tool(options: dict[str, Any]) -> bool:
+    """Cheap positive repair preflight for unavailable native implementations.
+
+    A negative result does not certify validity; the strict snapshot still does.
+    """
+    raw = options.get(CONF_FUNCTION_TOOLS)
+    if isinstance(raw, str) and "native" not in raw:
+        return False
+    editable = editable_function_tools(options)
+    if not isinstance(editable, list):
+        return False
+    return any(
+        isinstance(tool, dict)
+        and isinstance(tool.get("function"), dict)
+        and tool["function"].get("type") == "native"
+        and tool["function"].get("name") not in NATIVE_FUNCTION_IMPLEMENTATIONS
+        for tool in editable
+    )
+
+
+def repair_state_for_projection(
+    projection: _PersistedProjection,
+) -> tuple[_RepairState | None, bool]:
+    """Resolve quarantine once for the current persisted Function fields."""
+    if projection.repair_state is not None:
+        return projection.repair_state, True
+    options = dict(projection.data)
+    valid, invalid, issue = isolated_function_tools(options)
+    if issue is None:
+        return None, False
+    if len(valid) > 1:
+        # Individual isolation does not check collection invariants such as
+        # duplicate names or HA references. The former safe snapshot did.
+        valid = validate_function_tools(valid)
+    groups, group_issues, raw_groups = _effective_function_groups(options, valid)
+    # Preserve the same strict group contract as the former safe snapshot path.
+    groups = validate_function_groups(groups, valid)
+    state = _RepairState(valid, invalid, issue, groups, group_issues, raw_groups)
+    projection.repair_state = state
+    return state, False
 
 
 def safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
@@ -346,6 +414,16 @@ def persisted_config_projection(
     projection = _PersistedProjection(
         subentry, subentry.data, subentry.title, None, revision, retention
     )
+    if (
+        cached is not None
+        and cached.subentry is subentry
+        and cached.repair_state is not None
+        and all(
+            cached.data.get(field, _MISSING) == subentry.data.get(field, _MISSING)
+            for field in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS)
+        )
+    ):
+        projection.repair_state = cached.repair_state
     _persisted_projections[key] = projection
     _persisted_projections.move_to_end(key)
     if len(_persisted_projections) > _PROJECTION_CACHE_LIMIT:
@@ -507,14 +585,59 @@ def _safe_configuration_payload(
 
 
 def safe_configuration_payload(
-    hass: HomeAssistant, entry: Any, subentry: Any
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    *,
+    projection: _PersistedProjection | None = None,
 ) -> dict[str, Any]:
     """Share the existing quarantine read with normal configuration callers."""
     from . import management_loading_performance, management_ui
 
+    if projection is not None:
+        state, _cache_hit = repair_state_for_projection(projection)
+        if state is None:
+            raise HomeAssistantError("Function Tools do not require repair")
+        if projection.repair_snapshot is None:
+            safe = dict(projection.data)
+            safe[CONF_FUNCTION_TOOLS] = state.valid
+            safe[CONF_FUNCTION_GROUPS] = state.groups
+            projection.repair_snapshot = (
+                management_loading_performance._snapshot_normalized_configuration(
+                    safe, validated=True
+                )
+            )
+        config = deepcopy(projection.repair_snapshot)
+        return {
+            "title": projection.title,
+            "revision": projection.revision,
+            "config": config,
+            "defaults": deepcopy(_cached_repair_defaults()),
+            "options": management_ui.agent_config_options(),
+            "model_capabilities": management_ui.model_capabilities(
+                config[management_ui.CONF_CHAT_MODEL]
+            ),
+            "function_types": sorted(management_ui.FUNCTIONS),
+            "function_repair": {
+                "invalid_tools": deepcopy(state.invalid),
+                "invalid_count": len(state.invalid),
+                "group_issues": deepcopy(state.group_issues),
+                "persisted_groups": deepcopy(state.raw_groups),
+                "validation_error": state.issue,
+                "isolatable": bool(state.invalid),
+            },
+        }
     return _safe_configuration_payload(
         hass, management_ui, management_loading_performance, entry, subentry
     )
+
+
+@lru_cache(maxsize=1)
+def _cached_repair_defaults() -> dict[str, Any]:
+    """Build the unchanged legacy repair defaults projection once."""
+    from .management_loading_performance import _snapshot_normalized_configuration
+
+    return _snapshot_normalized_configuration(agent_config_defaults())
 
 
 def _function_fields_unchanged(

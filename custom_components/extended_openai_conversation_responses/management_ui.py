@@ -113,9 +113,11 @@ from .management_function_quarantine import (
 )
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,
-    function_tools_issue,
+    has_unavailable_native_tool,
     normalized_persisted_config_snapshot,
+    peek_function_tool_health,
     persisted_config_projection,
+    repair_state_for_projection,
     require_agent_config_revision as _require_agent_config_revision,
     seed_persisted_config_projection,
 )
@@ -905,6 +907,52 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         defaults_cache_hit = _cached_configuration_defaults.cache_info().currsize > 0
         defaults = _configuration_defaults()
         defaults_ms = _elapsed_ms(phase)
+        from .management_function_repair import safe_configuration_payload
+
+        def repair_response(
+            *,
+            strict_skipped: bool,
+            attempt_ms: float,
+            validation_ms: float,
+            state_cache_hit: bool,
+        ) -> dict[str, Any]:
+            repair_started = perf_counter()
+            safe = safe_configuration_payload(
+                hass, entry, subentry, projection=projection
+            )
+            safe["_performance"] = {
+                **projection_diagnostics,
+                "projection_ms": projection_ms,
+                "defaults_snapshot_ms": defaults_ms,
+                "snapshot_attempt_ms": attempt_ms,
+                "strict_snapshot_skipped_for_repair": strict_skipped,
+                "repair_state_cache_hit": state_cache_hit,
+                "function_validation_ms": validation_ms,
+                "function_issue_check_ms": validation_ms,
+                "repair_projection_ms": _elapsed_ms(repair_started),
+                "total_ms": _elapsed_ms(started),
+            }
+            return safe
+
+        preflight_started = perf_counter()
+        repair_hint = False
+        if projection.snapshot is None:
+            health = peek_function_tool_health(dict(projection.data))
+            repair_hint = (
+                projection.repair_state is not None
+                or bool(health and health.get("validation_error"))
+                or has_unavailable_native_tool(dict(projection.data))
+            )
+        if repair_hint:
+            state, state_cache_hit = repair_state_for_projection(projection)
+            if state is not None:
+                return repair_response(
+                    strict_skipped=True,
+                    attempt_ms=0.0,
+                    validation_ms=_elapsed_ms(preflight_started),
+                    state_cache_hit=state_cache_hit,
+                )
+        repair_preflight_ms = _elapsed_ms(preflight_started)
         phase = perf_counter()
         try:
             snapshot_diagnostics: dict[str, Any] = {}
@@ -916,25 +964,16 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             # Function Tool snapshot can still be served through quarantine,
             # including on cold reads before the catalogue is available.
             snapshot_attempt_ms = _elapsed_ms(phase)
-            repair_started = perf_counter()
-            _tools, issue = function_tools_issue(dict(subentry.data))
-            if issue is None:
+            validation_started = perf_counter()
+            state, state_cache_hit = repair_state_for_projection(projection)
+            if state is None:
                 raise
-            from .management_function_repair import safe_configuration_payload
-
-            issue_check_ms = _elapsed_ms(repair_started)
-            repair_started = perf_counter()
-            safe = safe_configuration_payload(hass, entry, subentry)
-            safe["_performance"] = {
-                **projection_diagnostics,
-                "projection_ms": projection_ms,
-                "defaults_snapshot_ms": defaults_ms,
-                "snapshot_attempt_ms": snapshot_attempt_ms,
-                "function_issue_check_ms": issue_check_ms,
-                "repair_projection_ms": _elapsed_ms(repair_started),
-                "total_ms": _elapsed_ms(started),
-            }
-            return safe
+            return repair_response(
+                strict_skipped=False,
+                attempt_ms=snapshot_attempt_ms,
+                validation_ms=_elapsed_ms(validation_started),
+                state_cache_hit=state_cache_hit,
+            )
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
@@ -954,6 +993,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         timings = {
             **projection_diagnostics,
             "projection_ms": projection_ms,
+            "repair_preflight_ms": repair_preflight_ms,
             "snapshot_cache_hit": snapshot_cache_hit,
             **snapshot_diagnostics,
             "config_snapshot_ms": config_ms,
