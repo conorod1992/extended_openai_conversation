@@ -243,6 +243,32 @@ def test_full_backup_validation_preserves_durable_categories_and_expiry() -> Non
     assert prepared.summary()["request_rules"] == 0
 
 
+def test_full_backup_inspection_accepts_quarantined_function_tool() -> None:
+    document = _document()
+    config = document["agent"]["config"]
+    tools = yaml.safe_load(config["functions"])
+    invalid = deepcopy(tools[0])
+    invalid["spec"]["name"] = "unavailable_reminder"
+    invalid["function"] = {"type": "native", "name": "reminders.unavailable"}
+    config["functions"] = yaml.safe_dump(
+        [tools[0], invalid], sort_keys=False, allow_unicode=True
+    )
+    config["function_groups"] = [
+        {
+            "id": "mixed",
+            "name": "Mixed",
+            "description": "Contains one quarantined Function Tool",
+            "loading_mode": "always",
+            "functions": [tools[0]["spec"]["name"], "unavailable_reminder"],
+        }
+    ]
+
+    prepared = inspect_backup(document, "agent-new")
+
+    assert prepared.config["functions"] == config["functions"]
+    assert prepared.config["function_groups"] == config["function_groups"]
+
+
 def test_backup_rejects_malformed_and_newer_versions() -> None:
     malformed = _document()
     malformed["memories"]["memories"][0]["content"] = 42
