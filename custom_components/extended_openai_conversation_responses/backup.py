@@ -117,8 +117,8 @@ def _safe_configuration(value: Any, *, schema: bool = False) -> Any:
     return redact_secrets(value, schema=schema)
 
 
-def export_configuration_snapshot(data: Any) -> dict[str, Any]:
-    """Snapshot persisted configuration without letting repairable Functions block export."""
+def recoverable_configuration_snapshot(data: Any) -> dict[str, Any]:
+    """Normalize configuration while preserving Function fields that need quarantine."""
     raw = dict(data)
     try:
         return preserve_legacy_guest_policy(raw, agent_config_snapshot(raw))
@@ -165,7 +165,7 @@ async def async_collect_backup_snapshot(
         guest_mode,
         request_rules,
     ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
-    config_snapshot = export_configuration_snapshot(subentry.data)
+    config_snapshot = recoverable_configuration_snapshot(subentry.data)
     return {
         "format": BACKUP_FORMAT,
         "version": BACKUP_VERSION,
@@ -321,9 +321,7 @@ def inspect_backup(
         raw_config = restore_redacted_secrets(agent["config"])
         if not isinstance(raw_config, dict):
             raise ValueError("agent config must be an object")
-        config = preserve_legacy_guest_policy(
-            raw_config, normalize_agent_config(raw_config)
-        )
+        config = recoverable_configuration_snapshot(raw_config)
         memories = PersistentMemory.validate_backup_data(value["memories"])
         temporary_memories = TemporaryMemory.validate_backup_data(
             value["temporary_memories"]
@@ -345,7 +343,7 @@ def inspect_backup(
                 value.get("request_rules", {"defaults": {}, "rules": []})
             )
         )
-    except (TypeError, ValueError) as err:
+    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
         raise BackupError(f"The backup is incomplete or corrupted: {err}") from err
     return PreparedRestore(
         title,
@@ -418,9 +416,7 @@ async def _snapshot_for_restore(
     )
     return PreparedRestore(
         subentry.title,
-        preserve_legacy_guest_policy(
-            dict(subentry.data), agent_config_snapshot(subentry.data)
-        ),
+        recoverable_configuration_snapshot(subentry.data),
         PersistentMemory.validate_backup_data(await memory.async_backup_data()),
         TemporaryMemory.validate_backup_data(await temporary.async_backup_data()),
         KnowledgeLibrary.validate_backup_data(await knowledge.async_backup_data()),
