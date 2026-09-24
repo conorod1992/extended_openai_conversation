@@ -26,6 +26,5 @@ assert.match(ui.renderPersistentMemories(panel), /No memories match this search\
 const source = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/guest-mode-ui.js", import.meta.url), "utf8");
 assert.match(source, /MEMORY_SEARCH_DEBOUNCE_MS = 250/);
 assert.match(source, /id="load-more-memories"/);
-assert.match(source, /id="load-more-conversations"/);
-assert.match(source, /conversations", "search"/);
+assert.doesNotMatch(source, /load-more-conversations|decorateConversations/);
 assert.match(source, /memories", action/);

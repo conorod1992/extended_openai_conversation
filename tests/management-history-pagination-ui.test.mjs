@@ -60,6 +60,8 @@ const historyChunk = Object.entries(manifest).find(([asset]) =>
 );
 assert.ok(historyChunk, "History pagination must be emitted as a production lazy chunk");
 assert.equal(historyChunk[1].isDynamicEntry, true);
+assert.deepEqual(historyChunk[1].imports || [], [],
+  "History list chunk must not import the broad memory browser or configuration editor");
 // Backend ownership changes must not bypass the same bounded projections.
 assert.match(management, /"overview": async_overview_command/);
 assert.match(management, /"usage": async_usage_command/);

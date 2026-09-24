@@ -20,10 +20,16 @@ assert.equal(loadingModule.fieldErrorKey("chat_model"), "chat_model");
 assert.equal(routeModule.routeAssetKind("assistant/basics"), "agent-config");
 assert.equal(routeModule.routeAssetKind("assistant/advanced"), "agent-config");
 assert.equal(routeModule.routeAssetKind("capabilities/functions"), "agent-config-tools");
-assert.equal(routeModule.routeAssetKind("data-memory/conversations"), "agent-config");
+assert.equal(routeModule.routeAssetKind("data-memory/conversations"), null);
 assert.equal(routeModule.routeAssetKind("usage-maintenance/retention"), null);
 assert.equal(routeModule.routeAssetKind("capabilities/request-rules"), "request-rules");
 assert.equal(routeModule.routeAssetKind("overview"), null);
+assert.equal(routeModule.routeFeaturesReady("data-memory/conversations"), false);
+await routeModule.routeAssetPromise("data-memory/conversations");
+assert.equal(routeModule.routeFeaturesReady("data-memory/conversations"), true,
+  "History list needs only its own feature before first render");
+assert.equal(routeModule.getConfigurationEditor(), undefined);
+assert.equal(routeModule.getRouteFeature("memory-browser"), undefined);
 assert.equal(
   routeModule.matchesRequestRuleSearch(
     {name:"Night", phrases:["good night", "bed time", "sleep now", "lights out", "hidden fifth phrase"], action_type:"local_action"},

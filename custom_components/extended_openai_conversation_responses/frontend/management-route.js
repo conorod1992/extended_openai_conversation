@@ -5,7 +5,6 @@ const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
   "capabilities/web-skills",
-  "data-memory/conversations",
 ]);
 // These views consume the normal full configuration snapshot. Retention uses a
 // separate projection; unauthorised readers must never speculate on config.
@@ -85,13 +84,31 @@ function routeFeatureKeys(view) {
   if (assetKind === "agent-config" || assetKind === "agent-config-tools") keys.push(assetKind);
   if (assetKind === "agent-config") keys.push(configurationSectionFamily(view));
   // Configuration guidance is additive and never blocks route readiness.
-  if (["data-memory/memories", "data-memory/conversations", "capabilities/guest-mode"].includes(view)) keys.push("memory-browser");
+  if (["data-memory/memories", "capabilities/guest-mode"].includes(view)) keys.push("memory-browser");
   if (["capabilities/home-assistant", "capabilities/web-skills"].includes(view)) keys.push("capabilities");
   if (["data-memory/memories", "usage-maintenance/diagnostics"].includes(view)) keys.push("status");
   return keys;
 }
 
 function warmSupplementalRouteFeatures(panel, view, token) {
+  if (view === "data-memory/conversations" && panel._data?.is_admin) {
+    panel._eocHistoryEditorLoading = true;
+    panel._eocHistoryEditorError = null;
+    Promise.all([
+      featureAssetPromise("agent-config"),
+      featureAssetPromise(configurationSectionFamily(view, ["archive"])),
+    ]).then(() => {
+      if (!isCurrentLazyLoad(panel, view, token)) return;
+      panel._eocHistoryEditorLoading = false;
+      panel._patchHistorySettings?.();
+    }, (error) => {
+      if (!isCurrentLazyLoad(panel, view, token)) return;
+      panel._eocHistoryEditorLoading = false;
+      panel._eocHistoryEditorError = error?.message || String(error);
+      panel._patchHistorySettings?.();
+    });
+    return;
+  }
   if (routeAssetKind(view) !== "agent-config" && view !== "data-memory/memory-settings") return;
   const pending = featureAssetPromise("configuration");
   pending?.then((module) => {
