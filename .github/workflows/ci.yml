@@ -410,7 +410,9 @@ jobs:
           test -s stable-shards/stable-test-a/.coverage
           test -s stable-shards/stable-test-b/.coverage
           python -m pip install 'coverage>=7,<8'
-          coverage combine stable-shards/stable-test-a stable-shards/stable-test-b
+          cp stable-shards/stable-test-a/.coverage .coverage.a
+          cp stable-shards/stable-test-b/.coverage .coverage.b
+          coverage combine
           coverage report -m
           coverage xml -o coverage.xml
 
