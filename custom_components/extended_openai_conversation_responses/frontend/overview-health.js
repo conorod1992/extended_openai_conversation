@@ -25,6 +25,11 @@ function providerRuntimeCheck(facts, fallback = {}) {
 
 function functionToolsCheck(facts) {
   const tools = facts.function_tools || {};
+  if (tools.loading === true) return {
+    id: "function_tools", state: "unknown", title: "Function Tools",
+    value: "Loading…", detail: "Checking the selected assistant's Function Tools.",
+    action: action("capabilities", "functions"),
+  };
   const invalid = Number(tools.invalid_count || 0);
   const usable = Number(tools.usable_count || 0);
   if (tools.validation_error && tools.isolatable === false) {
@@ -91,6 +96,11 @@ function instructionsCheck(facts) {
 }
 
 function exposureCheck(facts) {
+  if (facts.exposed_entity_count_loading === true) return {
+    id: "home_assistant_exposure", state: "unknown", title: "Home Assistant access",
+    value: "Loading…", detail: "Counting entities exposed to Assist.",
+    action: action("capabilities", "home-assistant"),
+  };
   const count = facts.exposed_entity_count;
   if (!Number.isFinite(count)) {
     return {

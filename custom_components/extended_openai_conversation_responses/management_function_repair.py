@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from copy import deepcopy
 from functools import lru_cache
 from hashlib import sha256
@@ -30,6 +31,8 @@ from .request import canonical_json
 _STALE_CONFIGURATION_ERROR = (
     "Agent configuration changed in another tab; reload before saving"
 )
+_health_cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
+_HEALTH_CACHE_LIMIT = 128
 
 
 def editable_function_tools(options: dict[str, Any]) -> Any:
@@ -148,8 +151,31 @@ def _cached_function_tool_state(
     return valid, [], None, len(valid)
 
 
+def peek_function_tool_health(options: dict[str, Any]) -> dict[str, Any] | None:
+    """Read an existing health projection without parsing or validating tools."""
+    key = _function_tools_cache_key(options)
+    health = _health_cache.get(key)
+    if health is not None:
+        _health_cache.move_to_end(key)
+    return deepcopy(health) if health is not None else None
+
+
 def management_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
-    """Return cheap cached metadata, including cached tolerant failure state."""
+    """Resolve health once per persisted Function Tool value."""
+    key = _function_tools_cache_key(options)
+    cached = _health_cache.get(key)
+    if cached is not None:
+        _health_cache.move_to_end(key)
+        return deepcopy(cached)
+    health = _uncached_function_tool_health(options)
+    _health_cache[key] = deepcopy(health)
+    if len(_health_cache) > _HEALTH_CACHE_LIMIT:
+        _health_cache.popitem(last=False)
+    return health
+
+
+def _uncached_function_tool_health(options: dict[str, Any]) -> dict[str, Any]:
+    """Compute metadata, including tolerant failure state."""
     try:
         metadata = configured_function_tool_metadata_from_data(options)
     except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:

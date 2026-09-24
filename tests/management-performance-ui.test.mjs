@@ -331,12 +331,12 @@ function panelFor(page = "assistant", subsection = "basics") {
     usage:{},
     conversations:{},
     load_errors:[],
-    loading:{usage:true,memory:true,knowledge:true,guest_mode:true},
+    loading:{usage:true,memory:true,knowledge:true,guest_mode:true,setup_health:true},
     setup_health:{memory:{loading:true},knowledge:{loading:true}},
   });
   await loading;
   assert.equal(panel._result?.load_errors?.length, 0);
-  for (const kind of ["usage", "memory", "knowledge", "guest_mode"]) {
+  for (const kind of ["usage", "memory", "knowledge", "guest_mode", "setup_health"]) {
     assert.equal(calls.some((call) => call.action === "detail" && call.kind === kind), true);
   }
   resolvers.get("detail:memory")({kind:"memory",agent:{memory_count:4},setup_health:{memory:{available:true,loading:false}}});
@@ -346,6 +346,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   resolvers.get("detail:usage")({kind:"usage",usage:{today:{total_tokens:7},month:{total_tokens:20}},agent:{tokens_today:7}});
   resolvers.get("detail:knowledge")({kind:"knowledge",agent:{knowledge_source_count:2},setup_health:{knowledge:{source_count:2,available:true,loading:false}}});
   resolvers.get("detail:guest_mode")({kind:"guest_mode",agent:{guest_mode:{state:"inactive"}}});
+  resolvers.get("detail:setup_health")({kind:"setup_health",agent:{function_count:2},setup_health:{function_tools:{usable_count:2},exposed_entity_count:4}});
   await Promise.resolve();
   await Promise.resolve();
 }

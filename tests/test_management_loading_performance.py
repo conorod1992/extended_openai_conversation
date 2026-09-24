@@ -234,10 +234,16 @@ def test_agent_snapshot_accepts_frontend_normalized_function_tools() -> None:
 def test_agent_snapshot_keeps_invalid_function_tool_agent_discoverable() -> None:
     hass, entry, subentry = _hass_with_agent()
     subentry.data["functions"] = _persisted_invalid_function_tools()
+    function_repair._health_cache.clear()
 
     result = _agent_snapshot(hass, entry, subentry)
 
     assert result["title"] == "Jarvis"
+    assert result["function_count"] is None
+    assert "configuration_issue" not in result
+
+    function_repair.management_function_tool_health(dict(subentry.data))
+    result = _agent_snapshot(hass, entry, subentry)
     assert result["function_count"] == 0
     assert result["configuration_issue"]["field"] == "functions"
     assert result["configuration_issue"]["repairable"] is True
@@ -249,6 +255,7 @@ def test_invalid_function_tool_health_is_cached_per_persisted_revision(
 ) -> None:
     function_repair._cached_isolated_function_tools.cache_clear()
     function_repair._cached_function_tool_state.cache_clear()
+    function_repair._health_cache.clear()
     original = function_repair._isolate_function_tools_uncached
     calls = 0
 
@@ -267,6 +274,34 @@ def test_invalid_function_tool_health_is_cached_per_persisted_revision(
     assert first == second
     assert first["invalid_count"] == 1
     assert "minLength" in first["validation_error"]
+
+
+def test_function_health_peek_tracks_tool_mutations_and_restore(monkeypatch) -> None:
+    monkeypatch.setattr(function_repair, "_health_cache", function_repair.OrderedDict())
+    projections = Mock(side_effect=lambda options: {
+        "enabled_count": len(options["functions"]),
+        "validation_error": None,
+    })
+    monkeypatch.setattr(function_repair, "_uncached_function_tool_health", projections)
+    original = {"functions": [{"enabled": True}], "function_groups": []}
+    disabled = {"functions": [{"enabled": False}], "function_groups": []}
+    removed = {"functions": [], "function_groups": []}
+
+    assert function_repair.peek_function_tool_health(original) is None
+    assert function_repair.management_function_tool_health(original)["enabled_count"] == 1
+    assert function_repair.management_function_tool_health(original)["enabled_count"] == 1
+    assert projections.call_count == 1
+    assert function_repair.peek_function_tool_health(disabled) is None
+    function_repair.management_function_tool_health(disabled)
+    assert function_repair.peek_function_tool_health(removed) is None
+    function_repair.management_function_tool_health(removed)
+    assert projections.call_count == 3
+
+    # A group-only change leaves the Function Tool projection unchanged.
+    grouped = {**original, "function_groups": [{"id": "group"}]}
+    assert function_repair.peek_function_tool_health(grouped)["enabled_count"] == 1
+    # Restore/import of the original persisted tools can reuse their old projection.
+    assert function_repair.peek_function_tool_health(original)["enabled_count"] == 1
 
 
 def test_agent_config_revision_does_not_validate_persisted_config(monkeypatch) -> None:
@@ -433,14 +468,41 @@ async def test_agent_catalog_does_not_initialize_per_agent_managers(
     assert result["_performance"]["snapshots"][0]["total_ms"] >= 0
 
 
+async def test_cold_catalog_skips_tool_validation_for_multiple_agents(monkeypatch) -> None:
+    hass, entry, subentry = _hass_with_agent()
+    second = SimpleNamespace(
+        subentry_id="agent-2", subentry_type="conversation", title="Second",
+        data={**agent_config_defaults(), "functions": _persisted_invalid_function_tools()},
+    )
+    entry.subentries[second.subentry_id] = second
+    function_repair._health_cache.clear()
+    monkeypatch.setattr(
+        loading, "management_function_tool_health",
+        Mock(side_effect=AssertionError("catalog must not validate tools")),
+    )
+    monkeypatch.setattr(
+        function_repair, "_uncached_function_tool_health",
+        Mock(side_effect=AssertionError("catalog must only peek")),
+    )
+
+    result = await async_agent_catalog(hass, "admin", True)
+
+    assert len(result["agents"]) == 2
+    assert all(agent["function_count"] is None for agent in result["agents"])
+
+
 async def test_agent_catalog_keeps_invalid_function_tool_agent_visible(
     monkeypatch,
 ) -> None:
     hass, _entry, subentry = _hass_with_agent()
     subentry.data["functions"] = _persisted_invalid_function_tools()
+    function_repair._health_cache.clear()
     result = await async_agent_catalog(hass, "admin", True)
 
     assert [agent["subentry_id"] for agent in result["agents"]] == ["agent-1"]
+    assert "configuration_issue" not in result["agents"][0]
+    function_repair.management_function_tool_health(dict(subentry.data))
+    result = await async_agent_catalog(hass, "admin", True)
     issue = result["agents"][0]["configuration_issue"]
     assert issue["field"] == "functions"
     assert issue["repairable"] is True
@@ -1003,6 +1065,15 @@ async def test_overview_primary_does_not_initialize_storage_managers(monkeypatch
             name,
             AsyncMock(side_effect=AssertionError(f"{name} should stay cold")),
         )
+    function_repair._health_cache.clear()
+    monkeypatch.setattr(
+        loading, "management_function_tool_health",
+        Mock(side_effect=AssertionError("primary must not validate tools")),
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
+        Mock(side_effect=AssertionError("primary must not scan states")),
+    )
 
     result = await loading.async_overview_primary(
         hass, entry, subentry, is_admin=True
@@ -1013,8 +1084,32 @@ async def test_overview_primary_does_not_initialize_storage_managers(monkeypatch
         "memory": True,
         "knowledge": True,
         "guest_mode": True,
+        "setup_health": True,
     }
     assert result["usage"] == {}
+    assert result["setup_health"]["function_tools"]["loading"] is True
+    assert result["setup_health"]["exposed_entity_count_loading"] is True
+
+
+async def test_overview_selected_agent_resolves_health_once(monkeypatch) -> None:
+    hass, entry, subentry = _hass_with_agent()
+    function_repair._health_cache.clear()
+    health = {"enabled_count": 2, "usable_count": 2, "validation_error": None}
+    projection = Mock(return_value=health)
+    monkeypatch.setattr(loading, "management_function_tool_health", projection)
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_setup_health._exposed_entity_count",
+        Mock(return_value=4),
+    )
+
+    primary = await loading.async_overview_primary(hass, entry, subentry, is_admin=True)
+    assert primary["agent"]["function_count"] is None
+    detail = await loading.async_overview_detail(
+        hass, entry, subentry, is_admin=True, kind="setup_health"
+    )
+    assert detail["setup_health"]["function_tools"] == health
+    assert detail["setup_health"]["exposed_entity_count"] == 4
+    projection.assert_called_once_with(dict(subentry.data))
 
 
 async def test_overview_detail_loads_only_requested_manager(monkeypatch) -> None:
