@@ -1,5 +1,6 @@
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
+export {backupSummaryLines} from "./backup-summary.js";
 export {TRANSFER_SECTIONS, renderBackupTransferPanel} from "./backup-transfer-shell.js";
 export const WS_BACKUP_TRANSFER = "extended_openai_conversation_responses/management/backup_transfer";
 
