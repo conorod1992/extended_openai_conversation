@@ -839,6 +839,55 @@ async def test_unavailable_native_full_get_reuses_one_quarantine_state(monkeypat
     assert isolate.call_count == 2  # Tool isolation is keyed only to Function Tools.
 
 
+async def test_repairable_read_routes_have_distinct_backend_work(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    raw_tools, groups = _unavailable_native_tools()
+    subentry.data = {**subentry.data, "functions": raw_tools, "function_groups": groups}
+    original_data = deepcopy(subentry.data)
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    message = {"entry_id": "entry-1", "subentry_id": "agent-1"}
+    normal = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "section": "configuration", "action": "get"}
+    )
+    assert normal["function_repair"]["group_issues"]
+    assert "_performance" in normal
+
+    normalize = Mock(wraps=loading._snapshot_normalized_configuration)
+    monkeypatch.setattr(loading, "_snapshot_normalized_configuration", normalize)
+    repeated = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "section": "configuration", "action": "get"}
+    )
+    assert repeated["_performance"]["repair_state_cache_hit"] is True
+    normalize.assert_not_called()
+
+    legacy = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "section": "function_repair", "action": "configuration_get"},
+    )
+    assert normalize.call_count == 2  # Full config and defaults are rebuilt.
+    assert "_performance" not in legacy
+    for field in ("config", "function_repair", "revision"):
+        assert legacy[field] == repeated[field]
+
+    normalize.reset_mock()
+    retention = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "section": "configuration", "action": "retention_get"},
+    )
+    normalize.assert_not_called()
+    assert retention["projection"] == "retention"
+    assert set(retention["config"]) == {
+        "usage_request_retention_days", "usage_run_retention_days"
+    }
+    assert "function_repair" not in retention
+    assert "defaults" not in retention
+    assert "model_capabilities" not in retention
+    assert retention["revision"] == repeated["revision"]
+    assert subentry.data == original_data
+
+
 async def test_valid_native_full_get_keeps_strict_snapshot_path(monkeypatch) -> None:
     hass, _entry, subentry = _hass_with_agent()
     raw_tools, _groups = _unavailable_native_tools()

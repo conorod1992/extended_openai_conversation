@@ -700,7 +700,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     // Configuration remains editable even when persisted Function Tools need repair.
     const issue = this._selectedAgent()?.configuration_issue;
     if (section === "configuration" && issue?.field === "functions" && issue.repairable === true) {
-      const repairAction = {get:"configuration_get", retention_get:"configuration_get", validate:"configuration_validate", save:"configuration_save", update:"configuration_save"}[action];
+      const repairAction = {validate:"configuration_validate", save:"configuration_save", update:"configuration_save"}[action];
       if (repairAction) return this._request("function_repair", repairAction, extra);
     }
     let payload = extra;
