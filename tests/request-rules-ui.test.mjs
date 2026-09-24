@@ -114,6 +114,9 @@ assert.match(bindingSource, /selector = \{action:\{\}\}/);
   assert.deepEqual(actionSelector.value, []);
   assert.deepEqual(assignments, [["hass",false],["selector",false],["value",false],["listener",false]]);
 
+  loadRequestRuleActions(actionSelector, null);
+  assert.deepEqual(actionSelector.value, []);
+
   const existingActions = [{action:"light.turn_on",data:{brightness_pct:50}}];
   loadRequestRuleActions(actionSelector, {action:{actions:existingActions}});
   assert.equal(actionSelector.value, existingActions);
@@ -126,6 +129,9 @@ assert.match(requestRulesDialog(panel), /Rest of this conversation/);
 assert.match(requestRulesDialog(panel), /without asking the AI model/);
 assert.match(requestRulesDialog(panel), /ExtendedOpenAI sentence pattern/);
 assert.doesNotMatch(requestRulesDialog(panel), /Home Assistant sentence pattern/);
+const sentenceDialog = requestRulesDialog(panel);
+assert.ok(sentenceDialog.indexOf('id="rule-match"') < sentenceDialog.indexOf('id="sentence-pattern-builder"'));
+assert.doesNotMatch(sentenceDialog, /script\.turn_on/);
 assert.match(requestRulesDialog(panel), /\{room=kitchen\|bedroom\}/);
 assert.match(requestRulesDialog(panel), /\{level=0\.\.100\}/);
 assert.match(requestRulesDialog(panel), /named expansions/i);
