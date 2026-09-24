@@ -10,6 +10,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     backup,
+    management_function_repair,
     restore_recovery,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
@@ -451,6 +452,7 @@ async def test_configuration_is_forced_to_disk_before_journal_cleanup(
     """The target subentry must be present in a fresh Core-store disk read."""
     hass = FakeHass()
     entry, subentry = _identity()
+    before = management_function_repair.persisted_config_projection(subentry)
     target, _rollback = _states()
     saved = []
 
@@ -488,6 +490,9 @@ async def test_configuration_is_forced_to_disk_before_journal_cleanup(
     assert saved
     assert subentry.title == "Restored"
     assert subentry.data == target.config
+    after = management_function_repair.persisted_config_projection(subentry)
+    assert after.revision != before.revision
+    assert after.snapshot["prompt"] == "new configuration"
 
 
 async def test_configuration_disk_mismatch_keeps_recovery_pending(monkeypatch) -> None:

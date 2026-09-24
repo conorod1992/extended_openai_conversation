@@ -191,9 +191,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass_data = getattr(hass, "data", None)
     subentries = getattr(entry, "subentries", None)
     if isinstance(hass_data, dict) and subentries is not None:
+        from .management_function_repair import discard_persisted_config_projection
+
         runtimes = hass_data.get(_REQUEST_RULE_RUNTIMES, {})
         for subentry in subentries.values():
             runtimes.pop((entry.entry_id, subentry.subentry_id), None)
+            discard_persisted_config_projection(subentry)
     await async_unload_templates(hass, entry.entry_id)
     return True
 

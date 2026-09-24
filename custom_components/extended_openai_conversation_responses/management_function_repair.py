@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
 import json
@@ -25,7 +26,15 @@ from .agent_config import (
     validate_function_groups,
     validate_function_tools,
 )
-from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_GROUPS
+from .const import (
+    CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
+    CONF_USAGE_REQUEST_RETENTION_DAYS,
+    CONF_USAGE_RUN_RETENTION_DAYS,
+    DEFAULT_FUNCTION_GROUPS,
+    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+    DEFAULT_USAGE_RUN_RETENTION_DAYS,
+)
 from .request import canonical_json
 
 _STALE_CONFIGURATION_ERROR = (
@@ -33,6 +42,21 @@ _STALE_CONFIGURATION_ERROR = (
 )
 _health_cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
 _HEALTH_CACHE_LIMIT = 128
+_PROJECTION_CACHE_LIMIT = 128
+_RETENTION_FIELDS = (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS)
+
+
+@dataclass
+class _PersistedProjection:
+    subentry: Any
+    data: Any
+    title: str
+    snapshot: dict[str, Any] | None
+    revision: str
+    retention: dict[str, Any]
+
+
+_persisted_projections: OrderedDict[int, _PersistedProjection] = OrderedDict()
 
 
 def editable_function_tools(options: dict[str, Any]) -> Any:
@@ -301,9 +325,79 @@ def agent_config_revision(data: Any, title: str) -> str:
     return agent_config_revision_from_snapshot(cached_agent_config_snapshot(raw), title)
 
 
+def persisted_config_projection(subentry: Any) -> _PersistedProjection:
+    """Reuse normalized reads while the authoritative subentry state is unchanged.
+
+    Home Assistant replaces subentry data through async_update_subentry. Identity,
+    owner, and title together cover updates, deletion/recreation, and title edits
+    without serializing the whole configuration to look up a cache entry.
+    """
+    key = id(subentry)
+    cached = _persisted_projections.get(key)
+    if (
+        cached is not None
+        and cached.subentry is subentry
+        and cached.data is subentry.data
+        and cached.title == subentry.title
+    ):
+        _persisted_projections.move_to_end(key)
+        return cached
+
+    raw = dict(subentry.data)
+    issue = function_tools_issue(raw)[1]
+    snapshot = None if issue is not None else agent_config_snapshot(raw)
+    revision = agent_config_revision_from_snapshot(
+        raw if snapshot is None else snapshot, subentry.title
+    )
+    defaults = {
+        CONF_USAGE_REQUEST_RETENTION_DAYS: DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+        CONF_USAGE_RUN_RETENTION_DAYS: DEFAULT_USAGE_RUN_RETENTION_DAYS,
+    }
+    retention = {
+        key: deepcopy((snapshot or raw).get(key, defaults[key]))
+        for key in _RETENTION_FIELDS
+    }
+    projection = _PersistedProjection(
+        subentry, subentry.data, subentry.title, snapshot, revision, retention
+    )
+    _persisted_projections[key] = projection
+    _persisted_projections.move_to_end(key)
+    if len(_persisted_projections) > _PROJECTION_CACHE_LIMIT:
+        _persisted_projections.popitem(last=False)
+    return projection
+
+
+def seed_persisted_config_projection(
+    entry: Any, subentry: Any, snapshot: dict[str, Any], revision: str
+) -> None:
+    """Seed a successful save from its authoritative normalized response."""
+    current = getattr(entry, "subentries", {}).get(subentry.subentry_id, subentry)
+    projection = _PersistedProjection(
+        current,
+        current.data,
+        current.title,
+        deepcopy(snapshot),
+        revision,
+        {key: deepcopy(snapshot[key]) for key in _RETENTION_FIELDS},
+    )
+    key = id(current)
+    _persisted_projections[key] = projection
+    _persisted_projections.move_to_end(key)
+    if len(_persisted_projections) > _PROJECTION_CACHE_LIMIT:
+        _persisted_projections.popitem(last=False)
+
+
+def discard_persisted_config_projection(subentry: Any) -> None:
+    """Drop one agent projection when its integration entry unloads."""
+    key = id(subentry)
+    cached = _persisted_projections.get(key)
+    if cached is not None and cached.subentry is subentry:
+        del _persisted_projections[key]
+
+
 def repair_revision(subentry: Any) -> str:
     """Return the optimistic-concurrency revision for a broken agent config."""
-    return agent_config_revision(subentry.data, subentry.title)
+    return persisted_config_projection(subentry).revision
 
 
 def require_agent_config_revision(subentry: Any, expected_revision: Any) -> None:
@@ -312,7 +406,7 @@ def require_agent_config_revision(subentry: Any, expected_revision: Any) -> None
         return
     if not isinstance(expected_revision, str):
         raise HomeAssistantError("revision must be a string")
-    if expected_revision != agent_config_revision(subentry.data, subentry.title):
+    if expected_revision != persisted_config_projection(subentry).revision:
         raise HomeAssistantError(
             "Configuration changed in another tab. Reload the latest saved settings before saving."
         )
@@ -348,10 +442,12 @@ def persist_valid_function_configuration(
     )
     hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
     snapshot = agent_config_snapshot(normalized)
+    revision = agent_config_revision_from_snapshot(snapshot, subentry.title)
+    seed_persisted_config_projection(entry, subentry, snapshot, revision)
     return {
         "functions": snapshot[CONF_FUNCTION_TOOLS],
         "function_groups": snapshot[CONF_FUNCTION_GROUPS],
-        "revision": agent_config_revision(normalized, subentry.title),
+        "revision": revision,
     }
 
 
