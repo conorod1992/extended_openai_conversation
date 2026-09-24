@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 import logging
 from types import MappingProxyType
 
 from openai import AsyncClient
 from openai._exceptions import AuthenticationError, OpenAIError
 
-from homeassistant.config_entries import ConfigEntry, ConfigSubentry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState, ConfigSubentry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
@@ -92,6 +93,7 @@ from .delayed_tools import async_setup_delayed_tools
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import get_authenticated_client, supports_openai_hosted_tools
 from .intercom_services import async_setup_intercom_services
+from .management_function_repair import async_prewarm_persisted_config_projection
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .model_catalog_manager import async_setup_model_catalog
@@ -114,6 +116,64 @@ PLATFORMS = [Platform.AI_TASK, Platform.CONVERSATION, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 type ExtendedOpenAIConfigEntry = ConfigEntry[AsyncClient]
+
+
+def _sole_conversation_agent(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> ConfigSubentry | None:
+    """Choose an agent only when the whole EOAI installation has exactly one."""
+    agents = [
+        (owner, subentry)
+        for owner in hass.config_entries.async_entries(DOMAIN)
+        for subentry in owner.subentries.values()
+        if subentry.subentry_type == "conversation"
+    ]
+    if len(agents) != 1 or agents[0][0] is not entry:
+        return None
+    return agents[0][1]
+
+
+async def _async_prewarm_sole_agent(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Prime optional Management state after setup, using current entry data."""
+    if entry.state is not ConfigEntryState.LOADED:
+        return
+    subentry = _sole_conversation_agent(hass, entry)
+    if subentry is None:
+        return
+    try:
+        await async_prewarm_persisted_config_projection(hass, entry, subentry)
+    except Exception:
+        # The normal Management read remains authoritative on a warm failure.
+        return
+
+
+def _schedule_sole_agent_prewarm(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    if _sole_conversation_agent(hass, entry) is None:
+        return
+
+    removed = False
+
+    def remove_once() -> None:
+        nonlocal removed
+        if not removed:
+            removed = True
+            remove_listener()
+
+    def on_state_change() -> None:
+        if entry.state is not ConfigEntryState.LOADED:
+            return
+        remove_once()
+        warm = _async_prewarm_sole_agent(hass, entry)
+        try:
+            entry.async_create_background_task(
+                hass, warm, "EOAI single-agent Management prewarm", eager_start=False
+            )
+        except Exception:
+            warm.close()
+
+    remove_listener = entry.async_on_state_change(on_state_change)
+    entry.async_on_unload(remove_once)
+    on_state_change()
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -180,6 +240,9 @@ async def async_setup_entry(
         finally:
             await async_unload_templates(hass, entry.entry_id)
         raise
+    with suppress(Exception):
+        # Optional cache preparation must never affect integration setup.
+        _schedule_sole_agent_prewarm(hass, entry)
     return True
 
 

@@ -12,11 +12,13 @@ from typing import Any
 
 import yaml
 
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     NATIVE_FUNCTION_IMPLEMENTATIONS,
+    AgentConfigError,
     agent_config_defaults,
     agent_config_snapshot,
     configured_function_tool_metadata_from_data,
@@ -436,6 +438,7 @@ def normalized_persisted_config_snapshot(
     diagnostics: dict[str, Any] | None = None,
     *,
     default_snapshot: dict[str, Any] | None = None,
+    preparsed_function_tools: Any = _MISSING,
 ) -> tuple[dict[str, Any], bool]:
     """Lazily normalize a full read and isolate the returned frontend data."""
     started = perf_counter()
@@ -452,7 +455,14 @@ def normalized_persisted_config_snapshot(
             projection.snapshot = deepcopy(default_snapshot)
             reused_defaults = True
         else:
-            projection.snapshot = agent_config_snapshot(dict(projection.data))
+            source = dict(projection.data)
+            if preparsed_function_tools is not _MISSING:
+                source[CONF_FUNCTION_TOOLS] = preparsed_function_tools
+                projection.snapshot = agent_config_snapshot(
+                    source, preparsed_function_tools=True
+                )
+            else:
+                projection.snapshot = agent_config_snapshot(source)
     if diagnostics is not None:
         diagnostics["default_snapshot_reused"] = reused_defaults
         diagnostics["snapshot_build_ms"] = round((perf_counter() - started) * 1000, 2)
@@ -461,6 +471,48 @@ def normalized_persisted_config_snapshot(
     if diagnostics is not None:
         diagnostics["snapshot_copy_ms"] = round((perf_counter() - started) * 1000, 2)
     return snapshot, hit
+
+
+async def async_prewarm_persisted_config_projection(
+    hass: HomeAssistant, entry: Any, subentry: Any
+) -> None:
+    """Prime normal read state, parsing YAML off the event loop first."""
+    projection = persisted_config_projection(subentry)
+    if projection.snapshot is not None or projection.repair_state is not None:
+        return
+    original_data, original_title = projection.data, projection.title
+    options = dict(original_data)
+    configured = options.get(CONF_FUNCTION_TOOLS)
+    parsed: Any = _MISSING
+    if isinstance(configured, str):
+        try:
+            parsed = await hass.async_add_executor_job(yaml.safe_load, configured)
+        except yaml.YAMLError:
+            # Let the authoritative validator report the original YAML error.
+            parsed = configured
+        if (
+            entry.state is not ConfigEntryState.LOADED
+            or entry.subentries.get(subentry.subentry_id) is not subentry
+            or subentry.data is not original_data
+            or subentry.title != original_title
+        ):
+            return
+        options[CONF_FUNCTION_TOOLS] = parsed
+    health = peek_function_tool_health(dict(original_data))
+    if bool(health and health.get("validation_error")) or has_unavailable_native_tool(
+        options
+    ):
+        state, _ = repair_state_for_projection(projection)
+        if state is not None:
+            return
+    try:
+        normalized_persisted_config_snapshot(
+            projection, preparsed_function_tools=parsed
+        )
+    except AgentConfigError:
+        state, _ = repair_state_for_projection(projection)
+        if state is None:
+            raise
 
 
 def seed_persisted_config_projection(
