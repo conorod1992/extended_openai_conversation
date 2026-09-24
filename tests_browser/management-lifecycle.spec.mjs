@@ -855,7 +855,7 @@ test("a delayed first route import cannot start obsolete data work after navigat
   await expect(panel.locator("extended-openai-debug-panel, #archive-query")).toHaveCount(0);
 });
 
-test("repair-aware configuration requests work before the Function Tools editor is imported", async ({page}) => {
+test("repairable configuration reads use the normal route before the Function Tools editor is imported", async ({page}) => {
   const modules = new Set();
   page.on("request", request => modules.add(new URL(request.url()).pathname.split("/").pop()));
   await page.goto(fixtureUrl("overview"));
@@ -864,18 +864,17 @@ test("repair-aware configuration requests work before the Function Tools editor 
   const calls = await panel.evaluate(async host => {
     host._selectedAgent().configuration_issue = {field:"functions", repairable:true};
     const original = host._hass.callWS;
-    const repairCalls = [];
+    const readCalls = [];
     host._hass.callWS = async message => {
-      if (message.section === "function_repair") {
-        repairCalls.push(message.action);
-        return original({...message, section:"configuration", action:"get"});
+      if (message.section === "configuration" || message.section === "function_repair") {
+        readCalls.push([message.section, message.action]);
       }
       return original(message);
     };
     await host._navigate("assistant", "basics");
-    return repairCalls;
+    return readCalls;
   });
-  expect(calls).toEqual(["configuration_get"]);
+  expect(calls).toEqual([["configuration", "get"]]);
   expect(modules.has("management-function-repair.js")).toBe(false);
   await expect(panel.locator('[data-config="__title"]')).toBeVisible();
 });
