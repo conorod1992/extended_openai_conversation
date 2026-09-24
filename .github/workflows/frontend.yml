@@ -92,6 +92,7 @@ jobs:
         run: git diff --exit-code -- custom_components/extended_openai_conversation_responses/frontend/dist/
 
       - name: Upload production frontend bundle
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: production-frontend-bundle
