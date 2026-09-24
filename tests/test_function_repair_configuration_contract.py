@@ -184,9 +184,8 @@ async def test_function_repair_configuration_get_defers_live_metadata(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["get", "retention_get"])
 async def test_normal_configuration_read_quarantines_invalid_tools(
-    monkeypatch: pytest.MonkeyPatch, action: str
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entry, subentry = _repairable_agent()
     original = deepcopy(subentry.data)
@@ -201,7 +200,7 @@ async def test_normal_configuration_read_quarantines_invalid_tools(
         True,
         {
             "section": "configuration",
-            "action": action,
+            "action": "get",
             "entry_id": entry.entry_id,
             "subentry_id": subentry.subentry_id,
         },
@@ -209,6 +208,33 @@ async def test_normal_configuration_read_quarantines_invalid_tools(
 
     assert payload["function_repair"]["invalid_count"] == 1
     assert len(payload["config"][CONF_FUNCTION_TOOLS]) == 1
+    assert payload["revision"]
+    assert subentry.data == original
+
+
+@pytest.mark.asyncio
+async def test_retention_read_stays_tolerant_of_invalid_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry, subentry = _repairable_agent()
+    original = deepcopy(subentry.data)
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    monkeypatch.setattr(
+        management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
+    )
+    payload = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "configuration",
+            "action": "retention_get",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+        },
+    )
+    assert payload["projection"] == "retention"
+    assert payload["config"]["usage_request_retention_days"] >= 0
     assert payload["revision"]
     assert subentry.data == original
 
