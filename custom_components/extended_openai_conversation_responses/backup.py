@@ -117,15 +117,19 @@ def _safe_configuration(value: Any, *, schema: bool = False) -> Any:
     return redact_secrets(value, schema=schema)
 
 
-def recoverable_configuration_snapshot(data: Any) -> dict[str, Any]:
-    """Normalize configuration while preserving Function fields that need quarantine."""
+def _configuration_snapshot_preserving_quarantine(
+    data: Any, *, frontend_shape: bool
+) -> dict[str, Any]:
+    """Normalize config while preserving only quarantined Function fields verbatim."""
     raw = dict(data)
+    normalize = agent_config_snapshot if frontend_shape else normalize_agent_config
     try:
-        return preserve_legacy_guest_policy(raw, agent_config_snapshot(raw))
+        return preserve_legacy_guest_policy(raw, normalize(raw))
     except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError):
-        # Export is a recovery boundary: if Function Tools are the only invalid
-        # persisted field, normalize a management-safe copy and then restore the
-        # exact raw Function Tool/Group fields into the exported snapshot.
+        # Backup/import is a recovery boundary: tolerate only a Function Tool
+        # validation failure. Normalize every unrelated field strictly using a
+        # safe Function projection, then put the original persisted Function
+        # Tool/Group values back so the user can repair them after restore.
         from .management_function_repair import (
             function_tools_issue,
             safe_function_configuration,
@@ -135,7 +139,7 @@ def recoverable_configuration_snapshot(data: Any) -> dict[str, Any]:
         if issue is None:
             raise
         snapshot = preserve_legacy_guest_policy(
-            raw, agent_config_snapshot(safe_function_configuration(raw))
+            raw, normalize(safe_function_configuration(raw))
         )
         for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
             if key in raw:
@@ -143,6 +147,16 @@ def recoverable_configuration_snapshot(data: Any) -> dict[str, Any]:
             else:
                 snapshot.pop(key, None)
         return snapshot
+
+
+def export_configuration_snapshot(data: Any) -> dict[str, Any]:
+    """Return the backup/export projection, preserving quarantined Function fields."""
+    return _configuration_snapshot_preserving_quarantine(data, frontend_shape=True)
+
+
+def recoverable_configuration_snapshot(data: Any) -> dict[str, Any]:
+    """Return persistence-shaped validated config that retains quarantined Functions."""
+    return _configuration_snapshot_preserving_quarantine(data, frontend_shape=False)
 
 
 def _backup_lock(hass: HomeAssistant, entry_id: str, subentry_id: str) -> asyncio.Lock:
@@ -165,7 +179,7 @@ async def async_collect_backup_snapshot(
         guest_mode,
         request_rules,
     ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
-    config_snapshot = recoverable_configuration_snapshot(subentry.data)
+    config_snapshot = export_configuration_snapshot(subentry.data)
     return {
         "format": BACKUP_FORMAT,
         "version": BACKUP_VERSION,
