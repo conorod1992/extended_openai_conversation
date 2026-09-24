@@ -819,6 +819,7 @@ def normalize_agent_config(
     reject_unknown: bool = True,
     validated_functions: tuple[list[dict[str, Any]], list[dict[str, Any]] | None]
     | None = None,
+    function_tools_as_list: bool = False,
 ) -> dict[str, Any]:
     """Validate config; reuse Function results only for identical Function inputs.
 
@@ -1060,7 +1061,9 @@ def normalize_agent_config(
             CONF_SKILLS,
             loader_status.reason or "selected Skills are not loadable",
         )
-    if CONF_FUNCTION_TOOLS in data and (
+    if function_tools_as_list:
+        result[CONF_FUNCTION_TOOLS] = function_tools
+    elif CONF_FUNCTION_TOOLS in data and (
         validated_functions is None or not isinstance(data[CONF_FUNCTION_TOOLS], str)
     ):
         result[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
@@ -1113,10 +1116,13 @@ def merge_agent_config(
     }
 
 
-def agent_config_snapshot(data: dict[str, Any]) -> dict[str, Any]:
+def agent_config_snapshot(
+    data: dict[str, Any], *, preparsed_function_tools: bool = False
+) -> dict[str, Any]:
     """Return frontend-safe normalized configuration with parsed tools."""
     result = normalize_agent_config(
-        {key: value for key, value in data.items() if key in AGENT_CONFIG_FIELDS}
+        {key: value for key, value in data.items() if key in AGENT_CONFIG_FIELDS},
+        function_tools_as_list=preparsed_function_tools,
     )
     # normalize_agent_config already validated the tools and their groups. It
     # stores explicitly configured tools as YAML for persistence; only decode
