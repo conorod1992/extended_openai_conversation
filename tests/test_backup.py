@@ -246,7 +246,8 @@ def test_full_backup_validation_preserves_durable_categories_and_expiry() -> Non
 def test_full_backup_inspection_accepts_quarantined_function_tool() -> None:
     document = _document()
     config = document["agent"]["config"]
-    tools = yaml.safe_load(config["functions"])
+    raw_tools = config["functions"]
+    tools = raw_tools if isinstance(raw_tools, list) else yaml.safe_load(raw_tools)
     invalid = deepcopy(tools[0])
     invalid["spec"]["name"] = "unavailable_reminder"
     invalid["function"] = {"type": "native", "name": "reminders.unavailable"}
