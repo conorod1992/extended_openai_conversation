@@ -238,8 +238,8 @@ async def async_collect_transfer_snapshot(
     document = _new_transfer_document(entry, subentry, mode)
     payload = document["sections"]
     if SECTION_CONFIGURATION in selected:
-        payload[SECTION_CONFIGURATION] = preserve_legacy_guest_policy(
-            dict(subentry.data), agent_config_snapshot(subentry.data)
+        payload[SECTION_CONFIGURATION] = backup.export_configuration_snapshot(
+            subentry.data
         )
     if SECTION_REQUEST_RULES in selected:
         request_rules_manager = await async_get_request_rules(
