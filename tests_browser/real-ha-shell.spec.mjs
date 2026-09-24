@@ -257,6 +257,8 @@ test("genuine HA native YAML editor saves with Ctrl+S and survives a fresh panel
   await expect(panel.locator("#tool-error")).toHaveClass(/valid/);
   await expect(panel.locator("#tool-error")).toContainText("Name: real_shell_native_tool");
   await panel.locator("#tool-save").click();
+  await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+  await expect(card).toContainText("Genuine HA native YAML editor edited");
 
   panel = await openFunctionsFromOverview(page);
   card = panel.locator(".tool-card").filter({hasText: "real_shell_native_tool"});
