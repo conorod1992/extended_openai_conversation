@@ -34,6 +34,7 @@ from .agent_config import (
     configured_function_tools_from_data as _strict_configured_function_tools,
     function_tool_enabled,
     function_tool_yaml,
+    merge_agent_config as merge_validated_agent_config,
     model_capabilities,
     normalize_agent_config,
     preserve_legacy_guest_policy,
@@ -50,6 +51,7 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
@@ -198,6 +200,16 @@ def _configuration_defaults() -> dict[str, Any]:
 
 def _configuration_options() -> dict[str, list[dict[str, Any]]]:
     return deepcopy(_cached_configuration_options())
+
+
+@lru_cache(maxsize=64)
+def _cached_model_capabilities(model: str) -> dict[str, Any]:
+    """Model metadata depends only on the selected model, not the agent revision."""
+    return model_capabilities(model)
+
+
+def _configuration_model_capabilities(model: str) -> dict[str, Any]:
+    return deepcopy(_cached_model_capabilities(model))
 
 
 def _elapsed_ms(start: float) -> float:
@@ -800,6 +812,8 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         _snapshot_normalized_configuration,
     )
 
+    started = perf_counter()
+    timings: dict[str, Any] = {}
     hass, is_admin, message = request.hass, request.is_admin, request.message
     entry, subentry = request.entry, request.subentry
     title = message.get("title")
@@ -810,41 +824,139 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     updates = message.get("config", {})
     if not isinstance(updates, dict):
         raise HomeAssistantError("config must be an object")
+    phase = perf_counter()
     if message.get("revision") is not None:
         _require_agent_config_revision(subentry, message["revision"])
+    timings["stale_revision_ms"] = _elapsed_ms(phase)
 
-    validation: dict[str, Any] = _validation_result(
+    phase = perf_counter()
+    projection = persisted_config_projection(subentry)
+    tools_changed = CONF_FUNCTION_TOOLS in updates
+    groups_changed = CONF_FUNCTION_GROUPS in updates
+    repair_state = None
+    validated_functions = None
+    if not tools_changed:
+        if (
+            projection.repair_state is not None
+            and projection.repair_state.invalid
+            and not groups_changed
+        ):
+            repair_state = projection.repair_state
+        elif projection.snapshot is not None:
+            validated_functions = (
+                projection.snapshot[CONF_FUNCTION_TOOLS],
+                None if groups_changed else projection.snapshot[CONF_FUNCTION_GROUPS],
+            )
+        elif not groups_changed and has_unavailable_native_tool(dict(projection.data)):
+            repair_state, _ = repair_state_for_projection(projection)
+            if repair_state is not None and not repair_state.invalid:
+                repair_state = None
+    timings["function_state_lookup_ms"] = _elapsed_ms(phase)
+    timings["function_tools_reused"] = (
+        repair_state is not None or validated_functions is not None
+    )
+    timings["function_groups_reused"] = repair_state is not None or (
+        validated_functions is not None and validated_functions[1] is not None
+    )
+    phase = perf_counter()
+    if repair_state is not None:
+
+        def merge_for_repair() -> dict[str, Any]:
+            merged = merge_validated_agent_config(
+                dict(subentry.data),
+                updates,
+                validated_functions=(repair_state.valid, repair_state.groups),
+            )
+            for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
+                if key in subentry.data:
+                    merged[key] = deepcopy(subentry.data[key])
+                else:
+                    merged.pop(key, None)
+            return merged
+
+        validation: dict[str, Any] = _validation_result(merge_for_repair)
+    elif validated_functions is not None:
+        validation = _validation_result(
+            lambda: merge_validated_agent_config(
+                dict(subentry.data), updates, validated_functions=validated_functions
+            )
+        )
+    else:
+        validation = _validation_result(
+            lambda: merge_agent_config(subentry.data, updates)
+        )
+    if not validation.get("valid"):
+        return validation
+    timings["merge_validation_ms"] = _elapsed_ms(phase)
+    phase = perf_counter()
+    validation = _validation_result(
         lambda: _validated_model_request(
-            merge_agent_config(subentry.data, updates), entry.data, subentry.data
+            validation["config"], entry.data, subentry.data
         )
     )
     if not validation.get("valid"):
         return validation
+    timings["model_request_validation_ms"] = _elapsed_ms(phase)
 
+    phase = perf_counter()
     normalized = validation["config"]
     persisted = preserve_legacy_guest_policy(dict(subentry.data), deepcopy(normalized))
     saved_title = title.strip() if isinstance(title, str) else subentry.title
     refresh_local_handling = _local_handling_config_changed(
         subentry.data, persisted, updates
     )
+    timings["persistence_preparation_ms"] = _elapsed_ms(phase)
+    phase = perf_counter()
     hass.config_entries.async_update_subentry(
         entry,
         subentry,
         data=persisted,
         **({"title": saved_title} if isinstance(title, str) else {}),
     )
+    timings["subentry_update_ms"] = _elapsed_ms(phase)
 
     # merge_agent_config validated both fields before persistence. Decode the
     # normalized YAML for the editor without repeating schema validation.
-    snapshot = _snapshot_normalized_configuration(persisted, validated=True)
+    phase = perf_counter()
+    response_data = persisted
+    if repair_state is not None:
+        response_data = dict(persisted)
+        response_data[CONF_FUNCTION_TOOLS] = repair_state.valid
+        response_data[CONF_FUNCTION_GROUPS] = repair_state.groups
+    elif validated_functions is not None:
+        response_data = dict(persisted)
+        response_data[CONF_FUNCTION_TOOLS] = validated_functions[0]
+    snapshot = _snapshot_normalized_configuration(response_data, validated=True)
+    timings["response_snapshot_ms"] = _elapsed_ms(phase)
+    phase = perf_counter()
     revision = _agent_config_revision(persisted, saved_title)
+    timings["revision_calculation_ms"] = _elapsed_ms(phase)
+    phase = perf_counter()
+    capability_hits = _cached_model_capabilities.cache_info().hits
+    capabilities = _configuration_model_capabilities(snapshot[CONF_CHAT_MODEL])
+    timings["model_capabilities_ms"] = _elapsed_ms(phase)
+    timings["model_capabilities_cache_hit"] = (
+        _cached_model_capabilities.cache_info().hits > capability_hits
+    )
     saved = {
         "title": saved_title,
         "config": snapshot,
         "revision": revision,
-        "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
+        "model_capabilities": capabilities,
     }
+    if repair_state is not None:
+        saved["function_repair"] = {
+            "invalid_tools": deepcopy(repair_state.invalid),
+            "invalid_count": len(repair_state.invalid),
+            "group_issues": deepcopy(repair_state.group_issues),
+            "persisted_groups": deepcopy(repair_state.raw_groups),
+            "validation_error": repair_state.issue,
+            "isolatable": bool(repair_state.invalid),
+        }
+    phase = perf_counter()
     seed_persisted_config_projection(entry, subentry, snapshot, revision)
+    timings["projection_seed_ms"] = _elapsed_ms(phase)
+    phase = perf_counter()
     if refresh_local_handling:
         saved["local_handling"] = local_handling_snapshot(
             hass,
@@ -852,18 +964,21 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             str(subentry.subentry_id),
             snapshot.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
         )
-    return {
+    timings["local_handling_ms"] = _elapsed_ms(phase)
+    phase = perf_counter()
+    agent = _agent_snapshot(hass, entry, subentry, config=snapshot, title=saved_title)
+    timings["agent_snapshot_ms"] = _elapsed_ms(phase)
+    phase = perf_counter()
+    result = {
         "valid": True,
         "errors": {},
         **saved,
-        "agent": _agent_snapshot(
-            hass,
-            entry,
-            subentry,
-            config=snapshot,
-            title=saved_title,
-        ),
+        "agent": agent,
+        "_performance": timings,
     }
+    timings["response_assembly_ms"] = _elapsed_ms(phase)
+    timings["total_ms"] = _elapsed_ms(started)
+    return result
 
 
 async def async_configuration_command(request: _ManagementRequest) -> dict[str, Any]:
@@ -986,7 +1101,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         options_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
-        capabilities = model_capabilities(config[CONF_CHAT_MODEL])
+        capabilities = _configuration_model_capabilities(config[CONF_CHAT_MODEL])
         model_capabilities_ms = _elapsed_ms(phase)
 
         assembly_started = perf_counter()
@@ -2197,10 +2312,10 @@ async def async_management_command(
     authorization precedes agent lookup; section-specific authorization stays with
     its handler. No setup/feature installer replaces this function.
     """
-    trace_get = (
-        message.get("section") == "configuration" and message.get("action") == "get"
-    )
-    started = perf_counter() if trace_get else None
+    trace_configuration = message.get("section") == "configuration" and message.get(
+        "action"
+    ) in {"get", "save", "update"}
+    started = perf_counter() if trace_configuration else None
     async with management_command_lease(hass, message):
         lease_ms = _elapsed_ms(started) if started is not None else None
         result = await _async_management_request(hass, user_id, is_admin, message)
@@ -2293,7 +2408,7 @@ async def _async_management_request(
         if isinstance(performance, dict):
             performance["decoration_ms"] = decoration_ms
             performance["request_total_ms"] = request_total_ms
-            if section == "configuration" and action == "get":
+            if section == "configuration" and action in {"get", "save", "update"}:
                 performance["dispatch_ms"] = dispatch_ms
                 performance["agent_resolution_ms"] = resolution_ms
                 performance["handler_ms"] = handler_ms
@@ -2391,18 +2506,21 @@ async def websocket_management(
     except (HomeAssistantError, RuntimeError, ValueError) as err:
         connection.send_error(msg["id"], "invalid_request", str(err))
         return
-    trace_get = msg.get("section") == "configuration" and msg.get("action") == "get"
-    if trace_get:
+    trace_configuration = msg.get("section") == "configuration" and msg.get(
+        "action"
+    ) in {"get", "save", "update"}
+    if trace_configuration:
         performance = result.get("_performance")
         if isinstance(performance, dict):
             performance["websocket_pre_send_ms"] = _elapsed_ms(started)
-    send_started = perf_counter() if trace_get else None
+    send_started = perf_counter() if trace_configuration else None
     connection.send_result(msg["id"], result)
     # Home Assistant serializes inside send_result. Its duration cannot be
     # inserted into a payload that has already been serialized.
     if send_started is not None and _PERFORMANCE_LOGGER.isEnabledFor(logging.DEBUG):
         _PERFORMANCE_LOGGER.debug(
-            "configuration/get send_result_ms=%.2f websocket_total_ms=%.2f",
+            "configuration/%s send_result_ms=%.2f websocket_total_ms=%.2f",
+            msg["action"],
             _elapsed_ms(send_started),
             _elapsed_ms(started),
         )

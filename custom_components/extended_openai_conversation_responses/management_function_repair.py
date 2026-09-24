@@ -468,15 +468,29 @@ def seed_persisted_config_projection(
 ) -> None:
     """Seed a successful save from its authoritative normalized response."""
     current = getattr(entry, "subentries", {}).get(subentry.subentry_id, subentry)
+    key = id(current)
+    previous = _persisted_projections.get(key)
+    repair_state = None
+    if (
+        previous is not None
+        and previous.subentry is current
+        and previous.repair_state is not None
+        and all(
+            previous.data.get(field, _MISSING) == current.data.get(field, _MISSING)
+            for field in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS)
+        )
+    ):
+        repair_state = previous.repair_state
     projection = _PersistedProjection(
         current,
         current.data,
         current.title,
-        deepcopy(snapshot),
+        None if repair_state is not None else deepcopy(snapshot),
         revision,
         {key: deepcopy(snapshot[key]) for key in _RETENTION_FIELDS},
+        repair_state=repair_state,
+        repair_snapshot=deepcopy(snapshot) if repair_state is not None else None,
     )
-    key = id(current)
     _persisted_projections[key] = projection
     _persisted_projections.move_to_end(key)
     if len(_persisted_projections) > _PROJECTION_CACHE_LIMIT:
@@ -614,7 +628,7 @@ def safe_configuration_payload(
             "config": config,
             "defaults": deepcopy(_cached_repair_defaults()),
             "options": management_ui.agent_config_options(),
-            "model_capabilities": management_ui.model_capabilities(
+            "model_capabilities": management_ui._configuration_model_capabilities(
                 config[management_ui.CONF_CHAT_MODEL]
             ),
             "function_types": sorted(management_ui.FUNCTIONS),

@@ -813,9 +813,19 @@ def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
 
 
 def normalize_agent_config(
-    data: dict[str, Any], *, apply_defaults: bool = True, reject_unknown: bool = True
+    data: dict[str, Any],
+    *,
+    apply_defaults: bool = True,
+    reject_unknown: bool = True,
+    validated_functions: tuple[list[dict[str, Any]], list[dict[str, Any]] | None]
+    | None = None,
 ) -> dict[str, Any]:
-    """Validate and normalize a complete or partial agent configuration."""
+    """Validate config; reuse Function results only for identical Function inputs.
+
+    ``validated_functions`` is an internal persisted-projection result for the
+    exact Function inputs in ``data``. Quarantined inputs use the validated
+    effective subset. When groups is None, groups are validated here.
+    """
     if not isinstance(data, dict):
         raise AgentConfigError("config", "must be an object")
     unknown = set(data) - AGENT_CONFIG_FIELDS
@@ -1022,10 +1032,22 @@ def normalize_agent_config(
             raise AgentConfigError(key, "must be a list of non-empty strings")
         result[key] = list(dict.fromkeys(value.strip() for value in values))
 
-    function_tools = validate_function_tools(result.get(CONF_FUNCTION_TOOLS, []))
-    function_groups = validate_function_groups(
-        result.get(CONF_FUNCTION_GROUPS, []), function_tools
-    )
+    if validated_functions is None:
+        function_tools = validate_function_tools(result.get(CONF_FUNCTION_TOOLS, []))
+        function_groups = validate_function_groups(
+            result.get(CONF_FUNCTION_GROUPS, []), function_tools
+        )
+    else:
+        # The caller may only supply a result validated for these exact persisted
+        # fields. Copy it so normalization never mutates the projection cache.
+        function_tools, cached_groups = deepcopy(validated_functions)
+        function_groups = (
+            validate_function_groups(
+                result.get(CONF_FUNCTION_GROUPS, []), function_tools
+            )
+            if cached_groups is None
+            else cached_groups
+        )
     result[CONF_FUNCTION_GROUPS] = function_groups
     loader_status = skill_loader_status(
         skills,
@@ -1038,7 +1060,9 @@ def normalize_agent_config(
             CONF_SKILLS,
             loader_status.reason or "selected Skills are not loadable",
         )
-    if CONF_FUNCTION_TOOLS in data:
+    if CONF_FUNCTION_TOOLS in data and (
+        validated_functions is None or not isinstance(data[CONF_FUNCTION_TOOLS], str)
+    ):
         result[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
             function_tools, sort_keys=False, allow_unicode=True
         )
@@ -1059,16 +1083,26 @@ def normalize_agent_config(
 
 
 def merge_agent_config(
-    current: dict[str, Any], updates: dict[str, Any]
+    current: dict[str, Any],
+    updates: dict[str, Any],
+    *,
+    validated_functions: tuple[list[dict[str, Any]], list[dict[str, Any]] | None]
+    | None = None,
 ) -> dict[str, Any]:
-    """Validate updates against the final merged configuration."""
+    """Validate updates against the final merged configuration.
+
+    Callers may pass ``validated_functions`` only when its corresponding Function
+    inputs in ``updates`` are unchanged from the authoritative source.
+    """
     unknown = set(updates) - AGENT_CONFIG_FIELDS
     if unknown:
         raise AgentConfigError(
             "config", "unknown fields: " + ", ".join(sorted(unknown))
         )
     known = {key: value for key, value in current.items() if key in AGENT_CONFIG_FIELDS}
-    normalized = normalize_agent_config({**known, **updates})
+    normalized = normalize_agent_config(
+        {**known, **updates}, validated_functions=validated_functions
+    )
     return {
         **{
             key: deepcopy(value)
