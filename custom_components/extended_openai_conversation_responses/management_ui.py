@@ -876,7 +876,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         return await _async_save_configuration(request)
     if action == "retention_get":
         started = perf_counter()
-        projection_diagnostics = {}
+        projection_diagnostics: dict[str, Any] = {}
         projection = persisted_config_projection(subentry, projection_diagnostics)
         fields = (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS)
         options = _cached_configuration_options()
