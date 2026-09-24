@@ -2,6 +2,49 @@ import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule, startOverviewDetailReads} from "./overview-page.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
+const CONFIG_TRACE_PREFIX = "extended-openai:config-read";
+const CONFIG_TRACE_LIMIT = 100;
+const configurationTraceEntries = [];
+let configurationTraceSequence = 0;
+
+export function markConfigurationRead(event, detail) {
+  const api = globalThis.performance;
+  if (typeof api?.mark !== "function") return;
+  const name = `${CONFIG_TRACE_PREFIX}:${event}:${++configurationTraceSequence}`;
+  try {
+    api.mark(name, {detail});
+    configurationTraceEntries.push({name, kind: "mark"});
+    while (configurationTraceEntries.length > CONFIG_TRACE_LIMIT) {
+      const old = configurationTraceEntries.shift();
+      if (old.kind === "mark") api.clearMarks?.(old.name);
+      else api.clearMeasures?.(old.name);
+    }
+  } catch (_err) { /* Optional tracing must not affect a configuration read. */ }
+}
+
+export function measureConfigurationRead(event, detail) {
+  const api = globalThis.performance;
+  if (typeof api?.mark !== "function" || typeof api?.measure !== "function") return () => {};
+  const name = `${CONFIG_TRACE_PREFIX}:${event}:${++configurationTraceSequence}`;
+  const start = `${name}:start`;
+  try { api.mark(start); } catch (_err) { return () => {}; }
+  return (status) => {
+    const end = `${name}:end`;
+    try {
+      api.mark(end);
+      api.measure(name, {start, end, detail: {...detail, status}});
+      configurationTraceEntries.push({name, kind: "measure"});
+      while (configurationTraceEntries.length > CONFIG_TRACE_LIMIT) {
+        const old = configurationTraceEntries.shift();
+        if (old.kind === "mark") api.clearMarks?.(old.name);
+        else api.clearMeasures?.(old.name);
+      }
+    } catch (_err) { /* Best-effort browser trace only. */ }
+    finally {
+      try { api.clearMarks?.(start); api.clearMarks?.(end); } catch (_err) { /* Best-effort cleanup. */ }
+    }
+  };
+}
 const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
   "capabilities/web-skills",
@@ -434,24 +477,33 @@ export function startStoredConfigurationPrefetch(panel, preferredSubentryId) {
   if (!action) return null;
   const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
   const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
-  if (!subentryId || !entryId) return null;
   // Keep the last cold-read decision inspectable without logging expected misses.
   const diagnostics = panel._eocConfigurationReadDiagnostics ||= {};
   const detail = {entryId, subentryId, view, action, status: "started", requestStatus: "not-started", reason: null};
   diagnostics.prefetch = detail;
+  if (!subentryId || !entryId) {
+    detail.status = "skipped";
+    detail.reason = !subentryId ? "missing-stored-agent" : "missing-stored-entry";
+    markConfigurationRead("prefetch-skipped", {view, action, status: detail.status, reason: detail.reason});
+    return null;
+  }
   if (panel._draftAgentId === subentryId && panel._configData?.config && !panel._configDataStale
       && (panel._configData.projection === "retention" ? "retention_get" : "get") === action) {
     detail.status = "skipped";
     detail.reason = "active-config";
+    markConfigurationRead("prefetch-skipped", {view, action, status: detail.status, reason: detail.reason});
     return null;
   }
   if (panel._freshCleanConfiguration?.(subentryId, action === "retention_get" ? "retention" : "full")) {
     detail.status = "skipped";
     detail.reason = "clean-snapshot";
+    markConfigurationRead("prefetch-skipped", {view, action, status: detail.status, reason: detail.reason});
     return null;
   }
   detail.startedAt = Date.now();
   detail.requestStatus = "pending";
+  markConfigurationRead("prefetch-started", {view, action, status: "started"});
+  const finishRead = measureConfigurationRead("prefetch-response", {view, action});
   const request = panel._hass.callWS({
     type: WS_TYPE,
     section: "configuration",
@@ -467,8 +519,8 @@ export function startStoredConfigurationPrefetch(panel, preferredSubentryId) {
     cacheGeneration: panel._cacheGeneration,
     detail,
     promise: request.then(
-      (value) => { detail.requestStatus = "fulfilled"; return {status: "fulfilled", value}; },
-      (reason) => { detail.requestStatus = "rejected"; return {status: "rejected", reason}; },
+      (value) => { detail.requestStatus = "fulfilled"; finishRead("fulfilled"); return {status: "fulfilled", value}; },
+      (reason) => { detail.requestStatus = "rejected"; finishRead("rejected"); return {status: "rejected", reason}; },
     ),
   };
   panel._eocStoredConfigPrefetch = prefetch;
@@ -481,6 +533,7 @@ export function discardStoredConfigurationPrefetch(panel, reason) {
   prefetch.detail.status = "discarded";
   prefetch.detail.reason = reason;
   prefetch.detail.discardedAt = Date.now();
+  markConfigurationRead("prefetch-discarded", {view: prefetch.view, action: prefetch.action, status: "discarded", reason});
   panel._eocStoredConfigPrefetch = null;
 }
 
@@ -502,6 +555,7 @@ export function consumeStoredConfigurationPrefetch(panel, action) {
   panel._eocStoredConfigPrefetch = null;
   prefetch.detail.status = "consumed";
   prefetch.detail.consumedAt = Date.now();
+  markConfigurationRead("prefetch-consumed", {view: prefetch.view, action, status: "consumed"});
   return prefetch.promise;
 }
 

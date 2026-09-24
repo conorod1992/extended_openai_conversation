@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 import yaml
-from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import (
     exposed_attributes as ea,
@@ -22,6 +21,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 class _FakeConfigEntries:
@@ -181,6 +181,63 @@ async def test_function_repair_configuration_get_defers_live_metadata(
             "durable_selection_available": True,
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["get", "retention_get"])
+async def test_normal_configuration_read_quarantines_invalid_tools(
+    monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    entry, subentry = _repairable_agent()
+    original = deepcopy(subentry.data)
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    monkeypatch.setattr(
+        management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
+    )
+
+    payload = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "configuration",
+            "action": action,
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+        },
+    )
+
+    assert payload["function_repair"]["invalid_count"] == 1
+    assert len(payload["config"][CONF_FUNCTION_TOOLS]) == 1
+    assert payload["revision"]
+    assert subentry.data == original
+
+
+@pytest.mark.asyncio
+async def test_valid_configuration_read_keeps_normal_fast_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry, subentry = _repairable_agent()
+    defaults = agent_config_defaults()
+    subentry.data[CONF_FUNCTION_TOOLS] = defaults[CONF_FUNCTION_TOOLS]
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    monkeypatch.setattr(
+        management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
+    )
+    payload = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "configuration",
+            "action": "get",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+        },
+    )
+    assert "function_repair" not in payload
+    assert payload["config"][CONF_FUNCTION_TOOLS]
+    assert "snapshot_cache_hit" in payload["_performance"]
 
 
 @pytest.mark.asyncio

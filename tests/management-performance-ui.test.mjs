@@ -147,6 +147,19 @@ const configResult = (projection, title = "A") => ({
   );
   assert.equal(typeof panel._eocConfigurationReadDiagnostics.prefetch.startedAt, "number");
   assert.equal(panel._eocConfigurationReadDiagnostics.draft.source, "prefetched-request");
+  assert.ok(performance.getEntriesByType("mark").some((entry) =>
+    entry.name.includes("config-read:prefetch-started")
+      && entry.detail?.action === "get" && entry.detail?.status === "started"));
+  assert.ok(performance.getEntriesByType("mark").some((entry) =>
+    entry.name.includes("config-read:draft-source")
+      && entry.detail?.source === "prefetched-request"));
+  assert.ok(performance.getEntriesByType("measure").some((entry) =>
+    entry.name.includes("config-read:prefetch-response")
+      && entry.detail?.status === "fulfilled" && entry.detail?.action === "get"));
+  assert.ok(performance.getEntriesByType("mark")
+    .filter((entry) => entry.name.includes("config-read:"))
+    .every((entry) => Object.keys(entry.detail || {}).every((key) =>
+      ["view", "action", "source", "status", "reason"].includes(key))));
   await panel._loadConfigDraft();
   assert.equal(panel._eocConfigurationReadDiagnostics.draft.source, "active-config");
   assert.equal(calls.length, 1);
@@ -177,6 +190,43 @@ const configResult = (projection, title = "A") => ({
   assert.equal(panel._draftTitle, "Fallback");
   assert.equal(panel._eocConfigurationReadDiagnostics.prefetch.reason, "request-failed");
   assert.equal(panel._eocConfigurationReadDiagnostics.draft.source, "new-backend-request");
+  assert.ok(performance.getEntriesByType("measure").some((entry) =>
+    entry.name.includes("config-read:fallback-response")
+      && entry.detail?.source === "new-backend-request" && entry.detail?.status === "fulfilled"));
+}
+
+{
+  const panel = panelFor("assistant", "basics");
+  localStorage.values.clear();
+  assert.equal(startStoredConfigurationPrefetch(panel), null);
+  assert.equal(panel._eocConfigurationReadDiagnostics.prefetch.reason, "missing-stored-agent");
+  localStorage.setItem(AGENT_KEY, "agent-a");
+  assert.equal(startStoredConfigurationPrefetch(panel), null);
+  assert.equal(panel._eocConfigurationReadDiagnostics.prefetch.reason, "missing-stored-entry");
+  localStorage.setItem(ENTRY_KEY, "entry-a");
+}
+
+{
+  const panel = panelFor("assistant", "basics");
+  let warnings = 0;
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  console.warn = () => { warnings++; };
+  console.error = () => { warnings++; };
+  try {
+    for (let index = 0; index < 110; index++) {
+      localStorage.values.clear();
+      startStoredConfigurationPrefetch(panel);
+    }
+  } finally {
+    console.warn = originalWarn;
+    console.error = originalError;
+  }
+  assert.equal(warnings, 0);
+  assert.ok(performance.getEntriesByType("mark")
+    .filter((entry) => entry.name.includes("config-read:")).length <= 100);
+  localStorage.setItem(AGENT_KEY, "agent-a");
+  localStorage.setItem(ENTRY_KEY, "entry-a");
 }
 
 {

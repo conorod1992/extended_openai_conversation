@@ -112,6 +112,7 @@ from .management_function_quarantine import (
 )
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,
+    function_tools_issue,
     normalized_persisted_config_snapshot,
     persisted_config_projection,
     require_agent_config_revision as _require_agent_config_revision,
@@ -872,6 +873,14 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     subentry_id = request.subentry_id
     action = request.message["action"]
     _require_admin(is_admin)
+    if action in {"get", "retention_get"}:
+        # Cold speculative callers do not yet have the agent catalogue's repair
+        # hint. Resolve the persisted state here for every configuration read.
+        _tools, issue = function_tools_issue(dict(subentry.data))
+        if issue is not None:
+            from .management_function_repair import safe_configuration_payload
+
+            return safe_configuration_payload(hass, entry, subentry)
     if action == "save":
         return await _async_save_configuration(request)
     if action == "retention_get":
