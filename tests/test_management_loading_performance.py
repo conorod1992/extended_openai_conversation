@@ -319,7 +319,8 @@ def test_agent_config_revision_does_not_validate_persisted_config(monkeypatch) -
 
 
 async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatch) -> None:
-    hass, _entry, _subentry = _hass_with_agent()
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data = {**subentry.data, "max_tokens": 777}
     monkeypatch.setattr(
         function_repair, "_persisted_projections", function_repair.OrderedDict()
     )
@@ -373,6 +374,41 @@ async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatc
     assert first["revision"] == second["revision"]
     first["config"]["chat_model"] = "changed locally"
     assert second["config"]["chat_model"] != "changed locally"
+
+
+async def test_configuration_get_reuses_validated_exact_defaults(monkeypatch, caplog) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    management_ui._cached_configuration_defaults.cache_clear()
+    build_defaults = Mock(wraps=management_ui.agent_config_snapshot)
+    build_persisted = Mock(wraps=function_repair.agent_config_snapshot)
+    monkeypatch.setattr(management_ui, "agent_config_snapshot", build_defaults)
+    monkeypatch.setattr(function_repair, "agent_config_snapshot", build_persisted)
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1",
+        "section": "configuration", "action": "get",
+    }
+
+    first = await management_ui.async_management_command(hass, "admin", True, message)
+    second = await management_ui.async_management_command(hass, "admin", True, message)
+
+    build_defaults.assert_called_once()
+    build_persisted.assert_not_called()
+    assert first["_performance"]["default_snapshot_reused"] is True
+    assert second["_performance"]["snapshot_cache_hit"] is True
+    assert second["_performance"]["default_snapshot_reused"] is False
+    assert first["config"] == second["config"]
+    first["config"]["chat_model"] = "changed locally"
+    assert second["config"]["chat_model"] != "changed locally"
+    assert not [record for record in caplog.records if record.levelno >= 30]
+
+    subentry.data = {**subentry.data, "max_tokens": 777}
+    changed = await management_ui.async_management_command(hass, "admin", True, message)
+    build_persisted.assert_called_once()
+    assert changed["config"]["max_tokens"] == 777
+    assert changed["_performance"]["snapshot_cache_hit"] is False
 
 
 def test_persisted_projection_tracks_title_and_authoritative_data_replacement(
@@ -683,6 +719,35 @@ async def test_function_repair_save_is_atomic_and_preserves_unrelated_data() -> 
     assert hass.config_entries.updates == 1
 
 
+async def test_full_get_recovers_from_malformed_tools_and_repair(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    subentry.data = {**subentry.data, "functions": _persisted_invalid_function_tools()}
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1",
+        "section": "configuration", "action": "get",
+    }
+    broken = await management_ui.async_management_command(hass, "admin", True, message)
+    assert broken["function_repair"]["invalid_count"] == 1
+    assert broken["_performance"]["function_issue_check_ms"] >= 0
+    assert broken["_performance"]["repair_projection_ms"] >= 0
+
+    repaired = await _async_function_repair(
+        hass, "admin", True,
+        {
+            "entry_id": "entry-1", "subentry_id": "agent-1", "action": "save",
+            "revision": broken["revision"], "tools": [],
+        },
+    )
+    normal = await management_ui.async_management_command(hass, "admin", True, message)
+    assert repaired["valid"] is True
+    assert "function_repair" not in normal
+    assert normal["config"]["functions"] == []
+    assert normal["revision"] == repaired["revision"]
+
+
 async def test_function_repair_rejects_still_invalid_tools_without_persisting() -> None:
     hass, _entry, subentry = _hass_with_agent()
     subentry.data["functions"] = _persisted_invalid_function_tools()
@@ -834,12 +899,22 @@ async def test_configuration_get_reports_phase_timings(monkeypatch) -> None:
     assert set(
         (
             "config_snapshot_ms",
+            "snapshot_build_ms",
+            "snapshot_copy_ms",
             "revision_ms",
             "defaults_snapshot_ms",
+            "defaults_cache_hit",
             "options_ms",
+            "options_cache_hit",
             "model_capabilities_ms",
             "decoration_ms",
             "request_total_ms",
+            "dispatch_ms",
+            "agent_resolution_ms",
+            "handler_ms",
+            "response_assembly_ms",
+            "maintenance_lease_ms",
+            "command_total_ms",
         )
     ) <= performance.keys()
 
