@@ -126,7 +126,10 @@ def export_configuration_snapshot(data: Any) -> dict[str, Any]:
         # Export is a recovery boundary: if Function Tools are the only invalid
         # persisted field, normalize a management-safe copy and then restore the
         # exact raw Function Tool/Group fields into the exported snapshot.
-        from .management_function_repair import function_tools_issue, safe_function_configuration
+        from .management_function_repair import (
+            function_tools_issue,
+            safe_function_configuration,
+        )
 
         _usable, issue = function_tools_issue(raw)
         if issue is None:
