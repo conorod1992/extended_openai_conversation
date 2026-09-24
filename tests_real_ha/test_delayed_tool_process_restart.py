@@ -112,7 +112,7 @@ async def _create_entry_and_schedule(config_dir: Path) -> None:
 
     sys.path.insert(0, str(config_dir))
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
     )
     assert hass is not None
     await hass.async_start()
@@ -250,7 +250,7 @@ async def _recover_and_execute(config_dir: Path) -> None:
     sys.path.insert(0, str(config_dir))
     metadata = json.loads((config_dir / _METADATA_FILE).read_text(encoding="utf-8"))
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
     )
     assert hass is not None
     await _register_execution_probe(hass, config_dir)

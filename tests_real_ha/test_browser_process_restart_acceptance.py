@@ -413,7 +413,7 @@ async def _child_main() -> None:
     # Force custom integration discovery from the staged HA config directory.
     sys.path.insert(0, str(config_dir))
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
     )
     assert hass is not None
 

@@ -287,7 +287,7 @@ async def _child_main() -> None:
     phase = os.environ[_CHILD_PHASE]
     sys.path.insert(0, str(config_dir))
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
     )
     assert hass is not None
 
