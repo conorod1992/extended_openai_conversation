@@ -1084,10 +1084,11 @@ def agent_config_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     result = normalize_agent_config(
         {key: value for key, value in data.items() if key in AGENT_CONFIG_FIELDS}
     )
-    result[CONF_FUNCTION_TOOLS] = validate_function_tools(result[CONF_FUNCTION_TOOLS])
-    result[CONF_FUNCTION_GROUPS] = validate_function_groups(
-        result[CONF_FUNCTION_GROUPS], result[CONF_FUNCTION_TOOLS]
-    )
+    # normalize_agent_config already validated the tools and their groups. It
+    # stores explicitly configured tools as YAML for persistence; only decode
+    # that validated representation for the frontend.
+    if isinstance(result[CONF_FUNCTION_TOOLS], str):
+        result[CONF_FUNCTION_TOOLS] = yaml.safe_load(result[CONF_FUNCTION_TOOLS]) or []
     return result
 
 

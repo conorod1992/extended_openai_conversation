@@ -10,15 +10,12 @@ import yaml
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import (
+    agent_config,
     debug_ui,
     frontend_assets,
-    management_ui,
-)
-from custom_components.extended_openai_conversation_responses import (
     management_function_repair as function_repair,
-)
-from custom_components.extended_openai_conversation_responses import (
     management_loading_performance as loading,
+    management_ui,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
@@ -323,11 +320,12 @@ def test_agent_config_revision_does_not_validate_persisted_config(monkeypatch) -
 
 async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
-    function_repair._cached_agent_config_snapshot.cache_clear()
     monkeypatch.setattr(
         function_repair, "_persisted_projections", function_repair.OrderedDict()
     )
     original = function_repair.agent_config_snapshot
+    tool_validator = Mock(wraps=agent_config.validate_function_tools)
+    monkeypatch.setattr(agent_config, "validate_function_tools", tool_validator)
     original_revision = function_repair.agent_config_revision_from_snapshot
     calls = 0
     revision_calls = 0
@@ -366,7 +364,10 @@ async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatc
     )
 
     assert calls == 1
+    assert tool_validator.call_count == 1
     assert revision_calls == 1
+    assert first["_performance"]["snapshot_cache_hit"] is False
+    assert second["_performance"]["snapshot_cache_hit"] is True
     assert first["config"] == second["config"]
     assert first["revision"] == second["revision"]
     first["config"]["chat_model"] = "changed locally"
@@ -386,7 +387,7 @@ def test_persisted_projection_tracks_title_and_authoritative_data_replacement(
     subentry.title = "Renamed"
     renamed = function_repair.persisted_config_projection(subentry)
     assert renamed.revision != original.revision
-    assert renamed.snapshot == original.snapshot
+    assert renamed.snapshot is None
     with pytest.raises(HomeAssistantError, match="changed in another tab"):
         function_repair.require_agent_config_revision(subentry, original.revision)
 
@@ -394,7 +395,8 @@ def test_persisted_projection_tracks_title_and_authoritative_data_replacement(
     subentry.data = {**subentry.data, "max_tokens": 777}
     replaced = function_repair.persisted_config_projection(subentry)
     assert replaced.revision != renamed.revision
-    assert replaced.snapshot["max_tokens"] == 777
+    assert replaced.snapshot is None
+    assert function_repair.normalized_persisted_config_snapshot(replaced)[0]["max_tokens"] == 777
 
     recreated = SimpleNamespace(
         subentry_id=subentry.subentry_id,
@@ -925,9 +927,14 @@ async def test_retention_projection_reads_only_needed_fields(monkeypatch) -> Non
     monkeypatch.setattr(
         function_repair, "_persisted_projections", function_repair.OrderedDict()
     )
-    normalizer = Mock(wraps=function_repair.agent_config_snapshot)
+    normalizer = Mock(side_effect=AssertionError("retention must not normalize"))
     revision_hash = Mock(wraps=function_repair.agent_config_revision_from_snapshot)
     monkeypatch.setattr(function_repair, "agent_config_snapshot", normalizer)
+    monkeypatch.setattr(
+        function_repair,
+        "validate_function_tools",
+        Mock(side_effect=AssertionError("retention must not validate tools")),
+    )
     monkeypatch.setattr(
         function_repair, "agent_config_revision_from_snapshot", revision_hash
     )
@@ -967,8 +974,35 @@ async def test_retention_projection_reads_only_needed_fields(monkeypatch) -> Non
         },
     )
     assert repeated["revision"] == result["revision"]
-    normalizer.assert_called_once()
+    normalizer.assert_not_called()
     revision_hash.assert_called_once()
+    assert result["_performance"]["projection_cache_hit"] is False
+    assert repeated["_performance"]["projection_cache_hit"] is True
+
+
+async def test_malformed_tools_do_not_block_cold_retention_projection(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data = {**subentry.data, "functions": _persisted_invalid_function_tools()}
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    monkeypatch.setattr(
+        function_repair, "agent_config_snapshot",
+        Mock(side_effect=AssertionError("retention must not validate tools")),
+    )
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "retention_get",
+        },
+    )
+    assert result["revision"] == function_repair.repair_revision(subentry)
+    assert result["projection"] == "retention"
 
 
 async def test_configuration_patch_preserves_omitted_fields_and_skips_local_snapshot(
