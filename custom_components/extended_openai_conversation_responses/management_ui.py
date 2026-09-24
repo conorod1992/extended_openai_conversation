@@ -964,7 +964,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "options_cache_hit": options_cache_hit,
             "model_capabilities_ms": model_capabilities_ms,
         }
-        result = {
+        payload = {
             "title": subentry.title,
             "revision": revision,
             "config": config,
@@ -976,7 +976,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         }
         timings["response_assembly_ms"] = _elapsed_ms(assembly_started)
         timings["total_ms"] = _elapsed_ms(started)
-        return result
+        return payload
     if action == "live_metadata":
         requested = message.get("metadata_keys", [])
         if not isinstance(requested, list) or any(
