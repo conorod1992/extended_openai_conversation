@@ -238,7 +238,7 @@ async def async_collect_transfer_snapshot(
     document = _new_transfer_document(entry, subentry, mode)
     payload = document["sections"]
     if SECTION_CONFIGURATION in selected:
-        payload[SECTION_CONFIGURATION] = backup.export_configuration_snapshot(
+        payload[SECTION_CONFIGURATION] = backup.recoverable_configuration_snapshot(
             subentry.data
         )
     if SECTION_REQUEST_RULES in selected:
@@ -590,9 +590,7 @@ def _validate_transfer_document(
             restored = restore_redacted_secrets(raw)
             if not isinstance(restored, dict):
                 raise ValueError("configuration must be an object")
-            prepared.config = preserve_legacy_guest_policy(
-                restored, normalize_agent_config(restored)
-            )
+            prepared.config = backup.recoverable_configuration_snapshot(restored)
         if SECTION_REQUEST_RULES in available:
             raw = raw_sections[SECTION_REQUEST_RULES]
             prepared.raw_request_rules = deepcopy(raw)
@@ -657,9 +655,7 @@ def _inspect_legacy_setup(value: Mapping[str, Any]) -> PreparedTransfer:
         restored = restore_redacted_secrets(raw_config)
         if not isinstance(restored, dict):
             raise ValueError("configuration must be an object")
-        config = preserve_legacy_guest_policy(
-            restored, normalize_agent_config(restored)
-        )
+        config = backup.recoverable_configuration_snapshot(restored)
         title = validate_agent_title(
             value.get("title"), default="Imported conversation agent"
         )
@@ -803,7 +799,7 @@ def _prepared_restore_from_selection(
             missing.extend(f"configuration.{path}" for path in absent)
             if not isinstance(raw, dict):
                 raise backup.BackupError("Transferred configuration is invalid")
-            config = preserve_legacy_guest_policy(raw, normalize_agent_config(raw))
+            config = backup.recoverable_configuration_snapshot(raw)
         elif imported.config is not None:
             config = deepcopy(imported.config)
         else:
@@ -812,9 +808,7 @@ def _prepared_restore_from_selection(
         # Durable snapshots contain frontend-shaped, parsed Function Tools.
         # Retained configuration must use the same persisted YAML representation
         # as imported configuration before dependency validation and restore.
-        config = preserve_legacy_guest_policy(
-            current.config, normalize_agent_config(current.config)
-        )
+        config = backup.recoverable_configuration_snapshot(current.config)
 
     rules = current.request_rules
     if SECTION_REQUEST_RULES in selected:
