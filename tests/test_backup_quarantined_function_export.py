@@ -106,7 +106,9 @@ async def test_setup_export_collection_succeeds_with_quarantined_function(
             return_value={"storage_version": 1, "defaults": {}, "rules": []}
         )
     )
-    monkeypatch.setattr(transfer, "async_get_request_rules", AsyncMock(return_value=rules))
+    monkeypatch.setattr(
+        transfer, "async_get_request_rules", AsyncMock(return_value=rules)
+    )
 
     document = await transfer.async_collect_transfer_snapshot(
         SimpleNamespace(), entry, subentry, mode="setup"
