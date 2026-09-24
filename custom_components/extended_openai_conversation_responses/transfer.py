@@ -20,8 +20,6 @@ from . import backup
 from .agent_config import (
     agent_config_snapshot,
     configured_function_tools_from_data,
-    normalize_agent_config,
-    preserve_legacy_guest_policy,
     validate_agent_title,
 )
 from .const import AGENT_CONFIG_EXPORT_VERSION
@@ -240,7 +238,7 @@ async def async_collect_transfer_snapshot(
     document = _new_transfer_document(entry, subentry, mode)
     payload = document["sections"]
     if SECTION_CONFIGURATION in selected:
-        payload[SECTION_CONFIGURATION] = backup.recoverable_configuration_snapshot(
+        payload[SECTION_CONFIGURATION] = backup.export_configuration_snapshot(
             subentry.data
         )
     if SECTION_REQUEST_RULES in selected:
