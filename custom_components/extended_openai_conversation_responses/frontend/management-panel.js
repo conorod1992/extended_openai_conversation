@@ -427,6 +427,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _clearConfigDraft() {
     this._setConfigDirty(false);
     this._configData = null;
+    this._configDataStale = false;
     this._draft = null;
     this._draftTitle = null;
     this._draftAgentId = null;
@@ -446,11 +447,42 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!configData?.config || configData.revision == null) return;
     const projection = configData.projection === "retention" ? "retention" : "full";
     const key = this._configurationSnapshotKey(agentId, projection);
-    if (key) this._cleanConfigSnapshots.set(key, {result: configData, loadedAt: Date.now()});
+    if (key) this._cleanConfigSnapshots.set(key, {result: configData, loadedAt: Date.now(), generation: this._cacheGeneration});
+  }
+
+  _freshCleanConfiguration(agentId, projection) {
+    const key = this._configurationSnapshotKey(agentId, projection);
+    const cached = key ? this._cleanConfigSnapshots.get(key) : null;
+    const age = cached ? Date.now() - cached.loadedAt : -1;
+    return cached?.result?.config && cached.result.revision != null
+      && (cached.result.projection === "retention" ? "retention" : "full") === projection
+      && cached.generation === this._cacheGeneration && age >= 0 && age <= CLEAN_CONFIG_TTL_MS
+      ? cached.result : null;
+  }
+
+  _hydrateCleanConfiguration(view) {
+    if (this._configDirty || !this._selectedAgent() || !this._isDraftView()
+        || ["data-memory/conversations", "capabilities/request-rules", "usage-maintenance/backup-restore"].includes(view)) return false;
+    const projection = view === "usage-maintenance/retention" ? "retention" : "full";
+    const configData = this._freshCleanConfiguration(this._agentId, projection);
+    if (!configData) return false;
+    this._configData = configData;
+    this._configDataStale = false;
+    this._draft = JSON.parse(JSON.stringify(configData.config));
+    this._draftTitle = configData.title;
+    this._draftAgentId = this._agentId;
+    this._setConfigDirty(false);
+    this._contentData = null;
+    this._result = configData;
+    this._error = null;
+    this._busy = false;
+    this._applyConfigurationLiveMetadata(view);
+    return true;
   }
 
   _invalidateCleanConfiguration(agentId) {
     if (!agentId) return;
+    if (agentId === this._draftAgentId) this._configDataStale = true;
     for (const projection of ["full", "retention"]) {
       const key = this._configurationSnapshotKey(agentId, projection);
       if (key) this._cleanConfigSnapshots.delete(key);
@@ -495,7 +527,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._subsection = route.section;
     this._query = "";
     this._result = null;
-    showPendingDestination(this);
+    if (this._hydrateCleanConfiguration(this._viewKey())) this._render();
+    else showPendingDestination(this);
     await this._loadSection();
   }
 
@@ -865,7 +898,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const cacheGeneration = this._cacheGeneration;
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules", "usage-maintenance/backup-restore"].includes(view);
-    if (configOnly && this._configData && this._draftAgentId === this._agentId
+    if (configOnly && this._configData && (this._configDirty || !this._configDataStale) && this._draftAgentId === this._agentId
         && (this._configData.projection !== "retention" || view === "usage-maintenance/retention")) {
       this._applyConfigurationLiveMetadata(view);
       this._contentData = null;
@@ -1218,23 +1251,24 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _loadConfigDraft() {
-    if (!this._configData || this._draftAgentId !== this._agentId
+    if (!this._configData || (this._configDataStale && !this._configDirty) || this._draftAgentId !== this._agentId
         || (this._configData.projection === "retention" && this._viewKey() !== "usage-maintenance/retention")) {
       const agentId = this._agentId;
       const loadToken = this._loadToken;
+      const cacheGeneration = this._cacheGeneration;
       const projection = this._viewKey() === "usage-maintenance/retention" ? "retention" : "full";
       const key = this._configurationSnapshotKey(agentId, projection);
-      const cached = key ? this._cleanConfigSnapshots.get(key) : null;
-      const fresh = cached && Date.now() - cached.loadedAt <= CLEAN_CONFIG_TTL_MS;
-      const configData = fresh ? cached.result
+      const cached = this._freshCleanConfiguration(agentId, projection);
+      const configData = cached ? cached
         : projection === "retention"
           ? await consumeIntentRead(this, this._viewKey(), "configuration", "retention_get")
           : await this._call("configuration", "get");
-      if (agentId !== this._agentId || loadToken !== this._loadToken) return;
+      if (agentId !== this._agentId || loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration) return;
       const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
       if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);
       this._configData = configData;
-      if (!fresh) this._rememberCleanConfiguration(configData, agentId);
+      this._configDataStale = false;
+      if (!cached) this._rememberCleanConfiguration(configData, agentId);
       this._draft = JSON.parse(JSON.stringify(configData.config));
       this._draftTitle = configData.title;
       this._draftAgentId = agentId;
@@ -1264,7 +1298,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._query = "";
       history.pushState({}, "", routePath(page, resolvedSubsection));
       this._result = null;
-      showPendingDestination(this);
+      if (this._hydrateCleanConfiguration(this._viewKey())) this._render();
+      else showPendingDestination(this);
       await this._loadSection();
     }, true);
   }

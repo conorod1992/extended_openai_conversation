@@ -46,3 +46,11 @@ assert.ok(!manifest[backupRoute].dynamicImports?.includes(genericEditor), "Backu
 const backupActionGraph = staticDependencies(backupTransfer);
 assert.ok(!backupActionGraph.has(genericEditor));
 assert.ok(!backupActionGraph.has(genericEditorBase));
+const backupSummary = sourceFor("backup-summary");
+const assistantGraph = staticDependencies(genericEditor);
+assert.ok(!backupSummary || !assistantGraph.has(backupSummary),
+  "generic Assistant/config activation must not load Backup summary");
+const editorSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js", import.meta.url), "utf8");
+const editorBaseSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js", import.meta.url), "utf8");
+assert.ok(!editorSource.includes('from "./backup-summary.js"'));
+assert.ok(!editorBaseSource.includes('from "./backup-summary.js"'));

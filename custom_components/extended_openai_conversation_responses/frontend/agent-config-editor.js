@@ -1,5 +1,4 @@
 import {prepareConfigurationSections, renderConfigurationShell, renderConfigurationActions as renderConfigurationActionsMarkup} from "./agent-config-editor-base.js";
-export {BACKUP_CREDENTIAL_WARNING, backupSummaryLines} from "./backup-summary.js";
 import {bindConfiguration as bindModelConfiguration} from "./agent-config-editor-model-v2.js";
 import {configurationSectionFamily, getRouteFeature} from "./management-route.js";
 export {configurationDialogs} from "./agent-config-editor-base.js";

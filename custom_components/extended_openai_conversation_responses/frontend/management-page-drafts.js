@@ -15,7 +15,9 @@ export function pageCoordinator(panel) {
     get pending() { return Boolean(panel._configurationSaving); },
     save: () => saveConfiguration(panel, panel.shadowRoot?.querySelector("#save-config")),
     destinations: () => [...(panel._configurationDirtyDestinations?.() || [])],
-    owns: (destination) => Boolean(destination && panel._isDraftView?.(...destination.split("/"))),
+    owns: (destination) => Boolean(destination && panel._isDraftView?.(...destination.split("/"))
+      && !(panel._configData?.projection === "retention" && destination !== "usage-maintenance/retention")
+      && !panel._configDataStale),
     discard: () => {
       if (panel._configData) {
         panel._draft = clone(panel._configData.config);

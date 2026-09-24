@@ -13,7 +13,7 @@ globalThis.localStorage = {
   setItem(key, value) { this.values.set(key, value); },
 };
 globalThis.HTMLElement = class {
-  attachShadow() { this.shadowRoot = {hasChildNodes: () => false}; }
+  attachShadow() { this.shadowRoot = {hasChildNodes: () => false, querySelector: () => null}; }
 };
 let definedPanel;
 let resolveDefined;
@@ -102,7 +102,7 @@ const initialScopes = [{scope_id:"user:current", scope_type:"user", display_name
 
   panel._cleanConfigSnapshots.set(
     panel._configurationSnapshotKey("agent-a", "retention"),
-    {result: {projection:"retention", config:{}}, loadedAt: Date.now()},
+    {result: {projection:"retention", revision:"r1", config:{}}, loadedAt: Date.now(), generation:panel._cacheGeneration},
   );
   assert.equal(prefetchIntentRead(panel, "usage-maintenance/retention"), null,
     "a fresh retention projection does not trigger speculative backend work");
@@ -119,6 +119,104 @@ function panelFor(page = "assistant", subsection = "basics") {
   panel.renderStates = [];
   panel._render = () => panel.renderStates.push(panel._busy);
   return panel;
+}
+
+const configResult = (projection, title = "A") => ({
+  projection, title, revision:`${title}-r1`, config:{usage_request_retention_days:30, chat_model:"gpt-4o"},
+});
+
+{
+  const panel = panelFor("usage-maintenance", "usage");
+  panel._rememberCleanConfiguration(configResult("retention"));
+  panel._hass = {callWS: async () => { throw new Error("fresh retention must not fetch"); }};
+  await panel._navigate("usage-maintenance", "retention");
+  assert.equal(panel._draftAgentId, "agent-a");
+  assert.equal(panel._draft.usage_request_retention_days, 30);
+  assert.equal(panel._result, panel._configData);
+  assert.ok(panel.renderStates.length > 0);
+  assert.ok(panel.renderStates.every((busy) => !busy), "fresh Retention revisit never renders busy");
+  panel._clearConfigDraft();
+  panel._page = "usage-maintenance";
+  panel._subsection = "usage";
+  panel.renderStates = [];
+  await panel._navigate("usage-maintenance", "retention");
+  assert.ok(panel.renderStates.every((busy) => !busy), "repeated clean visit stays immediate");
+}
+
+{
+  const panel = panelFor("usage-maintenance", "usage");
+  panel._rememberCleanConfiguration(configResult("retention"));
+  const key = panel._configurationSnapshotKey("agent-a", "retention");
+  panel._cleanConfigSnapshots.get(key).loadedAt -= 31_000;
+  let reads = 0;
+  panel._hass = {callWS: async () => { reads++; return configResult("retention", "Fresh"); }};
+  await panel._navigate("usage-maintenance", "retention");
+  assert.equal(reads, 1, "expired Retention projection reloads");
+  assert.ok(panel.renderStates.includes(true), "expired projection takes the loading path");
+  assert.equal(panel._draftTitle, "Fresh");
+}
+
+{
+  const panel = panelFor("usage-maintenance", "usage");
+  panel._rememberCleanConfiguration(configResult("retention"));
+  panel._invalidateAfterMutation("agent-a", "tools", "save");
+  let reads = 0;
+  panel._hass = {callWS: async () => { reads++; return configResult("retention", "After edit"); }};
+  await panel._navigate("usage-maintenance", "retention");
+  assert.equal(reads, 1, "mutation invalidation prevents instant stale hydration");
+  assert.ok(panel.renderStates.includes(true));
+  assert.equal(panel._draftTitle, "After edit");
+}
+
+{
+  const panel = panelFor("usage-maintenance", "usage");
+  panel._rememberCleanConfiguration(configResult("retention"));
+  panel._agentId = "agent-b";
+  let reads = 0;
+  panel._hass = {callWS: async () => { reads++; return configResult("retention", "B"); }};
+  await panel._navigate("usage-maintenance", "retention");
+  assert.equal(reads, 1, "another agent cannot use the first agent's snapshot");
+  assert.equal(panel._draftTitle, "B");
+}
+
+{
+  const panel = panelFor("usage-maintenance", "usage");
+  panel._rememberCleanConfiguration(configResult("full"));
+  panel._hass = {callWS: async () => { throw new Error("fresh Assistant must not fetch"); }};
+  await panel._navigate("assistant", "basics");
+  assert.equal(panel._draftAgentId, "agent-a");
+  assert.ok(panel.renderStates.every((busy) => !busy), "clean Assistant reuse never renders busy");
+  panel._draft.chat_model = "unsaved";
+  panel._setConfigDirty(true);
+  panel._confirm = async () => false;
+  await panel._navigate("overview");
+  assert.equal(panel._viewKey(), "assistant/basics", "cancelled unsaved navigation stays on Assistant");
+  assert.equal(panel._draft.chat_model, "unsaved");
+}
+
+{
+  const panel = panelFor("usage-maintenance", "retention");
+  panel._rememberCleanConfiguration(configResult("retention"));
+  await panel._loadConfigDraft();
+  panel._draft.usage_request_retention_days = 7;
+  panel._setConfigDirty(true);
+  panel._confirm = async () => false;
+  await panel._navigate("assistant", "basics");
+  assert.equal(panel._viewKey(), "usage-maintenance/retention",
+    "an unsaved Retention draft cannot be replaced by an Assistant projection");
+  assert.equal(panel._draft.usage_request_retention_days, 7);
+}
+
+{
+  const panel = panelFor("assistant", "basics");
+  panel._rememberCleanConfiguration(configResult("full"));
+  await panel._loadConfigDraft();
+  panel._draft.chat_model = "unsaved";
+  panel._setConfigDirty(true);
+  panel._invalidateAfterMutation("agent-a", "tools", "save");
+  panel._hass = {callWS: async () => { throw new Error("dirty draft must remain owned"); }};
+  await panel._loadSection();
+  assert.equal(panel._draft.chat_model, "unsaved", "mutation invalidation keeps an unsaved active draft");
 }
 
 {
