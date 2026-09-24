@@ -9,13 +9,10 @@ export function renderRestoreTransferDialog(panel) {
 
 async function activateTransfer(panel) {
   const agentId = panel._agentId;
-  const [transfer, configuration] = await Promise.all([
-    import("./backup-transfer-ui.js"),
-    import("./agent-config-editor.js"),
-  ]);
+  const transfer = await import("./backup-transfer-ui.js");
   if (panel._viewKey() !== "usage-maintenance/backup-restore" || panel._agentId !== agentId) return false;
   panel._backupTransferModule = transfer;
-  panel._backupSummaryLines = configuration.backupSummaryLines;
+  panel._backupSummaryLines = transfer.backupSummaryLines;
   const markup = panel._dialogs();
   updateDialogs(panel, markup);
   panel._eocDialogMarkup = markup;

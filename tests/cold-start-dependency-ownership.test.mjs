@@ -33,3 +33,16 @@ for (const name of lazyFeatures) {
 for (const dependency of manifest[entry].dynamicImports || []) {
   assert.ok(manifest[dependency]?.isDynamicEntry, `dynamic management dependency ${dependency} must resolve`);
 }
+
+const sourceFor = (name) => Object.keys(manifest).find((source) => source.endsWith(`/frontend/${name}.js`));
+const backupRoute = sourceFor("backup-route-ui");
+const backupTransfer = sourceFor("backup-transfer-ui");
+const genericEditor = sourceFor("agent-config-editor");
+const genericEditorBase = Object.keys(manifest).find((source) => manifest[source].name === "agent-config-editor-base");
+assert.ok(backupRoute && backupTransfer && genericEditor && genericEditorBase);
+assert.ok(!coldGraph.has(backupRoute), "Backup route must remain lazy");
+assert.ok(manifest[backupRoute].dynamicImports?.includes(backupTransfer), "transfer controls must remain action loaded");
+assert.ok(!manifest[backupRoute].dynamicImports?.includes(genericEditor), "Backup activation must not load the generic editor");
+const backupActionGraph = staticDependencies(backupTransfer);
+assert.ok(!backupActionGraph.has(genericEditor));
+assert.ok(!backupActionGraph.has(genericEditorBase));
