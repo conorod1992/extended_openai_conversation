@@ -25,6 +25,11 @@ function providerRuntimeCheck(facts, fallback = {}) {
 
 function functionToolsCheck(facts) {
   const tools = facts.function_tools || {};
+  if (tools.unavailable === true) return {
+    id: "function_tools", state: "unknown", title: "Function Tools",
+    value: "Unable to determine", detail: "Overview could not check the selected assistant's Function Tools.",
+    action: action("capabilities", "functions"),
+  };
   if (tools.loading === true) return {
     id: "function_tools", state: "unknown", title: "Function Tools",
     value: "Loading…", detail: "Checking the selected assistant's Function Tools.",

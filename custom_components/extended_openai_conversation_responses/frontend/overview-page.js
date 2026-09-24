@@ -199,6 +199,11 @@ export function startOverviewDetailReads(panel, {loadToken, cacheGeneration} = {
         next.setup_health = mergeSetupHealthFacts(next.setup_health, {
           [kind]: {available: false, loading: false},
         });
+      } else if (kind === "setup_health") {
+        next.setup_health = mergeSetupHealthFacts(next.setup_health, {
+          function_tools: {unavailable: true, loading: false},
+          exposed_entity_count_loading: false,
+        });
       }
     }
 
