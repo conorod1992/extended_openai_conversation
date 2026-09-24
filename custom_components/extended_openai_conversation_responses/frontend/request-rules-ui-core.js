@@ -13,7 +13,7 @@ export function requestRuleSummary(rule = {}, defaults = {}) {
   const phraseLabel = `${phrases.length} trigger phrase${phrases.length === 1 ? "" : "s"}`;
   let matching;
   if (rule.match_type === "sentence_pattern") {
-    matching = `${phraseLabel} · ${match} · Hassil grammar`;
+    matching = `${phraseLabel} · ${match} · ExtendedOpenAI sentence pattern`;
   } else {
     const source = rule.matching_behavior === "defaults" ? "Default matching" : "Custom matching";
     const settings = rule.matching_behavior === "defaults" ? defaults : (rule.matching || {});
