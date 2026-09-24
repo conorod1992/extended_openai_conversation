@@ -1,5 +1,5 @@
 import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
-import {featureStatusMarkup, selectedFeatureStatus} from "./management-feature-status.js";
+import {embeddedFeatureStatusMarkup, selectedFeatureStatus} from "./management-feature-status.js";
 import {formatManagementTimestamp, browserState, memoryCollectionIdentity} from "./management-data-state.js";
 export {prepareMemoryBrowser} from "./management-data-state.js";
 export {formatManagementTimestamp} from "./management-data-state.js";
@@ -177,11 +177,22 @@ export async function finishMemoryBrowserLoad(panel) {
   }
 }
 
-const memoryStatusMarkup = panel => featureStatusMarkup(panel, "Persistent memory", selectedFeatureStatus(panel, "memory"), {page: "data-memory", subsection: "memory-settings", label: "Configure memory"});
+const memoryStatusMarkup = panel => {
+  const current = selectedFeatureStatus(panel, "memory");
+  const mode = String(current?.mode || panel._selectedAgent?.()?.memory_mode || "").toLowerCase();
+  const status = {
+    state: current?.state || (mode === "off" ? "disabled" : mode ? "enabled" : "unknown"),
+    label: current?.label || ({automatic:"Automatic", manual:"Manual", off:"Off"}[mode] || "View settings"),
+    detail: current?.enabled === false || mode === "off"
+      ? "Stored memories remain available to manage, but this assistant cannot use them."
+      : "The assistant can use long-term memories when the request scope permits it.",
+  };
+  return embeddedFeatureStatusMarkup(panel, "Long-term memory", status, {page:"data-memory", subsection:"memory-settings", label:"Configure"});
+};
 
 export function renderPersistentMemories(panel) {
   const items = [...collectionState(panel).items.values()];
-  return `<div data-memory-feature-status>${memoryStatusMarkup(panel)}</div><section class="content-card" data-persistent-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}"><div class="section-heading"><div><h2>Memories</h2><p>Long-term facts the assistant can reuse in future conversations. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><button type="button" id="add-memory">+ Add memory</button></div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" disabled>Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary">Short-term</button></div><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map(memory => memoryCard(panel, memory)).join("")}<div data-memory-empty>${panel._empty(panel._query.trim() ? "No memories match this search." : "No long-term memories yet.")}</div></div><div class="section-actions" data-memory-pagination ${panel._result?.has_more ? "" : "hidden"}><button type="button" class="secondary" id="load-more-memories">Load more ${browserState(panel).memoryQuery ? "matches" : "memories"}</button></div></section>`;
+  return `<section class="content-card" data-persistent-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}"><div class="section-heading"><div><h2>Memories</h2><p>Long-term facts the assistant can reuse in future conversations. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><button type="button" id="add-memory">+ Add memory</button></div><div data-memory-feature-status>${memoryStatusMarkup(panel)}</div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" disabled>Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary">Short-term</button></div><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map(memory => memoryCard(panel, memory)).join("")}<div data-memory-empty>${panel._empty(panel._query.trim() ? "No memories match this search." : "No long-term memories yet.")}</div></div><div class="section-actions" data-memory-pagination ${panel._result?.has_more ? "" : "hidden"}><button type="button" class="secondary" id="load-more-memories">Load more ${browserState(panel).memoryQuery ? "matches" : "memories"}</button></div></section>`;
 }
 
 function applyMemoryFilter(panel) {

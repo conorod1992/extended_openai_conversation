@@ -26,7 +26,9 @@ const panel = {
 const html = renderRequestRules(panel);
 assert.match(html, /local commands that skip the AI call/);
 assert.doesNotMatch(html, /class="notice on"/);
-assert.match(html, /<summary>How routing rules work<\/summary>/);
+assert.match(html, /<summary>Learn how routing works<\/summary>/);
+assert.ok(html.indexOf('class="rule-list"') < html.indexOf('class="content-card rule-settings"'));
+assert.ok(html.indexOf('class="content-card rule-settings"') < html.indexOf('class="content-card rule-test-tools"'));
 assert.match(html, /treat the matched phrase as a routing command by default/);
 assert.match(html, /routing hints inside a normal request/);
 assert.match(html, /Reset for this request only/);

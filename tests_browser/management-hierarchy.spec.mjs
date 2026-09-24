@@ -39,6 +39,22 @@ test("guide links belong to section introductions and open the matching topic", 
   await expectHarnessClean(page, errors);
 });
 
+test("Memory and Knowledge keep status inside their owning cards", async ({page}) => {
+  const errors = trackPageErrors(page);
+  const panel = page.locator("extended-openai-management-panel");
+  await page.goto(fixtureUrl("data-memory/memories"));
+  await expect(panel.locator("[data-persistent-memories] [data-memory-feature-status]")).toBeVisible();
+  await expect(panel.locator(".feature-status-card")).toHaveCount(0);
+  await panel.locator('.memory-kind[data-kind="temporary"]').click();
+  await expect(panel.locator("[data-temporary-memories] .embedded-feature-status")).toBeVisible();
+  await expect(panel.locator(".feature-status-card")).toHaveCount(0);
+  await page.goto(fixtureUrl("data-memory/knowledge"));
+  await expect(panel.locator("[data-knowledge-collection] #knowledge-status")).toBeVisible();
+  await expect(panel.locator("[data-knowledge-collection] #knowledge-enabled-toggle")).toHaveCount(1);
+  await expect(panel.locator(".feature-status-card")).toHaveCount(0);
+  await expectHarnessClean(page, errors);
+});
+
 test("Request Rules keeps one create path when empty and the in-place toolbar when populated", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
@@ -46,6 +62,12 @@ test("Request Rules keeps one create path when empty and the in-place toolbar wh
   await expect(panel.locator("#rule-search")).toBeVisible();
   await expect(panel.locator(".rule-toolbar .count")).toHaveText("1 rule");
   await expect(panel.locator("#rule-add")).toBeVisible();
+  const order = await panel.locator(".page-intro,.rule-toolbar,.rule-list,.rule-settings,.rule-test-tools").evaluateAll(
+    (nodes) => nodes.map((node) => [...node.classList].find((name) => ["page-intro", "rule-toolbar", "rule-list", "rule-settings", "rule-test-tools"].includes(name))),
+  );
+  expect(order).toEqual(["page-intro", "rule-toolbar", "rule-list", "rule-settings", "rule-test-tools"]);
+  await expect(panel.locator(".page-intro .rule-routing-help")).toBeVisible();
+  await expect(panel.locator(".rule-settings").getByRole("heading", {name:"Matching settings"})).toBeVisible();
   await panel.locator("#rule-search").fill("no match");
   await expect(panel.locator("[data-eoc-rule-search-empty]")).toBeVisible();
   await expect(panel.locator("#rule-search")).toBeFocused();

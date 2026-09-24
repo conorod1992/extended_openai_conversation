@@ -108,6 +108,7 @@ const CRITICAL_STYLE = `
   main{display:grid;gap:30px}
   .page-intro{display:grid;gap:7px;max-width:780px}
   .page-intro h1,.page-intro p{margin:0}
+  .page-intro h1{font-size:24px;font-weight:600;line-height:1.25}
   .page-intro p{color:var(--secondary-text-color);line-height:1.5}
   .dashboard-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
   .dashboard-card{display:flex;justify-content:space-between;align-items:end;gap:18px;padding:22px;background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:13px}
@@ -1532,7 +1533,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "usage-maintenance/request-debug") return getRouteFeature(view)?.renderManagementDebug(this) || this._loading();
     if (view === "capabilities/guest-mode") return this._guestMode();
     if (view === "data-memory/memories") return this._memories();
-    if (view === "data-memory/knowledge") return `<section class="page-intro"><h1>Knowledge Library</h1><p>Manage reference sources the assistant can search when needed. <button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn more</button></p></section>${getRouteFeature(view)?.knowledgeAvailabilityMarkup(this) || ""}${this._knowledge()}`;
+    if (view === "data-memory/knowledge") return `<section class="page-intro"><h1>Knowledge Library</h1><p>Manage reference sources the assistant can search when needed. <button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn more</button></p></section>${this._knowledge()}`;
     if (view === "data-memory/conversations") {
       this._configSections = ["archive"];
       return `${this._conversations()}<div data-eoc-history-config>${this._historySettingsMarkup()}</div>`;

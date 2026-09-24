@@ -11,9 +11,12 @@ const panel = {
   _configSections:["general","conversation"],
 };
 const config = renderConfiguration(panel);
-assert.match(config, /Recommended default: Automatic \(Auto\)/);
+assert.match(config, /<h2 class="eyebrow">General<\/h2>/);
+assert.doesNotMatch(config, /<section class="page-intro"><h1>General<\/h1>/);
+assert.match(config, /Auto is recommended unless your provider requires a specific API/);
+assert.doesNotMatch(config, /Recommended default: Automatic \(Auto\)/);
 assert.doesNotMatch(config, /eoc-decision-badge default[^>]*>Default: Automatic/);
-assert.match(config, /Default: Use Home Assistant sessions/);
+assert.match(config, /Uses Home Assistant sessions/);
 assert.doesNotMatch(config, /Default: Ha Default/);
 const memory = renderMemorySettings(panel);
 assert.match(memory, /Relevance matching/);
