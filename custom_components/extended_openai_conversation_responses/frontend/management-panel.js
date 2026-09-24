@@ -2263,4 +2263,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
 }
 
-customElements.define("extended-openai-management-panel", ExtendedOpenAIManagementPanel);
+if (!customElements.get("extended-openai-management-panel")) {
+  customElements.define("extended-openai-management-panel", ExtendedOpenAIManagementPanel);
+}

@@ -333,4 +333,6 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 }
 
-customElements.define("extended-openai-debug-panel", ExtendedOpenAIDebugPanel);
+if (!customElements.get("extended-openai-debug-panel")) {
+  customElements.define("extended-openai-debug-panel", ExtendedOpenAIDebugPanel);
+}
