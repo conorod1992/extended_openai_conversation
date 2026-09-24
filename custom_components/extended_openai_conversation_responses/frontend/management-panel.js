@@ -12,7 +12,7 @@ import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} from "./management-dialogs.js";
 import {renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, isAgentMutation, syncAgentPicker} from "./management-actions.js";
-import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead} from "./management-route.js";
+import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath} from "./frontend-navigation.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
@@ -1249,19 +1249,52 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _loadConfigDraft() {
+    const diagnostics = this._eocConfigurationReadDiagnostics ||= {};
     if (!this._configData || (this._configDataStale && !this._configDirty) || this._draftAgentId !== this._agentId
         || (this._configData.projection === "retention" && this._viewKey() !== "usage-maintenance/retention")) {
       const agentId = this._agentId;
       const loadToken = this._loadToken;
       const cacheGeneration = this._cacheGeneration;
+      const view = this._viewKey();
       const projection = this._viewKey() === "usage-maintenance/retention" ? "retention" : "full";
+      const action = projection === "retention" ? "retention_get" : "get";
       const key = this._configurationSnapshotKey(agentId, projection);
       const cached = this._freshCleanConfiguration(agentId, projection);
-      const configData = cached ? cached
-        : projection === "retention"
-          ? await consumeIntentRead(this, this._viewKey(), "configuration", "retention_get")
-          : await this._call("configuration", "get");
-      if (agentId !== this._agentId || loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration) return;
+      let configData = cached;
+      if (cached) {
+        discardStoredConfigurationPrefetch(this, "clean-snapshot");
+        diagnostics.draft = {source: "clean-snapshot", action, sentAction: null};
+      } else {
+        const prefetched = consumeStoredConfigurationPrefetch(this, action);
+        if (prefetched) {
+          const settled = await prefetched;
+          const staleReason = agentId !== this._agentId ? "agent-changed"
+            : view !== this._viewKey() ? "route-changed"
+              : cacheGeneration !== this._cacheGeneration ? "cache-generation-changed"
+                : loadToken !== this._loadToken ? "load-token-changed" : null;
+          if (staleReason) {
+            diagnostics.prefetch.status = "discarded";
+            diagnostics.prefetch.reason = staleReason;
+            diagnostics.prefetch.discardedAt = Date.now();
+            return;
+          }
+          if (settled.status === "fulfilled" && settled.value?.config && typeof settled.value.config === "object") {
+            configData = settled.value;
+            diagnostics.draft = {source: "prefetched-request", action, sentAction: null};
+          } else {
+            diagnostics.prefetch.status = "discarded";
+            diagnostics.prefetch.reason = settled.status === "rejected" ? "request-failed" : "invalid-response";
+            diagnostics.prefetch.discardedAt = Date.now();
+          }
+        }
+        if (!configData) {
+          diagnostics.draft = {source: "new-backend-request", action, sentAction: action};
+          configData = projection === "retention"
+            ? await consumeIntentRead(this, view, "configuration", "retention_get")
+            : await this._call("configuration", "get");
+        }
+      }
+      if (agentId !== this._agentId || loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration || view !== this._viewKey()) return;
       const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
       if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);
       this._configData = configData;
@@ -1271,6 +1304,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._draftTitle = configData.title;
       this._draftAgentId = agentId;
       this._setConfigDirty(false);
+    } else {
+      diagnostics.draft = {source: "active-config", action: this._viewKey() === "usage-maintenance/retention" ? "retention_get" : "get", sentAction: null};
     }
     this._result = this._configData;
   }

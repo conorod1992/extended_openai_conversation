@@ -42,6 +42,8 @@ const {
   routeFeaturesReady,
   prefetchIntentRead,
   consumeIntentRead,
+  startStoredConfigurationPrefetch,
+  consumeStoredConfigurationPrefetch,
 } = await import("../custom_components/extended_openai_conversation_responses/frontend/management-route.js");
 await routeAssetPromise("assistant/basics");
 
@@ -124,6 +126,67 @@ function panelFor(page = "assistant", subsection = "basics") {
 const configResult = (projection, title = "A") => ({
   projection, title, revision:`${title}-r1`, config:{usage_request_retention_days:30, chat_model:"gpt-4o"},
 });
+
+{
+  const panel = panelFor("assistant", "basics");
+  localStorage.setItem(AGENT_KEY, "agent-a");
+  localStorage.setItem(ENTRY_KEY, "entry-a");
+  const calls = [];
+  panel._hass = {callWS: async (message) => { calls.push(message); return configResult("full"); }};
+  panel._call = () => { throw new Error("valid prefetch must suppress a second configuration/get"); };
+  startStoredConfigurationPrefetch(panel, "agent-a");
+  await panel._loadConfigDraft();
+  assert.equal(calls.length, 1);
+  assert.deepEqual([calls[0].section, calls[0].action], ["configuration", "get"]);
+  assert.equal(panel._eocConfigurationReadDiagnostics.prefetch.status, "consumed");
+  assert.deepEqual(
+    [panel._eocConfigurationReadDiagnostics.prefetch.entryId,
+      panel._eocConfigurationReadDiagnostics.prefetch.subentryId,
+      panel._eocConfigurationReadDiagnostics.prefetch.view],
+    ["entry-a", "agent-a", "assistant/basics"],
+  );
+  assert.equal(typeof panel._eocConfigurationReadDiagnostics.prefetch.startedAt, "number");
+  assert.equal(panel._eocConfigurationReadDiagnostics.draft.source, "prefetched-request");
+  await panel._loadConfigDraft();
+  assert.equal(panel._eocConfigurationReadDiagnostics.draft.source, "active-config");
+  assert.equal(calls.length, 1);
+}
+
+{
+  const panel = panelFor("assistant", "basics");
+  panel._rememberCleanConfiguration(configResult("full"));
+  panel._hass = {callWS: () => { throw new Error("clean snapshot suppresses prefetch"); }};
+  panel._call = () => { throw new Error("clean snapshot suppresses backend read"); };
+  assert.equal(startStoredConfigurationPrefetch(panel, "agent-a"), null);
+  await panel._loadConfigDraft();
+  assert.equal(panel._eocConfigurationReadDiagnostics.prefetch.reason, "clean-snapshot");
+  assert.equal(panel._eocConfigurationReadDiagnostics.draft.source, "clean-snapshot");
+}
+
+{
+  const panel = panelFor("assistant", "basics");
+  const calls = [];
+  panel._hass = {callWS: async (message) => { calls.push(message); throw new Error("prefetch failed"); }};
+  panel._call = async (section, action) => {
+    calls.push({section, action});
+    return configResult("full", "Fallback");
+  };
+  startStoredConfigurationPrefetch(panel, "agent-a");
+  await panel._loadConfigDraft();
+  assert.deepEqual(calls.map((item) => item.action), ["get", "get"]);
+  assert.equal(panel._draftTitle, "Fallback");
+  assert.equal(panel._eocConfigurationReadDiagnostics.prefetch.reason, "request-failed");
+  assert.equal(panel._eocConfigurationReadDiagnostics.draft.source, "new-backend-request");
+}
+
+{
+  const panel = panelFor("assistant", "basics");
+  panel._hass = {callWS: async () => configResult("full")};
+  startStoredConfigurationPrefetch(panel, "agent-a");
+  panel._cacheGeneration++;
+  assert.equal(consumeStoredConfigurationPrefetch(panel, "get"), null);
+  assert.equal(panel._eocConfigurationReadDiagnostics.prefetch.reason, "cache-generation-changed");
+}
 
 {
   const panel = panelFor("usage-maintenance", "usage");

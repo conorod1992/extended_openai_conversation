@@ -154,6 +154,11 @@ assert.equal(assistantPanel._configData.config.chat_model, "gpt-test");
 assert.equal(assistantPanel._draft.chat_model, "gpt-test");
 assert.equal(assistantPanel._draftAgentId, "agent-a");
 assert.equal(assistantPanel.sectionLoads, 1);
+assert.deepEqual(
+  [assistantPanel._eocConfigurationReadDiagnostics.prefetch.action,
+    assistantPanel._eocConfigurationReadDiagnostics.prefetch.status],
+  ["get", "consumed"],
+);
 
 // A Memory Settings deep link begins the same full configuration read before
 // the catalogue settles, then reuses that authoritative selected-agent result.
@@ -223,6 +228,7 @@ await retentionLoad;
 assert.equal(retentionPanel._configData.projection, "retention");
 assert.equal(retentionPanel._draft.usage_request_retention_days, 30);
 assert.equal(retentionPanel.sectionLoads, 1);
+assert.equal(retentionPanel._eocConfigurationReadDiagnostics.prefetch.action, "retention_get");
 
 let resolveStaleAgents;
 let resolveStaleConfig;
@@ -251,3 +257,87 @@ await staleLoad;
 assert.equal(stalePanel._configData, null, "stale stored Assistant config must not be applied");
 assert.equal(stalePanel._agentId, "agent-b");
 assert.equal(stalePanel.sectionLoads, 1);
+assert.equal(stalePanel._eocConfigurationReadDiagnostics.prefetch.reason, "stored-agent-mismatch");
+
+// History starts its list while a matching stored configuration request is
+// still in flight, then the settings loader consumes that request once.
+assistantStorage.set(module.AGENT_KEY, "agent-a");
+assistantStorage.set(module.ENTRY_KEY, "entry-a");
+globalThis.localStorage = {
+  getItem(key) { return assistantStorage.get(key) || null; },
+  setItem(key, value) { assistantStorage.set(key, value); },
+};
+let finishHistoryConfig;
+const historyCalls = [];
+const historyPanel = {
+  ...assistantPanel,
+  _viewKey: () => "data-memory/conversations",
+  _data: null, _agentId: null, _configData: null, _draftAgentId: null,
+  _eocConfigurationReadDiagnostics: undefined,
+  _eocStoredConfigPrefetch: null,
+  sectionLoads: 0,
+  _hass: {callWS(payload) {
+    historyCalls.push(payload);
+    if (payload.action === "agents") return Promise.resolve({agents:[selectedAgent], is_admin:true});
+    if (payload.section === "configuration" && payload.action === "get") {
+      return new Promise((resolve) => { finishHistoryConfig = resolve; });
+    }
+    throw new Error(`Unexpected History request ${JSON.stringify(payload)}`);
+  }},
+};
+await module.loadAgentsWithOverviewPrefetch(historyPanel);
+assert.equal(historyPanel.sectionLoads, 1, "History list starts before configuration resolves");
+assert.equal(historyCalls.filter((item) => item.section === "configuration").length, 1);
+const historyPrefetch = module.consumeStoredConfigurationPrefetch(historyPanel, "get");
+assert.ok(historyPrefetch);
+assert.equal(module.consumeStoredConfigurationPrefetch(historyPanel, "get"), null);
+finishHistoryConfig({title:"A", revision:"r1", config:{archive_enabled:true}});
+assert.equal((await historyPrefetch).status, "fulfilled");
+assert.deepEqual(
+  [historyPanel._eocConfigurationReadDiagnostics.prefetch.status,
+    historyPanel._eocConfigurationReadDiagnostics.prefetch.requestStatus],
+  ["consumed", "fulfilled"],
+);
+
+let currentBootstrapView = "assistant/model-responses";
+let finishRouteAgents;
+const routeChangedPanel = {
+  ...assistantPanel,
+  _viewKey: () => currentBootstrapView,
+  _data: null, _agentId: null, _configData: null, _draftAgentId: null,
+  _eocConfigurationReadDiagnostics: undefined,
+  _eocStoredConfigPrefetch: null,
+  _render() {},
+  _hass: {callWS(payload) {
+    if (payload.action === "agents") return new Promise((resolve) => { finishRouteAgents = resolve; });
+    if (payload.section === "configuration") return Promise.resolve({title:"A", config:{chat_model:"old"}});
+    throw new Error("Unexpected route-change request");
+  }},
+};
+const routeChangedLoad = module.loadAgentsWithOverviewPrefetch(routeChangedPanel);
+currentBootstrapView = "overview";
+finishRouteAgents({agents:[selectedAgent], is_admin:true});
+await routeChangedLoad;
+assert.equal(routeChangedPanel._eocConfigurationReadDiagnostics.prefetch.reason, "route-changed");
+
+let finishAgentChangeConfig;
+const agentChangedPanel = {
+  ...assistantPanel,
+  _data: null, _agentId: null, _configData: null, _draftAgentId: null,
+  _eocConfigurationReadDiagnostics: undefined,
+  _eocStoredConfigPrefetch: null,
+  _hass: {callWS(payload) {
+    if (payload.action === "agents") return Promise.resolve({agents:[selectedAgent,
+      {entry_id:"entry-b", subentry_id:"agent-b", title:"B"}], is_admin:true});
+    if (payload.section === "configuration") return new Promise((resolve) => { finishAgentChangeConfig = resolve; });
+    throw new Error("Unexpected agent-change request");
+  }},
+};
+const agentChangedLoad = module.loadAgentsWithOverviewPrefetch(agentChangedPanel);
+await Promise.resolve();
+await Promise.resolve();
+agentChangedPanel._agentId = "agent-b";
+finishAgentChangeConfig({title:"A", config:{chat_model:"stale"}});
+await agentChangedLoad;
+assert.equal(agentChangedPanel._configData, null);
+assert.equal(agentChangedPanel._eocConfigurationReadDiagnostics.prefetch.reason, "stored-agent-mismatch");

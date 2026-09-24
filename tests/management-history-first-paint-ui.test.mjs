@@ -72,3 +72,39 @@ assert.equal(list.innerHTML, "First conversation");
 panel._contentData.load_errors = [{key:"config", message:"Configuration unavailable"}];
 assert.match(panel._historySettingsMarkup(), /Archive settings unavailable: Configuration unavailable/);
 assert.match(renders.at(-1), /First conversation/);
+
+// The cold bootstrap request is reused by the real History settings loader;
+// the conversation list settles while that same request is still pending.
+globalThis.localStorage = {
+  getItem(key) { return key === route.AGENT_KEY ? "agent-a" : key === route.ENTRY_KEY ? "entry-a" : null; },
+  setItem() {},
+};
+const cold = new Panel();
+cold._page = "data-memory";
+cold._subsection = "conversations";
+cold._loadScopes = async () => {};
+let finishColdConfig;
+const coldCalls = [];
+cold._hass = {callWS(message) {
+  coldCalls.push(message);
+  if (message.action === "agents") return Promise.resolve(panel._data);
+  if (message.section === "configuration" && message.action === "get") {
+    return new Promise((resolve) => { finishColdConfig = resolve; });
+  }
+  throw new Error(`Unexpected cold request ${message.section}/${message.action}`);
+}};
+cold._call = async (section, action) => {
+  if (section === "conversations" && action === "list") return panel._contentData.sessions;
+  if (section === "conversations" && action === "active") return {active:[]};
+  throw new Error(`Duplicate or unexpected request ${section}/${action}`);
+};
+const coldRenders = [];
+cold._render = () => { if (!cold._busy) coldRenders.push(cold._content(cold._selectedAgent())); };
+cold._patchHistorySettings = () => true;
+await cold._loadAgents();
+assert.match(coldRenders.at(-1), /First conversation/);
+assert.equal(coldCalls.filter((call) => call.section === "configuration" && call.action === "get").length, 1);
+finishColdConfig({title:"A", revision:"r1", config:{archive_enabled:true}});
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(cold._eocConfigurationReadDiagnostics.draft.source, "prefetched-request");
+assert.equal(coldCalls.filter((call) => call.section === "configuration" && call.action === "get").length, 1);
