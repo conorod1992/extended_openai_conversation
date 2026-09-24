@@ -1,9 +1,9 @@
-import {prepareConfigurationSections, renderConfigurationShell, renderConfigurationActions as renderConfigurationActionsMarkup, backupSummaryLines as summaryLines} from "./agent-config-editor-base.js";
+import {prepareConfigurationSections, renderConfigurationShell, renderConfigurationActions as renderConfigurationActionsMarkup} from "./agent-config-editor-base.js";
+export {BACKUP_CREDENTIAL_WARNING, backupSummaryLines} from "./backup-summary.js";
 import {bindConfiguration as bindModelConfiguration} from "./agent-config-editor-model-v2.js";
 import {configurationSectionFamily, getRouteFeature} from "./management-route.js";
 export {configurationDialogs} from "./agent-config-editor-base.js";
 
-export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
 const CACHEABLE_CONFIG_SECTIONS = new Set(["capabilities", "archive", "voice", "speech", "context", "retention", "backup"]);
 const MAX_CONFIG_RENDER_CACHE_ENTRIES = 8;
 
@@ -63,8 +63,4 @@ export function renderConfigurationActions(panel, sections) {
 export function bindConfiguration(panel) {
   const result = bindModelConfiguration(panel);
   return result;
-}
-
-export function backupSummaryLines(summary) {
-  return [...summaryLines(summary), BACKUP_CREDENTIAL_WARNING];
 }
