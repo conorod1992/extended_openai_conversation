@@ -412,7 +412,7 @@ jobs:
           python -m pip install 'coverage>=7,<8'
           cp stable-shards/stable-test-a/.coverage .coverage.a
           cp stable-shards/stable-test-b/.coverage .coverage.b
-          coverage combine
+          coverage combine --rcfile=ci/stable_coverage_combine.ini
           coverage report -m
           coverage xml -o coverage.xml
 
