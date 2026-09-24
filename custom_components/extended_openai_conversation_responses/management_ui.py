@@ -832,13 +832,14 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     # merge_agent_config validated both fields before persistence. Decode the
     # normalized YAML for the editor without repeating schema validation.
     snapshot = _snapshot_normalized_configuration(persisted, validated=True)
+    revision = _agent_config_revision_from_snapshot(snapshot, saved_title)
     saved = {
         "title": saved_title,
         "config": snapshot,
-        "revision": _agent_config_revision_from_snapshot(snapshot, saved_title),
+        "revision": revision,
         "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
     }
-    seed_persisted_config_projection(entry, subentry, snapshot, saved["revision"])
+    seed_persisted_config_projection(entry, subentry, snapshot, revision)
     if refresh_local_handling:
         saved["local_handling"] = local_handling_snapshot(
             hass,
