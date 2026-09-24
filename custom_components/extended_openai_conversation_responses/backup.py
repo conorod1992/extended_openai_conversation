@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 import logging
@@ -25,6 +26,8 @@ from .agent_maintenance import (
     get_agent_maintenance_gate,
 )
 from .const import (
+    CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
@@ -112,6 +115,31 @@ def _safe_configuration(value: Any, *, schema: bool = False) -> Any:
     return redact_secrets(value, schema=schema)
 
 
+def export_configuration_snapshot(data: Any) -> dict[str, Any]:
+    """Snapshot persisted configuration without letting repairable Functions block export."""
+    raw = dict(data)
+    try:
+        return preserve_legacy_guest_policy(raw, agent_config_snapshot(raw))
+    except (HomeAssistantError, TypeError, ValueError):
+        # Export is a recovery boundary: if Function Tools are the only invalid
+        # persisted field, normalize a management-safe copy and then restore the
+        # exact raw Function Tool/Group fields into the exported snapshot.
+        from .management_function_repair import function_tools_issue, safe_function_configuration
+
+        _usable, issue = function_tools_issue(raw)
+        if issue is None:
+            raise
+        snapshot = preserve_legacy_guest_policy(
+            raw, agent_config_snapshot(safe_function_configuration(raw))
+        )
+        for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
+            if key in raw:
+                snapshot[key] = deepcopy(raw[key])
+            else:
+                snapshot.pop(key, None)
+        return snapshot
+
+
 def _backup_lock(hass: HomeAssistant, entry_id: str, subentry_id: str) -> asyncio.Lock:
     locks = cast(
         dict[tuple[str, str], asyncio.Lock], hass.data.setdefault(_BACKUP_LOCKS, {})
@@ -132,9 +160,7 @@ async def async_collect_backup_snapshot(
         guest_mode,
         request_rules,
     ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
-    config_snapshot = preserve_legacy_guest_policy(
-        dict(subentry.data), agent_config_snapshot(subentry.data)
-    )
+    config_snapshot = export_configuration_snapshot(subentry.data)
     return {
         "format": BACKUP_FORMAT,
         "version": BACKUP_VERSION,
