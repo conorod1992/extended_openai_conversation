@@ -1185,6 +1185,301 @@ async def test_configuration_save_normalizes_once(monkeypatch) -> None:
     assert fetched["config"] == result["config"]
 
 
+async def test_unrelated_save_reuses_valid_functions_and_seeds_fresh_snapshot(
+    monkeypatch,
+) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    from custom_components.extended_openai_conversation_responses import (
+        management_configuration_guidance as guidance,
+    )
+
+    monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1", "section": "configuration",
+    }
+    current = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    tools = Mock(wraps=agent_config.validate_function_tools)
+    groups = Mock(wraps=agent_config.validate_function_groups)
+    monkeypatch.setattr(agent_config, "validate_function_tools", tools)
+    monkeypatch.setattr(agent_config, "validate_function_groups", groups)
+    saved = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "action": "save", "revision": current["revision"],
+         "config": {"prompt": "New authoritative prompt"}},
+    )
+    fetched = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+
+    tools.assert_not_called()
+    groups.assert_not_called()
+    assert saved["_performance"]["function_tools_reused"] is True
+    assert saved["_performance"]["function_groups_reused"] is True
+    assert saved["_performance"]["model_capabilities_cache_hit"] is True
+    assert {"merge_validation_ms", "subentry_update_ms", "response_snapshot_ms",
+            "projection_seed_ms", "command_total_ms"} <= saved["_performance"].keys()
+    assert saved["revision"] == fetched["revision"]
+    assert saved["config"]["prompt"] == fetched["config"]["prompt"] == subentry.data["prompt"]
+    saved["config"]["functions"].clear()
+    assert fetched["config"]["functions"]
+    after_response_mutation = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    assert after_response_mutation["config"]["functions"]
+    assert subentry.data["functions"]
+
+
+async def test_unrelated_save_preserves_authoritative_valid_function_yaml(
+    monkeypatch,
+) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    tools, _groups = _unavailable_native_tools()
+    raw_valid = yaml.safe_dump(yaml.safe_load(tools)[:1], sort_keys=True)
+    subentry.data = {**subentry.data, "functions": raw_valid}
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    from custom_components.extended_openai_conversation_responses import (
+        management_configuration_guidance as guidance,
+    )
+
+    monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1", "section": "configuration",
+    }
+    await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    saved = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "action": "save", "config": {"prompt": "Unrelated"}},
+    )
+    assert saved["valid"] is True
+    assert subentry.data["functions"] == raw_valid
+    assert saved["config"]["functions"][0]["spec"]["name"] == "valid_phone_tool"
+
+
+async def test_unrelated_save_preserves_quarantine_without_reisolation(
+    monkeypatch,
+) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    raw_tools, raw_groups = _unavailable_native_tools()
+    subentry.data = {
+        **subentry.data, "functions": raw_tools, "function_groups": raw_groups,
+    }
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    function_repair._cached_isolated_function_tools.cache_clear()
+    from custom_components.extended_openai_conversation_responses import (
+        management_configuration_guidance as guidance,
+    )
+
+    monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
+    management_ui._configuration_defaults()
+    isolate = Mock(wraps=function_repair._isolate_function_tools_uncached)
+    monkeypatch.setattr(function_repair, "_isolate_function_tools_uncached", isolate)
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1", "section": "configuration",
+    }
+    current = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    assert isolate.call_count == 1
+    tools = Mock(wraps=agent_config.validate_function_tools)
+    groups = Mock(wraps=agent_config.validate_function_groups)
+    monkeypatch.setattr(agent_config, "validate_function_tools", tools)
+    monkeypatch.setattr(agent_config, "validate_function_groups", groups)
+    saved = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "action": "save", "revision": current["revision"],
+         "config": {"prompt": "Safe unrelated edit"}},
+    )
+    next_read = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    tools.assert_not_called()
+    groups.assert_not_called()
+    assert isolate.call_count == 1
+    assert subentry.data["functions"] == raw_tools
+    assert subentry.data["function_groups"] == raw_groups
+    assert saved["function_repair"]["invalid_count"] == 3
+    assert saved["function_repair"]["persisted_groups"] == raw_groups
+    assert saved["config"]["prompt"] == next_read["config"]["prompt"]
+    assert next_read["_performance"]["repair_state_cache_hit"] is True
+    assert next_read["revision"] == saved["revision"]
+    saved["function_repair"]["invalid_tools"].clear()
+    saved["config"]["functions"].clear()
+    assert next_read["function_repair"]["invalid_count"] == 3
+    assert len(next_read["config"]["functions"]) == 1
+    after_response_mutation = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    assert len(after_response_mutation["function_repair"]["invalid_tools"]) == 3
+    assert len(after_response_mutation["config"]["functions"]) == 1
+
+
+async def test_function_mutations_revalidate_only_changed_dependencies(
+    monkeypatch,
+) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    from custom_components.extended_openai_conversation_responses import (
+        management_configuration_guidance as guidance,
+    )
+
+    monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1", "section": "configuration",
+    }
+    await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    tools = Mock(wraps=agent_config.validate_function_tools)
+    groups = Mock(wraps=agent_config.validate_function_groups)
+    monkeypatch.setattr(agent_config, "validate_function_tools", tools)
+    monkeypatch.setattr(agent_config, "validate_function_groups", groups)
+    candidate = yaml.safe_load(subentry.data["functions"])
+    candidate[0]["spec"]["name"] = "renamed_tool"
+    tool_save = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "action": "save", "config": {
+            "functions": yaml.safe_dump(candidate, sort_keys=False),
+        }},
+    )
+    assert tool_save["valid"] is True
+    assert tool_save["_performance"]["function_tools_reused"] is False
+    assert tools.call_count == 1
+    assert groups.call_count == 1
+    tools.reset_mock()
+    groups.reset_mock()
+    group_save = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "action": "save", "config": {"function_groups": [{
+            "id": "renamed", "name": "Renamed", "description": "Renamed tools",
+            "loading_mode": "always", "functions": ["renamed_tool"],
+        }]}},
+    )
+    assert group_save["valid"] is True
+    assert group_save["_performance"]["function_tools_reused"] is True
+    assert group_save["_performance"]["function_groups_reused"] is False
+    tools.assert_not_called()
+    groups.assert_called_once()
+    fetched = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    assert fetched["revision"] == group_save["revision"]
+    assert fetched["config"]["function_groups"] == group_save["config"]["function_groups"]
+    assert fetched["config"]["function_groups"][0]["functions"] == ["renamed_tool"]
+
+
+async def test_save_model_metadata_reuses_only_unchanged_model(monkeypatch) -> None:
+    hass, _entry, _subentry = _hass_with_agent()
+    from custom_components.extended_openai_conversation_responses import (
+        management_configuration_guidance as guidance,
+    )
+
+    monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
+    management_ui._cached_model_capabilities.cache_clear()
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1", "section": "configuration",
+    }
+    await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    capabilities = Mock(wraps=management_ui.model_capabilities)
+    monkeypatch.setattr(management_ui, "model_capabilities", capabilities)
+    ordinary = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "action": "save", "config": {"prompt": "Changed"}},
+    )
+    capabilities.assert_not_called()
+    assert ordinary["_performance"]["model_capabilities_cache_hit"] is True
+    model = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "action": "save", "config": {"chat_model": "gpt-5"}},
+    )
+    capabilities.assert_called_once_with("gpt-5")
+    assert model["_performance"]["model_capabilities_cache_hit"] is False
+    expected = model["model_capabilities"]["supports_temperature"]
+    model["model_capabilities"]["supports_temperature"] = not expected
+    repeated = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "action": "save", "config": {"prompt": "Changed again"}},
+    )
+    assert repeated["model_capabilities"]["supports_temperature"] is expected
+    assert capabilities.call_count == 1
+
+
+async def test_cold_repairable_save_uses_one_quarantine_state(monkeypatch, caplog) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    raw_tools, raw_groups = _unavailable_native_tools()
+    subentry.data = {
+        **subentry.data, "functions": raw_tools, "function_groups": raw_groups,
+    }
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    function_repair._cached_isolated_function_tools.cache_clear()
+    from custom_components.extended_openai_conversation_responses import (
+        management_configuration_guidance as guidance,
+    )
+
+    monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
+    management_ui._configuration_defaults()
+    isolate = Mock(wraps=function_repair._isolate_function_tools_uncached)
+    monkeypatch.setattr(function_repair, "_isolate_function_tools_uncached", isolate)
+    strict = Mock(side_effect=AssertionError("repairable save must not validate raw tools"))
+    monkeypatch.setattr(agent_config, "validate_function_tools", strict)
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1", "section": "configuration",
+    }
+    saved = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "action": "save", "config": {"prompt": "Cold safe edit"}},
+    )
+    next_read = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    assert saved["valid"] is True
+    assert isolate.call_count == 1
+    strict.assert_not_called()
+    assert next_read["function_repair"]["invalid_count"] == 3
+    assert next_read["_performance"]["repair_state_cache_hit"] is True
+    assert subentry.data["functions"] == raw_tools
+    assert not [record for record in caplog.records if record.levelno >= 30]
+
+
+async def test_nonisolatable_functions_cannot_be_bypassed_on_save(monkeypatch) -> None:
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data = {**subentry.data, "functions": "not a list"}
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1", "section": "configuration",
+    }
+    current = await management_ui.async_management_command(
+        hass, "admin", True, {**message, "action": "get"}
+    )
+    assert current["function_repair"]["isolatable"] is False
+    attempted = await management_ui.async_management_command(
+        hass, "admin", True,
+        {**message, "action": "save", "revision": current["revision"],
+         "config": {"prompt": "must not persist"}},
+    )
+    assert attempted["valid"] is False
+    assert "functions" in attempted["errors"]
+    assert hass.config_entries.updates == 0
+
+
 async def test_retention_projection_reads_only_needed_fields(monkeypatch) -> None:
     hass, _entry, subentry = _hass_with_agent()
     monkeypatch.setattr(
