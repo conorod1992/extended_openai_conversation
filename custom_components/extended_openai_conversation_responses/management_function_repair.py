@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
+from time import perf_counter
 from typing import Any
 
 import yaml
@@ -354,12 +355,34 @@ def persisted_config_projection(
 
 def normalized_persisted_config_snapshot(
     projection: _PersistedProjection,
+    diagnostics: dict[str, Any] | None = None,
+    *,
+    default_snapshot: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Lazily normalize a full read and isolate the returned frontend data."""
+    started = perf_counter()
     hit = projection.snapshot is not None
+    reused_defaults = False
     if projection.snapshot is None:
-        projection.snapshot = agent_config_snapshot(dict(projection.data))
-    return deepcopy(projection.snapshot), hit
+        # An exact default persisted mapping has already passed the same
+        # normalization and Function Tool validation used to build defaults.
+        # Keep every non-default or malformed mapping on the strict path.
+        if (
+            default_snapshot is not None
+            and dict(projection.data) == agent_config_defaults()
+        ):
+            projection.snapshot = deepcopy(default_snapshot)
+            reused_defaults = True
+        else:
+            projection.snapshot = agent_config_snapshot(dict(projection.data))
+    if diagnostics is not None:
+        diagnostics["default_snapshot_reused"] = reused_defaults
+        diagnostics["snapshot_build_ms"] = round((perf_counter() - started) * 1000, 2)
+    started = perf_counter()
+    snapshot = deepcopy(projection.snapshot)
+    if diagnostics is not None:
+        diagnostics["snapshot_copy_ms"] = round((perf_counter() - started) * 1000, 2)
+    return snapshot, hit
 
 
 def seed_persisted_config_projection(

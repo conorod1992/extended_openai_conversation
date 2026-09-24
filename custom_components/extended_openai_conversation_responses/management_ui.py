@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
 import json
+import logging
 from time import perf_counter
 from types import MappingProxyType
 from typing import Any, Final
@@ -150,6 +151,8 @@ from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .secret_redaction import redact_secrets, restore_redacted_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
+
+_PERFORMANCE_LOGGER = logging.getLogger(f"{__name__}.performance")
 
 WS_COMMAND = f"{DOMAIN}/management"
 _UI_SETUP = f"{DOMAIN}.management_ui_setup"
@@ -899,20 +902,39 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         projection = persisted_config_projection(subentry, projection_diagnostics)
         projection_ms = _elapsed_ms(phase)
         phase = perf_counter()
+        defaults_cache_hit = _cached_configuration_defaults.cache_info().currsize > 0
+        defaults = _configuration_defaults()
+        defaults_ms = _elapsed_ms(phase)
+        phase = perf_counter()
         try:
+            snapshot_diagnostics: dict[str, Any] = {}
             config, snapshot_cache_hit = normalized_persisted_config_snapshot(
-                projection
+                projection, snapshot_diagnostics, default_snapshot=defaults
             )
         except AgentConfigError:
             # Retain the normal cached fast path for valid tools. A malformed
             # Function Tool snapshot can still be served through quarantine,
             # including on cold reads before the catalogue is available.
+            snapshot_attempt_ms = _elapsed_ms(phase)
+            repair_started = perf_counter()
             _tools, issue = function_tools_issue(dict(subentry.data))
             if issue is None:
                 raise
             from .management_function_repair import safe_configuration_payload
 
-            return safe_configuration_payload(hass, entry, subentry)
+            issue_check_ms = _elapsed_ms(repair_started)
+            repair_started = perf_counter()
+            safe = safe_configuration_payload(hass, entry, subentry)
+            safe["_performance"] = {
+                **projection_diagnostics,
+                "projection_ms": projection_ms,
+                "defaults_snapshot_ms": defaults_ms,
+                "snapshot_attempt_ms": snapshot_attempt_ms,
+                "function_issue_check_ms": issue_check_ms,
+                "repair_projection_ms": _elapsed_ms(repair_started),
+                "total_ms": _elapsed_ms(started),
+            }
+            return safe
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
@@ -920,10 +942,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         revision_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
-        defaults = _configuration_defaults()
-        defaults_ms = _elapsed_ms(phase)
-
-        phase = perf_counter()
+        options_cache_hit = _cached_configuration_options.cache_info().currsize > 0
         options = _configuration_options()
         options_ms = _elapsed_ms(phase)
 
@@ -931,18 +950,21 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         capabilities = model_capabilities(config[CONF_CHAT_MODEL])
         model_capabilities_ms = _elapsed_ms(phase)
 
+        assembly_started = perf_counter()
         timings = {
             **projection_diagnostics,
             "projection_ms": projection_ms,
             "snapshot_cache_hit": snapshot_cache_hit,
+            **snapshot_diagnostics,
             "config_snapshot_ms": config_ms,
             "revision_ms": revision_ms,
             "defaults_snapshot_ms": defaults_ms,
+            "defaults_cache_hit": defaults_cache_hit,
             "options_ms": options_ms,
+            "options_cache_hit": options_cache_hit,
             "model_capabilities_ms": model_capabilities_ms,
-            "total_ms": _elapsed_ms(started),
         }
-        return {
+        result = {
             "title": subentry.title,
             "revision": revision,
             "config": config,
@@ -952,6 +974,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "function_types": sorted(FUNCTIONS),
             "_performance": timings,
         }
+        timings["response_assembly_ms"] = _elapsed_ms(assembly_started)
+        timings["total_ms"] = _elapsed_ms(started)
+        return result
     if action == "live_metadata":
         requested = message.get("metadata_keys", [])
         if not isinstance(requested, list) or any(
@@ -2132,8 +2157,17 @@ async def async_management_command(
     authorization precedes agent lookup; section-specific authorization stays with
     its handler. No setup/feature installer replaces this function.
     """
+    trace_get = (
+        message.get("section") == "configuration" and message.get("action") == "get"
+    )
+    started = perf_counter() if trace_get else None
     async with management_command_lease(hass, message):
-        return await _async_management_request(hass, user_id, is_admin, message)
+        lease_ms = _elapsed_ms(started) if started is not None else None
+        result = await _async_management_request(hass, user_id, is_admin, message)
+    if started is not None and isinstance(result.get("_performance"), dict):
+        result["_performance"]["maintenance_lease_ms"] = lease_ms
+        result["_performance"]["command_total_ms"] = _elapsed_ms(started)
+    return result
 
 
 async def _async_management_request(
@@ -2143,6 +2177,7 @@ async def _async_management_request(
     message: dict[str, Any],
 ) -> dict[str, Any]:
     """Validate, select one agent, route, then apply the shared result contract."""
+    dispatch_started = perf_counter()
     section = message.get("section", "overview")
     action = message.get("action")
     if not isinstance(section, str) or not isinstance(action, str):
@@ -2169,7 +2204,9 @@ async def _async_management_request(
                 raise HomeAssistantError(f"{key} is required")
     if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
         raise HomeAssistantError("entry_id and subentry_id are required")
+    resolution_started = perf_counter()
     entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
+    resolution_ms = _elapsed_ms(resolution_started)
     request = _ManagementRequest(
         hass, user_id, is_admin, message, entry_id, subentry_id, entry, subentry
     )
@@ -2192,8 +2229,14 @@ async def _async_management_request(
 
     configuration_action = _configuration_action(message)
     configuration_started = perf_counter() if configuration_action is not None else None
+    dispatch_ms = _elapsed_ms(dispatch_started)
     with management_function_tools(section):
         result = await handler(request)
+    handler_ms = (
+        _elapsed_ms(configuration_started)
+        if configuration_started is not None
+        else None
+    )
 
     if configuration_action is not None:
         decoration_started = perf_counter()
@@ -2210,6 +2253,10 @@ async def _async_management_request(
         if isinstance(performance, dict):
             performance["decoration_ms"] = decoration_ms
             performance["request_total_ms"] = request_total_ms
+            if section == "configuration" and action == "get":
+                performance["dispatch_ms"] = dispatch_ms
+                performance["agent_resolution_ms"] = resolution_ms
+                performance["handler_ms"] = handler_ms
     return result
 
 
@@ -2296,6 +2343,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
 async def websocket_management(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
+    started = perf_counter()
     try:
         result = await async_management_command(
             hass, connection.user.id, connection.user.is_admin, msg
@@ -2303,7 +2351,21 @@ async def websocket_management(
     except (HomeAssistantError, RuntimeError, ValueError) as err:
         connection.send_error(msg["id"], "invalid_request", str(err))
         return
+    trace_get = msg.get("section") == "configuration" and msg.get("action") == "get"
+    if trace_get:
+        performance = result.get("_performance")
+        if isinstance(performance, dict):
+            performance["websocket_pre_send_ms"] = _elapsed_ms(started)
+    send_started = perf_counter() if trace_get else None
     connection.send_result(msg["id"], result)
+    # Home Assistant serializes inside send_result. Its duration cannot be
+    # inserted into a payload that has already been serialized.
+    if send_started is not None and _PERFORMANCE_LOGGER.isEnabledFor(logging.DEBUG):
+        _PERFORMANCE_LOGGER.debug(
+            "configuration/get send_result_ms=%.2f websocket_total_ms=%.2f",
+            _elapsed_ms(send_started),
+            _elapsed_ms(started),
+        )
 
 
 async def async_setup_management_ui(hass: HomeAssistant) -> None:
