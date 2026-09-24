@@ -184,7 +184,7 @@ async def _crash_phase(config_dir: Path) -> None:
     from homeassistant import bootstrap, runner
 
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
     )
     assert hass is not None
 
@@ -237,7 +237,7 @@ async def _recovery_phase(config_dir: Path) -> None:
     from homeassistant.config_entries import ConfigEntryState
 
     hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
+        runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=True)
     )
     assert hass is not None
 

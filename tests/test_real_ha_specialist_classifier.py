@@ -1,6 +1,6 @@
 """Check the conservative process-restart CI classification contract."""
 
-from ci.classify_real_ha_specialists import ALL, classify
+from ci.classify_real_ha_specialists import ALL, classify, matrix_shards
 
 
 def test_specialist_path_classification() -> None:
@@ -25,3 +25,16 @@ def test_specialist_path_classification() -> None:
     assert classify([component + "usage.py", component + "new_runtime.py"], pull_request=True) == ALL
     assert classify([], pull_request=True) == ALL
     assert classify(["frontend/src/panel.ts"], pull_request=False) == ALL
+
+
+def test_logical_specialists_expand_to_every_parallel_case() -> None:
+    assert matrix_shards(frozenset()) == ["parallel-safe", "stateful-serial"]
+    assert matrix_shards(frozenset("a"))[-1:] == ["process-restart-a"]
+    assert matrix_shards(frozenset("b"))[-2:] == [
+        "process-restart-b-active-request", "process-restart-b-immediate-tool"
+    ]
+    assert matrix_shards(frozenset("c"))[-2:] == [
+        "process-restart-c-before-commit", "process-restart-c-after-commit"
+    ]
+    assert len(matrix_shards(classify([], pull_request=False))) == 7
+    assert len(matrix_shards(classify([".github/workflows/real-ha.yml"], pull_request=True))) == 7

@@ -54,7 +54,7 @@ jobs:
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
             for shard in a b c; do echo "process_restart_${shard}=true" >> "$GITHUB_OUTPUT"; done
-            echo 'shards=["parallel-safe","stateful-serial","process-restart-a","process-restart-b","process-restart-c"]' >> "$GITHUB_OUTPUT"
+            echo 'shards=["parallel-safe","stateful-serial","process-restart-a","process-restart-b-active-request","process-restart-b-immediate-tool","process-restart-c-before-commit","process-restart-c-after-commit"]' >> "$GITHUB_OUTPUT"
             echo "Non-PR event: running the full suite." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -325,12 +325,20 @@ jobs:
               TEST_PATHS=("${PROCESS_RESTART_A[@]}")
               COVERAGE_ARGS=()
               ;;
-            process-restart-b)
-              TEST_PATHS=("${PROCESS_RESTART_B[@]}")
+            process-restart-b-active-request)
+              TEST_PATHS=(tests_real_ha/test_active_request_shutdown_recovery.py)
               COVERAGE_ARGS=()
               ;;
-            process-restart-c)
-              TEST_PATHS=("${PROCESS_RESTART_C[@]}")
+            process-restart-b-immediate-tool)
+              TEST_PATHS=(tests_real_ha/test_immediate_tool_process_crash.py)
+              COVERAGE_ARGS=()
+              ;;
+            process-restart-c-before-commit)
+              TEST_PATHS=('tests_real_ha/test_pending_store_write_shutdown_recovery.py::test_shutdown_during_pending_store_write_recovers_complete_generation[before_commit]')
+              COVERAGE_ARGS=()
+              ;;
+            process-restart-c-after-commit)
+              TEST_PATHS=('tests_real_ha/test_pending_store_write_shutdown_recovery.py::test_shutdown_during_pending_store_write_recovers_complete_generation[after_commit]')
               COVERAGE_ARGS=()
               ;;
             stateful-serial)
