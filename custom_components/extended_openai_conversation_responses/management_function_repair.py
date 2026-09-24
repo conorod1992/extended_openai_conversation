@@ -352,7 +352,9 @@ def persisted_config_projection(
     return projection
 
 
-def normalized_persisted_config_snapshot(projection: _PersistedProjection) -> tuple[dict[str, Any], bool]:
+def normalized_persisted_config_snapshot(
+    projection: _PersistedProjection,
+) -> tuple[dict[str, Any], bool]:
     """Lazily normalize a full read and isolate the returned frontend data."""
     hit = projection.snapshot is not None
     if projection.snapshot is None:
