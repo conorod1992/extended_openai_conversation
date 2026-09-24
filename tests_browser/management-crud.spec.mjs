@@ -84,3 +84,37 @@ test("Request Rules support create, precedence changes, reload, edit, and delete
   await expect(panel.getByRole("heading", {name: "Baseline rule", exact: true})).toBeVisible();
   await expectHarnessClean(page, pageErrors);
 });
+
+test("Request Rule condition selector, local continuation, and group survive reload", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  let panel = page.locator("extended-openai-management-panel");
+  await panel.locator(".rule-groups summary").click();
+  await panel.locator("#rule-new-group-name").fill("Kitchen");
+  await panel.locator("#rule-group-add").click();
+  await expect(panel.locator(".rule-group-row")).toHaveCount(1);
+  await panel.getByRole("button", {name:"Create rule", exact:true}).first().click();
+  await panel.locator("#rule-name").fill("Conditional local");
+  await panel.locator("#rule-phrases").fill("good kitchen");
+  await panel.locator("#rule-group").selectOption({label:"Kitchen"});
+  await panel.locator("#rule-local-continue-to-ai").check();
+  const condition = [{condition:"state",entity_id:"input_boolean.kitchen_ready",state:"on"}];
+  await panel.locator("#rule-condition-host ha-selector").evaluate((selector, value) => {
+    selector.value=value;
+    selector.dispatchEvent(new CustomEvent("value-changed", {detail:{value},bubbles:true,composed:true}));
+  }, condition);
+  await panel.locator("#rule-save").click();
+  await expect(panel.getByRole("heading", {name:"Conditional local", exact:true})).toBeVisible();
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  panel = page.locator("extended-openai-management-panel");
+  const card = panel.locator(".request-rule-card").filter({hasText:"Conditional local"});
+  await expect(card).toContainText("Kitchen");
+  await expect(card).toContainText("continues to AI");
+  await card.locator(".rule-edit").click();
+  await expect(panel.locator("#rule-local-continue-to-ai")).toBeChecked();
+  await expect(panel.locator("#rule-group")).toHaveValue(await panel.locator(".rule-group-row").getAttribute("data-group-id"));
+  const saved = await panel.locator("#rule-condition-host ha-selector").evaluate((selector) => selector.value);
+  expect(saved).toEqual(condition);
+  await panel.locator(".rule-close").first().click();
+  await expectHarnessClean(page, pageErrors);
+});

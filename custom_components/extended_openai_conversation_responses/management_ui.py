@@ -451,6 +451,19 @@ def _validate_request_rule_functions(
             )
 
 
+async def _validate_request_rule_conditions(
+    hass: HomeAssistant, rule: Mapping[str, Any]
+) -> None:
+    """Validate only the edited rule against HA's current condition platforms."""
+    from homeassistant.helpers import condition as ha_condition
+
+    for config in rule.get("conditions", []):
+        try:
+            await ha_condition.async_validate_condition_config(hass, deepcopy(config))
+        except Exception as err:
+            raise HomeAssistantError(f"Invalid Only when condition: {err}") from err
+
+
 @dataclass(frozen=True)
 class _ManagementRequest:
     """One validated agent selection shared by explicit section handlers."""
@@ -534,8 +547,13 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             expected_revision=message.get("revision"),
         )
         return {"wording_groups": wording_groups, "revision": rules.revision()}
+    if action == "groups":
+        return await rules.async_set_groups(
+            message.get("groups"), expected_revision=message.get("revision")
+        )
     if action == "create":
         candidate = _prepare_request_rule(message.get("rule"))
+        await _validate_request_rule_conditions(hass, candidate)
         _validate_request_rule_functions(
             candidate,
             configured_function_tools_from_data(subentry.data)
@@ -555,6 +573,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         raise HomeAssistantError("rule_id is required")
     if action == "update":
         candidate = _prepare_request_rule(message.get("rule"), rule_id)
+        await _validate_request_rule_conditions(hass, candidate)
         _validate_request_rule_functions(
             candidate,
             configured_function_tools_from_data(subentry.data)

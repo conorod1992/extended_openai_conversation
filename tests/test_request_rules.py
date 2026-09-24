@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -32,11 +33,13 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     RequestRuleRuntime,
     RequestRules,
     RequestRuleStore,
+    _bounded_function_result,
     async_call_active_function,
     async_evaluate_rule,
     canonical_action_signature,
     normalize_text,
     request_rule_session_id,
+    resolve_result_values,
     validate_rule,
     validate_wording_groups,
 )
@@ -97,6 +100,540 @@ async def manager(*rules, defaults=None):
     )
     await result.async_initialize()
     return result
+
+
+async def test_only_when_uses_first_eligible_text_match_and_preview_trace(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
+        async_request_rule_match_preview,
+    )
+
+    first = local_rule("First", phrases=["hello"])
+    second = local_rule("Second", phrases=["hello"], order=1)
+    first["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.first", "state": "on"}
+    ]
+    second["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.second", "state": "on"}
+    ]
+    checks = []
+
+    async def validate(_hass, config):
+        return config
+
+    async def build(_hass, config):
+        entity = config["entity_id"]
+        return SimpleNamespace(
+            async_check=lambda **_kwargs: (
+                checks.append(entity) or entity.endswith("second")
+            )
+        )
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_validate_condition_config",
+        validate,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_from_config",
+        build,
+    )
+    rules = await manager(first, second)
+    preview = await async_request_rule_match_preview(hass, rules, "hello")
+    assert preview["rule"]["name"] == "Second"
+    assert preview["skipped_conditions"] == [
+        {"id": "first", "name": "First", "reason": "conditions_false"}
+    ]
+    assert checks == ["input_boolean.first", "input_boolean.second"]
+    await rules.async_match(hass, "hello")
+    assert checks == ["input_boolean.first", "input_boolean.second"] * 2
+
+
+async def test_only_when_does_not_check_nonmatching_rule_and_stops_on_error(
+    hass, monkeypatch
+) -> None:
+    first = local_rule("First", phrases=["unrelated"])
+    first["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.first", "state": "on"}
+    ]
+    second = local_rule("Second", phrases=["hello"], order=1)
+    second["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.second", "state": "on"}
+    ]
+
+    async def fail(_hass, config):
+        assert config["entity_id"] == "input_boolean.second"
+        raise RuntimeError("condition unavailable")
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_validate_condition_config",
+        fail,
+    )
+    rules = await manager(
+        first, second, local_rule("Third", phrases=["hello"], order=2)
+    )
+    with pytest.raises(HomeAssistantError, match="condition could not be evaluated"):
+        await rules.async_match(hass, "hello")
+
+
+async def test_indeterminate_condition_stops_before_later_local_rule(
+    hass, monkeypatch
+) -> None:
+    first = local_rule("First", phrases=["hello"])
+    first["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.first", "state": "on"}
+    ]
+
+    async def validate(_hass, config):
+        return config
+
+    async def build(_hass, _config):
+        return SimpleNamespace(async_check=lambda **_kwargs: None)
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_validate_condition_config",
+        validate,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_from_config",
+        build,
+    )
+    rules = await manager(first, local_rule("Later", phrases=["hello"], order=1))
+    with pytest.raises(HomeAssistantError, match="condition could not be evaluated"):
+        await rules.async_match(hass, "hello")
+
+
+async def test_sentence_and_fuzzy_conditions_skip_to_next_eligible(
+    hass, monkeypatch
+) -> None:
+    sentence = local_rule(
+        "Sentence", phrases=["Set {room} light"], match_type="sentence_pattern"
+    )
+    sentence["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.no", "state": "on"}
+    ]
+    later = local_rule(
+        "Later", phrases=["Set {room} light"], match_type="sentence_pattern", order=1
+    )
+    later["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.yes", "state": "on"}
+    ]
+
+    async def validate(_hass, config):
+        return config
+
+    async def build(_hass, config):
+        return SimpleNamespace(
+            async_check=lambda **_kwargs: config["entity_id"].endswith("yes")
+        )
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_validate_condition_config",
+        validate,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_from_config",
+        build,
+    )
+    rules = await manager(sentence, later)
+    assert (await rules.async_match(hass, "Set kitchen light")).rule["name"] == "Later"
+    first = local_rule(
+        "Fuzzy first",
+        phrases=["hello"],
+        behavior="custom",
+        matching={**DEFAULT_MATCHING, "fuzzy": True, "fuzzy_threshold": 70},
+    )
+    first["conditions"] = sentence["conditions"]
+    second = local_rule(
+        "Fuzzy second",
+        phrases=["hello"],
+        order=1,
+        behavior="custom",
+        matching={**DEFAULT_MATCHING, "fuzzy": True, "fuzzy_threshold": 70},
+    )
+    second["conditions"] = later["conditions"]
+    rules = await manager(first, second)
+    assert (await rules.async_match(hass, "hellp")).rule["name"] == "Fuzzy second"
+
+
+def test_only_when_validation_and_legacy_default() -> None:
+    assert validate_rule(local_rule())["conditions"] == []
+    rule = local_rule()
+    rule["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.ready", "state": "on"}
+    ]
+    assert validate_rule(rule)["conditions"] == rule["conditions"]
+    rule["conditions"] = [{"condition": "state"}]
+    with pytest.raises(ValueError, match="Only when"):
+        validate_rule(rule)
+
+
+async def test_local_continue_to_ai_success_and_failure(hass) -> None:
+    rule = local_rule()
+    rule["action"]["continue_to_ai"] = True
+    rules = await manager(rule)
+    hass.services = FakeServices()
+    passed = await async_evaluate_rule(
+        hass, rules, RequestRuleRuntime(), "good night", "session"
+    )
+    assert passed is not None and not passed.consume and passed.response is None
+    assert len(hass.services.calls) == 1
+    hass.services = FakeServices(fail=True)
+    failed = await async_evaluate_rule(
+        hass, rules, RequestRuleRuntime(), "good night", "session"
+    )
+    assert failed is not None and failed.consume and not failed.successful
+    assert failed.response == "Failed safely"
+
+
+async def test_guest_denial_after_passing_condition_never_continues_to_ai(
+    hass, monkeypatch
+) -> None:
+    rule = local_rule()
+    rule["action"]["continue_to_ai"] = True
+    rule["action"]["actions"][0]["target"] = {}
+    rule["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.ready", "state": "on"}
+    ]
+
+    async def validate(_hass, config):
+        return config
+
+    async def build(_hass, _config):
+        return SimpleNamespace(async_check=lambda **_kwargs: True)
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_validate_condition_config",
+        validate,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_from_config",
+        build,
+    )
+    hass.services = FakeServices()
+    outcome = await async_evaluate_rule(
+        hass,
+        await manager(rule),
+        RequestRuleRuntime(),
+        "good night",
+        "session",
+        guest_policy=GuestCapabilityPolicy(True),
+    )
+    assert outcome is not None and outcome.consume and not outcome.successful
+    assert outcome.response == GUEST_MODE_UNAVAILABLE
+    assert hass.services.calls == []
+
+
+def test_result_alias_validation_and_substitution() -> None:
+    rule = local_rule(phrases=["Battery of {device}"], match_type="sentence_pattern")
+    rule["action"]["actions"] = [
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "data": {
+                "function": "battery",
+                "arguments": {"device": "{{ device }}"},
+                "result_alias": "battery",
+            },
+        },
+        {
+            "action": "notify.send_message",
+            "data": {"message": "{battery.level} for {device}"},
+        },
+    ]
+    rule["action"]["success_response"] = "{battery.name} is at {battery.level}%"
+    validated = validate_rule(rule)
+    assert validated["action"]["actions"][0]["data"]["step_id"]
+    assert (
+        resolve_result_values(
+            validated["action"]["success_response"],
+            {"device": "tablet"},
+            {"battery": {"name": "Kitchen tablet", "level": 62}},
+        )
+        == "Kitchen tablet is at 62%"
+    )
+    assert (
+        resolve_result_values(
+            "{device} / {battery.device}",
+            {"device": "request tablet"},
+            {"battery": {"device": "returned tablet"}},
+        )
+        == "request tablet / returned tablet"
+    )
+    assert resolve_result_values("{battery}", {}, {"battery": False}) is False
+    assert resolve_result_values("{battery}", {}, {"battery": 0}) == 0
+    assert (
+        resolve_result_values(
+            "{battery.items.0.name}", {}, {"battery": {"items": [{"name": "tablet"}]}}
+        )
+        == "tablet"
+    )
+    with pytest.raises(ValueError, match="unavailable"):
+        resolve_result_values("{battery.missing}", {}, {"battery": {}})
+    rule["action"]["actions"][0]["data"]["result_alias"] = "request"
+    with pytest.raises(ValueError, match="alias"):
+        validate_rule(rule)
+    rule["action"]["actions"][0]["data"]["result_alias"] = "bad-name"
+    with pytest.raises(ValueError, match="alias"):
+        validate_rule(rule)
+
+
+def test_result_dependencies_and_bounds() -> None:
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "data": {"function": "same", "arguments": {}, "result_alias": "one"},
+        },
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "data": {
+                "function": "same",
+                "arguments": {"previous": "{one.value}"},
+                "result_alias": "two",
+            },
+        },
+    ]
+    rule["action"]["success_response"] = "{two.value}"
+    validated = validate_rule(rule)
+    assert len(validated["action"]["actions"]) == 2
+    assert (
+        validated["action"]["actions"][0]["data"]["step_id"]
+        != validated["action"]["actions"][1]["data"]["step_id"]
+    )
+    assert (
+        validate_rule(validated)["action"]["actions"][0]["data"]["step_id"]
+        == validated["action"]["actions"][0]["data"]["step_id"]
+    )
+    duplicate = deepcopy(rule)
+    duplicate["action"]["actions"][1]["data"]["result_alias"] = "one"
+    with pytest.raises(ValueError, match="unique"):
+        validate_rule(duplicate)
+    reordered = deepcopy(rule)
+    reordered["action"]["actions"].reverse()
+    with pytest.raises(ValueError, match="earlier step"):
+        validate_rule(reordered)
+    deleted = deepcopy(rule)
+    deleted["action"]["actions"].pop(0)
+    with pytest.raises(ValueError, match="earlier step"):
+        validate_rule(deleted)
+    assert _bounded_function_result(False) is False
+    assert _bounded_function_result(0) == 0
+    with pytest.raises(HomeAssistantError, match="too large"):
+        _bounded_function_result("x" * 20000)
+    with pytest.raises(HomeAssistantError, match="deeply nested"):
+        _bounded_function_result([[[[[[[[[0]]]]]]]]])
+
+
+async def test_groups_preserve_global_order_and_revision() -> None:
+    rules = await manager(local_rule("One"), local_rule("Two", order=1))
+    first_revision = rules.revision()
+    updated = await rules.async_set_groups(
+        [{"id": "g1", "name": "Kitchen"}], expected_revision=first_revision
+    )
+    assert updated["rules"] == rules.snapshot()["rules"]
+    assert rules.match("good night").rule["name"] == "One"
+    with pytest.raises(ValueError, match="another tab"):
+        await rules.async_set_groups([], expected_revision=first_revision)
+    first = rules.snapshot()["rules"][0]
+    await rules.async_update(
+        first["id"], {**first, "group_id": "g1"}, expected_revision=rules.revision()
+    )
+    before = [item["id"] for item in rules.snapshot()["rules"]]
+    await rules.async_set_groups([], expected_revision=rules.revision())
+    assert [item["id"] for item in rules.snapshot()["rules"]] == before
+    assert all(item["group_id"] is None for item in rules.snapshot()["rules"])
+    moved = await rules.async_move("two", "top", expected_revision=rules.revision())
+    assert moved["order"] == 0
+    assert rules.match("good night").rule["name"] == "Two"
+
+
+async def test_group_and_reorder_mutations_keep_compiled_sentence_patterns(
+    monkeypatch,
+) -> None:
+    rules = await manager(
+        local_rule("One", phrases=["Set {room} light"], match_type="sentence_pattern"),
+        local_rule(
+            "Two", phrases=["Set {room} light"], match_type="sentence_pattern", order=1
+        ),
+    )
+
+    def unexpected_compile(_pattern):
+        raise AssertionError(
+            "metadata and order mutations must retain compiled patterns"
+        )
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules._compile_sentence_pattern",
+        unexpected_compile,
+    )
+    await rules.async_set_groups(
+        [{"id": "home", "name": "Home"}], expected_revision=rules.revision()
+    )
+    await rules.async_move("two", "top", expected_revision=rules.revision())
+    assert rules.match("Set kitchen light").rule["name"] == "Two"
+
+
+async def test_groups_survive_restart_and_backup_restore() -> None:
+    store = MemoryStore({"defaults": dict(DEFAULT_MATCHING), "rules": [local_rule()]})
+    rules = RequestRules(store)
+    await rules.async_initialize()
+    assert rules.snapshot()["groups"] == []
+    await rules.async_set_groups(
+        [{"id": "home", "name": "Home"}], expected_revision=rules.revision()
+    )
+    old = rules.snapshot()["rules"][0]
+    await rules.async_update(
+        old["id"], {**old, "group_id": "home"}, expected_revision=rules.revision()
+    )
+    restored = RequestRules(MemoryStore())
+    await restored.async_initialize()
+    await restored.async_replace_backup(await rules.async_backup_data())
+    assert restored.snapshot()["groups"] == [{"id": "home", "name": "Home"}]
+    assert restored.snapshot()["rules"][0]["group_id"] == "home"
+    restarted = RequestRules(store)
+    await restarted.async_initialize()
+    assert restarted.snapshot()["groups"] == restored.snapshot()["groups"]
+
+
+async def test_function_result_capture_feeds_later_step_and_response(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        request_rules as module,
+    )
+
+    calls = []
+
+    class CaptureScript:
+        def __init__(self, _hass, sequence, *_args, **_kwargs):
+            self.sequence = sequence
+
+        async def async_run(self, _variables, _context=None):
+            step = self.sequence[0]
+            if step["action"] == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
+                await async_call_active_function(
+                    step["data"]["function"],
+                    step["data"]["arguments"],
+                    step["data"].get("result_alias"),
+                )
+            else:
+                calls.append(step["data"]["message"])
+
+        async def async_unload(self):
+            pass
+
+    monkeypatch.setattr(module, "Script", CaptureScript)
+    rule = local_rule(phrases=["Battery {device}"], match_type="sentence_pattern")
+    rule["action"]["actions"] = [
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "data": {
+                "function": "get_battery",
+                "arguments": {},
+                "result_alias": "battery",
+            },
+        },
+        {
+            "action": "notify.send_message",
+            "data": {"message": "{battery.level} for {device}"},
+        },
+    ]
+    rule["action"]["success_response"] = "{battery.name} is at {battery.level}%"
+
+    async def execute(_name, _arguments):
+        return SimpleNamespace(
+            tool_result={"result": json.dumps({"name": "Kitchen tablet", "level": 62})}
+        )
+
+    outcome = await async_evaluate_rule(
+        hass,
+        await manager(rule),
+        RequestRuleRuntime(),
+        "Battery tablet",
+        "session",
+        function_executor=execute,
+    )
+    assert outcome is not None and outcome.response == "Kitchen tablet is at 62%"
+    assert calls == ["62 for tablet"]
+
+
+async def test_missing_function_result_path_stops_later_steps(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        request_rules as module,
+    )
+
+    calls = []
+
+    class CaptureScript:
+        def __init__(self, _hass, sequence, *_args, **_kwargs):
+            self.sequence = sequence
+
+        async def async_run(self, _variables, _context=None):
+            step = self.sequence[0]
+            if step["action"] == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
+                await async_call_active_function(
+                    step["data"]["function"], {}, step["data"].get("result_alias")
+                )
+            else:
+                calls.append(step)
+
+        async def async_unload(self):
+            pass
+
+    monkeypatch.setattr(module, "Script", CaptureScript)
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "data": {
+                "function": "get_battery",
+                "arguments": {},
+                "result_alias": "battery",
+            },
+        },
+        {"action": "notify.send_message", "data": {"message": "{battery.missing}"}},
+    ]
+
+    async def execute(_name, _arguments):
+        return SimpleNamespace(tool_result={"result": json.dumps({"level": 0})})
+
+    outcome = await async_evaluate_rule(
+        hass,
+        await manager(rule),
+        RequestRuleRuntime(),
+        "good night",
+        "session",
+        function_executor=execute,
+    )
+    assert (
+        outcome is not None
+        and outcome.response == "Failed safely"
+        and not outcome.successful
+    )
+    assert calls == []
+
+
+@pytest.mark.parametrize("value", [False, 0, "", None])
+async def test_function_capture_accepts_false_zero_empty_and_null(value) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        request_rules as module,
+    )
+
+    results = {}
+
+    async def execute(_name, _arguments):
+        return SimpleNamespace(tool_result={"result": json.dumps(value)})
+
+    executor_token = module._ACTIVE_FUNCTION_EXECUTOR.set(execute)
+    result_token = module._ACTIVE_FUNCTION_RESULTS.set(results)
+    try:
+        await async_call_active_function("value", {}, "captured")
+        assert "captured" in results and results["captured"] == value
+    finally:
+        module._ACTIVE_FUNCTION_RESULTS.reset(result_token)
+        module._ACTIVE_FUNCTION_EXECUTOR.reset(executor_token)
 
 
 @pytest.mark.parametrize(

@@ -59,6 +59,32 @@ def test_preview_summarizes_match_without_action_payloads() -> None:
     assert "actions" not in result["would_do"]
 
 
+def test_preview_lists_function_alias_without_executing_or_inventing_result() -> None:
+    match = _local_match()
+    match.rule["action"] = {
+        "actions": [
+            {
+                "action": "extended_openai_conversation_responses.call_function",
+                "data": {
+                    "function": "get_battery",
+                    "arguments": {},
+                    "result_alias": "battery",
+                },
+            }
+        ],
+        "continue_to_ai": True,
+    }
+    preview = request_rule_match_preview(match)
+    assert preview["would_do"] == {
+        "type": "local_action",
+        "action_count": 1,
+        "consumed": False,
+        "provider_input": "original",
+        "functions": [{"name": "get_battery", "result_alias": "battery"}],
+    }
+    assert "result" not in preview["would_do"]
+
+
 def test_preview_summarizes_model_routing_and_no_match() -> None:
     match = RuleMatch(
         rule={

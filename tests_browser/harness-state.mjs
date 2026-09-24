@@ -36,7 +36,7 @@ function freshState() {
     guest: {config: {guest_mode_enabled: false, guest_web_search: false}, revision: "guest-1", legacy_policy: false},
     quiet: {config: {enabled: false, start: "22:00", end: "07:00", max_volume: 0.2, wake_sound: "off", overrides: {}}, active: false, satellites: []},
     requestRules: {
-      revision: 3, defaults: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, wording_groups: [], diagnostics: {},
+      revision: 3, defaults: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, wording_groups: [], groups: [], diagnostics: {},
       rules: [{id: "rule-1", name: "Baseline rule", enabled: true, phrases: ["baseline route"], match_type: "contains", action_type: "model_routing", action: {model: "gpt-5-mini", reasoning_effort: "", scope: "request", reset: false, success_response: "Updated"}, matching_behavior: "defaults", matching: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, order: 0}],
     },
     toolYamls: {baseline_tool: "spec:\n  name: baseline_tool\n  description: Baseline browser fixture Function Tool\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: script\n  sequence: []\n"},
@@ -259,7 +259,8 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       state.requestRules.rules.splice(i + 1, 0, rule);
       normalizeRules(); state.requestRules.revision++; save(); return {rule: clone(rule), revision: state.requestRules.revision};
     }
-    if (key === "request_rules/move") { const i = state.requestRules.rules.findIndex((r) => r.id === message.rule_id), j = message.direction === "up" ? i - 1 : i + 1; if (i >= 0 && j >= 0 && j < state.requestRules.rules.length) [state.requestRules.rules[i], state.requestRules.rules[j]] = [state.requestRules.rules[j], state.requestRules.rules[i]]; normalizeRules(); state.requestRules.revision++; save(); const rule = state.requestRules.rules.find((r) => r.id === message.rule_id); return {rule: clone(rule), revision: state.requestRules.revision}; }
+    if (key === "request_rules/move") { const i = state.requestRules.rules.findIndex((r) => r.id === message.rule_id), j = ({up:i-1,down:i+1,top:0,bottom:state.requestRules.rules.length-1})[message.direction]; if (i >= 0 && j >= 0 && j < state.requestRules.rules.length) state.requestRules.rules.splice(j,0,state.requestRules.rules.splice(i,1)[0]); normalizeRules(); state.requestRules.revision++; save(); const rule = state.requestRules.rules.find((r) => r.id === message.rule_id); return {rule: clone(rule), revision: state.requestRules.revision}; }
+    if (key === "request_rules/groups") { if (message.revision !== state.requestRules.revision) throw new Error("Saved data changed; reload before saving."); state.requestRules.groups = clone(message.groups); const ids = new Set(message.groups.map((group) => group.id)); state.requestRules.rules.forEach((rule) => {if(!ids.has(rule.group_id))rule.group_id=null;}); state.requestRules.revision++; save(); return {groups:clone(state.requestRules.groups),rules:clone(state.requestRules.rules),revision:state.requestRules.revision}; }
     if (key === "request_rules/settings") {
       if (message.revision !== state.requestRules.revision) throw new Error("Saved data changed; reload before saving.");
       state.requestRules.defaults = clone(message.defaults);

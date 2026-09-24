@@ -183,6 +183,43 @@ async def test_consumed_request_rule_bypasses_local_intent_and_provider(
     assert payload["handled_locally"] is True
 
 
+async def test_successful_local_rule_continuation_calls_provider_once(monkeypatch):
+    entity, user_input, _chat_log, _policy, process = _pipeline_fixture(
+        monkeypatch, text="check the battery"
+    )
+    entity._request_rules = object()
+    entity._request_rule_runtime = SimpleNamespace(
+        effective_options=MagicMock(return_value={})
+    )
+    evaluation = RuleEvaluation(
+        match=RuleMatch(
+            {"id": "battery", "name": "Battery"}, "check the battery", False, 100.0
+        ),
+        consume=False,
+    )
+    monkeypatch.setattr(
+        conversation_module, "async_evaluate_rule", AsyncMock(return_value=evaluation)
+    )
+    local_intent = AsyncMock()
+    monkeypatch.setattr(
+        conversation_module, "async_try_handle_local_intent", local_intent
+    )
+    response = intent.IntentResponse(language="en")
+    response.async_set_speech("Battery checked")
+    expected = conversation.ConversationResult(
+        response=response, conversation_id="conversation-1"
+    )
+    entity._async_handle_message_with_ha_tools = AsyncMock(return_value=expected)
+    result = await process()
+    assert result is expected
+    entity._async_handle_message_with_ha_tools.assert_awaited_once()
+    assert (
+        entity._async_handle_message_with_ha_tools.call_args.args[0].text
+        == user_input.text
+    )
+    local_intent.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "mode",
     [

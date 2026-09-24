@@ -82,6 +82,11 @@ test("real browser creates, edits, reloads, and deletes a Request Rule through H
   await panel.locator("#rule-model").fill("gpt-5-mini");
   await panel.locator("#rule-reasoning").selectOption("medium");
   await panel.locator("#rule-scope").selectOption("conversation");
+  const onlyWhen = [{condition:"template",value_template:"{{ true }}"}];
+  await panel.locator("#rule-condition-host ha-selector").evaluate((selector, value) => {
+    selector.value=value;
+    selector.dispatchEvent(new CustomEvent("value-changed",{detail:{value},bubbles:true,composed:true}));
+  }, onlyWhen);
   await panel.locator("#rule-save").click();
   await expect(panel.getByRole("heading", {name: "Real HA browser rule", exact: true})).toBeVisible();
 
@@ -90,6 +95,7 @@ test("real browser creates, edits, reloads, and deletes a Request Rule through H
   let card = panel.locator(".request-rule-card").filter({hasText: "Real HA browser rule"});
   await expect(card).toBeVisible();
   await card.locator(".rule-edit").click();
+  expect(await panel.locator("#rule-condition-host ha-selector").evaluate((selector) => selector.value)).toEqual(onlyWhen);
   await panel.locator("#rule-name").fill("Real HA browser rule edited");
   await panel.locator("#rule-model").fill("gpt-5-nano");
   await panel.locator("#rule-save").click();
