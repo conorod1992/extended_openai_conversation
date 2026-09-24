@@ -250,6 +250,15 @@ def test_agent_snapshot_accepts_frontend_normalized_function_tools() -> None:
     )
 
 
+def test_agent_snapshot_projects_configured_temporary_memory_mode() -> None:
+    hass, entry, subentry = _hass_with_agent()
+    subentry.data["temporary_memory"] = "eager"
+
+    result = _agent_snapshot(hass, entry, subentry)
+
+    assert result["temporary_memory"] == "eager"
+
+
 def test_agent_snapshot_keeps_invalid_function_tool_agent_discoverable() -> None:
     hass, entry, subentry = _hass_with_agent()
     subentry.data["functions"] = _persisted_invalid_function_tools()

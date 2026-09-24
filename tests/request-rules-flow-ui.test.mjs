@@ -12,11 +12,12 @@ test("Request Rule dialog exposes explicit Continue to AI control", () => {
   assert.match(html, /After applying these routing settings, send the original request/);
 });
 
-test("sentence-pattern helper controls are present", () => {
+test("sentence-pattern helper controls are present after the match selector", () => {
   const html = requestRulesDialog();
   for (const helper of ["optional", "choice", "variable", "range"]) {
     assert.match(html, new RegExp(`data-pattern-helper="${helper}"`));
   }
+  assert.ok(html.indexOf('id="rule-match"') < html.indexOf('id="sentence-pattern-builder"'));
 });
 
 test("sentence-pattern helpers insert editable raw syntax", () => {

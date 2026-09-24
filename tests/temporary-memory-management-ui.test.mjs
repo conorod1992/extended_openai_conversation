@@ -14,6 +14,7 @@ const scopes = [
   {scope_id: "__anonymous__", scope_type: "anonymous_legacy", display_name: "Legacy unowned"},
 ];
 const panel = {
+  _selectedAgent: () => ({temporary_memory: "off"}),
   _data: {is_admin: true, scopes},
   _scopeId: "__anonymous__",
   _query: "",
@@ -53,6 +54,18 @@ assert.match(markup, /Parents are visiting tomorrow/);
 assert.match(markup, /Alice/);
 assert.match(markup, /edit-temporary-memory/);
 assert.match(markup, /delete-temporary/);
-assert.match(markup, /remain manageable until they expire even when Temporary Memory is turned off/);
+assert.match(markup, /class="status-value ">Off</);
+assert.match(markup, /does not create new short-term memories/);
+assert.match(markup, /remain until their expiry time, even if short-term memory is later turned off/);
+assert.doesNotMatch(markup, /Expires automatically/);
+for (const [mode, label, description] of [
+  ["balanced", "Balanced", "clearly relevant"],
+  ["eager", "Eager", "more readily"],
+]) {
+  panel._selectedAgent = () => ({temporary_memory: mode});
+  const updated = renderTemporaryMemories(panel);
+  assert.match(updated, new RegExp(`class="status-value on">${label}<`));
+  assert.match(updated, new RegExp(description));
+}
 assert.doesNotMatch(markup, /Assist device/);
 assert.doesNotMatch(markup, /data-scope=/);

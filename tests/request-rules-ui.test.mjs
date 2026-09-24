@@ -26,7 +26,9 @@ const panel = {
 const html = renderRequestRules(panel);
 assert.match(html, /local commands that skip the AI call/);
 assert.doesNotMatch(html, /class="notice on"/);
-assert.match(html, /<summary>How routing rules work<\/summary>/);
+assert.match(html, /<summary>Learn how routing works<\/summary>/);
+assert.ok(html.indexOf('class="rule-list"') < html.indexOf('class="content-card rule-settings"'));
+assert.ok(html.indexOf('class="content-card rule-settings"') < html.indexOf('class="content-card rule-test-tools"'));
 assert.match(html, /treat the matched phrase as a routing command by default/);
 assert.match(html, /routing hints inside a normal request/);
 assert.match(html, /Reset for this request only/);
@@ -112,6 +114,9 @@ assert.match(bindingSource, /selector = \{action:\{\}\}/);
   assert.deepEqual(actionSelector.value, []);
   assert.deepEqual(assignments, [["hass",false],["selector",false],["value",false],["listener",false]]);
 
+  loadRequestRuleActions(actionSelector, null);
+  assert.deepEqual(actionSelector.value, []);
+
   const existingActions = [{action:"light.turn_on",data:{brightness_pct:50}}];
   loadRequestRuleActions(actionSelector, {action:{actions:existingActions}});
   assert.equal(actionSelector.value, existingActions);
@@ -124,6 +129,9 @@ assert.match(requestRulesDialog(panel), /Rest of this conversation/);
 assert.match(requestRulesDialog(panel), /without asking the AI model/);
 assert.match(requestRulesDialog(panel), /ExtendedOpenAI sentence pattern/);
 assert.doesNotMatch(requestRulesDialog(panel), /Home Assistant sentence pattern/);
+const sentenceDialog = requestRulesDialog(panel);
+assert.ok(sentenceDialog.indexOf('id="rule-match"') < sentenceDialog.indexOf('id="sentence-pattern-builder"'));
+assert.doesNotMatch(sentenceDialog, /script\.turn_on/);
 assert.match(requestRulesDialog(panel), /\{room=kitchen\|bedroom\}/);
 assert.match(requestRulesDialog(panel), /\{level=0\.\.100\}/);
 assert.match(requestRulesDialog(panel), /named expansions/i);

@@ -1,5 +1,5 @@
 import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
-import {featureStatusMarkup, selectedFeatureStatus} from "./management-feature-status-core.js";
+import {embeddedFeatureStatusMarkup, selectedFeatureStatus} from "./management-feature-status-core.js";
 import {knowledgeSourceAvailabilityBadge} from "./knowledge-presentation.js";
 import {formatUsageNumber} from "./usage-format.js";
 
@@ -8,7 +8,18 @@ const identity = panel => JSON.stringify([panel._selectedAgent?.()?.entry_id, pa
 const signature = source => JSON.stringify([source.title, source.description, source.enabled, source.character_count, source.updated_at]);
 const matches = (source, query) => `${source.title || ""} ${source.description || ""}`.toLocaleLowerCase().includes(query);
 const countText = sources => `${formatUsageNumber(sources.length)} source${sources.length === 1 ? "" : "s"}`;
-const statusMarkup = panel => featureStatusMarkup(panel, "Knowledge Library", selectedFeatureStatus(panel, "knowledge"));
+const statusMarkup = panel => {
+  const current = selectedFeatureStatus(panel, "knowledge") || {};
+  const enabled = typeof current.enabled === "boolean" ? current.enabled : panel._selectedAgent?.()?.knowledge_enabled !== false;
+  const count = panel._result?.sources?.length || 0;
+  const state = current.state || (enabled ? count ? "available" : "empty" : "disabled");
+  return embeddedFeatureStatusMarkup(panel, "Assistant access", {
+    state,
+    label: current.label || ({available:"Available", empty:"Needs sources", disabled:"Off"}[state] || "Unknown"),
+    detail: !enabled ? "Stored sources stay in the library, but the assistant cannot use them."
+      : count ? "The assistant can search these sources when needed." : "Add a source to make Knowledge available to the assistant.",
+  });
+};
 
 export function applyKnowledgeMutation(panel, response, deletedId = null) {
   if (!panel._result || !Array.isArray(panel._result.sources)) return false;
@@ -33,13 +44,15 @@ export function knowledgeAvailabilityMarkup(panel) {
   const status = sectionStatus && typeof sectionStatus.enabled === "boolean"
     ? sectionStatus
     : panel._selectedAgent?.()?.feature_status?.knowledge;
-  const enabled = typeof status?.enabled === "boolean" ? status.enabled : status?.state === "enabled";
-  return `<section class="content-card knowledge-availability-setting">
+  const agentEnabled = panel._selectedAgent?.()?.knowledge_enabled;
+  const enabled = typeof status?.enabled === "boolean" ? status.enabled
+    : typeof agentEnabled === "boolean" ? agentEnabled : ["enabled", "available", "empty"].includes(status?.state);
+  return `<div class="knowledge-availability-setting">
     <div class="config-toggle setting">
       <span class="setting-copy"><span class="setting-label-row"><label for="knowledge-enabled-toggle"><strong>Allow the assistant to use Knowledge</strong></label></span><small>When off, stored sources remain in the library but Knowledge tools are not available to the assistant. Changes here save immediately.</small></span>
       <label class="switch-control" for="knowledge-enabled-toggle"><input id="knowledge-enabled-toggle" type="checkbox" role="switch" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label>
     </div>
-  </section>`;
+  </div>`;
 }
 
 async function saveKnowledgeAvailability(panel, input) {
@@ -89,7 +102,7 @@ function sourceCard(panel, source) {
 
 export function renderKnowledge(panel) {
   const sources = panel._result?.sources || [];
-  return `<div id="knowledge-status">${statusMarkup(panel)}</div><section class="content-card" data-knowledge-collection data-collection-identity="${panel._e(identity(panel))}"><div class="section-heading"><div><h2>Sources</h2><p data-source-count>${countText(sources)}</p></div><button type="button" id="add-source">+ Add source</button></div><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${sources.map(source => sourceCard(panel, source)).join("")}<div data-source-empty>${panel._empty("No Knowledge sources yet. Add one to make reference information available on demand.")}</div></div></section>`;
+  return `<section class="content-card" data-knowledge-collection data-collection-identity="${panel._e(identity(panel))}"><div class="section-heading"><div><h2>Sources</h2><p data-source-count>${countText(sources)}</p></div><button type="button" id="add-source">+ Add source</button></div><div id="knowledge-status">${statusMarkup(panel)}</div>${knowledgeAvailabilityMarkup(panel)}<input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Filter by title or description" aria-label="Filter Knowledge sources"><div class="list knowledge-list">${sources.map(source => sourceCard(panel, source)).join("")}<div data-source-empty>${panel._empty("No Knowledge sources yet. Add one to make reference information available on demand.")}</div></div></section>`;
 }
 
 export function filterKnowledge(panel) {
@@ -116,7 +129,7 @@ export function reconcileKnowledge(panel) {
   const sources = panel._result?.sources || [];
   reconcileKeyedChildren(state.list, state.cards, sources, source => source.source_id, signature, source => sourceCard(panel, source), [state.empty]);
   setText(state.host.querySelector("[data-source-count]"), countText(sources));
-  const status = panel.shadowRoot.querySelector("#knowledge-status"), markup = statusMarkup(panel);
+  const status = state.host.querySelector("#knowledge-status"), markup = statusMarkup(panel);
   if (state.status !== markup) { status.innerHTML = markup; state.status = markup; }
   const toggle = panel.shadowRoot.querySelector("#knowledge-enabled-toggle");
   const enabled = selectedFeatureStatus(panel, "knowledge")?.enabled;

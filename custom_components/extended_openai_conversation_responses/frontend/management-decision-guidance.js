@@ -2,21 +2,8 @@ import {assistantScopeLabel} from "./management-confirmation-scope.js";
 export {DECISION_GUIDANCE_STYLES, assistantScopeLabel, enhanceConfirmationScope} from "./management-confirmation-scope.js";
 import {friendlySettingValue, settingEffectMarkup} from "./management-setting-metadata.js";
 
-const DEFAULT_GUIDANCE_KEYS = new Set([
-  "api_mode",
-  "conversation_continuity",
-  "continue_conversation",
-  "temporary_memory",
-  "memory_mode",
-  "memory_retrieval_mode",
-  "shared_memory_mode",
-  "voice_scope_policy",
-  "voice_unmapped_policy",
-  "web_search_context",
-]);
-
-const RECOMMENDED_CHOICES = Object.freeze({
-  api_mode: new Set(["auto"]),
+const DELEGATED_CHOICES = Object.freeze({
+  conversation_continuity: new Set(["ha_default"]),
 });
 
 const MATCH_LABELS = Object.freeze({
@@ -43,11 +30,10 @@ export function displayDefaultValue(key, value) {
 }
 
 export function configurationDecisionBadges(key, defaults = {}) {
-  if (!DEFAULT_GUIDANCE_KEYS.has(key) || !Object.prototype.hasOwnProperty.call(defaults, key)) return [];
+  if (!Object.prototype.hasOwnProperty.call(defaults, key)) return [];
   const value = defaults[key];
-  const display = displayDefaultValue(key, value);
-  if (RECOMMENDED_CHOICES[key]?.has(String(value))) return [{kind:"recommended", text:`Recommended default: ${display}`}];
-  return [{kind:"default", text:`Default: ${display}`}];
+  if (DELEGATED_CHOICES[key]?.has(String(value))) return [{kind:"default", text:"Uses Home Assistant sessions"}];
+  return [];
 }
 
 function matchingSettings(rule, defaults) {
