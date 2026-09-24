@@ -1,6 +1,8 @@
 import {updateDialogs} from "./management-dialogs.js";
 import {NAVIGATION, pageMetadata} from "./frontend-navigation.js";
 
+export const ASSISTANT_INTRO_MARKUP = '<section class="page-intro assistant-parent-intro"><h1>Assistant settings</h1><p>Configure how this assistant responds, handles conversations, uses context, and works with voice.</p></section>';
+
 function navigationFor(panel) {
   return NAVIGATION.filter((item) => panel._canAccessView(item.id));
 }
@@ -210,6 +212,12 @@ function renderDynamicRegions(panel) {
   const sectionHost = root.querySelector("#eoc-section-host");
   if (sectionHost) {
     updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
+  }
+
+  const assistantIntroHost = root.querySelector("#eoc-assistant-intro-host");
+  const assistantIntro = agent && panel._page === "assistant" ? ASSISTANT_INTRO_MARKUP : "";
+  if (assistantIntroHost && assistantIntroHost.innerHTML !== assistantIntro) {
+    updateRegion(assistantIntroHost, assistantIntro);
   }
 
   const main = root.querySelector("[data-eoc-main]") || root.querySelector("main");

@@ -231,6 +231,7 @@
     .embedded-feature-status .inline-route{min-height:36px}
     .knowledge-availability-setting{border-top:1px solid var(--divider-color);margin:0 0 18px;padding-top:10px}
     .rule-settings .section-heading{margin-bottom:6px}
+    .assistant-parent-intro{margin:0 0 30px}
     .rule-test-tools h3{margin:0 0 6px}.rule-test-tools .help{line-height:1.5}
     .eoc-live-request-test{margin-top:16px}
     .eoc-live-request-test>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;font-weight:650}
