@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+import yaml
+
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -768,7 +770,7 @@ async def _async_validate_request_rule_function_dependencies(
     quarantined_names: set[str] = set()
     try:
         tools = configured_function_tools_from_data(config)
-    except (HomeAssistantError, TypeError, ValueError):
+    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError):
         from .management_function_repair import (
             function_tools_issue,
             isolated_function_tools,
