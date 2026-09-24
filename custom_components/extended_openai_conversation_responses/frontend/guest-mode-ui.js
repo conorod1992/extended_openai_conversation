@@ -9,7 +9,6 @@ export const GUEST_EXCLUSION_KEYS = [
 ];
 
 const MEMORY_PAGE_SIZE = 100;
-const ARCHIVE_PAGE_SIZE = 50;
 const MEMORY_SEARCH_DEBOUNCE_MS = 250;
 
 export function freshGuestPolicyDraft(config = {}) {
@@ -33,10 +32,6 @@ export function renderGuestWebSearchSetting(config = {}) {
 
 export function memorySearchProjection(memory) {
   return `${memory?.content ?? ""} ${memory?.category ?? ""} ${memory?.source ?? ""}`.toLocaleLowerCase();
-}
-
-function resultTarget(panel) {
-  return panel._contentData || panel._result;
 }
 
 const memoryCollections = new WeakMap();
@@ -175,40 +170,6 @@ async function loadMoreMemories(panel, button) {
   }
 }
 
-function mappedArchiveResults(found) {
-  return {
-    sessions: (found.results || []).map((item) => ({
-      ...item,
-      last_message_at: item.timestamp,
-      turn_count: "matching",
-      scope_source: "Search match",
-    })),
-    offset: found.offset || 0,
-    limit: found.limit || ARCHIVE_PAGE_SIZE,
-    has_more: Boolean(found.has_more),
-  };
-}
-
-async function loadMoreConversations(panel, button) {
-  const state = browserState(panel);
-  const target = resultTarget(panel);
-  if (!target) return;
-  const current = target.sessions?.sessions || [];
-  panel._setSaving(button, true, "Loading…");
-  try {
-    const result = state.archiveQuery
-      ? await panel._call("conversations", "search", {scope_id: panel._scopeId, query: state.archiveQuery, limit: ARCHIVE_PAGE_SIZE, offset: current.length})
-      : await panel._call("conversations", "list", {scope_id: panel._scopeId, limit: ARCHIVE_PAGE_SIZE, offset: current.length});
-    const next = state.archiveQuery ? mappedArchiveResults(result) : result;
-    target.sessions = {...next, sessions: [...current, ...(next.sessions || [])]};
-    panel._render();
-  } catch (err) {
-    panel._toast(`Unable to load more conversations: ${err.message || String(err)}`, true);
-  } finally {
-    panel._setSaving(button, false);
-  }
-}
-
 export async function finishMemoryBrowserLoad(panel) {
   if (panel._viewKey() === "data-memory/memories" && panel._memoryKind === "persistent" && !panel._busy && !panel._error) {
     indexMemories(panel);
@@ -295,17 +256,6 @@ function bindPersistentMemories(panel) {
   });
 }
 
-export function decorateConversations(panel, html) {
-  const state = browserState(panel);
-  const sessions = resultTarget(panel)?.sessions;
-  if (state.archiveQuery) html = html.replace('id="archive-query" type="search"', `id="archive-query" type="search" value="${panel._e(state.archiveQuery)}"`);
-  if (!sessions?.has_more) return html;
-  const marker = html.lastIndexOf("</section>");
-  if (marker < 0) return html;
-  const pagination = `<div class="section-actions"><button type="button" class="secondary" id="load-more-conversations">Load more ${state.archiveQuery ? "matches" : "conversations"}</button></div>`;
-  return `${html.slice(0, marker)}${pagination}${html.slice(marker)}`;
-}
-
 export function decorateGuestPolicy(panel, html) {
   const marker = '<section class="content-card"><div class="section-heading"><div><h2>Assistant permission</h2>';
   if (!html.includes(marker)) return html;
@@ -320,11 +270,6 @@ export function filterPersistentMemories(panel) {
 
 export function bindMemoryBrowser(panel) {
   bindPersistentMemories(panel);
-  const more = panel.shadowRoot.querySelector("#load-more-conversations");
-  if (more && !more.__eocMemoryBrowserBound) {
-    more.__eocMemoryBrowserBound = true;
-    more.addEventListener("click", event => loadMoreConversations(panel, event.currentTarget));
-  }
   const guest = panel.shadowRoot.querySelector("#guest-web-search");
   if (guest && !guest.__eocMemoryBrowserBound) {
     guest.__eocMemoryBrowserBound = true;

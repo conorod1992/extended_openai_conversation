@@ -1039,12 +1039,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
             if (key === "config") this._result = this._configData;
           }
           if (key === "active" && getRouteFeature("data-memory/conversations")?.reconcileActiveConversations(this)) return;
-          if (key === "config" && settled.status === "fulfilled" && this._configData) {
-            const markup = getConfigurationEditor()?.renderConfiguration(this);
-            if (markup && reconcileHistoryConfiguration(this, markup)) {
-              getConfigurationEditor()?.bindConfiguration(this);
-              return;
-            }
+          if (key === "config") {
+            if (this._patchHistorySettings()) return;
+            // An open conversation dialog keeps its list and editor DOM intact.
+            if (this.shadowRoot?.querySelector?.("[data-eoc-history-config]")) return;
           }
           this._render();
         };
@@ -1487,12 +1485,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "data-memory/knowledge") return `<section class="page-intro"><h1>Knowledge Library</h1><p>Manage reference sources the assistant can search when needed. <button type="button" class="guide-topic-link guide-link" data-guide-topic="knowledge">Learn more</button></p></section>${getRouteFeature(view)?.knowledgeAvailabilityMarkup(this) || ""}${this._knowledge()}`;
     if (view === "data-memory/conversations") {
       this._configSections = ["archive"];
-      const settings = this._data?.is_admin
-        ? (this._configData && this._draftAgentId === this._agentId
-          ? (getConfigurationEditor()?.renderConfiguration(this) || this._loading())
-          : `<section class="content-card"><div class="loading" role="status">Loading archive settings…</div></section>`)
-        : "";
-      return `${this._conversations()}<div data-eoc-history-config>${settings}</div>`;
+      return `${this._conversations()}<div data-eoc-history-config>${this._historySettingsMarkup()}</div>`;
     }
     if (view === "usage-maintenance/usage") return this._usage();
     if (view === "usage-maintenance/backup-restore") return getRouteFeature(view)?.renderBackupTransferPanel(Boolean(this._configDirty)) || this._loading();
@@ -1517,7 +1510,27 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _conversations() {
-    return getRouteFeature("data-memory/conversations")?.renderConversations(this, getRouteFeature("memory-browser")?.decorateConversations) || this._loading();
+    return getRouteFeature("data-memory/conversations")?.renderConversations(this) || this._loading();
+  }
+
+  _historySettingsMarkup() {
+    if (!this._data?.is_admin) return "";
+    const error = this._contentData?.load_errors?.find((issue) => issue.key === "config")?.message
+      || this._eocHistoryEditorError;
+    if (error) return `<section class="content-card"><div class="error" role="alert">Archive settings unavailable: ${this._e(error)}</div></section>`;
+    if (this._configData && this._draftAgentId === this._agentId && !this._eocHistoryEditorLoading) {
+      const markup = getConfigurationEditor()?.renderConfiguration(this);
+      if (markup) return markup;
+    }
+    return `<section class="content-card"><div class="loading" role="status">Loading archive settings…</div></section>`;
+  }
+
+  _patchHistorySettings() {
+    if (this._viewKey?.() !== "data-memory/conversations" || !this._contentData) return false;
+    if (!reconcileHistoryConfiguration(this, this._historySettingsMarkup())) return false;
+    if (this._configData && this._draftAgentId === this._agentId && !this._eocHistoryEditorLoading
+        && !this._eocHistoryEditorError) getConfigurationEditor()?.bindConfiguration(this);
+    return true;
   }
 
   _memories() {
@@ -1755,7 +1768,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._pendingSettingFocus = null;
       requestAnimationFrame(() => { const element = this.shadowRoot.querySelector(`#${target}`); element?.scrollIntoView({behavior:"smooth", block:"start"}); (element?.querySelector("input,select,textarea,button") || element)?.focus?.(); });
     }
-    if (["data-memory/memories", "data-memory/conversations", "capabilities/guest-mode"].includes(view)) {
+    if (["data-memory/memories", "capabilities/guest-mode"].includes(view)) {
       getRouteFeature("memory-browser")?.bindMemoryBrowser(this);
     }
     if (view === "data-memory/memories") getRouteFeature(view)?.bindTemporaryMemory(this);
