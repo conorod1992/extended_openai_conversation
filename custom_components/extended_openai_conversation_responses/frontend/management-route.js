@@ -435,6 +435,23 @@ export function startStoredConfigurationPrefetch(panel, preferredSubentryId) {
   const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
   const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
   if (!subentryId || !entryId) return null;
+  // Keep the last cold-read decision inspectable without logging expected misses.
+  const diagnostics = panel._eocConfigurationReadDiagnostics ||= {};
+  const detail = {entryId, subentryId, view, action, status: "started", requestStatus: "not-started", reason: null};
+  diagnostics.prefetch = detail;
+  if (panel._draftAgentId === subentryId && panel._configData?.config && !panel._configDataStale
+      && (panel._configData.projection === "retention" ? "retention_get" : "get") === action) {
+    detail.status = "skipped";
+    detail.reason = "active-config";
+    return null;
+  }
+  if (panel._freshCleanConfiguration?.(subentryId, action === "retention_get" ? "retention" : "full")) {
+    detail.status = "skipped";
+    detail.reason = "clean-snapshot";
+    return null;
+  }
+  detail.startedAt = Date.now();
+  detail.requestStatus = "pending";
   const request = panel._hass.callWS({
     type: WS_TYPE,
     section: "configuration",
@@ -442,15 +459,50 @@ export function startStoredConfigurationPrefetch(panel, preferredSubentryId) {
     entry_id: entryId,
     subentry_id: subentryId,
   });
-  return {
+  const prefetch = {
     view,
     entryId,
     subentryId,
+    action,
+    cacheGeneration: panel._cacheGeneration,
+    detail,
     promise: request.then(
-      (value) => ({status: "fulfilled", value}),
-      (reason) => ({status: "rejected", reason}),
+      (value) => { detail.requestStatus = "fulfilled"; return {status: "fulfilled", value}; },
+      (reason) => { detail.requestStatus = "rejected"; return {status: "rejected", reason}; },
     ),
   };
+  panel._eocStoredConfigPrefetch = prefetch;
+  return prefetch;
+}
+
+export function discardStoredConfigurationPrefetch(panel, reason) {
+  const prefetch = panel._eocStoredConfigPrefetch;
+  if (!prefetch) return;
+  prefetch.detail.status = "discarded";
+  prefetch.detail.reason = reason;
+  prefetch.detail.discardedAt = Date.now();
+  panel._eocStoredConfigPrefetch = null;
+}
+
+function storedConfigurationDiscardReason(panel, prefetch, selected) {
+  if (panel._data?.is_admin === false) return "non-admin";
+  if (!selected || selected.subentry_id !== prefetch.subentryId || selected.entry_id !== prefetch.entryId) return "stored-agent-mismatch";
+  if (panel._viewKey?.() !== prefetch.view) return "route-changed";
+  if (panel._cacheGeneration !== prefetch.cacheGeneration) return "cache-generation-changed";
+  if (panel._configDirty) return "dirty-configuration";
+  return null;
+}
+
+export function consumeStoredConfigurationPrefetch(panel, action) {
+  const prefetch = panel._eocStoredConfigPrefetch;
+  if (!prefetch) return null;
+  const reason = storedConfigurationDiscardReason(panel, prefetch, panel._selectedAgent?.())
+    || (prefetch.action !== action ? "configuration-action-changed" : null);
+  if (reason) { discardStoredConfigurationPrefetch(panel, reason); return null; }
+  panel._eocStoredConfigPrefetch = null;
+  prefetch.detail.status = "consumed";
+  prefetch.detail.consumedAt = Date.now();
+  return prefetch.promise;
 }
 
 function applyPrefetchedConfiguration(panel, prefetch, configData) {
@@ -502,22 +554,27 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
     panel._render();
   }
 
-  if (
-    configurationPrefetch
-    && panel._data?.is_admin !== false
-    && selected?.subentry_id === configurationPrefetch.subentryId
-    && selected?.entry_id === configurationPrefetch.entryId
-    && panel._viewKey?.() === configurationPrefetch.view
-  ) {
-    const settled = await configurationPrefetch.promise;
-    if (
-      panel._viewKey?.() === configurationPrefetch.view
-      && panel._loadToken === initialToken
-      && panel._agentId === configurationPrefetch.subentryId
-      && settled.status === "fulfilled"
-      && settled.value?.config && typeof settled.value.config === "object"
-    ) {
-      applyPrefetchedConfiguration(panel, configurationPrefetch, settled.value);
+  if (configurationPrefetch) {
+    const reason = storedConfigurationDiscardReason(panel, configurationPrefetch, selected);
+    if (reason) discardStoredConfigurationPrefetch(panel, reason);
+    else if (configurationPrefetch.view !== "data-memory/conversations") {
+      // History's list can paint before configuration completes. Its settings
+      // loader consumes this same in-flight request after the route starts.
+      const pending = consumeStoredConfigurationPrefetch(panel, configurationPrefetch.action);
+      const settled = await pending;
+      const staleReason = storedConfigurationDiscardReason(panel, configurationPrefetch, panel._selectedAgent?.())
+        || (panel._loadToken !== initialToken ? "load-token-changed" : null);
+      if (staleReason) {
+        configurationPrefetch.detail.status = "discarded";
+        configurationPrefetch.detail.reason = staleReason;
+        configurationPrefetch.detail.discardedAt = Date.now();
+      } else if (settled.status === "fulfilled" && settled.value?.config && typeof settled.value.config === "object") {
+        applyPrefetchedConfiguration(panel, configurationPrefetch, settled.value);
+      } else {
+        configurationPrefetch.detail.status = "discarded";
+        configurationPrefetch.detail.reason = settled.status === "rejected" ? "request-failed" : "invalid-response";
+        configurationPrefetch.detail.discardedAt = Date.now();
+      }
     }
   }
 
