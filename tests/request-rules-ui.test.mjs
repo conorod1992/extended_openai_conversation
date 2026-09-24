@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
 import {renderRequestRules} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui.js";
-import {createRequestRuleActionSelector, loadRequestRuleActions, readRequestRuleActions, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
+import {createRequestRuleActionSelector, createRequestRuleConditionSelector, loadRequestRuleActions, readRequestRuleActions, renameResultReferences, suggestResultAlias, requestRulesDialog} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const panel = {
@@ -38,6 +38,10 @@ assert.match(html, /<h2>Test rules<\/h2>/);
 assert.match(html, /id="eoc-rule-live-test"/);
 assert.match(html, /class="eoc-live-label">Live/);
 assert.match(html, /Good night/);
+assert.match(html, /Global priority 1/);
+assert.match(html, /Move to top/);
+assert.match(html, /Move to bottom/);
+assert.match(html, /Groups organize rules/);
 assert.match(html, /Default matching/);
 assert.match(html, /Create rule/);
 assert.match(html, /id="rule-search"/);
@@ -66,6 +70,9 @@ assert.doesNotMatch(resetHtml, /high reasoning/);
 assert.match(requestRulesDialog(panel), /Alternatives must use the same variable names/);
 assert.match(requestRulesDialog(panel), /Variable values let part of the request change each time/);
 assert.match(requestRulesDialog(panel), /id="rule-action-sequence-host"/);
+assert.match(requestRulesDialog(panel), /id="rule-condition-host"/);
+assert.match(requestRulesDialog(panel), /id="rule-local-continue-to-ai"/);
+assert.match(requestRulesDialog(panel), /id="rule-group"/);
 assert.doesNotMatch(requestRulesDialog(panel), /<ha-selector/);
 assert.match(requestRulesDialog(panel), /Conditions, delays, choose, repeat, parallel/);
 assert.match(requestRulesDialog(panel), /extended_openai_conversation_responses\.call_function/);
@@ -79,6 +86,22 @@ assert.match(literalHtml, /<h2>Home Assistant sentence pattern<\/h2>/);
 assert.match(literalHtml, /<b>Equals<\/b> Home Assistant sentence pattern/);
 assert.match(bindingSource, /Captured values:/);
 assert.match(bindingSource, /selector = \{action:\{\}\}/);
+assert.match(bindingSource, /selector = \{condition:\{\}\}/);
+assert.doesNotMatch(requestRulesDialog(panel), /<textarea[^>]*id="rule-condition/);
+assert.equal(renameResultReferences("{battery.level} {battery} {battery_other.level} {{ battery.level }}", "battery", "power"), "{power.level} {power} {battery_other.level} {{ battery.level }}");
+assert.equal(renameResultReferences("{battery.items.0.name}", "battery", "power"), "{power.items.0.name}");
+assert.equal(suggestResultAlias("get_battery", ["get_battery"]), "get_battery_2");
+assert.equal(suggestResultAlias("request"), "request_2");
+
+{
+  const selector={addEventListener(){},};
+  const host={ownerDocument:{createElement:()=>selector},replaceChildren(child){assert.equal(child,selector);}};
+  const hass={};
+  assert.equal(createRequestRuleConditionSelector({_hass:hass},host),selector);
+  assert.deepEqual(selector.selector,{condition:{}});
+  assert.equal(selector.hass,hass);
+  assert.deepEqual(selector.value,[]);
+}
 
 {
   const hass = {localize: () => "localized"};
@@ -126,7 +149,7 @@ assert.match(bindingSource, /selector = \{action:\{\}\}/);
 }
 
 assert.match(requestRulesDialog(panel), /Rest of this conversation/);
-assert.match(requestRulesDialog(panel), /without asking the AI model/);
+assert.match(requestRulesDialog(panel), /before optional AI continuation/);
 assert.match(requestRulesDialog(panel), /ExtendedOpenAI sentence pattern/);
 assert.doesNotMatch(requestRulesDialog(panel), /Home Assistant sentence pattern/);
 const sentenceDialog = requestRulesDialog(panel);
@@ -136,7 +159,7 @@ assert.match(requestRulesDialog(panel), /\{room=kitchen\|bedroom\}/);
 assert.match(requestRulesDialog(panel), /\{level=0\.\.100\}/);
 assert.match(requestRulesDialog(panel), /named expansions/i);
 assert.match(requestRulesDialog(panel), /1\. What will you say\?/);
-assert.match(requestRulesDialog(panel), /3\. What should the assistant say\?/);
+assert.match(requestRulesDialog(panel), /4\. What should the assistant say\?/);
 assert.match(requestRulesDialog(panel), /class="matching-setting"/);
 assert.match(requestRulesDialog(panel), /Treats simple variations such as “light” and “lights” as the same\./);
 

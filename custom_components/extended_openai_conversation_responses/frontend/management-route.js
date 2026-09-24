@@ -301,6 +301,11 @@ export function applyRequestRuleSearch(panel, root = panel?.shadowRoot) {
     if (matches) visible += 1;
   }
 
+  root.querySelectorAll?.(".rule-group-section").forEach((section) => {
+    section.hidden = Boolean(normalized)
+      && ![...section.querySelectorAll("[data-rule-key]")].some((card) => !card.hidden);
+  });
+
   const list = root.querySelector(".rule-list");
   const empty = list?.querySelector("[data-eoc-rule-search-empty]");
   if (empty) empty.hidden = !String(query).trim() || visible > 0 || !rules.length;

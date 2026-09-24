@@ -133,6 +133,8 @@ CALL_FUNCTION_SCHEMA = vol.Schema(
     {
         vol.Required("function"): cv.string,
         vol.Optional("arguments", default=dict): dict,
+        vol.Optional("result_alias"): cv.string,
+        vol.Optional("step_id"): cv.string,
     }
 )
 
@@ -840,9 +842,13 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
     async def call_function(call: ServiceCall) -> ServiceResponse:
         """Bridge a native HA script action into the active configured function."""
-        result = await async_call_active_function(
-            call.data["function"], call.data.get("arguments", {})
-        )
+        arguments = call.data.get("arguments", {})
+        if "result_alias" in call.data:
+            result = await async_call_active_function(
+                call.data["function"], arguments, call.data["result_alias"]
+            )
+        else:
+            result = await async_call_active_function(call.data["function"], arguments)
         result = tool_result_data(result, default=result)
         return cast(ServiceResponse, {"result": result})
 

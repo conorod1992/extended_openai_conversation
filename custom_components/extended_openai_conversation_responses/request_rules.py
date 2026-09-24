@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -19,7 +20,7 @@ from uuid import uuid4
 
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import condition as ha_condition, config_validation as cv
 from homeassistant.helpers.script import Script, async_validate_actions_config
 from homeassistant.helpers.storage import Store
 
@@ -58,7 +59,7 @@ from .request_rule_patterns import (
 
 _LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 5
+STORAGE_VERSION = 6
 STORAGE_KEY_PREFIX = "extended_openai_conversation_responses.request_rules"
 MAX_RULES = 500
 MAX_PHRASES = 25
@@ -70,6 +71,20 @@ MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_patte
 ACTION_TYPES = ("local_action", "model_routing")
 SLOT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 SLOT_REFERENCE = re.compile(r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]{0,63})\}(?!\})")
+RESULT_REFERENCE = re.compile(
+    r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]*)(\.[A-Za-z_0-9][A-Za-z0-9_]*)+\}(?!\})"
+)
+RESERVED_RESULT_ALIASES = {
+    "request",
+    "conversation",
+    "system",
+    "trigger",
+    "this",
+    "repeat",
+    "wait",
+}
+MAX_RESULT_BYTES = 16384
+MAX_RESULT_DEPTH = 8
 JINJA_SLOT_REFERENCE = re.compile(
     r"\{\{\s*(?:request\.slots\.)?([A-Za-z_][A-Za-z0-9_]{0,63})\s*\}\}"
 )
@@ -96,6 +111,9 @@ SENSITIVE_DOMAINS = {"lock", "alarm_control_panel"}
 RequestRuleFunctionExecutor = Callable[[str, dict[str, Any]], Awaitable[Any]]
 _ACTIVE_FUNCTION_EXECUTOR: ContextVar[RequestRuleFunctionExecutor | None] = ContextVar(
     "request_rule_function_executor", default=None
+)
+_ACTIVE_FUNCTION_RESULTS: ContextVar[dict[str, Any] | None] = ContextVar(
+    "request_rule_function_results", default=None
 )
 
 
@@ -179,7 +197,7 @@ class RequestRuleStore(Store[dict[str, Any]]):
                 **old_data,
                 "wording_groups": _copy_wording_groups(DEFAULT_WORDING_GROUPS),
             }
-        if old_major_version in {2, 3, 4}:
+        if old_major_version in {2, 3, 4, 5}:
             return old_data
         raise NotImplementedError
 
@@ -212,7 +230,9 @@ class RequestRules:
         self._rules: list[dict[str, Any]] = []
         self._defaults = dict(DEFAULT_MATCHING)
         self._wording_groups = _copy_wording_groups(DEFAULT_WORDING_GROUPS)
+        self._groups: list[dict[str, str]] = []
         self._matching_snapshot = _MatchingSnapshot((), ())
+        self._condition_checkers: dict[str, tuple[str, tuple[Any, ...]]] = {}
         self._diagnostics: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -236,6 +256,11 @@ class RequestRules:
                     )
                     migrated = True
                 else:
+                    try:
+                        self._groups = validate_rule_groups(stored.get("groups", []))
+                    except ValueError:
+                        _LOGGER.warning("Ignoring invalid stored Request Rule groups")
+                        migrated = True
                     try:
                         self._defaults = validate_matching_settings(
                             stored.get("defaults", DEFAULT_MATCHING)
@@ -274,6 +299,7 @@ class RequestRules:
                         candidate, scope_migrated = (
                             _normalize_legacy_consumed_request_scope(raw)
                         )
+                        candidate = _assign_missing_result_step_ids(candidate)
                         if scope_migrated:
                             _LOGGER.warning(
                                 "Migrating stored complete Request Rule %s from request "
@@ -307,6 +333,7 @@ class RequestRules:
             except BaseException:
                 self._defaults = dict(DEFAULT_MATCHING)
                 self._wording_groups = deepcopy(list(DEFAULT_WORDING_GROUPS))
+                self._groups = []
                 self._rules = []
                 self._sort_and_compile()
                 self._initialized = False
@@ -319,6 +346,7 @@ class RequestRules:
             {
                 "defaults": self._defaults,
                 "wording_groups": self._wording_groups,
+                "groups": self._groups,
                 "rules": self._rules,
             },
             sort_keys=True,
@@ -345,6 +373,7 @@ class RequestRules:
             "revision": self.revision(),
             "defaults": dict(self._defaults),
             "wording_groups": _copy_wording_groups(self._wording_groups),
+            "groups": deepcopy(self._groups),
             "rules": [dict(rule) for rule in self._rules],
             "diagnostics": dict(self._diagnostics),
         }
@@ -383,6 +412,7 @@ class RequestRules:
             "storage_version",
             "defaults",
             "wording_groups",
+            "groups",
             "rules",
         }
         if unknown:
@@ -391,6 +421,7 @@ class RequestRules:
         wording_groups = validate_wording_groups(
             value.get("wording_groups", DEFAULT_WORDING_GROUPS)
         )
+        groups = validate_rule_groups(value.get("groups", []))
         raw_rules = value.get("rules", [])
         if not isinstance(raw_rules, Sequence) or isinstance(raw_rules, str):
             raise ValueError("request_rules.rules must be a list")
@@ -402,7 +433,18 @@ class RequestRules:
             rules.append(validate_rule(candidate, validate_sentence_pattern=False))
         if len({rule["id"] for rule in rules}) != len(rules):
             raise ValueError("duplicate Request Rule id")
-        return {"defaults": defaults, "wording_groups": wording_groups, "rules": rules}
+        if any(
+            rule["group_id"]
+            and rule["group_id"] not in {group["id"] for group in groups}
+            for rule in rules
+        ):
+            raise ValueError("Request Rule references an unknown group")
+        return {
+            "defaults": defaults,
+            "wording_groups": wording_groups,
+            "groups": groups,
+            "rules": rules,
+        }
 
     async def async_replace_backup(self, value: Any) -> None:
         """Replace all durable state from a fully validated backup."""
@@ -410,7 +452,15 @@ class RequestRules:
         async with self._lock:
             self._defaults = prepared["defaults"]
             self._wording_groups = prepared["wording_groups"]
-            self._rules = prepared["rules"]
+            self._groups = prepared["groups"]
+            self._rules = [
+                validate_rule(
+                    _assign_missing_result_step_ids(rule),
+                    validate_sentence_pattern=False,
+                )
+                for rule in prepared["rules"]
+            ]
+            self._condition_checkers.clear()
             self._sort_and_compile()
             self._initialized = True
             await self._async_save_locked()
@@ -475,7 +525,8 @@ class RequestRules:
             raw = dict(value)
             raw.setdefault("id", uuid4().hex)
             raw.setdefault("order", len(self._rules))
-            rule = validate_rule(raw)
+            rule = validate_rule(_assign_missing_result_step_ids(raw))
+            self._require_group(rule)
             if any(item["id"] == rule["id"] for item in self._rules):
                 raise ValueError("rule id already exists")
             _validate_total_pattern_states(
@@ -509,14 +560,30 @@ class RequestRules:
                 and raw.get("match_type", "equals") == previous["match_type"]
                 and not raw.get("enabled", True)
             )
-            rule = validate_rule(raw, validate_sentence_pattern=not preserve_inactive)
+            rule = validate_rule(
+                _assign_missing_result_step_ids(raw),
+                validate_sentence_pattern=not preserve_inactive,
+            )
+            self._require_group(rule)
             prospective = [*self._rules]
             prospective[index] = rule
             _validate_total_pattern_states(
                 prospective, inactive_rule_ids=set(self._diagnostics) - {rule_id}
             )
             self._rules[index] = rule
-            self._sort_and_compile()
+            self._condition_checkers.pop(rule_id, None)
+            match_fields = (
+                "enabled",
+                "phrases",
+                "match_type",
+                "matching_behavior",
+                "matching",
+                "order",
+            )
+            if all(previous[key] == rule[key] for key in match_fields):
+                self._refresh_snapshot_rule(rule_id, rule)
+            else:
+                self._sort_and_compile()
             await self._async_save_locked()
         return dict(rule)
 
@@ -528,6 +595,7 @@ class RequestRules:
             self._require_revision_locked(expected_revision)
             index = self._index(rule_id)
             del self._rules[index]
+            self._condition_checkers.pop(rule_id, None)
             self._sort_and_compile()
             await self._async_save_locked()
         return True
@@ -568,25 +636,30 @@ class RequestRules:
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
         """Move one rule by one position and update matching priority."""
-        if direction not in {"up", "down"}:
-            raise ValueError("direction must be up or down")
+        if direction not in {"up", "down", "top", "bottom"}:
+            raise ValueError("direction must be up, down, top or bottom")
         async with self._lock:
             self._require_revision_locked(expected_revision)
             index = self._index(rule_id)
-            target = index - 1 if direction == "up" else index + 1
+            target = {
+                "up": index - 1,
+                "down": index + 1,
+                "top": 0,
+                "bottom": len(self._rules) - 1,
+            }[direction]
             if target < 0 or target >= len(self._rules):
                 return dict(self._rules[index])
-            self._rules[index], self._rules[target] = (
-                self._rules[target],
-                self._rules[index],
-            )
+            moved = self._rules.pop(index)
+            self._rules.insert(target, moved)
             for order, rule in enumerate(self._rules):
                 rule["order"] = order
-            self._sort_and_compile()
+            self._reorder_matching_snapshot()
             await self._async_save_locked()
             return dict(self._rules[target])
 
-    def match(self, text: str) -> RuleMatch | None:
+    def match(
+        self, text: str, excluded_ids: frozenset[str] = frozenset()
+    ) -> RuleMatch | None:
         """Use list-order deterministic precedence, with fuzzy only as fallback."""
         snapshot = self._matching_snapshot
         validate_match_input(text)
@@ -606,6 +679,8 @@ class RequestRules:
             return normalized_candidates[key]
 
         for rule, settings, compiled in snapshot.deterministic:
+            if rule["id"] in excluded_ids:
+                continue
             if compiled.sentence_pattern is not None:
                 if sentence_text is None:
                     sentence_text = prepare_match_text(text)
@@ -621,6 +696,8 @@ class RequestRules:
 
         fuzzy: list[tuple[tuple[float, int, int], RuleMatch]] = []
         for rule, settings, compiled in snapshot.fuzzy:
+            if rule["id"] in excluded_ids:
+                continue
             score = _fuzzy_score(
                 candidate(settings), cast(str, compiled.normalized), rule["match_type"]
             )
@@ -632,15 +709,162 @@ class RequestRules:
         return max(fuzzy, key=lambda item: item[0])[1] if fuzzy else None
 
     async def async_match(self, hass: HomeAssistant, text: str) -> RuleMatch | None:
+        match, _ = await self.async_match_with_skipped(hass, text)
+        return match
+
+    async def async_match_with_skipped(
+        self, hass: HomeAssistant, text: str
+    ) -> tuple[RuleMatch | None, list[dict[str, str]]]:
         """Run matching off-loop only when the compiled snapshot has work."""
         snapshot = self._matching_snapshot
         if not snapshot.deterministic:
             validate_match_input(text)
-            return None
+            return None, []
         executor = getattr(hass, "async_add_executor_job", None)
-        if callable(executor):
-            return cast(RuleMatch | None, await executor(self.match, text))
-        return await asyncio.to_thread(self.match, text)
+        excluded: set[str] = set()
+        skipped: list[dict[str, str]] = []
+        while True:
+            args = (text, frozenset(excluded)) if excluded else (text,)
+            match = (
+                cast(RuleMatch | None, await executor(self.match, *args))
+                if callable(executor)
+                else await asyncio.to_thread(self.match, *args)
+            )
+            if match is None:
+                return None, skipped
+            if not isinstance(match, RuleMatch):
+                # Preserve lightweight matcher instrumentation/test doubles.
+                return match, skipped
+            conditions = match.rule.get("conditions", [])
+            if not conditions:
+                return match, skipped
+            try:
+                passed = True
+                fingerprint = json.dumps(
+                    conditions, sort_keys=True, separators=(",", ":")
+                )
+                cached = self._condition_checkers.get(match.rule["id"])
+                if cached is None or cached[0] != fingerprint:
+                    checkers = []
+                    for config in conditions:
+                        checked = await ha_condition.async_validate_condition_config(
+                            hass, deepcopy(config)
+                        )
+                        checkers.append(
+                            await ha_condition.async_from_config(hass, checked)
+                        )
+                    cached = (fingerprint, tuple(checkers))
+                    self._condition_checkers[match.rule["id"]] = cached
+                for checker in cached[1]:
+                    outcome = checker.async_check(
+                        variables={"request": {"slots": match.slots}, **match.slots}
+                    )
+                    if outcome is None:
+                        raise HomeAssistantError(
+                            "Request Rule condition returned no result"
+                        )
+                    if outcome is False:
+                        passed = False
+                        break
+            except Exception as err:
+                # An indeterminate higher-priority match stops routing entirely.
+                raise HomeAssistantError(
+                    "Request Rule condition could not be evaluated"
+                ) from err
+            if passed:
+                return match, skipped
+            excluded.add(match.rule["id"])
+            skipped.append(
+                {
+                    "id": match.rule["id"],
+                    "name": match.rule["name"],
+                    "reason": "conditions_false",
+                }
+            )
+
+    def _require_group(self, rule: Mapping[str, Any]) -> None:
+        if rule["group_id"] and rule["group_id"] not in {
+            group["id"] for group in self._groups
+        }:
+            raise ValueError("Request Rule group does not exist")
+
+    def _refresh_snapshot_rule(self, rule_id: str, replacement: dict[str, Any]) -> None:
+        """Publish a metadata-only change without recompiling every phrase."""
+        snapshot = self._matching_snapshot
+
+        def replace(
+            items: tuple[tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...],
+        ):
+            return tuple(
+                (
+                    deepcopy(replacement) if rule["id"] == rule_id else rule,
+                    settings,
+                    phrase,
+                )
+                for rule, settings, phrase in items
+            )
+
+        self._matching_snapshot = _MatchingSnapshot(
+            replace(snapshot.phrases),
+            snapshot.wording_groups,
+            replace(snapshot.deterministic),
+            replace(snapshot.fuzzy),
+        )
+
+    def _reorder_matching_snapshot(self) -> None:
+        """Publish the new priority order while retaining compiled phrases."""
+        snapshot = self._matching_snapshot
+        current = {rule["id"]: rule for rule in self._rules}
+
+        def ordered(items):
+            return tuple(
+                sorted(
+                    (
+                        (deepcopy(current[rule["id"]]), settings, phrase)
+                        for rule, settings, phrase in items
+                    ),
+                    key=lambda item: item[0]["order"],
+                )
+            )
+
+        phrases = ordered(snapshot.phrases)
+        fuzzy = tuple(
+            item
+            for item in phrases
+            if item[2].sentence_pattern is None and item[1]["fuzzy"]
+        )
+        self._matching_snapshot = _MatchingSnapshot(
+            phrases, snapshot.wording_groups, phrases, fuzzy
+        )
+
+    async def async_set_groups(
+        self, value: Any, *, expected_revision: str | None = None
+    ) -> dict[str, Any]:
+        """Update organization without changing the global rule order."""
+        if not isinstance(value, list):
+            raise ValueError("groups must be a list")
+        async with self._lock:
+            self._require_revision_locked(expected_revision)
+            groups = validate_rule_groups(
+                [
+                    {**item, "id": item.get("id") or uuid4().hex}
+                    if isinstance(item, Mapping)
+                    else item
+                    for item in value
+                ]
+            )
+            valid_ids = {group["id"] for group in groups}
+            for rule in self._rules:
+                if rule["group_id"] not in valid_ids:
+                    rule["group_id"] = None
+            self._groups = groups
+            self._reorder_matching_snapshot()
+            await self._async_save_locked()
+            return {
+                "groups": deepcopy(groups),
+                "rules": deepcopy(self._rules),
+                "revision": self.revision(),
+            }
 
     def _index(self, rule_id: str) -> int:
         for index, rule in enumerate(self._rules):
@@ -741,6 +965,7 @@ class RequestRules:
                 {
                     "defaults": self._defaults,
                     "wording_groups": self._wording_groups,
+                    "groups": self._groups,
                     "rules": self._rules,
                 }
             ),
@@ -753,6 +978,7 @@ class RequestRules:
         self._committed_state = {
             "defaults": deepcopy(self._defaults),
             "wording_groups": deepcopy(self._wording_groups),
+            "groups": deepcopy(self._groups),
             "rules": deepcopy(self._rules),
         }
 
@@ -762,6 +988,7 @@ class RequestRules:
             return
         self._defaults = deepcopy(snapshot["defaults"])
         self._wording_groups = deepcopy(snapshot["wording_groups"])
+        self._groups = deepcopy(snapshot["groups"])
         self._rules = deepcopy(snapshot["rules"])
         self._sort_and_compile()
 
@@ -904,6 +1131,25 @@ def _copy_wording_groups(value: Sequence[Mapping[str, Any]]) -> list[dict[str, A
     ]
 
 
+def validate_rule_groups(value: Any) -> list[dict[str, str]]:
+    """Validate organization metadata independently of precedence."""
+    if not isinstance(value, list) or len(value) > 100:
+        raise ValueError("groups must be a list of at most 100 items")
+    groups: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping) or set(item) != {"id", "name"}:
+            raise ValueError("each group needs an id and name")
+        groups.append(
+            {
+                "id": _clean(item["id"], 64, "group id"),
+                "name": _clean(item["name"], 100, "group name"),
+            }
+        )
+    if len({group["id"] for group in groups}) != len(groups):
+        raise ValueError("group ids must be unique")
+    return groups
+
+
 def validate_rule(
     value: Any, *, validate_sentence_pattern: bool = True
 ) -> dict[str, Any]:
@@ -922,6 +1168,8 @@ def validate_rule(
         "matching",
         "order",
         "slots",
+        "conditions",
+        "group_id",
     }
     unknown = set(value) - allowed
     if unknown:
@@ -984,7 +1232,26 @@ def validate_rule(
             "continue_to_ai": match_type not in {"equals", "sentence_pattern"},
         }
     action = _validate_action(action_type, raw_action)
+    conditions = value.get("conditions", [])
+    if not isinstance(conditions, list) or len(conditions) > MAX_ACTIONS:
+        raise ValueError("Only when conditions must be a list of at most 20 conditions")
+    _validate_script_complexity(conditions)
+    try:
+        cv.CONDITIONS_SCHEMA(deepcopy(conditions))
+    except Exception as err:
+        raise ValueError(f"Invalid Only when condition: {err}") from err
+    group_id = value.get("group_id")
+    if group_id is not None:
+        group_id = _clean(group_id, 64, "group id")
     referenced_slots = _referenced_slots(action) | _legacy_action_slots(raw_action)
+    if action_type == "local_action":
+        _validate_result_dependencies(action, set(slot_names))
+        aliases = {
+            step.get("data", {}).get("result_alias")
+            for step in action["actions"]
+            if isinstance(step, Mapping) and isinstance(step.get("data"), Mapping)
+        }
+        referenced_slots -= aliases
     unknown_slots = referenced_slots - set(slot_names)
     if unknown_slots and (validate_sentence_pattern or sentence_valid):
         raise ValueError("unknown captured value: " + ", ".join(sorted(unknown_slots)))
@@ -1019,6 +1286,8 @@ def validate_rule(
         "matching": matching,
         "order": order,
         "slots": [{"name": item} for item in slot_names],
+        "conditions": deepcopy(conditions),
+        "group_id": group_id,
     }
 
 
@@ -1080,6 +1349,7 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
             "success_response",
             "failure_response",
             "canonical_signature",
+            "continue_to_ai",
         }
         unknown = set(value) - allowed
         if unknown:
@@ -1092,6 +1362,9 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
         if not actions_value or len(actions_value) > MAX_ACTIONS:
             raise ValueError(f"actions must contain 1 to {MAX_ACTIONS} items")
         actions = _validate_script_sequence(actions_value)
+        continue_to_ai = value.get("continue_to_ai", False)
+        if not isinstance(continue_to_ai, bool):
+            raise ValueError("continue_to_ai must be true or false")
         return {
             "actions": actions,
             "success_response": _clean(
@@ -1103,6 +1376,7 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
                 "failure_response",
             ),
             "canonical_signature": canonical_action_signature(actions),
+            "continue_to_ai": continue_to_ai,
         }
     allowed = {
         "model",
@@ -1199,7 +1473,13 @@ def _validate_ha_action(value: Any) -> dict[str, Any]:
 def _validate_local_action(value: Any) -> dict[str, Any]:
     """Migrate one legacy HA or configured-function action to native syntax."""
     if isinstance(value, Mapping) and value.get("type") == "function":
-        unknown = set(value) - {"type", "function", "arguments"}
+        unknown = set(value) - {
+            "type",
+            "function",
+            "arguments",
+            "result_alias",
+            "step_id",
+        }
         if unknown:
             raise ValueError(
                 "unknown function action fields: " + ", ".join(sorted(unknown))
@@ -1236,6 +1516,12 @@ def _validate_local_action(value: Any) -> dict[str, Any]:
             "data": {
                 "function": function_name,
                 "arguments": normalized_arguments,
+                **(
+                    {"result_alias": value["result_alias"]}
+                    if "result_alias" in value
+                    else {}
+                ),
+                **({"step_id": value["step_id"]} if "step_id" in value else {}),
             },
         }
     if isinstance(value, Mapping) and value.get("type") == "home_assistant":
@@ -1275,19 +1561,135 @@ def _legacy_action_slots(value: Any) -> set[str]:
 
 def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
     """Validate native HA script syntax and enforce conservative size bounds."""
-    migrated = [
-        _validate_local_action(item)
-        if isinstance(item, Mapping)
-        and ("domain" in item or item.get("type") in {"function", "home_assistant"})
-        else item
-        for item in value
-    ]
+    migrated: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError("each Home Assistant action must be an object")
+        if "domain" in item or item.get("type") in {"function", "home_assistant"}:
+            migrated.append(_validate_local_action(item))
+        else:
+            migrated.append(dict(deepcopy(item)))
     _validate_script_complexity(migrated)
     try:
         cv.SCRIPT_SCHEMA(_mask_script_templates(migrated))
     except Exception as err:
         raise ValueError(f"invalid Home Assistant action sequence: {err}") from err
-    return cast(list[dict[str, Any]], migrated)
+    return migrated
+
+
+def _assign_missing_result_step_ids(value: Any) -> Any:
+    """Give newly saved result-producing steps identities once at a write boundary."""
+    if not isinstance(value, Mapping):
+        return value
+    rule = deepcopy(dict(value))
+    action = rule.get("action")
+    if not isinstance(action, dict) or not isinstance(action.get("actions"), list):
+        return rule
+    for step in action["actions"]:
+        if not isinstance(step, dict):
+            continue
+        if step.get("type") == "function":
+            if step.get("result_alias") and not step.get("step_id"):
+                step["step_id"] = uuid4().hex
+            continue
+        data = step.get("data")
+        if (
+            step.get("action") == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+            and isinstance(data, dict)
+            and data.get("result_alias")
+            and not data.get("step_id")
+        ):
+            data["step_id"] = uuid4().hex
+    return rule
+
+
+def _result_references(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return {match.group(1) for match in RESULT_REFERENCE.finditer(value)}
+    if isinstance(value, Mapping):
+        result: set[str] = set()
+        for key, item in value.items():
+            if key not in {"result_alias", "step_id"}:
+                result.update(_result_references(item))
+        return result
+    if isinstance(value, list):
+        result = set()
+        for item in value:
+            result.update(_result_references(item))
+        return result
+    return set()
+
+
+def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) -> None:
+    produced: set[str] = set()
+    step_ids: set[str] = set()
+    top_level_ids = {id(step) for step in action["actions"]}
+    for nested in _iter_script_actions(action["actions"]):
+        data = nested.get("data")
+        if (
+            isinstance(data, Mapping)
+            and data.get("result_alias")
+            and id(nested) not in top_level_ids
+        ):
+            raise ValueError("Function results can be captured only by top-level steps")
+    all_aliases = {
+        step.get("data", {}).get("result_alias")
+        for step in action["actions"]
+        if isinstance(step, Mapping) and isinstance(step.get("data"), Mapping)
+    }
+    for step in action["actions"]:
+        if not isinstance(step, Mapping):
+            continue
+        missing = (
+            _result_references(step) | (_referenced_slots(step) & all_aliases)
+        ) - produced
+        if missing:
+            raise ValueError(
+                "Function result must be produced by an earlier step: "
+                + ", ".join(sorted(missing))
+            )
+        data = step.get("data", {})
+        if step.get("action") != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}" or not isinstance(
+            data, Mapping
+        ):
+            continue
+        alias = data.get("result_alias")
+        if alias is None:
+            continue
+        if (
+            not isinstance(alias, str)
+            or not SLOT_NAME.fullmatch(alias)
+            or alias in RESERVED_RESULT_ALIASES
+            or alias in slots
+        ):
+            raise ValueError(
+                "Function result alias must be a distinct simple identifier"
+            )
+        if alias in produced:
+            raise ValueError("Function result aliases must be unique within a rule")
+        step_id = data.get("step_id")
+        if step_id is not None and (
+            not isinstance(step_id, str)
+            or not re.fullmatch(r"[0-9a-f]{32}", step_id)
+            or step_id in step_ids
+        ):
+            raise ValueError("Function result step IDs must be unique")
+        if step_id is not None:
+            step_ids.add(step_id)
+        produced.add(alias)
+    missing = (
+        _result_references(action["success_response"])
+        | (_referenced_slots(action["success_response"]) & all_aliases)
+    ) - produced
+    if missing:
+        raise ValueError(
+            "Success response references a missing Function result: "
+            + ", ".join(sorted(missing))
+        )
+    if _result_references(action["failure_response"]) or (
+        _referenced_slots(action["failure_response"]) & all_aliases
+    ):
+        raise ValueError("Failure response cannot reference Function results")
 
 
 def _mask_script_templates(value: Any, *, key: str | None = None) -> Any:
@@ -1445,7 +1847,9 @@ def rule_has_sensitive_actions(rule: Mapping[str, Any]) -> bool:
     return False
 
 
-async def async_call_active_function(function: str, arguments: Any) -> Any:
+async def async_call_active_function(
+    function: str, arguments: Any, result_alias: str | None = None
+) -> Any:
     """Execute an integration function in the active Request Rule context."""
     executor = _ACTIVE_FUNCTION_EXECUTOR.get()
     if executor is None:
@@ -1454,7 +1858,116 @@ async def async_call_active_function(function: str, arguments: Any) -> Any:
         )
     if not isinstance(arguments, Mapping):
         raise HomeAssistantError("Function arguments must be an object")
-    return await executor(function, dict(arguments))
+    result = await executor(function, dict(arguments))
+    if result_alias is not None:
+        results = _ACTIVE_FUNCTION_RESULTS.get()
+        if results is None:
+            raise HomeAssistantError("Function results require an active Request Rule")
+        from .ha_tool_result_compat import tool_result_data
+
+        payload = tool_result_data(result, default=result)
+        if isinstance(payload, Mapping) and "result" in payload:
+            payload = payload["result"]
+        if isinstance(payload, str):
+            with suppress(json.JSONDecodeError):
+                payload = json.loads(payload)
+        if isinstance(payload, Mapping) and payload.get("status") in {
+            "error",
+            "denied",
+            "unavailable",
+        }:
+            raise HomeAssistantError("Function Tool returned a failure")
+        results[result_alias] = _bounded_function_result(payload)
+    return result
+
+
+def _bounded_function_result(
+    value: Any, depth: int = 0, budget: list[int] | None = None
+) -> Any:
+    """Retain only bounded JSON values; false, zero, empty text and null are valid."""
+    if budget is None:
+        budget = [0, 0]
+    budget[0] += 1
+    if budget[0] > MAX_SCRIPT_NODES:
+        raise HomeAssistantError("Function result contains too many values")
+    if depth > MAX_RESULT_DEPTH:
+        raise HomeAssistantError("Function result is too deeply nested")
+    result: Any
+    if isinstance(value, Mapping):
+        result = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise HomeAssistantError("Function result object keys must be text")
+            budget[1] += len(key.encode("utf-8"))
+            if budget[1] > MAX_RESULT_BYTES:
+                raise HomeAssistantError("Function result is too large")
+            result[key] = _bounded_function_result(item, depth + 1, budget)
+    elif isinstance(value, list):
+        result = [_bounded_function_result(item, depth + 1, budget) for item in value]
+    elif value is None or isinstance(value, (str, int, float, bool)):
+        result = value
+        budget[1] += len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+        if budget[1] > MAX_RESULT_BYTES:
+            raise HomeAssistantError("Function result is too large")
+    else:
+        raise HomeAssistantError("Function result must contain JSON values")
+    if (
+        depth == 0
+        and len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+        > MAX_RESULT_BYTES
+    ):
+        raise HomeAssistantError("Function result is too large")
+    return result
+
+
+def resolve_result_values(
+    value: Any, slots: Mapping[str, str], results: Mapping[str, Any]
+) -> Any:
+    """Resolve exact result paths, keeping captures in their own namespace."""
+
+    def lookup(token: str) -> Any:
+        alias, *path = token.split(".")
+        if alias not in results:
+            raise ValueError(f"Function result {alias} is unavailable")
+        current = results[alias]
+        for part in path:
+            if isinstance(current, Mapping) and part in current:
+                current = current[part]
+            elif (
+                isinstance(current, list)
+                and part.isdigit()
+                and int(part) < len(current)
+            ):
+                current = current[int(part)]
+            else:
+                raise ValueError(f"Function result path {token} is unavailable")
+        return current
+
+    if isinstance(value, str):
+        exact = re.fullmatch(
+            r"\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_0-9][A-Za-z0-9_]*)*)\}", value
+        )
+        if exact and exact.group(1).split(".")[0] in results:
+            return lookup(exact.group(1))
+        rendered = RESULT_REFERENCE.sub(
+            lambda match: str(lookup(match.group(0)[1:-1])), value
+        )
+        return SLOT_REFERENCE.sub(
+            lambda match: (
+                str(results[match.group(1)])
+                if match.group(1) in results
+                else slots[match.group(1)]
+            ),
+            rendered,
+        )
+    if isinstance(value, Mapping):
+        return {
+            key: resolve_result_values(item, slots, results)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [resolve_result_values(item, slots, results) for item in value]
+    return value
 
 
 def _resolve_guest_slot_templates(value: Any, slots: Mapping[str, str]) -> Any:
@@ -1584,29 +2097,64 @@ async def async_evaluate_rule(
                     match, True, GUEST_MODE_UNAVAILABLE, successful=False
                 )
         try:
-            schema_actions = cv.SCRIPT_SCHEMA(executable_actions)
-            validated_actions = await async_validate_actions_config(
-                hass, schema_actions
+            captures_results = any(
+                isinstance(step, Mapping)
+                and isinstance(step.get("data"), Mapping)
+                and step["data"].get("result_alias")
+                for step in executable_actions
             )
-            script = Script(
-                hass,
-                validated_actions,
-                f"Request Rule {rule['id']}",
-                DOMAIN,
-                log_exceptions=False,
-            )
-            token = _ACTIVE_FUNCTION_EXECUTOR.set(function_executor)
-            try:
-                await script.async_run(
-                    {
-                        **match.slots,
-                        "request": {"slots": dict(match.slots)},
-                    },
-                    context,
+            script = None
+            if not captures_results:
+                schema_actions = cv.SCRIPT_SCHEMA(executable_actions)
+                validated_actions = await async_validate_actions_config(
+                    hass, schema_actions
                 )
+                script = Script(
+                    hass,
+                    validated_actions,
+                    f"Request Rule {rule['id']}",
+                    DOMAIN,
+                    log_exceptions=False,
+                )
+            token = _ACTIVE_FUNCTION_EXECUTOR.set(function_executor)
+            result_values: dict[str, Any] = {}
+            result_token = _ACTIVE_FUNCTION_RESULTS.set(result_values)
+            try:
+                if captures_results:
+                    for step in executable_actions:
+                        resolved = resolve_result_values(
+                            step, match.slots, result_values
+                        )
+                        one = Script(
+                            hass,
+                            await async_validate_actions_config(
+                                hass, cv.SCRIPT_SCHEMA([resolved])
+                            ),
+                            f"Request Rule {rule['id']}",
+                            DOMAIN,
+                            log_exceptions=False,
+                        )
+                        try:
+                            await one.async_run(
+                                {
+                                    **match.slots,
+                                    "request": {"slots": dict(match.slots)},
+                                },
+                                context,
+                            )
+                        finally:
+                            await one.async_unload()
+                else:
+                    assert script is not None
+                    await script.async_run(
+                        {**match.slots, "request": {"slots": dict(match.slots)}},
+                        context,
+                    )
             finally:
+                _ACTIVE_FUNCTION_RESULTS.reset(result_token)
                 _ACTIVE_FUNCTION_EXECUTOR.reset(token)
-                await script.async_unload()
+                if script is not None:
+                    await script.async_unload()
         except GuestModeDenied:
             return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
         except Exception:
@@ -1617,9 +2165,20 @@ async def async_evaluate_rule(
                 resolve_slot_values(action["failure_response"], match.slots),
                 successful=False,
             )
-        return RuleEvaluation(
-            match, True, resolve_slot_values(action["success_response"], match.slots)
-        )
+        if action["continue_to_ai"]:
+            return RuleEvaluation(match, False)
+        try:
+            response = resolve_result_values(
+                action["success_response"], match.slots, result_values
+            )
+        except ValueError, KeyError:
+            return RuleEvaluation(
+                match,
+                True,
+                resolve_slot_values(action["failure_response"], match.slots),
+                successful=False,
+            )
+        return RuleEvaluation(match, True, str(response))
 
     if action["reset"]:
         if action["scope"] == "conversation":

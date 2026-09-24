@@ -2,7 +2,7 @@
 
 Request Rules examine text received by Extended OpenAI Conversation before its normal provider request. They provide deterministic local voice shortcuts and AI-routing commands without asking a model to interpret the trigger.
 
-Open **Extended OpenAI > Capabilities > Request Rules**. Rules, matching defaults, and wording alternatives are stored locally per conversation agent and included in that agent's backup.
+Open **Extended OpenAI > Capabilities > Request Rules**. Rules, groups, matching defaults, and wording alternatives are stored locally per conversation agent and included in that agent's backup.
 
 Request Rules only see text that Home Assistant routes to this conversation agent. If a native intent or sentence-trigger automation handles a sentence first, the rule is not involved.
 
@@ -11,17 +11,28 @@ Request Rules only see text that Home Assistant routes to this conversation agen
 The editor follows the way a command is usually designed:
 
 1. Enter what you will say and choose how it matches.
-2. Choose what should happen.
-3. Choose what the assistant should say.
-4. Open **Advanced matching and action configuration** only when the defaults or friendly action fields are not enough.
+2. Optionally add **Only when** conditions with Home Assistant's native condition editor.
+3. Choose what should happen.
+4. Choose what the assistant should say.
+5. Open **Advanced matching and action configuration** only when the defaults or friendly action fields are not enough.
+
+## Only when conditions
+
+Rules with no conditions behave exactly as before. For a conditional rule, phrase or sentence-pattern matching runs first. Only if the text matches are its Home Assistant conditions evaluated. A false condition skips that rule and checks later text-matching rules in global priority order. This also applies to fuzzy fallback candidates. The first text match whose conditions pass wins.
+
+The **Only when** editor uses Home Assistant's condition selector. For example, an Equals rule for `good night` can require a state condition that `input_boolean.bedtime` is `on`. You can use native nested `and`/`or`/`not`, numeric state, time, template, device, and other conditions offered by Home Assistant. Saved condition structures remain intact when the rule is edited.
+
+If a text-matching condition cannot be evaluated, Request Rules stop safely for that request. No lower-priority rule runs, and the user receives a rule error. Match Preview reports the error. This avoids treating an uncertain higher-priority rule as false and executing another local action.
 
 ## Local commands
 
-A **Local command** runs one or more Home Assistant actions or enabled ExtendedOpenAI functions in order and does not make an OpenAI/API call. Select an action by its `domain.action` name, then choose an entity, device, or area through Home Assistant's native selectors. Fields published by the selected service, such as brightness, temperature, media, or a select option, appear as friendly controls when Home Assistant provides selector metadata.
+A **Local command** runs one or more Home Assistant actions or enabled ExtendedOpenAI functions in order. By default it consumes the request locally and does not make an OpenAI/API call. Select an action by its `domain.action` name, then choose an entity, device, or area through Home Assistant's native selectors. Fields published by the selected service, such as brightness, temperature, media, or a select option, appear as friendly controls when Home Assistant provides selector metadata.
 
 Existing `target` and `data` values are preserved when a rule is edited. **Advanced JSON** is a lossless fallback for service data or target keys that the friendly editor does not expose.
 
 If any action fails, the remaining actions do not run and the configured failure response is returned. While Guest Mode is active, the entire sequence is authorized before the first action runs; if one action is unavailable, none run.
+
+Turn on **Continue to AI** when the local sequence should run first and the provider should then answer the original request unchanged. The provider is called once after all local steps succeed; the local success response is used only when the request is consumed locally. A failed step or Guest Mode denial stops the request and does not continue to AI. Earlier successful side effects are not rolled back if a later step fails.
 
 ### Example: fast local script
 
@@ -62,6 +73,8 @@ Reasoning effort is validated against the model that will actually receive it, i
 - **Fuzzy matching** tolerates small speech-recognition differences only after strict matching fails. Conservative, Normal, and Tolerant correspond to progressively lower thresholds. Sensitivity is unavailable when fuzzy matching is off.
 
 Strict matching always wins over fuzzy matching. Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen; the first enabled rule with a strict match wins, regardless of match type. Move rules to change their priority. If no deterministic rule matches, fuzzy matching is used as a fallback; its existing score-based winner selection applies.
+
+The first *eligible* candidate wins: a candidate whose Only when conditions are false is skipped. Conditions are never evaluated for rules whose text did not match.
 
 For example, if an earlier **Contains** rule and a later **Equals** rule both match the same request, the earlier rule wins. Move the Equals rule above it when that more specific case should take priority.
 
@@ -152,6 +165,18 @@ Inactive legacy rules can be disabled and repaired individually without blocking
 A rule can call an enabled Function Tool directly without sending the request to the AI provider. The function selector comes from the current agent's configured tools. Selecting one shows common string, number, integer, boolean, enum, and simple-array inputs from its existing schema. Each input can be a fixed value or a captured request value.
 
 For example, use `Show {entity_id} attributes`, select the existing `get_attributes` function, and set `entity_id` to **Value from request → entity_id**. Direct execution uses the same implementation, argument validation, current enabled state, Guest Mode policy, and entity-access checks as a model-initiated call.
+
+To use a Function Tool's return value, set an optional **Result alias** on its action step. For `get_device_battery(device={device})`, name the result `battery`; an object result such as `{"name":"Kitchen tablet","level":62}` can then be used in the local success response as `{battery.name} is at {battery.level}%`. A scalar string, number, boolean, or null can be referenced as `{battery}`. Nested object paths and simple numeric array indexes such as `{battery.items.0.name}` are supported. Missing paths fail the local rule and use its failure response; placeholders are never spoken unresolved.
+
+Request captures and Function results stay separate. `{device}` remains a request capture, while `{battery.device}` reads a field from the Function result. A Function result cannot overwrite a capture. Each result-producing call needs a unique editable alias, even when the same Function Tool is called twice. Aliases use letters, digits, and underscores, start with a letter or underscore, and cannot use reserved names such as `request`, `conversation`, or `system`. The editor suggests an alias from the Function Tool name; the saved step ID remains stable when you rename the alias. References to an earlier alias in simple `{alias.path}` form are updated on rename. Removing or moving a producing step ahead of its consumers is rejected on save.
+
+Function execution success is determined by the execution outcome, not the truthiness of its result: `false`, `0`, empty string, and null are valid values. Retained results are limited to 16 KiB and eight levels of nesting. The safe Match Preview lists the Function Tool and alias but never runs it or invents a result. Live Test can run it after the normal explicit confirmation. **Function results are not automatically sent to the AI provider**, including when Continue to AI is on; the provider receives only the original request.
+
+## Groups and priority
+
+Groups organize Request Rules in visible, collapsible sections, including **Ungrouped** where needed. Create, rename, or delete a group under **Manage groups**, and assign a rule to a group in its editor. Collapsing a section only changes what is shown. Deleting a group moves its rules to **Ungrouped** and preserves their priority. Group definitions and membership are included in backups.
+
+Groups do not create separate precedence lanes. Each card shows its **global priority** number, which determines matching order even when the cards appear in different group sections. Use **Move up**, **Move down**, **Move to top**, and **Move to bottom** to change the single global sequence across group boundaries. A moved rule remains in its assigned section, and every priority number updates. The server checks the current revision when saving a reorder, so an older tab cannot silently overwrite a newer order.
 
 ## Request Rules compared with native automations
 

@@ -45,8 +45,19 @@ assert.match(localMatch, /Matched: Kitchen &lt;night&gt;/);
 assert.match(localMatch, /Sentence pattern/);
 assert.match(localMatch, /Normal match/);
 assert.match(localMatch, /room → kitchen/);
-assert.match(localMatch, /Would run 2 local actions and consume the command locally/);
-assert.match(localMatch, /AI provider would not receive it/);
+assert.match(localMatch, /Would run 2 local actions/);
+assert.match(localMatch, /command would be consumed locally/);
+
+const continued = formatRequestRuleMatchResult(panel, {
+  matched:true,rule:{name:"Battery",match_type:"equals",action_type:"local_action"},
+  matched_phrase:"battery",fuzzy:false,score:100,captured_values:{},
+  skipped_conditions:[{name:"Earlier rule",reason:"conditions_false"}],
+  would_do:{type:"local_action",action_count:1,consumed:false,provider_input:"original",functions:[{name:"get_battery",result_alias:"battery"}]},
+});
+assert.match(continued, /get_battery → battery/);
+assert.match(continued, /original request would continue to the AI/);
+assert.match(continued, /Earlier rule: Only when conditions were false/);
+assert.match(continued, /no Function result was invented/);
 
 const broadRouting = formatRequestRuleMatchResult(panel, {
   matched:true,
