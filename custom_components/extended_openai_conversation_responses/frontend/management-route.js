@@ -1,6 +1,6 @@
 import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule, startOverviewDetailReads} from "./overview-page.js";
-import {SECTION_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
+import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_VIEWS = new Set([
   "capabilities/home-assistant",
@@ -153,9 +153,7 @@ export function prefetchIntentRead(panel, view) {
     const active = panel._configData;
     if (panel._draftAgentId === agent.subentry_id && active?.config
         && active.projection !== "retention") return null;
-    const retentionKey = panel._configurationSnapshotKey?.(agent.subentry_id, "retention");
-    const cachedRetention = retentionKey ? panel._cleanConfigSnapshots?.get(retentionKey) : null;
-    if (cachedRetention && Date.now() - cachedRetention.loadedAt <= CLEAN_CONFIG_TTL_MS) return null;
+    if (panel._freshCleanConfiguration?.(agent.subentry_id, "retention")) return null;
   }
   const cacheKey = panel._sectionCacheKey?.(view);
   const loadedAt = panel._eocSectionCacheTimes?.get(cacheKey);

@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 
-import { BACKUP_CREDENTIAL_WARNING, backupSummaryLines } from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor.js";
+import { BACKUP_CREDENTIAL_WARNING, backupSummaryLines, baseBackupSummaryLines } from "../custom_components/extended_openai_conversation_responses/frontend/backup-summary.js";
 import {backupSummaryLines as transferSummaryLines} from "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
-import {backupSummaryLines as baseSummaryLines} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
 
 const summary = {
   request_rules: 5,
@@ -32,4 +31,4 @@ assert.match(BACKUP_CREDENTIAL_WARNING, /redacted/i);
 assert.match(BACKUP_CREDENTIAL_WARNING, /re-enter/i);
 assert.match(BACKUP_CREDENTIAL_WARNING, /best-effort/i);
 assert.deepEqual(transferSummaryLines(summary), lines);
-assert.deepEqual(baseSummaryLines(summary), lines.slice(0, -1));
+assert.deepEqual(baseBackupSummaryLines(summary), lines.slice(0, -1));

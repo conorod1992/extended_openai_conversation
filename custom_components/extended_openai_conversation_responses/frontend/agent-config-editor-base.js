@@ -103,7 +103,6 @@ export async function copyTextToClipboard(text, clipboardNavigator = globalThis.
   }
 }
 
-export {baseBackupSummaryLines as backupSummaryLines} from "./backup-summary.js";
 
 const searchTokens = (value) => String(value || "")
   .normalize("NFKD")
