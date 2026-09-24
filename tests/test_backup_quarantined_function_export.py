@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock
 import pytest
 import yaml
 
-from custom_components.extended_openai_conversation_responses import backup, transfer
+from custom_components.extended_openai_conversation_responses import (
+    backup,
+    function_dependency_integrity,
+    transfer,
+)
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
     agent_config_defaults,
@@ -17,7 +21,10 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
+    DOMAIN,
+    SERVICE_CALL_FUNCTION,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def _broken_config() -> dict:
@@ -118,3 +125,50 @@ async def test_setup_export_collection_succeeds_with_quarantined_function(
     exported = document["sections"][transfer.SECTION_CONFIGURATION]
     assert exported[CONF_FUNCTION_TOOLS] == config[CONF_FUNCTION_TOOLS]
     assert exported[CONF_FUNCTION_GROUPS] == config[CONF_FUNCTION_GROUPS]
+
+
+
+def test_setup_import_accepts_quarantined_function_for_repair() -> None:
+    config = _broken_config()
+    prepared = transfer.inspect_transfer(
+        {
+            "schema": transfer.LEGACY_AGENT_SCHEMA,
+            "version": transfer.AGENT_CONFIG_EXPORT_VERSION,
+            "title": "Imported",
+            "config": config,
+        },
+        "target-agent",
+    )
+
+    assert prepared.config is not None
+    assert prepared.config[CONF_FUNCTION_TOOLS] == config[CONF_FUNCTION_TOOLS]
+    assert prepared.config[CONF_FUNCTION_GROUPS] == config[CONF_FUNCTION_GROUPS]
+
+
+async def test_request_rule_restore_allows_only_explicitly_quarantined_name(
+    hass,
+) -> None:
+    rule = {
+        "action": {
+            "actions": [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"function": "unavailable_reminder", "arguments": {}},
+                }
+            ]
+        }
+    }
+
+    await function_dependency_integrity.async_validate_request_rule_functions(
+        hass,
+        rule,
+        [],
+        quarantined_names={"unavailable_reminder"},
+    )
+
+    with pytest.raises(HomeAssistantError, match="unavailable or disabled"):
+        await function_dependency_integrity.async_validate_request_rule_functions(
+            hass,
+            rule,
+            [],
+        )
