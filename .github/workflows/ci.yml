@@ -307,10 +307,14 @@ jobs:
         run: mypy custom_components/extended_openai_conversation_responses
 
   stable-test:
-    name: Test (HA stable)
+    name: Test (HA stable / ${{ matrix.shard }})
     runs-on: ubuntu-latest
     needs: classify
     if: needs.classify.outputs.backend == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [a, b]
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
@@ -353,20 +357,62 @@ jobs:
           pip check
           python -c "from importlib.metadata import version; print('homeassistant=' + version('homeassistant'))"
 
+      - name: Validate stable test partition
+        run: python ci/stable_test_shards.py
+
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          pytest tests/ \
+          mapfile -t TEST_PATHS < <(python ci/stable_test_shards.py --shard "${{ matrix.shard }}")
+          pytest "${TEST_PATHS[@]}" \
             -n 2 \
             --dist=loadscope \
             -v \
             --asyncio-mode=auto \
             --timeout=30 \
+            --junitxml="stable-junit-${{ matrix.shard }}.xml" \
             --cov=custom_components/extended_openai_conversation_responses \
             --cov-branch \
-            --cov-report=xml \
+            --cov-fail-under=0 \
+            --cov-report=xml:stable-coverage-${{ matrix.shard }}.xml \
             --cov-report=term-missing
+
+      - name: Upload stable coverage and test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stable-test-${{ matrix.shard }}
+          path: |
+            .coverage
+            stable-coverage-${{ matrix.shard }}.xml
+            stable-junit-${{ matrix.shard }}.xml
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  stable-coverage:
+    name: Test (HA stable / combined coverage)
+    runs-on: ubuntu-latest
+    needs: stable-test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download both stable shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: stable-test-*
+          path: stable-shards
+
+      - name: Combine coverage and enforce branch threshold
+        run: |
+          test -s stable-shards/stable-test-a/.coverage
+          test -s stable-shards/stable-test-b/.coverage
+          python -m pip install 'coverage>=7,<8'
+          coverage combine stable-shards/stable-test-a stable-shards/stable-test-b
+          coverage report -m
+          coverage xml -o coverage.xml
 
   dev-test:
     name: Test (HA dev)
