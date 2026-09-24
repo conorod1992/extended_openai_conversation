@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 from typing import Any, cast
 
+import yaml
+
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -120,7 +122,7 @@ def export_configuration_snapshot(data: Any) -> dict[str, Any]:
     raw = dict(data)
     try:
         return preserve_legacy_guest_policy(raw, agent_config_snapshot(raw))
-    except (HomeAssistantError, TypeError, ValueError):
+    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError):
         # Export is a recovery boundary: if Function Tools are the only invalid
         # persisted field, normalize a management-safe copy and then restore the
         # exact raw Function Tool/Group fields into the exported snapshot.
