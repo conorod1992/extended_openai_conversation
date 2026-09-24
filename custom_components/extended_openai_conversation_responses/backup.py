@@ -125,7 +125,7 @@ def _configuration_snapshot_preserving_quarantine(
     normalize = agent_config_snapshot if frontend_shape else normalize_agent_config
     try:
         return preserve_legacy_guest_policy(raw, normalize(raw))
-    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError):
+    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
         # Backup/import is a recovery boundary: tolerate only a Function Tool
         # validation failure. Normalize every unrelated field strictly using a
         # safe Function projection, then put the original persisted Function
@@ -430,7 +430,7 @@ async def _snapshot_for_restore(
     )
     return PreparedRestore(
         subentry.title,
-        recoverable_configuration_snapshot(subentry.data),
+        export_configuration_snapshot(subentry.data),
         PersistentMemory.validate_backup_data(await memory.async_backup_data()),
         TemporaryMemory.validate_backup_data(await temporary.async_backup_data()),
         KnowledgeLibrary.validate_backup_data(await knowledge.async_backup_data()),
