@@ -492,7 +492,9 @@ async def test_configuration_is_forced_to_disk_before_journal_cleanup(
     assert subentry.data == target.config
     after = management_function_repair.persisted_config_projection(subentry)
     assert after.revision != before.revision
-    assert after.snapshot["prompt"] == "new configuration"
+    assert management_function_repair.normalized_persisted_config_snapshot(after)[0][
+        "prompt"
+    ] == "new configuration"
 
 
 async def test_configuration_disk_mismatch_keeps_recovery_pending(monkeypatch) -> None:

@@ -323,6 +323,7 @@ async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatc
     monkeypatch.setattr(
         function_repair, "_persisted_projections", function_repair.OrderedDict()
     )
+    management_ui._cached_configuration_defaults()
     original = function_repair.agent_config_snapshot
     tool_validator = Mock(wraps=agent_config.validate_function_tools)
     monkeypatch.setattr(agent_config, "validate_function_tools", tool_validator)
