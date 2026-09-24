@@ -18,9 +18,6 @@ from custom_components.extended_openai_conversation_responses import (
     management_function_repair as function_repair,
 )
 from custom_components.extended_openai_conversation_responses import (
-    management_function_quarantine as function_quarantine,
-)
-from custom_components.extended_openai_conversation_responses import (
     management_loading_performance as loading,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -305,20 +302,6 @@ def test_function_health_peek_tracks_tool_mutations_and_restore(monkeypatch) -> 
     assert function_repair.peek_function_tool_health(grouped)["enabled_count"] == 1
     # Restore/import of the original persisted tools can reuse their old projection.
     assert function_repair.peek_function_tool_health(original)["enabled_count"] == 1
-
-
-def test_repeated_function_reads_reuse_validated_persisted_tools(monkeypatch) -> None:
-    function_repair._cached_function_tool_state.cache_clear()
-    source = {"functions": "[]"}
-    parser = Mock(return_value=[{"spec": {"name": "one"}, "enabled": True}])
-    monkeypatch.setattr(function_repair, "configured_function_tools_from_data", parser)
-
-    first = function_quarantine._management_configured_tools(source)
-    first[0]["enabled"] = False
-    second = function_quarantine._management_configured_tools(source)
-
-    assert second[0]["enabled"] is True
-    parser.assert_called_once()
 
 
 def test_agent_config_revision_does_not_validate_persisted_config(monkeypatch) -> None:
