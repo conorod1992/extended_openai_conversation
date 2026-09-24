@@ -59,14 +59,18 @@ def _usable_function_tools(data: Any) -> list[dict[str, Any]]:
         )
         return tools
     _QUARANTINED_FUNCTION_NAMES.set(frozenset())
-    return _STRICT_CONFIGURED_TOOLS(data)
+    return tools
 
 
 def _management_configured_tools(data: Any) -> list[dict[str, Any]]:
     """Use tolerant Function Tool loading only inside isolated management sections."""
     if _ALLOW_QUARANTINED_TOOLS.get():
         return _usable_function_tools(data)
-    return _STRICT_CONFIGURED_TOOLS(data)
+    tools, issue = function_tools_issue(dict(data))
+    if issue is not None:
+        # Preserve the strict error contract outside repair-aware sections.
+        return _STRICT_CONFIGURED_TOOLS(data)
+    return tools
 
 
 def _management_validate_function_groups(
