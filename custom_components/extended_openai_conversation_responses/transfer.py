@@ -765,12 +765,31 @@ async def _async_validate_request_rule_function_dependencies(
     config: Mapping[str, Any],
 ) -> None:
     """Apply canonical Request Rule Function validation to one combined target."""
-    tools = configured_function_tools_from_data(config)
+    quarantined_names: set[str] = set()
+    try:
+        tools = configured_function_tools_from_data(config)
+    except (HomeAssistantError, TypeError, ValueError):
+        from .management_function_repair import (
+            function_tools_issue,
+            isolated_function_tools,
+        )
+
+        tools, issue = function_tools_issue(dict(config))
+        if issue is None:
+            raise
+        _valid, invalid, _isolated_issue = isolated_function_tools(dict(config))
+        quarantined_names = {
+            str(item["name"])
+            for item in invalid
+            if isinstance(item.get("name"), str) and item["name"]
+        }
     for rule in request_rules.get("rules", []):
         if not isinstance(rule, Mapping):
             continue
         try:
-            await async_validate_request_rule_functions(hass, rule, tools)
+            await async_validate_request_rule_functions(
+                hass, rule, tools, quarantined_names=quarantined_names
+            )
         except (HomeAssistantError, ValueError) as err:
             label = rule.get("name", rule.get("id", "unnamed"))
             raise backup.BackupError(
