@@ -114,7 +114,9 @@ from .management_function_repair import (
     agent_config_revision as _agent_config_revision,
     agent_config_revision_from_snapshot as _agent_config_revision_from_snapshot,
     cached_agent_config_snapshot as _cached_agent_config_snapshot_for_read,
+    persisted_config_projection,
     require_agent_config_revision as _require_agent_config_revision,
+    seed_persisted_config_projection,
 )
 from .management_history_queries import (
     archive_get_page,
@@ -608,7 +610,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             exposed_entities = get_exposed_entities(hass)
 
         primary_result: dict[str, Any] = {
-            "revision": _agent_config_revision(subentry.data, subentry.title),
+            "revision": persisted_config_projection(subentry).revision,
             "status": guest_manager.status(),
             "config": (
                 guest_policy_editor_snapshot(
@@ -836,6 +838,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         "revision": _agent_config_revision_from_snapshot(snapshot, saved_title),
         "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
     }
+    seed_persisted_config_projection(entry, subentry, snapshot, saved["revision"])
     if refresh_local_handling:
         saved["local_handling"] = local_handling_snapshot(
             hass,
@@ -872,24 +875,32 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     if action == "save":
         return await _async_save_configuration(request)
     if action == "retention_get":
-        config = _cached_agent_config_snapshot_for_read(subentry.data)
+        projection = persisted_config_projection(subentry)
+        if projection.snapshot is None:
+            # Keep the established malformed-tool repair boundary.
+            _cached_agent_config_snapshot_for_read(subentry.data)
         fields = (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS)
         options = _cached_configuration_options()
         return {
             "title": subentry.title,
-            "revision": _agent_config_revision_from_snapshot(config, subentry.title),
-            "config": {key: config[key] for key in fields},
+            "revision": projection.revision,
+            "config": {key: deepcopy(projection.retention[key]) for key in fields},
             "options": {key: deepcopy(options[key]) for key in fields},
             "projection": "retention",
         }
     if action == "get":
         started = perf_counter()
         phase = perf_counter()
-        config = _cached_agent_config_snapshot_for_read(subentry.data)
+        projection = persisted_config_projection(subentry)
+        config = (
+            deepcopy(projection.snapshot)
+            if projection.snapshot is not None
+            else _cached_agent_config_snapshot_for_read(subentry.data)
+        )
         config_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
-        revision = _agent_config_revision_from_snapshot(config, subentry.title)
+        revision = projection.revision
         revision_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
@@ -994,6 +1005,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "config": snapshot,
             "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
         }
+        seed_persisted_config_projection(entry, subentry, snapshot, result["revision"])
         if refresh_local_handling:
             result["local_handling"] = local_handling_snapshot(
                 hass,
@@ -1068,10 +1080,19 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             hass.config_entries.async_update_subentry(
                 entry, subentry, data=parsed["config"], title=parsed["title"]
             )
+            from .management_loading_performance import (
+                _snapshot_normalized_configuration,
+            )
+
+            snapshot = _snapshot_normalized_configuration(
+                parsed["config"], validated=True
+            )
+            revision = _agent_config_revision_from_snapshot(snapshot, parsed["title"])
+            seed_persisted_config_projection(entry, subentry, snapshot, revision)
             return {
                 "status": "updated",
                 "subentry_id": subentry.subentry_id,
-                "revision": _agent_config_revision(parsed["config"], parsed["title"]),
+                "revision": revision,
             }
         if mode != "new":
             raise HomeAssistantError("mode must be current or new")
@@ -1315,7 +1336,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             )
 
         assert original_name is not None
-        operation_revision = _agent_config_revision(subentry.data, subentry.title)
+        operation_revision = persisted_config_projection(subentry).revision
         original_tools = configured_function_tools_from_data(subentry.data)
         original_groups = validate_function_groups(
             subentry.data.get(CONF_FUNCTION_GROUPS, []), original_tools
@@ -1408,7 +1429,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         remaining = [tool for tool in tools if tool["spec"]["name"] != name]
         if len(remaining) == len(tools):
             raise HomeAssistantError("The Function Tool no longer exists")
-        operation_revision = _agent_config_revision(subentry.data, subentry.title)
+        operation_revision = persisted_config_projection(subentry).revision
         _rules, references = await _function_reference_state(
             hass, entry_id, subentry_id, subentry.data, name
         )

@@ -324,15 +324,28 @@ def test_agent_config_revision_does_not_validate_persisted_config(monkeypatch) -
 async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
     function_repair._cached_agent_config_snapshot.cache_clear()
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
     original = function_repair.agent_config_snapshot
+    original_revision = function_repair.agent_config_revision_from_snapshot
     calls = 0
+    revision_calls = 0
 
     def counted(data):
         nonlocal calls
         calls += 1
         return original(data)
 
+    def counted_revision(data, title):
+        nonlocal revision_calls
+        revision_calls += 1
+        return original_revision(data, title)
+
     monkeypatch.setattr(function_repair, "agent_config_snapshot", counted)
+    monkeypatch.setattr(
+        function_repair, "agent_config_revision_from_snapshot", counted_revision
+    )
     monkeypatch.setattr(
         management_ui,
         "decorate_configuration_result",
@@ -353,8 +366,104 @@ async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatc
     )
 
     assert calls == 1
+    assert revision_calls == 1
     assert first["config"] == second["config"]
     assert first["revision"] == second["revision"]
+    first["config"]["chat_model"] = "changed locally"
+    assert second["config"]["chat_model"] != "changed locally"
+
+
+def test_persisted_projection_tracks_title_and_authoritative_data_replacement(
+    monkeypatch,
+) -> None:
+    _hass, _entry, subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    original = function_repair.persisted_config_projection(subentry)
+    assert function_repair.persisted_config_projection(subentry) is original
+
+    subentry.title = "Renamed"
+    renamed = function_repair.persisted_config_projection(subentry)
+    assert renamed.revision != original.revision
+    assert renamed.snapshot == original.snapshot
+    with pytest.raises(HomeAssistantError, match="changed in another tab"):
+        function_repair.require_agent_config_revision(subentry, original.revision)
+
+    # Import/restore and config-flow updates replace the persisted data mapping.
+    subentry.data = {**subentry.data, "max_tokens": 777}
+    replaced = function_repair.persisted_config_projection(subentry)
+    assert replaced.revision != renamed.revision
+    assert replaced.snapshot["max_tokens"] == 777
+
+    recreated = SimpleNamespace(
+        subentry_id=subentry.subentry_id,
+        title=subentry.title,
+        data=agent_config_defaults(),
+    )
+    new_projection = function_repair.persisted_config_projection(recreated)
+    assert new_projection is not replaced
+    assert new_projection.revision != replaced.revision
+
+
+async def test_import_replaces_cached_configuration_projection(monkeypatch) -> None:
+    hass, _entry, _subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "decorate_configuration_result",
+        lambda _hass, _entry_data, result, **_kwargs: result,
+    )
+    message = {
+        "entry_id": "entry-1", "subentry_id": "agent-1",
+        "section": "configuration", "action": "get",
+    }
+    before = await management_ui.async_management_command(hass, "admin", True, message)
+    replacement = agent_config_defaults()
+    replacement["max_tokens"] = 777
+    imported = await management_ui.async_management_command(
+        hass, "admin", True, {
+            **message,
+            "action": "import",
+            "confirm": True,
+            "document": {
+                "schema": "extended_openai_conversation.agent",
+                "version": management_ui.AGENT_CONFIG_EXPORT_VERSION,
+                "title": "Imported",
+                "config": replacement,
+            },
+        },
+    )
+    after = await management_ui.async_management_command(hass, "admin", True, message)
+    assert after["title"] == "Imported"
+    assert after["config"]["max_tokens"] == 777
+    assert after["revision"] == imported["revision"]
+    assert after["revision"] != before["revision"]
+
+
+def test_function_mutation_seeds_next_persisted_read(monkeypatch) -> None:
+    hass, entry, subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    before = function_repair.persisted_config_projection(subentry)
+    tools = yaml.safe_load(subentry.data["functions"])
+    tools[0]["enabled"] = False
+    groups = subentry.data["function_groups"]
+    saved = function_repair.persist_valid_function_configuration(
+        hass, entry, subentry, tools, groups,
+        expected_revision=before.revision,
+    )
+    monkeypatch.setattr(
+        function_repair,
+        "agent_config_snapshot",
+        Mock(side_effect=AssertionError("mutation response should seed the next read")),
+    )
+    after = function_repair.persisted_config_projection(subentry)
+    assert after.revision == saved["revision"]
+    assert after.revision != before.revision
 
 
 async def test_guest_mode_primary_get_skips_heavy_catalogues(monkeypatch) -> None:
@@ -786,10 +895,42 @@ async def test_configuration_save_normalizes_once(monkeypatch) -> None:
     assert subentry.data["chat_model"] == "gpt-5-mini"
     assert hass.config_entries.updates == 1
     assert merge_calls == 1
+    monkeypatch.setattr(
+        function_repair,
+        "agent_config_snapshot",
+        Mock(side_effect=AssertionError("save response should seed the next read")),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "decorate_configuration_result",
+        lambda _hass, _entry_data, result, **_kwargs: result,
+    )
+    fetched = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "get",
+        },
+    )
+    assert fetched["revision"] == result["revision"]
+    assert fetched["config"] == result["config"]
 
 
 async def test_retention_projection_reads_only_needed_fields(monkeypatch) -> None:
     hass, _entry, subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    normalizer = Mock(wraps=function_repair.agent_config_snapshot)
+    revision_hash = Mock(wraps=function_repair.agent_config_revision_from_snapshot)
+    monkeypatch.setattr(function_repair, "agent_config_snapshot", normalizer)
+    monkeypatch.setattr(
+        function_repair, "agent_config_revision_from_snapshot", revision_hash
+    )
     monkeypatch.setattr(
         management_ui,
         "_configuration_defaults",
@@ -814,6 +955,20 @@ async def test_retention_projection_reads_only_needed_fields(monkeypatch) -> Non
     assert isinstance(result["revision"], str)
     assert "defaults" not in result
     assert "model_capabilities" not in result
+    repeated = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+            "section": "configuration",
+            "action": "retention_get",
+        },
+    )
+    assert repeated["revision"] == result["revision"]
+    normalizer.assert_called_once()
+    revision_hash.assert_called_once()
 
 
 async def test_configuration_patch_preserves_omitted_fields_and_skips_local_snapshot(
