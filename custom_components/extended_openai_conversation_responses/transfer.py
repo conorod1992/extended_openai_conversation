@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+import yaml
+
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -18,8 +20,6 @@ from . import backup
 from .agent_config import (
     agent_config_snapshot,
     configured_function_tools_from_data,
-    normalize_agent_config,
-    preserve_legacy_guest_policy,
     validate_agent_title,
 )
 from .const import AGENT_CONFIG_EXPORT_VERSION
@@ -238,8 +238,8 @@ async def async_collect_transfer_snapshot(
     document = _new_transfer_document(entry, subentry, mode)
     payload = document["sections"]
     if SECTION_CONFIGURATION in selected:
-        payload[SECTION_CONFIGURATION] = preserve_legacy_guest_policy(
-            dict(subentry.data), agent_config_snapshot(subentry.data)
+        payload[SECTION_CONFIGURATION] = backup.export_configuration_snapshot(
+            subentry.data
         )
     if SECTION_REQUEST_RULES in selected:
         request_rules_manager = await async_get_request_rules(
@@ -590,9 +590,7 @@ def _validate_transfer_document(
             restored = restore_redacted_secrets(raw)
             if not isinstance(restored, dict):
                 raise ValueError("configuration must be an object")
-            prepared.config = preserve_legacy_guest_policy(
-                restored, normalize_agent_config(restored)
-            )
+            prepared.config = backup.recoverable_configuration_snapshot(restored)
         if SECTION_REQUEST_RULES in available:
             raw = raw_sections[SECTION_REQUEST_RULES]
             prepared.raw_request_rules = deepcopy(raw)
@@ -657,9 +655,7 @@ def _inspect_legacy_setup(value: Mapping[str, Any]) -> PreparedTransfer:
         restored = restore_redacted_secrets(raw_config)
         if not isinstance(restored, dict):
             raise ValueError("configuration must be an object")
-        config = preserve_legacy_guest_policy(
-            restored, normalize_agent_config(restored)
-        )
+        config = backup.recoverable_configuration_snapshot(restored)
         title = validate_agent_title(
             value.get("title"), default="Imported conversation agent"
         )
@@ -769,12 +765,31 @@ async def _async_validate_request_rule_function_dependencies(
     config: Mapping[str, Any],
 ) -> None:
     """Apply canonical Request Rule Function validation to one combined target."""
-    tools = configured_function_tools_from_data(config)
+    quarantined_names: set[str] = set()
+    try:
+        tools = configured_function_tools_from_data(config)
+    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
+        from .management_function_repair import (
+            function_tools_issue,
+            isolated_function_tools,
+        )
+
+        tools, issue = function_tools_issue(dict(config))
+        if issue is None:
+            raise
+        _valid, invalid, _isolated_issue = isolated_function_tools(dict(config))
+        quarantined_names = {
+            str(item["name"])
+            for item in invalid
+            if isinstance(item.get("name"), str) and item["name"]
+        }
     for rule in request_rules.get("rules", []):
         if not isinstance(rule, Mapping):
             continue
         try:
-            await async_validate_request_rule_functions(hass, rule, tools)
+            await async_validate_request_rule_functions(
+                hass, rule, tools, quarantined_names=quarantined_names
+            )
         except (HomeAssistantError, ValueError) as err:
             label = rule.get("name", rule.get("id", "unnamed"))
             raise backup.BackupError(
@@ -803,7 +818,7 @@ def _prepared_restore_from_selection(
             missing.extend(f"configuration.{path}" for path in absent)
             if not isinstance(raw, dict):
                 raise backup.BackupError("Transferred configuration is invalid")
-            config = preserve_legacy_guest_policy(raw, normalize_agent_config(raw))
+            config = backup.recoverable_configuration_snapshot(raw)
         elif imported.config is not None:
             config = deepcopy(imported.config)
         else:
@@ -812,9 +827,7 @@ def _prepared_restore_from_selection(
         # Durable snapshots contain frontend-shaped, parsed Function Tools.
         # Retained configuration must use the same persisted YAML representation
         # as imported configuration before dependency validation and restore.
-        config = preserve_legacy_guest_policy(
-            current.config, normalize_agent_config(current.config)
-        )
+        config = backup.recoverable_configuration_snapshot(current.config)
 
     rules = current.request_rules
     if SECTION_REQUEST_RULES in selected:

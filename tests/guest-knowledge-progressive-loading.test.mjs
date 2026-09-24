@@ -27,7 +27,9 @@ assert.doesNotMatch(
 assert.match(knowledgeSource, /management-feature-status-core\.js/);
 assert.match(knowledgeSource, /knowledge-presentation\.js/);
 assert.doesNotMatch(knowledgeSource, /management-capabilities-ia\.js|management-feature-status\.js/);
-assert.match(panelSource, /getRouteFeature\(view\)\?\.knowledgeAvailabilityMarkup/);
+assert.match(panelSource, /\$\{this\._knowledge\(\)\}/);
+assert.match(knowledgeSource, /data-knowledge-collection[^\n]*knowledge-status/);
+assert.match(knowledgeSource, /\$\{knowledgeAvailabilityMarkup\(panel\)\}/);
 
 assert.match(backendSource, /if action == "details":/);
 assert.match(panelSource, /_call\("guest_mode", "details"\)/);

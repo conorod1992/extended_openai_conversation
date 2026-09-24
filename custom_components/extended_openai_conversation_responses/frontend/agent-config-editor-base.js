@@ -137,7 +137,7 @@ export function matchesFunctionSearch(query, searchableText) {
 export function section(panel, id, title, description, keywords, body, includeHeading = true) {
   if (panel._configSectionFilter && !panel._configSectionFilter.has(id)) return "";
   const content = typeof body === "function" ? body() : body;
-  return `<section id="config-${id}" class="config-section" data-config-section data-search="${panel._e(`${title} ${description} ${keywords}`.toLowerCase())}">${includeHeading ? `<div class="config-section-heading"><p class="eyebrow">${title}</p><p>${description}</p></div>` : ""}${content}</section>`;
+  return `<section id="config-${id}" class="config-section" data-config-section data-search="${panel._e(`${title} ${description} ${keywords}`.toLowerCase())}">${includeHeading ? `<div class="config-section-heading"><h2 class="eyebrow">${title}</h2><p>${description}</p></div>` : ""}${content}</section>`;
 }
 
 export function renderLocalHandling(panel, config) {

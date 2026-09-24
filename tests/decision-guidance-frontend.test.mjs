@@ -24,14 +24,14 @@ assert.equal(displayDefaultValue("api_mode", "auto"), "Automatic (Auto)");
 assert.equal(displayDefaultValue("memory_retrieval_mode", "lexical"), "Keyword matching (Lexical)");
 assert.deepEqual(
   configurationDecisionBadges("api_mode", {api_mode:"auto"}),
-  [
-    {kind:"recommended", text:"Recommended default: Automatic (Auto)"},
-  ],
+  [],
 );
 assert.deepEqual(
   configurationDecisionBadges("memory_retrieval_mode", {memory_retrieval_mode:"lexical"}),
-  [{kind:"default", text:"Default: Keyword matching (Lexical)"}],
+  [],
 );
+assert.deepEqual(configurationDecisionBadges("conversation_continuity", {conversation_continuity:"ha_default"}),
+  [{kind:"default", text:"Uses Home Assistant sessions"}]);
 assert.deepEqual(configurationDecisionBadges("temperature", {temperature:1}), []);
 
 const local = requestRuleSummary({

@@ -23,6 +23,11 @@ const FRIENDLY_VALUE_LABELS = Object.freeze({
     manual: "Only when I ask (Manual)",
     automatic: "Automatic",
   }),
+  temporary_memory: Object.freeze({
+    off: "Off",
+    balanced: "Balanced",
+    eager: "Eager",
+  }),
   memory_retrieval_mode: Object.freeze({
     lexical: "Keyword matching (Lexical)",
     hybrid: "Semantic + keyword matching (Hybrid)",

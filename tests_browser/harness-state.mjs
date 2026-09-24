@@ -6,7 +6,7 @@ function freshState() {
   return {
     agent: {
       entry_id: "entry-1", subentry_id: "agent-1", title: "Jarvis", provider: "OpenAI",
-      model: "gpt-5-mini", function_count: 1, function_group_count: 1, memory_mode: "Manual",
+      model: "gpt-5-mini", function_count: 1, function_group_count: 1, memory_mode: "Manual", temporary_memory: "off",
       memory_count: 1, knowledge_source_count: 0, archive_enabled: true,
       guest_mode: {state: "inactive", has_home_assistant_exclusions: true},
     },
@@ -14,7 +14,7 @@ function freshState() {
     configuration: {
       title: "Jarvis", revision: "fixture-7",
       config: {
-        chat_model: "gpt-5-mini", api_mode: "responses", max_tokens: 1200,
+        chat_model: "gpt-5-mini", api_mode: "responses", max_tokens: 1200, temporary_memory: "off",
         max_function_calls_per_conversation: 8, function_tool_error_recovery: true,
         continue_conversation: "never",
         usage_request_retention_days: 30, usage_run_retention_days: 30,
@@ -222,7 +222,8 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       const updates = clone(message.config);
       for (const field of ["usage_request_retention_days", "usage_run_retention_days"]) if (field in updates) updates[field] = Number(updates[field]);
       state.configuration = {...state.configuration, title: message.title ?? state.configuration.title, revision: `${state.configuration.revision}x`, config: {...state.configuration.config, ...updates}};
-      state.agent.title = state.configuration.title; state.agent.model = state.configuration.config.chat_model; counts(); save();
+      state.agent.title = state.configuration.title; state.agent.model = state.configuration.config.chat_model;
+      state.agent.temporary_memory = state.configuration.config.temporary_memory; counts(); save();
       return {valid: true, errors: {}, ...clone(state.configuration), agent: clone(state.agent)};
     }
 

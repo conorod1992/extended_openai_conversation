@@ -1,6 +1,31 @@
 import {expect, test} from "@playwright/test";
 import {fixtureUrl, trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
 
+test("Assistant parent introduction stays between subsection navigation and the active card", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  const intro = panel.locator("#eoc-assistant-intro-host .page-intro");
+  await expect(intro.getByRole("heading", {name:"Assistant settings"})).toBeVisible();
+  const firstIntro = await intro.evaluate(node => { window.__assistantIntro = node; return node.textContent; });
+  expect(firstIntro).toContain("responds");
+  const callsBefore = await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "get").length);
+  for (const [subsection, cardHeading] of [["conversation", "Conversation"], ["voice", "Voice & identity"], ["basics", "General"]]) {
+    await panel.locator(`.subsection-nav button[data-subsection="${subsection}"]`).click();
+    await expect(panel.locator(".config-section-heading").getByText(cardHeading, {exact:true})).toBeVisible();
+    await expect(panel.locator(".page-intro")).toHaveCount(1);
+    expect(await panel.evaluate(host => {
+      const root = host.shadowRoot;
+      const introNode = root.querySelector("#eoc-assistant-intro-host .page-intro");
+      return introNode === window.__assistantIntro
+        && Boolean(root.querySelector(".subsection-nav").compareDocumentPosition(introNode) & Node.DOCUMENT_POSITION_FOLLOWING)
+        && Boolean(introNode.compareDocumentPosition(root.querySelector("[data-eoc-main] .config-section-heading")) & Node.DOCUMENT_POSITION_FOLLOWING);
+    })).toBe(true);
+  }
+  expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "get").length)).toBe(callsBefore);
+  await expectHarnessClean(page, errors);
+});
+
 test("subsection navigation keeps its description accessible without a desktop tagline", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
@@ -39,6 +64,34 @@ test("guide links belong to section introductions and open the matching topic", 
   await expectHarnessClean(page, errors);
 });
 
+test("Memory and Knowledge keep status inside their owning cards", async ({page}) => {
+  const errors = trackPageErrors(page);
+  const panel = page.locator("extended-openai-management-panel");
+  await page.goto(fixtureUrl("data-memory/memories"));
+  await expect(panel.locator("[data-persistent-memories] [data-memory-feature-status]")).toBeVisible();
+  await expect(panel.locator(".feature-status-card")).toHaveCount(0);
+  await panel.locator('.memory-kind[data-kind="temporary"]').click();
+  await expect(panel.locator("[data-temporary-memories] .embedded-feature-status")).toBeVisible();
+  const shortTerm = panel.locator("[data-temporary-feature-status]");
+  await expect(shortTerm.locator(".status-value")).toHaveText("Off");
+  await expect(shortTerm).toContainText("does not create new");
+  await expect(panel.locator("[data-temporary-memories] > .help")).toContainText("expiry time");
+  const reads = await page.evaluate(() => browserHarness.calls.length);
+  await panel.evaluate(host => { host._selectedAgent().temporary_memory = "balanced"; host._render(); });
+  await expect(shortTerm.locator(".status-value")).toHaveText("Balanced");
+  await expect(shortTerm).toContainText("clearly relevant");
+  await panel.evaluate(host => { host._selectedAgent().temporary_memory = "eager"; host._render(); });
+  await expect(shortTerm.locator(".status-value")).toHaveText("Eager");
+  await expect(shortTerm.locator(".status-value")).not.toHaveText("Expires automatically");
+  expect(await page.evaluate(() => browserHarness.calls.length)).toBe(reads);
+  await expect(panel.locator(".feature-status-card")).toHaveCount(0);
+  await page.goto(fixtureUrl("data-memory/knowledge"));
+  await expect(panel.locator("[data-knowledge-collection] #knowledge-status")).toBeVisible();
+  await expect(panel.locator("[data-knowledge-collection] #knowledge-enabled-toggle")).toHaveCount(1);
+  await expect(panel.locator(".feature-status-card")).toHaveCount(0);
+  await expectHarnessClean(page, errors);
+});
+
 test("Request Rules keeps one create path when empty and the in-place toolbar when populated", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
@@ -46,6 +99,12 @@ test("Request Rules keeps one create path when empty and the in-place toolbar wh
   await expect(panel.locator("#rule-search")).toBeVisible();
   await expect(panel.locator(".rule-toolbar .count")).toHaveText("1 rule");
   await expect(panel.locator("#rule-add")).toBeVisible();
+  const order = await panel.locator(".page-intro,.rule-toolbar,.rule-list,.rule-settings,.rule-test-tools").evaluateAll(
+    (nodes) => nodes.map((node) => [...node.classList].find((name) => ["page-intro", "rule-toolbar", "rule-list", "rule-settings", "rule-test-tools"].includes(name))),
+  );
+  expect(order).toEqual(["page-intro", "rule-toolbar", "rule-list", "rule-settings", "rule-test-tools"]);
+  await expect(panel.locator(".page-intro .rule-routing-help")).toBeVisible();
+  await expect(panel.locator(".rule-settings").getByRole("heading", {name:"Matching settings"})).toBeVisible();
   await panel.locator("#rule-search").fill("no match");
   await expect(panel.locator("[data-eoc-rule-search-empty]")).toBeVisible();
   await expect(panel.locator("#rule-search")).toBeFocused();

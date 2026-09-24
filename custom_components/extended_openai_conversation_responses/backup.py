@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 import logging
 from pathlib import Path
 import re
 from typing import Any, cast
+
+import yaml
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -25,6 +28,8 @@ from .agent_maintenance import (
     get_agent_maintenance_gate,
 )
 from .const import (
+    CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
@@ -112,6 +117,48 @@ def _safe_configuration(value: Any, *, schema: bool = False) -> Any:
     return redact_secrets(value, schema=schema)
 
 
+def _configuration_snapshot_preserving_quarantine(
+    data: Any, *, frontend_shape: bool
+) -> dict[str, Any]:
+    """Normalize config while preserving only quarantined Function fields verbatim."""
+    raw = dict(data)
+    normalize = agent_config_snapshot if frontend_shape else normalize_agent_config
+    try:
+        return preserve_legacy_guest_policy(raw, normalize(raw))
+    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
+        # Backup/import is a recovery boundary: tolerate only a Function Tool
+        # validation failure. Normalize every unrelated field strictly using a
+        # safe Function projection, then put the original persisted Function
+        # Tool/Group values back so the user can repair them after restore.
+        from .management_function_repair import (
+            function_tools_issue,
+            safe_function_configuration,
+        )
+
+        _usable, issue = function_tools_issue(raw)
+        if issue is None:
+            raise
+        snapshot = preserve_legacy_guest_policy(
+            raw, normalize(safe_function_configuration(raw))
+        )
+        for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
+            if key in raw:
+                snapshot[key] = deepcopy(raw[key])
+            else:
+                snapshot.pop(key, None)
+        return snapshot
+
+
+def export_configuration_snapshot(data: Any) -> dict[str, Any]:
+    """Return the backup/export projection, preserving quarantined Function fields."""
+    return _configuration_snapshot_preserving_quarantine(data, frontend_shape=True)
+
+
+def recoverable_configuration_snapshot(data: Any) -> dict[str, Any]:
+    """Return persistence-shaped validated config that retains quarantined Functions."""
+    return _configuration_snapshot_preserving_quarantine(data, frontend_shape=False)
+
+
 def _backup_lock(hass: HomeAssistant, entry_id: str, subentry_id: str) -> asyncio.Lock:
     locks = cast(
         dict[tuple[str, str], asyncio.Lock], hass.data.setdefault(_BACKUP_LOCKS, {})
@@ -132,9 +179,7 @@ async def async_collect_backup_snapshot(
         guest_mode,
         request_rules,
     ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
-    config_snapshot = preserve_legacy_guest_policy(
-        dict(subentry.data), agent_config_snapshot(subentry.data)
-    )
+    config_snapshot = export_configuration_snapshot(subentry.data)
     return {
         "format": BACKUP_FORMAT,
         "version": BACKUP_VERSION,
@@ -290,9 +335,7 @@ def inspect_backup(
         raw_config = restore_redacted_secrets(agent["config"])
         if not isinstance(raw_config, dict):
             raise ValueError("agent config must be an object")
-        config = preserve_legacy_guest_policy(
-            raw_config, normalize_agent_config(raw_config)
-        )
+        config = recoverable_configuration_snapshot(raw_config)
         memories = PersistentMemory.validate_backup_data(value["memories"])
         temporary_memories = TemporaryMemory.validate_backup_data(
             value["temporary_memories"]
@@ -314,7 +357,7 @@ def inspect_backup(
                 value.get("request_rules", {"defaults": {}, "rules": []})
             )
         )
-    except (TypeError, ValueError) as err:
+    except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
         raise BackupError(f"The backup is incomplete or corrupted: {err}") from err
     return PreparedRestore(
         title,
@@ -387,9 +430,7 @@ async def _snapshot_for_restore(
     )
     return PreparedRestore(
         subentry.title,
-        preserve_legacy_guest_policy(
-            dict(subentry.data), agent_config_snapshot(subentry.data)
-        ),
+        export_configuration_snapshot(subentry.data),
         PersistentMemory.validate_backup_data(await memory.async_backup_data()),
         TemporaryMemory.validate_backup_data(await temporary.async_backup_data()),
         KnowledgeLibrary.validate_backup_data(await knowledge.async_backup_data()),

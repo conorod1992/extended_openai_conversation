@@ -25,10 +25,12 @@ from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
+    CONF_TEMPORARY_MEMORY,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CHAT_MODEL,
     DEFAULT_FUNCTION_GROUPS,
+    DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
 )
 from .conversation_archive import async_get_archive
@@ -120,6 +122,9 @@ def _agent_snapshot(
         "provider": entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
         "model": options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
         "memory_mode": get_memory_mode(options),
+        "temporary_memory": options.get(
+            CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY
+        ),
         "memory_count": memory_count,
         "knowledge_enabled": bool(options.get(CONF_KNOWLEDGE_ENABLED, False)),
         "knowledge_source_count": knowledge_source_count,

@@ -1,5 +1,7 @@
 import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
 import {ensureTemporaryScope, memoryCollectionIdentity} from "./management-data-state.js";
+import {embeddedFeatureStatusMarkup} from "./management-feature-status-core.js";
+import {friendlySettingValue} from "./management-setting-metadata.js";
 const CONTENT_LIMIT = 500;
 const CATEGORY_LIMIT = 64;
 
@@ -42,12 +44,27 @@ function temporaryDiagnostics(panel) {
     ? `<p class="help">Startup cleanup removed ${panel._e(String(pruned))} record(s) with invalid legacy ownership and ${panel._e(String(overflow))} record(s) above the 100-record ceiling.</p>` : "";
 }
 
+function temporaryMemoryStatus(panel) {
+  const mode = panel._selectedAgent()?.temporary_memory || "off";
+  const descriptions = {
+    off: "The assistant does not create new short-term memories automatically.",
+    balanced: "The assistant saves useful temporary details when they are clearly relevant.",
+    eager: "The assistant saves useful temporary details more readily.",
+  };
+  return embeddedFeatureStatusMarkup(panel, "Short-term memory", {
+    state: mode === "off" ? "disabled" : "enabled",
+    label: friendlySettingValue("temporary_memory", mode) || mode,
+    summary: descriptions[mode] || "Controls how readily the assistant saves useful temporary details.",
+  }, {page:"data-memory", subsection:"memory-settings", label:"Configure"});
+}
+
 function renderTemporaryMemories(panel) {
   const items = panel._result?.memories || [];
   return `<section class="content-card" data-temporary-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}">
-    <div class="section-heading"><div><h2>Memories</h2><p>Short-term details that are removed automatically at their expiry time. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><button type="button" class="danger" id="clear-temporary">Clear short-term memories</button></div>
+    <div class="section-heading"><div><h2>Memories</h2><p>Review short-term details saved for a Personal or Shared scope. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><button type="button" class="danger" id="clear-temporary">Clear short-term memories</button></div>
+    <div data-temporary-feature-status>${temporaryMemoryStatus(panel)}</div>
     <div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent">Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary" disabled>Short-term</button></div>
-    <p class="help">Short-term memories belong to a Personal or Shared scope. Conversation and device continuity do not determine ownership. Existing records remain manageable until they expire even when Temporary Memory is turned off.</p>
+    <p class="help">Once stored, short-term memories remain until their expiry time, even if short-term memory is later turned off. Conversation and device continuity do not determine ownership.</p>
     <div data-temporary-diagnostics>${temporaryDiagnostics(panel)}</div>
     <input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories">
     <div class="list memory-list">${items.map(memory => temporaryMemoryCard(panel, memory)).join("")}<div data-temporary-empty>${panel._empty("No short-term memories in this scope.")}</div></div>
@@ -85,6 +102,8 @@ export function reconcileTemporaryMemories(panel) {
     memory => temporaryMemoryCard(panel, memory), [state.empty]);
   const diagnostics = temporaryDiagnostics(panel);
   if (state.diagnostics !== diagnostics) { state.host.querySelector("[data-temporary-diagnostics]").innerHTML = diagnostics; state.diagnostics = diagnostics; }
+  const status = temporaryMemoryStatus(panel);
+  if (state.status !== status) { state.host.querySelector("[data-temporary-feature-status]").innerHTML = status; state.status = status; }
   filterTemporaryMemories(panel);
   return true;
 }
@@ -213,7 +232,7 @@ export function bindTemporaryMemory(panel) {
   if (!host) return;
   if (collections.get(panel)?.host !== host) {
     const list = host.querySelector(".memory-list");
-    collections.set(panel, {host, list, identity: memoryCollectionIdentity(panel), cards: adoptKeyedElements(list, "[data-memory-id]", "memoryId"), empty: list.querySelector("[data-temporary-empty]"), diagnostics: temporaryDiagnostics(panel)});
+    collections.set(panel, {host, list, identity: memoryCollectionIdentity(panel), cards: adoptKeyedElements(list, "[data-memory-id]", "memoryId"), empty: list.querySelector("[data-temporary-empty]"), diagnostics: temporaryDiagnostics(panel), status: temporaryMemoryStatus(panel)});
     reconcileTemporaryMemories(panel);
     host.querySelector("#list-search").addEventListener("input", event => { panel._query = event.target.value; filterTemporaryMemories(panel); });
   }

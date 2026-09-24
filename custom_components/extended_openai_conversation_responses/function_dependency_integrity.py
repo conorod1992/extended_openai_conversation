@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from copy import deepcopy
 from typing import Any, cast
 
@@ -241,8 +241,10 @@ async def async_validate_request_rule_functions(
     hass: HomeAssistant,
     rule: Mapping[str, Any],
     configured_tools: list[dict[str, Any]],
+    *,
+    quarantined_names: Collection[str] = (),
 ) -> None:
-    """Validate every nested configured Function call before a rule is persisted."""
+    """Validate Function calls, allowing explicitly quarantined unavailable tools."""
     service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
     by_name = {
         tool["spec"]["name"]: tool
@@ -261,6 +263,8 @@ async def async_validate_request_rule_functions(
         function_name = str(data["function"])
         tool = by_name.get(function_name)
         if tool is None:
+            if function_name in quarantined_names:
+                continue
             raise HomeAssistantError(
                 f"Function Tool is unavailable or disabled: {function_name}"
             )

@@ -265,7 +265,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
       [hidden]{display:none!important}
       #debug-provider-status{margin-right:auto}
       *{box-sizing:border-box}main{max-width:1450px;margin:0 auto;padding:24px;display:grid;gap:18px}
-      h1,h2,p{margin:0}.heading{display:flex;justify-content:space-between;gap:20px;align-items:end}.heading p{margin-top:6px;color:var(--secondary-text-color);line-height:1.5}
+      h1,h2,p{margin:0}.heading{display:flex;justify-content:space-between;gap:20px;align-items:end}.heading p{margin-top:6px;color:var(--secondary-text-color);line-height:1.5}.page-intro{display:grid;gap:7px;max-width:780px}.page-intro h1,.page-intro p{margin:0}.page-intro p{color:var(--secondary-text-color);line-height:1.5}.debug-intro{display:flex;align-items:end;justify-content:space-between;gap:20px}
       .card{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:12px;padding:18px}.warning{border-left:4px solid var(--warning-color,#ff9800)}
       .warning p{margin-top:7px;line-height:1.55}.controls{display:grid;grid-template-columns:minmax(220px,1fr) auto auto auto;gap:14px;align-items:end}
       label{display:grid;gap:7px;font-size:13px;color:var(--secondary-text-color)}select,button{font:inherit;min-height:42px;border-radius:8px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);padding:8px 12px}
@@ -298,7 +298,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     </tr>`).join("");
 
     this.shadowRoot.innerHTML = `${this._styles()}<main>
-      <div class="heading"><div><h1>Request debugging</h1><p>Inspect exactly what Extended OpenAI assembled and how long each provider request took.</p></div><button id="refresh">Refresh</button></div>
+      <div class="debug-intro"><section class="page-intro"><h1>Request debugging</h1><p>Inspect exactly what Extended OpenAI assembled and how long each provider request took.</p></section><button id="refresh">Refresh</button></div>
       <section class="card warning"><strong>Debug captures can contain private data</strong><p>When enabled, Extended OpenAI keeps complete recent request material in memory, including the effective system prompt, conversation input, entity states, retrieved memories, tool schemas, provider events and tool results carried into later requests. Captures are bounded and disappear when Home Assistant restarts. Do not share a copied log without reviewing it first.</p></section>
       ${this._error ? `<div class="error-box">${this._e(this._error)}</div>` : ""}
       <section class="card"><div class="controls">
