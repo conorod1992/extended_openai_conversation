@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
+import time
 from typing import Any
 
 import pytest
@@ -74,20 +74,22 @@ async def test_history_dependency_failure_is_tool_scoped_and_recovers(
     assert agent._archive is not None
 
     calls = 0
-    original = native.recorder.util.session_scope
+    original = native.recorder_history.get_significant_states_with_session
 
-    @contextmanager
-    def failing_session(*args: Any, **kwargs: Any):
+    def failing_history(*args: Any, **kwargs: Any):
+        del args, kwargs
         nonlocal calls
         calls += 1
         if degradation == "unavailable":
             raise RuntimeError("recorder unloaded for nightly probe")
         if degradation == "erroring":
             raise OSError("history database unavailable for nightly probe")
+        time.sleep(0.05)
         raise TimeoutError("history query delayed past deadline for nightly probe")
-        yield  # pragma: no cover - contextmanager shape
 
-    monkeypatch.setattr(native.recorder.util, "session_scope", failing_session)
+    monkeypatch.setattr(
+        native.recorder_history, "get_significant_states_with_session", failing_history
+    )
     call_id = "call-history-fault"
     provider = ProviderFaultTransport(
         [
@@ -118,7 +120,11 @@ async def test_history_dependency_failure_is_tool_scoped_and_recovers(
     assert "history_fault_probe" not in str(tool_result)
     assert agent._archive.stats()["turn_count"] == 1
 
-    monkeypatch.setattr(native.recorder.util, "session_scope", original)
+    monkeypatch.setattr(
+        native.recorder_history,
+        "get_significant_states_with_session",
+        original,
+    )
     second = await _say(hass, agent, "Ask a question without history")
     assert second.response.error_code is None
     assert second.response.as_dict()["speech"]["plain"]["speech"] == (

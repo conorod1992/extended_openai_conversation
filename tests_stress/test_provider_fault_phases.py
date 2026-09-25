@@ -28,7 +28,12 @@ from tests_real_ha.test_provider_wire_truncated_tool_stream import (
 )
 from tests_stress.conftest import record
 from tests_stress.provider_fault_transport import ProviderFaultTransport, WireStep
-from tests_stress.test_provider_fault_matrix import _OWNER, _agent, _say
+from tests_stress.test_provider_fault_matrix import (
+    _OWNER,
+    _agent,
+    _archived_successes,
+    _say,
+)
 
 
 def _reply(mode: str, text: str) -> bytes:
@@ -120,14 +125,14 @@ async def test_stream_failure_never_runs_a_partial_tool_and_next_turn_recovers(
     failed = await _say(hass, agent, f"Seeded {phase} fault")
     assert failed.response.error_code is not None
     assert calls == []
-    assert agent._archive.stats()["turn_count"] == 0
+    assert _archived_successes(agent) == [False]
     assert agent._usage.runs[0].successful is False
 
     recovered = await _say(hass, agent, "Recover after interrupted provider stream")
     assert recovered.response.error_code is None
     assert recovered.response.as_dict()["speech"]["plain"]["speech"] == "Recovered."
     assert calls == []
-    assert agent._archive.stats()["turn_count"] == 1
+    assert sorted(_archived_successes(agent)) == [False, True]
     assert agent._usage.totals.conversation_count == 2
     assert len(wire.requests) == 2
     record(stress_trace, "stream_phase", mode=mode, phase=phase)
@@ -162,7 +167,7 @@ async def test_disconnect_after_tool_side_effect_never_replays_it(
         else _tool_result_from_responses_request(wire.requests[1]["body"])
     )
     assert tool_result["result"][0]["success"] is True
-    assert agent._archive.stats()["turn_count"] == 0
+    assert _archived_successes(agent) == [False]
     assert agent._usage.runs[0].successful is False
 
     recovered = await _say(hass, agent, "Ask a fresh question")
@@ -173,7 +178,7 @@ async def test_disconnect_after_tool_side_effect_never_replays_it(
     )
     assert len(calls) == 1
     assert len(wire.requests) == 3
-    assert agent._archive.stats()["turn_count"] == 1
+    assert sorted(_archived_successes(agent)) == [False, True]
     record(stress_trace, "post_tool_disconnect", mode=mode, service_calls=len(calls))
 
 

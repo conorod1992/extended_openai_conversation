@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
 from openai import OpenAIError
 
 from homeassistant.components.conversation import ConversationResult
@@ -13,6 +14,7 @@ from homeassistant.helpers import intent
 
 from .debug import record_current_provider_failure
 from .provider_errors import (
+    ProviderTransportError,
     log_provider_failure,
     provider_user_message,
     request_reauthentication,
@@ -26,13 +28,17 @@ def _conversation_error_result(
     entity: Any,
     user_input: Any,
     chat_log: Any,
-    err: OpenAIError | HomeAssistantError,
+    err: OpenAIError | HomeAssistantError | httpx.RequestError,
     *,
     logger: logging.Logger | None = None,
     provider_log_message: str = "OpenAI request preparation failed",
     conversation_id: Any = _USE_INPUT_CONVERSATION_ID,
 ) -> ConversationResult:
     """Build the same Assist error result for failures before or during provider prep."""
+    if isinstance(err, httpx.RequestError):
+        stream_error = ProviderTransportError("Provider stream interrupted")
+        stream_error.__cause__ = err
+        err = stream_error
     active_logger = logger or _LOGGER
     usage = getattr(entity, "_usage", None)
     if usage is not None:

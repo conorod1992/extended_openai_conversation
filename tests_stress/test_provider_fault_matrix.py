@@ -73,6 +73,12 @@ async def _say(hass: HomeAssistant, agent, text: str):
     )
 
 
+def _archived_successes(agent) -> list[bool]:
+    return [
+        turn.successful for turns in agent._archive._turns.values() for turn in turns
+    ]
+
+
 @pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
 @pytest.mark.parametrize("fault", _FAULTS)
 async def test_provider_failure_accounts_once_and_next_assist_turn_recovers(
@@ -107,7 +113,7 @@ async def test_provider_failure_accounts_once_and_next_assist_turn_recovers(
     assert agent._usage.totals.conversation_count == 1
     assert agent._usage.totals.failed_request_count == 1
     assert agent._usage.runs[0].successful is False
-    assert agent._archive.stats()["turn_count"] == 0
+    assert _archived_successes(agent) == [False]
 
     recovered = await _say(hass, agent, f"Recovery case {fault}")
     assert recovered.response.error_code is None
@@ -119,7 +125,7 @@ async def test_provider_failure_accounts_once_and_next_assist_turn_recovers(
     assert agent._usage.totals.api_request_count == 2
     assert agent._usage.totals.successful_request_count == 1
     assert agent._usage.totals.failed_request_count == 1
-    assert agent._archive.stats()["turn_count"] == 1
+    assert sorted(_archived_successes(agent)) == [False, True]
     assert len(wire.requests) == 2
     assert not wire.steps
     record(

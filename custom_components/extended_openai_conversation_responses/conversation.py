@@ -15,6 +15,7 @@ import time
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
+import httpx
 from openai import OpenAIError
 
 from homeassistant.components import conversation
@@ -967,7 +968,7 @@ class ExtendedOpenAIAgentEntity(
                     await async_process_speech_text(self.hass, *deferred_speech[0])
                 )
             return result
-        except (OpenAIError, HomeAssistantError) as err:
+        except (OpenAIError, HomeAssistantError, httpx.RequestError) as err:
             return _conversation_error_result(self, user_input, chat_log, err)
 
     async def _async_generate_message(
@@ -1023,7 +1024,7 @@ class ExtendedOpenAIAgentEntity(
                 ),
                 request_options=request_options,
             )
-        except (OpenAIError, HomeAssistantError) as err:
+        except (OpenAIError, HomeAssistantError, httpx.RequestError) as err:
             return _conversation_error_result(
                 self,
                 user_input,
