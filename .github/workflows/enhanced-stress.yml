@@ -117,7 +117,7 @@ jobs:
         run: |
           case "$STRESS_CAMPAIGN" in
             runtime) TEST_PATHS=(tests_stress/test_runtime_soak.py tests_stress/test_evidence_manifest.py tests_stress/test_frontend_route_inventory.py tests_stress/test_management_action_inventory.py tests_stress/test_public_service_inventory.py tests_stress/test_backup_inventory.py) ;;
-            lifecycle) TEST_PATHS=(tests_stress/test_lifecycle_matrix.py tests_real_ha/test_multi_entry_lifecycle.py tests_real_ha/test_config_flow_lifecycle_contracts.py) ;;
+            lifecycle) TEST_PATHS=(tests_stress/test_lifecycle_matrix.py tests_stress/test_installed_lifecycle.py tests_real_ha/test_multi_entry_lifecycle.py tests_real_ha/test_config_flow_lifecycle_contracts.py) ;;
             ai-task) TEST_PATHS=(tests_stress/test_ai_task_mixed_campaign.py tests_real_ha/test_ai_task_runtime.py tests_real_ha/test_ai_task_lifecycle.py) ;;
             voice-intercom) TEST_PATHS=(tests_stress/test_voice_household_campaign.py tests_stress/test_intercom_endurance_campaign.py tests_real_ha/test_assist_voice_identity_precedence.py tests_real_ha/test_intercom_voice_acceptance.py) ;;
             archive) TEST_PATHS=(tests_stress/test_archive_living_campaign.py tests/test_conversation_archive.py) ;;

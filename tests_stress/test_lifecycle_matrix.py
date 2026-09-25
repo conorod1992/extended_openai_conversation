@@ -97,6 +97,10 @@ async def test_seeded_multi_entry_lifecycle_contract(
     for entry in entries:
         assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
-    assert not hass.services.has_service(DOMAIN, SERVICE_PROCESS)
+    # EOAI registers the shared process service once per HA instance. It remains
+    # registered after the last entry unloads, but its count must not grow.
+    assert _resource_footprint(hass)["registered_services"] == baseline_resources[
+        "registered_services"
+    ]
     assert not (_integration_tasks() - baseline_tasks)
     record(stress_trace, "summary", cycles=cycles, entries=2, subentries=4)
