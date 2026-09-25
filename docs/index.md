@@ -20,7 +20,7 @@ Common capabilities include:
 - Search larger local reference material through the Knowledge Library.
 - Clean Markdown, citations and URLs from spoken output without replacing the original retained response.
 - Apply Quiet Hours to lower Assist satellite volume and optionally suppress wake-word sounds on a daily schedule.
-- Handle predictable phrases locally or route requests with Request Rules.
+- Build deterministic Request Rules for conditional local actions, Function Tools, AI routing, and reusable shared commands.
 - Define custom Function Tools, including durable delayed execution, and organize large tool collections with optional on-demand Function Groups.
 - Load reusable Skills per conversation agent.
 - Apply Guest Mode as a backend-enforced visitor restriction layer.

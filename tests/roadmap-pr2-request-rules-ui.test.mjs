@@ -28,11 +28,13 @@ test("Request Rules UI explains AI-routing command semantics", async () => {
   assert.match(source, /first eligible match handles the request/i);
 });
 
-test("Guide explains broad versus complete AI-routing matches", async () => {
+test("Guide explains current Request Rules matching and AI handoff", async () => {
   const source = renderGuide(panel);
 
-  assert.match(source, /original request/i);
-  assert.match(source, /Hassil/i);
-  assert.match(source, /deterministic rule/i);
+  assert.match(source, /Original request/i);
+  assert.match(source, /Captured value/i);
+  assert.match(source, /ExtendedOpenAI sentence patterns/i);
+  assert.match(source, /global priority order/i);
   assert.match(source, /Fuzzy matching/i);
+  assert.doesNotMatch(source, /Home Assistant sentence patterns|Hassil sentence format/i);
 });
