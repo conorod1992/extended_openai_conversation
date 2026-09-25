@@ -24,6 +24,7 @@ COUNT_METRICS = {
     "read_file_function_executions",
     "write_file_function_executions",
     "edit_file_function_executions",
+    "provider_wire_function_errors",
     "delayed_tool_mutation_cases",
     "delayed_tool_due_executions",
     "ha_service_calls",

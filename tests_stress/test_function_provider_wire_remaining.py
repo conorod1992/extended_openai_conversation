@@ -35,6 +35,13 @@ REMAINING_TYPES = (
     "write_file",
     "edit_file",
 )
+ERROR_CASES = (
+    "rest_404",
+    "scrape_missing_selector",
+    "sqlite_bad_query",
+    "bash_nonzero",
+    "read_file_missing",
+)
 
 
 def _configuration(kind: str, root: Path, url: str) -> dict[str, Any]:
@@ -216,6 +223,123 @@ async def test_remaining_function_type_executes_on_provider_wire(
             provider_requests=2,
             actual_function_executions=1,
             **{f"{kind}_function_executions": 1},
+        )
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize("failure", ERROR_CASES)
+async def test_remaining_function_errors_are_serialized_on_provider_wire(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    socket_enabled: Any,
+    tmp_path: Path,
+    stress_trace: list[dict],
+    failure: str,
+) -> None:
+    del socket_enabled
+    hits: list[str] = []
+
+    async def html_response(_request: web.Request) -> web.Response:
+        hits.append("html")
+        return web.Response(
+            text="<html><span>Other content</span></html>", content_type="text/html"
+        )
+
+    app = web.Application()
+    app.router.add_get("/html", html_response)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    try:
+        assert site._server is not None
+        url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+        kind = failure.split("_")[0]
+        if failure == "read_file_missing":
+            kind = "read_file"
+        config = _configuration(kind, tmp_path, url)
+        if failure == "rest_404":
+            config["resource"] = f"{url}/missing"
+        elif failure == "scrape_missing_selector":
+            config["sensor"] = [{"select": ".absent", "name": "absent"}]
+        elif failure == "sqlite_bad_query":
+            config["query"] = "SELECT value FROM absent_table"
+        elif failure == "bash_nonzero":
+            config["command"] = "printf EOAI_FAILURE >&2; exit 7"
+        else:
+            config["path"] = str(tmp_path / "absent.txt")
+        if kind == "sqlite":
+            with sqlite3.connect(tmp_path / "wire.db") as db:
+                db.execute("CREATE TABLE probes (id INTEGER PRIMARY KEY, value TEXT)")
+        name = f"enhanced_{failure}_wire"
+        entry = _make_entry(
+            f"Enhanced {failure} wire error",
+            include_ai_task=False,
+            conversation_options={
+                CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+                CONF_FUNCTION_TOOLS: [
+                    {
+                        "spec": {
+                            "name": name,
+                            "description": f"Exercise {failure} failure",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                        "function": config,
+                        "enabled": True,
+                    }
+                ],
+            },
+        )
+        await _setup_entry(hass, entry)
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        assert agent is not None
+        call_id = f"call-{failure}"
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            [_chat_sse_tool_call(call_id, name, {}), _chat_sse_text("Failure handled")],
+        )
+        response = await conversation.async_converse(
+            hass=hass,
+            text=f"Execute {failure}",
+            conversation_id=None,
+            context=Context(),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+        assert _speech(response) == "Failure handled"
+        assert len(wire.requests) == 2
+        assert name in _tool_names(wire.requests[0]["body"], API_MODE_CHAT_COMPLETIONS)
+        tool_message = next(
+            message
+            for message in wire.requests[1]["body"]["messages"]
+            if message.get("role") == "tool" and message.get("tool_call_id") == call_id
+        )
+        result = json.loads(tool_message["content"])["result"]
+        if failure == "bash_nonzero":
+            assert result["exit_code"] == 7
+            assert "EOAI_FAILURE" in result["stderr"]
+        elif failure == "scrape_missing_selector":
+            assert hits == ["html"]
+            assert "Other content" not in str(result)
+            assert "EOAI_SCRAPE_WIRE" not in str(result)
+        else:
+            assert "error" in str(result).lower(), result
+            if failure == "rest_404":
+                assert "404" in str(result)
+            elif failure == "sqlite_bad_query":
+                assert "absent_table" in str(result)
+            else:
+                assert "absent.txt" in str(result) or "not found" in str(result).lower()
+        record(
+            stress_trace,
+            "summary",
+            layer="provider-wire",
+            public_turns=1,
+            provider_requests=2,
+            provider_wire_function_errors=1,
+            failure=failure,
         )
     finally:
         await runner.cleanup()
