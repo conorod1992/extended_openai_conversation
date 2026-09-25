@@ -20,7 +20,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     async_evaluate_rule,
     validate_rule,
 )
-from tests.test_request_rules import MemoryStore, local_rule
+from tests.test_request_rules import FakeServices, MemoryStore, local_rule
 
 
 def captured_routing_rule():
@@ -68,6 +68,41 @@ async def test_captured_ai_handoff_and_preview_share_resolved_input(hass) -> Non
         "capture": "question",
         "provider_input": evaluated.provider_input,
     }
+
+
+async def test_captured_ai_input_survives_backup_and_old_rules_default_original() -> None:
+    stored = RequestRules(MemoryStore({"rules": [captured_routing_rule()]}))
+    await stored.async_initialize()
+    backup = await stored.async_backup_data()
+    restored = RequestRules.validate_backup_data(backup)
+    assert restored["rules"][0]["ai_input_mode"] == "capture"
+    assert restored["rules"][0]["ai_input_capture"] == "question"
+    old = RequestRules.validate_backup_data({"rules": [local_rule()]})
+    assert old["rules"][0]["ai_input_mode"] == "original"
+    assert old["rules"][0]["ai_input_capture"] is None
+
+
+async def test_local_captured_handoff_only_after_success(hass) -> None:
+    rule = local_rule("Ask", ["ask {question}"], "sentence_pattern")
+    rule["action"]["continue_to_ai"] = True
+    rule["ai_input_mode"] = "capture"
+    rule["ai_input_capture"] = "question"
+    stored = RequestRules(MemoryStore({"rules": [rule]}))
+    await stored.async_initialize()
+    services = FakeServices()
+    hass.services = services
+    success = await async_evaluate_rule(
+        hass, stored, RequestRuleRuntime(), "ask why", "session"
+    )
+    assert success is not None and not success.consume
+    assert success.provider_input == "why"
+    assert len(services.calls) == 1
+    hass.services = FakeServices(fail=True)
+    failed = await async_evaluate_rule(
+        hass, stored, RequestRuleRuntime(), "ask why", "session"
+    )
+    assert failed is not None and failed.consume and not failed.successful
+    assert failed.provider_input is None
 
 
 async def test_pack_export_import_appends_disabled_in_relative_order() -> None:

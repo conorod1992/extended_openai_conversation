@@ -7,9 +7,10 @@ from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
+from hashlib import sha256
 import json
 import logging
-from time import perf_counter
+from time import monotonic, perf_counter
 from types import MappingProxyType
 from typing import Any, Final
 from uuid import uuid4
@@ -586,6 +587,38 @@ async def _review_rule_pack(
     }
 
 
+def _rule_pack_digest(prepared: Mapping[str, Any]) -> str:
+    return sha256(
+        json.dumps(prepared, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _register_rule_pack_review(
+    rules: Any, prepared: Mapping[str, Any], revision: str
+) -> str:
+    reviews = getattr(rules, "_rule_pack_reviews", {})
+    now = monotonic()
+    reviews = {token: record for token, record in reviews.items() if record[2] > now}
+    token = uuid4().hex
+    reviews[token] = (_rule_pack_digest(prepared), revision, now + 600)
+    rules._rule_pack_reviews = dict(list(reviews.items())[-16:])
+    return token
+
+
+def _consume_rule_pack_review(
+    rules: Any, token: Any, prepared: Mapping[str, Any], revision: Any
+) -> None:
+    reviews = getattr(rules, "_rule_pack_reviews", {})
+    record = reviews.pop(token, None) if isinstance(token, str) else None
+    if (
+        record is None
+        or record[0] != _rule_pack_digest(prepared)
+        or record[1] != revision
+        or record[2] <= monotonic()
+    ):
+        raise HomeAssistantError("Review this exact Rule Pack before importing")
+
+
 @dataclass(frozen=True)
 class _ManagementRequest:
     """One validated agent selection shared by explicit section handlers."""
@@ -641,11 +674,17 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         tools = configured_function_tools_from_data(subentry.data)
         review = await _review_rule_pack(hass, prepared, rules, tools)
         if action == "rule_pack_review":
+            review["review_token"] = _register_rule_pack_review(
+                rules, prepared, review["revision"]
+            )
             return review
         if message.get("confirm") is not True:
             raise HomeAssistantError("Review and confirm the Rule Pack before import")
         if message.get("revision") != review["revision"]:
             raise HomeAssistantError("Request Rules changed after review; review again")
+        _consume_rule_pack_review(
+            rules, message.get("review_token"), prepared, review["revision"]
+        )
         imported = await async_append_rule_pack(
             rules, prepared, expected_revision=message.get("revision")
         )

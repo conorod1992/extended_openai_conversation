@@ -25,7 +25,7 @@ MAX_PACK_BYTES = 2 * 1024 * 1024
 
 def export_rule_pack(
     manager: RequestRules,
-    selection: str,
+    selection: str | None,
     group_id: str | None = None,
     rule_ids: Sequence[str] | None = None,
 ) -> dict[str, Any]:

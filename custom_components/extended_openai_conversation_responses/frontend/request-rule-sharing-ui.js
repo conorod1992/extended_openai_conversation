@@ -48,7 +48,7 @@ export function bindRuleSharing(panel, host) {
     try{
       const pack=await file.text();
       const review=await panel._call("request_rules","rule_pack_review",{pack});
-      reviewed={pack,revision:review.revision};
+      reviewed={pack,revision:review.revision,review_token:review.review_token};
       q("#rule-pack-review").innerHTML=reviewMarkup(panel,review);
       setMessage("");
     }catch(err){reviewed=null;q("#rule-pack-review").replaceChildren();setMessage(err.message||String(err));}
@@ -60,7 +60,7 @@ export function bindRuleSharing(panel, host) {
     if(!button||!reviewed)return;
     button.disabled=true;
     try{
-      const result=await panel._call("request_rules","rule_pack_import",{pack:reviewed.pack,revision:reviewed.revision,confirm:true});
+      const result=await panel._call("request_rules","rule_pack_import",{pack:reviewed.pack,revision:reviewed.revision,review_token:reviewed.review_token,confirm:true});
       applyRulePackImportMutation(panel,result);
       reviewed=null;q("#rule-pack-review").replaceChildren();
       setMessage(`${result.rules.length} disabled rules imported after existing rules.`);
