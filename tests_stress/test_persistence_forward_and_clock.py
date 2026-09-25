@@ -17,6 +17,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONFIG_ENTRY_VERSION,
     DOMAIN,
 )
+from custom_components.extended_openai_conversation_responses.request_rules import (
+    async_get_request_rules,
+)
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
 )
@@ -60,6 +63,19 @@ async def test_opaque_future_agent_fields_survive_edit_backup_and_reload(
     saved = await backup.async_collect_backup_snapshot(hass, entry, subentry)
     assert saved["agent"]["config"]["future_agent_extension"] == future
     assert saved["agent"]["config"]["prompt"] == "Known edit after future schema"
+    assert (
+        backup.inspect_backup(saved, subentry.subentry_id).config[
+            "future_agent_extension"
+        ]
+        == future
+    )
+    without_opaque = dict(subentry.data)
+    without_opaque.pop("future_agent_extension")
+    hass.config_entries.async_update_subentry(entry, subentry, data=without_opaque)
+    assert (await backup.async_restore_backup(hass, entry, subentry, saved))[
+        "status"
+    ] == "restored"
+    assert subentry.data["future_agent_extension"] == future
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     subentry = next(iter(entry.subentries.values()))
@@ -67,7 +83,7 @@ async def test_opaque_future_agent_fields_survive_edit_backup_and_reload(
     assert (await backup.async_collect_backup_snapshot(hass, entry, subentry))["agent"][
         "config"
     ]["future_agent_extension"] == future
-    record(stress_trace, "future_field_preserved", reloads=1, backup_round_trips=2)
+    record(stress_trace, "future_field_preserved", reloads=1, backup_round_trips=3)
 
 
 async def test_future_backup_version_refuses_without_mutation(
@@ -103,6 +119,50 @@ async def test_future_backup_version_refuses_without_mutation(
     record(
         stress_trace, "unsupported_future_restore_rejected", version=future["version"]
     )
+
+
+async def test_opaque_future_rule_store_field_survives_group_edit_and_restore(
+    hass,
+    stress_trace,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Future rules",
+        data={CONF_API_KEY: "sk-local", CONF_SKIP_AUTHENTICATION: True},
+        version=CONFIG_ENTRY_VERSION,
+        subentries_data=[
+            {
+                "data": {},
+                "subentry_type": "conversation",
+                "title": "Rules agent",
+                "unique_id": None,
+            }
+        ],
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    subentry = next(iter(entry.subentries.values()))
+    rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
+    raw = await rules._store.async_load()
+    future = {"format": 8, "nested": {"preserve": [1, 2, 3]}}
+    await rules._store.async_save({**(raw or {}), "future_rule_index": future})
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
+    assert (await rules.async_backup_data())["future_rule_index"] == future
+    await rules.async_set_groups([{"id": "nightly", "name": "Nightly group"}])
+    saved = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    assert saved["request_rules"]["future_rule_index"] == future
+    assert (await backup.async_restore_backup(hass, entry, subentry, saved))[
+        "status"
+    ] == "restored"
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
+    assert (await rules.async_backup_data())["future_rule_index"] == future
+    assert rules.snapshot()["groups"][0]["id"] == "nightly"
+    record(stress_trace, "future_rule_field_preserved", reloads=2, backups=1)
 
 
 async def test_temporary_memory_forward_backward_jump_is_irreversible(

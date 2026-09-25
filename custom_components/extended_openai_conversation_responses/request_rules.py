@@ -334,6 +334,7 @@ class RequestRules:
     def __init__(self, store: RequestRuleStore) -> None:
         self._store = store
         self._rules: list[dict[str, Any]] = []
+        self._opaque_fields: dict[str, Any] = {}
         self._defaults = dict(DEFAULT_MATCHING)
         self._wording_groups = _copy_wording_groups(DEFAULT_WORDING_GROUPS)
         self._groups: list[dict[str, str]] = []
@@ -363,6 +364,11 @@ class RequestRules:
                     )
                     migrated = True
                 else:
+                    self._opaque_fields = {
+                        key: deepcopy(value)
+                        for key, value in stored.items()
+                        if key not in {"defaults", "wording_groups", "groups", "rules"}
+                    }
                     try:
                         self._groups = validate_rule_groups(stored.get("groups", []))
                     except ValueError:
@@ -442,6 +448,7 @@ class RequestRules:
                 self._wording_groups = deepcopy(list(DEFAULT_WORDING_GROUPS))
                 self._groups = []
                 self._rules = []
+                self._opaque_fields = {}
                 self._sort_and_compile()
                 self._initialized = False
                 self._committed_state = None
@@ -508,7 +515,7 @@ class RequestRules:
         snapshot = self.snapshot()
         snapshot.pop("revision", None)
         snapshot.pop("diagnostics", None)
-        return snapshot
+        return {**snapshot, **deepcopy(self._opaque_fields)}
 
     @staticmethod
     def validate_backup_data(value: Any) -> dict[str, Any]:
@@ -522,8 +529,8 @@ class RequestRules:
             "groups",
             "rules",
         }
-        if unknown:
-            raise ValueError("unknown request_rules fields")
+        if any(not isinstance(key, str) for key in unknown):
+            raise ValueError("request_rules fields must be strings")
         defaults = validate_matching_settings(value.get("defaults", DEFAULT_MATCHING))
         wording_groups = validate_wording_groups(
             value.get("wording_groups", DEFAULT_WORDING_GROUPS)
@@ -547,6 +554,7 @@ class RequestRules:
         ):
             raise ValueError("Request Rule references an unknown group")
         return {
+            **{key: deepcopy(value[key]) for key in unknown},
             "defaults": defaults,
             "wording_groups": wording_groups,
             "groups": groups,
@@ -557,6 +565,11 @@ class RequestRules:
         """Replace all durable state from a fully validated backup."""
         prepared = self.validate_backup_data(value)
         async with self._lock:
+            self._opaque_fields = {
+                key: deepcopy(value)
+                for key, value in prepared.items()
+                if key not in {"defaults", "wording_groups", "groups", "rules"}
+            }
             self._defaults = prepared["defaults"]
             self._wording_groups = prepared["wording_groups"]
             self._groups = prepared["groups"]
@@ -1139,6 +1152,7 @@ class RequestRules:
         await _async_settle_transactional_save(
             self._store.async_save(
                 {
+                    **self._opaque_fields,
                     "defaults": self._defaults,
                     "wording_groups": self._wording_groups,
                     "groups": self._groups,
@@ -1152,6 +1166,7 @@ class RequestRules:
     def _remember_committed_state(self) -> None:
         """Capture the exact last committed Request Rule configuration."""
         self._committed_state = {
+            "opaque_fields": deepcopy(self._opaque_fields),
             "defaults": deepcopy(self._defaults),
             "wording_groups": deepcopy(self._wording_groups),
             "groups": deepcopy(self._groups),
@@ -1163,6 +1178,7 @@ class RequestRules:
         if snapshot is None:
             return
         self._defaults = deepcopy(snapshot["defaults"])
+        self._opaque_fields = deepcopy(snapshot["opaque_fields"])
         self._wording_groups = deepcopy(snapshot["wording_groups"])
         self._groups = deepcopy(snapshot["groups"])
         self._rules = deepcopy(snapshot["rules"])
