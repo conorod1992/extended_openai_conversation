@@ -771,7 +771,7 @@ const configResult = (projection, title = "A") => ({
     querySelector(selector) {
       if (selector === "#rule-search") return search;
       if (selector === ".rule-list") return list;
-      if (selector === ".search-row .count") return count;
+      if (selector === ".rule-toolbar .count") return count;
       return null;
     },
     ownerDocument:{createElement:() => null},

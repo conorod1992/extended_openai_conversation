@@ -43,7 +43,7 @@ const panel = {
 };
 
 const markup = renderRetentionSettings(panel);
-assert.match(markup, /Usage history retention/);
+assert.match(markup, /Retention periods/);
 assert.match(markup, /data-retention-config="usage_request_retention_days"/);
 assert.match(markup, /data-retention-config="usage_run_retention_days"/);
 assert.doesNotMatch(markup, /Chat model|Function Tool|Import configuration/);

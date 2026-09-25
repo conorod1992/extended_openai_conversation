@@ -137,6 +137,7 @@ export function matchesFunctionSearch(query, searchableText) {
 export function section(panel, id, title, description, keywords, body, includeHeading = true) {
   if (panel._configSectionFilter && !panel._configSectionFilter.has(id)) return "";
   const content = typeof body === "function" ? body() : body;
+  if (id === "capabilities" && panel._viewKey?.() === "capabilities/web-skills") includeHeading = false;
   return `<section id="config-${id}" class="config-section" data-config-section data-search="${panel._e(`${title} ${description} ${keywords}`.toLowerCase())}">${includeHeading ? `<div class="config-section-heading"><h2 class="eyebrow">${title}</h2><p>${description}</p></div>` : ""}${content}</section>`;
 }
 
@@ -227,7 +228,10 @@ export function prepareConfigurationSections(panel) {
 
 export function renderConfigurationShell(panel, sections) {
   const defaults = panel._result?.defaults || {};
-  return `<div class="content-card config-surface">${sections}${saveBar(panel)}<span id="save-bar-anchor" class="sr-only" data-defaults="${panel._e(JSON.stringify(defaults))}"></span></div>`;
+  const intro = panel._viewKey?.() === "capabilities/web-skills"
+    ? '<section class="page-intro"><h1>Web search & Skills</h1><p>Choose optional online information and installed instruction sets the assistant may load when needed.</p></section>'
+    : "";
+  return `${intro}<div class="content-card config-surface">${sections}${saveBar(panel)}<span id="save-bar-anchor" class="sr-only" data-defaults="${panel._e(JSON.stringify(defaults))}"></span></div>`;
 }
 
 export function regexRow(panel, rule, index, disabled = false) {
