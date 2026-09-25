@@ -16,6 +16,9 @@ MANIFEST = ROOT / "tests_stress" / "evidence_manifest.json"
 BASE_FEATURES = {
     "initial_setup",
     "ai_task",
+    "voice_identity",
+    "intercom",
+    "conversation_archive",
     "reauth",
     "guest_mode",
     "quiet_hours",

@@ -158,6 +158,9 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
         data={**fast_subentry.data, CONF_CHAT_MODEL: "gpt-5.6"},
     )
     await hass.async_block_till_done()
+    # HA may reload the parent entry after a subentry edit, replacing the SDK
+    # client. Reinstall only the deterministic provider seam on that new client.
+    install_client()
     fast_model = "gpt-5.6"
     await task(sequential + concurrent + 2)
 
