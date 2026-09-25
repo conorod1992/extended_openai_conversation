@@ -76,7 +76,7 @@ Reasoning effort is validated against the model that will actually receive it, i
 
 Strict matching always wins over fuzzy matching. Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen. The first eligible strict match handles the request by default, regardless of match type. A rule with **Continue matching** on can let later strict matches run. Fuzzy matching is considered only after strict candidates are exhausted. When no strict rule matched, the first fuzzy candidate is chosen by its existing score-based ranking; continuation then checks only later-priority fuzzy rules in global order.
 
-The first *eligible* candidate wins: a candidate whose Only when conditions are false is skipped. Conditions are never evaluated for rules whose text did not match.
+Eligibility is checked before a candidate runs: a candidate whose **Only when** conditions are false is skipped, while conditions are never evaluated for rules whose text did not match. An eligible rule then follows the normal stop-or-continue behavior described above.
 
 For example, if an earlier **Contains** rule and a later **Equals** rule both match the same request, the earlier rule wins. Move the Equals rule above it when that more specific case should take priority.
 
