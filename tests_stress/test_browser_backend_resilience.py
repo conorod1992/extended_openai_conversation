@@ -14,6 +14,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
 
 from homeassistant.components import onboarding
+from homeassistant.components.websocket_api.const import DATA_CONNECTIONS
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 from tests_real_ha.test_browser_backend_acceptance import (
@@ -152,7 +153,13 @@ async def test_real_ha_shell_auth_expiry_and_websocket_loss(
         await runner.cleanup()
         await client.close()
         await hass.async_stop()
-        await asyncio.sleep(0)
+        async with asyncio.timeout(5):
+            while hass.data.get(DATA_CONNECTIONS, 0):
+                await asyncio.sleep(0.05)
+        # Browser process exit and HA's socket-close callback cross event loops.
+        # Let the aiohttp close callback cancel its heartbeat before pytest's
+        # strict leftover-timer audit runs.
+        await asyncio.sleep(0.2)
 
 
 async def test_published_frontend_assets_against_new_real_ha_backend(
