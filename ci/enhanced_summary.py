@@ -62,7 +62,7 @@ def main() -> None:
                 lines += [f"Measured: {details}", ""]
         if "maxNodes" in data:
             lines += [
-                f"Browser transitions: {data['count']}; maximum observed panel DOM nodes: {data['maxNodes']}",
+                f"Browser transitions: {data['count']}; successful backend mutations: {data.get('mutations', 0)}; maximum observed panel DOM nodes: {data['maxNodes']}",
                 "",
             ]
     summary = "\n".join(lines)

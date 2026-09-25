@@ -123,7 +123,7 @@ jobs:
             chaos) TEST_PATHS=(tests_stress/test_cross_feature_chaos.py) ;;
             *) exit 2 ;;
           esac
-          pytest "${TEST_PATHS[@]}" -v -s --asyncio-mode=auto \
+          pytest "${TEST_PATHS[@]}" -v -s --asyncio-mode=auto --log-cli-level=WARNING \
             --timeout=600 --durations=20 \
             --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
       - name: Summarize exercised operations
