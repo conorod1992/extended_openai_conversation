@@ -13,6 +13,7 @@ The current campaigns are:
 | `quiet-hours` | Multiple repeated periods across real registry-backed satellites with distinct starting volumes and restoration checks. |
 | `functions` | Seeded Function Group loading, disabling and session-isolation model across 24 tools, 12 groups and 16 conversations. |
 | `memory-knowledge` | Hundreds of private Memory records and Knowledge sources, user-isolated reads, full durable-state comparison after reload. |
+| `chaos` | Seeded valid Memory, Knowledge and Request Rule mutations, backup checkpoints and restores, reloads and public request probes after every step. |
 | `browser` | One mounted Chromium management panel through 80 seeded route changes over the major sections, with DOM, error and mount checks. |
 
 `normal` is the nightly workload. `heavy` multiplies Python operation counts by four and browser transitions by four. The workflow generates a seed if none is supplied, prints it in the first job and every trace, and includes it in the Step Summary. To reproduce a failure, choose the failing campaign and intensity in **Run workflow**, then paste the reported seed. Python traces are in `stress-artifacts/*.json`; browser traces and screenshots are retained on failure.

@@ -27,7 +27,7 @@ test("one mounted panel survives a long seeded route journey", async ({page}, te
   await page.goto(fixtureUrl("assistant/basics"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#agent")).toHaveValue("agent-1");
-  await panel.evaluate((host) => { host.__nightlyMount = seed; });
+  await panel.evaluate((host, value) => { host.__nightlyMount = value; }, seed);
   let maxNodes = 0;
   try {
     for (let index = 0; index < count; index++) {
