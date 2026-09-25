@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -50,10 +51,15 @@ def test_skill_metadata_validation(tmp_path: Path) -> None:
         "---\nname: no-description\n---\nbody",
     ],
 )
-def test_parser_rejects_invalid_frontmatter(content: str, tmp_path: Path) -> None:
-    """Malformed and incomplete frontmatter is ignored rather than published."""
+def test_parser_rejects_invalid_frontmatter(
+    content: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Malformed frontmatter is skipped with an actionable System Log warning."""
     skill_file = tmp_path / "alpha" / "SKILL.md"
-    assert SkillMdParser.parse(content, skill_file, tmp_path) is None
+    with caplog.at_level(logging.WARNING):
+        assert SkillMdParser.parse(content, skill_file, tmp_path) is None
+    assert "Skill 'alpha' was not loaded" in caplog.text
+    assert "Extended OpenAI > Skills" in caplog.text
 
 
 def test_parser_path_fallback_validation_and_body_extraction(tmp_path: Path) -> None:

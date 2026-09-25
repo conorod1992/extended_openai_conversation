@@ -20,7 +20,7 @@ The editor follows the way a command is usually designed:
 
 ## Only when conditions
 
-Rules with no conditions behave exactly as before. For a conditional rule, phrase or sentence-pattern matching runs first. Only if the text matches are its Home Assistant conditions evaluated. A false condition skips that rule and checks later text-matching rules in global priority order. This also applies to fuzzy fallback candidates. The first text match whose conditions pass wins.
+Rules with no conditions behave exactly as before. For a conditional rule, phrase or sentence-pattern matching runs first. Only if the text matches are its Home Assistant conditions evaluated. A false condition skips that rule and checks later text-matching rules in global priority order. This also applies to fuzzy fallback candidates. The first text match whose conditions pass is the next eligible rule. By default it handles the request and stops matching; a rule with **Continue matching after this rule** enabled can allow later eligible rules to run too.
 
 The **Only when** editor uses Home Assistant's condition selector. For example, an Equals rule for `good night` can require a state condition that `input_boolean.bedtime` is `on`. You can use native nested `and`/`or`/`not`, numeric state, time, template, device, and other conditions offered by Home Assistant. Saved condition structures remain intact when the rule is edited.
 
@@ -76,7 +76,7 @@ Reasoning effort is validated against the model that will actually receive it, i
 
 Strict matching always wins over fuzzy matching. Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen. The first eligible strict match handles the request by default, regardless of match type. A rule with **Continue matching** on can let later strict matches run. Fuzzy matching is considered only after strict candidates are exhausted. When no strict rule matched, the first fuzzy candidate is chosen by its existing score-based ranking; continuation then checks only later-priority fuzzy rules in global order.
 
-The first *eligible* candidate wins: a candidate whose Only when conditions are false is skipped. Conditions are never evaluated for rules whose text did not match.
+Eligibility is checked before a candidate runs: a candidate whose **Only when** conditions are false is skipped, while conditions are never evaluated for rules whose text did not match. An eligible rule then follows the normal stop-or-continue behavior described above.
 
 For example, if an earlier **Contains** rule and a later **Equals** rule both match the same request, the earlier rule wins. Move the Equals rule above it when that more specific case should take priority.
 

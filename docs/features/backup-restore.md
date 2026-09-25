@@ -9,7 +9,7 @@ This is different from **Export configuration**. Configuration export is mainly 
 A full backup contains the selected agent's:
 
 - saved configuration
-- Request Rules
+- Request Rules, including their groups, global priority order, matching settings and wording alternatives
 - persistent memories
 - active temporary memories with their original expiry time
 - Knowledge Library source text and metadata
@@ -27,7 +27,7 @@ When moving a backup to another Home Assistant installation, reconnect or recrea
 
 Selecting a backup validates it before anything is replaced. Temporary memories that have already expired are discarded during restore.
 
-**Restore everything** replaces the agent's corresponding saved data rather than merging the backup with what is already there. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
+**Restore everything** replaces the agent's corresponding saved data rather than merging the backup with what is already there. Request Rules are therefore restored as the saved rule set, including their exact global order and groups. This is different from **Rule Sharing**, which appends shared rules after existing rules in their shared relative order and does not import agent-wide wording alternatives. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
 
 Restore is designed to avoid leaving only half of the backup applied. If saving the restored data fails part-way through, Extended OpenAI attempts to return the agent to the state it had before the restore began.
 

@@ -1,0 +1,123 @@
+name: Cleanup orphan Actions history
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run lists orphan workflows/runs; delete permanently removes their completed runs"
+        required: true
+        default: "dry-run"
+        type: choice
+        options:
+          - dry-run
+          - delete
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: cleanup-orphan-actions-history
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.actor == 'conorod1992'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted develop
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Find orphan workflows and optionally delete completed runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="${GITHUB_REPOSITORY}"
+          tmp="${RUNNER_TEMP}/workflow-cleanup"
+          mkdir -p "$tmp"
+
+          # Current files on trusted develop are the allow-list. GitHub may retain
+          # workflow objects/history after their YAML files have been removed.
+          find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \)             -printf '%P\n' | sort > "$tmp/current-files.txt"
+
+          gh api --paginate "repos/$repo/actions/workflows?per_page=100"             --jq '.workflows[] | [.id, .name, .path, .state] | @tsv'             > "$tmp/workflows.tsv"
+
+          orphan_count=0
+          run_count=0
+          deleted_count=0
+          skipped_active=0
+
+          {
+            echo "## Orphan GitHub Actions workflow history"
+            echo
+            echo "Mode: `$MODE`"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          while IFS=$'\t' read -r workflow_id workflow_name workflow_path workflow_state; do
+            # GitHub normally reports .github/workflows/<file>. Extract only a
+            # basename for comparison to the trusted current checkout.
+            workflow_file="${workflow_path##*/}"
+            if grep -Fxq "$workflow_file" "$tmp/current-files.txt"; then
+              continue
+            fi
+
+            orphan_count=$((orphan_count + 1))
+            echo "::group::Orphan: $workflow_name ($workflow_path)"
+            echo "Workflow id: $workflow_id"
+            echo "State: $workflow_state"
+
+            mapfile -t runs < <(
+              gh api --paginate "repos/$repo/actions/workflows/$workflow_id/runs?per_page=100"                 --jq '.workflow_runs[] | [.id, .status, (.conclusion // ""), .html_url] | @tsv'
+            )
+
+            this_runs=0
+            this_deleted=0
+            for row in "${runs[@]}"; do
+              IFS=$'\t' read -r run_id status conclusion run_url <<< "$row"
+              this_runs=$((this_runs + 1))
+              run_count=$((run_count + 1))
+              echo "run=$run_id status=$status conclusion=$conclusion $run_url"
+
+              if [ "$MODE" = "delete" ]; then
+                if [ "$status" != "completed" ]; then
+                  echo "Skipping active/non-completed run $run_id"
+                  skipped_active=$((skipped_active + 1))
+                  continue
+                fi
+                gh api --method DELETE "repos/$repo/actions/runs/$run_id"
+                this_deleted=$((this_deleted + 1))
+                deleted_count=$((deleted_count + 1))
+              fi
+            done
+
+            {
+              echo "- **$workflow_name** — `$workflow_path` — $this_runs recorded run(s)"
+              if [ "$MODE" = "delete" ]; then
+                echo "  - deleted: $this_deleted"
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::endgroup::"
+          done < "$tmp/workflows.tsv"
+
+          {
+            echo
+            echo "### Totals"
+            echo "- Current workflow files: $(wc -l < "$tmp/current-files.txt")"
+            echo "- Orphan workflow records: $orphan_count"
+            echo "- Orphan workflow runs found: $run_count"
+            if [ "$MODE" = "delete" ]; then
+              echo "- Completed runs deleted: $deleted_count"
+              echo "- Active/non-completed runs skipped: $skipped_active"
+            else
+              echo
+              echo "No runs were deleted. Re-run with **mode = delete** to remove the completed orphan history."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

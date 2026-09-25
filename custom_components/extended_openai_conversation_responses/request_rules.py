@@ -1096,7 +1096,12 @@ class RequestRules:
                 except ValueError as err:
                     diagnostic = f"Sentence pattern is inactive: {err}"
                     diagnostics[rule["id"]] = diagnostic
-                    _LOGGER.warning("Request Rule %s is inactive: %s", rule["id"], err)
+                    _LOGGER.warning(
+                        "Request Rule '%s' is inactive and needs attention in Extended "
+                        "OpenAI > Request Rules: %s",
+                        rule.get("name") or rule["id"],
+                        err,
+                    )
                     continue
                 if rule["enabled"]:
                     total_pattern_states += state_count
@@ -2484,7 +2489,12 @@ async def _async_evaluate_matched_rule(
         except GuestModeDenied:
             return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
         except Exception:
-            _LOGGER.exception("Request Rule local action failed for %s", rule["id"])
+            _LOGGER.exception(
+                "Request Rule '%s' failed while running its local Home Assistant "
+                "action. Review the rule's actions and referenced entities/services "
+                "in Extended OpenAI > Request Rules",
+                rule.get("name") or rule["id"],
+            )
             return RuleEvaluation(
                 match,
                 True,

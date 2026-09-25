@@ -1,0 +1,104 @@
+name: Live OpenAI Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_count:
+        description: "How many current catalogue models to sample (1-12)"
+        required: true
+        default: "6"
+        type: string
+      cases_per_model:
+        description: "Compatibility profiles per selected model (1-4)"
+        required: true
+        default: "2"
+        type: string
+      seed:
+        description: "Optional numeric seed to reproduce a previous selection"
+        required: false
+        type: string
+      include_expensive_models:
+        description: "Include models whose id contains -pro"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: live-openai-acceptance
+  cancel-in-progress: false
+
+jobs:
+  live-openai:
+    name: Real OpenAI provider compatibility
+    if: github.actor == 'conorod1992'
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      PYTHONPATH: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout trusted branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Verify caller and secret
+        run: |
+          set -euo pipefail
+          test "${GITHUB_ACTOR}" = "conorod1992"
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::Repository secret OPENAI_API_KEY is not configured."
+            exit 1
+          fi
+
+      - name: Reconcile current dependencies
+        run: |
+          set -euo pipefail
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+            pip install -r requirements_test.txt
+            pip install --upgrade homeassistant
+            python ci/install_ha_dependencies.py \
+              --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
+          pip check
+
+      - name: Run live compatibility probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            --model-count "${{ inputs.model_count }}"
+            --cases-per-model "${{ inputs.cases_per_model }}"
+            --report live-openai-acceptance-report.json
+          )
+          if [ -n "${{ inputs.seed }}" ]; then
+            args+=(--seed "${{ inputs.seed }}")
+          fi
+          if [ "${{ inputs.include_expensive_models }}" = "true" ]; then
+            args+=(--include-expensive-models)
+          fi
+          python ci/live_openai_acceptance.py "${args[@]}"
+
+      - name: Upload compatibility report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-openai-acceptance-report
+          path: live-openai-acceptance-report.json
+          if-no-files-found: warn
+          retention-days: 14

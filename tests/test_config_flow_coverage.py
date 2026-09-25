@@ -35,6 +35,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     DEFAULT_AI_TASK_NAME,
     DEFAULT_AI_TASK_OPTIONS,
     DEFAULT_API_MODE,
+    DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONF_BASE_URL,
     DEFAULT_CONVERSATION_NAME,
@@ -164,17 +165,100 @@ async def test_validate_input_normalizes_openai_and_forwards_provider_settings()
         )
 
 
+async def test_initial_provider_setup_routes_to_simple_provider_specific_forms() -> None:
+    """Initial setup asks for provider first and hides irrelevant provider fields."""
+    flow = SimpleNamespace(
+        hass=MagicMock(),
+        _setup_data=None,
+        async_show_form=MagicMock(side_effect=_sync_result),
+        async_create_entry=MagicMock(side_effect=_sync_result),
+    )
+
+    async def step_user(user_input=None):
+        return await ExtendedOpenAIConversationConfigFlow.async_step_user(
+            flow, user_input
+        )
+
+    async def step_openai_credentials(user_input=None):
+        return await ExtendedOpenAIConversationConfigFlow.async_step_openai_credentials(
+            flow, user_input
+        )
+
+    async def step_openai_advanced(user_input=None):
+        return await ExtendedOpenAIConversationConfigFlow.async_step_openai_advanced(
+            flow, user_input
+        )
+
+    async def step_azure_credentials(user_input=None):
+        return await ExtendedOpenAIConversationConfigFlow.async_step_azure_credentials(
+            flow, user_input
+        )
+
+    async def finish(data, step_id, data_schema):
+        return await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
+            flow, data, step_id, data_schema
+        )
+
+    flow.async_step_user = AsyncMock(side_effect=step_user)
+    flow.async_step_openai_credentials = AsyncMock(
+        side_effect=step_openai_credentials
+    )
+    flow.async_step_openai_advanced = AsyncMock(side_effect=step_openai_advanced)
+    flow.async_step_azure_credentials = AsyncMock(
+        side_effect=step_azure_credentials
+    )
+    flow._async_finish_initial_setup = AsyncMock(side_effect=finish)
+
+    first = await step_user()
+    first_keys = {str(key) for key in first["data_schema"].schema}
+    assert first_keys == {CONF_NAME, CONF_API_PROVIDER}
+
+    openai = await step_user(
+        {CONF_NAME: "Home", CONF_API_PROVIDER: DEFAULT_API_PROVIDER}
+    )
+    assert openai["step_id"] == "openai_credentials"
+    openai_keys = {str(key) for key in openai["data_schema"].schema}
+    assert CONF_API_KEY in openai_keys
+    assert CONF_BASE_URL not in openai_keys
+    assert CONF_API_VERSION not in openai_keys
+    assert CONF_ORGANIZATION not in openai_keys
+
+    advanced = await step_openai_credentials(
+        {CONF_API_KEY: "sk-test", "advanced_provider_settings": True}
+    )
+    assert advanced["step_id"] == "openai_advanced"
+    advanced_keys = {str(key) for key in advanced["data_schema"].schema}
+    assert {CONF_BASE_URL, CONF_ORGANIZATION, CONF_SKIP_AUTHENTICATION} == advanced_keys
+    assert CONF_API_VERSION not in advanced_keys
+
+    flow._setup_data = None
+    azure = await step_user({CONF_NAME: "Azure", CONF_API_PROVIDER: "azure"})
+    assert azure["step_id"] == "azure_credentials"
+    azure_keys = {str(key) for key in azure["data_schema"].schema}
+    assert azure_keys == {CONF_API_KEY, CONF_BASE_URL, CONF_API_VERSION}
+    assert CONF_ORGANIZATION not in azure_keys
+    assert CONF_SKIP_AUTHENTICATION not in azure_keys
+
+
 async def test_config_flow_success_errors_reauth_and_type_registration() -> None:
     """Cover direct config-flow outcomes, including defensive reauthentication paths."""
     flow = SimpleNamespace(
         hass=MagicMock(),
         context={"entry_id": "entry-1"},
         _reauth_entry=None,
+        _setup_data=None,
         async_show_form=MagicMock(side_effect=_sync_result),
         async_create_entry=MagicMock(side_effect=_sync_result),
         async_abort=MagicMock(side_effect=_sync_result),
         async_update_reload_and_abort=MagicMock(side_effect=_sync_result),
     )
+
+    async def finish(data, step_id, data_schema):
+        return await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
+            flow, data, step_id, data_schema
+        )
+
+    flow._async_finish_initial_setup = AsyncMock(side_effect=finish)
 
     async def step_reauth_confirm(user_input=None):
         return await ExtendedOpenAIConversationConfigFlow.async_step_reauth_confirm(
@@ -200,7 +284,7 @@ async def test_config_flow_success_errors_reauth_and_type_registration() -> None
         created = await ExtendedOpenAIConversationConfigFlow.async_step_user(
             flow, {CONF_API_KEY: "sk-default-title"}
         )
-    assert created["title"] == DEFAULT_NAME
+    assert created["title"] == "ChatGPT"
 
     with patch.object(
         config_flow,
