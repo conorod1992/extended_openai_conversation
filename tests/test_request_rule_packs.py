@@ -89,7 +89,29 @@ async def test_captured_ai_input_survives_backup_and_old_rules_default_original(
     assert old["rules"][0]["ai_input_capture"] is None
 
 
-async def test_local_captured_handoff_only_after_success(hass) -> None:
+async def test_local_captured_handoff_only_after_success(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    class FakeScript:
+        def __init__(self, home_assistant, sequence, *_args, **_kwargs):
+            self.hass = home_assistant
+            self.sequence = sequence
+
+        async def async_run(self, _variables, _context=None):
+            for action in self.sequence:
+                domain, service = action["action"].split(".", 1)
+                await self.hass.services.async_call(domain, service)
+
+        async def async_unload(self):
+            pass
+
+    async def validate_actions(_hass, actions):
+        return actions
+
+    monkeypatch.setattr(request_rules, "Script", FakeScript)
+    monkeypatch.setattr(
+        request_rules, "async_validate_actions_config", validate_actions
+    )
     rule = local_rule("Ask", ["ask {question}"], "sentence_pattern")
     rule["action"]["continue_to_ai"] = True
     rule["ai_input_mode"] = "capture"

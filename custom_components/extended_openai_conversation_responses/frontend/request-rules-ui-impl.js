@@ -257,7 +257,7 @@ function refreshEditor(panel) {
   const invalid=mode.value==="capture" && (!handoff || !common.length || !common.includes(capture.value));
   capture.setAttribute("aria-invalid",String(invalid));
   help.hidden=!invalid;
-  help.textContent=!handoff ? "Enable Continue to AI or choose Original request." : q("#rule-match").value!=="sentence_pattern" ? "Captured value requires Sentence Pattern matching." : "No captured values are available for every trigger. Use Sentence Pattern matching and make each trigger capture the same value, such as {question}.";
+  help.textContent=!handoff ? "Enable Continue to AI or choose Original request." : q("#rule-match").value!=="sentence_pattern" ? "Captured value requires Sentence Pattern matching." : common.length ? "The selected captured value is not available in every trigger. Choose a common value or Original request." : "No captured values are available for every trigger. Use Sentence Pattern matching and make each trigger capture the same value, such as {question}.";
   syncRequestRuleRoutingControls(root);
   if(local)return;
   const model=q("#rule-model")?.value.trim();
