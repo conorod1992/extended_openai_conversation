@@ -19,6 +19,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     MEMORY_MODE_MANUAL,
 )
 from custom_components.extended_openai_conversation_responses.knowledge import (
+    MAX_SOURCES_PER_AGENT,
     async_get_knowledge,
 )
 from custom_components.extended_openai_conversation_responses.memory import (
@@ -108,8 +109,21 @@ async def test_large_installation_survives_setup_management_backup_and_assist(
                 key=f"large-{number}",
             )
         )["status"] == "created"
+    # Heavy has 600 sources; EOAI correctly limits one agent to 500. Keep all
+    # 600 sources by distributing the overflow to a second real agent.
+    primary_knowledge_count = min(knowledge_count, MAX_SOURCES_PER_AGENT)
+    overflow_knowledge_count = knowledge_count - primary_knowledge_count
+    overflow_knowledge = None
+    if overflow_knowledge_count:
+        secondary = entries[1]
+        secondary_subentry = next(iter(secondary.subentries.values()))
+        overflow_knowledge = await async_get_knowledge(
+            hass, secondary.entry_id, secondary_subentry.subentry_id
+        )
     for number in range(knowledge_count):
-        await knowledge.async_create(
+        target = knowledge if number < primary_knowledge_count else overflow_knowledge
+        assert target is not None
+        await target.async_create(
             f"Large source {number}",
             f"Description {number}",
             f"Knowledge body {number} 東京",
@@ -137,7 +151,9 @@ async def test_large_installation_survives_setup_management_backup_and_assist(
         ),
     )
     assert counts["memory_records"] == memory_count
-    assert counts["knowledge_sources"] == knowledge_count
+    assert counts["knowledge_sources"] == primary_knowledge_count
+    if overflow_knowledge is not None:
+        assert len((await overflow_knowledge.async_backup_data())["sources"]) == overflow_knowledge_count
     assert counts["request_rules"] == rule_count
     snapshot_started = perf_counter()
     snapshot = await backup.async_collect_backup_snapshot(hass, primary, subentry)
@@ -148,6 +164,15 @@ async def test_large_installation_survives_setup_management_backup_and_assist(
     assert (await backup.async_collect_backup_snapshot(hass, primary, subentry))[
         "memories"
     ] == snapshot["memories"]
+    if overflow_knowledge is not None:
+        secondary = entries[1]
+        secondary_subentry = next(iter(secondary.subentries.values()))
+        assert await hass.config_entries.async_reload(secondary.entry_id)
+        await hass.async_block_till_done()
+        reloaded_overflow = await async_get_knowledge(
+            hass, secondary.entry_id, secondary_subentry.subentry_id
+        )
+        assert len((await reloaded_overflow.async_backup_data())["sources"]) == overflow_knowledge_count
     for entry in entries:
         agent = conversation.async_get_agent(hass, entry.entry_id)
         assert agent is not None
