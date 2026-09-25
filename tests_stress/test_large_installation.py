@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from time import perf_counter
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
@@ -40,6 +41,11 @@ async def test_large_installation_survives_setup_management_backup_and_assist(
     stress_scale: int,
     stress_trace: list[dict],
 ) -> None:
+    # The HA test Store mock logs the entire accumulated payload after each
+    # write. At this scale that becomes quadratic CI output, not diagnostics.
+    logging.getLogger("pytest_homeassistant_custom_component.common").setLevel(
+        logging.WARNING
+    )
     agents = 10 if stress_scale == 1 else 20
     rule_count = 100 * stress_scale
     tool_count = 60 * stress_scale

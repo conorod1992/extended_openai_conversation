@@ -117,7 +117,7 @@ jobs:
             request-rules) TEST_PATHS=(tests_stress/test_request_rules_matrix.py tests_stress/test_request_rules_provider_wire.py) ;;
             guest-security) TEST_PATHS=(tests_stress/test_guest_functions_matrix.py) ;;
             quiet-hours) TEST_PATHS=(tests_stress/test_quiet_hours_multi_satellite.py) ;;
-            functions) TEST_PATHS=(tests_stress/test_function_groups_state_machine.py) ;;
+            functions) TEST_PATHS=(tests_stress/test_function_groups_state_machine.py tests_stress/test_function_provider_wire.py) ;;
             memory-knowledge) TEST_PATHS=(tests_stress/test_memory_knowledge_scale.py tests_stress/test_temporary_memory_scale.py tests_stress/test_provider_wire_privacy.py) ;;
             large-installation) TEST_PATHS=(tests_stress/test_large_installation.py) ;;
             chaos) TEST_PATHS=(tests_stress/test_cross_feature_chaos.py) ;;
