@@ -131,7 +131,10 @@ test("one mounted panel survives a long seeded route journey", async ({page}, te
         counts.backForward++;
       }
       if (index > 0 && index % 23 === 0) {
-        await page.reload();
+        // The static fixture server does not route /extended-openai/* on a
+        // hard refresh. Reopen its entry document at the same route; this
+        // remounts the panel and reloads the persisted fixture backend.
+        await page.goto(fixtureUrl(route));
         await expect(panel.locator("#agent")).toHaveValue("agent-1");
         await panel.evaluate((host, value) => { host.__nightlyMount = value; }, seed);
         counts.refreshes++;

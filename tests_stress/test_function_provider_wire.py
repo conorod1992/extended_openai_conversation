@@ -119,4 +119,5 @@ async def test_group_load_tool_execution_result_and_session_isolation(
         provider_requests=4,
         actual_tool_executions=2,
         local_function_executions=1,
+        template_function_executions=1,
     )

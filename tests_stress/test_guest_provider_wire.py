@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import timedelta
 import json
@@ -45,7 +46,13 @@ from tests_real_ha.test_knowledge_provider_wire_e2e import (
     _chat_tool_result,
     _tool_names,
 )
-from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
+from tests_real_ha.test_memory_provider_wire_e2e import _memory_agent
+from tests_real_ha.test_provider_wire_e2e import (
+    _chat_sse_text,
+    _install_wire,
+    _raw_client,
+    _speech,
+)
 from tests_stress.conftest import record
 
 _OWNER = "enhanced-guest-owner"
@@ -171,7 +178,11 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
             "phrases": ["guest route probe"],
             "match_type": "equals",
             "action_type": "model_routing",
-            "action": {"model": "gpt-5.6", "scope": "request"},
+            "action": {
+                "model": "gpt-5.6",
+                "scope": "request",
+                "continue_to_ai": True,
+            },
         }
     )
 
@@ -352,7 +363,7 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
             item.get("success") for item in denied_result.get("result", [])
         )
         assert len(calls) == 1
-        executed_functions += 2
+        executed_functions += 1  # The loader ran; denied HA control did not.
         provider_requests += 3
         public_turns += 1
 
@@ -375,5 +386,84 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
         public_turns=public_turns,
         provider_requests=provider_requests,
         actual_function_executions=executed_functions,
+        native_function_executions=1 if function_policy != "off" else 0,
         ha_service_calls=len(calls),
+    )
+
+
+async def test_blocked_provider_request_keeps_guest_authorization_snapshot(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    stress_trace: list[dict],
+) -> None:
+    """A committed Guest change affects the next turn, not an already sent one."""
+    MockUser(id=_OWNER, name="Guest transition owner", is_owner=True).add_to_hass(hass)
+    entry, agent = await _memory_agent(hass, API_MODE_CHAT_COMPLETIONS)
+    await agent._memory.async_add(
+        _OWNER,
+        f"The transition calibration token is {_PRIVATE}.",
+        "preferences",
+        "explicit",
+    )
+
+    async def blocked_turn(label: str, change):
+        wire = _install_wire(monkeypatch, agent, [_chat_sse_text(label)])
+        real_send = wire.send
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def gated_send(request, *args, **kwargs):
+            entered.set()  # SDK has already serialized the authorization snapshot.
+            await release.wait()
+            return await real_send(request, *args, **kwargs)
+
+        monkeypatch.setattr(_raw_client(agent)._client, "send", gated_send)
+        turn = asyncio.create_task(
+            _say(hass, entry.entry_id, "What is my transition calibration token?")
+        )
+        await asyncio.wait_for(entered.wait(), 10)
+        await change()
+        release.set()
+        assert _speech(await asyncio.wait_for(turn, 10)) == label
+        assert len(wire.requests) == 1
+        return json.dumps(wire.requests[0]["body"], ensure_ascii=False)
+
+    owner_snapshot = await blocked_turn(
+        "Owner snapshot",
+        lambda: agent._guest_mode.async_update_trusted(indefinite=True),
+    )
+    assert _PRIVATE in owner_snapshot
+    guest_wire = _install_wire(monkeypatch, agent, [_chat_sse_text("Guest next turn")])
+    assert (
+        _speech(
+            await _say(hass, entry.entry_id, "What is my transition calibration token?")
+        )
+        == "Guest next turn"
+    )
+    assert _PRIVATE not in json.dumps(
+        guest_wire.requests[0]["body"], ensure_ascii=False
+    )
+
+    guest_snapshot = await blocked_turn(
+        "Guest snapshot", agent._guest_mode.async_disable_trusted
+    )
+    assert _PRIVATE not in guest_snapshot
+    restored_wire = _install_wire(
+        monkeypatch, agent, [_chat_sse_text("Owner next turn")]
+    )
+    assert (
+        _speech(
+            await _say(hass, entry.entry_id, "What is my transition calibration token?")
+        )
+        == "Owner next turn"
+    )
+    assert _PRIVATE in json.dumps(restored_wire.requests[0]["body"], ensure_ascii=False)
+    record(
+        stress_trace,
+        "summary",
+        layer="provider-wire",
+        guest_transition_snapshots=2,
+        private_context_probes=4,
+        public_turns=4,
+        provider_requests=4,
     )

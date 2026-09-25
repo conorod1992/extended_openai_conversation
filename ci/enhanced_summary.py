@@ -12,6 +12,8 @@ COUNT_METRICS = {
     "actual_tool_executions",
     "actual_function_executions",
     "local_function_executions",
+    "native_function_executions",
+    "template_function_executions",
     "ha_service_calls",
     "guest_end_to_end_combinations",
     "private_context_probes",
@@ -71,7 +73,7 @@ def main() -> None:
         lines += [
             f"**{data.get('test', path.stem)}**",
             "",
-            f"Evidence layer: **{layer_for(data.get('test', path.stem), operations)}** · Trace events: {len(operations)}",
+            f"Evidence layer: **{'browser' if path.stem.startswith('browser-') else layer_for(data.get('test', path.stem), operations)}** · Trace events: {len(operations)}",
             "",
         ]
         if counts:

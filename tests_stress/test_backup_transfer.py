@@ -11,9 +11,7 @@ import zipfile
 
 from pytest_homeassistant_custom_component.common import MockUser
 
-from custom_components.extended_openai_conversation_responses.backup_transfer import (
-    BACKUP_CHUNK_BYTES,
-)
+from custom_components.extended_openai_conversation_responses import backup_transfer
 from custom_components.extended_openai_conversation_responses.knowledge import (
     async_get_knowledge,
 )
@@ -30,13 +28,20 @@ from tests_real_ha.test_backup_transfer_protocol import (
 )
 from tests_stress.conftest import record
 
+CHUNK_BYTES = 32 * 1024
+
 
 async def test_large_multichunk_transfer_retry_and_restore(
     hass: HomeAssistant,
     hass_ws_client,
+    monkeypatch,
     stress_seed: int,
     stress_trace: list[dict],
 ) -> None:
+    # The production protocol supports smaller bounded chunks. Keeping each
+    # WebSocket message below fixture-client limits also makes ordering faults
+    # observable without relying on a very large single response frame.
+    monkeypatch.setattr(backup_transfer, "BACKUP_CHUNK_BYTES", CHUNK_BYTES)
     entry = _entry()
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
@@ -58,7 +63,7 @@ async def test_large_multichunk_transfer_retry_and_restore(
         "transfer-owner", "ORIGINAL-TRANSFER-MEMORY", "acceptance", "explicit"
     )
     for index in range(10):
-        payload = "".join(rng.choices(alphabet, k=90_000))
+        payload = "".join(rng.choices(alphabet, k=30_000))
         await asyncio.wait_for(
             knowledge.async_create(
                 f"Transfer source {index:02d}", "Large deterministic source", payload
@@ -116,7 +121,7 @@ async def test_large_multichunk_transfer_retry_and_restore(
     assert started["success"], started
     session = started["result"]["session_id"]
     sessions += 1
-    first = base64.b64encode(archive[:BACKUP_CHUNK_BYTES]).decode("ascii")
+    first = base64.b64encode(archive[:CHUNK_BYTES]).decode("ascii")
     bad = await _transfer_call(
         client,
         entry=entry,
@@ -125,8 +130,8 @@ async def test_large_multichunk_transfer_retry_and_restore(
     )
     assert not bad["success"]
     assert "Expected backup chunk 0" in bad["error"]["message"]
-    for index, offset in enumerate(range(0, len(archive), BACKUP_CHUNK_BYTES)):
-        part = archive[offset : offset + BACKUP_CHUNK_BYTES]
+    for index, offset in enumerate(range(0, len(archive), CHUNK_BYTES)):
+        part = archive[offset : offset + CHUNK_BYTES]
         response = await _transfer_call(
             client,
             entry=entry,

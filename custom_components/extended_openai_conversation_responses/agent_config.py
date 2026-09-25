@@ -987,7 +987,11 @@ def normalize_agent_config(
         if not value.strip():
             continue
         try:
-            template.Template(value, cast(Any, None)).ensure_valid()
+            # Normalization is used outside a running HA instance (including
+            # backup import). Template.ensure_valid() dereferences hass.data
+            # for a dynamic template, so compile with HA's filter environment
+            # directly without binding an unavailable HomeAssistant object.
+            template.TemplateEnvironment(None).compile(value)
         except Exception as err:
             concise = " ".join(str(err).split())[:300] or type(err).__name__
             raise AgentConfigError(key, f"invalid template: {concise}") from err
