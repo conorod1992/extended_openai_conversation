@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import random
 
 import pytest
@@ -12,9 +13,13 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_MODE,
     CONF_SKIP_AUTHENTICATION,
+    CONF_TEMPORARY_MEMORY,
     CONFIG_ENTRY_VERSION,
     DOMAIN,
     MEMORY_MODE_MANUAL,
+)
+from custom_components.extended_openai_conversation_responses.guest_mode import (
+    async_get_guest_mode,
 )
 from custom_components.extended_openai_conversation_responses.knowledge import (
     async_get_knowledge,
@@ -25,9 +30,14 @@ from custom_components.extended_openai_conversation_responses.memory import (
 from custom_components.extended_openai_conversation_responses.request_rules import (
     async_get_request_rules,
 )
+from custom_components.extended_openai_conversation_responses.temporary_memory import (
+    async_get_temporary_memory,
+)
 from homeassistant.components import conversation
+from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from tests_stress.conftest import record
 from tests_stress.health import HealthChecks, assert_enhanced_health
 
@@ -59,6 +69,7 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
                 "data": {
                     CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
                     CONF_KNOWLEDGE_ENABLED: True,
+                    CONF_TEMPORARY_MEMORY: "balanced",
                 },
                 "subentry_type": "conversation",
                 "title": "Chaos conversation",
@@ -86,20 +97,26 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
 
     for step in range(90 * stress_scale):
         memory, knowledge, rules = await managers()
-        operation = rng.choice(
+        operation = rng.choices(
             (
-                "memory_add",
                 "memory_add",
                 "memory_delete",
                 "knowledge_create",
                 "knowledge_delete",
                 "rule_create",
                 "rule_delete",
+                "temporary_add",
+                "temporary_delete",
+                "guest_toggle",
+                "config_edit",
+                "exposure_toggle",
                 "checkpoint",
                 "restore",
                 "reload",
-            )
-        )
+            ),
+            weights=(16, 6, 10, 5, 8, 4, 8, 3, 8, 4, 4, 7, 4, 5),
+            k=1,
+        )[0]
         users = [f"chaos-user-{number}" for number in range(4)]
         if operation == "memory_add":
             user = rng.choice(users)
@@ -149,6 +166,59 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
                 selected = rng.choice(items)
                 record(stress_trace, operation, step=step, id=selected["id"])
                 assert await rules.async_delete(selected["id"])
+        elif operation == "temporary_add":
+            temporary = await async_get_temporary_memory(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+            user = rng.choice(users)
+            await temporary.async_add(
+                f"user:{user}",
+                f"Temporary chaos marker {step}",
+                (dt_util.utcnow() + timedelta(hours=1)).isoformat(),
+                "acceptance",
+                owner_scope_id=f"user:{user}",
+            )
+            record(stress_trace, operation, step=step, user=user)
+        elif operation == "temporary_delete":
+            temporary = await async_get_temporary_memory(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+            user = rng.choice(users)
+            items = await temporary.async_active(
+                f"user:{user}", owner_scope_id=f"user:{user}"
+            )
+            if items:
+                await temporary.async_delete(
+                    f"user:{user}", [items[0].memory_id], owner_scope_id=f"user:{user}"
+                )
+                record(stress_trace, operation, step=step, user=user)
+        elif operation == "guest_toggle":
+            guest = await async_get_guest_mode(
+                hass, entry.entry_id, subentry.subentry_id
+            )
+            assert guest is not None
+            if guest.is_active():
+                await guest.async_disable_trusted()
+            else:
+                await guest.async_update_trusted(indefinite=True)
+            record(stress_trace, operation, step=step, active=guest.is_active())
+        elif operation == "config_edit":
+            options = dict(subentry.data)
+            options["max_tokens"] = 600 + step
+            hass.config_entries.async_update_subentry(entry, subentry, data=options)
+            await hass.async_block_till_done()
+            assert await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done()
+            record(stress_trace, operation, step=step, max_tokens=options["max_tokens"])
+        elif operation == "exposure_toggle":
+            entity_id = "light.chaos_probe"
+            exposed = bool(step % 2)
+            if exposed:
+                hass.states.async_set(entity_id, "on")
+            else:
+                hass.states.async_remove(entity_id)
+            async_expose_entity(hass, conversation.DOMAIN, entity_id, exposed)
+            record(stress_trace, operation, step=step, exposed=exposed)
         elif operation == "checkpoint":
             checkpoints.append(
                 await backup.async_collect_backup_snapshot(hass, entry, subentry)

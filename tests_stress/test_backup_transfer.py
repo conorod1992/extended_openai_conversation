@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from io import BytesIO
 import random
@@ -24,7 +25,7 @@ from tests_real_ha.test_backup_transfer_protocol import (
     _conversation_subentry,
     _entry,
     _setup_entry,
-    _transfer_call,
+    _transfer_call as _real_transfer_call,
     _user_token,
 )
 from tests_stress.conftest import record
@@ -41,6 +42,14 @@ async def test_large_multichunk_transfer_retry_and_restore(
     subentry = _conversation_subentry(entry)
     admin = MockUser(id="stress-transfer-admin", name="Transfer Admin", is_owner=True)
     client = await hass_ws_client(hass, await _user_token(hass, admin))
+
+    async def _transfer_call(*args, **kwargs):
+        # A stalled WebSocket operation must produce a bounded, attributed
+        # failure rather than consume the entire campaign timeout.
+        action = kwargs["action"]
+        record(stress_trace, "transfer_request", action=action)
+        return await asyncio.wait_for(_real_transfer_call(*args, **kwargs), 30)
+
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
     knowledge = await async_get_knowledge(hass, entry.entry_id, subentry.subentry_id)
     rng = random.Random(stress_seed ^ 0xBAACE)
@@ -50,9 +59,13 @@ async def test_large_multichunk_transfer_retry_and_restore(
     )
     for index in range(10):
         payload = "".join(rng.choices(alphabet, k=90_000))
-        await knowledge.async_create(
-            f"Transfer source {index:02d}", "Large deterministic source", payload
+        await asyncio.wait_for(
+            knowledge.async_create(
+                f"Transfer source {index:02d}", "Large deterministic source", payload
+            ),
+            30,
         )
+    record(stress_trace, "seed_large_archive", knowledge_sources=10)
 
     sessions = 0
     chunks = 0

@@ -64,7 +64,7 @@ test("one mounted panel survives a long seeded route journey", async ({page}, te
           await acceptConfirmation(panel);
           owned.memory.shift(); counts.deletes++;
         }
-        await expect(panel.locator("#memory-dialog")).toHaveJSProperty("open", false);
+        await expect(panel.locator("#memory-dialog")).not.toBeVisible();
         const stored = await page.evaluate((value) => window.browserHarness.getState().memories.filter((item) => item.content === value).length, marker);
         expect(stored).toBe(mode === "delete" ? 0 : 1);
         operations.push({number: index + 1, operation: `memory_${mode}`, marker});
@@ -90,7 +90,7 @@ test("one mounted panel survives a long seeded route journey", async ({page}, te
           await acceptConfirmation(panel);
           owned.knowledge.shift(); counts.deletes++;
         }
-        await expect(panel.locator("#knowledge-dialog")).toHaveJSProperty("open", false);
+        await expect(panel.locator("#knowledge-dialog")).not.toBeVisible();
         const stored = await page.evaluate((value) => window.browserHarness.getState().knowledgeSources.filter((item) => item.title === value).length, marker);
         expect(stored).toBe(mode === "delete" ? 0 : 1);
         operations.push({number: index + 1, operation: `knowledge_${mode}`, marker});
@@ -118,7 +118,7 @@ test("one mounted panel survives a long seeded route journey", async ({page}, te
           await acceptConfirmation(panel);
           owned.rule.shift(); counts.deletes++;
         }
-        await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
+        await expect(panel.locator("#rule-dialog")).not.toBeVisible();
         const stored = await page.evaluate((value) => window.browserHarness.getState().requestRules.rules.filter((item) => item.name === value).length, marker);
         expect(stored).toBe(mode === "delete" ? 0 : 1);
         operations.push({number: index + 1, operation: `rule_${mode}`, marker});

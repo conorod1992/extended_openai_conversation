@@ -84,7 +84,7 @@ FIXTURE_OVERRIDES = {
     "guest_shared_memory_write": True,
     "guest_web_search": True,
     "knowledge_enabled": True,
-    "local_intents_enabled": False,
+    "local_intents_enabled": True,
     "local_intent_delayed_commands_to_ai": True,
     "local_intent_exclusions": ["HassTurnOn"],
     "max_function_calls_per_conversation": 8,
