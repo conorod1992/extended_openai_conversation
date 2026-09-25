@@ -109,6 +109,30 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
+LEGACY_STEP_USER_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_NAME, default="ChatGPT"): str,
+        vol.Required(CONF_API_KEY): str,
+        vol.Optional(CONF_BASE_URL, default=DEFAULT_CONF_BASE_URL): str,
+        vol.Optional(CONF_API_VERSION): str,
+        vol.Optional(CONF_ORGANIZATION): str,
+        vol.Optional(
+            CONF_SKIP_AUTHENTICATION, default=DEFAULT_SKIP_AUTHENTICATION
+        ): bool,
+        vol.Optional(CONF_API_PROVIDER, default=DEFAULT_API_PROVIDER): SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    SelectOptionDict(
+                        value=api_provider["key"], label=api_provider["label"]
+                    )
+                    for api_provider in API_PROVIDERS
+                ],
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        ),
+    }
+)
+
 STEP_OPENAI_CREDENTIALS_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_API_KEY): str,
@@ -311,8 +335,11 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         # Keep accepting the old one-step payload for in-progress/restored flows and
         # callers that still submit credentials directly.
         if CONF_API_KEY in user_input:
-            return await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
-                self, dict(user_input), "user", STEP_USER_DATA_SCHEMA
+            legacy_data = dict(LEGACY_STEP_USER_DATA_SCHEMA(dict(user_input)))
+            return (
+                await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
+                    self, legacy_data, "user", STEP_USER_DATA_SCHEMA
+                )
             )
 
         self._setup_data = dict(user_input)
