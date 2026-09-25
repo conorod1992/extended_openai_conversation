@@ -1,4 +1,5 @@
 import {expect, test} from "@playwright/test";
+import {mkdirSync, readFileSync, writeFileSync} from "node:fs";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const cases = [
@@ -49,6 +50,14 @@ for (const [surface, route, section, action] of cases) {
     await expect(panel).toHaveCount(1);
     await expectHarnessClean(page, errors);
     await testInfo.attach("stale-response-injection", {body: JSON.stringify({surface, route, section, action, injections: 1}), contentType: "application/json"});
+    const directory = process.env.STRESS_ARTIFACT_DIR || "stress-artifacts";
+    mkdirSync(directory, {recursive: true});
+    const path = `${directory}/browser-stale-responses.json`;
+    let report = {staleResponses: 0, staleBySurface: {}};
+    try { report = JSON.parse(readFileSync(path, "utf8")); } catch { /* First case. */ }
+    report.staleResponses++;
+    report.staleBySurface[surface] = (report.staleBySurface[surface] || 0) + 1;
+    writeFileSync(path, JSON.stringify(report, null, 2));
     console.log(`ENHANCED STALE_RESPONSE surface=${JSON.stringify(surface)} injections=1`);
   });
 }

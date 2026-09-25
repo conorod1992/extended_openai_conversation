@@ -1,4 +1,5 @@
 import {expect, test} from "@playwright/test";
+import {mkdirSync, writeFileSync} from "node:fs";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const pages = [
@@ -32,6 +33,9 @@ test("major management pages keep unique IDs and reachable navigation at narrow 
   }
   await expectHarnessClean(page, errors);
   await testInfo.attach("layout-pages", {body: JSON.stringify({pages: checked, widths: [390, 1600]}), contentType: "application/json"});
+  const directory = process.env.STRESS_ARTIFACT_DIR || "stress-artifacts";
+  mkdirSync(directory, {recursive: true});
+  writeFileSync(`${directory}/browser-accessibility.json`, JSON.stringify({accessibilityLayoutPages: checked, widths: [390, 1600]}));
   console.log(`ENHANCED ACCESSIBILITY_LAYOUT pages=${checked}`);
 });
 

@@ -43,9 +43,13 @@ test("one mounted panel has bounded backend calls after repeated disconnects", a
       });
       await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
       const before = await page.evaluate(() => window.browserHarness.calls.length);
-      await panel.evaluate(async host => { await host._loadSection(true); });
+      await panel.evaluate(async host => {
+        host._sectionCache.delete(host._sectionCacheKey("data-memory/knowledge"));
+        await host._loadSection(true);
+      });
       const observed = await page.evaluate(start => window.browserHarness.calls.length - start, before);
       if (baselineCalls === null) baselineCalls = observed;
+      expect(observed).toBeGreaterThan(0);
       expect(observed).toBeLessThanOrEqual(baselineCalls + 2);
       if (index % 4 === 0) {
         const mode = marker === null ? "create" : (mutationCycles % 3 === 1 ? "edit" : "delete");

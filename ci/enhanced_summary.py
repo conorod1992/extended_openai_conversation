@@ -45,6 +45,7 @@ COUNT_METRICS = {
     "stale_responses",
     "reconnect_cycles",
     "reconnect_mutation_cycles",
+    "accessibility_layout_pages",
     "quiet_hours_transitions",
     "quiet_ownership_cases",
     "quiet_heterogeneous_devices",
@@ -129,6 +130,12 @@ def main() -> None:
                 f"Reconnect cycles: {data['cycles']}; mutation cycles: {data.get('mutationCycles', 0)}; baseline backend calls per forced read: {data.get('baselineCalls')}",
                 "",
             ]
+        if "staleResponses" in data:
+            totals["stale_responses"] += int(data["staleResponses"])
+            lines += [f"Injected stale responses by surface: {data.get('staleBySurface', {})}", ""]
+        if "accessibilityLayoutPages" in data:
+            totals["accessibility_layout_pages"] += int(data["accessibilityLayoutPages"])
+            lines += [f"Accessibility/layout page-width combinations checked: {data['accessibilityLayoutPages']}", ""]
     if totals:
         lines += ["**Measured totals**", "", "| Metric | Count |", "| --- | ---: |"]
         lines += [f"| {key} | {value} |" for key, value in sorted(totals.items())]

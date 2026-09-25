@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
+import {browserToolYaml, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 
 const backendUrl = process.env.REAL_HA_BACKEND_URL;
 test.skip(!backendUrl, "requires the genuine Home Assistant management bridge");
@@ -107,6 +107,70 @@ test("a staged Assistant edit cannot overwrite a genuine HA backup restore", asy
     expect(await other.evaluate(() => ({errors: browserHarness.windowErrors, rejections: browserHarness.rejections}))).toEqual({errors: [], rejections: []});
   } finally {
     await testInfo.attach("multi-tab-backup-restore", {body: JSON.stringify({trace}, null, 2), contentType: "application/json"});
+    await other.close();
+  }
+});
+
+test("stale Function Tool and Group editors preserve the newer genuine HA revisions", async ({page, context}, testInfo) => {
+  test.setTimeout(120_000);
+  const other = await context.newPage();
+  const errorsA = trackPageErrors(page);
+  const errorsB = trackPageErrors(other);
+  const trace = [];
+  try {
+    await page.goto(realFixtureUrl("capabilities/functions"));
+    const panelA = page.locator("extended-openai-management-panel");
+    await expect(panelA.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
+    await panelA.locator("#add-tool").click();
+    await panelA.locator("#tool-yaml").fill(browserToolYaml("Two-tab initial tool"));
+    await panelA.locator("#tool-save").click();
+    await expect(panelA.locator(".tool-card").filter({hasText: "browser_tool"})).toBeVisible();
+    await other.goto(realFixtureUrl("capabilities/functions"));
+    const panelB = other.locator("extended-openai-management-panel");
+    const toolA = panelA.locator(".tool-card").filter({hasText: "browser_tool"});
+    const toolB = panelB.locator(".tool-card").filter({hasText: "browser_tool"});
+    await expect(toolB).toBeVisible();
+    await toolA.locator(".edit-tool").click();
+    await toolB.locator(".edit-tool").click();
+    await panelA.locator("#tool-yaml").fill(browserToolYaml("A committed tool revision"));
+    await panelA.locator("#tool-save").click();
+    await expect(toolA).toContainText("A committed tool revision");
+    await panelB.locator("#tool-yaml").fill(browserToolYaml("B stale tool revision"));
+    await panelB.locator("#tool-save").click();
+    await expect(panelB.locator("#tool-error")).toContainText("changed in another tab");
+    trace.push("Tool same-object stale save rejected");
+
+    await other.goto(realFixtureUrl("capabilities/functions"));
+    await panelA.locator("#add-group").click();
+    await panelA.locator("#group-name").fill("Two-tab group");
+    await panelA.locator("#group-id").fill("two-tab-group");
+    await panelA.locator("#group-description").fill("Initial group description");
+    await panelA.locator('#group-functions input[value="browser_tool"]').check();
+    await panelA.locator("#group-save").click();
+    await page.goto(realFixtureUrl("capabilities/functions"));
+    await other.goto(realFixtureUrl("capabilities/functions"));
+    const groupA = panelA.locator('.function-group-card[data-group-id="two-tab-group"]');
+    const groupB = panelB.locator('.function-group-card[data-group-id="two-tab-group"]');
+    await expect(groupA).toBeVisible();
+    await expect(groupB).toBeVisible();
+    await groupA.locator("summary").click();
+    await groupB.locator("summary").click();
+    await groupA.locator(".edit-group").click();
+    await groupB.locator(".edit-group").click();
+    await panelA.locator("#group-description").fill("A committed group revision");
+    await panelA.locator("#group-save").click();
+    await expect(groupA).toContainText("A committed group revision");
+    await panelB.locator("#group-description").fill("B stale group revision");
+    await panelB.locator("#group-save").click();
+    await expect(panelB.locator("#group-error")).toContainText("changed in another tab");
+    trace.push("Group same-object stale save rejected");
+    await other.goto(realFixtureUrl("capabilities/functions"));
+    await expect(panelB.locator('.function-group-card[data-group-id="two-tab-group"]')).toContainText("A committed group revision");
+    await expectHarnessClean(page, errorsA);
+    expect(errorsB).toHaveLength(0);
+    expect(errorsB.badResponses.every(item => item.startsWith("400 "))).toBe(true);
+  } finally {
+    await testInfo.attach("multi-tab-function-conflicts", {body: JSON.stringify({trace}, null, 2), contentType: "application/json"});
     await other.close();
   }
 });
