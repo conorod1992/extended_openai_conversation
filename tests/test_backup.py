@@ -34,6 +34,7 @@ from custom_components.extended_openai_conversation_responses.memory import (
     PersistentMemory,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
+    DEFAULT_WORDING_GROUPS,
     RequestRules,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
@@ -207,14 +208,51 @@ def _document() -> dict:
             ],
         },
         "request_rules": {
-            "storage_version": 1,
+            "storage_version": 6,
             "defaults": {
                 "word_forms": True,
                 "wording_alternatives": True,
                 "fuzzy": False,
                 "fuzzy_threshold": 90,
             },
-            "rules": [],
+            "wording_groups": [
+                {
+                    "canonical": "activate",
+                    "alternatives": ["power up"],
+                }
+            ],
+            "groups": [{"id": "home", "name": "Home"}],
+            "rules": [
+                {
+                    "id": "good-night",
+                    "name": "Good night",
+                    "enabled": True,
+                    "phrases": ["good night"],
+                    "match_type": "equals",
+                    "action_type": "local_action",
+                    "action": {
+                        "actions": [
+                            {
+                                "domain": "script",
+                                "service": "turn_on",
+                                "target": {"entity_id": ["script.goodnight"]},
+                                "data": {},
+                            }
+                        ],
+                        "success_response": "Done",
+                        "failure_response": "Failed safely",
+                    },
+                    "matching_behavior": "defaults",
+                    "matching": {
+                        "word_forms": True,
+                        "wording_alternatives": True,
+                        "fuzzy": False,
+                        "fuzzy_threshold": 90,
+                    },
+                    "group_id": "home",
+                    "order": 0,
+                }
+            ],
         },
     }
 
@@ -240,7 +278,12 @@ def test_full_backup_validation_preserves_durable_categories_and_expiry() -> Non
     assert prepared.usage_requests[0].details["input_cached_tokens"] == 8
     assert prepared.usage_runs[0].agent_subentry_id == "agent-new"
     assert prepared.summary()["knowledge_sources"] == 1
-    assert prepared.summary()["request_rules"] == 0
+    assert prepared.summary()["request_rules"] == 1
+    assert prepared.request_rules["groups"] == [{"id": "home", "name": "Home"}]
+    assert prepared.request_rules["wording_groups"] == [
+        {"canonical": "activate", "alternatives": ["power up"]}
+    ]
+    assert prepared.request_rules["rules"][0]["group_id"] == "home"
 
 
 def test_full_backup_inspection_accepts_quarantined_function_tool() -> None:
@@ -286,8 +329,29 @@ def test_version_two_backup_migrates_with_empty_request_rules() -> None:
     legacy = _document()
     legacy["version"] = 2
     legacy.pop("request_rules")
+
     prepared = inspect_backup(legacy, "agent-new")
+
     assert prepared.request_rules["rules"] == []
+    assert prepared.request_rules["groups"] == []
+    assert prepared.request_rules["wording_groups"] == list(DEFAULT_WORDING_GROUPS)
+
+
+def test_pre_group_request_rules_backup_adds_current_additive_defaults() -> None:
+    legacy = _document()
+    legacy["version"] = 3
+    request_rules = legacy["request_rules"]
+    request_rules["storage_version"] = 1
+    request_rules.pop("groups")
+    request_rules.pop("wording_groups")
+    request_rules["rules"][0].pop("group_id")
+
+    prepared = inspect_backup(legacy, "agent-new")
+
+    assert prepared.request_rules["groups"] == []
+    assert prepared.request_rules["wording_groups"] == list(DEFAULT_WORDING_GROUPS)
+    assert prepared.request_rules["rules"][0]["id"] == "good-night"
+    assert prepared.request_rules["rules"][0]["group_id"] is None
 
 
 def test_version_four_backup_ignores_only_retired_section() -> None:
@@ -301,7 +365,7 @@ def test_version_four_backup_ignores_only_retired_section() -> None:
 
     prepared = inspect_backup(legacy, "agent-new")
 
-    assert prepared.request_rules["rules"] == []
+    assert prepared.request_rules["rules"][0]["id"] == "good-night"
     assert "protected_actions" not in prepared.summary()
 
 
@@ -376,6 +440,11 @@ async def test_create_full_backup_contains_only_durable_safe_state(
     assert document["format"] == BACKUP_FORMAT
     assert document["agent"]["config"]["function_groups"][0]["id"] == "lighting"
     assert document["memories"]["memories"][0]["memory_id"] == "memory-1"
+    assert document["request_rules"]["groups"] == [{"id": "home", "name": "Home"}]
+    assert document["request_rules"]["wording_groups"] == [
+        {"canonical": "activate", "alternatives": ["power up"]}
+    ]
+    assert document["request_rules"]["rules"][0]["group_id"] == "home"
     assert "sk-1234567890abcdef" not in result["json"]
     assert "loaded_function_groups" not in result["json"]
     assert result["filename"].startswith("jarvis-full-backup-")
@@ -430,7 +499,12 @@ async def test_replace_helpers_rebuild_canonical_state() -> None:
     request_rules = RequestRules(FakeStorage())
     await request_rules.async_initialize()
     await request_rules.async_replace_backup(document["request_rules"])
-    assert (await request_rules.async_backup_data())["rules"] == []
+    restored_rules = await request_rules.async_backup_data()
+    assert restored_rules["groups"] == [{"id": "home", "name": "Home"}]
+    assert restored_rules["wording_groups"] == [
+        {"canonical": "activate", "alternatives": ["power up"]}
+    ]
+    assert restored_rules["rules"][0]["group_id"] == "home"
 
 
 async def test_restore_failure_rolls_back_before_reporting(monkeypatch, hass) -> None:
