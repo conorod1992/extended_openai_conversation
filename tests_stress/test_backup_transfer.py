@@ -154,15 +154,15 @@ async def test_large_multichunk_transfer_retry_and_restore(
             assert not duplicate["success"]
             assert "Expected backup chunk 1" in duplicate["error"]["message"]
 
+    await memory.async_add(
+        "transfer-owner", "MUTATED-AFTER-EXPORT", "acceptance", "explicit"
+    )
     preview = await _transfer_call(
         client, entry=entry, action="import_inspect", data={"session_id": session}
     )
     assert preview["success"], preview
     assert preview["result"]["valid"] is True
     assert preview["result"]["summary"]["persistent_memories"] == 1
-    await memory.async_add(
-        "transfer-owner", "MUTATED-AFTER-EXPORT", "acceptance", "explicit"
-    )
     restored = await _transfer_call(
         client,
         entry=entry,

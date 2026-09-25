@@ -106,9 +106,12 @@ def _latest_previews(hass: HomeAssistant) -> dict[tuple[str, str], tuple[str, st
 
 def _snapshot_revision(value: backup.PreparedRestore) -> str:
     """Fingerprint the exact durable target state inspected by an administrator."""
-    canonical = json.dumps(
-        asdict(value), sort_keys=True, default=str, separators=(",", ":")
-    )
+    snapshot = asdict(value)
+    # _snapshot_for_restore stamps each read with a fresh export timestamp. That
+    # timestamp is not target state and would make every preview immediately stale.
+    snapshot.pop("created_at", None)
+    snapshot.pop("integration_version", None)
+    canonical = json.dumps(snapshot, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

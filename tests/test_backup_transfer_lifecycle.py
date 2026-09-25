@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from dataclasses import dataclass, replace
 import hashlib
 import os
 from types import SimpleNamespace
@@ -16,6 +17,26 @@ from custom_components.extended_openai_conversation_responses import (
     backup_transfer,
     transfer,
 )
+
+
+def test_preview_revision_excludes_generated_export_timestamp() -> None:
+    """A second snapshot read stays valid until actual target state changes."""
+
+    @dataclass
+    class Target:
+        config: dict[str, str]
+        created_at: str
+        integration_version: str
+
+    original = Target({"prompt": "before"}, "first-read", "5.3.0")
+    reread = replace(original, created_at="second-read")
+    changed = replace(reread, config={"prompt": "after"})
+    assert backup_transfer._snapshot_revision(
+        original
+    ) == backup_transfer._snapshot_revision(reread)
+    assert backup_transfer._snapshot_revision(
+        original
+    ) != backup_transfer._snapshot_revision(changed)
 
 
 async def test_export_chunk_streams_archive_and_enforces_agent_identity(

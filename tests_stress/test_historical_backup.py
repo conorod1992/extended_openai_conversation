@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
 
 from custom_components.extended_openai_conversation_responses import backup
@@ -19,17 +20,49 @@ from homeassistant.core import HomeAssistant
 from tests_stress.conftest import record
 from tests_stress.health import HealthChecks, assert_enhanced_health
 
-FIXTURE = Path(__file__).parent / "fixtures" / "backup-v5.3.0-format2.json"
+FIXTURES = Path(__file__).parent / "fixtures"
+CASES = (
+    (
+        "backup-v4.9.0-format1.json",
+        1,
+        "The garage key is in the blue drawer.",
+        "The fuse box is next to the garage door.",
+        False,
+    ),
+    (
+        "backup-v5.2.1-format2.json",
+        2,
+        "The patio lights use the evening scene.",
+        "The patio switch is beside the back door.",
+        True,
+    ),
+    (
+        "backup-v5.3.0-format2.json",
+        2,
+        "The kitchen light is named Aurora",
+        "The stopcock is under the kitchen sink.",
+        False,
+    ),
+)
 
 
-async def test_tagged_format_two_fixture_imports_and_reexports(
+@pytest.mark.parametrize(
+    ("filename", "version", "memory_marker", "knowledge_marker", "has_guest"),
+    CASES,
+)
+async def test_tagged_release_fixture_imports_and_reexports(
     hass: HomeAssistant,
     monkeypatch,
     stress_trace: list[dict],
+    filename: str,
+    version: int,
+    memory_marker: str,
+    knowledge_marker: str,
+    has_guest: bool,
 ) -> None:
-    historical = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    assert historical["integration_version"] == "5.3.0"
-    assert historical["version"] == 2
+    historical = json.loads((FIXTURES / filename).read_text(encoding="utf-8"))
+    assert historical["integration_version"] in filename
+    assert historical["version"] == version
     MockUser(id="historical-owner", name="Historical owner", is_owner=True).add_to_hass(
         hass
     )
@@ -55,6 +88,7 @@ async def test_tagged_format_two_fixture_imports_and_reexports(
     assert len(prepared.memories) == 1
     assert len(prepared.knowledge) == 1
     assert prepared.request_rules["rules"] == []
+    assert (prepared.guest_mode_schedule is not None) is has_guest
     assert (await backup.async_restore_backup(hass, entry, subentry, historical))[
         "status"
     ] == "restored"
@@ -65,12 +99,9 @@ async def test_tagged_format_two_fixture_imports_and_reexports(
     current = await backup.async_collect_backup_snapshot(hass, entry, subentry)
     assert current["version"] == backup.BACKUP_VERSION
     assert "request_rules" in current
-    assert current["memories"]["memories"][0]["content"] == (
-        "The kitchen light is named Aurora"
-    )
-    assert current["knowledge"]["sources"][0]["content"] == (
-        "The stopcock is under the kitchen sink."
-    )
+    assert current["memories"]["memories"][0]["content"] == memory_marker
+    assert current["knowledge"]["sources"][0]["content"] == knowledge_marker
+    assert (current["guest_mode"]["schedule"] is not None) is has_guest
     assert (await backup.async_restore_backup(hass, entry, subentry, current))[
         "status"
     ] == "restored"
