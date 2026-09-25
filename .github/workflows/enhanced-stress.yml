@@ -1,6 +1,8 @@
 name: Enhanced nightly acceptance and stress
 
 on:
+  push:
+    branches: [codex/enhanced-nightly-acceptance] # Temporary branch-only validation trigger.
   schedule:
     - cron: "15 3 * * *"
   workflow_dispatch:
