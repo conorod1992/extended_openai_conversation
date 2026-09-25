@@ -220,6 +220,8 @@ test("stale Guest policy cannot weaken a newer genuine HA policy", async ({page,
   try {
     await page.goto(realFixtureUrl("capabilities/guest-mode"));
     const panelA = page.locator("extended-openai-management-panel");
+    const reviewLegacy = panelA.locator("#guest-review-converted");
+    if (await reviewLegacy.isVisible()) await reviewLegacy.click();
     const knowledgeA = panelA.locator('[data-guest-mode="guest_knowledge_policy"]');
     await expect(knowledgeA).toBeVisible();
     await knowledgeA.selectOption("on");
