@@ -469,20 +469,23 @@ class NativeFunction(Function):
 
         self.validate_entity_ids(hass, entity_ids, exposed_entities)
 
-        with recorder.util.session_scope(hass=hass, read_only=True) as session:
-            result = await recorder.get_instance(hass).async_add_executor_job(
-                recorder_history.get_significant_states_with_session,
-                hass,
-                session,
-                start_time,
-                end_time,
-                entity_ids,
-                None,
-                include_start_time_state,
-                significant_changes_only,
-                minimal_response,
-                no_attributes,
-            )
+        try:
+            with recorder.util.session_scope(hass=hass, read_only=True) as session:
+                result = await recorder.get_instance(hass).async_add_executor_job(
+                    recorder_history.get_significant_states_with_session,
+                    hass,
+                    session,
+                    start_time,
+                    end_time,
+                    entity_ids,
+                    None,
+                    include_start_time_state,
+                    significant_changes_only,
+                    minimal_response,
+                    no_attributes,
+                )
+        except (RuntimeError, OSError) as err:
+            raise HomeAssistantError("History is temporarily unavailable") from err
 
         return [[self.as_dict(item) for item in sublist] for sublist in result.values()]
 
