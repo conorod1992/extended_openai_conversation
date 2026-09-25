@@ -102,7 +102,11 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
                 mode=SelectSelectorMode.DROPDOWN,
             )
         ),
-    }
+    },
+    # Older/in-progress flows can still submit the former one-step provider
+    # fields. ALLOW_EXTRA accepts those values without rendering them in the
+    # provider-first form.
+    extra=vol.ALLOW_EXTRA,
 )
 
 STEP_OPENAI_CREDENTIALS_SCHEMA = vol.Schema(
@@ -307,8 +311,8 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         # Keep accepting the old one-step payload for in-progress/restored flows and
         # callers that still submit credentials directly.
         if CONF_API_KEY in user_input:
-            return await self._async_finish_initial_setup(
-                dict(user_input), "user", STEP_USER_DATA_SCHEMA
+            return await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
+                self, dict(user_input), "user", STEP_USER_DATA_SCHEMA
             )
 
         self._setup_data = dict(user_input)
@@ -327,6 +331,10 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_show_form(
                 step_id="openai_credentials",
                 data_schema=STEP_OPENAI_CREDENTIALS_SCHEMA,
+                description_placeholders={
+                    "api_key_guide_url": "https://conorod1992.github.io/extended_openai_conversation/getting-started/api-key/",
+                    "openai_api_keys_url": "https://platform.openai.com/api-keys",
+                },
             )
 
         submitted = dict(user_input)
