@@ -209,7 +209,7 @@ async def test_move_validates_direction_and_boundary_is_a_noop() -> None:
     before = rules.snapshot()["rules"]
     saves = store.saves
 
-    with pytest.raises(ValueError, match="direction must be up, down, top or bottom"):
+    with pytest.raises(ValueError, match="direction must be up, down, top, bottom, before or after"):
         await rules.async_move("good-night", "sideways")
     result = await rules.async_move("good-night", "up")
 

@@ -611,6 +611,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         rule = await rules.async_move(
             rule_id,
             direction,
+            target_rule_id=message.get("target_rule_id"),
             expected_revision=message.get("revision"),
         )
         return {

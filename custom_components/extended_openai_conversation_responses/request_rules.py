@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Mapping,
+    Sequence,
+)
 from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
@@ -181,6 +188,104 @@ class RuleEvaluation:
     successful: bool = True
 
 
+class _MatchCursor:
+    """Continue one immutable matcher snapshot without revisiting earlier phrases."""
+
+    def __init__(self, snapshot: _MatchingSnapshot, text: str) -> None:
+        validate_match_input(text)
+        self.snapshot = snapshot
+        self.text = text
+        self.position = 0
+        self.normalized: dict[tuple[bool, bool], str] = {}
+        self.sentence_text: PreparedSentenceText | None = None
+        self.budget = MatchBudget()
+        self.seen: set[str] = set()
+        self.last_matched_order: int | None = None
+        self.fuzzy_matches: list[RuleMatch] | None = None
+
+    def _candidate(self, settings: dict[str, Any]) -> str:
+        key = (
+            bool(settings.get("word_forms")),
+            bool(settings.get("wording_alternatives")),
+        )
+        if key not in self.normalized:
+            self.normalized[key] = normalize_text(
+                self.text, settings, self.snapshot.wording_groups
+            )
+        return self.normalized[key]
+
+    def next_match(self) -> RuleMatch | None:
+        """Return the next strict candidate, then ranked fuzzy fallback candidates."""
+        phrases = self.snapshot.deterministic
+        while self.position < len(phrases):
+            rule, settings, compiled = phrases[self.position]
+            self.position += 1
+            if rule["id"] in self.seen:
+                continue
+            if compiled.sentence_pattern is not None:
+                if self.sentence_text is None:
+                    self.sentence_text = prepare_match_text(self.text)
+                slots = _match_compiled_sentence(
+                    compiled, self.sentence_text, self.budget
+                )
+                if slots is not None:
+                    self.seen.add(rule["id"])
+                    self.last_matched_order = rule["order"]
+                    return RuleMatch(rule, compiled.original, False, 100.0, slots)
+            elif _deterministic_match(
+                self._candidate(settings),
+                cast(str, compiled.normalized),
+                rule["match_type"],
+            ):
+                self.seen.add(rule["id"])
+                self.last_matched_order = rule["order"]
+                return RuleMatch(rule, compiled.original, False, 100.0)
+        if self.fuzzy_matches is None:
+            ranked: dict[str, tuple[tuple[float, int, int], RuleMatch]] = {}
+            for rule, settings, compiled in self.snapshot.fuzzy:
+                if rule["id"] in self.seen:
+                    continue
+                score = _fuzzy_score(
+                    self._candidate(settings),
+                    cast(str, compiled.normalized),
+                    rule["match_type"],
+                )
+                if score < settings["fuzzy_threshold"]:
+                    continue
+                rank = (score, _MATCH_RANK[rule["match_type"]], -rule["order"])
+                previous = ranked.get(rule["id"])
+                if previous is None or rank > previous[0]:
+                    ranked[rule["id"]] = (
+                        rank,
+                        RuleMatch(rule, compiled.original, True, score),
+                    )
+            self.fuzzy_matches = [
+                match
+                for _, match in sorted(
+                    ranked.values(), key=lambda item: item[0], reverse=True
+                )
+            ]
+        if not self.fuzzy_matches:
+            return None
+        if self.last_matched_order is None:
+            result = self.fuzzy_matches.pop(0)
+        else:
+            later = (
+                match
+                for match in self.fuzzy_matches
+                if match.rule["order"] > self.last_matched_order
+            )
+            later_result = min(
+                later, key=lambda match: match.rule["order"], default=None
+            )
+            if later_result is None:
+                return None
+            result = later_result
+            self.fuzzy_matches.remove(result)
+        self.last_matched_order = result.rule["order"]
+        return result
+
+
 class RequestRuleStore(Store[dict[str, Any]]):
     """Versioned private Home Assistant storage."""
 
@@ -232,7 +337,8 @@ class RequestRules:
         self._wording_groups = _copy_wording_groups(DEFAULT_WORDING_GROUPS)
         self._groups: list[dict[str, str]] = []
         self._matching_snapshot = _MatchingSnapshot((), ())
-        self._condition_checkers: dict[str, tuple[str, tuple[Any, ...]]] = {}
+        self._has_continuation = False
+        self._condition_checkers: dict[str, tuple[list[Any], tuple[Any, ...]]] = {}
         self._diagnostics: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -633,23 +739,36 @@ class RequestRules:
         rule_id: str,
         direction: str,
         *,
+        target_rule_id: str | None = None,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
         """Move one rule by one position and update matching priority."""
-        if direction not in {"up", "down", "top", "bottom"}:
-            raise ValueError("direction must be up, down, top or bottom")
+        if direction not in {"up", "down", "top", "bottom", "before", "after"}:
+            raise ValueError("direction must be up, down, top, bottom, before or after")
         async with self._lock:
             self._require_revision_locked(expected_revision)
             index = self._index(rule_id)
-            target = {
-                "up": index - 1,
-                "down": index + 1,
-                "top": 0,
-                "bottom": len(self._rules) - 1,
-            }[direction]
+            if direction in {"before", "after"}:
+                if not target_rule_id:
+                    raise ValueError("target rule id is required")
+                target = self._index(target_rule_id)
+            else:
+                target = {
+                    "up": index - 1,
+                    "down": index + 1,
+                    "top": 0,
+                    "bottom": len(self._rules) - 1,
+                }[direction]
             if target < 0 or target >= len(self._rules):
                 return dict(self._rules[index])
+            if target == index:
+                return dict(self._rules[index])
             moved = self._rules.pop(index)
+            if direction in {"before", "after"}:
+                if index < target:
+                    target -= 1
+                if direction == "after":
+                    target += 1
             self._rules.insert(target, moved)
             for order, rule in enumerate(self._rules):
                 rule["order"] = order
@@ -716,13 +835,21 @@ class RequestRules:
         self, hass: HomeAssistant, text: str
     ) -> tuple[RuleMatch | None, list[dict[str, str]]]:
         """Run matching off-loop only when the compiled snapshot has work."""
+        if getattr(self.match, "__func__", None) is RequestRules.match:
+            skipped: list[dict[str, str]] = []
+            async for eligible_match in self.async_eligible_matches(
+                hass, text, skipped
+            ):
+                return eligible_match, skipped
+            return None, skipped
+        # Preserve the public match seam used by lightweight instrumentation.
         snapshot = self._matching_snapshot
         if not snapshot.deterministic:
             validate_match_input(text)
             return None, []
         executor = getattr(hass, "async_add_executor_job", None)
         excluded: set[str] = set()
-        skipped: list[dict[str, str]] = []
+        skipped = []
         while True:
             args = (text, frozenset(excluded)) if excluded else (text,)
             match = (
@@ -735,43 +862,7 @@ class RequestRules:
             if not isinstance(match, RuleMatch):
                 # Preserve lightweight matcher instrumentation/test doubles.
                 return match, skipped
-            conditions = match.rule.get("conditions", [])
-            if not conditions:
-                return match, skipped
-            try:
-                passed = True
-                fingerprint = json.dumps(
-                    conditions, sort_keys=True, separators=(",", ":")
-                )
-                cached = self._condition_checkers.get(match.rule["id"])
-                if cached is None or cached[0] != fingerprint:
-                    checkers = []
-                    for config in conditions:
-                        checked = await ha_condition.async_validate_condition_config(
-                            hass, deepcopy(config)
-                        )
-                        checkers.append(
-                            await ha_condition.async_from_config(hass, checked)
-                        )
-                    cached = (fingerprint, tuple(checkers))
-                    self._condition_checkers[match.rule["id"]] = cached
-                for checker in cached[1]:
-                    outcome = checker.async_check(
-                        variables={"request": {"slots": match.slots}, **match.slots}
-                    )
-                    if outcome is None:
-                        raise HomeAssistantError(
-                            "Request Rule condition returned no result"
-                        )
-                    if outcome is False:
-                        passed = False
-                        break
-            except Exception as err:
-                # An indeterminate higher-priority match stops routing entirely.
-                raise HomeAssistantError(
-                    "Request Rule condition could not be evaluated"
-                ) from err
-            if passed:
+            if await self._async_conditions_pass(hass, match):
                 return match, skipped
             excluded.add(match.rule["id"])
             skipped.append(
@@ -782,6 +873,67 @@ class RequestRules:
                 }
             )
 
+    async def _async_conditions_pass(
+        self, hass: HomeAssistant, match: RuleMatch
+    ) -> bool:
+        """Check a text-matched rule, caching native condition checkers."""
+        conditions = match.rule.get("conditions", [])
+        if not conditions:
+            return True
+        try:
+            cached = self._condition_checkers.get(match.rule["id"])
+            if cached is None or cached[0] != conditions:
+                checkers = []
+                for config in conditions:
+                    checked = await ha_condition.async_validate_condition_config(
+                        hass, deepcopy(config)
+                    )
+                    checkers.append(await ha_condition.async_from_config(hass, checked))
+                cached = (deepcopy(conditions), tuple(checkers))
+                self._condition_checkers[match.rule["id"]] = cached
+            for checker in cached[1]:
+                outcome = checker.async_check(
+                    variables={"request": {"slots": match.slots}, **match.slots}
+                )
+                if outcome is None:
+                    raise HomeAssistantError(
+                        "Request Rule condition returned no result"
+                    )
+                if outcome is False:
+                    return False
+            return True
+        except Exception as err:
+            raise HomeAssistantError(
+                "Request Rule condition could not be evaluated"
+            ) from err
+
+    async def async_eligible_matches(
+        self, hass: HomeAssistant, text: str, skipped: list[dict[str, str]]
+    ) -> AsyncIterator[RuleMatch]:
+        """Stream matches from one snapshot and a single matcher work budget."""
+        cursor = _MatchCursor(self._matching_snapshot, text)
+        if not cursor.snapshot.deterministic:
+            return
+        executor = getattr(hass, "async_add_executor_job", None)
+        while True:
+            match = (
+                cast(RuleMatch | None, await executor(cursor.next_match))
+                if callable(executor)
+                else await asyncio.to_thread(cursor.next_match)
+            )
+            if match is None:
+                return
+            if await self._async_conditions_pass(hass, match):
+                yield match
+            else:
+                skipped.append(
+                    {
+                        "id": match.rule["id"],
+                        "name": match.rule["name"],
+                        "reason": "conditions_false",
+                    }
+                )
+
     def _require_group(self, rule: Mapping[str, Any]) -> None:
         if rule["group_id"] and rule["group_id"] not in {
             group["id"] for group in self._groups
@@ -790,14 +942,25 @@ class RequestRules:
 
     def _refresh_snapshot_rule(self, rule_id: str, replacement: dict[str, Any]) -> None:
         """Publish a metadata-only change without recompiling every phrase."""
+        self._refresh_snapshot_rules({rule_id: replacement})
+        self._has_continuation = any(
+            rule.get("continue_matching", False)
+            for rule, _, _ in self._matching_snapshot.deterministic
+        )
+
+    def _refresh_snapshot_rules(
+        self, replacements: Mapping[str, dict[str, Any]]
+    ) -> None:
+        """Update changed rule metadata in one pass over compiled phrases."""
         snapshot = self._matching_snapshot
+        published = {rule_id: deepcopy(rule) for rule_id, rule in replacements.items()}
 
         def replace(
             items: tuple[tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...],
         ):
             return tuple(
                 (
-                    deepcopy(replacement) if rule["id"] == rule_id else rule,
+                    published.get(rule["id"], rule),
                     settings,
                     phrase,
                 )
@@ -815,12 +978,13 @@ class RequestRules:
         """Publish the new priority order while retaining compiled phrases."""
         snapshot = self._matching_snapshot
         current = {rule["id"]: rule for rule in self._rules}
+        published = {rule_id: deepcopy(rule) for rule_id, rule in current.items()}
 
         def ordered(items):
             return tuple(
                 sorted(
                     (
-                        (deepcopy(current[rule["id"]]), settings, phrase)
+                        (published[rule["id"]], settings, phrase)
                         for rule, settings, phrase in items
                     ),
                     key=lambda item: item[0]["order"],
@@ -854,11 +1018,14 @@ class RequestRules:
                 ]
             )
             valid_ids = {group["id"] for group in groups}
+            changed: dict[str, dict[str, Any]] = {}
             for rule in self._rules:
-                if rule["group_id"] not in valid_ids:
+                if rule["group_id"] and rule["group_id"] not in valid_ids:
                     rule["group_id"] = None
+                    changed[rule["id"]] = rule
             self._groups = groups
-            self._reorder_matching_snapshot()
+            if changed:
+                self._refresh_snapshot_rules(changed)
             await self._async_save_locked()
             return {
                 "groups": deepcopy(groups),
@@ -954,6 +1121,9 @@ class RequestRules:
             tuple(_copy_wording_groups(self._wording_groups)),
             tuple(compiled_rules),
             fuzzy_rules,
+        )
+        self._has_continuation = any(
+            rule.get("continue_matching", False) for rule, _, _ in compiled_rules
         )
         self._diagnostics = diagnostics
         return order_changed
@@ -1170,6 +1340,7 @@ def validate_rule(
         "slots",
         "conditions",
         "group_id",
+        "continue_matching",
     }
     unknown = set(value) - allowed
     if unknown:
@@ -1232,6 +1403,9 @@ def validate_rule(
             "continue_to_ai": match_type not in {"equals", "sentence_pattern"},
         }
     action = _validate_action(action_type, raw_action)
+    continue_matching = value.get("continue_matching", False)
+    if not isinstance(continue_matching, bool):
+        raise ValueError("continue_matching must be true or false")
     conditions = value.get("conditions", [])
     if not isinstance(conditions, list) or len(conditions) > MAX_ACTIONS:
         raise ValueError("Only when conditions must be a list of at most 20 conditions")
@@ -1258,6 +1432,7 @@ def validate_rule(
     if (
         action_type == "model_routing"
         and not action["continue_to_ai"]
+        and not continue_matching
         and action["scope"] == "request"
     ):
         raise ValueError(
@@ -1288,6 +1463,7 @@ def validate_rule(
         "slots": [{"name": item} for item in slot_names],
         "conditions": deepcopy(conditions),
         "group_id": group_id,
+        "continue_matching": continue_matching,
     }
 
 
@@ -2050,6 +2226,13 @@ def _validate_effective_reasoning(
         )
 
 
+def rule_stops_matching(rule: Mapping[str, Any]) -> bool:
+    """A provider handoff or an ordinary match is terminal for this utterance."""
+    return not rule.get("continue_matching", False) or bool(
+        rule["action"].get("continue_to_ai", False)
+    )
+
+
 async def async_evaluate_rule(
     hass: HomeAssistant,
     rules: RequestRules,
@@ -2062,14 +2245,100 @@ async def async_evaluate_rule(
     function_executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
     context: Context | None = None,
 ) -> RuleEvaluation | None:
-    """Match and apply local side effects or model-routing state."""
+    """Apply each eligible rule once, stopping on handoff or failure."""
+    if not isinstance(rules, RequestRules) or not rules._has_continuation:
+        try:
+            match = await rules.async_match(hass, text)
+        except SentenceMatchLimitError as err:
+            _LOGGER.warning(
+                "Skipping Request Rules for bounded matching failure: %s", err
+            )
+            return None
+        if match is None:
+            return None
+        return await _async_evaluate_matched_rule(
+            hass,
+            match,
+            runtime,
+            session_id,
+            configured_model,
+            guest_policy,
+            timeout_minutes,
+            function_executor,
+            context,
+        )
+
+    last: RuleEvaluation | None = None
+    request_override: dict[str, str] = {}
+    skipped: list[dict[str, str]] = []
     try:
-        match = await rules.async_match(hass, text)
+        async for match in rules.async_eligible_matches(hass, text, skipped):
+            evaluation = await _async_evaluate_matched_rule(
+                hass,
+                match,
+                runtime,
+                session_id,
+                configured_model,
+                guest_policy,
+                timeout_minutes,
+                function_executor,
+                context,
+                request_override,
+            )
+            action = match.rule["action"]
+            if match.rule["action_type"] == "model_routing":
+                if action["reset"]:
+                    if action["scope"] == "conversation":
+                        request_override.clear()
+                    else:
+                        request_override = dict(evaluation.request_override or {})
+                elif action["scope"] == "conversation":
+                    applied = runtime.get(session_id, timeout_minutes)
+                    for key, value in (
+                        (CONF_CHAT_MODEL, action["model"]),
+                        (CONF_REASONING_EFFORT, action["reasoning_effort"]),
+                    ):
+                        if value:
+                            if _REQUEST_RESET_SENTINEL in request_override:
+                                request_override[key] = applied[key]
+                            else:
+                                request_override.pop(key, None)
+            if evaluation.request_override:
+                request_override.update(evaluation.request_override)
+            last = RuleEvaluation(
+                evaluation.match,
+                evaluation.consume,
+                evaluation.response,
+                dict(request_override) or None,
+                evaluation.successful,
+            )
+            if not evaluation.successful or rule_stops_matching(match.rule):
+                return last
     except SentenceMatchLimitError as err:
-        _LOGGER.warning("Skipping Request Rules for bounded matching failure: %s", err)
-        return None
-    if match is None:
-        return None
+        if last is None:
+            _LOGGER.warning(
+                "Skipping Request Rules for bounded matching failure: %s", err
+            )
+            return None
+        raise HomeAssistantError(
+            "Request Rule matching could not safely continue"
+        ) from err
+    return last
+
+
+async def _async_evaluate_matched_rule(
+    hass: HomeAssistant,
+    match: RuleMatch,
+    runtime: RequestRuleRuntime,
+    session_id: str,
+    configured_model: str,
+    guest_policy: GuestCapabilityPolicy | None,
+    timeout_minutes: int,
+    function_executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None,
+    context: Context | None,
+    prior_request_override: Mapping[str, str] | None = None,
+) -> RuleEvaluation:
+    """Execute one already matched and condition-eligible rule."""
     rule = match.rule
     action = rule["action"]
     if rule["action_type"] == "local_action":
@@ -2205,7 +2474,13 @@ async def async_evaluate_rule(
         if action["reasoning_effort"]
         else None
     )
-    conversation_override = runtime.get(session_id, timeout_minutes)
+    prior = dict(prior_request_override or {})
+    conversation_override = (
+        {}
+        if _REQUEST_RESET_SENTINEL in prior
+        else runtime.get(session_id, timeout_minutes)
+    )
+    conversation_override.update(prior)
     selected_model = (
         model or conversation_override.get(CONF_CHAT_MODEL) or configured_model
     )

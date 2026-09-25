@@ -86,6 +86,25 @@ def test_standalone_routing_rejects_request_scope_even_for_reset() -> None:
                 validate_rule(rule)
 
 
+async def test_continued_routing_uses_later_override_in_global_order(hass) -> None:
+    first = _rule("first", "route", order=0, action={
+        "model": "gpt-5.6", "reasoning_effort": None, "scope": "request",
+        "reset": False, "continue_to_ai": False, "success_response": "Updated",
+    })
+    first["continue_matching"] = True
+    second = _rule("second", "route", order=1, action={
+        "model": "gpt-6-astra", "reasoning_effort": None, "scope": "request",
+        "reset": False, "continue_to_ai": True, "success_response": "Updated",
+    })
+    rules = RequestRules(MemoryStore({"rules": [first, second]}))
+    await rules.async_initialize()
+    runtime = RequestRuleRuntime()
+    result = await async_evaluate_rule(hass, rules, runtime, "route", "session")
+    assert result is not None and result.match.rule["id"] == "second"
+    assert not result.consume
+    assert result.request_override == {CONF_CHAT_MODEL: "gpt-6-astra"}
+
+
 async def test_saved_complete_request_scope_is_migrated_not_discarded() -> None:
     stored_rule = _rule(
         "legacy-exact",

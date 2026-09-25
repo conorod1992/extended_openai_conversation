@@ -6,6 +6,8 @@ Open **Extended OpenAI > Capabilities > Request Rules**. Rules, groups, matching
 
 Request Rules only see text that Home Assistant routes to this conversation agent. If a native intent or sentence-trigger automation handles a sentence first, the rule is not involved.
 
+Rules are checked in the order shown. By default, the first matching rule handles the request. Advanced rules can choose to continue checking later rules. An AI handoff, failed action, denied Guest Mode action, or rule evaluation error stops further matching. A false **Only when** condition simply skips that rule.
+
 ## Build a rule
 
 The editor follows the way a command is usually designed:
@@ -72,7 +74,7 @@ Reasoning effort is validated against the model that will actually receive it, i
 - **Wording alternatives** map different ways of saying the same thing to a main phrase. The seeded alternatives preserve the previous built-in behavior, such as `switch on` to `turn on` and `television` to `tv`. Alternatives can be added, edited, and removed. Ambiguous duplicate phrases are rejected.
 - **Fuzzy matching** tolerates small speech-recognition differences only after strict matching fails. Conservative, Normal, and Tolerant correspond to progressively lower thresholds. Sensitivity is unavailable when fuzzy matching is off.
 
-Strict matching always wins over fuzzy matching. Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen; the first enabled rule with a strict match wins, regardless of match type. Move rules to change their priority. If no deterministic rule matches, fuzzy matching is used as a fallback; its existing score-based winner selection applies.
+Strict matching always wins over fuzzy matching. Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen. The first eligible strict match handles the request by default, regardless of match type. A rule with **Continue matching** on can let later strict matches run. Fuzzy matching is considered only after strict candidates are exhausted. When no strict rule matched, the first fuzzy candidate is chosen by its existing score-based ranking; continuation then checks only later-priority fuzzy rules in global order.
 
 The first *eligible* candidate wins: a candidate whose Only when conditions are false is skipped. Conditions are never evaluated for rules whose text did not match.
 
@@ -152,7 +154,7 @@ The current safety limits are:
 
 The same parser, compiled matcher, input bounds, winner-selection rules, and aggregate work budget are used by live requests and Match Preview. Matching itself runs outside Home Assistant's main event loop. Each match reads one complete configuration snapshot, even if rules or defaults are being saved concurrently. Compiled patterns are immutable and reused through a bounded cache.
 
-Deterministic candidates are evaluated in displayed rule order. Once an earlier rule matches, later rules are skipped. An unresolved earlier sentence-pattern candidate that could determine the first match still causes the whole evaluation to fail safely if it exceeds the work budget.
+Deterministic candidates are evaluated in displayed rule order. Matching stops after an ordinary matched rule or an AI handoff; a continued rule lets later candidates run. An unresolved sentence-pattern candidate that could determine the next match causes evaluation to fail safely if it exceeds the work budget.
 
 If a live request is larger than the matching limit or the aggregate work budget cannot safely complete, **no Request Rule action runs** and the original request continues through the normal AI path. The matcher never treats an interrupted higher-priority rule as a failed match and then executes a lower-priority local action. Match Preview instead reports the limit as an error.
 
@@ -174,9 +176,15 @@ Function execution success is determined by the execution outcome, not the truth
 
 ## Groups and priority
 
-Groups organize Request Rules in visible, collapsible sections, including **Ungrouped** where needed. Create, rename, or delete a group under **Manage groups**, and assign a rule to a group in its editor. Collapsing a section only changes what is shown. Deleting a group moves its rules to **Ungrouped** and preserves their priority. Group definitions and membership are included in backups.
+Groups help organize and filter rules. They do not affect priority. Use **Show** to view all rules, Ungrouped rules, or one group. Filtered rules keep their global priority numbers. Switch to **All rules** to change priority. Search and group filters only change what is visible.
 
-Groups do not create separate precedence lanes. Each card shows its **global priority** number, which determines matching order even when the cards appear in different group sections. Use **Move up**, **Move down**, **Move to top**, and **Move to bottom** to change the single global sequence across group boundaries. A moved rule remains in its assigned section, and every priority number updates. The server checks the current revision when saving a reorder, so an older tab cannot silently overwrite a newer order.
+In **All rules**, drag a card or use **Move up**, **Move down**, **Move to top**, and **Move to bottom** to change the one global sequence. Reordering is unavailable while search or a group filter hides rules. Changing a rule's group or deleting a group preserves the global order; deleted-group rules become Ungrouped. Groups and order are included in backups. The server checks the current revision when saving a reorder, so an older tab cannot silently overwrite a newer order.
+
+### Continue matching
+
+Open a rule's advanced settings to enable **Continue matching after this rule**. After a local sequence succeeds, later matching rules can run in priority order. A later rule with this option off stops normally. A routing command can also apply its model or reasoning choice and let later rules run. If later routing rules change the same setting, the later matching choice wins.
+
+**Continue to AI** always ends rule checking. The provider is called once, after successful local actions where applicable. A failed local action or Function Tool, Guest Mode denial, or condition evaluation error stops the chain safely. Function results remain within their own rule. Match Preview shows the rules that would match and where checking would stop, without running actions or calling the provider.
 
 ## Request Rules compared with native automations
 

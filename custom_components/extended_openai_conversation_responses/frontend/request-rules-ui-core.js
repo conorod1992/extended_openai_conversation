@@ -57,35 +57,38 @@ export const matchingControls = (prefix, values, hidden = false) => `<div id="${
 
 const wordingEditor = (panel, groups) => `<details class="wording-editor eoc-details-base"><summary>Wording alternatives</summary><p class="help">Add different ways of saying the same thing. Separate multiple alternatives with commas.</p><div id="wording-groups">${groups.map((group) => `<div class="wording-group"><label>Main phrase<input class="wording-canonical" maxlength="100" value="${panel._e(group.canonical)}"></label><label>Other ways to say it<input class="wording-alternatives" value="${panel._e(group.alternatives.join(", "))}" placeholder="Comma-separated alternatives"></label><button type="button" class="icon wording-remove" aria-label="Remove wording alternative">×</button></div>`).join("")}</div><div class="section-actions"><button type="button" class="secondary" id="wording-add">Add wording alternative</button></div></details>`;
 const groupManagerRows = (panel, groups) => groups.map((group) => `<div class="rule-group-row" data-group-id="${panel._e(group.id)}"><input class="rule-group-name" value="${panel._e(group.name)}" aria-label="Group name"><button type="button" class="secondary rule-group-rename" data-id="${panel._e(group.id)}">Rename</button><button type="button" class="danger secondary-danger rule-group-delete" data-id="${panel._e(group.id)}">Delete</button></div>`).join("");
-const groupManager = (panel, result) => `<details class="eoc-details-base rule-groups"><summary>Manage groups</summary><p class="help">Create and rename groups here. Collapse or expand each group in the rule list.</p><div class="rule-group-manager-rows">${groupManagerRows(panel, result.groups || [])}</div><div class="search-row"><input id="rule-new-group-name" maxlength="100" placeholder="New group name" aria-label="New group name"><button type="button" id="rule-group-add" class="secondary">Create group</button></div></details>`;
-const ROUTING_HELP = '<details class="eoc-details-base rule-routing-help"><summary>Learn how routing works</summary><p><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> treat the matched phrase as a routing command by default: the route is applied and the command stops there instead of being sent to the AI. Turn on <strong>Continue to AI</strong> if the matched request should also be answered by the model. <strong>Starts with</strong>, <strong>Ends with</strong>, and <strong>Contains</strong> are treated as routing hints inside a normal request, so they continue to the AI automatically and the matched words stay in the request.</p><p><strong>Reset for this request only</strong> uses the assistant\'s normal route for this message, then returns to the conversation\'s existing route afterward. For exact matches, rules are checked from top to bottom and the first match is used.</p></details>';
+const groupManager = (panel, result) => `<details class="eoc-details-base rule-groups"><summary>Manage groups</summary><p class="help">Create and rename groups here. Use Show to filter the rule list by group.</p><div class="rule-group-manager-rows">${groupManagerRows(panel, result.groups || [])}</div><div class="search-row"><input id="rule-new-group-name" maxlength="100" placeholder="New group name" aria-label="New group name"><button type="button" id="rule-group-add" class="secondary">Create group</button></div></details>`;
+const ROUTING_HELP = '<details class="eoc-details-base rule-routing-help"><summary>Learn how routing works</summary><p><strong>Equals</strong> and <strong>ExtendedOpenAI sentence pattern</strong> treat the matched phrase as a routing command by default: the route is applied and the command stops there instead of being sent to the AI. Turn on <strong>Continue to AI</strong> if the matched request should also be answered by the model. <strong>Starts with</strong>, <strong>Ends with</strong>, and <strong>Contains</strong> are treated as routing hints inside a normal request, so they continue to the AI automatically and the matched words stay in the request.</p><p><strong>Reset for this request only</strong> uses the assistant\'s normal route for this message, then returns to the conversation\'s existing route afterward. Rules are checked in global priority order. By default, the first eligible match handles the request.</p></details>';
 
 function requestRuleCard(panel, rule, index) {
-  const result = panel._result || {}, rules = result.rules || [], summary = requestRuleSummary(rule, result.defaults || {});
-  return `<article data-rule-key="${panel._e(rule.id)}" class="request-rule-card ${rule.enabled ? "" : "disabled"}"><div class="rule-card-heading"><div><span class="type-badge ${rule.action_type === "local_action" ? "local" : "routing"}">${rule.action_type === "local_action" ? "Local command" : "AI routing"}</span><h2>${panel._e(rule.name)}</h2><span class="meta">Global priority ${index + 1} · ${panel._e((result.groups || []).find((group) => group.id === rule.group_id)?.name || "Ungrouped")}</span></div><label class="switch-label"><span class="sr-only">Enable ${panel._e(rule.name)}</span><input class="rule-enabled" data-id="${panel._e(rule.id)}" type="checkbox" ${rule.enabled ? "checked" : ""}></label></div><div class="phrase-chips">${rule.phrases.slice(0,4).map((phrase) => `<span><b>${matchLabel(rule.match_type)}</b> ${panel._e(phrase)}</span>`).join("")}${summary.hiddenPhrases ? `<span class="eoc-more-phrases">+${summary.hiddenPhrases} more</span>` : ""}</div><p>${panel._e(summary.action)}</p><p class="meta">${panel._e(summary.matching)}</p>${rule.sensitive_matching_warning && rule.match_type !== "sentence_pattern" ? '<p class="sensitive-warning">Review tolerant matching carefully: this rule controls a potentially sensitive Home Assistant domain.</p>' : ""}<div class="actions">${result.diagnostics?.[rule.id] ? `<p class="sensitive-warning"><strong>Rule inactive:</strong> ${panel._e(result.diagnostics[rule.id])} Edit and save this rule to use the current sentence-pattern syntax.</p>` : ""}<button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="up" ${index === 0 ? "disabled" : ""}>Move up</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="down" ${index === rules.length - 1 ? "disabled" : ""}>Move down</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="top" ${index === 0 ? "disabled" : ""}>Move to top</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="bottom" ${index === rules.length - 1 ? "disabled" : ""}>Move to bottom</button><button type="button" class="secondary rule-edit" data-id="${panel._e(rule.id)}">Edit</button><button type="button" class="secondary rule-duplicate" data-id="${panel._e(rule.id)}">Duplicate</button><button type="button" class="danger secondary-danger rule-delete" data-id="${panel._e(rule.id)}">Delete</button></div></article>`;
+  const result = panel._result || {}, rules = result.rules || [], summary = requestRuleSummary(rule, result.defaults || {}), canReorder = !panel._query && (!panel._ruleGroupFilter || panel._ruleGroupFilter === "all");
+  return `<article data-rule-key="${panel._e(rule.id)}" draggable="${canReorder}" class="request-rule-card ${rule.enabled ? "" : "disabled"}"><div class="rule-card-heading"><div><span class="type-badge ${rule.action_type === "local_action" ? "local" : "routing"}">${rule.action_type === "local_action" ? "Local command" : "AI routing"}</span><h2>${panel._e(rule.name)}</h2><span class="meta">#${index + 1} <span class="rule-group-chip">${panel._e((result.groups || []).find((group) => group.id === rule.group_id)?.name || "Ungrouped")}</span></span></div><label class="switch-label"><span class="sr-only">Enable ${panel._e(rule.name)}</span><input class="rule-enabled" data-id="${panel._e(rule.id)}" type="checkbox" ${rule.enabled ? "checked" : ""}></label></div><div class="phrase-chips">${rule.phrases.slice(0,4).map((phrase) => `<span><b>${matchLabel(rule.match_type)}</b> ${panel._e(phrase)}</span>`).join("")}${summary.hiddenPhrases ? `<span class="eoc-more-phrases">+${summary.hiddenPhrases} more</span>` : ""}</div><p>${panel._e(summary.action)}</p><p class="meta">${panel._e(summary.matching)}</p>${rule.sensitive_matching_warning && rule.match_type !== "sentence_pattern" ? '<p class="sensitive-warning">Review tolerant matching carefully: this rule controls a potentially sensitive Home Assistant domain.</p>' : ""}<div class="actions">${result.diagnostics?.[rule.id] ? `<p class="sensitive-warning"><strong>Rule inactive:</strong> ${panel._e(result.diagnostics[rule.id])} Edit and save this rule to use the current sentence-pattern syntax.</p>` : ""}<button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="up" ${!canReorder || index === 0 ? "disabled" : ""}>Move up</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="down" ${!canReorder || index === rules.length - 1 ? "disabled" : ""}>Move down</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="top" ${!canReorder || index === 0 ? "disabled" : ""}>Move to top</button><button type="button" class="secondary rule-move" data-id="${panel._e(rule.id)}" data-direction="bottom" ${!canReorder || index === rules.length - 1 ? "disabled" : ""}>Move to bottom</button><button type="button" class="secondary rule-edit" data-id="${panel._e(rule.id)}">Edit</button><button type="button" class="secondary rule-duplicate" data-id="${panel._e(rule.id)}">Duplicate</button><button type="button" class="danger secondary-danger rule-delete" data-id="${panel._e(rule.id)}">Delete</button></div></article>`;
 }
 const EMPTY_RULES_MARKUP = '<section class="content-card empty-state"><h2>Create your first Request Rule</h2><p>Add a fast local command such as “good night”.</p><button type="button" id="rule-empty-add">Create rule</button></section>';
 const NO_RULES_MATCH_CONTENT = '<h2>No rules match your search</h2><p>Try a different phrase or rule name.</p>';
-const SAFE_TESTER = '<div id="rule-match-tester"><h3>Preview match</h3><p class="help">Check which enabled rule wins. No Home Assistant action executes, conversation routing changes, or AI provider call occurs.</p><div class="search-row"><input id="rule-match-test-text" type="text" maxlength="2048" placeholder="Turn off the kitchen light" aria-label="Request text to test against Request Rules"><button type="button" id="rule-match-test">Preview match</button></div><p class="help">Preview and live Request Rule matching inspect at most 2048 characters (and 256 words).</p><div id="rule-match-test-result" aria-live="polite"></div></div>';
+const SAFE_TESTER = '<div id="rule-match-tester"><h3>Preview match</h3><p class="help">See which enabled rules would match and where checking stops. No Home Assistant action executes, conversation routing changes, or AI provider call occurs.</p><div class="search-row"><input id="rule-match-test-text" type="text" maxlength="2048" placeholder="Turn off the kitchen light" aria-label="Request text to test against Request Rules"><button type="button" id="rule-match-test">Preview match</button></div><p class="help">Preview and live Request Rule matching inspect at most 2048 characters (and 256 words).</p><div id="rule-match-test-result" aria-live="polite"></div></div>';
 const LIVE_TESTER = '<details id="eoc-rule-live-test" class="eoc-live-request-test eoc-details-base"><summary><span>Run live request</span><span class="eoc-live-label">Live</span></summary><div class="eoc-live-request-body"><p>Runs text through the same full processing path as a real request to this assistant.</p><div class="notice"><strong>This can have real effects</strong><p>Unlike the safe preview above, this may execute Home Assistant actions, change conversation routing, or call the AI provider. A confirmation is shown before it runs.</p></div><div class="search-row"><input id="eoc-rule-live-text" type="text" placeholder="Turn off the kitchen light" aria-label="Live request text"><button type="button" id="eoc-rule-live-run">Run live request</button></div><pre id="eoc-rule-live-result" class="eoc-live-request-result" aria-live="polite"></pre></div></details>';
 
-function groupedRuleMarkup(panel, filtered, rules, groups) {
-  const known = new Set(groups.map((group) => group.id));
-  const assigned = (rule) => known.has(rule.group_id) ? rule.group_id : "";
-  const sections = [{id:"", name:"Ungrouped"}, ...groups].filter((group) => group.id || rules.some((rule) => !assigned(rule)));
-  return sections.map((group) => {
-    const members = filtered.filter(({rule}) => assigned(rule) === group.id);
-    const total = rules.filter((rule) => assigned(rule) === group.id).length;
-    return `<details class="rule-group-section" data-rule-group-id="${panel._e(group.id)}" open><summary><span>${panel._e(group.name)}</span><small>${total} rule${total === 1 ? "" : "s"} · global priorities shown on cards</small></summary><div class="rule-group-items">${members.map(({rule,index}) => requestRuleCard(panel,rule,index)).join("")}<p class="rule-group-empty" ${members.length ? "hidden" : ""}>No rules in this group.</p></div></details>`;
-  }).join("");
+function globalRuleMarkup(panel, filtered) {
+  return filtered.map(({rule,index}) => requestRuleCard(panel,rule,index)).join("");
+}
+
+function groupFilterOptions(panel, groups) {
+  return [{id:"all",name:"All rules"},{id:"ungrouped",name:"Ungrouped"},...groups].map((group) => `<option value="${panel._e(group.id)}" ${panel._ruleGroupFilter === group.id ? "selected" : ""}>${panel._e(group.name)}</option>`).join("");
+}
+
+function ruleVisible(rule, groupFilter, search) {
+  const groupMatches = groupFilter === "all" || !groupFilter || (groupFilter === "ungrouped" ? !rule.group_id : rule.group_id === groupFilter);
+  return groupMatches && (!search || `${rule.name} ${rule.phrases.join(" ")} ${rule.action_type}`.toLowerCase().includes(search));
 }
 
 function renderRulesPage(panel, {query = panel._query || "", inPlaceSearch = false} = {}) {
   const result = panel._result || {}, rules = result.rules || [];
   const defaults = {...{word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90}, ...((panel._rulesSettingsDraft || result).defaults || {})};
   const search = inPlaceSearch ? "" : String(query).trim().toLowerCase();
-  const filtered = rules.map((rule,index)=>({rule,index})).filter(({rule}) => !search || `${rule.name} ${rule.phrases.join(" ")} ${rule.action_type}`.toLowerCase().includes(search));
-  return `<section class="page-intro"><h1>Request Rules</h1><p>Create fast local commands that skip the AI call, or route AI requests by phrase before they reach the AI provider.</p>${ROUTING_HELP}</section>${groupManager(panel,result)}<div class="search-row rule-toolbar" ${rules.length ? "" : "hidden"}><input id="rule-search" type="search" value="${panel._e(query)}" placeholder="Search rules" aria-label="Search Request Rules"><span class="count">${rules.length} rule${rules.length === 1 ? "" : "s"}</span><button type="button" id="rule-add" class="secondary">Create rule</button></div><p class="help rule-global-order-note">Groups organize rules only. Global priority determines matching order.</p><section class="rule-list">${groupedRuleMarkup(panel,filtered,rules,result.groups || [])} ${rules.length ? "" : EMPTY_RULES_MARKUP}<section class="content-card empty-state" data-eoc-rule-search-empty ${inPlaceSearch || filtered.length || !rules.length ? "hidden" : ""}>${NO_RULES_MATCH_CONTENT}</section></section><section class="content-card rule-settings" aria-labelledby="rule-matching-title"><div class="section-heading"><div><h2 id="rule-matching-title">Matching settings</h2><p>Set the defaults used by rules and manage alternative phrases.</p></div></div><details class="eoc-details-base"><summary>Default matching settings</summary><p class="help">These settings apply to rules unless a rule has its own custom matching settings. Normal matches are always preferred before fuzzy matching is tried.</p>${matchingControls("rules-default",defaults)}</details>${wordingEditor(panel,(panel._rulesSettingsDraft || result).wording_groups || [])}</section><section class="content-card rule-test-tools"><div class="section-heading"><div><h2>Test rules</h2><p>Check a match safely, or run a live request when needed.</p></div></div>${SAFE_TESTER}${LIVE_TESTER}</section>`;
+  const groupFilter = panel._ruleGroupFilter || "all";
+  const filtered = rules.map((rule,index)=>({rule,index})).filter(({rule}) => ruleVisible(rule,groupFilter,search));
+  return `<section class="page-intro"><h1>Request Rules</h1><p>Create fast local commands that skip the AI call, or route AI requests by phrase before they reach the AI provider.</p>${ROUTING_HELP}</section>${groupManager(panel,result)}<div class="search-row rule-toolbar" ${rules.length ? "" : "hidden"}><input id="rule-search" type="search" value="${panel._e(query)}" placeholder="Search rules" aria-label="Search Request Rules"><label class="rule-show-filter">Show <select id="rule-group-filter" aria-label="Show rules">${groupFilterOptions(panel,result.groups || [])}</select></label><span class="count">${rules.length} rule${rules.length === 1 ? "" : "s"}</span><button type="button" id="rule-add" class="secondary">Create rule</button></div><div class="rule-list-heading"><h2>Rules</h2><p class="help">Evaluated in the order shown. Drag to change priority.</p><p class="help rule-filter-help" ${groupFilter === "all" && !search ? "hidden" : ""}>Switch to All rules to change priority.</p></div><section class="rule-list">${globalRuleMarkup(panel,filtered)} ${rules.length ? "" : EMPTY_RULES_MARKUP}<section class="content-card empty-state" data-eoc-rule-search-empty ${inPlaceSearch || filtered.length || !rules.length ? "hidden" : ""}>${NO_RULES_MATCH_CONTENT}</section></section><section class="content-card rule-settings" aria-labelledby="rule-matching-title"><div class="section-heading"><div><h2 id="rule-matching-title">Matching settings</h2><p>Set the defaults used by rules and manage alternative phrases.</p></div></div><details class="eoc-details-base"><summary>Default matching settings</summary><p class="help">These settings apply to rules unless a rule has its own custom matching settings. Normal matches are always preferred before fuzzy matching is tried.</p>${matchingControls("rules-default",defaults)}</details>${wordingEditor(panel,(panel._rulesSettingsDraft || result).wording_groups || [])}</section><section class="content-card rule-test-tools"><div class="section-heading"><div><h2>Test rules</h2><p>Check a match safely, or run a live request when needed.</p></div></div>${SAFE_TESTER}${LIVE_TESTER}</section>`;
 }
 export function renderRequestRules(panel, presentation = {query:panel._query || "",inPlaceSearch:Boolean(panel._eocInPlaceRequestRuleSearch)}) { return renderRulesPage(panel,presentation); }
 
@@ -96,40 +99,34 @@ const ruleSettingsSignature = panel => JSON.stringify([(panel._rulesSettingsDraf
 function prepareRequestRulesCollection(panel) {
   const list = panel.shadowRoot.querySelector(".rule-list");
   if (!list || ruleCollections.has(list)) return;
-  ruleCollections.set(list,{cards:adoptKeyedElements(list,"[data-rule-key]","ruleKey"),sections:new Map([...list.querySelectorAll("[data-rule-group-id]")].map((section)=>[section.dataset.ruleGroupId,section])),settings:ruleSettingsSignature(panel),empty:list.querySelector(":scope > .empty-state:not([data-eoc-rule-search-empty])")});
+  ruleCollections.set(list,{cards:adoptKeyedElements(list,"[data-rule-key]","ruleKey"),settings:ruleSettingsSignature(panel),empty:list.querySelector(":scope > .empty-state:not([data-eoc-rule-search-empty])")});
   reconcileRequestRules(panel);
 }
 export function reconcileRequestRules(panel) {
   const list=panel.shadowRoot.querySelector(".rule-list"), state=ruleCollections.get(list);
   if (!state || state.settings !== ruleSettingsSignature(panel)) return false;
-  const result=panel._result || {}, rules=result.rules || [], known=new Set((result.groups || []).map((group)=>group.id));
-  const assigned=(rule)=>known.has(rule.group_id)?rule.group_id:"";
-  const sections=[{id:"",name:"Ungrouped"},...(result.groups || [])].filter((group)=>group.id || rules.some((rule)=>!assigned(rule)));
-  const members=new Map(sections.map((group)=>[group.id,[]]));
-  rules.forEach((rule,index)=>{
+  const result=panel._result || {}, rules=result.rules || [], filter=panel._ruleGroupFilter || "all", query=String(panel._query || "").trim().toLowerCase();
+  const groupNames=new Map((result.groups || []).map((group)=>[group.id,group.name]));
+  const canReorder=filter === "all" && !query;
+  const nodes=rules.map((rule,index)=>{
     const {order:_order,...cardRule}=rule;
-    const record=keyedElement(state.cards,rule.id,JSON.stringify([cardRule,result.defaults,result.groups,result.diagnostics?.[rule.id]]),()=>requestRuleCard(panel,rule,index));
+    const record=keyedElement(state.cards,rule.id,JSON.stringify([cardRule,result.defaults,result.diagnostics?.[rule.id]]),()=>requestRuleCard(panel,rule,index));
     const priority=record.node.querySelector(".rule-card-heading .meta");
-    if(priority)priority.textContent=`Global priority ${index + 1} · ${((result.groups || []).find((group)=>group.id===rule.group_id)?.name || "Ungrouped")}`;
+    const groupName=groupNames.get(rule.group_id) || "Ungrouped";
+    if(priority && priority.textContent !== `#${index + 1} ${groupName}`)priority.innerHTML=`#${index + 1} <span class="rule-group-chip">${panel._e(groupName)}</span>`;
     record.moves ||= [...record.node.querySelectorAll(".rule-move")];
-    for(const button of record.moves) button.disabled = pendingRuleButtons.has(button) || moveDisabled(index,rules.length,button.dataset.direction);
-    members.get(assigned(rule))?.push(record.node);
+    for(const button of record.moves) button.disabled = pendingRuleButtons.has(button) || !canReorder || moveDisabled(index,rules.length,button.dataset.direction);
+    record.node.draggable=canReorder;
+    record.node.hidden=!ruleVisible(rule,filter,query);
+    return record.node;
   });
-  const nodes=sections.map((group)=>{
-    let section=state.sections.get(group.id);
-    if(!section){section=elementFromMarkup(`<details class="rule-group-section" data-rule-group-id="${panel._e(group.id)}" open><summary></summary><div class="rule-group-items"><p class="rule-group-empty">No rules in this group.</p></div></details>`);state.sections.set(group.id,section);}
-    const summary=section.querySelector("summary"), count=members.get(group.id)?.length || 0;
-    summary.innerHTML=`<span>${panel._e(group.name)}</span><small>${count} rule${count===1?"":"s"} · global priorities shown on cards</small>`;
-    const items=section.querySelector(".rule-group-items"),empty=items.querySelector(".rule-group-empty");
-    empty.hidden=count>0;
-    placeChildren(items,[...(members.get(group.id)||[]),empty]);
-    return section;
-  });
-  for(const id of state.sections.keys())if(!sections.some((group)=>group.id===id))state.sections.delete(id);
   if(!rules.length){state.empty ||= elementFromMarkup(EMPTY_RULES_MARKUP);nodes.push(state.empty);}
-  const searchEmpty=list.querySelector("[data-eoc-rule-search-empty]");if(searchEmpty)nodes.push(searchEmpty);
+  const searchEmpty=list.querySelector("[data-eoc-rule-search-empty]");if(searchEmpty){searchEmpty.hidden=!rules.length || nodes.some(node=>node.matches?.("[data-rule-key]") && !node.hidden);nodes.push(searchEmpty);}
   placeChildren(list,nodes);pruneKeys(state.cards,new Set(rules.map(rule=>rule.id)));
   const toolbar=panel.shadowRoot.querySelector(".rule-toolbar");if(toolbar)toolbar.hidden=!rules.length;
+  const count=panel.shadowRoot.querySelector(".rule-toolbar .count"), visible=rules.filter(rule=>ruleVisible(rule,filter,query)).length;
+  if(count)count.textContent=(filter !== "all" || query) ? `Showing ${visible} of ${rules.length} rules` : `${rules.length} rule${rules.length===1?"":"s"}`;
+  const help=panel.shadowRoot.querySelector(".rule-filter-help");if(help)help.hidden=canReorder;
   panel._eocRequestRuleCollectionRevision=(panel._eocRequestRuleCollectionRevision||0)+1;panel._eocRequestRuleSearchCache=null;return true;
 }
 export function requestRulesDialog(){ return ""; }
@@ -146,24 +143,6 @@ function finishMutation(panel,result,rules){
   const cacheKey=panel._sectionCacheKey?.(); if(cacheKey) panel._sectionCache?.delete(cacheKey);
   syncScopeRevision(panel,result);
   const reconciled = panel.shadowRoot ? reconcileRequestRules(panel) : false;
-  if (reconciled) {
-    const count = panel.shadowRoot?.querySelector?.(".rule-toolbar .count");
-    const query = String(panel._query || "").trim().toLocaleLowerCase();
-    const byId = new Map(rules.map((rule) => [String(rule.id), rule]));
-    let visible = 0;
-    panel.shadowRoot?.querySelectorAll?.("[data-rule-key]").forEach((card) => {
-      const rule = byId.get(String(card.dataset.ruleKey));
-      const show = Boolean(rule) && (!query || `${rule.name || ""} ${(rule.phrases || []).join(" ")} ${rule.action_type || ""}`.toLocaleLowerCase().includes(query));
-      card.hidden = !show;
-      if (show) visible++;
-    });
-    panel.shadowRoot?.querySelectorAll?.(".rule-group-section").forEach((section) => {
-      section.hidden = Boolean(query) && ![...section.querySelectorAll("[data-rule-key]")].some((card) => !card.hidden);
-    });
-    if (count) count.textContent = query ? `${visible} of ${rules.length} rules` : `${rules.length} rule${rules.length === 1 ? "" : "s"}`;
-    const empty = panel.shadowRoot?.querySelector?.("[data-eoc-rule-search-empty]");
-    if (empty) empty.hidden = !query || visible > 0 || rules.length === 0;
-  }
   if (!reconciled) panel._render();
 }
 export function applyRequestRuleMutation(panel, action, result, context={}) {
@@ -182,7 +161,12 @@ export function applyRequestRuleMutation(panel, action, result, context={}) {
     rules=rules.filter(rule=>rule.id!==ruleId);
   } else if (action === "move") {
     const index=rules.findIndex(rule=>rule.id===ruleId);
-    const target=({up:index-1,down:index+1,top:0,bottom:rules.length-1})[context.direction];
+    let target=({up:index-1,down:index+1,top:0,bottom:rules.length-1})[context.direction];
+    if(context.direction==="before"||context.direction==="after"){
+      target=rules.findIndex(rule=>rule.id===context.targetRuleId);
+      if(index<target)target--;
+      if(context.direction==="after")target++;
+    }
     if(index>=0 && target>=0 && target<rules.length) rules.splice(target,0,rules.splice(index,1)[0]);
     if(presentedRule){const moved=rules.findIndex(rule=>rule.id===presentedRule.id);if(moved>=0)rules[moved]={...rules[moved],...presentedRule};}
   } else if (action === "create" || action === "duplicate") {
@@ -216,6 +200,8 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
   const root=panel.shadowRoot,list=root.querySelector(".rule-list"); prepareRequestRulesCollection(panel);
   setFuzzyState(root,"rules-default"); root.querySelector("#rules-default-fuzzy")?.addEventListener("change",()=>setFuzzyState(root,"rules-default"),{once:false});
   bindWordingEditor(panel);
+  const filter=root.querySelector("#rule-group-filter");
+  if(filter&&!filter.dataset.eocBound){filter.dataset.eocBound="";filter.addEventListener("change",()=>{panel._ruleGroupFilter=filter.value;reconcileRequestRules(panel);root.querySelector("#rule-search")?.dispatchEvent(new Event("input",{bubbles:true}));});}
   const groupManager=root.querySelector(".rule-groups");
   if(groupManager && !groupManager.dataset.eocBound){
     groupManager.dataset.eocBound="";
@@ -240,6 +226,7 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
         syncScopeRevision(panel,result);
         groupManager.querySelector(".rule-group-manager-rows").innerHTML=groupManagerRows(panel,result.groups);
         groupManager.querySelector("#rule-new-group-name").value="";
+        const filter=root.querySelector("#rule-group-filter");if(filter){filter.innerHTML=groupFilterOptions(panel,result.groups);if(!result.groups.some(group=>group.id===panel._ruleGroupFilter))panel._ruleGroupFilter="all";filter.value=panel._ruleGroupFilter;}
         if (!reconcileRequestRules(panel)) panel._render();
         panel._toast("Groups saved");
       }catch(err){await recoverRequestRuleMutation(panel,err,"Unable to save groups");}
@@ -248,6 +235,11 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
   }
   if(list && !list.dataset.eocRuleCoreBound){
     list.dataset.eocRuleCoreBound="";
+    let dragging=null;
+    list.addEventListener("dragstart",event=>{const card=event.target.closest?.("[data-rule-key]");if(!card||!card.draggable){event.preventDefault();return;}dragging=card.dataset.ruleKey;event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",dragging);});
+    list.addEventListener("dragover",event=>{if(dragging&&event.target.closest?.("[data-rule-key]"))event.preventDefault();});
+    list.addEventListener("dragend",()=>{dragging=null;});
+    list.addEventListener("drop",async event=>{const card=event.target.closest?.("[data-rule-key]");const id=dragging;dragging=null;if(!id||!card||!card.draggable||card.dataset.ruleKey===id)return;event.preventDefault();const targetId=card.dataset.ruleKey,direction=event.clientY>card.getBoundingClientRect().top+card.getBoundingClientRect().height/2?"after":"before";try{const result=await panel._call("request_rules","move",{rule_id:id,direction,target_rule_id:targetId,revision:panel._result?.revision});applyRequestRuleMutation(panel,"move",result,{ruleId:id,direction,targetRuleId:targetId});}catch(err){await recoverRequestRuleMutation(panel,err,"Unable to move Request Rule");}});
     list.addEventListener("click",async(event)=>{
       const button=event.target.closest?.("button");if(!button||button.disabled)return;
       if(button.id==="rule-empty-add"||button.matches(".rule-edit")){void openEditor?.(button.dataset.id||null);return;}

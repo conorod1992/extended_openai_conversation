@@ -98,6 +98,8 @@ test("Request Rule condition selector, local continuation, and group survive rel
   await panel.locator("#rule-phrases").fill("good kitchen");
   await panel.locator("#rule-group").selectOption({label:"Kitchen"});
   await panel.locator("#rule-local-continue-to-ai").check();
+  await panel.locator("#rule-advanced summary").click();
+  await panel.locator("#rule-continue-matching").check();
   await expect(panel.locator("#rule-action-sequence-host ha-selector")).toHaveJSProperty("value", []);
   await panel.locator("#rule-save").click();
   await expect(panel.locator("#rule-error")).toContainText("Add at least one action before saving this rule.");
@@ -120,6 +122,7 @@ test("Request Rule condition selector, local continuation, and group survive rel
   await expect(card).toContainText("continues to AI");
   await card.locator(".rule-edit").click();
   await expect(panel.locator("#rule-local-continue-to-ai")).toBeChecked();
+  await expect(panel.locator("#rule-continue-matching")).toBeChecked();
   await expect(panel.locator("#rule-group")).toHaveValue(await panel.locator(".rule-group-row").getAttribute("data-group-id"));
   const saved = await panel.locator("#rule-condition-host ha-selector").evaluate((selector) => selector.value);
   expect(saved).toEqual(condition);
@@ -127,7 +130,7 @@ test("Request Rule condition selector, local continuation, and group survive rel
   await expectHarnessClean(page, pageErrors);
 });
 
-test("Request Rule groups show global priorities and preserve order across moves and deletion", async ({page}) => {
+test("Request Rule Show filter keeps global priorities and group changes preserve order", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
   const panel = page.locator("extended-openai-management-panel");
@@ -144,29 +147,31 @@ test("Request Rule groups show global priorities and preserve order across moves
     await panel.locator("#rule-action-type").selectOption("model_routing");
     await panel.locator("#rule-save").click();
   }
-  const section = (name) => panel.locator(".rule-group-section").filter({has:page.getByText(name,{exact:true})});
-  await expect(panel.locator(".rule-group-section summary span")).toHaveText(["Ungrouped","Lighting","Media"]);
-  await expect(section("Ungrouped").locator(".request-rule-card")).toContainText("Global priority 1");
-  await expect(section("Lighting").locator(".request-rule-card")).toContainText("Global priority 2");
-  await expect(section("Media").locator(".request-rule-card")).toContainText("Global priority 3");
-  await section("Media").locator('.rule-move[data-direction="up"]').click();
-  await expect(section("Media").locator(".request-rule-card")).toContainText("Global priority 2");
-  await expect(section("Lighting").locator(".request-rule-card")).toContainText("Global priority 3");
-  await section("Lighting").locator("summary").click();
-  await expect(section("Lighting")).not.toHaveAttribute("open", "");
-  await expect(section("Lighting").locator(".request-rule-card")).toHaveCount(1);
-  await section("Lighting").locator("summary").click();
+  const cards = panel.locator(".request-rule-card");
+  await expect(cards).toHaveCount(3);
+  await expect(cards.locator(".rule-card-heading .meta")).toContainText(["#1", "#2", "#3"]);
+  await expect(cards.locator(".rule-group-chip")).toHaveText(["Ungrouped", "Lighting", "Media"]);
+  await panel.locator("#rule-group-filter").selectOption({label:"Lighting"});
+  await expect(panel.locator(".request-rule-card:visible")).toHaveCount(1);
+  await expect(panel.locator(".request-rule-card:visible")).toContainText("#2");
+  await expect(panel.locator(".request-rule-card:visible .rule-move").first()).toBeDisabled();
+  await panel.locator("#rule-group-filter").selectOption({label:"All rules"});
+  const music=cards.filter({hasText:"Music rule"}), lamp=cards.filter({hasText:"Lamp rule"});
+  await page.setViewportSize({width:1280,height:1200});
+  await music.evaluate(node => { window.__musicCard = node; });
+  await music.dragTo(lamp,{targetPosition:{x:20,y:5}});
+  await expect(cards.locator(".rule-group-chip")).toHaveText(["Ungrouped", "Media", "Lighting"]);
+  expect(await music.evaluate(node => node === window.__musicCard)).toBe(true);
   const lighting = panel.locator(".rule-group-row").filter({has:page.locator('input[value="Lighting"]')});
   await lighting.locator(".rule-group-name").fill("Lights");
   await lighting.locator(".rule-group-rename").click();
-  await expect(panel.locator(".rule-group-section summary span")).toHaveText(["Ungrouped","Lights","Media"]);
+  await expect(cards.locator(".rule-group-chip")).toHaveText(["Ungrouped", "Media", "Lights"]);
   await panel.locator(".rule-group-row").filter({has:page.locator('input[value="Lights"]')}).locator(".rule-group-delete").click();
   await acceptConfirmation(panel);
-  await expect(panel.locator(".rule-group-section summary span")).toHaveText(["Ungrouped","Media"]);
-  await expect(section("Ungrouped").locator(".request-rule-card")).toHaveCount(2);
-  await expect(section("Ungrouped").locator(".request-rule-card").filter({hasText:"Lamp rule"})).toContainText("Global priority 3");
+  await expect(cards.locator(".rule-group-chip")).toHaveText(["Ungrouped", "Media", "Ungrouped"]);
+  await expect(cards.filter({hasText:"Lamp rule"})).toContainText("#3");
   await page.goto(fixtureUrl("capabilities/request-rules"));
-  await expect(panel.locator(".rule-group-section summary span")).toHaveText(["Ungrouped","Media"]);
-  await expect(section("Media").locator(".request-rule-card")).toContainText("Global priority 2");
+  await expect(cards.locator(".rule-group-chip")).toHaveText(["Ungrouped", "Media", "Ungrouped"]);
+  await expect(cards.filter({hasText:"Music rule"})).toContainText("#2");
   await expectHarnessClean(page, pageErrors);
 });

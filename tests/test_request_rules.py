@@ -34,6 +34,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     RequestRules,
     RequestRuleStore,
     _bounded_function_result,
+    _MatchCursor,
     async_call_active_function,
     async_evaluate_rule,
     canonical_action_signature,
@@ -139,14 +140,28 @@ async def test_only_when_uses_first_eligible_text_match_and_preview_trace(
         build,
     )
     rules = await manager(first, second)
+    from custom_components.extended_openai_conversation_responses import (
+        request_rules as rule_module,
+    )
+
+    compared = []
+    original_match = rule_module._deterministic_match
+
+    def counted_match(text, phrase, match_type):
+        compared.append(phrase)
+        return original_match(text, phrase, match_type)
+
+    monkeypatch.setattr(rule_module, "_deterministic_match", counted_match)
     preview = await async_request_rule_match_preview(hass, rules, "hello")
     assert preview["rule"]["name"] == "Second"
     assert preview["skipped_conditions"] == [
         {"id": "first", "name": "First", "reason": "conditions_false"}
     ]
     assert checks == ["input_boolean.first", "input_boolean.second"]
+    assert len(compared) == 2
     await rules.async_match(hass, "hello")
     assert checks == ["input_boolean.first", "input_boolean.second"] * 2
+    assert len(compared) == 4
 
 
 async def test_condition_checker_is_rebuilt_after_edit_and_restore(
@@ -323,6 +338,155 @@ async def test_local_continue_to_ai_success_and_failure(hass) -> None:
     )
     assert failed is not None and failed.consume and not failed.successful
     assert failed.response == "Failed safely"
+
+
+async def test_continue_matching_runs_each_local_rule_once_and_preview_is_safe(
+    hass,
+) -> None:
+    from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
+        async_request_rule_match_preview,
+    )
+
+    first = local_rule("First", phrases=["hello"])
+    first["continue_matching"] = True
+    second = local_rule("Second", phrases=["hello"], order=1)
+    second["continue_matching"] = True
+    third = local_rule("Third", phrases=["hello"], order=2)
+    rules = await manager(first, second, third)
+    services = FakeServices()
+    hass.services = services
+
+    preview = await async_request_rule_match_preview(hass, rules, "hello")
+    assert [item["rule"]["name"] for item in preview["matched_rules"]] == [
+        "First",
+        "Second",
+        "Third",
+    ]
+    assert [item["status"] for item in preview["matched_rules"]] == [
+        "continued",
+        "continued",
+        "stopped",
+    ]
+    assert services.calls == []
+
+    outcome = await async_evaluate_rule(
+        hass, rules, RequestRuleRuntime(), "hello", "session"
+    )
+    assert outcome is not None and outcome.match.rule["name"] == "Third"
+    assert outcome.consume and outcome.successful
+    assert len(services.calls) == 3
+
+
+async def test_continue_matching_defaults_off_and_legacy_rules_migrate() -> None:
+    rule = local_rule()
+    assert validate_rule(rule)["continue_matching"] is False
+    rule["continue_matching"] = "yes"
+    with pytest.raises(ValueError, match="continue_matching"):
+        validate_rule(rule)
+
+
+async def test_continue_matching_persists_and_round_trips_backup() -> None:
+    original = local_rule("First", phrases=["hello"])
+    original["continue_matching"] = True
+    source = await manager(original)
+    backup = await source.async_backup_data()
+    assert backup["rules"][0]["continue_matching"] is True
+    assert (
+        RequestRules.validate_backup_data(backup)["rules"][0]["continue_matching"]
+        is True
+    )
+    restored = RequestRules(MemoryStore())
+    await restored.async_replace_backup(backup)
+    assert restored.snapshot()["rules"][0]["continue_matching"] is True
+
+
+async def test_global_drag_reorder_keeps_groups_and_compiled_patterns() -> None:
+    first = local_rule("First", phrases=["first"])
+    second = local_rule("Second", phrases=["second"], order=1)
+    third = local_rule("Third", phrases=["third"], order=2)
+    rules = await manager(first, second, third)
+    compiled = rules._matching_snapshot.phrases[0][2]
+    await rules.async_move("first", "after", target_rule_id="third")
+    assert [rule["name"] for rule in rules.snapshot()["rules"]] == [
+        "Second",
+        "Third",
+        "First",
+    ]
+    assert rules._matching_snapshot.phrases[-1][2] is compiled
+    await rules.async_move("first", "before", target_rule_id="second")
+    assert [rule["name"] for rule in rules.snapshot()["rules"]] == [
+        "First",
+        "Second",
+        "Third",
+    ]
+
+
+async def test_group_name_change_does_not_rebuild_matcher() -> None:
+    rule = local_rule("First", phrases=["hello"])
+    rule["group_id"] = "group-1"
+    rules = RequestRules(
+        MemoryStore({"groups": [{"id": "group-1", "name": "Old"}], "rules": [rule]})
+    )
+    await rules.async_initialize()
+    snapshot = rules._matching_snapshot
+    await rules.async_set_groups([{"id": "group-1", "name": "New"}])
+    assert rules._matching_snapshot is snapshot
+    await rules.async_set_groups([])
+    assert rules.snapshot()["rules"][0]["group_id"] is None
+    assert rules._matching_snapshot.phrases[0][2] is snapshot.phrases[0][2]
+
+
+async def test_fuzzy_chain_never_returns_to_earlier_priority() -> None:
+    fuzzy = {
+        "word_forms": False,
+        "wording_alternatives": False,
+        "fuzzy": True,
+        "fuzzy_threshold": 70,
+    }
+    rules = await manager(
+        local_rule("First", phrases=["liagt"], order=0),
+        local_rule("Second", phrases=["ligh"], order=1),
+        local_rule("Third", phrases=["ligth"], order=2),
+        defaults=fuzzy,
+    )
+    cursor = _MatchCursor(rules._matching_snapshot, "light")
+    first = cursor.next_match()
+    second = cursor.next_match()
+    assert first is not None and first.rule["name"] == "Second"
+    assert second is not None and second.rule["name"] == "Third"
+    assert cursor.next_match() is None
+
+
+async def test_continue_matching_handoff_stops_later_rules(hass) -> None:
+    first = local_rule("First", phrases=["hello"])
+    first["continue_matching"] = True
+    first["action"]["continue_to_ai"] = True
+    second = local_rule("Second", phrases=["hello"], order=1)
+    rules = await manager(first, second)
+    services = FakeServices()
+    hass.services = services
+    outcome = await async_evaluate_rule(
+        hass, rules, RequestRuleRuntime(), "hello", "session"
+    )
+    assert outcome is not None and not outcome.consume
+    assert outcome.match.rule["name"] == "First"
+    assert len(services.calls) == 1
+
+
+async def test_continue_matching_failure_stops_later_actions(hass) -> None:
+    first = local_rule("First", phrases=["hello"])
+    first["continue_matching"] = True
+    second = local_rule("Second", phrases=["hello"], order=1)
+    rules = await manager(first, second)
+    services = FakeServices(fail=True)
+    hass.services = services
+    outcome = await async_evaluate_rule(
+        hass, rules, RequestRuleRuntime(), "hello", "session"
+    )
+    assert outcome is not None and outcome.match.rule["name"] == "First"
+    assert outcome.consume and not outcome.successful
+    assert outcome.response == "Failed safely"
+    assert len(services.calls) == 1
 
 
 async def test_guest_denial_after_passing_condition_never_continues_to_ai(

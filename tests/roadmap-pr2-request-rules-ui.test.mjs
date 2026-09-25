@@ -25,7 +25,7 @@ test("Request Rules UI explains AI-routing command semantics", async () => {
   assert.match(source, /Continue to AI/i);
   assert.match(source, /routing hints inside a normal request/i);
   assert.match(source, /Reset for this request only/i);
-  assert.match(source, /first match is used/i);
+  assert.match(source, /first eligible match handles the request/i);
 });
 
 test("Guide explains broad versus complete AI-routing matches", async () => {
