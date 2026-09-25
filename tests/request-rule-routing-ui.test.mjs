@@ -69,5 +69,5 @@ assert.equal(reasoning.querySelector('option[value="max"]').disabled, false);
 
 const dialog = requestRulesDialog({});
 assert.match(dialog, /complete commands/);
-assert.match(dialog, /original request to the provider/);
+assert.match(dialog, /selected AI input after applying the route/);
 assert.match(dialog, /rule-routing-scope-help/);

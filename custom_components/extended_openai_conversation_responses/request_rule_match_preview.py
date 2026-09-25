@@ -8,7 +8,24 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .request_rule_patterns import SentenceMatchLimitError
-from .request_rules import RuleMatch, _iter_script_actions, rule_stops_matching
+from .request_rules import (
+    RuleMatch,
+    _iter_script_actions,
+    rule_provider_input,
+    rule_stops_matching,
+)
+
+
+def _preview_ai_input(match: RuleMatch, original: str) -> dict[str, Any] | None:
+    """Describe a handoff without invoking the provider."""
+    if not match.rule["action"].get("continue_to_ai", False):
+        return None
+    capture = match.rule.get("ai_input_capture")
+    return {
+        "mode": match.rule.get("ai_input_mode", "original"),
+        "capture": capture,
+        "provider_input": rule_provider_input(match) or original,
+    }
 
 
 def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
@@ -92,6 +109,7 @@ async def async_request_rule_match_preview(
                         if handoff
                         else ("stopped" if stopped else "continued"),
                         "would_do": request_rule_match_preview(match)["would_do"],
+                        "ai_input": _preview_ai_input(match, text),
                     }
                 )
                 if stopped:
@@ -118,6 +136,7 @@ async def async_request_rule_match_preview(
                 if match.rule["action"].get("continue_to_ai", False)
                 else "stopped",
                 "would_do": summary["would_do"],
+                "ai_input": _preview_ai_input(match, text),
             }
         ]
         if match is not None

@@ -124,6 +124,7 @@ class CompiledSentencePattern:
     start_state: int
     capture_names: tuple[str, ...]
     required_fragments: tuple[str, ...]
+    required_capture_names: tuple[str, ...] = ()
 
     @property
     def state_count(self) -> int:
@@ -427,6 +428,7 @@ def compile_sentence_pattern(pattern: str) -> CompiledSentencePattern:
         required_fragments=tuple(
             sorted(_required_fragments(expression), key=len, reverse=True)
         ),
+        required_capture_names=tuple(sorted(_required_capture_names(expression))),
     )
 
 
@@ -737,6 +739,25 @@ def _required_fragments(expression: object) -> set[str]:
         common = _required_fragments(expression.items[0])
         for item in expression.items[1:]:
             common.intersection_update(_required_fragments(item))
+        return common
+    return set()
+
+
+def _required_capture_names(expression: object) -> set[str]:
+    """Captures present on every successful branch of a sentence pattern."""
+    if isinstance(expression, _Capture):
+        return {expression.name}
+    if isinstance(expression, _Optional):
+        return set()
+    if isinstance(expression, _Sequence):
+        result: set[str] = set()
+        for item in expression.items:
+            result.update(_required_capture_names(item))
+        return result
+    if isinstance(expression, _Alternative) and expression.items:
+        common = _required_capture_names(expression.items[0])
+        for item in expression.items[1:]:
+            common.intersection_update(_required_capture_names(item))
         return common
     return set()
 

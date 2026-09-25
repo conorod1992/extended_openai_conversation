@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from contextvars import ContextVar
+from dataclasses import replace
 from datetime import datetime, timedelta
 import json
 import logging
@@ -824,6 +825,15 @@ class ExtendedOpenAIAgentEntity(
                         resolution.claim_token,
                         source_device_id,
                         successful=evaluation.successful,
+                    )
+                if evaluation is not None and evaluation.provider_input is not None:
+                    current_user = chat_log.content[-1]
+                    if not isinstance(current_user, conversation.UserContent):
+                        raise HomeAssistantError(
+                            "Current request is unavailable for AI handoff"
+                        )
+                    chat_log.content[-1] = replace(
+                        current_user, content=evaluation.provider_input
                     )
                 request_options = (
                     self._request_rule_runtime.effective_options(
