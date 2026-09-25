@@ -31,6 +31,7 @@ You do **not** need to configure all of these features. For most users, the best
 ## Start here
 
 - [Installation](getting-started/installation.md)
+- [Get an OpenAI API key](getting-started/api-key.md)
 - [First setup](getting-started/setup.md)
 - [Configuration](configuration.md)
 - [Troubleshooting](troubleshooting.md)

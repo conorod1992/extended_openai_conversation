@@ -1,6 +1,10 @@
 # First setup
 
-After installing the integration, connect it to a Home Assistant Voice Assistant and expose the entities you want it to use.
+When you first add the integration, choose your provider. **OpenAI** is the normal choice for most users; choose **Azure OpenAI** only if you already use an Azure OpenAI resource.
+
+If you are using OpenAI and do not have an API key yet, see the [simple OpenAI API key guide](api-key.md). The normal OpenAI setup only needs your API key; leave advanced provider settings off unless you specifically use a custom endpoint.
+
+After the provider connection succeeds, connect the integration to a Home Assistant Voice Assistant and expose the entities you want it to use.
 
 ## Select the conversation agent
 

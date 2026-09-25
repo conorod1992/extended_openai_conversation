@@ -86,7 +86,30 @@ from .skills import SkillManager
 
 _LOGGER = logging.getLogger(__name__)
 
+_CONF_PROVIDER_ADVANCED = "advanced_provider_settings"
+
 STEP_USER_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_NAME, default="ChatGPT"): str,
+        vol.Required(CONF_API_PROVIDER, default=DEFAULT_API_PROVIDER): SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    SelectOptionDict(
+                        value=api_provider["key"], label=api_provider["label"]
+                    )
+                    for api_provider in API_PROVIDERS
+                ],
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        ),
+    },
+    # Older/in-progress flows can still submit the former one-step provider
+    # fields. ALLOW_EXTRA accepts those values without rendering them in the
+    # provider-first form.
+    extra=vol.ALLOW_EXTRA,
+)
+
+LEGACY_STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_NAME, default="ChatGPT"): str,
         vol.Required(CONF_API_KEY): str,
@@ -107,6 +130,31 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
                 mode=SelectSelectorMode.DROPDOWN,
             )
         ),
+    }
+)
+
+STEP_OPENAI_CREDENTIALS_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_API_KEY): str,
+        vol.Optional(_CONF_PROVIDER_ADVANCED, default=False): BooleanSelector(),
+    }
+)
+
+STEP_OPENAI_ADVANCED_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_BASE_URL, default=DEFAULT_CONF_BASE_URL): str,
+        vol.Optional(CONF_ORGANIZATION): str,
+        vol.Optional(
+            CONF_SKIP_AUTHENTICATION, default=DEFAULT_SKIP_AUTHENTICATION
+        ): BooleanSelector(),
+    }
+)
+
+STEP_AZURE_CREDENTIALS_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_API_KEY): str,
+        vol.Required(CONF_BASE_URL): str,
+        vol.Required(CONF_API_VERSION): str,
     }
 )
 
@@ -235,10 +283,7 @@ def _ai_task_display_reasoning_effort(
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
-    """Validate the user input allows us to connect.
-
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
-    """
+    """Validate a complete provider configuration before creating the entry."""
     api_key = data[CONF_API_KEY]
     base_url = data.get(CONF_BASE_URL)
     api_version = data.get(CONF_API_VERSION)
@@ -270,6 +315,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = CONFIG_ENTRY_VERSION
     _reauth_entry: ConfigEntry | None = None
+    _setup_data: dict[str, Any] | None = None
 
     @staticmethod
     @callback
@@ -280,16 +326,105 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the initial step."""
+        """Choose the provider before showing provider-specific credentials."""
         if user_input is None:
             return self.async_show_form(
                 step_id="user", data_schema=STEP_USER_DATA_SCHEMA
             )
 
-        errors = {}
+        # Keep accepting the old one-step payload for in-progress/restored flows and
+        # callers that still submit credentials directly.
+        if CONF_API_KEY in user_input:
+            legacy_data = dict(LEGACY_STEP_USER_DATA_SCHEMA(dict(user_input)))
+            return (
+                await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
+                    self, legacy_data, "user", STEP_USER_DATA_SCHEMA
+                )
+            )
 
+        self._setup_data = dict(user_input)
+        if user_input.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER) == "azure":
+            return await self.async_step_azure_credentials()
+        return await self.async_step_openai_credentials()
+
+    async def async_step_openai_credentials(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Collect the only credential most OpenAI users need."""
+        if self._setup_data is None:
+            return await self.async_step_user()
+
+        if user_input is None:
+            return self.async_show_form(
+                step_id="openai_credentials",
+                data_schema=STEP_OPENAI_CREDENTIALS_SCHEMA,
+                description_placeholders={
+                    "api_key_guide_url": "https://conorod1992.github.io/extended_openai_conversation/getting-started/api-key/",
+                    "openai_api_keys_url": "https://platform.openai.com/api-keys",
+                },
+            )
+
+        submitted = dict(user_input)
+        show_advanced = bool(submitted.pop(_CONF_PROVIDER_ADVANCED, False))
+        self._setup_data = {**self._setup_data, **submitted}
+        if show_advanced:
+            return await self.async_step_openai_advanced()
+        return await self._async_finish_initial_setup(
+            dict(self._setup_data),
+            "openai_credentials",
+            STEP_OPENAI_CREDENTIALS_SCHEMA,
+        )
+
+    async def async_step_openai_advanced(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Collect optional OpenAI-compatible endpoint settings."""
+        if self._setup_data is None:
+            return await self.async_step_user()
+
+        if user_input is None:
+            return self.async_show_form(
+                step_id="openai_advanced",
+                data_schema=STEP_OPENAI_ADVANCED_SCHEMA,
+            )
+
+        data = {**self._setup_data, **user_input}
+        return await self._async_finish_initial_setup(
+            data,
+            "openai_advanced",
+            STEP_OPENAI_ADVANCED_SCHEMA,
+        )
+
+    async def async_step_azure_credentials(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Collect Azure-specific endpoint credentials."""
+        if self._setup_data is None:
+            return await self.async_step_user()
+
+        if user_input is None:
+            return self.async_show_form(
+                step_id="azure_credentials",
+                data_schema=STEP_AZURE_CREDENTIALS_SCHEMA,
+            )
+
+        data = {**self._setup_data, **user_input}
+        return await self._async_finish_initial_setup(
+            data,
+            "azure_credentials",
+            STEP_AZURE_CREDENTIALS_SCHEMA,
+        )
+
+    async def _async_finish_initial_setup(
+        self,
+        data: dict[str, Any],
+        step_id: str,
+        data_schema: vol.Schema,
+    ) -> ConfigFlowResult:
+        """Validate provider settings and create the parent plus default agents."""
+        errors: dict[str, str] = {}
         try:
-            await validate_input(self.hass, user_input)
+            await validate_input(self.hass, data)
         except OpenAIError as err:
             log_provider_failure(_LOGGER, "Provider validation failed", err)
             errors["base"] = classify_config_provider_error(err)
@@ -298,8 +433,8 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             errors["base"] = "unknown"
         else:
             return self.async_create_entry(
-                title=user_input.get(CONF_NAME, DEFAULT_NAME),
-                data=user_input,
+                title=data.get(CONF_NAME, DEFAULT_NAME),
+                data=data,
                 subentries=[
                     {
                         "subentry_type": "conversation",
@@ -317,7 +452,9 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             )
 
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            step_id=step_id,
+            data_schema=data_schema,
+            errors=errors,
         )
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:

@@ -2,14 +2,15 @@
   "config": {
     "step": {
       "user": {
+        "title": "Connect a provider",
+        "description": "Choose where Extended OpenAI should send AI requests. **OpenAI** is the right choice for most people. Choose **Azure OpenAI** only if you already use an Azure OpenAI resource.",
         "data": {
-          "name": "[%key:common::config_flow::data::name%]",
-          "api_key": "[%key:common::config_flow::data::api_key%]",
-          "base_url": "[%key:common::config_flow::data::base_url%]",
-          "api_version": "[%key:common::config_flow::data::api_version%]",
-          "organization": "[%key:common::config_flow::data::organization%]",
-          "skip_authentication": "[%key:common::config_flow::data::skip_authentication%]",
-          "api_provider": "[%key:common::config_flow::data::api_provider%]"
+          "name": "Name",
+          "api_provider": "API provider"
+        },
+        "data_description": {
+          "name": "A friendly name for this provider connection.",
+          "api_provider": "OpenAI is recommended for normal personal setups. Azure OpenAI uses your own Azure resource."
         }
       },
       "reauth_confirm": {
@@ -17,6 +18,46 @@
         "description": "Enter a valid API key. Existing provider and endpoint settings will be preserved.",
         "data": {
           "api_key": "[%key:common::config_flow::data::api_key%]"
+        }
+      },
+      "openai_credentials": {
+        "title": "Connect OpenAI",
+        "description": "Paste your OpenAI API key below. If you do not have one yet, follow the [simple API key guide]({api_key_guide_url}) or go straight to [OpenAI API keys]({openai_api_keys_url}). API usage is billed separately from ChatGPT subscriptions.",
+        "data": {
+          "api_key": "OpenAI API key",
+          "advanced_provider_settings": "Show advanced provider settings"
+        },
+        "data_description": {
+          "api_key": "Your secret OpenAI API key. This is not your ChatGPT password.",
+          "advanced_provider_settings": "Leave this off for a normal OpenAI setup."
+        }
+      },
+      "openai_advanced": {
+        "title": "Advanced provider settings",
+        "description": "Most OpenAI users do not need to change anything here. Leave the Base URL unchanged and Organization blank unless you know your provider requires different settings.",
+        "data": {
+          "base_url": "Base URL",
+          "organization": "Organization",
+          "skip_authentication": "Skip authentication"
+        },
+        "data_description": {
+          "base_url": "Leave this unchanged for OpenAI. Change it only for a compatible custom endpoint.",
+          "organization": "Optional. Most users should leave this blank.",
+          "skip_authentication": "Leave this off for OpenAI. Use it only for a compatible endpoint that does not require authentication."
+        }
+      },
+      "azure_credentials": {
+        "title": "Connect Azure OpenAI",
+        "description": "Enter the details for your existing Azure OpenAI resource. Azure uses its own endpoint and API version, so these are required here.",
+        "data": {
+          "api_key": "Azure OpenAI API key",
+          "base_url": "Azure OpenAI endpoint",
+          "api_version": "API version"
+        },
+        "data_description": {
+          "api_key": "The API key for your Azure OpenAI resource.",
+          "base_url": "Your Azure OpenAI resource endpoint, as shown in your Azure resource.",
+          "api_version": "The Azure OpenAI API version configured for your resource."
         }
       }
     },
@@ -94,8 +135,8 @@
             "top_p": "Top P",
             "reasoning_effort": "Reasoning effort",
             "service_tier": "Service tier",
-            "shorten_tool_call_id": "Shorten tool call IDs"
-            ,"memory_auto_retrieve_limit": "Automatically include memories",
+            "shorten_tool_call_id": "Shorten tool call IDs",
+            "memory_auto_retrieve_limit": "Automatically include memories",
             "memory_retrieval_mode": "Memory retrieval",
             "memory_embedding_model": "Embedding model"
           },
@@ -120,7 +161,7 @@
       "step": {
         "init": {
           "data": {
-            "name": "[%key:common::config_flow::data::name%]",
+            "name": "Agent name",
             "chat_model": "Model",
             "api_mode": "API mode",
             "max_tokens": "Maximum tokens to return in response",
@@ -161,15 +202,27 @@
           "manage_knowledge": "Open the per-agent Knowledge Library management panel."
         }
       },
-      "test_agent": {"data": {"agent_id": "Conversation agent"}},
-      "test_result": {"data": {"report": "Test result"}},
+      "test_agent": {
+        "data": {
+          "agent_id": "Conversation agent"
+        }
+      },
+      "test_result": {
+        "data": {
+          "report": "Test result"
+        }
+      },
       "manage_knowledge": {
         "description": "Open this path from the Home Assistant sidebar or browser to manage Knowledge sources.",
-        "data": {"panel_path": "Knowledge Library panel path"}
+        "data": {
+          "panel_path": "Knowledge Library panel path"
+        }
       },
       "manage_memory": {
         "description": "Open this path from the Home Assistant sidebar or browser to manage memories.",
-        "data": {"panel_path": "Memory panel path"}
+        "data": {
+          "panel_path": "Memory panel path"
+        }
       }
     }
   },
@@ -196,22 +249,46 @@
       }
     },
     "voice_scope_policy": {
-      "options": {"unretained": "Do not retain", "shared": "Shared household", "default_user": "Selected user", "device_mapping": "Per satellite mapping"}
+      "options": {
+        "unretained": "Do not retain",
+        "shared": "Shared household",
+        "default_user": "Selected user",
+        "device_mapping": "Per satellite mapping"
+      }
     },
     "voice_unmapped_policy": {
-      "options": {"unretained": "Do not retain", "shared": "Shared household", "default_user": "Selected user", "device_mapping": "Per satellite mapping"}
+      "options": {
+        "unretained": "Do not retain",
+        "shared": "Shared household",
+        "default_user": "Selected user",
+        "device_mapping": "Per satellite mapping"
+      }
     },
     "shared_memory_mode": {
-      "options": {"disabled": "Disabled", "explicit": "Explicit only", "automatic": "Automatic"}
+      "options": {
+        "disabled": "Disabled",
+        "explicit": "Explicit only",
+        "automatic": "Automatic"
+      }
     }
   },
   "entity": {
     "sensor": {
-      "usage": {"name": "Lifetime usage"},
-      "usage_today": {"name": "Usage today"},
-      "usage_month": {"name": "Usage this month"},
-      "last_response_usage": {"name": "Last response usage"},
-      "guest_mode": {"name": "Guest Mode"}
+      "usage": {
+        "name": "Lifetime usage"
+      },
+      "usage_today": {
+        "name": "Usage today"
+      },
+      "usage_month": {
+        "name": "Usage this month"
+      },
+      "last_response_usage": {
+        "name": "Last response usage"
+      },
+      "guest_mode": {
+        "name": "Guest Mode"
+      }
     }
   },
   "services": {
@@ -252,12 +329,30 @@
       "name": "Process request directly",
       "description": "Sends text through the normal Extended OpenAI processing pipeline without re-entering Home Assistant conversation routing.",
       "fields": {
-        "text": {"name": "Text", "description": "The request to process."},
-        "agent_id": {"name": "Conversation agent", "description": "Optional when only one Extended OpenAI conversation agent is available."},
-        "conversation_id": {"name": "Conversation ID", "description": "Optional existing conversation to continue."},
-        "device_id": {"name": "Device ID", "description": "Optional source device context."},
-        "satellite_id": {"name": "Satellite ID", "description": "Optional Assist satellite context."},
-        "language": {"name": "Language", "description": "Optional language code."}
+        "text": {
+          "name": "Text",
+          "description": "The request to process."
+        },
+        "agent_id": {
+          "name": "Conversation agent",
+          "description": "Optional when only one Extended OpenAI conversation agent is available."
+        },
+        "conversation_id": {
+          "name": "Conversation ID",
+          "description": "Optional existing conversation to continue."
+        },
+        "device_id": {
+          "name": "Device ID",
+          "description": "Optional source device context."
+        },
+        "satellite_id": {
+          "name": "Satellite ID",
+          "description": "Optional Assist satellite context."
+        },
+        "language": {
+          "name": "Language",
+          "description": "Optional language code."
+        }
       }
     },
     "change_config": {
