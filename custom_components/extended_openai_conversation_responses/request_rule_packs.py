@@ -11,11 +11,9 @@ from uuid import uuid4
 from .request_rules import (
     MAX_RULES,
     RequestRules,
-    _basic_normalize,
     _validate_total_pattern_states,
     validate_rule,
     validate_rule_groups,
-    validate_wording_groups,
 )
 
 PACK_FORMAT = "extended_openai_request_rule_pack"
@@ -57,20 +55,12 @@ def export_rule_pack(
     selected_groups = {rule["group_id"] for rule in selected if rule["group_id"]}
     groups = [g for g in snapshot["groups"] if g["id"] in selected_groups]
     portable_rules = []
-    wording_phrases: list[str] = []
     for order, rule in enumerate(selected):
         matching = (
             snapshot["defaults"]
             if rule["matching_behavior"] == "defaults"
             else rule["matching"]
         )
-        if (
-            matching["wording_alternatives"]
-            and rule["match_type"] != "sentence_pattern"
-        ):
-            wording_phrases.extend(
-                _basic_normalize(phrase) for phrase in rule["phrases"]
-            )
         portable_rules.append(
             {
                 key: deepcopy(value)
@@ -83,20 +73,10 @@ def export_rule_pack(
                 "order": order,
             }
         )
-    required_wording = [
-        group
-        for group in snapshot["wording_groups"]
-        if any(
-            f" {_basic_normalize(term)} " in f" {phrase} "
-            for phrase in wording_phrases
-            for term in [group["canonical"], *group["alternatives"]]
-        )
-    ]
     pack = {
         "format": PACK_FORMAT,
         "version": PACK_VERSION,
         "groups": deepcopy(groups),
-        "wording_groups": deepcopy(required_wording),
         "rules": portable_rules,
     }
     if not portable_rules:
@@ -124,7 +104,7 @@ def validate_rule_pack(value: Any) -> dict[str, Any]:
             raise ValueError("Rule pack is not valid JSON") from err
     if not isinstance(value, Mapping):
         raise ValueError("Rule pack must be an object")
-    if set(value) != {"format", "version", "groups", "wording_groups", "rules"}:
+    if set(value) != {"format", "version", "groups", "rules"}:
         raise ValueError("Rule pack has missing or unknown fields")
     try:
         size = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
@@ -136,7 +116,6 @@ def validate_rule_pack(value: Any) -> dict[str, Any]:
         raise ValueError("Unrecognized Request Rule pack format")
     migrated = _migrate_pack(value)
     groups = validate_rule_groups(migrated["groups"])
-    wording_groups = validate_wording_groups(migrated["wording_groups"])
     raw_rules = migrated["rules"]
     if not isinstance(raw_rules, list) or not raw_rules or len(raw_rules) > MAX_RULES:
         raise ValueError("Rule pack must contain 1 to 500 rules")
@@ -181,7 +160,6 @@ def validate_rule_pack(value: Any) -> dict[str, Any]:
     _validate_total_pattern_states(rules)
     return {
         "groups": groups,
-        "wording_groups": wording_groups,
         "rules": sorted(rules, key=lambda rule: rule["order"]),
     }
 
@@ -208,11 +186,6 @@ async def async_append_rule_pack(
                 incoming_groups.append({"id": assigned, "name": group["name"]})
                 current_names[group["name"].casefold()] = assigned
         merged_groups = validate_rule_groups([*manager._groups, *incoming_groups])
-        current_wording = deepcopy(manager._wording_groups)
-        for group in prepared["wording_groups"]:
-            if group not in current_wording:
-                current_wording.append(group)
-        merged_wording = validate_wording_groups(current_wording)
         new_rules = []
         for index, source in enumerate(incoming):
             candidate = {
@@ -225,13 +198,11 @@ async def async_append_rule_pack(
             new_rules.append(validate_rule(candidate))
         _validate_total_pattern_states([*manager._rules, *new_rules])
         manager._groups = merged_groups
-        manager._wording_groups = merged_wording
         manager._rules.extend(new_rules)
         manager._sort_and_compile()
         await manager._async_save_locked()
         return {
             "rules": deepcopy(new_rules),
             "groups": deepcopy(merged_groups),
-            "wording_groups": deepcopy(merged_wording),
             "revision": manager.revision(),
         }
