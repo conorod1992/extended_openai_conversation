@@ -52,13 +52,15 @@ def _runtime_configured_function_tools(data: Any) -> list[dict[str, Any]]:
         detail = issue or str(err) or type(err).__name__
         if quarantine_all:
             _LOGGER.warning(
-                "Quarantining all persisted Function Tools from this runtime request: %s",
+                "All configured Function Tools are invalid and were disabled for this "
+                "request. Open Extended OpenAI > Functions to repair or remove the "
+                "invalid configuration. Reason: %s",
                 detail,
             )
         else:
             _LOGGER.warning(
-                "Quarantining invalid persisted Function Tools from this runtime request "
-                "(%s): %s",
+                "Invalid Function Tool(s) %s were disabled for this request. Open "
+                "Extended OpenAI > Functions to repair or remove them. Reason: %s",
                 ", ".join(sorted(quarantined_names)) or "unnamed tool",
                 detail,
             )
