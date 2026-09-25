@@ -139,11 +139,13 @@ export function createBackupTransferBackend(backend) {
     if (action === "import_inspect") {
       const session = imports.get(data.session_id);
       if (!session || session.received !== session.size) throw new Error("Incomplete browser fixture import");
-      return inspection(importDocument(session));
+      session.previewToken = sessionId("preview");
+      return {...inspection(importDocument(session)), preview_token: session.previewToken};
     }
     if (action === "import_restore") {
       const session = imports.get(data.session_id);
       if (!session || session.received !== session.size) throw new Error("Incomplete browser fixture import");
+      if (!data.preview_token || data.preview_token !== session.previewToken) throw new Error("Stale browser fixture preview");
       await restore(importDocument(session), data.sections);
       imports.delete(data.session_id);
       return {restored: true};

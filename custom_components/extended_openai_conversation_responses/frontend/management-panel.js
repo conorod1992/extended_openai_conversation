@@ -1999,7 +1999,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const owner = this._retainedMutationOwner();
     this._setSaving(button, true);
     try {
-      const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id } : {}), ...values });
+      const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
       if (!this._ownsRetainedMutation(owner)) return;
       if (!getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source response was incomplete.");
       this.shadowRoot.querySelector("#knowledge-dialog").close();

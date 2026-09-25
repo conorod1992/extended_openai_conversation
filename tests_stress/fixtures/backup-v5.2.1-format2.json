@@ -1,0 +1,78 @@
+{
+  "format": "extended_openai_conversation_backup",
+  "version": 2,
+  "created_at": "2026-08-01T12:00:00+00:00",
+  "integration_version": "5.2.1",
+  "agent": {
+    "title": "Historical Guest schedule agent",
+    "source_entry_id": "historical-entry",
+    "source_subentry_id": "historical-agent",
+    "config": {
+      "chat_model": "gpt-5-mini",
+      "prompt": "Historical Guest schedule assistant.",
+      "memory_mode": "manual",
+      "knowledge_enabled": true,
+      "guest_mode_enabled": true
+    }
+  },
+  "memories": {
+    "memories": [
+      {
+        "memory_id": "historical-memory-1",
+        "user_id": "historical-owner",
+        "content": "The patio lights use the evening scene.",
+        "category": "home",
+        "source": "explicit",
+        "created_at": "2026-08-01T12:00:00+00:00",
+        "updated_at": "2026-08-01T12:00:00+00:00"
+      }
+    ]
+  },
+  "temporary_memories": {
+    "records": []
+  },
+  "knowledge": {
+    "sources": [
+      {
+        "source_id": "historical-source-1",
+        "title": "House guide",
+        "description": "Local reference",
+        "content": "The patio switch is beside the back door.",
+        "created_at": "2026-08-01T12:00:00+00:00",
+        "updated_at": "2026-08-01T12:00:00+00:00"
+      }
+    ]
+  },
+  "archive": {
+    "sessions": [],
+    "turns": []
+  },
+  "usage": {
+    "totals": {
+      "conversation_count": 4,
+      "api_request_count": 5,
+      "successful_request_count": 4,
+      "failed_request_count": 1,
+      "input_tokens": 100,
+      "output_tokens": 20,
+      "total_tokens": 120,
+      "cached_input_tokens": 30,
+      "reasoning_tokens": 7,
+      "details": {
+        "input_cached_tokens": 30,
+        "output_reasoning_tokens": 7
+      }
+    },
+    "daily": {},
+    "requests": [],
+    "runs": []
+  },
+  "guest_mode": {
+    "schedule": {
+      "active_from": "2026-01-01T00:00:00+00:00",
+      "active_until": null,
+      "source": "home_assistant",
+      "updated_at": null
+    }
+  }
+}

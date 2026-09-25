@@ -7,11 +7,11 @@ import hashlib
 from typing import Any
 
 import pytest
-
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_API_KEY
-from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import CLIENT_ID, MockConfigEntry, MockUser
+from pytest_homeassistant_custom_component.common import (
+    CLIENT_ID,
+    MockConfigEntry,
+    MockUser,
+)
 
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_snapshot,
@@ -27,10 +27,15 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
     MEMORY_MODE_MANUAL,
 )
-from custom_components.extended_openai_conversation_responses.memory import async_get_memory
+from custom_components.extended_openai_conversation_responses.memory import (
+    async_get_memory,
+)
 from custom_components.extended_openai_conversation_responses.transfer import (
     SECTION_PERSISTENT_MEMORY,
 )
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import CONF_API_KEY
+from homeassistant.core import HomeAssistant
 
 
 def _entry() -> MockConfigEntry:
@@ -210,9 +215,7 @@ async def test_full_backup_round_trip_through_registered_websocket(
     )
     original_id = created["memory"]["memory_id"]
 
-    archive, metadata = await _download_archive(
-        admin_client, entry=entry, mode="full"
-    )
+    archive, metadata = await _download_archive(admin_client, entry=entry, mode="full")
     assert metadata["mode"] == "full"
     assert metadata["content_type"] == "application/zip"
     assert metadata["filename"].endswith(".zip")
@@ -251,13 +254,16 @@ async def test_full_backup_round_trip_through_registered_websocket(
         admin_client,
         entry=entry,
         action="import_restore",
-        data={"session_id": import_session},
+        data={
+            "session_id": import_session,
+            "preview_token": inspection["preview_token"],
+        },
     )
     assert restored["success"], restored
     assert restored["result"]["status"] == "restored"
-    assert SECTION_PERSISTENT_MEMORY in restored["result"]["transfer"][
-        "selected_sections"
-    ]
+    assert (
+        SECTION_PERSISTENT_MEMORY in restored["result"]["transfer"]["selected_sections"]
+    )
 
     memories = await memory.async_list(owner)
     assert [(item.memory_id, item.content) for item in memories] == [
@@ -286,9 +292,7 @@ async def test_backup_transfer_rejects_non_admin_through_registered_websocket(
     await _setup_entry(hass, entry)
 
     normal_user = MockUser(id="backup-normal", name="Backup Normal User")
-    normal_client = await hass_ws_client(
-        hass, await _user_token(hass, normal_user)
-    )
+    normal_client = await hass_ws_client(hass, await _user_token(hass, normal_user))
     denied = await _transfer_call(
         normal_client,
         entry=entry,
@@ -319,7 +323,9 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
     )
     original_id = original["memory"]["memory_id"]
 
-    admin = MockUser(id="custom-backup-admin", name="Custom Backup Admin", is_owner=True)
+    admin = MockUser(
+        id="custom-backup-admin", name="Custom Backup Admin", is_owner=True
+    )
     admin_client = await hass_ws_client(hass, await _user_token(hass, admin))
     archive, metadata = await _download_archive(
         admin_client,
@@ -354,16 +360,17 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
         inspection = inspected["result"]
         assert inspection["source_kind"] == "custom_backup"
         assert inspection["available_sections"] == [SECTION_PERSISTENT_MEMORY]
-        assert inspection["preview"]["selected_sections"] == [
-            SECTION_PERSISTENT_MEMORY
-        ]
+        assert inspection["preview"]["selected_sections"] == [SECTION_PERSISTENT_MEMORY]
         assert inspection["can_create_new_agent"] is False
 
         restored = await _transfer_call(
             admin_client,
             entry=entry,
             action="import_restore",
-            data={"session_id": import_session},
+            data={
+                "session_id": import_session,
+                "preview_token": inspection["preview_token"],
+            },
         )
         assert restored["success"], restored
         assert restored["result"]["transfer"]["selected_sections"] == [

@@ -251,6 +251,7 @@ function invalidateImportPreview(panel) {
   work.timer = null;
   work.latest = null;
   panel._backupTransferPreview = null;
+  panel._backupTransferPreviewToken = null;
   const apply = panel.shadowRoot?.querySelector(`#${APPLY_ID}`);
   if (apply) apply.disabled = true;
   return panel._transferPreviewToken = (panel._transferPreviewToken || 0) + 1;
@@ -270,6 +271,7 @@ function sendLatestImportPreview(panel) {
       const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.sessionId, sections: request.sections});
       if (panel._transferPreviewToken !== request.token || panel._backupTransferSession !== request.sessionId) return;
       panel._backupTransferPreview = result.preview;
+      panel._backupTransferPreviewToken = result.preview_token;
       updateSensitiveStatus(panel, result.preview);
       if (apply) apply.disabled = false;
     } catch (err) {
@@ -363,6 +365,7 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
       panel._backupTransferSession = result.session_id;
       panel._backupTransferInspection = result;
       panel._backupTransferPreview = result.preview;
+      panel._backupTransferPreviewToken = result.preview_token;
       root.querySelector("#restore-backup-name").textContent = result.title;
       const created = result.summary?.created_at ? new Date(result.summary.created_at).toLocaleString() : "legacy export";
       const version = result.summary?.integration_version ? ` · integration ${result.summary.integration_version}` : "";
@@ -378,6 +381,7 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
       panel._backupTransferSession = null;
       panel._backupTransferInspection = null;
       panel._backupTransferPreview = null;
+      panel._backupTransferPreviewToken = null;
       apply.disabled = true;
       panel._toast(err.message || String(err), true);
     }
@@ -397,6 +401,8 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
     if (!sections.length) return;
     const labels = sections.map((key) => SECTION_LABELS[key] || key).join(", ");
     const previewToken = panel._transferPreviewToken;
+    const serverPreviewToken = panel._backupTransferPreviewToken;
+    if (!serverPreviewToken) return;
     if (typeof panel._confirm === "function") {
       const confirmed = await panel._confirm(
         "Restore selected sections?",
@@ -409,10 +415,11 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
     const button = root.querySelector(`#${APPLY_ID}`);
     panel._setSaving(button, true);
     try {
-      await callBackupTransfer(panel, "import_restore", {session_id: sessionId, sections});
+      await callBackupTransfer(panel, "import_restore", {session_id: sessionId, sections, preview_token: serverPreviewToken});
       panel._backupTransferSession = null;
       panel._backupTransferInspection = null;
       panel._backupTransferPreview = null;
+      panel._backupTransferPreviewToken = null;
       root.querySelector("#restore-dialog").close();
       panel._clearConfigDraft();
       await panel._loadAgents(panel._agentId);

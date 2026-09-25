@@ -295,11 +295,19 @@ class KnowledgeLibrary:
         description: str | None = None,
         content: str | None = None,
         enabled: bool | None = None,
+        expected_revision: str | None = None,
     ) -> KnowledgeSource:
         """Update and immediately re-index one source."""
         async with self._lock:
             self._ensure_initialized()
             current = self._source(source_id)
+            if (
+                expected_revision is not None
+                and expected_revision != current.updated_at
+            ):
+                raise ValueError(
+                    "Knowledge source changed in another tab. Reload before saving."
+                )
             new_title, new_description, new_content = _validated_fields(
                 current.title if title is None else title,
                 current.description if description is None else description,

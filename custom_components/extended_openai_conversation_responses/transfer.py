@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 import json
@@ -926,6 +926,7 @@ async def async_materialize_restore(
     imported: PreparedTransfer | Any,
     *,
     sections: Iterable[str] | None = None,
+    current_snapshot: backup.PreparedRestore | None = None,
 ) -> tuple[backup.PreparedRestore, dict[str, Any]]:
     """Build and validate a complete restore target from a selective transfer."""
     prepared = inspect_transfer(imported, subentry.subentry_id)
@@ -934,7 +935,11 @@ async def async_materialize_restore(
         allowed=prepared.available_sections,
         default=prepared.available_sections,
     )
-    current = await _current_snapshot(hass, entry, subentry)
+    current = (
+        current_snapshot
+        if current_snapshot is not None
+        else await _current_snapshot(hass, entry, subentry)
+    )
     target, preserved, missing = _prepared_restore_from_selection(
         current, prepared, selected
     )
@@ -968,6 +973,7 @@ async def async_restore_transfer(
     imported: PreparedTransfer | Any,
     *,
     sections: Iterable[str] | None = None,
+    precondition: Callable[[], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Preserve unselected state and commit under one shielded exclusive lease."""
     from .agent_maintenance import (
@@ -977,6 +983,8 @@ async def async_restore_transfer(
     from .restore_recovery import async_restore_backup_recoverably
 
     async def restore_exclusively_owned() -> dict[str, Any]:
+        if precondition is not None:
+            await precondition()
         target, preview = await async_materialize_restore(
             hass, entry, subentry, imported, sections=sections
         )
