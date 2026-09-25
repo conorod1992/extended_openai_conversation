@@ -284,7 +284,7 @@ async def test_config_flow_success_errors_reauth_and_type_registration() -> None
         created = await ExtendedOpenAIConversationConfigFlow.async_step_user(
             flow, {CONF_API_KEY: "sk-default-title"}
         )
-    assert created["title"] == DEFAULT_NAME
+    assert created["title"] == "ChatGPT"
 
     with patch.object(
         config_flow,
