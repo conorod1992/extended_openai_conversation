@@ -1,6 +1,8 @@
 name: Enhanced nightly acceptance and stress
 
 on:
+  push:
+    branches: [codex/enhanced-nightly-acceptance] # Temporary validation trigger.
   schedule:
     - cron: "15 3 * * *"
   workflow_dispatch:
@@ -137,7 +139,7 @@ jobs:
 
   browser:
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
+    if: github.event_name == 'schedule' || github.event_name == 'push' || inputs.campaign == 'all' || inputs.campaign == 'browser'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -150,6 +152,7 @@ jobs:
       run:
         shell: bash
     env:
+      PYTHONPATH: ${{ github.workspace }}
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
       STRESS_INTENSITY: ${{ needs.prepare.outputs.intensity }}
       STRESS_CAMPAIGN: browser
@@ -161,8 +164,22 @@ jobs:
           ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
       - name: Install local Playwright runner
         run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+      - name: Reconcile current Home Assistant requirements
+        run: |
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+            pip install -r requirements_test.txt
+            pip install --upgrade homeassistant
+            python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
       - name: Run long-lived browser campaign
         run: npx playwright test --config=playwright.stress.config.mjs
+      - name: Run two tabs against one genuine HA backend
+        run: >-
+          pytest tests_stress/test_browser_multi_tab.py -v -s
+          --asyncio-mode=auto --timeout=240
+          --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
       - name: Summarize exercised transitions
         if: always()
         run: python ci/enhanced_summary.py stress-artifacts
