@@ -35,11 +35,11 @@ from custom_components.extended_openai_conversation_responses.const import (
     DEFAULT_AI_TASK_NAME,
     DEFAULT_AI_TASK_OPTIONS,
     DEFAULT_API_MODE,
+    DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONF_BASE_URL,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_NAME,
-    DEFAULT_API_PROVIDER,
 )
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY, CONF_NAME
