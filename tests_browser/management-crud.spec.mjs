@@ -94,7 +94,7 @@ test("Rule Sharing reviews before importing disabled rules at the bottom", async
   await expect(panel.locator("#rule-pack-file")).toHaveCount(0);
   await sharing.locator("summary").click();
   await expect(panel.locator("#rule-pack-file")).toBeVisible();
-  const pack={format:"extended_openai_request_rule_pack",version:1,groups:[],wording_groups:[],rules:[{
+  const pack={format:"extended_openai_request_rule_pack",version:1,groups:[],rules:[{
     id:"portable-rule",name:"Shared route",enabled:true,phrases:["shared route"],match_type:"equals",action_type:"model_routing",
     action:{model:"gpt-5-mini",reasoning_effort:"",scope:"request",reset:false,continue_to_ai:true,success_response:"Updated"},
     matching_behavior:"custom",matching:{word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90},order:0,
