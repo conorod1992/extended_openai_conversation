@@ -13,14 +13,9 @@ from custom_components.extended_openai_conversation_responses import (
     backup,
 )
 from custom_components.extended_openai_conversation_responses.const import (
-    CONF_CHAT_MODEL,
-    CONF_KNOWLEDGE_ENABLED,
-    CONF_MEMORY_MODE,
-    CONF_PROMPT,
     CONF_SKIP_AUTHENTICATION,
     CONFIG_ENTRY_VERSION,
     DOMAIN,
-    MEMORY_MODE_MANUAL,
 )
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     async_get_archive,
@@ -47,9 +42,11 @@ from custom_components.extended_openai_conversation_responses.usage import (
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
+from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
 from tests_stress.conftest import record
+from tests_stress.maximal_agent_fixture import FIXTURE_EXCEPTIONS, maximal_agent_options
 from tests_stress.test_backup_inventory import BACKED_UP_SUBSYSTEMS
 
 PHASES = (
@@ -66,8 +63,10 @@ PHASES = (
 @pytest.mark.asyncio
 async def test_populated_export_mutate_restore_is_semantically_equal(
     hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
     stress_trace: list[dict],
 ) -> None:
+    maximal = maximal_agent_options()
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Round trip",
@@ -75,31 +74,7 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
         version=CONFIG_ENTRY_VERSION,
         subentries_data=[
             {
-                "data": {
-                    CONF_CHAT_MODEL: "gpt-5.6",
-                    CONF_PROMPT: "Answer in English and preserve café 🎯.",
-                    CONF_KNOWLEDGE_ENABLED: True,
-                    CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
-                    "api_mode": "chat_completions",
-                    "max_tokens": 900,
-                    "reasoning_effort": "medium",
-                    "temperature": 0.3,
-                    "top_p": 0.8,
-                    "current_datetime_enabled": False,
-                    "exposed_entities_enabled": False,
-                    "context_threshold": 28000,
-                    "conversation_timeout_minutes": 60,
-                    "archive_enabled": True,
-                    "archive_retention_days": 7,
-                    "web_search": True,
-                    "temporary_memory": "balanced",
-                    "guest_knowledge_policy": "off",
-                    "guest_excluded_domains": ["lock"],
-                    "usage_request_retention_days": 7,
-                    "speech_processing_enabled": True,
-                    "speech_strip_markdown": False,
-                    "function_tool_error_recovery": True,
-                },
+                "data": maximal,
                 "subentry_type": "conversation",
                 "title": "Archive 🎯 agent",
                 "unique_id": None,
@@ -161,7 +136,9 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     nondefault_config_fields = sum(
         value != defaults.get(key) for key, value in target["agent"]["config"].items()
     )
-    assert nondefault_config_fields >= 15
+    assert nondefault_config_fields == len(agent_config.AGENT_CONFIG_FIELDS) - len(
+        FIXTURE_EXCEPTIONS
+    )
     assert (
         set(target) - {"format", "version", "created_at", "integration_version"}
         == BACKED_UP_SUBSYSTEMS
@@ -203,7 +180,32 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     assert semantic(
         await backup.async_collect_backup_snapshot(hass, entry, subentry)
     ) == semantic(target)
-    record(stress_trace, "summary", restore_round_trips=1, reloads=1)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert agent is not None
+    wire = _install_wire(monkeypatch, agent, [_chat_sse_text("Backup marker restored")])
+    result = await conversation.async_converse(
+        hass=hass,
+        text="Confirm backup marker",
+        conversation_id=None,
+        context=Context(),
+        language="en",
+        agent_id=entry.entry_id,
+    )
+    assert _speech(result) == "Backup marker restored"
+    assert len(wire.requests) == 1
+    request = wire.requests[0]["body"]
+    assert "Preserve café 🎯" in str(request)
+    assert "load_function_groups" in str(request)
+    record(
+        stress_trace,
+        "summary",
+        layer="provider-wire",
+        restore_round_trips=1,
+        reloads=1,
+        nondefault_config_fields=nondefault_config_fields,
+        public_turns=1,
+        provider_requests=1,
+    )
 
 
 def semantic(snapshot: dict) -> dict:
