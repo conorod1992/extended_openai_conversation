@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "services": {
+    "broadcast": [
+      "tests_real_ha/test_intercom_voice_acceptance.py"
+    ],
+    "call_function": [
+      "tests_real_ha/test_service_handler_contracts.py",
+      "tests/test_function_tool_services.py"
+    ],
+    "change_config": [
+      "tests_real_ha/test_service_handler_contracts.py",
+      "tests/test_function_tool_services.py"
+    ],
+    "disable_function_groups": [
+      "tests_real_ha/test_service_handler_contracts.py",
+      "tests/test_function_tool_services.py"
+    ],
+    "disable_function_tools": [
+      "tests_real_ha/test_service_handler_contracts.py",
+      "tests/test_function_tool_services.py"
+    ],
+    "disable_quiet_hours": [
+      "tests_real_ha/test_quiet_hours_acceptance.py"
+    ],
+    "download_skill": [
+      "tests/test_skills_coverage.py"
+    ],
+    "enable_function_groups": [
+      "tests_real_ha/test_service_handler_contracts.py",
+      "tests/test_function_tool_services.py"
+    ],
+    "enable_function_tools": [
+      "tests_real_ha/test_service_handler_contracts.py",
+      "tests/test_function_tool_services.py"
+    ],
+    "enable_quiet_hours": [
+      "tests_real_ha/test_quiet_hours_acceptance.py"
+    ],
+    "guest_mode_disable": [
+      "tests/test_guest_mode.py"
+    ],
+    "guest_mode_update": [
+      "tests/test_guest_mode.py"
+    ],
+    "memory_clear": [
+      "tests_real_ha/test_service_handler_contracts.py"
+    ],
+    "memory_delete": [
+      "tests_real_ha/test_service_handler_contracts.py"
+    ],
+    "memory_list": [
+      "tests_real_ha/test_service_handler_contracts.py"
+    ],
+    "process": [
+      "tests/test_process_service.py"
+    ],
+    "query_image": [
+      "tests_real_ha/test_service_handler_contracts.py"
+    ],
+    "reload_skills": [
+      "tests/test_skills_coverage.py"
+    ]
+  }
+}

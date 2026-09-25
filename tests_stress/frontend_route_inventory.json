@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "routes": {
+    "overview": "read-only",
+    "guide": "render-navigation",
+    "assistant/basics": "read-write",
+    "assistant/model-responses": "read-write",
+    "assistant/conversation": "read-write",
+    "assistant/prompt-context": "read-write",
+    "assistant/voice": "read-write",
+    "assistant/speech": "read-write",
+    "capabilities/home-assistant": "read-write",
+    "capabilities/web-skills": "read-write",
+    "capabilities/request-rules": "full-crud",
+    "capabilities/functions": "full-crud",
+    "capabilities/quiet-hours": "read-write",
+    "capabilities/guest-mode": "read-write",
+    "data-memory/memory-settings": "read-write",
+    "data-memory/memories": "full-crud",
+    "data-memory/knowledge": "full-crud",
+    "data-memory/conversations": "read-only",
+    "usage-maintenance/usage": "read-only",
+    "usage-maintenance/request-debug": "read-write",
+    "usage-maintenance/backup-restore": "read-write",
+    "usage-maintenance/diagnostics": "read-only",
+    "usage-maintenance/retention": "read-write"
+  }
+}

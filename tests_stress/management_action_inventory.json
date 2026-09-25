@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "sections": {
+    "backup": {
+      "actions": [
+        "create",
+        "inspect",
+        "restore"
+      ],
+      "evidence": [
+        "tests_stress/test_backup_fault_matrix.py"
+      ]
+    },
+    "configuration": {
+      "actions": [
+        "duplicate",
+        "export",
+        "get",
+        "import",
+        "import_preview",
+        "live_metadata",
+        "prompt_preview",
+        "request_preview",
+        "retention_get",
+        "save",
+        "speech_preview",
+        "update",
+        "validate"
+      ],
+      "evidence": [
+        "tests_real_ha/test_live_config_mutation_semantics.py",
+        "tests_browser/real-ha-backend.spec.mjs"
+      ]
+    },
+    "conversations": {
+      "actions": [
+        "active",
+        "clear",
+        "delete",
+        "delete_range",
+        "end_active",
+        "get",
+        "list",
+        "search",
+        "settings"
+      ],
+      "evidence": [
+        "tests_stress/test_archive_living_campaign.py"
+      ]
+    },
+    "diagnostics": {
+      "actions": [
+        "test_agent"
+      ],
+      "evidence": [
+        "tests_real_ha/test_management_backend_acceptance.py"
+      ]
+    },
+    "function_repair": {
+      "actions": [
+        "configuration_get",
+        "configuration_save",
+        "configuration_validate",
+        "delete_one",
+        "get",
+        "save",
+        "save_one"
+      ],
+      "evidence": [
+        "tests/test_function_repair_configuration_contract.py"
+      ]
+    },
+    "guest_mode": {
+      "actions": [
+        "details",
+        "disable",
+        "get",
+        "save_policy",
+        "update"
+      ],
+      "evidence": [
+        "tests_stress/test_guest_provider_wire.py",
+        "tests_browser/real-ha-backend.spec.mjs"
+      ]
+    },
+    "knowledge": {
+      "actions": [
+        "create",
+        "delete",
+        "get",
+        "list",
+        "set_enabled",
+        "update"
+      ],
+      "evidence": [
+        "tests_real_ha/test_knowledge_management_lifecycle.py",
+        "tests_browser/real-ha-backend.spec.mjs"
+      ]
+    },
+    "memories": {
+      "actions": [
+        "add",
+        "clear",
+        "delete",
+        "list",
+        "reassign_legacy",
+        "search",
+        "temporary_clear",
+        "temporary_delete",
+        "temporary_list",
+        "temporary_update",
+        "update"
+      ],
+      "evidence": [
+        "tests_stress/test_memory_knowledge_scale.py",
+        "tests_browser/real-ha-backend.spec.mjs"
+      ]
+    },
+    "overview": {
+      "actions": [
+        "detail",
+        "primary",
+        "summary"
+      ],
+      "evidence": [
+        "tests_real_ha/test_management_backend_acceptance.py"
+      ]
+    },
+    "quiet_hours": {
+      "actions": [
+        "discover",
+        "get",
+        "update"
+      ],
+      "evidence": [
+        "tests_real_ha/test_quiet_hours_acceptance.py"
+      ]
+    },
+    "request_rules": {
+      "actions": [
+        "create",
+        "defaults",
+        "delete",
+        "duplicate",
+        "groups",
+        "list",
+        "move",
+        "rule_pack_export",
+        "rule_pack_import",
+        "rule_pack_review",
+        "settings",
+        "test",
+        "test_match",
+        "update",
+        "wording_groups"
+      ],
+      "evidence": [
+        "tests_stress/test_request_rules_provider_wire.py",
+        "tests_browser/real-ha-backend.spec.mjs"
+      ]
+    },
+    "scopes": {
+      "actions": [
+        "catalog"
+      ],
+      "evidence": [
+        "tests_real_ha/test_user_ownership_privacy.py"
+      ]
+    },
+    "service_catalog": {
+      "actions": [
+        "get"
+      ],
+      "evidence": [
+        "tests_real_ha/test_management_backend_acceptance.py"
+      ]
+    },
+    "settings": {
+      "actions": [
+        "update"
+      ],
+      "evidence": [
+        "tests_real_ha/test_management_backend_acceptance.py"
+      ]
+    },
+    "tools": {
+      "actions": [
+        "built_in_catalog",
+        "delete",
+        "delete_group",
+        "ha_add",
+        "ha_catalog",
+        "save",
+        "save_group",
+        "serialize",
+        "set_enabled",
+        "starter",
+        "validate",
+        "validate_current",
+        "validate_yaml"
+      ],
+      "evidence": [
+        "tests_stress/test_function_provider_wire.py",
+        "tests_browser/real-ha-backend.spec.mjs"
+      ]
+    },
+    "usage": {
+      "actions": [
+        "breakdowns",
+        "clear_details",
+        "daily",
+        "requests",
+        "retention",
+        "runs",
+        "summary"
+      ],
+      "evidence": [
+        "tests_real_ha/test_usage_accounting_failure_recovery.py"
+      ]
+    }
+  }
+}

@@ -32,9 +32,15 @@ permissions:
 
 jobs:
   upgrade:
-    name: Published release to candidate, including browser
+    name: ${{ matrix.from_version }} to develop
+    strategy:
+      fail-fast: false
+      matrix:
+        # Reviewed migration epochs. Keep release-created state at each boundary.
+        # 6.2.0 is the oldest coherent tagged Responses payload in this fork.
+        from_version: ${{ fromJSON(github.event_name == 'schedule' && '["latest","6.8.2","6.5.0","6.3.1","6.2.0"]' || format('["{0}"]', inputs.from_version || 'latest')) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 120
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
       credentials:
@@ -58,7 +64,7 @@ jobs:
         id: payloads
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUESTED_FROM: ${{ github.event.inputs.from_version || 'latest' }}
+          REQUESTED_FROM: ${{ matrix.from_version }}
         run: |
           set -euo pipefail
           FROM_VERSION="$REQUESTED_FROM"
@@ -156,7 +162,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-upgrade-browser-diagnostics
+          name: release-upgrade-${{ matrix.from_version }}-browser-diagnostics
           path: |
             playwright-report/
             test-results/

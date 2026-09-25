@@ -25,6 +25,7 @@ _TO_VERSION_ENV = "UPGRADE_TO_VERSION"
 _CHILD_PHASE_ENV = "UPGRADE_ACCEPTANCE_CHILD_PHASE"
 _CONFIG_DIR_ENV = "UPGRADE_ACCEPTANCE_CONFIG_DIR"
 _STATE_FILE = "upgrade-acceptance-state.json"
+_BACKUP_FILE = "upgrade-acceptance-current-backup.json"
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get(_FROM_COMPONENT_ENV) or not os.environ.get(_TO_COMPONENT_ENV),
@@ -290,6 +291,12 @@ async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
 
     state["candidate_title"] = reloaded.title
     state["candidate_entry_version"] = entry.version
+    from custom_components.extended_openai_conversation_responses import backup
+
+    snapshot = await backup.async_collect_backup_snapshot(hass, entry, reloaded)
+    (config_dir / _BACKUP_FILE).write_text(
+        json.dumps(snapshot, ensure_ascii=False), encoding="utf-8"
+    )
     (config_dir / _STATE_FILE).write_text(json.dumps(state), encoding="utf-8")
 
 
@@ -317,6 +324,25 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
 
     await _exercise_public_conversation(
         hass, entry.entry_id, "Migrated candidate state survived a cold restart."
+    )
+
+    # A backup made *after* migration must recover from subsequent user changes.
+    from custom_components.extended_openai_conversation_responses import backup
+
+    saved = json.loads((config_dir / _BACKUP_FILE).read_text(encoding="utf-8"))
+    hass.config_entries.async_update_subentry(
+        entry, subentry, data={}, title="Deliberately mutated after backup"
+    )
+    await hass.async_block_till_done()
+    assert (await backup.async_restore_backup(hass, entry, subentry, saved))[
+        "status"
+    ] == "restored"
+    await hass.async_block_till_done()
+    restored = _conversation_subentry(entry)
+    assert restored.title == state["candidate_title"]
+    assert restored.data == saved["agent"]["config"]
+    await _exercise_public_conversation(
+        hass, entry.entry_id, "Migrated candidate backup restored successfully."
     )
 
 
