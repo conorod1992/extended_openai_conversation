@@ -10,7 +10,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, request-rules, guest-security, quiet-hours, functions, provider-resilience, memory-knowledge, large-installation, browser, chaos, process-chaos]
+        options: [all, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, persistence, request-rules, guest-security, quiet-hours, functions, provider-resilience, memory-knowledge, large-installation, browser, chaos, process-chaos]
       intensity:
         description: Workload multiplier
         type: choice
@@ -59,9 +59,9 @@ jobs:
             echo "intensities=[\"$INTENSITY\"]" >> "$GITHUB_OUTPUT"
           fi
           case "${{ inputs.campaign }}" in
-            '') CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
-            all|browser) CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
-            runtime|lifecycle|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|request-rules|guest-security|quiet-hours|functions|provider-resilience|memory-knowledge|large-installation|chaos|process-chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
+            '') CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
+            all|browser) CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
+            runtime|lifecycle|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|persistence|request-rules|guest-security|quiet-hours|functions|provider-resilience|memory-knowledge|large-installation|chaos|process-chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
             *) echo 'Unknown campaign' >&2; exit 1 ;;
           esac
           echo "campaigns=$CAMPAIGNS" >> "$GITHUB_OUTPUT"
@@ -113,6 +113,20 @@ jobs:
             pip install --upgrade homeassistant
             python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
           fi
+      - name: Stage published payload for downgrade boundary
+        if: matrix.campaign == 'persistence'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          TAG="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${{ github.repository }}/releases/latest" | python -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          OLD_ROOT="${RUNNER_TEMP}/eoai-downgrade-release"
+          mkdir -p "$OLD_ROOT"
+          git archive "$TAG" custom_components/extended_openai_conversation_responses | tar -x -C "$OLD_ROOT"
+          echo "DOWNGRADE_COMPONENT_DIR=$OLD_ROOT/custom_components/extended_openai_conversation_responses" >> "$GITHUB_ENV"
+          echo "Downgrade reader payload: $TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Run enhanced campaign
         run: |
           case "$STRESS_CAMPAIGN" in
@@ -125,6 +139,7 @@ jobs:
             setup) TEST_PATHS=(tests_stress/test_backup_inventory.py tests_real_ha/test_config_flow.py tests_real_ha/test_config_flow_edges.py tests_real_ha/test_config_flow_lifecycle_contracts.py) ;;
             backup) TEST_PATHS=(tests_stress/test_backup_fault_matrix.py tests_stress/test_backup_inventory.py tests_stress/test_historical_backup.py) ;;
             backup-transfer) TEST_PATHS=(tests_stress/test_backup_transfer.py tests_stress/test_backup_transfer_preview_races.py) ;;
+            persistence) TEST_PATHS=(tests_stress/test_persistence_forward_and_clock.py tests_stress/test_management_transaction_matrix.py tests_stress/test_published_downgrade_boundary.py tests_stress/test_backup_fault_matrix.py tests_real_ha/test_store_write_process_crash.py tests_real_ha/test_delayed_tool_process_restart.py) ;;
             request-rules) TEST_PATHS=(tests_stress/test_request_rules_matrix.py tests_stress/test_request_rules_provider_wire.py) ;;
             guest-security) TEST_PATHS=(tests_stress/test_guest_functions_matrix.py tests_stress/test_guest_provider_wire.py) ;;
             quiet-hours) TEST_PATHS=(tests_stress/test_quiet_hours_multi_satellite.py tests_stress/test_quiet_hours_ownership_time.py tests_real_ha/test_quiet_hours_resilience.py tests_real_ha/test_quiet_hours_scheduling.py) ;;

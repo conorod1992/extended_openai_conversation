@@ -13,6 +13,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.extended_openai_conversation_responses import (
     agent_config,
     backup,
+    restore_recovery,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_SKIP_AUTHENTICATION,
@@ -367,3 +368,63 @@ async def test_every_restore_phase_rolls_back_and_reloads(
         == before
     )
     record(stress_trace, "summary", rollback_phases=1, reloads=1)
+
+
+async def test_committed_restore_finishes_after_configuration_write_failure(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    stress_trace: list[dict],
+) -> None:
+    """A failure after the journal commit resolves to the full target state."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Commit boundary",
+        data={CONF_API_KEY: "sk-local", CONF_SKIP_AUTHENTICATION: True},
+        version=CONFIG_ENTRY_VERSION,
+        subentries_data=[
+            {
+                "data": {},
+                "subentry_type": "conversation",
+                "title": "Before restore",
+                "unique_id": None,
+            }
+        ],
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    subentry = next(iter(entry.subentries.values()))
+    memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
+    await memory.async_add("owner", "target memory", "nightly", "explicit")
+    target = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    target["agent"]["title"] = "After restore"
+    for item in await memory.async_list("owner"):
+        await memory.async_delete("owner", [item.memory_id])
+    await memory.async_add("owner", "current memory", "nightly", "explicit")
+    original_update = restore_recovery._update_configuration
+    calls = 0
+
+    async def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("injected final config write failure")
+        return await original_update(*args, **kwargs)
+
+    monkeypatch.setattr(restore_recovery, "_update_configuration", fail_once)
+    with pytest.raises(backup.BackupError, match="completion is pending"):
+        await backup.async_restore_backup(hass, entry, subentry, target)
+    assert await restore_recovery.async_recover_pending_restore(hass, entry, subentry)
+    assert calls == 2
+    assert subentry.title == "After restore"
+    after = semantic(await backup.async_collect_backup_snapshot(hass, entry, subentry))
+    assert after == semantic(target)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert (
+        semantic(await backup.async_collect_backup_snapshot(hass, entry, subentry))
+        == after
+    )
+    record(
+        stress_trace, "committed_restore_recovered", config_write_faults=1, reloads=1
+    )
