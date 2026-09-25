@@ -77,6 +77,9 @@ test("revoked HA session while editing cannot commit a save", async ({page, cont
 });
 
 test("genuine HA WebSocket drop during a save leaves the backend authoritative", async ({page, context}) => {
+  // The preceding expiry case revoked its token. Start this independent browser
+  // journey with another genuine HA refresh/access token pair.
+  const freshAuth = await fetch(controlUrl, {method: "POST"}).then(response => response.json());
   await page.addInitScript(() => {
     window.__dropManagementSave = false;
     window.__droppedManagementSave = 0;
@@ -93,7 +96,7 @@ test("genuine HA WebSocket drop during a save leaves the backend authoritative",
       return send.call(this, payload);
     };
   });
-  const {panel, title} = await openAssistant(page, context);
+  const {panel, title} = await openAssistant(page, context, freshAuth);
   const before = await title.inputValue();
   const draft = `Dropped HA WS ${process.env.STRESS_SEED || "0"}`;
   await title.fill(draft);
@@ -107,6 +110,6 @@ test("genuine HA WebSocket drop during a save leaves the backend authoritative",
     const reopened = await openAssistant(fresh, context);
     await expect(reopened.title).toHaveValue(before);
   } finally { await fresh.close(); }
-  await page.reload({waitUntil: "domcontentloaded"});
+  await page.goto(`${baseUrl}/extended-openai`, {waitUntil: "domcontentloaded"});
   await expect(page.locator("extended-openai-management-panel")).toHaveCount(1);
 });
