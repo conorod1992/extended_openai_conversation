@@ -2655,6 +2655,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("text"): str,
         vol.Optional("defaults"): dict,
         vol.Optional("wording_groups"): list,
+        vol.Optional("groups"): list,
         vol.Optional("enabled"): bool,
         vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),
