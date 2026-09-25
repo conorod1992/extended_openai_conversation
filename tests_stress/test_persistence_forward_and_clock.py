@@ -161,6 +161,7 @@ async def test_opaque_future_rule_store_field_survives_group_edit_and_restore(
     assert (await backup.async_restore_backup(hass, entry, subentry, saved))[
         "status"
     ] == "restored"
+    await hass.async_block_till_done()
     assert await hass.config_entries.async_unload(entry.entry_id)
     hass.data.get(RULE_MANAGERS, {}).pop((entry.entry_id, subentry.subentry_id), None)
     assert await hass.config_entries.async_setup(entry.entry_id)
