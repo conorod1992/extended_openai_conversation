@@ -111,22 +111,33 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert target_subentry_id == "agent-1"
         return prepared
 
+    async def current_snapshot(*_args):
+        return object()
+
     async def materialize(
-        _hass, actual_entry, actual_subentry, actual_prepared, *, sections
+        _hass,
+        actual_entry,
+        actual_subentry,
+        actual_prepared,
+        *,
+        sections,
+        current_snapshot,
     ):
         assert actual_entry is entry
         assert actual_subentry is subentry
         assert actual_prepared is prepared
         assert sections == ["memory"]
-        return object(), {"changes": 1}
+        assert current_snapshot is not None
+        return object(), {"changes": 1, "selected_sections": ["memory"]}
 
     async def restore(
-        _hass, actual_entry, actual_subentry, actual_prepared, *, sections
+        _hass, actual_entry, actual_subentry, actual_prepared, *, sections, precondition
     ):
         assert actual_entry is entry
         assert actual_subentry is subentry
         assert actual_prepared is prepared
         assert sections == ["memory"]
+        await precondition()
         return {"restored": True}
 
     monkeypatch.setattr(backup_transfer, "_async_load_prepared_restore", load_prepared)
@@ -134,6 +145,10 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         backup_transfer, "_resolve_agent", lambda *_args: (entry, subentry)
     )
     monkeypatch.setattr(transfer, "async_materialize_restore", materialize)
+    monkeypatch.setattr(transfer, "_current_snapshot", current_snapshot)
+    monkeypatch.setattr(
+        backup_transfer, "_snapshot_revision", lambda _value: "revision"
+    )
     monkeypatch.setattr(
         transfer,
         "inspection_for_frontend",
@@ -147,7 +162,9 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         "agent-1",
         {"session_id": session_id, "sections": ["memory"]},
     )
-    assert inspection == {"prepared": True, "preview": {"changes": 1}}
+    assert inspection["prepared"] is True
+    assert inspection["preview"] == {"changes": 1, "selected_sections": ["memory"]}
+    assert isinstance(inspection["preview_token"], str)
     assert session_id in backup_transfer._imports(hass)
     assert os.path.exists(staged_path)
 
@@ -155,7 +172,11 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         hass,
         entry,
         subentry,
-        {"session_id": session_id, "sections": ["memory"]},
+        {
+            "session_id": session_id,
+            "sections": ["memory"],
+            "preview_token": inspection["preview_token"],
+        },
     )
 
     assert restored == {"restored": True}
@@ -190,20 +211,33 @@ async def test_restore_failure_still_consumes_and_deletes_completed_upload(
     async def load_prepared(*_args):
         return object()
 
-    async def fail_restore(*_args, **_kwargs):
+    async def fail_restore(*_args, precondition, **_kwargs):
+        await precondition()
         raise RuntimeError("restore failed")
 
     monkeypatch.setattr(backup_transfer, "_async_load_prepared_restore", load_prepared)
     monkeypatch.setattr(transfer, "async_restore_transfer", fail_restore)
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        backup_transfer, "_snapshot_revision", lambda _value: "revision"
+    )
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1")
+    session = backup_transfer._imports(hass)[session_id]
+    session.preview_token = "preview"
+    session.preview_revision = "revision"
+    session.preview_sections = ("memory",)
+    backup_transfer._latest_previews(hass)[("entry-1", "agent-1")] = (
+        session_id,
+        "preview",
+    )
 
     with pytest.raises(RuntimeError, match="restore failed"):
         await backup_transfer._restore_import(
             hass,
             entry,
             subentry,
-            {"session_id": session_id},
+            {"session_id": session_id, "preview_token": "preview"},
         )
 
     assert session_id not in backup_transfer._imports(hass)

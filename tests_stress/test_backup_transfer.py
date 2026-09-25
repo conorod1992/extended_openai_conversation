@@ -164,7 +164,13 @@ async def test_large_multichunk_transfer_retry_and_restore(
         "transfer-owner", "MUTATED-AFTER-EXPORT", "acceptance", "explicit"
     )
     restored = await _transfer_call(
-        client, entry=entry, action="import_restore", data={"session_id": session}
+        client,
+        entry=entry,
+        action="import_restore",
+        data={
+            "session_id": session,
+            "preview_token": preview["result"]["preview_token"],
+        },
     )
     assert restored["success"], restored
     assert restored["result"]["status"] == "restored"

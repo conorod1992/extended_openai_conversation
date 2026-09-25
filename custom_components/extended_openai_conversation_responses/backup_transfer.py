@@ -6,7 +6,7 @@ import asyncio
 import base64
 import binascii
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import math
@@ -50,6 +50,7 @@ _IMPORTS_KEY = f"{DOMAIN}.backup_transfer_imports"
 _REGISTRY_LOCK_KEY = f"{DOMAIN}.backup_transfer_registry_lock"
 _START_LOCK_KEY = f"{DOMAIN}.backup_transfer_start_lock"
 _WS_SETUP_KEY = f"{DOMAIN}.backup_transfer_ws_setup"
+_LATEST_PREVIEW_KEY = f"{DOMAIN}.backup_transfer_latest_previews"
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -82,6 +83,9 @@ class ImportSession:
     expires_at: float
     received: int = 0
     next_index: int = 0
+    preview_token: str | None = None
+    preview_revision: str | None = None
+    preview_sections: tuple[str, ...] | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -91,6 +95,32 @@ def _exports(hass: HomeAssistant) -> dict[str, ExportSession]:
 
 def _imports(hass: HomeAssistant) -> dict[str, ImportSession]:
     return cast(dict[str, ImportSession], hass.data.setdefault(_IMPORTS_KEY, {}))
+
+
+def _latest_previews(hass: HomeAssistant) -> dict[tuple[str, str], tuple[str, str]]:
+    return cast(
+        dict[tuple[str, str], tuple[str, str]],
+        hass.data.setdefault(_LATEST_PREVIEW_KEY, {}),
+    )
+
+
+def _snapshot_revision(value: backup.PreparedRestore) -> str:
+    """Fingerprint the exact durable target state inspected by an administrator."""
+    canonical = json.dumps(
+        asdict(value), sort_keys=True, default=str, separators=(",", ":")
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _forget_preview(hass: HomeAssistant, session: ImportSession) -> None:
+    if session.preview_token is None:
+        return
+    key = (session.entry_id, session.subentry_id)
+    if _latest_previews(hass).get(key) == (
+        session.session_id,
+        session.preview_token,
+    ):
+        _latest_previews(hass).pop(key, None)
 
 
 def _registry_lock(hass: HomeAssistant) -> asyncio.Lock:
@@ -155,6 +185,7 @@ async def _async_cleanup_expired(hass: HomeAssistant) -> None:
             if import_session.expires_at <= now:
                 expired.append(import_session)
                 imports.pop(import_session_id, None)
+                _forget_preview(hass, import_session)
     await _async_delete_sessions(hass, expired)
 
 
@@ -564,6 +595,8 @@ async def _discard_export(hass: HomeAssistant, session_id: str) -> bool:
 async def _discard_import(hass: HomeAssistant, session_id: str) -> bool:
     async with _registry_lock(hass):
         session = _imports(hass).pop(session_id, None)
+        if session is not None:
+            _forget_preview(hass, session)
     if session is None:
         return False
     await _async_delete_session_file(hass, session)
@@ -848,20 +881,41 @@ async def _inspect_import(
 ) -> dict[str, Any]:
     await _async_cleanup_expired(hass)
     session = _completed_import(hass, data.get("session_id"), entry_id, subentry_id)
-    async with session.lock:
+    gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
+    async with gate.exclusive(), session.lock:
         if _imports(hass).get(session.session_id) is not session:
             raise backup.BackupError("The backup upload has expired or was cancelled")
-        session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
         prepared = await _async_load_prepared_restore(
             hass, session.path, session.kind, subentry_id
         )
-    entry, subentry = _resolve_agent(hass, entry_id, subentry_id)
-    _target, preview = await transfer.async_materialize_restore(
-        hass, entry, subentry, prepared, sections=data.get("sections")
-    )
+        entry, subentry = _resolve_agent(hass, entry_id, subentry_id)
+        current = await transfer._current_snapshot(hass, entry, subentry)
+        _target, preview = await transfer.async_materialize_restore(
+            hass,
+            entry,
+            subentry,
+            prepared,
+            sections=data.get("sections"),
+            current_snapshot=current,
+        )
+        token = uuid4().hex
+        async with _registry_lock(hass):
+            if _imports(hass).get(session.session_id) is not session:
+                raise backup.BackupError(
+                    "The backup upload has expired or was cancelled"
+                )
+            session.preview_token = token
+            session.preview_revision = _snapshot_revision(current)
+            session.preview_sections = tuple(preview["selected_sections"])
+            session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+            _latest_previews(hass)[(entry_id, subentry_id)] = (
+                session.session_id,
+                token,
+            )
     return {
         **transfer.inspection_for_frontend(prepared),
         "preview": preview,
+        "preview_token": token,
     }
 
 
@@ -888,18 +942,62 @@ async def _restore_import(
     data: dict[str, Any],
 ) -> dict[str, Any]:
     await _async_cleanup_expired(hass)
-    session = await _take_completed_import(
+    session = _completed_import(
         hass, data.get("session_id"), entry.entry_id, subentry.subentry_id
     )
-    try:
+    token = data.get("preview_token")
+    if not isinstance(token, str) or not token:
+        raise backup.BackupError("Preview the backup before restoring it")
+    async with session.lock:
+        if _imports(hass).get(session.session_id) is not session:
+            raise backup.BackupError("The backup upload has expired or was cancelled")
         prepared = await _async_load_prepared_restore(
             hass, session.path, session.kind, subentry.subentry_id
         )
+
+    async def validate_preview() -> None:
+        selected = data.get("sections")
+        if selected is not None and (
+            not isinstance(selected, list)
+            or not all(isinstance(item, str) for item in selected)
+            or set(selected) != set(session.preview_sections or ())
+        ):
+            raise backup.BackupError("The restore sections changed; preview again")
+        async with _registry_lock(hass):
+            if _imports(hass).get(session.session_id) is not session:
+                raise backup.BackupError(
+                    "The backup upload has expired or was cancelled"
+                )
+            if (
+                session.preview_token != token
+                or session.preview_revision is None
+                or _latest_previews(hass).get((entry.entry_id, subentry.subentry_id))
+                != (session.session_id, token)
+            ):
+                raise backup.BackupError("The backup preview is stale; preview again")
+        current = await transfer._current_snapshot(hass, entry, subentry)
+        if _snapshot_revision(current) != session.preview_revision:
+            raise backup.BackupError("The target changed after preview; preview again")
+        async with _registry_lock(hass):
+            if _imports(hass).get(session.session_id) is not session:
+                raise backup.BackupError(
+                    "The backup upload has expired or was cancelled"
+                )
+            _imports(hass).pop(session.session_id, None)
+            _forget_preview(hass, session)
+
+    try:
         return await transfer.async_restore_transfer(
-            hass, entry, subentry, prepared, sections=data.get("sections")
+            hass,
+            entry,
+            subentry,
+            prepared,
+            sections=data.get("sections"),
+            precondition=validate_preview,
         )
     finally:
-        await _async_remove_path(hass, session.path)
+        if _imports(hass).get(session.session_id) is not session:
+            await _async_remove_path(hass, session.path)
 
 
 async def async_backup_transfer_command(
