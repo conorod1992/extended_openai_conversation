@@ -53,7 +53,7 @@ FIXTURE_OVERRIDES = {
             "enabled": True,
         }
     ],
-    "function_tools": [_TOOL],
+    "functions": [_TOOL],
     "function_tool_error_recovery": True,
     "guest_allowed_function_names": ["backup_marker"],
     "guest_allowed_group_ids": ["backup-group"],

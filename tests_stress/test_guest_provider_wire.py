@@ -105,10 +105,12 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
     await _setup_entry(hass, entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
-    await agent._memory.async_add(_OWNER, _PRIVATE, "preferences", "explicit")
+    await agent._memory.async_add(
+        _OWNER, f"The calibration token is {_PRIVATE}.", "preferences", "explicit"
+    )
     await agent._temporary_memory.async_add(
         f"user:{_OWNER}",
-        _TEMPORARY,
+        f"The temporary calibration token is {_TEMPORARY}.",
         (dt_util.utcnow() + timedelta(hours=1)).isoformat(),
         "acceptance",
         owner_scope_id=f"user:{_OWNER}",
@@ -142,7 +144,7 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
 
     owner_wire = _install_wire(monkeypatch, agent, [_chat_sse_text("Owner context")])
     assert (
-        _speech(await _say(hass, entry.entry_id, "Read my private context"))
+        _speech(await _say(hass, entry.entry_id, "What is my calibration token?"))
         == "Owner context"
     )
     assert len(owner_wire.requests) == 1
@@ -155,7 +157,7 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
     await agent._guest_mode.async_update_trusted(indefinite=True)
     guest_wire = _install_wire(monkeypatch, agent, [_chat_sse_text("Guest context")])
     assert (
-        _speech(await _say(hass, entry.entry_id, "Read my private context"))
+        _speech(await _say(hass, entry.entry_id, "What is my calibration token?"))
         == "Guest context"
     )
     assert len(guest_wire.requests) == 1
@@ -183,7 +185,7 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
         monkeypatch, agent, [_chat_sse_text("Owner restored")]
     )
     assert (
-        _speech(await _say(hass, entry.entry_id, "Read my private context"))
+        _speech(await _say(hass, entry.entry_id, "What is my calibration token?"))
         == "Owner restored"
     )
     assert _PRIVATE in json.dumps(restored_wire.requests[0]["body"], ensure_ascii=False)
