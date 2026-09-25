@@ -486,6 +486,37 @@ def _portable_document(*, mode: str = "custom") -> dict:
     }
 
 
+def test_selective_request_rules_transfer_keeps_captured_ai_input() -> None:
+    document = _portable_document(mode="setup")
+    rule = {
+        "id": "ask-rule",
+        "name": "Ask",
+        "enabled": True,
+        "phrases": ["ask {question}"],
+        "match_type": "sentence_pattern",
+        "action_type": "model_routing",
+        "action": {
+            "model": "gpt-5",
+            "reasoning_effort": "",
+            "scope": "request",
+            "reset": False,
+            "continue_to_ai": True,
+        },
+        "matching_behavior": "defaults",
+        "matching": dict(DEFAULT_MATCHING),
+        "order": 0,
+        "continue_matching": True,
+        "ai_input_mode": "capture",
+        "ai_input_capture": "question",
+    }
+    document["sections"][transfer.SECTION_REQUEST_RULES] = _rules_backup([rule])
+    prepared = transfer.inspect_transfer(document, "target-agent")
+    imported = prepared.request_rules["rules"][0]
+    assert imported["ai_input_mode"] == "capture"
+    assert imported["ai_input_capture"] == "question"
+    assert imported["continue_matching"] is True
+
+
 @pytest.mark.parametrize(
     ("sections", "message"),
     [

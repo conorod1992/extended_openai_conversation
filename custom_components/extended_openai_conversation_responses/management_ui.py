@@ -670,7 +670,9 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             message.get("rule_ids"),
         )
     if action in {"rule_pack_review", "rule_pack_import"}:
-        prepared = validate_rule_pack(message.get("pack"))
+        prepared = await hass.async_add_executor_job(
+            validate_rule_pack, message.get("pack")
+        )
         tools = configured_function_tools_from_data(subentry.data)
         review = await _review_rule_pack(hass, prepared, rules, tools)
         if action == "rule_pack_review":
