@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     CONF_API_MODE,
@@ -95,8 +97,13 @@ async def test_group_load_tool_execution_result_and_session_isolation(
     assert tool_name in names[1] and tool_name in names[2]
     loaded = _chat_tool_result(wire.requests[1]["body"], "call-load")
     assert loaded["status"] == "success"
-    executed = _chat_tool_result(wire.requests[2]["body"], "call-status")
-    assert "LOCAL-TOOL-RESULT-東京" in str(executed)
+    tool_message = next(
+        item
+        for item in wire.requests[2]["body"]["messages"]
+        if item.get("role") == "tool" and item.get("tool_call_id") == "call-status"
+    )
+    executed = json.loads(tool_message["content"])
+    assert executed["result"] == "LOCAL-TOOL-RESULT-東京"
 
     other = await say("Start a separate conversation")
     assert _speech(other) == "Fresh session"

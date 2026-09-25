@@ -61,7 +61,16 @@ async def assert_enhanced_health(
         seen: set[str] = set()
         total = 0
         for user_id in checks.memory_users:
-            records = await memory.async_list(user_id, limit=10000)
+            records = []
+            offset = 0
+            while True:
+                page, more = await memory.async_list_page(
+                    user_id, limit=100, offset=offset
+                )
+                records.extend(page)
+                offset += len(page)
+                if not more:
+                    break
             assert all(item.user_id == user_id for item in records)
             identifiers = {item.memory_id for item in records}
             assert len(identifiers) == len(records)

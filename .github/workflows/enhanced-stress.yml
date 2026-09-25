@@ -113,7 +113,7 @@ jobs:
         run: |
           case "$STRESS_CAMPAIGN" in
             runtime) TEST_PATHS=(tests_stress/test_runtime_soak.py) ;;
-            backup) TEST_PATHS=(tests_stress/test_backup_fault_matrix.py tests_stress/test_backup_inventory.py) ;;
+            backup) TEST_PATHS=(tests_stress/test_backup_fault_matrix.py tests_stress/test_backup_inventory.py tests_stress/test_historical_backup.py) ;;
             request-rules) TEST_PATHS=(tests_stress/test_request_rules_matrix.py tests_stress/test_request_rules_provider_wire.py) ;;
             guest-security) TEST_PATHS=(tests_stress/test_guest_functions_matrix.py) ;;
             quiet-hours) TEST_PATHS=(tests_stress/test_quiet_hours_multi_satellite.py) ;;
