@@ -262,13 +262,13 @@ test("real browser manages a Function Tool and dependent Group through genuine H
   await expect(group).toContainText("Real HA browser group edited");
   await expect(group).toContainText("Real HA browser group description edited");
 
-  await tool.locator(".tool-enabled").uncheck();
+  await tool.locator(".tool-enabled-control").click();
   await expect(tool.locator(".tool-enabled")).not.toBeChecked();
-  await tool.locator(".tool-enabled").check();
+  await tool.locator(".tool-enabled-control").click();
   await expect(tool.locator(".tool-enabled")).toBeChecked();
-  await group.locator(".group-enabled").uncheck();
+  await group.locator(".group-enabled-control").click();
   await expect(group.locator(".group-enabled")).not.toBeChecked();
-  await group.locator(".group-enabled").check();
+  await group.locator(".group-enabled-control").click();
   await expect(group.locator(".group-enabled")).toBeChecked();
 
   await page.goto(realFixtureUrl("capabilities/functions"));
@@ -303,7 +303,7 @@ test("real browser creates, edits, and deletes Knowledge through genuine HA", as
   await panel.locator("#knowledge-content").fill("Knowledge payload crossed HA WebSocket validation");
   await panel.locator("#knowledge-save").click();
   await expect(panel.locator(".list-card").filter({hasText: "Browser contract source"})).toBeVisible();
-  await panel.locator("#knowledge-enabled-toggle").check();
+  await panel.locator(".knowledge-availability-setting .switch-control").click();
   await expect(panel.locator("#knowledge-enabled-toggle")).toBeChecked();
 
   await page.goto(realFixtureUrl("data-memory/knowledge"));
@@ -324,7 +324,7 @@ test("real browser creates, edits, and deletes Knowledge through genuine HA", as
   await source.locator(".delete-source").click();
   await acceptConfirmation(panel);
   await expect(panel.locator(".list-card").filter({hasText: "Browser contract source"})).toHaveCount(0);
-  await panel.locator("#knowledge-enabled-toggle").uncheck();
+  await panel.locator(".knowledge-availability-setting .switch-control").click();
   await expect(panel.locator("#knowledge-enabled-toggle")).not.toBeChecked();
 
   await page.goto(realFixtureUrl("data-memory/knowledge"));
