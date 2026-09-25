@@ -7,6 +7,20 @@ from pathlib import Path
 import sys
 
 
+def layer_for(test: str, operations: list[dict]) -> str:
+    """Classify evidence by its deepest exercised boundary, not by test count."""
+    explicit = next(
+        (item.get("layer") for item in operations if item.get("layer")), None
+    )
+    if explicit:
+        return str(explicit)
+    if "browser" in test or test.endswith(".stress.mjs"):
+        return "browser"
+    if "function_groups_state_machine" in test or "request_rules_matrix" in test:
+        return "model-level"
+    return "real-ha"
+
+
 def main() -> None:
     folder = Path(sys.argv[1])
     files = sorted(folder.glob("*.json")) if folder.exists() else []
@@ -31,7 +45,7 @@ def main() -> None:
         lines += [
             f"**{data.get('test', path.stem)}**",
             "",
-            f"Operations: {len(operations)}",
+            f"Evidence layer: **{layer_for(data.get('test', path.stem), operations)}** · Trace events: {len(operations)}",
             "",
         ]
         if counts:

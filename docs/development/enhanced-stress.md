@@ -8,11 +8,12 @@ The current campaigns are:
 | --- | --- |
 | `runtime` | Seeded public Assist conversations across two agents and six users, concurrent batches, unload/setup cycles, registry ownership and provider ChatLog isolation. |
 | `backup` | Fault injection at all seven durable restore category writes, rollback/reload checks, and a reviewed inventory of persisted agent fields. |
-| `request-rules` | Full matcher inventory, text variants, preview agreement, seeded create/toggle/delete/move/reload sequence and backup equivalence. |
+| `request-rules` | Full matcher inventory, text variants, preview agreement, seeded mutations, plus all current matcher × routing scope × API-mode cases through public Assist and SDK wire, and local HA actions. |
 | `guest-security` | Cross-product of supported Guest policies for Functions, Knowledge and shared Memory, with security and Function type inventories. |
 | `quiet-hours` | Multiple repeated periods across real registry-backed satellites with distinct starting volumes and restoration checks. |
 | `functions` | Seeded Function Group loading, disabling and session-isolation model across 24 tools, 12 groups and 16 conversations. |
-| `memory-knowledge` | Hundreds of private Memory records and Knowledge sources with reload comparison, plus bulk Temporary Memory expiry, repeated owner-isolated reads and restart. |
+| `memory-knowledge` | Hundreds of private Memory records and Knowledge sources with reload comparison, bulk Temporary Memory expiry, concurrent multi-user private Memory requests inspected on SDK wire, and on-demand Knowledge search results after disabled/deleted source mutations. |
+| `large-installation` | Ten agents, 100 rules, 60 configured tools, 20 groups, 500 memories and 150 Knowledge sources in normal mode; setup, backup, reload, public Assist probes and measured stage timings. Heavy increases the counts. |
 | `chaos` | Seeded valid Memory, Knowledge and Request Rule mutations, backup checkpoints and restores, reloads and public request probes after every step. |
 | `browser` | One mounted Chromium management panel through 80 seeded route changes, plus two tabs against the same genuine HA backend proving stale Request Rule saves are rejected. |
 
@@ -29,4 +30,6 @@ Home Assistant's Python test harness requires Linux. The Windows Python installa
 
 When adding a persisted agent setting, update `BACKED_UP_AGENT_FIELDS` in `tests_stress/test_backup_inventory.py` after reviewing the export and restore behavior. When adding a Request Rule matcher, action or routing scope, update the classified inventory and generated cases in `tests_stress/test_request_rules_matrix.py`. Keep a new stress test under `tests_stress/` or name a browser test `*.stress.mjs` to preserve the separation from normal CI.
 
-The suite is complementary to the existing bounded Real HA, browser, release, upgrade and mutation tests. It does not rerun those suites. A failing operation trace identifies the seed and last completed operation; use the same seed to reproduce, then inspect the first violated invariant and Playwright trace or HA log.
+The Step Summary labels evidence layers. **Model-level** means a manager or state machine was exercised directly. **Real-HA** includes genuine setup, stores, registries or public Assist calls. **Provider-wire** checks SDK-serialized requests and the scripted local provider response. **Browser** checks the mounted management UI; **process** would require an actual restarted child process. Counts of model transitions are never described as provider requests or tool executions. `tests_stress/health.py` offers configurable durable and public invariants for long stateful journeys.
+
+The suite is complementary to the existing bounded Real HA, browser, release, upgrade and mutation tests. It does not rerun those suites. A failing operation trace identifies the seed and last completed operation; use the same seed to reproduce, then inspect the first violated invariant and Playwright trace or HA log. The suite is broad evidence, not proof of all supported histories: historical backup fixtures, full transfer-race and process-boundary matrices, and all Function Tool types still require dedicated deterministic fixtures.

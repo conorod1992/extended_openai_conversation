@@ -26,10 +26,10 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     async_get_request_rules,
 )
 from homeassistant.components import conversation
-from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import HomeAssistant
 from tests_stress.conftest import record
+from tests_stress.health import HealthChecks, assert_enhanced_health
 
 
 def _semantic(snapshot: dict) -> dict:
@@ -174,20 +174,6 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
             assert await hass.config_entries.async_reload(entry.entry_id)
             await hass.async_block_till_done()
 
-        memory, knowledge, rules = await managers()
-        snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
-        assert backup.inspect_backup(snapshot, subentry.subentry_id)
-        for user in users:
-            assert all(
-                item.user_id == user for item in await memory.async_list(user, limit=50)
-            )
-        assert len({item["source_id"] for item in await knowledge.async_list()}) == len(
-            await knowledge.async_list()
-        )
-        assert len({item["id"] for item in rules.snapshot()["rules"]}) == len(
-            rules.snapshot()["rules"]
-        )
-        assert entry.state is ConfigEntryState.LOADED
         agent = conversation.async_get_agent(hass, entry.entry_id)
         assert agent is not None
 
@@ -202,15 +188,21 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
             )
 
         monkeypatch.setattr(agent, "_async_handle_chat_log", model)
-        result = await conversation.async_converse(
-            hass=hass,
-            text=f"probe {step}",
-            conversation_id=None,
-            context=Context(user_id=users[step % len(users)]),
-            language="en",
-            agent_id=entry.entry_id,
+        await assert_enhanced_health(
+            hass,
+            entry,
+            subentry,
+            HealthChecks(
+                backup=True,
+                memory_users=tuple(users),
+                knowledge=True,
+                request_rules=True,
+                public_probe=True,
+                probe_user=users[step % len(users)],
+                probe_text=f"probe {step}",
+                expected_speech="chaos healthy",
+            ),
         )
-        assert result.response.as_dict()["speech"]["plain"]["speech"] == "chaos healthy"
         turns += 1
     record(
         stress_trace,

@@ -10,7 +10,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, runtime, backup, request-rules, guest-security, quiet-hours, functions, memory-knowledge, browser, chaos]
+        options: [all, runtime, backup, request-rules, guest-security, quiet-hours, functions, memory-knowledge, large-installation, browser, chaos]
       intensity:
         description: Workload multiplier
         type: choice
@@ -55,8 +55,8 @@ jobs:
           echo "seed=$SEED" >> "$GITHUB_OUTPUT"
           echo "intensity=$INTENSITY" >> "$GITHUB_OUTPUT"
           case "${{ inputs.campaign }}" in
-            ''|all|browser) CAMPAIGNS='["runtime","backup","request-rules","guest-security","quiet-hours","functions","memory-knowledge","chaos"]' ;;
-            runtime|backup|request-rules|guest-security|quiet-hours|functions|memory-knowledge|chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
+            ''|all|browser) CAMPAIGNS='["runtime","backup","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos"]' ;;
+            runtime|backup|request-rules|guest-security|quiet-hours|functions|memory-knowledge|large-installation|chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
             *) echo 'Unknown campaign' >&2; exit 1 ;;
           esac
           echo "campaigns=$CAMPAIGNS" >> "$GITHUB_OUTPUT"
@@ -112,11 +112,12 @@ jobs:
           case "$STRESS_CAMPAIGN" in
             runtime) TEST_PATHS=(tests_stress/test_runtime_soak.py) ;;
             backup) TEST_PATHS=(tests_stress/test_backup_fault_matrix.py tests_stress/test_backup_inventory.py) ;;
-            request-rules) TEST_PATHS=(tests_stress/test_request_rules_matrix.py) ;;
+            request-rules) TEST_PATHS=(tests_stress/test_request_rules_matrix.py tests_stress/test_request_rules_provider_wire.py) ;;
             guest-security) TEST_PATHS=(tests_stress/test_guest_functions_matrix.py) ;;
             quiet-hours) TEST_PATHS=(tests_stress/test_quiet_hours_multi_satellite.py) ;;
             functions) TEST_PATHS=(tests_stress/test_function_groups_state_machine.py) ;;
-            memory-knowledge) TEST_PATHS=(tests_stress/test_memory_knowledge_scale.py tests_stress/test_temporary_memory_scale.py) ;;
+            memory-knowledge) TEST_PATHS=(tests_stress/test_memory_knowledge_scale.py tests_stress/test_temporary_memory_scale.py tests_stress/test_provider_wire_privacy.py) ;;
+            large-installation) TEST_PATHS=(tests_stress/test_large_installation.py) ;;
             chaos) TEST_PATHS=(tests_stress/test_cross_feature_chaos.py) ;;
             *) exit 2 ;;
           esac
