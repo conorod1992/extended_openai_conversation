@@ -18,7 +18,6 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from custom_components.extended_openai_conversation_responses.const import (
-    API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -122,17 +121,65 @@ def _supports_sampling(model: dict[str, Any], parameter: str, effort: str | None
     return False
 
 
-def _build_options(rng: random.Random, model: dict[str, Any], ordinal: int) -> dict[str, Any]:
+def _function_calling_allowed(
+    model: dict[str, Any],
+    api_mode: str,
+    effort: str | None,
+) -> bool:
+    support = model["function_calling"][api_mode]
+    if support is True:
+        return True
+    if support is False:
+        return False
+    return (
+        support.get("support") == "conditional"
+        and effort in support.get("allowed_reasoning_efforts", [])
+    )
+
+
+def _viable_api_efforts(
+    model: dict[str, Any],
+    *,
+    requires_tools: bool,
+) -> list[tuple[str, str | None]]:
+    efforts: list[str | None] = list(model["reasoning"]["efforts"]) or [None]
+    result: list[tuple[str, str | None]] = []
+    for api_mode in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
+        if not model["api"].get(api_mode):
+            continue
+        for effort in efforts:
+            if requires_tools and not _function_calling_allowed(
+                model, api_mode, effort
+            ):
+                continue
+            result.append((api_mode, effort))
+    return result
+
+
+def _build_options(
+    rng: random.Random,
+    model: dict[str, Any],
+    ordinal: int,
+    *,
+    requires_tools: bool,
+) -> dict[str, Any]:
+    viable = _viable_api_efforts(model, requires_tools=requires_tools)
+    if not viable:
+        raise ValueError(
+            f"{model['id']} has no viable API/effort combination for "
+            f"requires_tools={requires_tools}"
+        )
+    # Rotate deterministically through viable API/effort pairs before random
+    # repetition. This makes multi-case runs cover both APIs where possible.
+    api_mode, effort = viable[ordinal % len(viable)]
+
     options: dict[str, Any] = {
         CONF_CHAT_MODEL: model["id"],
-        CONF_API_MODE: API_MODE_AUTO,
+        CONF_API_MODE: api_mode,
         CONF_MAX_TOKENS: MAX_OUTPUT_TOKENS,
     }
 
-    effort: str | None = None
-    efforts = list(model["reasoning"]["efforts"])
-    if efforts:
-        effort = efforts[ordinal % len(efforts)] if ordinal < len(efforts) else rng.choice(efforts)
+    if effort is not None:
         options[CONF_REASONING_EFFORT] = effort
 
     sampling_candidates = [
@@ -316,11 +363,22 @@ def _cases(
             profile = _PROFILES[
                 (profile_offset + model_index + ordinal) % len(_PROFILES)
             ]
+            requires_tools = profile in {"tool-heavy", "kitchen-sink"}
+            if requires_tools and not _viable_api_efforts(
+                model, requires_tools=True
+            ):
+                profile = "context-heavy"
+                requires_tools = False
             result.append(
                 ProbeCase(
                     model=model["id"],
                     profile=profile,
-                    options=_build_options(rng, model, ordinal),
+                    options=_build_options(
+                        rng,
+                        model,
+                        ordinal,
+                        requires_tools=requires_tools,
+                    ),
                 )
             )
     return result
