@@ -117,7 +117,12 @@ def validate_function_schema(schema: Mapping[str, Any]) -> tuple[str, ...]:
     if root_type is not None and root_type != "object":
         raise _schema_error("function parameters must describe an object")
     for warning in warnings:
-        _LOGGER.warning("Function Tool schema compatibility warning: %s", warning)
+        _LOGGER.warning(
+            "Function Tool schema uses a feature Extended OpenAI cannot validate "
+            "locally. Review the tool schema in Extended OpenAI > Functions. "
+            "Compatibility detail: %s",
+            warning,
+        )
     return tuple(warnings)
 
 
