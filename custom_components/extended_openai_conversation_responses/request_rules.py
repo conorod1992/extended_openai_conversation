@@ -944,7 +944,7 @@ class RequestRules:
         """Publish a metadata-only change without recompiling every phrase."""
         self._refresh_snapshot_rules({rule_id: replacement})
         self._has_continuation = any(
-            rule["continue_matching"]
+            rule.get("continue_matching", False)
             for rule, _, _ in self._matching_snapshot.deterministic
         )
 
@@ -1123,7 +1123,7 @@ class RequestRules:
             fuzzy_rules,
         )
         self._has_continuation = any(
-            rule["continue_matching"] for rule, _, _ in compiled_rules
+            rule.get("continue_matching", False) for rule, _, _ in compiled_rules
         )
         self._diagnostics = diagnostics
         return order_changed
