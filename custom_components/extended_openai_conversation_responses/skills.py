@@ -61,22 +61,43 @@ class SkillMdParser:
         match = cls.FRONTMATTER_PATTERN.match(content)
         if not match:
             _LOGGER.warning(
-                "Invalid SKILL.md format in %s: missing frontmatter", skill_path
+                "Skill '%s' was not loaded because SKILL.md is missing YAML "
+                "frontmatter. Fix or reinstall the Skill in Extended OpenAI > Skills. "
+                "File: %s",
+                skill_path.parent.name,
+                skill_path,
             )
             return None
         try:
             frontmatter = yaml.safe_load(match.group(1))
         except yaml.YAMLError as err:
             _LOGGER.warning(
-                "Failed to parse YAML frontmatter in %s: %s", skill_path, err
+                "Skill '%s' was not loaded because its SKILL.md YAML frontmatter is "
+                "invalid. Fix or reinstall the Skill in Extended OpenAI > Skills. "
+                "File: %s. Reason: %s",
+                skill_path.parent.name,
+                skill_path,
+                err,
             )
             return None
         if not isinstance(frontmatter, dict):
-            _LOGGER.warning("Invalid frontmatter format in %s", skill_path)
+            _LOGGER.warning(
+                "Skill '%s' was not loaded because its SKILL.md frontmatter is not a "
+                "mapping. Fix or reinstall the Skill in Extended OpenAI > Skills. "
+                "File: %s",
+                skill_path.parent.name,
+                skill_path,
+            )
             return None
         description = frontmatter.get("description")
         if not description:
-            _LOGGER.warning("Missing required field (description) in %s", skill_path)
+            _LOGGER.warning(
+                "Skill '%s' was not loaded because SKILL.md is missing the required "
+                "'description' field. Fix or reinstall the Skill in Extended OpenAI "
+                "> Skills. File: %s",
+                skill_path.parent.name,
+                skill_path,
+            )
             return None
         skill_dir = skill_path.parent
         try:
@@ -86,7 +107,13 @@ class SkillMdParser:
         try:
             return Skill(name=name, description=description, path=skill_path)
         except ValueError as err:
-            _LOGGER.warning("Invalid skill in %s: %s", skill_path, err)
+            _LOGGER.warning(
+                "Skill '%s' was not loaded because its metadata is invalid. Fix or "
+                "reinstall the Skill in Extended OpenAI > Skills. File: %s. Reason: %s",
+                skill_path.parent.name,
+                skill_path,
+                err,
+            )
             return None
 
     @classmethod
@@ -348,7 +375,11 @@ class SkillManager:
             _LOGGER.debug("Skills directory does not exist: %s", skills_dir)
             return results
         if not skills_dir.is_dir():
-            _LOGGER.warning("Skills path is not a directory: %s", skills_dir)
+            _LOGGER.warning(
+                "The configured Skills path is not a directory, so installed Skills "
+                "cannot be loaded. Check the Skills path in Extended OpenAI > Skills: %s",
+                skills_dir,
+            )
             return results
         entries_seen = 0
         for skill_dir in skills_dir.iterdir():
@@ -373,7 +404,13 @@ class SkillManager:
             try:
                 results.append((skill_file, read_bounded_skill_text(skill_file)))
             except HomeAssistantError as err:
-                _LOGGER.warning("Failed to read skill file %s: %s", skill_file, err)
+                _LOGGER.warning(
+                    "Skill '%s' could not be read and was skipped. Check the Skill file "
+                    "or reinstall it in Extended OpenAI > Skills. File: %s. Reason: %s",
+                    skill_dir.name,
+                    skill_file,
+                    err,
+                )
         return results
 
     def get_skill(self, name: str) -> Skill | None:
