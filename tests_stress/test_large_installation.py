@@ -68,12 +68,22 @@ async def test_large_installation_survives_setup_management_backup_and_assist(
         }
         for number in range(group_count)
     ]
+    primary_group_count = min(group_count, 50)
+    primary_tool_count = primary_group_count * 3
     entries = []
     setup_started = perf_counter()
     for number in range(agents):
         options = {CONF_MEMORY_MODE: MEMORY_MODE_MANUAL, CONF_KNOWLEDGE_ENABLED: True}
         if number == 0:
-            options |= {CONF_FUNCTION_TOOLS: tools, CONF_FUNCTION_GROUPS: groups}
+            options |= {
+                CONF_FUNCTION_TOOLS: tools[:primary_tool_count],
+                CONF_FUNCTION_GROUPS: groups[:primary_group_count],
+            }
+        elif number == 1 and group_count > primary_group_count:
+            options |= {
+                CONF_FUNCTION_TOOLS: tools[primary_tool_count:],
+                CONF_FUNCTION_GROUPS: groups[primary_group_count:],
+            }
         entry = MockConfigEntry(
             domain=DOMAIN,
             title=f"Scale provider {number}",
@@ -95,6 +105,11 @@ async def test_large_installation_survives_setup_management_backup_and_assist(
     setup_seconds = round(perf_counter() - setup_started, 3)
     primary = entries[0]
     subentry = next(iter(primary.subentries.values()))
+    assert len(subentry.data[CONF_FUNCTION_GROUPS]) == primary_group_count
+    if group_count > primary_group_count:
+        second_subentry = next(iter(entries[1].subentries.values()))
+        assert len(second_subentry.data[CONF_FUNCTION_GROUPS]) == group_count - primary_group_count
+        assert len(second_subentry.data[CONF_FUNCTION_TOOLS]) == tool_count - primary_tool_count
     memory = await async_get_memory(hass, primary.entry_id, subentry.subentry_id)
     knowledge = await async_get_knowledge(hass, primary.entry_id, subentry.subentry_id)
     rules = await async_get_request_rules(hass, primary.entry_id, subentry.subentry_id)
