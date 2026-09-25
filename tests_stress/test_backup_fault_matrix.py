@@ -8,7 +8,10 @@ from datetime import timedelta
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.extended_openai_conversation_responses import backup
+from custom_components.extended_openai_conversation_responses import (
+    agent_config,
+    backup,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_CHAT_MODEL,
     CONF_KNOWLEDGE_ENABLED,
@@ -87,12 +90,12 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
                     "context_threshold": 28000,
                     "conversation_timeout_minutes": 60,
                     "archive_enabled": True,
-                    "archive_retention_days": 14,
+                    "archive_retention_days": 7,
                     "web_search": True,
                     "temporary_memory": "balanced",
                     "guest_knowledge_policy": "off",
                     "guest_excluded_domains": ["lock"],
-                    "usage_request_retention_days": 14,
+                    "usage_request_retention_days": 7,
                     "speech_processing_enabled": True,
                     "speech_strip_markdown": False,
                     "function_tool_error_recovery": True,
@@ -154,6 +157,12 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
             tool_calls_requested=0,
         )
     target = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    defaults = agent_config.agent_config_defaults()
+    nondefault_config_fields = sum(
+        value != defaults.get(key)
+        for key, value in target["agent"]["config"].items()
+    )
+    assert nondefault_config_fields >= 15
     assert (
         set(target) - {"format", "version", "created_at", "integration_version"}
         == BACKED_UP_SUBSYSTEMS
@@ -167,7 +176,7 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
         temporary_memories=1,
         guest_mode_schedules=1,
         usage_requests=1,
-        nondefault_config_fields=20,
+        nondefault_config_fields=nondefault_config_fields,
     )
     assert (await backup.async_restore_backup(hass, entry, subentry, blank))[
         "status"
