@@ -1,407 +1,407 @@
 {
-  "config": {
-    "error": {
-      "cannot_connect": "Failed to connect",
-      "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error",
-      "provider_forbidden": "Provider rejected access for these credentials or account permissions.",
-      "provider_rate_limited": "Provider rate limit reached. Try again later.",
-      "provider_unavailable": "Provider is temporarily unavailable. Try again later.",
-      "provider_error": "Provider rejected the request. Check the provider settings and Home Assistant logs.",
-      "config_changed": "Provider settings changed while the API key was being validated. Nothing was overwritten; try again."
+    "config": {
+        "error": {
+            "cannot_connect": "Failed to connect",
+            "invalid_auth": "Invalid authentication",
+            "unknown": "Unexpected error",
+            "provider_forbidden": "Provider rejected access for these credentials or account permissions.",
+            "provider_rate_limited": "Provider rate limit reached. Try again later.",
+            "provider_unavailable": "Provider is temporarily unavailable. Try again later.",
+            "provider_error": "Provider rejected the request. Check the provider settings and Home Assistant logs.",
+            "config_changed": "Provider settings changed while the API key was being validated. Nothing was overwritten; try again."
+        },
+        "step": {
+            "user": {
+                "title": "Connect a provider",
+                "description": "Choose where Extended OpenAI should send AI requests. **OpenAI** is the right choice for most people. Choose **Azure OpenAI** only if you already use an Azure OpenAI resource.",
+                "data": {
+                    "name": "Name",
+                    "api_provider": "API provider"
+                },
+                "data_description": {
+                    "name": "A friendly name for this provider connection.",
+                    "api_provider": "OpenAI is recommended for normal personal setups. Azure OpenAI uses your own Azure resource."
+                }
+            },
+            "reauth_confirm": {
+                "title": "Reauthenticate Extended OpenAI",
+                "description": "Enter a valid API key. Existing provider and endpoint settings will be preserved.",
+                "data": {
+                    "api_key": "API key"
+                }
+            },
+            "openai_credentials": {
+                "title": "Connect OpenAI",
+                "description": "Paste your OpenAI API key below. If you do not have one yet, follow the [simple API key guide](https://conorod1992.github.io/extended_openai_conversation/getting-started/api-key/) or go straight to [OpenAI API keys](https://platform.openai.com/api-keys). API usage is billed separately from ChatGPT subscriptions.",
+                "data": {
+                    "api_key": "OpenAI API key",
+                    "advanced_provider_settings": "Show advanced provider settings"
+                },
+                "data_description": {
+                    "api_key": "Your secret OpenAI API key. This is not your ChatGPT password.",
+                    "advanced_provider_settings": "Leave this off for a normal OpenAI setup."
+                }
+            },
+            "openai_advanced": {
+                "title": "Advanced provider settings",
+                "description": "Most OpenAI users do not need to change anything here. Leave the Base URL unchanged and Organization blank unless you know your provider requires different settings.",
+                "data": {
+                    "base_url": "Base URL",
+                    "organization": "Organization",
+                    "skip_authentication": "Skip authentication"
+                },
+                "data_description": {
+                    "base_url": "Leave this unchanged for OpenAI. Change it only for a compatible custom endpoint.",
+                    "organization": "Optional. Most users should leave this blank.",
+                    "skip_authentication": "Leave this off for OpenAI. Use it only for a compatible endpoint that does not require authentication."
+                }
+            },
+            "azure_credentials": {
+                "title": "Connect Azure OpenAI",
+                "description": "Enter the details for your existing Azure OpenAI resource. Azure uses its own endpoint and API version, so these are required here.",
+                "data": {
+                    "api_key": "Azure OpenAI API key",
+                    "base_url": "Azure OpenAI endpoint",
+                    "api_version": "API version"
+                },
+                "data_description": {
+                    "api_key": "The API key for your Azure OpenAI resource.",
+                    "base_url": "Your Azure OpenAI resource endpoint, for example https://your-resource.openai.azure.com.",
+                    "api_version": "The Azure OpenAI API version configured for your resource."
+                }
+            }
+        }
     },
-    "step": {
-      "user": {
-        "title": "Connect a provider",
-        "description": "Choose where Extended OpenAI should send AI requests. **OpenAI** is the right choice for most people. Choose **Azure OpenAI** only if you already use an Azure OpenAI resource.",
-        "data": {
-          "name": "Name",
-          "api_provider": "API provider"
+    "config_subentries": {
+        "conversation": {
+            "entry_type": "Conversation agent",
+            "initiate_flow": {
+                "reconfigure": "Reconfigure conversation agent",
+                "user": "Add conversation agent"
+            },
+            "step": {
+                "init": {
+                    "data": {
+                        "name": "Agent name",
+                        "management_panel": "Configuration location",
+                        "max_tokens": "Maximum tokens to return in response",
+                        "model": "Completion Model",
+                        "api_mode": "API mode",
+                        "web_search": "Web search",
+                        "web_search_context": "Web search context",
+                        "memory_mode": "Memory mode",
+                        "knowledge_enabled": "Knowledge Library",
+                        "archive_enabled": "Conversation archive",
+                        "archive_retention_days": "Archive retention (days)",
+                        "archive_model_search_enabled": "Allow model archive search",
+                        "shared_archive_enabled": "Allow shared-household archive",
+                        "archive_session_timeout_minutes": "Archive inactivity timeout (minutes)",
+                        "voice_scope_policy": "Unidentified voice policy",
+                        "voice_unmapped_policy": "Unmapped satellite fallback",
+                        "voice_default_user_id": "Default voice owner",
+                        "voice_device_mappings": "Satellite owner mappings",
+                        "shared_memory_mode": "Shared-household memory behavior",
+                        "usage_request_retention_days": "Request detail retention (days)",
+                        "usage_run_retention_days": "Run detail retention (days)",
+                        "continue_conversation": "Continue conversation",
+                        "prompt": "Prompt Template",
+                        "max_function_calls_per_conversation": "Maximum tool calls per request",
+                        "skills": "Skills",
+                        "functions": "Functions",
+                        "attach_username": "Attach Username to Message",
+                        "context_threshold": "Context Threshold",
+                        "context_truncate_strategy": "Context truncation strategy when exceeded threshold",
+                        "advanced_options": "Advanced Options"
+                    },
+                    "data_description": {
+                        "web_search": "Allow the model to use OpenAI's native Web Search tool for current or external information. Requires the direct OpenAI Responses API.",
+                        "web_search_context": "Controls retrieval breadth only when Web Search is enabled. Low is recommended for concise voice-agent answers.",
+                        "memory_mode": "Off disables persistent memory. Manual saves only explicit remember requests. Automatic may proactively save stable, useful facts under the existing safety rules.",
+                        "knowledge_enabled": "Allow on-demand search and retrieval of this agent's locally stored Knowledge sources.",
+                        "archive_enabled": "Store user messages and final assistant replies locally. Disabled by default.",
+                        "archive_model_search_enabled": "Expose bounded, current-scope lexical archive search to the model. No extra model calls or embeddings are used.",
+                        "voice_scope_policy": "How unidentified voice requests are scoped. Do not retain is the privacy-conscious default.",
+                        "voice_device_mappings": "Map Home Assistant device IDs to user IDs, shared, or unretained.",
+                        "continue_conversation": "HA Default uses Home Assistant's normal punctuation-based behavior. Always listens again after successful responses. Conditional lets the language model decide when an immediate follow-up is expected.",
+                        "max_function_calls_per_conversation": "Maximum model-requested tool executions allowed while producing one response to a user request.",
+                        "context_threshold": "Provider-reported input-token count that triggers context management.",
+                        "context_truncate_strategy": "Keep recent messages is recommended. Clear all preserves legacy behavior. Summarize makes one bounded model request and falls back to keeping recent messages if it fails."
+                    }
+                },
+                "advanced": {
+                    "title": "Advanced Options",
+                    "data": {
+                        "temperature": "Temperature",
+                        "top_p": "Top P",
+                        "reasoning_effort": "Reasoning effort",
+                        "service_tier": "Service tier",
+                        "shorten_tool_call_id": "Shorten tool call IDs",
+                        "memory_auto_retrieve_limit": "Automatically include memories",
+                        "memory_retrieval_mode": "Memory retrieval",
+                        "memory_embedding_model": "Embedding model"
+                    },
+                    "data_description": {
+                        "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers.",
+                        "memory_auto_retrieve_limit": "Select up to this many relevant memories when a new conversation starts. The same memories remain available for that conversation. Set to 0 to use memory only on demand.",
+                        "memory_retrieval_mode": "Use lightweight local lexical ranking or optional embedding-based hybrid semantic retrieval.",
+                        "memory_embedding_model": "Embedding model used only for hybrid semantic retrieval."
+                    }
+                }
+            },
+            "abort": {
+                "agent_configuration_managed_in_panel": "Conversation-agent behaviour is managed from Extended OpenAI > Configuration in the sidebar."
+            }
         },
-        "data_description": {
-          "name": "A friendly name for this provider connection.",
-          "api_provider": "OpenAI is recommended for normal personal setups. Azure OpenAI uses your own Azure resource."
+        "ai_task_data": {
+            "entry_type": "AI Task agent",
+            "initiate_flow": {
+                "reconfigure": "Reconfigure AI Task agent",
+                "user": "Add AI Task agent"
+            },
+            "step": {
+                "init": {
+                    "data": {
+                        "name": "Agent name",
+                        "chat_model": "Model",
+                        "api_mode": "API mode",
+                        "max_tokens": "Maximum tokens to return in response",
+                        "web_search": "Web search",
+                        "advanced_options": "Advanced options"
+                    },
+                    "data_description": {
+                        "web_search": "Allow this AI Task agent to use OpenAI's native Web Search tool for current or external information. Requires the direct OpenAI Responses API."
+                    }
+                },
+                "advanced": {
+                    "title": "Advanced options",
+                    "data": {
+                        "temperature": "Temperature",
+                        "top_p": "Top P",
+                        "reasoning_effort": "Reasoning effort",
+                        "service_tier": "Service tier",
+                        "shorten_tool_call_id": "Shorten tool call IDs"
+                    },
+                    "data_description": {
+                        "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers."
+                    }
+                }
+            }
         }
-      },
-      "reauth_confirm": {
-        "title": "Reauthenticate Extended OpenAI",
-        "description": "Enter a valid API key. Existing provider and endpoint settings will be preserved.",
-        "data": {
-          "api_key": "API key"
+    },
+    "options": {
+        "step": {
+            "init": {
+                "menu_options": {
+                    "test_agent": "Test agent",
+                    "manage_memory": "Manage memories",
+                    "manage_knowledge": "Manage knowledge"
+                },
+                "menu_option_descriptions": {
+                    "test_agent": "Run safe local checks and one minimal model request.",
+                    "manage_memory": "Open the user-scoped memory management panel.",
+                    "manage_knowledge": "Open the per-agent Knowledge Library management panel."
+                }
+            },
+            "test_agent": {
+                "data": {
+                    "agent_id": "Conversation agent"
+                }
+            },
+            "test_result": {
+                "data": {
+                    "report": "Test result"
+                }
+            },
+            "manage_knowledge": {
+                "description": "Open this path from the Home Assistant sidebar or browser to manage Knowledge sources.",
+                "data": {
+                    "panel_path": "Knowledge Library panel path"
+                }
+            },
+            "manage_memory": {
+                "description": "Open this path from the Home Assistant sidebar or browser to manage memories.",
+                "data": {
+                    "panel_path": "Memory panel path"
+                }
+            }
         }
-      },
-      "openai_credentials": {
-        "title": "Connect OpenAI",
-        "description": "Paste your OpenAI API key below. If you do not have one yet, follow the [simple API key guide](https://conorod1992.github.io/extended_openai_conversation/getting-started/api-key/) or go straight to [OpenAI API keys](https://platform.openai.com/api-keys). API usage is billed separately from ChatGPT subscriptions.",
-        "data": {
-          "api_key": "OpenAI API key",
-          "advanced_provider_settings": "Show advanced provider settings"
+    },
+    "selector": {
+        "web_search_context": {
+            "options": {
+                "low": "Low",
+                "medium": "Medium",
+                "high": "High"
+            }
         },
-        "data_description": {
-          "api_key": "Your secret OpenAI API key. This is not your ChatGPT password.",
-          "advanced_provider_settings": "Leave this off for a normal OpenAI setup."
-        }
-      },
-      "openai_advanced": {
-        "title": "Advanced provider settings",
-        "description": "Most OpenAI users do not need to change anything here. Leave the Base URL unchanged and Organization blank unless you know your provider requires different settings.",
-        "data": {
-          "base_url": "Base URL",
-          "organization": "Organization",
-          "skip_authentication": "Skip authentication"
+        "continue_conversation": {
+            "options": {
+                "ha_default": "HA Default",
+                "always": "Always",
+                "conditional": "Conditional"
+            }
         },
-        "data_description": {
-          "base_url": "Leave this unchanged for OpenAI. Change it only for a compatible custom endpoint.",
-          "organization": "Optional. Most users should leave this blank.",
-          "skip_authentication": "Leave this off for OpenAI. Use it only for a compatible endpoint that does not require authentication."
-        }
-      },
-      "azure_credentials": {
-        "title": "Connect Azure OpenAI",
-        "description": "Enter the details for your existing Azure OpenAI resource. Azure uses its own endpoint and API version, so these are required here.",
-        "data": {
-          "api_key": "Azure OpenAI API key",
-          "base_url": "Azure OpenAI endpoint",
-          "api_version": "API version"
+        "memory_mode": {
+            "options": {
+                "off": "Off",
+                "manual": "Manual",
+                "automatic": "Automatic"
+            }
         },
-        "data_description": {
-          "api_key": "The API key for your Azure OpenAI resource.",
-          "base_url": "Your Azure OpenAI resource endpoint, for example https://your-resource.openai.azure.com.",
-          "api_version": "The Azure OpenAI API version configured for your resource."
+        "voice_scope_policy": {
+            "options": {
+                "unretained": "Do not retain",
+                "shared": "Shared household",
+                "default_user": "Selected user",
+                "device_mapping": "Per satellite mapping"
+            }
+        },
+        "voice_unmapped_policy": {
+            "options": {
+                "unretained": "Do not retain",
+                "shared": "Shared household",
+                "default_user": "Selected user",
+                "device_mapping": "Per satellite mapping"
+            }
+        },
+        "shared_memory_mode": {
+            "options": {
+                "disabled": "Disabled",
+                "explicit": "Explicit only",
+                "automatic": "Automatic"
+            }
         }
-      }
+    },
+    "entity": {
+        "sensor": {
+            "usage": {
+                "name": "Lifetime usage"
+            },
+            "usage_today": {
+                "name": "Usage today"
+            },
+            "usage_month": {
+                "name": "Usage this month"
+            },
+            "last_response_usage": {
+                "name": "Last response usage"
+            },
+            "guest_mode": {
+                "name": "Guest Mode"
+            }
+        }
+    },
+    "services": {
+        "query_image": {
+            "name": "Query image",
+            "description": "Take in images and answer questions about them",
+            "fields": {
+                "config_entry": {
+                    "name": "Config Entry",
+                    "description": "The config entry to use for this service"
+                },
+                "model": {
+                    "name": "Model",
+                    "description": "The model",
+                    "example": "gpt-4.1-mini"
+                },
+                "api_mode": {
+                    "name": "API mode",
+                    "description": "Select Auto, Chat Completions, or Responses"
+                },
+                "prompt": {
+                    "name": "Prompt",
+                    "description": "The text to ask about image",
+                    "example": "What’s in this image?"
+                },
+                "images": {
+                    "name": "Images",
+                    "description": "A list of images that would be asked"
+                },
+                "max_tokens": {
+                    "name": "Max Tokens",
+                    "description": "The maximum tokens",
+                    "example": "300"
+                }
+            }
+        },
+        "process": {
+            "name": "Process request directly",
+            "description": "Sends text through the normal Extended OpenAI processing pipeline without re-entering Home Assistant conversation routing.",
+            "fields": {
+                "text": {
+                    "name": "Text",
+                    "description": "The request to process."
+                },
+                "agent_id": {
+                    "name": "Conversation agent",
+                    "description": "Optional when only one Extended OpenAI conversation agent is available."
+                },
+                "conversation_id": {
+                    "name": "Conversation ID",
+                    "description": "Optional existing conversation to continue."
+                },
+                "device_id": {
+                    "name": "Device ID",
+                    "description": "Optional source device context."
+                },
+                "satellite_id": {
+                    "name": "Satellite ID",
+                    "description": "Optional Assist satellite context."
+                },
+                "language": {
+                    "name": "Language",
+                    "description": "Optional language code."
+                }
+            }
+        },
+        "change_config": {
+            "name": "Change configuration",
+            "description": "Changes the configuration of the integration.",
+            "fields": {
+                "config_entry": {
+                    "name": "Config Entry",
+                    "description": "The config entry to update."
+                },
+                "api_key": {
+                    "name": "API Key",
+                    "description": "The API key."
+                },
+                "base_url": {
+                    "name": "Base Url",
+                    "description": "The base URL."
+                },
+                "api_version": {
+                    "name": "Api Version",
+                    "description": "The API version."
+                },
+                "organization": {
+                    "name": "Organization",
+                    "description": "The organization."
+                },
+                "skip_authentication": {
+                    "name": "Skip Authentication",
+                    "description": "Skip authentication."
+                },
+                "api_provider": {
+                    "name": "Api Provider",
+                    "description": "The API provider. (OpenAI or Azure)"
+                }
+            }
+        },
+        "download_skill": {
+            "name": "Download skill",
+            "description": "Download a skill from the GitHub repository to your skills directory.",
+            "fields": {
+                "skill_name": {
+                    "name": "Skill name",
+                    "description": "The name of the skill to download (e.g., crypto)"
+                }
+            }
+        },
+        "reload_skills": {
+            "name": "Reload skills",
+            "description": "Reload skills from the skills directory."
+        }
     }
-  },
-  "config_subentries": {
-    "conversation": {
-      "entry_type": "Conversation agent",
-      "initiate_flow": {
-        "reconfigure": "Reconfigure conversation agent",
-        "user": "Add conversation agent"
-      },
-      "step": {
-        "init": {
-          "data": {
-            "name": "Agent name",
-            "management_panel": "Configuration location",
-            "max_tokens": "Maximum tokens to return in response",
-            "model": "Completion Model",
-            "api_mode": "API mode",
-            "web_search": "Web search",
-            "web_search_context": "Web search context",
-            "memory_mode": "Memory mode",
-            "knowledge_enabled": "Knowledge Library",
-            "archive_enabled": "Conversation archive",
-            "archive_retention_days": "Archive retention (days)",
-            "archive_model_search_enabled": "Allow model archive search",
-            "shared_archive_enabled": "Allow shared-household archive",
-            "archive_session_timeout_minutes": "Archive inactivity timeout (minutes)",
-            "voice_scope_policy": "Unidentified voice policy",
-            "voice_unmapped_policy": "Unmapped satellite fallback",
-            "voice_default_user_id": "Default voice owner",
-            "voice_device_mappings": "Satellite owner mappings",
-            "shared_memory_mode": "Shared-household memory behavior",
-            "usage_request_retention_days": "Request detail retention (days)",
-            "usage_run_retention_days": "Run detail retention (days)",
-            "continue_conversation": "Continue conversation",
-            "prompt": "Prompt Template",
-            "max_function_calls_per_conversation": "Maximum tool calls per request",
-            "skills": "Skills",
-            "functions": "Functions",
-            "attach_username": "Attach Username to Message",
-            "context_threshold": "Context Threshold",
-            "context_truncate_strategy": "Context truncation strategy when exceeded threshold",
-            "advanced_options": "Advanced Options"
-          },
-          "data_description": {
-            "web_search": "Allow the model to use OpenAI's native Web Search tool for current or external information. Requires the direct OpenAI Responses API.",
-            "web_search_context": "Controls retrieval breadth only when Web Search is enabled. Low is recommended for concise voice-agent answers.",
-            "memory_mode": "Off disables persistent memory. Manual saves only explicit remember requests. Automatic may proactively save stable, useful facts under the existing safety rules.",
-            "knowledge_enabled": "Allow on-demand search and retrieval of this agent's locally stored Knowledge sources.",
-            "archive_enabled": "Store user messages and final assistant replies locally. Disabled by default.",
-            "archive_model_search_enabled": "Expose bounded, current-scope lexical archive search to the model. No extra model calls or embeddings are used.",
-            "voice_scope_policy": "How unidentified voice requests are scoped. Do not retain is the privacy-conscious default.",
-            "voice_device_mappings": "Map Home Assistant device IDs to user IDs, shared, or unretained.",
-            "continue_conversation": "HA Default uses Home Assistant's normal punctuation-based behavior. Always listens again after successful responses. Conditional lets the language model decide when an immediate follow-up is expected.",
-            "max_function_calls_per_conversation": "Maximum model-requested tool executions allowed while producing one response to a user request.",
-            "context_threshold": "Provider-reported input-token count that triggers context management.",
-            "context_truncate_strategy": "Keep recent messages is recommended. Clear all preserves legacy behavior. Summarize makes one bounded model request and falls back to keeping recent messages if it fails."
-          }
-        },
-        "advanced": {
-          "title": "Advanced Options",
-          "data": {
-            "temperature": "Temperature",
-            "top_p": "Top P",
-            "reasoning_effort": "Reasoning effort",
-            "service_tier": "Service tier",
-            "shorten_tool_call_id": "Shorten tool call IDs",
-            "memory_auto_retrieve_limit": "Automatically include memories",
-            "memory_retrieval_mode": "Memory retrieval",
-            "memory_embedding_model": "Embedding model"
-          },
-          "data_description": {
-            "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers.",
-            "memory_auto_retrieve_limit": "Select up to this many relevant memories when a new conversation starts. The same memories remain available for that conversation. Set to 0 to use memory only on demand.",
-            "memory_retrieval_mode": "Use lightweight local lexical ranking or optional embedding-based hybrid semantic retrieval.",
-            "memory_embedding_model": "Embedding model used only for hybrid semantic retrieval."
-          }
-        }
-      },
-      "abort": {
-        "agent_configuration_managed_in_panel": "Conversation-agent behaviour is managed from Extended OpenAI > Configuration in the sidebar."
-      }
-    },
-    "ai_task_data": {
-      "entry_type": "AI Task agent",
-      "initiate_flow": {
-        "reconfigure": "Reconfigure AI Task agent",
-        "user": "Add AI Task agent"
-      },
-      "step": {
-        "init": {
-          "data": {
-            "name": "Agent name",
-            "chat_model": "Model",
-            "api_mode": "API mode",
-            "max_tokens": "Maximum tokens to return in response",
-            "web_search": "Web search",
-            "advanced_options": "Advanced options"
-          },
-          "data_description": {
-            "web_search": "Allow this AI Task agent to use OpenAI's native Web Search tool for current or external information. Requires the direct OpenAI Responses API."
-          }
-        },
-        "advanced": {
-          "title": "Advanced options",
-          "data": {
-            "temperature": "Temperature",
-            "top_p": "Top P",
-            "reasoning_effort": "Reasoning effort",
-            "service_tier": "Service tier",
-            "shorten_tool_call_id": "Shorten tool call IDs"
-          },
-          "data_description": {
-            "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers."
-          }
-        }
-      }
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "menu_options": {
-          "test_agent": "Test agent",
-          "manage_memory": "Manage memories",
-          "manage_knowledge": "Manage knowledge"
-        },
-        "menu_option_descriptions": {
-          "test_agent": "Run safe local checks and one minimal model request.",
-          "manage_memory": "Open the user-scoped memory management panel.",
-          "manage_knowledge": "Open the per-agent Knowledge Library management panel."
-        }
-      },
-      "test_agent": {
-        "data": {
-          "agent_id": "Conversation agent"
-        }
-      },
-      "test_result": {
-        "data": {
-          "report": "Test result"
-        }
-      },
-      "manage_knowledge": {
-        "description": "Open this path from the Home Assistant sidebar or browser to manage Knowledge sources.",
-        "data": {
-          "panel_path": "Knowledge Library panel path"
-        }
-      },
-      "manage_memory": {
-        "description": "Open this path from the Home Assistant sidebar or browser to manage memories.",
-        "data": {
-          "panel_path": "Memory panel path"
-        }
-      }
-    }
-  },
-  "selector": {
-    "web_search_context": {
-      "options": {
-        "low": "Low",
-        "medium": "Medium",
-        "high": "High"
-      }
-    },
-    "continue_conversation": {
-      "options": {
-        "ha_default": "HA Default",
-        "always": "Always",
-        "conditional": "Conditional"
-      }
-    },
-    "memory_mode": {
-      "options": {
-        "off": "Off",
-        "manual": "Manual",
-        "automatic": "Automatic"
-      }
-    },
-    "voice_scope_policy": {
-      "options": {
-        "unretained": "Do not retain",
-        "shared": "Shared household",
-        "default_user": "Selected user",
-        "device_mapping": "Per satellite mapping"
-      }
-    },
-    "voice_unmapped_policy": {
-      "options": {
-        "unretained": "Do not retain",
-        "shared": "Shared household",
-        "default_user": "Selected user",
-        "device_mapping": "Per satellite mapping"
-      }
-    },
-    "shared_memory_mode": {
-      "options": {
-        "disabled": "Disabled",
-        "explicit": "Explicit only",
-        "automatic": "Automatic"
-      }
-    }
-  },
-  "entity": {
-    "sensor": {
-      "usage": {
-        "name": "Lifetime usage"
-      },
-      "usage_today": {
-        "name": "Usage today"
-      },
-      "usage_month": {
-        "name": "Usage this month"
-      },
-      "last_response_usage": {
-        "name": "Last response usage"
-      },
-      "guest_mode": {
-        "name": "Guest Mode"
-      }
-    }
-  },
-  "services": {
-    "query_image": {
-      "name": "Query image",
-      "description": "Take in images and answer questions about them",
-      "fields": {
-        "config_entry": {
-          "name": "Config Entry",
-          "description": "The config entry to use for this service"
-        },
-        "model": {
-          "name": "Model",
-          "description": "The model",
-          "example": "gpt-4.1-mini"
-        },
-        "api_mode": {
-          "name": "API mode",
-          "description": "Select Auto, Chat Completions, or Responses"
-        },
-        "prompt": {
-          "name": "Prompt",
-          "description": "The text to ask about image",
-          "example": "What’s in this image?"
-        },
-        "images": {
-          "name": "Images",
-          "description": "A list of images that would be asked"
-        },
-        "max_tokens": {
-          "name": "Max Tokens",
-          "description": "The maximum tokens",
-          "example": "300"
-        }
-      }
-    },
-    "process": {
-      "name": "Process request directly",
-      "description": "Sends text through the normal Extended OpenAI processing pipeline without re-entering Home Assistant conversation routing.",
-      "fields": {
-        "text": {
-          "name": "Text",
-          "description": "The request to process."
-        },
-        "agent_id": {
-          "name": "Conversation agent",
-          "description": "Optional when only one Extended OpenAI conversation agent is available."
-        },
-        "conversation_id": {
-          "name": "Conversation ID",
-          "description": "Optional existing conversation to continue."
-        },
-        "device_id": {
-          "name": "Device ID",
-          "description": "Optional source device context."
-        },
-        "satellite_id": {
-          "name": "Satellite ID",
-          "description": "Optional Assist satellite context."
-        },
-        "language": {
-          "name": "Language",
-          "description": "Optional language code."
-        }
-      }
-    },
-    "change_config": {
-      "name": "Change configuration",
-      "description": "Changes the configuration of the integration.",
-      "fields": {
-        "config_entry": {
-          "name": "Config Entry",
-          "description": "The config entry to update."
-        },
-        "api_key": {
-          "name": "API Key",
-          "description": "The API key."
-        },
-        "base_url": {
-          "name": "Base Url",
-          "description": "The base URL."
-        },
-        "api_version": {
-          "name": "Api Version",
-          "description": "The API version."
-        },
-        "organization": {
-          "name": "Organization",
-          "description": "The organization."
-        },
-        "skip_authentication": {
-          "name": "Skip Authentication",
-          "description": "Skip authentication."
-        },
-        "api_provider": {
-          "name": "Api Provider",
-          "description": "The API provider. (OpenAI or Azure)"
-        }
-      }
-    },
-    "download_skill": {
-      "name": "Download skill",
-      "description": "Download a skill from the GitHub repository to your skills directory.",
-      "fields": {
-        "skill_name": {
-          "name": "Skill name",
-          "description": "The name of the skill to download (e.g., crypto)"
-        }
-      }
-    },
-    "reload_skills": {
-      "name": "Reload skills",
-      "description": "Reload skills from the skills directory."
-    }
-  }
 }
