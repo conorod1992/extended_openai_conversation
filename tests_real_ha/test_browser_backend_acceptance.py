@@ -57,9 +57,23 @@ async def _run_playwright(
     assert process.returncode == 0, f"{failure_label}:\n{output}"
 
 
-async def _start_ws_bridge(client: Any) -> tuple[web.AppRunner, str]:
+async def _start_ws_bridge(
+    client: Any, *, restricted_client: Any | None = None
+) -> tuple[web.AppRunner, str]:
     """Expose a transparent HTTP bridge into HA's authenticated WS test client."""
     lock = asyncio.Lock()
+    state = {"identity": "owner", "delay_ms": 0}
+
+    async def control(request: web.Request) -> web.Response:
+        payload = await request.json()
+        identity = payload.get("identity", state["identity"])
+        if identity not in ("owner", "restricted", "expired"):
+            return web.json_response({"message": "Unknown identity"}, status=400)
+        if identity == "restricted" and restricted_client is None:
+            return web.json_response({"message": "No restricted HA client"}, status=400)
+        state["identity"] = identity
+        state["delay_ms"] = max(0, min(2000, int(payload.get("delay_ms", 0))))
+        return web.json_response(state, headers={"Access-Control-Allow-Origin": "*"})
 
     async def call_ws(request: web.Request) -> web.Response:
         try:
@@ -77,9 +91,18 @@ async def _start_ws_bridge(client: Any) -> tuple[web.AppRunner, str]:
                 headers={"Access-Control-Allow-Origin": "*"},
             )
 
+        if state["identity"] == "expired":
+            return web.json_response(
+                {"message": "Home Assistant session expired"},
+                status=401,
+                headers={"Access-Control-Allow-Origin": "*"},
+            )
+        if state["delay_ms"]:
+            await asyncio.sleep(state["delay_ms"] / 1000)
+        selected = restricted_client if state["identity"] == "restricted" else client
         async with lock:
-            await client.send_json_auto_id(message)
-            response = await client.receive_json()
+            await selected.send_json_auto_id(message)
+            response = await selected.receive_json()
 
         if not response.get("success"):
             error = response.get("error") or {}
@@ -100,6 +123,7 @@ async def _start_ws_bridge(client: Any) -> tuple[web.AppRunner, str]:
 
     app = web.Application()
     app.router.add_post("/callws", call_ws)
+    app.router.add_post("/control", control)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)

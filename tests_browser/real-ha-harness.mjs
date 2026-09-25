@@ -7,7 +7,14 @@ history.replaceState({}, "", `/extended-openai/${route}`);
 
 // Preserve the wire trace across page refreshes in a single acceptance journey.
 // Every Playwright test gets a fresh browser context, so journeys stay isolated.
-const calls = JSON.parse(sessionStorage.getItem("eocRealHaCalls") || "[]");
+let calls;
+try {
+  calls = JSON.parse(sessionStorage.getItem("eocRealHaCalls") || "[]");
+  if (!Array.isArray(calls)) throw new TypeError("Invalid browser call trace");
+} catch (_err) {
+  calls = [];
+  sessionStorage.removeItem("eocRealHaCalls");
+}
 const hass = {
   config: {time_zone: "Europe/Dublin"},
   callWS: async (message) => {
