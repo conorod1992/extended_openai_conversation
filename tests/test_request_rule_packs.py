@@ -160,6 +160,26 @@ async def test_pack_export_import_appends_disabled_in_relative_order() -> None:
     assert result["rules"][1]["ai_input_capture"] == "question"
 
 
+async def test_pack_import_does_not_change_destination_wording_alternatives() -> None:
+    source = RequestRules(MemoryStore({
+        "wording_groups": [{"canonical": "turn on", "alternatives": ["switch on"]}],
+        "rules": [local_rule("Shared", phrases=["turn on lights"])],
+    }))
+    await source.async_initialize()
+    pack = export_rule_pack(source, "all")
+    assert "wording_groups" not in pack
+
+    target_wording = [{"canonical": "tv", "alternatives": ["television"]}]
+    target = RequestRules(MemoryStore({
+        "wording_groups": target_wording,
+        "rules": [local_rule("Existing")],
+    }))
+    await target.async_initialize()
+    prepared = validate_rule_pack(pack)
+    await async_append_rule_pack(target, prepared, expected_revision=target.revision())
+    assert target.snapshot()["wording_groups"] == target_wording
+
+
 async def test_pack_group_and_selected_exports_keep_subset_order() -> None:
     first = local_rule("First", phrases=["activate lights"], order=0)
     second = local_rule("Second", phrases=["good night"], order=1)
@@ -175,9 +195,7 @@ async def test_pack_group_and_selected_exports_keep_subset_order() -> None:
     assert [rule["name"] for rule in group["rules"]] == ["First", "Third"]
     assert [rule["order"] for rule in group["rules"]] == [0, 1]
     assert [item["name"] for item in group["groups"]] == ["Lighting"]
-    assert group["wording_groups"] == [
-        {"canonical": "activate", "alternatives": ["power up"]}
-    ]
+    assert "wording_groups" not in group
     selected = export_rule_pack(source, "selected", rule_ids=[third["id"], second["id"]])
     assert [rule["name"] for rule in selected["rules"]] == ["Second", "Third"]
     assert selected["groups"][0]["name"] == "Lighting"
@@ -209,7 +227,6 @@ def test_pack_rejects_newer_version_unknown_executable_and_duplicate_ids() -> No
         "format": "extended_openai_request_rule_pack",
         "version": 2,
         "groups": [],
-        "wording_groups": [],
         "rules": [rule],
     }
     with pytest.raises(ValueError, match="version"):
