@@ -100,6 +100,29 @@ async def test_concurrent_users_never_cross_private_provider_wire(
         )
 
     await batch(agent, 2)
+    await agent._guest_mode.async_update_trusted(indefinite=True)
+    guest_wire = _install_wire(
+        monkeypatch, agent, [_chat_sse_text("private context hidden")]
+    )
+    guest_result = await _say(
+        hass,
+        entry.entry_id,
+        users[0],
+        f"For {users[0]}, what is my calibration token while Guest Mode is active?",
+    )
+    assert _speech(guest_result) == "private context hidden"
+    assert len(guest_wire.requests) == 1
+    guest_body = json.dumps(guest_wire.requests[0]["body"], ensure_ascii=False)
+    assert all(marker not in guest_body for marker in markers.values())
+    await agent._guest_mode.async_disable_trusted()
+    record(
+        stress_trace,
+        "guest_provider_wire_probe",
+        layer="provider-wire",
+        public_turns=1,
+        provider_requests=1,
+        hidden_private_markers=len(markers),
+    )
     await assert_enhanced_health(
         hass,
         entry,
@@ -120,8 +143,8 @@ async def test_concurrent_users_never_cross_private_provider_wire(
         "summary",
         layer="provider-wire",
         users=len(users),
-        public_turns=3 * len(users),
-        provider_requests=3 * len(users),
+        public_turns=3 * len(users) + 1,
+        provider_requests=3 * len(users) + 1,
         reloads=1,
     )
 
