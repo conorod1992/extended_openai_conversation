@@ -9,6 +9,9 @@ The current campaigns are:
 | `runtime` | Seeded public Assist conversations across two agents and six users, concurrent batches, unload/setup cycles, registry ownership and provider ChatLog isolation. |
 | `backup` | Fault injection at all seven durable restore category writes, rollback/reload checks, and a reviewed inventory of persisted agent fields. |
 | `request-rules` | Full matcher inventory, text variants, preview agreement, seeded create/toggle/delete/move/reload sequence and backup equivalence. |
+| `guest-security` | Cross-product of supported Guest policies for Functions, Knowledge and shared Memory, with security and Function type inventories. |
+| `quiet-hours` | Multiple repeated periods across real registry-backed satellites with distinct starting volumes and restoration checks. |
+| `functions` | Seeded Function Group loading, disabling and session-isolation model across 24 tools, 12 groups and 16 conversations. |
 | `memory-knowledge` | Hundreds of private Memory records and Knowledge sources, user-isolated reads, full durable-state comparison after reload. |
 | `browser` | One mounted Chromium management panel through 80 seeded route changes over the major sections, with DOM, error and mount checks. |
 

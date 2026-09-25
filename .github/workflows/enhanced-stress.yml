@@ -12,7 +12,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, runtime, backup, request-rules, memory-knowledge, browser]
+        options: [all, runtime, backup, request-rules, guest-security, quiet-hours, functions, memory-knowledge, browser]
       intensity:
         description: Workload multiplier
         type: choice
@@ -57,8 +57,8 @@ jobs:
           echo "seed=$SEED" >> "$GITHUB_OUTPUT"
           echo "intensity=$INTENSITY" >> "$GITHUB_OUTPUT"
           case "${{ inputs.campaign }}" in
-            ''|all|browser) CAMPAIGNS='["runtime","backup","request-rules","memory-knowledge"]' ;;
-            runtime|backup|request-rules|memory-knowledge) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
+            ''|all|browser) CAMPAIGNS='["runtime","backup","request-rules","guest-security","quiet-hours","functions","memory-knowledge"]' ;;
+            runtime|backup|request-rules|guest-security|quiet-hours|functions|memory-knowledge) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
             *) echo 'Unknown campaign' >&2; exit 1 ;;
           esac
           echo "campaigns=$CAMPAIGNS" >> "$GITHUB_OUTPUT"
@@ -115,6 +115,9 @@ jobs:
             runtime) TEST_PATHS=(tests_stress/test_runtime_soak.py) ;;
             backup) TEST_PATHS=(tests_stress/test_backup_fault_matrix.py tests_stress/test_backup_inventory.py) ;;
             request-rules) TEST_PATHS=(tests_stress/test_request_rules_matrix.py) ;;
+            guest-security) TEST_PATHS=(tests_stress/test_guest_functions_matrix.py) ;;
+            quiet-hours) TEST_PATHS=(tests_stress/test_quiet_hours_multi_satellite.py) ;;
+            functions) TEST_PATHS=(tests_stress/test_function_groups_state_machine.py) ;;
             memory-knowledge) TEST_PATHS=(tests_stress/test_memory_knowledge_scale.py) ;;
             *) exit 2 ;;
           esac
@@ -135,7 +138,7 @@ jobs:
 
   browser:
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
+    if: github.event_name == 'schedule' || github.event_name == 'push' || inputs.campaign == 'all' || inputs.campaign == 'browser'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
