@@ -124,7 +124,12 @@ test("Knowledge late delete cannot resurrect the deleted source after navigation
   await panel.locator(".list-card").filter({hasText: "Delete race source"}).locator(".delete-source").click();
   await acceptConfirmation(panel);
   await expect.poll(() => page.evaluate(() => window.__lateMutation.started)).toBe(1);
-  await panel.evaluate(host => host._loadSection(true));
+  await panel.evaluate(host => {
+    const key = host._sectionCacheKey();
+    host._sectionCache.delete(key);
+    host._eocSectionCacheTimes.delete(key);
+    return host._loadSection(true);
+  });
   await expect(panel.locator(".list-card").filter({hasText: "Delete race source"})).toHaveCount(0);
   await page.evaluate(() => window.__lateMutation.release());
   await expect(panel.locator(".list-card").filter({hasText: "Delete race source"})).toHaveCount(0);
@@ -163,7 +168,7 @@ test("Guest policy late save cannot repaint a newer route", async ({page}) => {
   await page.evaluate(() => window.__lateMutation.release());
   await expect(panel.locator('[data-guest-mode="guest_knowledge_policy"]')).toHaveValue("custom");
   await expect(panel.locator("#save-page")).toBeEnabled();
-  expect((await page.evaluate(() => browserHarness.getState().configuration.config.guest_knowledge_policy))).toBe("on");
+  expect((await page.evaluate(() => browserHarness.getState().guest.config.guest_knowledge_policy))).toBe("on");
   expect((await page.evaluate(() => browserHarness.calls.filter(call => call.section === "guest_mode" && call.action === "save_policy").length))).toBe(1);
   await expectHarnessClean(page, errors);
   recordInjection("Guest Mode", "save");
