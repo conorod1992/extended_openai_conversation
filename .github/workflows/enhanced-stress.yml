@@ -1,0 +1,175 @@
+name: Enhanced nightly acceptance and stress
+
+on:
+  schedule:
+    - cron: "15 3 * * *"
+  workflow_dispatch:
+    inputs:
+      campaign:
+        description: Campaign to run
+        type: choice
+        required: true
+        default: all
+        options: [all, runtime, backup, request-rules, memory-knowledge, browser]
+      intensity:
+        description: Workload multiplier
+        type: choice
+        required: true
+        default: normal
+        options: [normal, heavy]
+      seed:
+        description: Optional deterministic unsigned integer seed
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: enhanced-stress-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      seed: ${{ steps.seed.outputs.seed }}
+      intensity: ${{ steps.seed.outputs.intensity }}
+      campaigns: ${{ steps.seed.outputs.campaigns }}
+    steps:
+      - name: Resolve reproducible run controls
+        id: seed
+        env:
+          REQUESTED_SEED: ${{ inputs.seed }}
+          REQUESTED_INTENSITY: ${{ inputs.intensity }}
+        run: |
+          set -euo pipefail
+          if [ -n "$REQUESTED_SEED" ]; then
+            [[ "$REQUESTED_SEED" =~ ^[0-9]+$ ]] || { echo 'Seed must be an unsigned integer' >&2; exit 1; }
+            SEED="$REQUESTED_SEED"
+          else
+            SEED="$(python3 -c 'import secrets; print(secrets.randbits(32))')"
+          fi
+          INTENSITY="${REQUESTED_INTENSITY:-normal}"
+          echo "seed=$SEED" >> "$GITHUB_OUTPUT"
+          echo "intensity=$INTENSITY" >> "$GITHUB_OUTPUT"
+          case "${{ inputs.campaign }}" in
+            ''|all|browser) CAMPAIGNS='["runtime","backup","request-rules","memory-knowledge"]' ;;
+            runtime|backup|request-rules|memory-knowledge) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
+            *) echo 'Unknown campaign' >&2; exit 1 ;;
+          esac
+          echo "campaigns=$CAMPAIGNS" >> "$GITHUB_OUTPUT"
+          echo "ENHANCED STRESS SEED=$SEED INTENSITY=$INTENSITY"
+          {
+            echo '## Enhanced acceptance run'
+            echo
+            echo "Seed: \`$SEED\` · Intensity: \`$INTENSITY\`"
+            echo
+            echo 'Reproduce with workflow_dispatch and the same campaign, intensity, and seed.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  python-campaigns:
+    name: ${{ matrix.campaign }}
+    needs: prepare
+    if: github.event_name == 'schedule' || inputs.campaign != 'browser'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        campaign: ${{ fromJSON(needs.prepare.outputs.campaigns) }}
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      STRESS_SEED: ${{ needs.prepare.outputs.seed }}
+      STRESS_INTENSITY: ${{ needs.prepare.outputs.intensity }}
+      STRESS_CAMPAIGN: ${{ matrix.campaign }}
+      STRESS_ARTIFACT_DIR: stress-artifacts
+    steps:
+      - name: Checkout candidate or nightly develop
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+      - name: Reconcile current test requirements
+        run: |
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+            pip install -r requirements_test.txt
+            pip install --upgrade homeassistant
+            python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
+      - name: Run enhanced campaign
+        run: |
+          case "$STRESS_CAMPAIGN" in
+            runtime) TEST_PATHS=(tests_stress/test_runtime_soak.py) ;;
+            backup) TEST_PATHS=(tests_stress/test_backup_fault_matrix.py tests_stress/test_backup_inventory.py) ;;
+            request-rules) TEST_PATHS=(tests_stress/test_request_rules_matrix.py) ;;
+            memory-knowledge) TEST_PATHS=(tests_stress/test_memory_knowledge_scale.py) ;;
+            *) exit 2 ;;
+          esac
+          pytest "${TEST_PATHS[@]}" -v -s --asyncio-mode=auto \
+            --timeout=600 --durations=20 \
+            --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
+      - name: Summarize exercised operations
+        if: always()
+        run: python ci/enhanced_summary.py stress-artifacts
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: enhanced-${{ matrix.campaign }}-seed-${{ needs.prepare.outputs.seed }}
+          path: stress-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
+  browser:
+    needs: prepare
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --ipc=host
+    defaults:
+      run:
+        shell: bash
+    env:
+      STRESS_SEED: ${{ needs.prepare.outputs.seed }}
+      STRESS_INTENSITY: ${{ needs.prepare.outputs.intensity }}
+      STRESS_CAMPAIGN: browser
+      STRESS_ARTIFACT_DIR: stress-artifacts
+    steps:
+      - name: Checkout candidate or nightly develop
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+      - name: Install local Playwright runner
+        run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+      - name: Run long-lived browser campaign
+        run: npx playwright test --config=playwright.stress.config.mjs
+      - name: Summarize exercised transitions
+        if: always()
+        run: python ci/enhanced_summary.py stress-artifacts
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: enhanced-browser-seed-${{ needs.prepare.outputs.seed }}
+          path: |
+            stress-artifacts/
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
