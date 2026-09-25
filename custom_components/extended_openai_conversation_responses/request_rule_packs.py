@@ -162,6 +162,12 @@ def validate_rule_pack(value: Any) -> dict[str, Any]:
         for rule in raw_rules
     ):
         raise ValueError("Rule pack rule is missing required fields")
+    if any(
+        not isinstance(rule["action"], Mapping)
+        or "continue_to_ai" not in rule["action"]
+        for rule in raw_rules
+    ):
+        raise ValueError("Rule pack action is missing Continue to AI")
     rules = [validate_rule(rule) for rule in raw_rules]
     if len({rule["id"] for rule in rules}) != len(rules):
         raise ValueError("Rule pack has duplicate rule IDs")

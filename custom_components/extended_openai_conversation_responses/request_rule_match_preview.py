@@ -24,7 +24,7 @@ def _preview_ai_input(match: RuleMatch, original: str) -> dict[str, Any] | None:
     return {
         "mode": match.rule.get("ai_input_mode", "original"),
         "capture": capture,
-        "provider_input": rule_provider_input(match) or original,
+        "provider_input": rule_provider_input(match, original) or original,
     }
 
 

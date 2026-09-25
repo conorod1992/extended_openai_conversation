@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
+
+from custom_components.extended_openai_conversation_responses.management_ui import (
+    _consume_rule_pack_review,
+    _register_rule_pack_review,
+)
 
 from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
     async_request_rule_match_preview,
@@ -56,13 +63,13 @@ def test_captured_ai_input_requires_every_variant_and_branch() -> None:
 async def test_captured_ai_handoff_and_preview_share_resolved_input(hass) -> None:
     stored = RequestRules(MemoryStore({"rules": [captured_routing_rule()]}))
     await stored.async_initialize()
-    text = "deep think why is the sky blue"
+    text = "deep think why is the sky blue?"
     evaluated = await async_evaluate_rule(
         hass, stored, RequestRuleRuntime(), text, "session"
     )
     preview = await async_request_rule_match_preview(hass, stored, text)
     assert evaluated is not None and not evaluated.consume
-    assert evaluated.provider_input == "why is the sky blue"
+    assert evaluated.provider_input == "why is the sky blue?"
     assert preview["matched_rules"][0]["ai_input"] == {
         "mode": "capture",
         "capture": "question",
@@ -154,6 +161,26 @@ async def test_pack_group_and_selected_exports_keep_subset_order() -> None:
     assert selected["groups"][0]["name"] == "Lighting"
 
 
+async def test_pack_group_id_collision_creates_a_distinct_group() -> None:
+    source_rule = local_rule("Imported")
+    source_rule["group_id"] = "shared-id"
+    source = RequestRules(MemoryStore({
+        "groups": [{"id": "shared-id", "name": "Lighting"}],
+        "rules": [source_rule],
+    }))
+    await source.async_initialize()
+    pack = validate_rule_pack(export_rule_pack(source, "all"))
+    target = RequestRules(MemoryStore({
+        "groups": [{"id": "shared-id", "name": "Different"}],
+        "rules": [local_rule("Existing")],
+    }))
+    await target.async_initialize()
+    result = await async_append_rule_pack(target, pack, expected_revision=target.revision())
+    assert {group["name"] for group in result["groups"]} == {"Different", "Lighting"}
+    assert result["rules"][0]["group_id"] != "shared-id"
+    assert target.snapshot()["rules"][0]["group_id"] is None
+
+
 def test_pack_rejects_newer_version_unknown_executable_and_duplicate_ids() -> None:
     rule = validate_rule(local_rule())
     pack = {
@@ -174,3 +201,15 @@ def test_pack_rejects_newer_version_unknown_executable_and_duplicate_ids() -> No
     pack["rules"][1]["order"] = 1
     with pytest.raises(ValueError, match="duplicate rule IDs"):
         validate_rule_pack(pack)
+
+
+def test_import_requires_one_review_of_the_exact_pack_and_revision() -> None:
+    manager = SimpleNamespace()
+    pack = {"rules": [{"name": "First"}]}
+    token = _register_rule_pack_review(manager, pack, "revision-1")
+    with pytest.raises(HomeAssistantError, match="Review this exact"):
+        _consume_rule_pack_review(manager, token, {"rules": [{"name": "Changed"}]}, "revision-1")
+    token = _register_rule_pack_review(manager, pack, "revision-1")
+    _consume_rule_pack_review(manager, token, pack, "revision-1")
+    with pytest.raises(HomeAssistantError, match="Review this exact"):
+        _consume_rule_pack_review(manager, token, pack, "revision-1")

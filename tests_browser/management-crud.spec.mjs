@@ -117,6 +117,28 @@ test("Rule Sharing reviews before importing disabled rules at the bottom", async
   await expectHarnessClean(page,pageErrors);
 });
 
+test("Captured AI input keeps an invalid selection visible for repair", async ({page}) => {
+  const pageErrors=trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  const panel=page.locator("extended-openai-management-panel");
+  await panel.getByRole("button",{name:"Create rule",exact:true}).first().click();
+  await panel.locator("#rule-phrases").fill("deep think {question}\nthink {question}");
+  await panel.locator("#rule-match").selectOption("sentence_pattern");
+  await panel.locator("#rule-action-type").selectOption("model_routing");
+  await panel.locator("#rule-ai-input-mode").selectOption("capture");
+  await expect(panel.locator("#rule-ai-input-capture option")).toHaveCount(1);
+  await expect(panel.locator("#rule-ai-input-capture")).toHaveValue("question");
+  await panel.locator("#rule-phrases").fill("deep think {question}\nthink carefully");
+  await expect(panel.locator("#rule-ai-input-capture")).toHaveValue("question");
+  await expect(panel.locator("#rule-ai-input-capture")).toHaveAttribute("aria-invalid","true");
+  await expect(panel.locator("#rule-ai-input-help")).toBeVisible();
+  await panel.locator("#rule-match").selectOption("equals");
+  await expect(panel.locator("#rule-match")).toHaveValue("equals");
+  await expect(panel.locator("#rule-ai-input-capture")).toHaveValue("question");
+  await panel.locator(".rule-close").first().click();
+  await expectHarnessClean(page,pageErrors);
+});
+
 test("Request Rule condition selector, local continuation, and group survive reload", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
