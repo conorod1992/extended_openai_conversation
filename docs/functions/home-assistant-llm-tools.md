@@ -54,10 +54,10 @@ references, including when the destination lacks their sources.
 
 ## Identity and Home Assistant compatibility
 
-The integration requires Home Assistant 2026.8 or later, the first stable release
-with the `llm` component required by its manifest. Traditional registered LLM APIs
-continue to work alongside the newer `llm.py` contribution platform. Schema
-conversion follows Core's
+The integration retains its existing minimum Home Assistant version. Traditional
+registered LLM APIs work on that API architecture. The newer `llm.py` contribution
+platform requires Home Assistant 2026.8 or later; the installed Home Assistant
+version determines which sources can appear. Schema conversion follows Core's
 serializer, using `probatio` on newer Core versions and `voluptuous-openapi` on older
 ones. Live schemas are never copied into saved Function definitions.
 
