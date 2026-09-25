@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -149,6 +150,8 @@ async def test_real_ha_shell_auth_expiry_and_websocket_loss(
         record(stress_trace, "real_ha_shell_auth_ws", seed=stress_seed)
     finally:
         await runner.cleanup()
+        await client.close()
+        await asyncio.sleep(0)
 
 
 async def test_published_frontend_assets_against_new_real_ha_backend(
