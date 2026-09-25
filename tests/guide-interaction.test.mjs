@@ -17,3 +17,17 @@ assert.doesNotMatch(
 assert.doesNotMatch(guideSource, /querySelectorAll\("\.guide-topic\[open\]"\)/);
 assert.match(guideSource, /panel\._openGuideTopicElement/);
 assert.doesNotMatch(guideSource, /return `<style>/);
+
+const guideContentSource = await readFile(
+  new URL("../custom_components/extended_openai_conversation_responses/frontend/guide-content.js", import.meta.url),
+  "utf8",
+);
+const requestRulesStart = guideContentSource.indexOf('id: "request-rules"');
+const requestRulesEnd = guideContentSource.indexOf("\n  {\n    id:", requestRulesStart + 1);
+const requestRulesGuide = guideContentSource.slice(requestRulesStart, requestRulesEnd);
+assert.match(requestRulesGuide, /ExtendedOpenAI sentence patterns/);
+assert.match(requestRulesGuide, /Continue matching after this rule/);
+assert.match(requestRulesGuide, /Captured value/);
+assert.match(requestRulesGuide, /Rule Sharing/);
+assert.match(requestRulesGuide, /groups only help organise and filter rules/i);
+assert.doesNotMatch(requestRulesGuide, /Home Assistant sentence patterns|Hassil sentence format/);
