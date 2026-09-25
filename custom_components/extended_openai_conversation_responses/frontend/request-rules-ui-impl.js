@@ -70,14 +70,44 @@ export function commonCapturedSlotNames(text) {
   const variants = String(text || "").split("\n").map((line) => line.trim()).filter(Boolean);
   if (!variants.length) return [];
   const required=(variant)=>{
-    let depth=0, outside="";
-    for(let index=0;index<variant.length;index++){
-      if(variant[index]==="\\"){if(!depth)outside+=variant.slice(index,index+2);index++;continue;}
-      if(variant[index]==="["){depth++;continue;}
-      if(variant[index]==="]"&&depth){depth--;continue;}
-      if(!depth)outside+=variant[index];
-    }
-    return capturedSlotNames(outside);
+    let index=0;
+    const sequence=(closing=null)=>{
+      const branches=[];
+      let closed=false;
+      let names=new Set();
+      while(index<variant.length){
+        const char=variant[index++];
+        if(char==="\\"){index++;continue;}
+        if(char===closing){branches.push(names);closed=true;break;}
+        if(char===")"||char==="]")return null;
+        if(char==="|"&&closing===")"){branches.push(names);names=new Set();continue;}
+        if(char==="("||char==="["){
+          const nested=sequence(char==="("?")":"]");
+          if(nested===null)return null;
+          if(char==="(")for(const name of nested)names.add(name);
+          continue;
+        }
+        if(char==="{"){
+          let body="",closed=false;
+          while(index<variant.length){
+            const next=variant[index++];
+            if(next==="\\"&&index<variant.length){body+=next+variant[index++];continue;}
+            if(next==="}"){closed=true;break;}
+            body+=next;
+          }
+          if(!closed)return null;
+          const name=body.split("=",1)[0].trim();
+          if(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name))names.add(name);
+        }
+      }
+      if(closing&&!closed)return null;
+      if(!closing)branches.push(names);
+      const common=new Set(branches[0]||[]);
+      for(const branch of branches.slice(1))for(const name of common)if(!branch.has(name))common.delete(name);
+      return common;
+    };
+    const names=sequence();
+    return names===null?[]:[...names];
   };
   return required(variants[0]).filter((name) => variants.every((variant) => required(variant).includes(name)));
 }
@@ -207,7 +237,7 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
   }
   if (help) help.textContent = consumed
     ? "This is a complete routing command. It is acknowledged locally and is not sent to the AI provider, so it must change or reset the rest of this conversation."
-    : "This sends the original request to the AI unchanged after applying the route. This request only affects that provider call; Rest of this conversation also changes later requests.";
+    : `This sends the ${root.querySelector("#rule-ai-input-mode")?.value === "capture" ? "selected captured value" : "original request"} to the AI after applying the route. This request only affects that provider call; Rest of this conversation also changes later requests.`;
 }
 
 function ensureDialog(panel) {

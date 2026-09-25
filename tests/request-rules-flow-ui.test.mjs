@@ -21,6 +21,9 @@ test("AI input offers original or common required captures", () => {
   assert.deepEqual(commonCapturedSlotNames("deep think {question}\nthink carefully {question}"), ["question"]);
   assert.deepEqual(commonCapturedSlotNames("deep think {question}\nthink carefully"), []);
   assert.deepEqual(commonCapturedSlotNames("deep think [{question}]"), []);
+  assert.deepEqual(commonCapturedSlotNames("deep think (about {question}|carefully)"), []);
+  assert.deepEqual(commonCapturedSlotNames("deep think (about {question}|on {question})"), ["question"]);
+  assert.deepEqual(commonCapturedSlotNames("deep think {question=why|how}"), ["question"]);
 });
 
 test("sentence-pattern helper controls are present after the match selector", () => {
