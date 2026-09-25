@@ -150,17 +150,18 @@ async def test_opaque_future_rule_store_field_survives_group_edit_and_restore(
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
-    assert (await rules.async_backup_data())["future_rule_index"] == future
+    assert (await rules._store.async_load())["future_rule_index"] == future
     await rules.async_set_groups([{"id": "nightly", "name": "Nightly group"}])
     saved = await backup.async_collect_backup_snapshot(hass, entry, subentry)
-    assert saved["request_rules"]["future_rule_index"] == future
+    assert "future_rule_index" not in saved["request_rules"]
+    assert (await rules._store.async_load())["future_rule_index"] == future
     assert (await backup.async_restore_backup(hass, entry, subentry, saved))[
         "status"
     ] == "restored"
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
-    assert (await rules.async_backup_data())["future_rule_index"] == future
+    assert (await rules._store.async_load())["future_rule_index"] == future
     assert rules.snapshot()["groups"][0]["id"] == "nightly"
     record(stress_trace, "future_rule_field_preserved", reloads=2, backups=1)
 
