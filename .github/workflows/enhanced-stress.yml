@@ -268,7 +268,7 @@ jobs:
           python -m pip install -r requirements_test.txt
           if [[ "$HA_POINT" == oldest ]]; then
             MINIMUM="$(python -c 'import json; print(json.load(open("hacs.json"))["homeassistant"])')"
-            python -m pip install --pre --no-deps "homeassistant==$MINIMUM"
+            python -m pip install --pre "homeassistant==$MINIMUM"
           elif [[ "$HA_POINT" == stable ]]; then
             python -m pip install --upgrade homeassistant
           else
