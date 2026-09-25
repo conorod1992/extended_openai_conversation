@@ -1,6 +1,6 @@
 import {expect, test} from "@playwright/test";
 import {mkdirSync, writeFileSync} from "node:fs";
-import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 test("one mounted panel has bounded backend calls after repeated disconnects", async ({page}, testInfo) => {
   test.setTimeout(180_000);
@@ -26,6 +26,8 @@ test("one mounted panel has bounded backend calls after repeated disconnects", a
   });
 
   let baselineCalls = null;
+  let mutationCycles = 0;
+  let marker = null;
   try {
     for (let index = 0; index < cycles; index++) {
       await page.evaluate(() => { window.browserHarness.backendOnline = false; });
@@ -45,6 +47,33 @@ test("one mounted panel has bounded backend calls after repeated disconnects", a
       const observed = await page.evaluate(start => window.browserHarness.calls.length - start, before);
       if (baselineCalls === null) baselineCalls = observed;
       expect(observed).toBeLessThanOrEqual(baselineCalls + 2);
+      if (index % 4 === 0) {
+        const mode = marker === null ? "create" : (mutationCycles % 3 === 1 ? "edit" : "delete");
+        const previousCalls = await page.evaluate(() => window.browserHarness.calls.length);
+        if (mode === "create") {
+          marker = `Reconnect source ${index}`;
+          await panel.locator("#add-source").click();
+          await panel.locator("#knowledge-title").fill(marker);
+          await panel.locator("#knowledge-content").fill(`Content ${index}`);
+          await panel.locator("#knowledge-save").click();
+        } else if (mode === "edit") {
+          await panel.locator(".list-card").filter({hasText: marker}).locator(".source-edit-button").click();
+          const updated = `${marker} edited`;
+          await panel.locator("#knowledge-title").fill(updated);
+          await panel.locator("#knowledge-save").click();
+          marker = updated;
+        } else {
+          await panel.locator(".list-card").filter({hasText: marker}).locator(".delete-source").click();
+          await acceptConfirmation(panel);
+          marker = null;
+        }
+        const mutations = await page.evaluate(start => window.browserHarness.calls.slice(start).filter(call => call.section === "knowledge" && ["create", "update", "delete"].includes(call.action)).map(call => call.action), previousCalls);
+        expect(mutations).toHaveLength(1);
+        const matches = await page.evaluate(value => window.browserHarness.getState().knowledgeSources.filter(source => source.title === value).length, marker);
+        expect(matches).toBe(marker === null ? 0 : 1);
+        mutationCycles++;
+        operations.push({cycle: index + 1, mutation: mode, backendMutations: mutations.length});
+      }
       await expect(panel).toHaveCount(1);
       expect(await panel.evaluate(host => host.__reconnectMount)).toBe("original");
       await expect(panel.getByRole("alert")).toHaveCount(0);
@@ -53,10 +82,10 @@ test("one mounted panel has bounded backend calls after repeated disconnects", a
     expect(await page.evaluate(() => window.browserHarness.disconnectAttempts)).toBeGreaterThanOrEqual(cycles);
     await expectHarnessClean(page, errors);
   } finally {
-    const report = {cycles, baselineCalls, operations};
+    const report = {cycles, baselineCalls, mutationCycles, operations};
     mkdirSync(process.env.STRESS_ARTIFACT_DIR || "stress-artifacts", {recursive: true});
     writeFileSync(`${process.env.STRESS_ARTIFACT_DIR || "stress-artifacts"}/browser-reconnect.json`, JSON.stringify(report, null, 2));
     await testInfo.attach("reconnect-operations", {body: JSON.stringify(report, null, 2), contentType: "application/json"});
-    console.log(`ENHANCED RECONNECT cycles=${cycles} baseline_backend_calls=${baselineCalls}`);
+    console.log(`ENHANCED RECONNECT cycles=${cycles} mutation_cycles=${mutationCycles} baseline_backend_calls=${baselineCalls}`);
   }
 });

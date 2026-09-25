@@ -16,12 +16,27 @@ COUNT_METRICS = {
     "native_function_executions",
     "template_function_executions",
     "script_function_executions",
+    "rest_function_executions",
+    "scrape_function_executions",
+    "composite_function_executions",
+    "sqlite_function_executions",
+    "bash_function_executions",
+    "read_file_function_executions",
+    "write_file_function_executions",
+    "edit_file_function_executions",
+    "delayed_tool_mutation_cases",
+    "delayed_tool_due_executions",
     "ha_service_calls",
     "guest_end_to_end_combinations",
     "private_context_probes",
     "rollback_phases",
     "backup_chunks_transferred",
     "transfer_sessions",
+    "concurrent_import_sessions",
+    "transfer_previews",
+    "stale_apply_rejections",
+    "expired_import_sessions",
+    "cancelled_import_sessions",
     "historical_fixtures",
     "browser_creates",
     "browser_edits",
@@ -29,7 +44,12 @@ COUNT_METRICS = {
     "multi_tab_conflicts",
     "stale_responses",
     "reconnect_cycles",
+    "reconnect_mutation_cycles",
     "quiet_hours_transitions",
+    "quiet_ownership_cases",
+    "quiet_heterogeneous_devices",
+    "quiet_time_boundary_cases",
+    "quiet_dst_cases",
     "chaos_operations",
     "process_terminations",
     "setup_flows",
@@ -104,8 +124,9 @@ def main() -> None:
             ]
         if "cycles" in data:
             totals["reconnect_cycles"] += int(data["cycles"])
+            totals["reconnect_mutation_cycles"] += int(data.get("mutationCycles", 0))
             lines += [
-                f"Reconnect cycles: {data['cycles']}; baseline backend calls per forced read: {data.get('baselineCalls')}",
+                f"Reconnect cycles: {data['cycles']}; mutation cycles: {data.get('mutationCycles', 0)}; baseline backend calls per forced read: {data.get('baselineCalls')}",
                 "",
             ]
     if totals:
