@@ -255,10 +255,7 @@ def _ai_task_display_reasoning_effort(
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
-    """Validate the user input allows us to connect.
-
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
-    """
+    """Validate a complete provider configuration before creating the entry."""
     api_key = data[CONF_API_KEY]
     base_url = data.get(CONF_BASE_URL)
     api_version = data.get(CONF_API_VERSION)
