@@ -383,8 +383,8 @@ async def test_combined_context_boundary_tiers_use_real_assist_and_provider_wire
     assert other_memory_marker not in initial
     assert relevant_marker not in initial  # Knowledge remains on demand.
     assert relevant_marker in result
-    assert "ATTR-" in initial
-    assert "<omitted:" in initial  # Selected attribute values have a hard budget.
+    selected_attribute_count = initial.count("ATTR-")
+    assert 0 < selected_attribute_count < min(entity_count, 100)
     functions = [
         item["function"]
         for item in wire.requests[0]["body"].get("tools", [])
