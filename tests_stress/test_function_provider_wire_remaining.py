@@ -324,11 +324,11 @@ async def test_remaining_function_errors_are_serialized_on_provider_wire(
             assert hits == ["html"]
             assert "Other content" not in str(result)
             assert "EOAI_SCRAPE_WIRE" not in str(result)
+        elif failure == "rest_404":
+            assert "404: Not Found" in str(result)
         else:
             assert "error" in str(result).lower(), result
-            if failure == "rest_404":
-                assert "404" in str(result)
-            elif failure == "sqlite_bad_query":
+            if failure == "sqlite_bad_query":
                 assert "absent_table" in str(result)
             else:
                 assert "absent.txt" in str(result) or "not found" in str(result).lower()

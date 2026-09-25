@@ -50,6 +50,8 @@ COUNT_METRICS = {
     "quiet_hours_transitions",
     "quiet_ownership_cases",
     "quiet_heterogeneous_devices",
+    "quiet_active_policy_mutations",
+    "quiet_transient_service_failures",
     "quiet_time_boundary_cases",
     "quiet_dst_cases",
     "chaos_operations",

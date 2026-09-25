@@ -164,3 +164,131 @@ async def test_exact_boundaries_dst_and_jumps_reconcile_multiple_satellites(
         )
     finally:
         await manager.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_active_policy_change_and_new_control_keep_pre_quiet_baselines(
+    hass: HomeAssistant,
+    stress_trace: list[dict],
+) -> None:
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    _, first_media, first_wake = _install_satellite_entities(
+        hass, slug="changing-policy", volume=0.60, wake="on"
+    )
+    _install_control_services(hass)
+    manager = await async_get_quiet_hours(hass)
+    manager._config = _config_from_data(
+        {
+            "enabled": True,
+            "start": "22:00",
+            "end": "07:00",
+            "max_volume": 0.20,
+            "wake_sound": "off",
+        }
+    )
+    try:
+        await manager.async_reconcile(now=datetime(2026, 1, 10, 22, 0, tzinfo=DUBLIN))
+        assert _volume(hass, first_media) == pytest.approx(0.20)
+        assert hass.states.get(first_wake).state == "off"
+
+        # Moving the start while active replaces the period. Production must
+        # restore the pre-quiet 0.60 before applying the new 0.10 policy.
+        manager._config = _config_from_data(
+            {
+                "enabled": True,
+                "start": "21:00",
+                "end": "08:00",
+                "max_volume": 0.10,
+                "wake_sound": "unchanged",
+            }
+        )
+        await manager.async_reconcile(now=datetime(2026, 1, 10, 23, 0, tzinfo=DUBLIN))
+        assert _volume(hass, first_media) == pytest.approx(0.10)
+        assert hass.states.get(first_wake).state == "on"
+        assert manager.active is not None
+        assert manager.active["controls"][first_media][
+            "original_value"
+        ] == pytest.approx(0.60)
+
+        _, second_media, second_wake = _install_satellite_entities(
+            hass, slug="new-active-control", volume=0.80, wake="on"
+        )
+        await manager.async_reconcile(now=datetime(2026, 1, 10, 23, 10, tzinfo=DUBLIN))
+        assert _volume(hass, second_media) == pytest.approx(0.10)
+        assert manager.active["controls"][second_media][
+            "original_value"
+        ] == pytest.approx(0.80)
+        assert hass.states.get(second_wake).state == "on"
+
+        manager._config = _config_from_data(
+            {
+                "enabled": False,
+                "start": "21:00",
+                "end": "08:00",
+                "max_volume": 0.10,
+                "wake_sound": "unchanged",
+            }
+        )
+        await manager.async_reconcile(now=datetime(2026, 1, 10, 23, 20, tzinfo=DUBLIN))
+        assert _volume(hass, first_media) == pytest.approx(0.60)
+        assert _volume(hass, second_media) == pytest.approx(0.80)
+        assert manager.active is None
+        record(
+            stress_trace,
+            "summary",
+            layer="Real HA",
+            quiet_active_policy_mutations=2,
+            quiet_heterogeneous_devices=2,
+        )
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_transient_control_service_failure_retries_without_losing_baseline(
+    hass: HomeAssistant,
+    stress_trace: list[dict],
+) -> None:
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    _, media, wake = _install_satellite_entities(
+        hass, slug="retry-control", volume=0.60, wake="on"
+    )
+    _install_control_services(hass)
+    failures = 0
+
+    async def fail_once(_call) -> None:
+        nonlocal failures
+        failures += 1
+        raise RuntimeError("deterministic first volume service failure")
+
+    hass.services.async_register("media_player", "volume_set", fail_once)
+    manager = await async_get_quiet_hours(hass)
+    manager._config = _config_from_data(
+        {
+            "enabled": True,
+            "start": "22:00",
+            "end": "07:00",
+            "max_volume": 0.20,
+            "wake_sound": "off",
+        }
+    )
+    try:
+        await manager.async_reconcile(now=datetime(2026, 1, 10, 22, 0, tzinfo=DUBLIN))
+        assert failures == 1
+        assert _volume(hass, media) == pytest.approx(0.60)
+        assert hass.states.get(wake).state == "off"
+        _install_control_services(hass)
+        await manager.async_reconcile(now=datetime(2026, 1, 10, 22, 1, tzinfo=DUBLIN))
+        assert _volume(hass, media) == pytest.approx(0.20)
+        await manager.async_reconcile(now=datetime(2026, 1, 11, 7, 0, tzinfo=DUBLIN))
+        assert _volume(hass, media) == pytest.approx(0.60)
+        assert hass.states.get(wake).state == "on"
+        assert manager.active is None
+        record(
+            stress_trace,
+            "summary",
+            layer="Real HA",
+            quiet_transient_service_failures=1,
+        )
+    finally:
+        await manager.async_shutdown()
