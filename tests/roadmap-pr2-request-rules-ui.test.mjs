@@ -18,14 +18,11 @@ test("Request Rules UI exposes revision-safe move controls", async () => {
   assert.match(markup, /data-direction=\"down\" disabled/);
 });
 
-test("Request Rules UI explains AI-routing command semantics", async () => {
+test("Request Rules links to its Guide topic instead of repeating routing help", async () => {
   const source = renderRequestRules(panel);
 
-  assert.match(source, /routing command by default/i);
-  assert.match(source, /Continue to AI/i);
-  assert.match(source, /routing hints inside a normal request/i);
-  assert.match(source, /Reset for this request only/i);
-  assert.match(source, /first eligible match handles the request/i);
+  assert.match(source, /data-guide-topic="request-rules">Learn how routing works/);
+  assert.doesNotMatch(source, /rule-routing-help|<summary>Learn how routing works<\/summary>/);
 });
 
 test("Guide explains current Request Rules matching and AI handoff", async () => {
