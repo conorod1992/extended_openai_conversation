@@ -11,10 +11,12 @@ const title = page => panel(page).locator('[data-config="__title"]');
 
 async function servePublishedFrontend(page, onlyChunk = false) {
   let served = 0;
-  const pattern = "**/custom_components/extended_openai_conversation_responses/frontend/**";
+  const pattern = onlyChunk
+    ? "**/agent-config-editor.js"
+    : "**/custom_components/extended_openai_conversation_responses/frontend/**";
   await page.route(pattern, async route => {
     const relative = new URL(route.request().url()).pathname.split("/frontend/")[1];
-    if (!relative || (onlyChunk && relative !== "agent-config-editor.js")) return route.continue();
+    if (!relative) return route.continue();
     const file = path.join(oldRoot, relative);
     if (!existsSync(file)) return route.continue();
     served++;
@@ -52,6 +54,7 @@ test("new frontend with a stale published lazy chunk recovers on a fresh documen
   await page.goto(fixture("assistant/basics"));
   await expect(panel(page)).toHaveCount(1);
   await expect.poll(old.count).toBeGreaterThan(0);
+  await expect(title(page)).toBeVisible();
   await page.unroute(old.pattern);
   await page.goto(fixture("assistant/basics"));
   await expect(title(page)).toBeVisible();
