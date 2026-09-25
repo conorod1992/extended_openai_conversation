@@ -7,8 +7,12 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-from homeassistant.auth import EVENT_USER_ADDED, EVENT_USER_REMOVED, EVENT_USER_UPDATED
-from homeassistant.auth.permissions import filter_entity_ids_by_permission
+from homeassistant.auth import (
+    EVENT_USER_ADDED,
+    EVENT_USER_REMOVED,
+    EVENT_USER_UPDATED,
+    permissions as ha_permissions,
+)
 from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
 from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -20,6 +24,22 @@ _ACTIVE_HA_CONTEXT: ContextVar[Context | None] = ContextVar(
 )
 _USER_CACHE_KEY = f"{DOMAIN}.permission_users"
 _SETUP_KEY = f"{DOMAIN}.permission_users_setup"
+
+
+def _filter_entity_ids_compat(
+    user: Any, entity_ids: Iterable[str], policy: str
+) -> list[str]:
+    """Use the per-entity permissions API when Core lacks its batch helper."""
+    return [
+        entity_id
+        for entity_id in entity_ids
+        if user.permissions.check_entity(entity_id, policy)
+    ]
+
+
+filter_entity_ids_by_permission = getattr(
+    ha_permissions, "filter_entity_ids_by_permission", _filter_entity_ids_compat
+)
 
 
 def set_active_ha_context(context: Context | None) -> None:
