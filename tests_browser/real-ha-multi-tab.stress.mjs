@@ -174,3 +174,75 @@ test("stale Function Tool and Group editors preserve the newer genuine HA revisi
     await other.close();
   }
 });
+
+test("stale Knowledge edit cannot overwrite a newer genuine HA source", async ({page, context}, testInfo) => {
+  test.setTimeout(120_000);
+  const other = await context.newPage();
+  const errorsA = trackPageErrors(page), errorsB = trackPageErrors(other);
+  try {
+    await page.goto(realFixtureUrl("data-memory/knowledge"));
+    const panelA = page.locator("extended-openai-management-panel");
+    await expect(panelA.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
+    await panelA.locator("#add-source").click();
+    await panelA.locator("#knowledge-title").fill("Two-tab Knowledge source");
+    await panelA.locator("#knowledge-content").fill("Original Knowledge content");
+    await panelA.locator("#knowledge-save").click();
+    await expect(panelA.locator(".list-card").filter({hasText: "Two-tab Knowledge source"})).toBeVisible();
+    await other.goto(realFixtureUrl("data-memory/knowledge"));
+    const panelB = other.locator("extended-openai-management-panel");
+    await panelA.locator(".list-card").filter({hasText: "Two-tab Knowledge source"}).locator(".source-edit-button").click();
+    await panelB.locator(".list-card").filter({hasText: "Two-tab Knowledge source"}).locator(".source-edit-button").click();
+    await expect(panelA.locator("#knowledge-content")).toHaveValue("Original Knowledge content");
+    await expect(panelB.locator("#knowledge-content")).toHaveValue("Original Knowledge content");
+    await panelA.locator("#knowledge-content").fill("A committed Knowledge content");
+    await panelA.locator("#knowledge-save").click();
+    await expect(panelA.locator("#knowledge-dialog")).not.toBeVisible();
+    await panelB.locator("#knowledge-content").fill("B stale Knowledge content");
+    await panelB.locator("#knowledge-save").click();
+    await expect(panelB.locator("#knowledge-error")).toContainText("changed in another tab");
+    await expect(panelB.locator("#knowledge-content")).toHaveValue("B stale Knowledge content");
+    await other.goto(realFixtureUrl("data-memory/knowledge"));
+    await panelB.locator(".list-card").filter({hasText: "Two-tab Knowledge source"}).locator(".source-edit-button").click();
+    await expect(panelB.locator("#knowledge-content")).toHaveValue("A committed Knowledge content");
+    await expectHarnessClean(page, errorsA);
+    expect(errorsB).toHaveLength(0);
+    expect(errorsB.badResponses.every(item => item.startsWith("400 "))).toBe(true);
+  } finally {
+    await testInfo.attach("multi-tab-knowledge-conflict", {body: JSON.stringify({surface: "Knowledge", conflicts: 1}), contentType: "application/json"});
+    await other.close();
+  }
+});
+
+test("stale Guest policy cannot weaken a newer genuine HA policy", async ({page, context}, testInfo) => {
+  test.setTimeout(120_000);
+  const other = await context.newPage();
+  const errorsA = trackPageErrors(page), errorsB = trackPageErrors(other);
+  try {
+    await page.goto(realFixtureUrl("capabilities/guest-mode"));
+    const panelA = page.locator("extended-openai-management-panel");
+    const knowledgeA = panelA.locator('[data-guest-mode="guest_knowledge_policy"]');
+    await expect(knowledgeA).toBeVisible();
+    await knowledgeA.selectOption("on");
+    await panelA.locator("#save-page").click();
+    await expect(panelA.locator(".save-bar")).toHaveCount(0);
+    await other.goto(realFixtureUrl("capabilities/guest-mode"));
+    const panelB = other.locator("extended-openai-management-panel");
+    const knowledgeB = panelB.locator('[data-guest-mode="guest_knowledge_policy"]');
+    await expect(knowledgeB).toHaveValue("on");
+    await knowledgeA.selectOption("off");
+    await panelA.locator("#save-page").click();
+    await expect(panelA.locator(".save-bar")).toHaveCount(0);
+    await knowledgeB.selectOption("custom");
+    await panelB.locator("#save-page").click();
+    await expect(panelB.locator("#toast")).toContainText("changed in another tab");
+    await expect(knowledgeB).toHaveValue("custom");
+    await other.goto(realFixtureUrl("capabilities/guest-mode"));
+    await expect(panelB.locator('[data-guest-mode="guest_knowledge_policy"]')).toHaveValue("off");
+    await expectHarnessClean(page, errorsA);
+    expect(errorsB).toHaveLength(0);
+    expect(errorsB.badResponses.every(item => item.startsWith("400 "))).toBe(true);
+  } finally {
+    await testInfo.attach("multi-tab-guest-conflict", {body: JSON.stringify({surface: "Guest Mode", conflicts: 1}), contentType: "application/json"});
+    await other.close();
+  }
+});

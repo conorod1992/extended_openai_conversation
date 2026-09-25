@@ -10,6 +10,10 @@ import pytest
 from custom_components.extended_openai_conversation_responses.agent_config import (
     normalize_agent_config,
 )
+from custom_components.extended_openai_conversation_responses.backup import (
+    async_collect_backup_snapshot,
+    async_restore_backup,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
@@ -43,6 +47,8 @@ MUTATIONS = (
     "group_disabled",
     "group_detached",
     "guest_enabled",
+    "guest_policy_edited",
+    "backup_restore_removed_tool",
     "entity_unexposed",
     "entity_removed",
     "service_removed",
@@ -85,7 +91,9 @@ async def test_delayed_tool_uses_live_state_at_due_time(
             CONF_FUNCTION_TOOLS: [tool],
             CONF_FUNCTION_GROUPS: [group] if grouped else [],
             CONF_GUEST_MODE_ENABLED: True,
-            CONF_GUEST_FUNCTION_POLICY: "off",
+            CONF_GUEST_FUNCTION_POLICY: "on"
+            if mutation == "guest_policy_edited"
+            else "off",
         },
     )
     await _setup_entry(hass, entry)
@@ -98,6 +106,11 @@ async def test_delayed_tool_uses_live_state_at_due_time(
     assert agent is not None
     manager = hass.data[DOMAIN][DATA_DELAYED_TOOL_MANAGER]
     assert isinstance(manager, DelayedToolManager)
+    if mutation == "guest_policy_edited":
+        guest = await async_get_guest_mode(hass, entry.entry_id, subentry.subentry_id)
+        assert guest is not None
+        await guest.async_update_trusted(indefinite=True)
+        assert guest.is_active()
     call_id = await _schedule_delayed_call(
         agent, manager, user, f"call-delayed-{mutation}"
     )
@@ -134,6 +147,25 @@ async def test_delayed_tool_uses_live_state_at_due_time(
         assert guest is not None
         await guest.async_update_trusted(indefinite=True)
         assert guest.is_active()
+    elif mutation == "guest_policy_edited":
+        options = dict(entry.subentries[subentry.subentry_id].data)
+        options[CONF_GUEST_FUNCTION_POLICY] = "off"
+        hass.config_entries.async_update_subentry(
+            entry,
+            entry.subentries[subentry.subentry_id],
+            data=normalize_agent_config(options),
+        )
+        await hass.async_block_till_done()
+    elif mutation == "backup_restore_removed_tool":
+        snapshot = await async_collect_backup_snapshot(
+            hass, entry, entry.subentries[subentry.subentry_id]
+        )
+        snapshot["agent"]["config"][CONF_FUNCTION_TOOLS] = []
+        result = await async_restore_backup(
+            hass, entry, entry.subentries[subentry.subentry_id], snapshot
+        )
+        assert result["status"] == "restored"
+        await hass.async_block_till_done()
     elif mutation == "entity_unexposed":
         async_expose_entity(hass, conversation.DOMAIN, _ENTITY_ID, False)
     elif mutation == "entity_removed":

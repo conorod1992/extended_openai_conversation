@@ -2385,6 +2385,7 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             message.get("description"),
             message.get("content"),
             message.get("enabled"),
+            expected_revision=message.get("expected_revision"),
         )
         return {
             "status": "updated",

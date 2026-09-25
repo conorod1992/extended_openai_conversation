@@ -122,7 +122,7 @@ jobs:
             memory-knowledge) TEST_PATHS=(tests_stress/test_memory_knowledge_scale.py tests_stress/test_temporary_memory_scale.py tests_stress/test_provider_wire_privacy.py) ;;
             large-installation) TEST_PATHS=(tests_stress/test_large_installation.py) ;;
             chaos) TEST_PATHS=(tests_stress/test_cross_feature_chaos.py) ;;
-            process-chaos) TEST_PATHS=(tests_stress/test_backup_inventory.py tests_real_ha/test_immediate_tool_process_crash.py tests_real_ha/test_delayed_tool_process_restart.py) ;;
+            process-chaos) TEST_PATHS=(tests_stress/test_backup_inventory.py tests_real_ha/test_immediate_tool_process_crash.py tests_real_ha/test_store_write_process_crash.py tests_real_ha/test_delayed_tool_process_restart.py) ;;
             *) exit 2 ;;
           esac
           pytest "${TEST_PATHS[@]}" -v -s --asyncio-mode=auto --log-cli-level=WARNING \

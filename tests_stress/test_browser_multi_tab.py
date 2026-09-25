@@ -41,4 +41,18 @@ async def test_two_tabs_reject_a_stale_rule_writer(
         )
     finally:
         await runner.cleanup()
-    record(stress_trace, "summary", tabs=2, stale_rule_writes_rejected=1)
+    record(
+        stress_trace,
+        "summary",
+        layer="browser + real-ha",
+        tabs=2,
+        multi_tab_conflicts=6,
+        conflict_surfaces=[
+            "Request Rules",
+            "Assistant backup restore",
+            "Function Tool",
+            "Function Group",
+            "Knowledge",
+            "Guest Mode",
+        ],
+    )

@@ -97,6 +97,23 @@ async def test_empty_initialization_and_crud_persistence() -> None:
     assert await reloaded.async_list() == []
 
 
+async def test_stale_knowledge_editor_cannot_overwrite_newer_source() -> None:
+    library = await _library()
+    original = await library.async_create("Guide", "", "Original content")
+    newer = await library.async_update(
+        original.source_id,
+        content="Newer content",
+        expected_revision=original.updated_at,
+    )
+    with pytest.raises(ValueError, match="changed in another tab"):
+        await library.async_update(
+            original.source_id,
+            content="Stale content",
+            expected_revision=original.updated_at,
+        )
+    assert (await library.async_get(original.source_id)).content == newer.content
+
+
 async def test_malformed_stored_records_are_ignored() -> None:
     valid = {
         "source_id": "valid",
