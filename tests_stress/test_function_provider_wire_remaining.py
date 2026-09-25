@@ -97,10 +97,12 @@ def _configuration(kind: str, root: Path, url: str) -> dict[str, Any]:
 async def test_remaining_function_type_executes_on_provider_wire(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
+    socket_enabled: Any,
     tmp_path: Path,
     stress_trace: list[dict],
     kind: str,
 ) -> None:
+    del socket_enabled  # Local HTTP fixture and HA's real REST client use loopback.
     calls: list[str] = []
 
     async def json_response(_request: web.Request) -> web.Response:
@@ -183,7 +185,8 @@ async def test_remaining_function_type_executes_on_provider_wire(
             if message.get("role") == "tool" and message.get("tool_call_id") == call_id
         )
         result = json.loads(tool_message["content"])["result"]
-        assert "error" not in result if isinstance(result, dict) else True, result
+        if isinstance(result, dict):
+            assert "error" not in result, result
         if kind == "rest":
             assert "EOAI_REST_WIRE" in str(result)
             assert calls == ["rest"]
