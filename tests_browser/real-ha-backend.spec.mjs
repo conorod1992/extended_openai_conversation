@@ -67,12 +67,20 @@ test("real browser creates, edits, reloads, and deletes a Memory through HA", as
   await expectHarnessClean(page, pageErrors);
 });
 
-test("real browser creates, edits, reloads, and deletes a Request Rule through HA", async ({page}) => {
+test("real browser creates, groups, edits, reloads, and deletes a Request Rule through HA", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(realFixtureUrl("capabilities/request-rules"));
 
   let panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Request Rules", exact: true})).toBeVisible();
+
+  const groups = panel.locator(".rule-groups");
+  await groups.locator("summary").click();
+  await groups.locator("#rule-new-group-name").fill("Real HA browser rule group");
+  await groups.locator("#rule-group-add").click();
+  let groupRow = groups.locator(".rule-group-row").filter({hasText: "Real HA browser rule group"});
+  await expect(groupRow).toBeVisible();
+
   await panel.getByRole("button", {name: "Create rule", exact: true}).first().click();
   await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#rule-name").fill("Real HA browser rule");
@@ -82,6 +90,7 @@ test("real browser creates, edits, reloads, and deletes a Request Rule through H
   await panel.locator("#rule-model").fill("gpt-5-mini");
   await panel.locator("#rule-reasoning").selectOption("medium");
   await panel.locator("#rule-scope").selectOption("conversation");
+  await panel.locator("#rule-group").selectOption({label: "Real HA browser rule group"});
   const onlyWhen = [{condition:"template",value_template:"{{ true }}"}];
   await panel.locator("#rule-condition-host ha-selector").evaluate((selector, value) => {
     selector.value=value;
@@ -92,8 +101,12 @@ test("real browser creates, edits, reloads, and deletes a Request Rule through H
 
   await page.goto(realFixtureUrl("capabilities/request-rules"));
   panel = page.locator("extended-openai-management-panel");
+  await panel.locator(".rule-groups summary").click();
+  groupRow = panel.locator(".rule-group-row").filter({hasText: "Real HA browser rule group"});
+  await expect(groupRow).toBeVisible();
   let card = panel.locator(".request-rule-card").filter({hasText: "Real HA browser rule"});
   await expect(card).toBeVisible();
+  await expect(card).toContainText("Real HA browser rule group");
   await card.locator(".rule-edit").click();
   expect(await panel.locator("#rule-condition-host ha-selector").evaluate((selector) => selector.value)).toEqual(onlyWhen);
   await panel.locator("#rule-name").fill("Real HA browser rule edited");
@@ -108,9 +121,22 @@ test("real browser creates, edits, reloads, and deletes a Request Rule through H
   await acceptConfirmation(panel);
   await expect(panel.getByRole("heading", {name: "Real HA browser rule edited", exact: true})).toHaveCount(0);
 
+  const groupManager = panel.locator(".rule-groups");
+  await groupManager.locator("summary").click();
+  groupRow = groupManager.locator(".rule-group-row").filter({hasText: "Real HA browser rule group"});
+  await groupRow.locator(".rule-group-name").fill("Real HA browser rule group edited");
+  await groupRow.locator(".rule-group-rename").click();
+  await expect(groupManager.locator(".rule-group-row").filter({hasText: "Real HA browser rule group edited"})).toBeVisible();
+  groupRow = groupManager.locator(".rule-group-row").filter({hasText: "Real HA browser rule group edited"});
+  await groupRow.locator(".rule-group-delete").click();
+  await acceptConfirmation(panel);
+  await expect(groupManager.locator(".rule-group-row").filter({hasText: "Real HA browser rule group edited"})).toHaveCount(0);
+
   await page.goto(realFixtureUrl("capabilities/request-rules"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Real HA browser rule edited", exact: true})).toHaveCount(0);
+  await panel.locator(".rule-groups summary").click();
+  await expect(panel.locator(".rule-group-row").filter({hasText: "Real HA browser rule group edited"})).toHaveCount(0);
   await expectHarnessClean(page, pageErrors);
 });
 
