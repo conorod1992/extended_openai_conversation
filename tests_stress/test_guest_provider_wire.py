@@ -28,12 +28,23 @@ from custom_components.extended_openai_conversation_responses.const import (
     MEMORY_MODE_MANUAL,
     TEMPORARY_MEMORY_BALANCED,
 )
+from homeassistant.auth.models import Group
+from homeassistant.auth.permissions.const import (
+    CAT_ENTITIES,
+    POLICY_CONTROL,
+    POLICY_READ,
+)
+from homeassistant.auth.permissions.entities import ENTITY_ENTITY_IDS
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
-from tests_real_ha.test_knowledge_provider_wire_e2e import _tool_names
+from tests_real_ha.test_knowledge_provider_wire_e2e import (
+    _chat_sse_tool_call,
+    _chat_tool_result,
+    _tool_names,
+)
 from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
 from tests_stress.conftest import record
 
@@ -62,7 +73,25 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
     function_policy: str,
     stress_trace: list[dict],
 ) -> None:
-    MockUser(id=_OWNER, name="Guest matrix owner", is_owner=True).add_to_hass(hass)
+    def permission_group(control: bool) -> Group:
+        entity_policy = {POLICY_READ: True}
+        if control:
+            entity_policy[POLICY_CONTROL] = True
+        return Group(
+            id=f"guest-matrix-{'control' if control else 'read'}",
+            name="Guest matrix",
+            policy={
+                CAT_ENTITIES: {ENTITY_ENTITY_IDS: {"light.guest_matrix": entity_policy}}
+            },
+        )
+
+    user = MockUser(
+        id=_OWNER,
+        name="Guest matrix user",
+        is_owner=False,
+        groups=[permission_group(True)],
+    )
+    user.add_to_hass(hass)
     safe = deepcopy(DEFAULT_CONF_FUNCTION_TOOLS[0])
     denied = {
         "spec": {
@@ -141,6 +170,7 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
     hass.services.async_register("light", "turn_off", turn_off)
     hass.states.async_set("light.guest_matrix", "on")
     async_expose_entity(hass, conversation.DOMAIN, "light.guest_matrix", True)
+    assert user.permissions.check_entity("light.guest_matrix", POLICY_CONTROL)
 
     owner_wire = _install_wire(monkeypatch, agent, [_chat_sse_text("Owner context")])
     assert (
@@ -180,6 +210,100 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
         == 1
     )
 
+    executed_functions = 0
+    provider_requests = 3
+    public_turns = 3
+    if function_policy != "off":
+        tool_wire = _install_wire(
+            monkeypatch,
+            agent,
+            [
+                _chat_sse_tool_call(
+                    "call-guest-load", "load_function_groups", {"groups": [_GROUP]}
+                ),
+                _chat_sse_tool_call(
+                    "call-guest-service",
+                    "execute_services",
+                    {
+                        "list": [
+                            {
+                                "domain": "light",
+                                "service": "turn_off",
+                                "service_data": {"entity_id": ["light.guest_matrix"]},
+                            }
+                        ]
+                    },
+                ),
+                _chat_sse_text("Guest safe control complete"),
+            ],
+        )
+        assert (
+            _speech(await _say(hass, entry.entry_id, "Turn off the guest matrix light"))
+            == "Guest safe control complete"
+        )
+        assert len(tool_wire.requests) == 3
+        assert "execute_services" in _tool_names(
+            tool_wire.requests[1]["body"], API_MODE_CHAT_COMPLETIONS
+        )
+        assert (
+            _chat_tool_result(tool_wire.requests[1]["body"], "call-guest-load")[
+                "status"
+            ]
+            == "success"
+        )
+        service_result = _chat_tool_result(
+            tool_wire.requests[2]["body"], "call-guest-service"
+        )
+        assert service_result["result"][0]["success"] is True
+        assert len(calls) == 1
+        executed_functions = 2  # loader and the actual HA service Function
+        provider_requests += 3
+        public_turns += 1
+
+        # The same function remains configured and advertised, but live HA
+        # permissions now veto execution. Replacing groups invalidates HA's
+        # cached permissions; mutating the list in place would not.
+        user.groups = [permission_group(False)]
+        assert not user.permissions.check_entity("light.guest_matrix", POLICY_CONTROL)
+        denied_wire = _install_wire(
+            monkeypatch,
+            agent,
+            [
+                _chat_sse_tool_call(
+                    "call-denied-load", "load_function_groups", {"groups": [_GROUP]}
+                ),
+                _chat_sse_tool_call(
+                    "call-denied-service",
+                    "execute_services",
+                    {
+                        "list": [
+                            {
+                                "domain": "light",
+                                "service": "turn_off",
+                                "service_data": {"entity_id": ["light.guest_matrix"]},
+                            }
+                        ]
+                    },
+                ),
+                _chat_sse_text("Control denied"),
+            ],
+        )
+        assert (
+            _speech(await _say(hass, entry.entry_id, "Try to turn off the light again"))
+            == "Control denied"
+        )
+        assert len(denied_wire.requests) == 3
+        denied_result = _chat_tool_result(
+            denied_wire.requests[2]["body"], "call-denied-service"
+        )
+        assert "success" not in json.dumps(denied_result).lower() or not any(
+            item.get("success") for item in denied_result.get("result", [])
+        )
+        assert len(calls) == 1
+        executed_functions += 2
+        provider_requests += 3
+        public_turns += 1
+
     await agent._guest_mode.async_disable_trusted()
     restored_wire = _install_wire(
         monkeypatch, agent, [_chat_sse_text("Owner restored")]
@@ -196,8 +320,8 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
         guest_policy=function_policy,
         guest_end_to_end_combinations=1,
         private_context_probes=3,
-        public_turns=3,
-        provider_requests=3,
-        actual_function_executions=0,
+        public_turns=public_turns,
+        provider_requests=provider_requests,
+        actual_function_executions=executed_functions,
         ha_service_calls=len(calls),
     )
