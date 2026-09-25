@@ -34,6 +34,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     RequestRules,
     RequestRuleStore,
     _bounded_function_result,
+    _MatchCursor,
     async_call_active_function,
     async_evaluate_rule,
     canonical_action_signature,
@@ -433,6 +434,27 @@ async def test_group_name_change_does_not_rebuild_matcher() -> None:
     await rules.async_set_groups([])
     assert rules.snapshot()["rules"][0]["group_id"] is None
     assert rules._matching_snapshot.phrases[0][2] is snapshot.phrases[0][2]
+
+
+async def test_fuzzy_chain_never_returns_to_earlier_priority() -> None:
+    fuzzy = {
+        "word_forms": False,
+        "wording_alternatives": False,
+        "fuzzy": True,
+        "fuzzy_threshold": 70,
+    }
+    rules = await manager(
+        local_rule("First", phrases=["liagt"], order=0),
+        local_rule("Second", phrases=["ligh"], order=1),
+        local_rule("Third", phrases=["ligth"], order=2),
+        defaults=fuzzy,
+    )
+    cursor = _MatchCursor(rules._matching_snapshot, "light")
+    first = cursor.next_match()
+    second = cursor.next_match()
+    assert first is not None and first.rule["name"] == "Second"
+    assert second is not None and second.rule["name"] == "Third"
+    assert cursor.next_match() is None
 
 
 async def test_continue_matching_handoff_stops_later_rules(hass) -> None:

@@ -200,6 +200,7 @@ class _MatchCursor:
         self.sentence_text: PreparedSentenceText | None = None
         self.budget = MatchBudget()
         self.seen: set[str] = set()
+        self.last_matched_order: int | None = None
         self.fuzzy_matches: list[RuleMatch] | None = None
 
     def _candidate(self, settings: dict[str, Any]) -> str:
@@ -229,6 +230,7 @@ class _MatchCursor:
                 )
                 if slots is not None:
                     self.seen.add(rule["id"])
+                    self.last_matched_order = rule["order"]
                     return RuleMatch(rule, compiled.original, False, 100.0, slots)
             elif _deterministic_match(
                 self._candidate(settings),
@@ -236,6 +238,7 @@ class _MatchCursor:
                 rule["match_type"],
             ):
                 self.seen.add(rule["id"])
+                self.last_matched_order = rule["order"]
                 return RuleMatch(rule, compiled.original, False, 100.0)
         if self.fuzzy_matches is None:
             ranked: dict[str, tuple[tuple[float, int, int], RuleMatch]] = {}
@@ -262,7 +265,25 @@ class _MatchCursor:
                     ranked.values(), key=lambda item: item[0], reverse=True
                 )
             ]
-        return self.fuzzy_matches.pop(0) if self.fuzzy_matches else None
+        if not self.fuzzy_matches:
+            return None
+        if self.last_matched_order is None:
+            result = self.fuzzy_matches.pop(0)
+        else:
+            later = (
+                match
+                for match in self.fuzzy_matches
+                if match.rule["order"] > self.last_matched_order
+            )
+            later_result = min(
+                later, key=lambda match: match.rule["order"], default=None
+            )
+            if later_result is None:
+                return None
+            result = later_result
+            self.fuzzy_matches.remove(result)
+        self.last_matched_order = result.rule["order"]
+        return result
 
 
 class RequestRuleStore(Store[dict[str, Any]]):
@@ -923,7 +944,8 @@ class RequestRules:
         """Publish a metadata-only change without recompiling every phrase."""
         self._refresh_snapshot_rules({rule_id: replacement})
         self._has_continuation = any(
-            rule["enabled"] and rule["continue_matching"] for rule in self._rules
+            rule["continue_matching"]
+            for rule, _, _ in self._matching_snapshot.deterministic
         )
 
     def _refresh_snapshot_rules(
@@ -1101,7 +1123,7 @@ class RequestRules:
             fuzzy_rules,
         )
         self._has_continuation = any(
-            rule["enabled"] and rule["continue_matching"] for rule in self._rules
+            rule["continue_matching"] for rule, _, _ in compiled_rules
         )
         self._diagnostics = diagnostics
         return order_changed

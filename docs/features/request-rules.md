@@ -74,7 +74,7 @@ Reasoning effort is validated against the model that will actually receive it, i
 - **Wording alternatives** map different ways of saying the same thing to a main phrase. The seeded alternatives preserve the previous built-in behavior, such as `switch on` to `turn on` and `television` to `tv`. Alternatives can be added, edited, and removed. Ambiguous duplicate phrases are rejected.
 - **Fuzzy matching** tolerates small speech-recognition differences only after strict matching fails. Conservative, Normal, and Tolerant correspond to progressively lower thresholds. Sensitivity is unavailable when fuzzy matching is off.
 
-Strict matching always wins over fuzzy matching. Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen. The first eligible strict match handles the request by default, regardless of match type. A rule with **Continue matching** on can let later strict matches run. Fuzzy matching is considered only after strict candidates are exhausted; its score-based ordering applies.
+Strict matching always wins over fuzzy matching. Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen. The first eligible strict match handles the request by default, regardless of match type. A rule with **Continue matching** on can let later strict matches run. Fuzzy matching is considered only after strict candidates are exhausted. When no strict rule matched, the first fuzzy candidate is chosen by its existing score-based ranking; continuation then checks only later-priority fuzzy rules in global order.
 
 The first *eligible* candidate wins: a candidate whose Only when conditions are false is skipped. Conditions are never evaluated for rules whose text did not match.
 
