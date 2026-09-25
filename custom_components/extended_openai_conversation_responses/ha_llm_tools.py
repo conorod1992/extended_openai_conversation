@@ -16,6 +16,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 import hashlib
+import importlib
 import json
 import logging
 from types import ModuleType
@@ -307,9 +308,9 @@ async def async_discover(
         return snapshot
     llm_component: ModuleType | None
     try:
-        from homeassistant.components import llm as component
-
-        llm_component = component
+        # Core's component only exists from HA 2026.8. The helper API above is
+        # older and remains available without registering a manifest dependency.
+        llm_component = importlib.import_module("homeassistant.components.llm")
     except ImportError:
         llm_component = None
     apis = llm.async_get_apis(hass)

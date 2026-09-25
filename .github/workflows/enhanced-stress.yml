@@ -10,7 +10,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, runtime, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, request-rules, guest-security, quiet-hours, functions, memory-knowledge, large-installation, browser, chaos, process-chaos]
+        options: [all, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, request-rules, guest-security, quiet-hours, functions, memory-knowledge, large-installation, browser, chaos, process-chaos]
       intensity:
         description: Workload multiplier
         type: choice
@@ -59,9 +59,9 @@ jobs:
             echo "intensities=[\"$INTENSITY\"]" >> "$GITHUB_OUTPUT"
           fi
           case "${{ inputs.campaign }}" in
-            '') CAMPAIGNS='["runtime","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
-            all|browser) CAMPAIGNS='["runtime","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
-            runtime|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|request-rules|guest-security|quiet-hours|functions|memory-knowledge|large-installation|chaos|process-chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
+            '') CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
+            all|browser) CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
+            runtime|lifecycle|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|request-rules|guest-security|quiet-hours|functions|memory-knowledge|large-installation|chaos|process-chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
             *) echo 'Unknown campaign' >&2; exit 1 ;;
           esac
           echo "campaigns=$CAMPAIGNS" >> "$GITHUB_OUTPUT"
@@ -117,6 +117,7 @@ jobs:
         run: |
           case "$STRESS_CAMPAIGN" in
             runtime) TEST_PATHS=(tests_stress/test_runtime_soak.py tests_stress/test_evidence_manifest.py tests_stress/test_frontend_route_inventory.py tests_stress/test_management_action_inventory.py tests_stress/test_public_service_inventory.py tests_stress/test_backup_inventory.py) ;;
+            lifecycle) TEST_PATHS=(tests_stress/test_lifecycle_matrix.py tests_stress/test_installed_lifecycle.py tests_real_ha/test_multi_entry_lifecycle.py tests_real_ha/test_config_flow_lifecycle_contracts.py) ;;
             ai-task) TEST_PATHS=(tests_stress/test_ai_task_mixed_campaign.py tests_real_ha/test_ai_task_runtime.py tests_real_ha/test_ai_task_lifecycle.py) ;;
             voice-intercom) TEST_PATHS=(tests_stress/test_voice_household_campaign.py tests_stress/test_intercom_endurance_campaign.py tests_real_ha/test_assist_voice_identity_precedence.py tests_real_ha/test_intercom_voice_acceptance.py) ;;
             archive) TEST_PATHS=(tests_stress/test_archive_living_campaign.py tests/test_conversation_archive.py) ;;
@@ -223,5 +224,77 @@ jobs:
             stress-artifacts/
             playwright-report/
             test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  ha-lifecycle-matrix:
+    name: HA ${{ matrix.ha-version }} / shared lifecycle contract
+    needs: prepare
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'lifecycle'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        ha-version: [oldest, stable, dev]
+    steps:
+      - name: Checkout candidate or nightly develop
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+      - name: Resolve Python version required by HA dev
+        id: python
+        run: |
+          if [[ '${{ matrix.ha-version }}' == dev ]]; then
+            SHA="$(git ls-remote https://github.com/home-assistant/core.git refs/heads/dev | awk '{print $1}')"
+            test -n "$SHA"
+            VERSION="$(curl -fsSL "https://raw.githubusercontent.com/home-assistant/core/$SHA/.python-version" | tr -d '\n')"
+            echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          else
+            VERSION=3.14
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ steps.python.outputs.version }}
+          allow-prereleases: true
+      - name: Install test and selected HA environment
+        env:
+          HA_POINT: ${{ matrix.ha-version }}
+          HA_DEV_SHA: ${{ steps.python.outputs.sha }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements_test.txt
+          if [[ "$HA_POINT" == oldest ]]; then
+            MINIMUM="$(python -c 'import json; print(json.load(open("hacs.json"))["homeassistant"])')"
+            # The newest fixture plugin calls Core APIs added after this floor.
+            # 0.13.317 is the earliest published plugin for the 2026.3 series.
+            python -m pip install 'pytest-homeassistant-custom-component==0.13.317'
+            # The plugin was published for 2026.3.1; restore EOAI's exact beta
+            # floor after its test-only dependencies have been resolved.
+            python -m pip install --pre "homeassistant==$MINIMUM"
+          elif [[ "$HA_POINT" == stable ]]; then
+            python -m pip install --upgrade homeassistant
+          else
+            python -m pip install "git+https://github.com/home-assistant/core.git@$HA_DEV_SHA"
+          fi
+          python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          python -c 'from importlib.metadata import version; print("homeassistant=" + version("homeassistant"))'
+      - name: Run the same genuine HA lifecycle contract
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          STRESS_SEED: ${{ needs.prepare.outputs.seed }}
+          STRESS_ARTIFACT_DIR: stress-artifacts
+        run: >-
+          pytest tests_stress/test_lifecycle_matrix.py
+          -v -s --asyncio-mode=auto --timeout=600
+          --stress-seed="$STRESS_SEED" --stress-intensity=normal
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lifecycle-${{ matrix.ha-version }}-seed-${{ needs.prepare.outputs.seed }}
+          path: stress-artifacts/
           if-no-files-found: warn
           retention-days: 14
