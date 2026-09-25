@@ -10,7 +10,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, runtime, setup, backup, backup-transfer, request-rules, guest-security, quiet-hours, functions, memory-knowledge, large-installation, browser, chaos, process-chaos]
+        options: [all, runtime, ai-task, setup, backup, backup-transfer, request-rules, guest-security, quiet-hours, functions, memory-knowledge, large-installation, browser, chaos, process-chaos]
       intensity:
         description: Workload multiplier
         type: choice
@@ -55,9 +55,9 @@ jobs:
           echo "seed=$SEED" >> "$GITHUB_OUTPUT"
           echo "intensity=$INTENSITY" >> "$GITHUB_OUTPUT"
           case "${{ inputs.campaign }}" in
-            '') CAMPAIGNS='["runtime","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos"]' ;;
-            all|browser) CAMPAIGNS='["runtime","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
-            runtime|setup|backup|backup-transfer|request-rules|guest-security|quiet-hours|functions|memory-knowledge|large-installation|chaos|process-chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
+            '') CAMPAIGNS='["runtime","ai-task","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos"]' ;;
+            all|browser) CAMPAIGNS='["runtime","ai-task","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
+            runtime|ai-task|setup|backup|backup-transfer|request-rules|guest-security|quiet-hours|functions|memory-knowledge|large-installation|chaos|process-chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
             *) echo 'Unknown campaign' >&2; exit 1 ;;
           esac
           echo "campaigns=$CAMPAIGNS" >> "$GITHUB_OUTPUT"
@@ -112,6 +112,7 @@ jobs:
         run: |
           case "$STRESS_CAMPAIGN" in
             runtime) TEST_PATHS=(tests_stress/test_runtime_soak.py tests_stress/test_evidence_manifest.py) ;;
+            ai-task) TEST_PATHS=(tests_stress/test_ai_task_mixed_campaign.py tests_real_ha/test_ai_task_runtime.py tests_real_ha/test_ai_task_lifecycle.py) ;;
             setup) TEST_PATHS=(tests_stress/test_backup_inventory.py tests_real_ha/test_config_flow.py tests_real_ha/test_config_flow_edges.py tests_real_ha/test_config_flow_lifecycle_contracts.py) ;;
             backup) TEST_PATHS=(tests_stress/test_backup_fault_matrix.py tests_stress/test_backup_inventory.py tests_stress/test_historical_backup.py) ;;
             backup-transfer) TEST_PATHS=(tests_stress/test_backup_transfer.py tests_stress/test_backup_transfer_preview_races.py) ;;

@@ -7,6 +7,10 @@ from pathlib import Path
 import sys
 
 COUNT_METRICS = {
+    "ai_task_turns",
+    "ai_task_concurrent",
+    "ai_task_agents",
+    "ai_task_provider_failures",
     "public_turns",
     "provider_requests",
     "embedding_provider_requests",
