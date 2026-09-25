@@ -3,13 +3,27 @@ import test from "node:test";
 
 import {
   applySentencePatternHelper,
+  commonCapturedSlotNames,
   requestRulesDialog,
 } from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
 
 test("Request Rule dialog exposes explicit Continue to AI control", () => {
   const html = requestRulesDialog();
   assert.match(html, /id="rule-continue-to-ai"/);
-  assert.match(html, /After applying these routing settings, send the original request/);
+  assert.match(html, /After applying these routing settings, send the selected AI input/);
+});
+
+test("AI input offers original or common required captures", () => {
+  const html = requestRulesDialog();
+  assert.match(html, /id="rule-ai-input-mode"/);
+  assert.match(html, /<option value="original">Original request<\/option>/);
+  assert.match(html, /<option value="capture">Captured value<\/option>/);
+  assert.deepEqual(commonCapturedSlotNames("deep think {question}\nthink carefully {question}"), ["question"]);
+  assert.deepEqual(commonCapturedSlotNames("deep think {question}\nthink carefully"), []);
+  assert.deepEqual(commonCapturedSlotNames("deep think [{question}]"), []);
+  assert.deepEqual(commonCapturedSlotNames("deep think (about {question}|carefully)"), []);
+  assert.deepEqual(commonCapturedSlotNames("deep think (about {question}|on {question})"), ["question"]);
+  assert.deepEqual(commonCapturedSlotNames("deep think {question=why|how}"), ["question"]);
 });
 
 test("sentence-pattern helper controls are present after the match selector", () => {

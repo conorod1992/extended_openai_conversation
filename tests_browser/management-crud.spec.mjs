@@ -85,6 +85,60 @@ test("Request Rules support create, precedence changes, reload, edit, and delete
   await expectHarnessClean(page, pageErrors);
 });
 
+test("Rule Sharing reviews before importing disabled rules at the bottom", async ({page}) => {
+  const pageErrors=trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  const panel=page.locator("extended-openai-management-panel");
+  const sharing=panel.locator("#rule-sharing");
+  await expect(sharing).not.toHaveAttribute("open", "");
+  await expect(panel.locator("#rule-pack-file")).toHaveCount(0);
+  await sharing.locator("summary").click();
+  await expect(panel.locator("#rule-pack-file")).toBeVisible();
+  const pack={format:"extended_openai_request_rule_pack",version:1,groups:[],rules:[{
+    id:"portable-rule",name:"Shared route",enabled:true,phrases:["shared route"],match_type:"equals",action_type:"model_routing",
+    action:{model:"gpt-5-mini",reasoning_effort:"",scope:"request",reset:false,continue_to_ai:true,success_response:"Updated"},
+    matching_behavior:"custom",matching:{word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90},order:0,
+    conditions:[],group_id:null,continue_matching:true,ai_input_mode:"original",ai_input_capture:null,
+  }]};
+  await panel.locator("#rule-pack-file").setInputFiles({name:"rules.json",mimeType:"application/json",buffer:Buffer.from(JSON.stringify(pack))});
+  await panel.locator("#rule-pack-review-button").click();
+  await expect(panel.getByRole("heading",{name:"Review Rule Pack"})).toBeVisible();
+  await expect(panel.getByRole("heading",{name:"Shared route"})).toHaveCount(0);
+  await panel.locator("#rule-pack-confirm").click();
+  const card=panel.locator(".request-rule-card").filter({hasText:"Shared route"});
+  await expect(card).toBeVisible();
+  await expect(card.locator(".rule-enabled")).not.toBeChecked();
+  await expect.poll(async()=>panel.locator(".request-rule-card h2").allTextContents()).toEqual(["Baseline rule","Shared route"]);
+  await panel.locator("#rule-pack-selection").selectOption("selected");
+  await panel.locator("#rule-pack-export").click();
+  await expect(panel.locator("#rule-pack-select-dialog")).toHaveJSProperty("open",true);
+  await expect(panel.locator("#rule-pack-rule-list input")).toHaveCount(2);
+  await panel.locator("#rule-pack-select-cancel").click();
+  await expectHarnessClean(page,pageErrors);
+});
+
+test("Captured AI input keeps an invalid selection visible for repair", async ({page}) => {
+  const pageErrors=trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  const panel=page.locator("extended-openai-management-panel");
+  await panel.getByRole("button",{name:"Create rule",exact:true}).first().click();
+  await panel.locator("#rule-phrases").fill("deep think {question}\nthink {question}");
+  await panel.locator("#rule-match").selectOption("sentence_pattern");
+  await panel.locator("#rule-action-type").selectOption("model_routing");
+  await panel.locator("#rule-ai-input-mode").selectOption("capture");
+  await expect(panel.locator("#rule-ai-input-capture option")).toHaveCount(1);
+  await expect(panel.locator("#rule-ai-input-capture")).toHaveValue("question");
+  await panel.locator("#rule-phrases").fill("deep think {question}\nthink carefully");
+  await expect(panel.locator("#rule-ai-input-capture")).toHaveValue("question");
+  await expect(panel.locator("#rule-ai-input-capture")).toHaveAttribute("aria-invalid","true");
+  await expect(panel.locator("#rule-ai-input-help")).toBeVisible();
+  await panel.locator("#rule-match").selectOption("equals");
+  await expect(panel.locator("#rule-match")).toHaveValue("equals");
+  await expect(panel.locator("#rule-ai-input-capture")).toHaveValue("question");
+  await panel.locator(".rule-close").first().click();
+  await expectHarnessClean(page,pageErrors);
+});
+
 test("Request Rule condition selector, local continuation, and group survive reload", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));

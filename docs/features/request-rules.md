@@ -34,7 +34,7 @@ Existing `target` and `data` values are preserved when a rule is edited. **Advan
 
 If any action fails, the remaining actions do not run and the configured failure response is returned. While Guest Mode is active, the entire sequence is authorized before the first action runs; if one action is unavailable, none run.
 
-Turn on **Continue to AI** when the local sequence should run first and the provider should then answer the original request unchanged. The provider is called once after all local steps succeed; the local success response is used only when the request is consumed locally. A failed step or Guest Mode denial stops the request and does not continue to AI. Earlier successful side effects are not rolled back if a later step fails.
+Turn on **Continue to AI** when the local sequence should run first and the provider should then answer. **AI input** defaults to **Original request**; choose **Captured value** to send one named Sentence Pattern capture instead. The provider is called once after all local steps succeed; the local success response is used only when the request is consumed locally. A failed step or Guest Mode denial stops the request and does not continue to AI. Earlier successful side effects are not rolled back if a later step fails.
 
 ### Example: fast local script
 
@@ -49,7 +49,7 @@ An **AI routing** rule can override the model, reasoning effort, or both. Matchi
 
 Use **Continue to AI** to choose what happens after a routing rule matches:
 
-- **On** applies the routing settings and sends the original request to the AI provider unchanged. **This request only** applies the selected model/reasoning only to that provider call; **Rest of this conversation** applies it to that call and later requests in the same conversation.
+- **On** applies the routing settings and sends the selected AI input to the provider. The default is the unchanged original request. **This request only** applies the selected model/reasoning only to that provider call; **Rest of this conversation** applies it to that call and later requests in the same conversation.
 - **Off** treats the phrase as a standalone routing command. ExtendedOpenAI acknowledges it locally and does not send that command to the provider. Because there is no provider request to modify, standalone commands use **Rest of this conversation** scope.
 
 Routing precedence for a provider request is:
@@ -172,7 +172,7 @@ To use a Function Tool's return value, set an optional **Result alias** on its a
 
 Request captures and Function results stay separate. `{device}` remains a request capture, while `{battery.device}` reads a field from the Function result. A Function result cannot overwrite a capture. Each result-producing call needs a unique editable alias, even when the same Function Tool is called twice. Aliases use letters, digits, and underscores, start with a letter or underscore, and cannot use reserved names such as `request`, `conversation`, or `system`. The editor suggests an alias from the Function Tool name; the saved step ID remains stable when you rename the alias. References to an earlier alias in simple `{alias.path}` form are updated on rename. Removing or moving a producing step ahead of its consumers is rejected on save.
 
-Function execution success is determined by the execution outcome, not the truthiness of its result: `false`, `0`, empty string, and null are valid values. Retained results are limited to 16 KiB and eight levels of nesting. The safe Match Preview lists the Function Tool and alias but never runs it or invents a result. Live Test can run it after the normal explicit confirmation. **Function results are not automatically sent to the AI provider**, including when Continue to AI is on; the provider receives only the original request.
+Function execution success is determined by the execution outcome, not the truthiness of its result: `false`, `0`, empty string, and null are valid values. Retained results are limited to 16 KiB and eight levels of nesting. The safe Match Preview lists the Function Tool and alias but never runs it or invents a result. Live Test can run it after the normal explicit confirmation. **Function results are not automatically sent to the AI provider**, including when Continue to AI is on; the provider receives the selected AI input.
 
 ## Groups and priority
 
@@ -185,6 +185,18 @@ In **All rules**, drag a card or use **Move up**, **Move down**, **Move to top**
 Open a rule's advanced settings to enable **Continue matching after this rule**. After a local sequence succeeds, later matching rules can run in priority order. A later rule with this option off stops normally. A routing command can also apply its model or reasoning choice and let later rules run. If later routing rules change the same setting, the later matching choice wins.
 
 **Continue to AI** always ends rule checking. The provider is called once, after successful local actions where applicable. A failed local action or Function Tool, Guest Mode denial, or condition evaluation error stops the chain safely. Function results remain within their own rule. Match Preview shows the rules that would match and where checking would stop, without running actions or calling the provider.
+
+### AI input
+
+For any rule with **Continue to AI** on, **Original request** sends the user's full request, as existing rules do. **Captured value** sends only the chosen named value from a Sentence Pattern trigger. For example, `deep think {question}` can send `why is the sky blue?` from `deep think why is the sky blue?`.
+
+The selected capture must be present on every trigger variant and every possible match of those variants. If editing a trigger removes it, the editor keeps the selection visible and requires you to fix the trigger or switch back to **Original request**. Match Preview shows the exact user text that would be sent to the provider. It does not run local actions or call the provider.
+
+### Rule Sharing
+
+Open **Rule Sharing** at the bottom of Request Rules to export all rules, one group, or selected rules. A rule pack contains only selected rules, their organizational groups, and the effective matching settings owned by those rules. It does not contain provider credentials, Function Tool definitions, memories, knowledge, archive data, unrelated agent settings, or agent-wide wording alternatives. The pack has an explicit format and version for compatibility.
+
+Import first shows **Review Rule Pack**, including rules, actions, conditions, Function Tool references, and unavailable resources. Nothing executes during review. Confirming appends the rules after your existing rules in their exported relative order and leaves every imported rule **disabled**. Enable and test each rule after checking its dependencies. Groups with the same name are reused; other groups receive new internal IDs. Rule Sharing never changes the destination agent's wording alternatives; if a shared rule's author relies on additional alternative phrases, those remain a separate setup choice. A conflicting or invalid pack is rejected without replacing existing rules. Full agent backup and selective transfer remain separate capabilities.
 
 ## Request Rules compared with native automations
 

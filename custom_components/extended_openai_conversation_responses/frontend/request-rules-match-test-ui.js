@@ -5,7 +5,7 @@ export const REQUEST_RULE_MATCH_MAX_CHARS = 2048;
 function localActionSummary(response) {
   const count = Number(response?.would_do?.action_count || 0);
   const functions=(response?.would_do?.functions || []).map((item)=>`${item.name}${item.result_alias ? ` → ${item.result_alias}` : ""}`).join(", ");
-  return `Would run ${count} local action${count === 1 ? "" : "s"}${functions ? `, including ${functions}` : ""}. ${response?.would_do?.consumed ? "The command would be consumed locally." : "After success, the original request would continue to the AI."} Nothing was executed and no Function result was invented.`;
+  return `Would run ${count} local action${count === 1 ? "" : "s"}${functions ? `, including ${functions}` : ""}. ${response?.would_do?.consumed ? "The command would be consumed locally." : "After success, the selected AI input would continue to the AI."} Nothing was executed and no Function result was invented.`;
 }
 
 function routingSummary(response) {
@@ -14,8 +14,8 @@ function routingSummary(response) {
   const conversation = action.scope === "conversation";
   if (action.reset) {
     if (consumed) return "Would consume this command locally and return the rest of this conversation to the configured model settings. The AI provider would not receive this command. Nothing was changed.";
-    if (conversation) return "Would clear the conversation routing override, then send the original request unchanged to the AI provider using the configured model settings. Nothing was changed in this preview.";
-    return "Would send the original request unchanged to the AI provider using configured model settings for this request only. The saved conversation routing override would remain for the next request. Nothing was changed in this preview.";
+    if (conversation) return "Would clear the conversation routing override, then send the selected AI input using the configured model settings. Nothing was changed in this preview.";
+    return "Would send the selected AI input using configured model settings for this request only. The saved conversation routing override would remain for the next request. Nothing was changed in this preview.";
   }
   const changes = [];
   if (action.model) changes.push(`model ${action.model}`);
@@ -23,7 +23,7 @@ function routingSummary(response) {
   const route = changes.join(" and ") || "the routing override";
   if (consumed) return `Would consume this command locally and apply ${route} to the rest of this conversation. The AI provider would not receive this command. Nothing was changed.`;
   const scope = conversation ? "this request and later requests in this conversation" : "this request only";
-  return `Would send the original request unchanged to the AI provider using ${route} for ${scope}. Nothing was changed in this preview.`;
+  return `Would send the selected AI input using ${route} for ${scope}. Nothing was changed in this preview.`;
 }
 
 export function formatRequestRuleMatchResult(panel, response) {
@@ -39,7 +39,7 @@ export function formatRequestRuleMatchResult(panel, response) {
     : "Normal match";
   const actionType = rule.action_type === "local_action" ? "Local command" : "AI routing";
   const wouldDo = rule.action_type === "local_action" ? localActionSummary(response) : routingSummary(response);
-  const chain=(response.matched_rules || []).map((item)=>`<li>${panel._e(item.rule.name)} — ${item.status === "would_send_to_ai" ? "would send to AI, stopped" : item.status}</li>`).join("");
+  const chain=(response.matched_rules || []).map((item)=>`<li>${panel._e(item.rule.name)} — ${item.status === "would_send_to_ai" ? "would send to AI, stopped" : item.status}${item.ai_input ? ` · ${item.ai_input.mode === "capture" ? `Captured value: ${panel._e(item.ai_input.capture)}` : "Original request"} → ${panel._e(item.ai_input.provider_input)}` : ""}</li>`).join("");
   return `<div class="notice on rule-match-preview"><strong>Matched: ${panel._e(rule.name || "Unnamed rule")}</strong>${chain ? `<ol class="rule-match-chain">${chain}</ol>` : ""}<p>${panel._e(actionType)} · ${panel._e(matchLabel(rule.match_type))} · ${panel._e(matchKind)}</p><dl class="match-preview-details"><div><dt>Matched phrase</dt><dd>${panel._e(response.matched_phrase || "—")}</dd></div>${captured.length ? `<div><dt>Captured values</dt><dd>${captured.map(([name,value]) => `${panel._e(name)} → ${panel._e(value)}`).join("<br>")}</dd></div>` : ""}${skipped ? `<div><dt>Skipped</dt><dd>${panel._e(skipped)}: Only when conditions were false</dd></div>` : ""}<div><dt>Would happen</dt><dd>${panel._e(wouldDo)}</dd></div></dl></div>`;
 }
 

@@ -7,9 +7,10 @@ from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
+from hashlib import sha256
 import json
 import logging
-from time import perf_counter
+from time import monotonic, perf_counter
 from types import MappingProxyType
 from typing import Any, Final
 from uuid import uuid4
@@ -74,6 +75,7 @@ from .exposed_attributes import exposed_attribute_catalog
 from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .function_dependency_integrity import (
     _TOOL_MUTATIONS,
+    _rule_script_actions,
     async_validate_request_rule_functions,
     group_reference_updates,
 )
@@ -145,6 +147,11 @@ from .management_request_preview import (
 from .memory import ANONYMOUS_USER_ID, async_get_memory
 from .regex_execution import async_process_speech_text
 from .request_rule_match_preview import async_request_rule_match_preview
+from .request_rule_packs import (
+    async_append_rule_pack,
+    export_rule_pack,
+    validate_rule_pack,
+)
 from .request_rules import (
     async_get_request_rules,
     get_request_rule_runtime,
@@ -464,6 +471,146 @@ async def _validate_request_rule_conditions(
             raise HomeAssistantError(f"Invalid Only when condition: {err}") from err
 
 
+async def _review_rule_pack(
+    hass: HomeAssistant,
+    prepared: Mapping[str, Any],
+    rules: Any,
+    configured_tools: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Inspect dependencies without executing or saving imported rules."""
+    snapshot = rules.snapshot()
+    if len(snapshot["rules"]) + len(prepared["rules"]) > 500:
+        raise HomeAssistantError("Request Rule limit reached")
+    new_group_names = {group["name"].casefold() for group in snapshot["groups"]}
+    added_group_names = {
+        group["name"].casefold()
+        for group in prepared["groups"]
+        if group["name"].casefold() not in new_group_names
+    }
+    if len(snapshot["groups"]) + len(added_group_names) > 100:
+        raise HomeAssistantError("Group limit reached")
+    group_names = {group["id"]: group["name"] for group in prepared["groups"]}
+    available = {
+        tool["spec"]["name"] for tool in configured_tools if function_tool_enabled(tool)
+    }
+    summaries = []
+    for rule in prepared["rules"]:
+        await _validate_request_rule_conditions(hass, rule)
+        actions = list(_rule_script_actions(rule))
+        function_names = sorted(
+            {
+                str(action["data"]["function"])
+                for action in actions
+                if action.get("action", action.get("service"))
+                == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+                and isinstance(action.get("data"), Mapping)
+                and isinstance(action["data"].get("function"), str)
+            }
+        )
+        missing_functions = sorted(set(function_names) - available)
+        await async_validate_request_rule_functions(
+            hass, rule, configured_tools, quarantined_names=missing_functions
+        )
+        entities = sorted(
+            {
+                entity
+                for action in actions
+                for value in (
+                    [action.get("target", {}).get("entity_id")]
+                    if isinstance(action.get("target"), Mapping)
+                    else []
+                )
+                for entity in (value if isinstance(value, list) else [value])
+                if isinstance(entity, str) and "{{" not in entity
+            }
+        )
+        missing_entities = [
+            entity for entity in entities if hass.states.get(entity) is None
+        ]
+        services = sorted(
+            {
+                service
+                for action in actions
+                if isinstance(
+                    service := action.get("action", action.get("service")), str
+                )
+                and "." in service
+                and service != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+            }
+        )
+        missing_services = [
+            service
+            for service in services
+            if not hass.services.has_service(*service.split(".", 1))
+        ]
+        summaries.append(
+            {
+                "name": rule["name"],
+                "triggers": rule["phrases"][:3],
+                "group": group_names.get(rule["group_id"], "Ungrouped"),
+                "action_type": rule["action_type"],
+                "conditions": len(rule["conditions"]),
+                "function_tools": function_names,
+                "entities": entities,
+                "services": services,
+                "missing_dependencies": [
+                    *missing_functions,
+                    *missing_entities,
+                    *missing_services,
+                ],
+                "continue_to_ai": rule["action"]["continue_to_ai"],
+                "continue_matching": rule["continue_matching"],
+                "ai_input_mode": rule["ai_input_mode"],
+                "ai_input_capture": rule["ai_input_capture"],
+                "status": "needs_attention"
+                if missing_functions or missing_entities or missing_services
+                else "ready",
+            }
+        )
+    return {
+        "count": len(summaries),
+        "ready": sum(item["status"] == "ready" for item in summaries),
+        "needs_attention": sum(item["status"] != "ready" for item in summaries),
+        "rules": summaries,
+        "will_append": True,
+        "will_disable": True,
+        "new_groups": len(added_group_names),
+        "revision": snapshot["revision"],
+    }
+
+
+def _rule_pack_digest(prepared: Mapping[str, Any]) -> str:
+    return sha256(
+        json.dumps(prepared, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _register_rule_pack_review(
+    rules: Any, prepared: Mapping[str, Any], revision: str
+) -> str:
+    reviews = getattr(rules, "_rule_pack_reviews", {})
+    now = monotonic()
+    reviews = {token: record for token, record in reviews.items() if record[2] > now}
+    token = uuid4().hex
+    reviews[token] = (_rule_pack_digest(prepared), revision, now + 600)
+    rules._rule_pack_reviews = dict(list(reviews.items())[-16:])
+    return token
+
+
+def _consume_rule_pack_review(
+    rules: Any, token: Any, prepared: Mapping[str, Any], revision: Any
+) -> None:
+    reviews = getattr(rules, "_rule_pack_reviews", {})
+    record = reviews.pop(token, None) if isinstance(token, str) else None
+    if (
+        record is None
+        or record[0] != _rule_pack_digest(prepared)
+        or record[1] != revision
+        or record[2] <= monotonic()
+    ):
+        raise HomeAssistantError("Review this exact Rule Pack before importing")
+
+
 @dataclass(frozen=True)
 class _ManagementRequest:
     """One validated agent selection shared by explicit section handlers."""
@@ -507,6 +654,35 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         # second read so the final rule validator sees current Function Tools.
         _entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
     rules = await async_get_request_rules(hass, entry_id, subentry_id)
+    if action == "rule_pack_export":
+        return export_rule_pack(
+            rules,
+            message.get("selection"),
+            message.get("group_id"),
+            message.get("rule_ids"),
+        )
+    if action in {"rule_pack_review", "rule_pack_import"}:
+        prepared = await hass.async_add_executor_job(
+            validate_rule_pack, message.get("pack")
+        )
+        tools = configured_function_tools_from_data(subentry.data)
+        review = await _review_rule_pack(hass, prepared, rules, tools)
+        if action == "rule_pack_review":
+            review["review_token"] = _register_rule_pack_review(
+                rules, prepared, review["revision"]
+            )
+            return review
+        if message.get("confirm") is not True:
+            raise HomeAssistantError("Review and confirm the Rule Pack before import")
+        if message.get("revision") != review["revision"]:
+            raise HomeAssistantError("Request Rules changed after review; review again")
+        _consume_rule_pack_review(
+            rules, message.get("review_token"), prepared, review["revision"]
+        )
+        imported = await async_append_rule_pack(
+            rules, prepared, expected_revision=message.get("revision")
+        )
+        return {**imported, "review": review}
     if action == "list":
         snapshot = rules.snapshot()
         snapshot["rules"] = [

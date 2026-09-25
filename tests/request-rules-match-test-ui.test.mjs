@@ -55,7 +55,7 @@ const continued = formatRequestRuleMatchResult(panel, {
   would_do:{type:"local_action",action_count:1,consumed:false,provider_input:"original",functions:[{name:"get_battery",result_alias:"battery"}]},
 });
 assert.match(continued, /get_battery → battery/);
-assert.match(continued, /original request would continue to the AI/);
+assert.match(continued, /selected AI input would continue to the AI/);
 assert.match(continued, /Earlier rule: Only when conditions were false/);
 assert.match(continued, /no Function result was invented/);
 
@@ -70,7 +70,7 @@ const broadRouting = formatRequestRuleMatchResult(panel, {
 });
 assert.match(broadRouting, /Fuzzy match · 93\.5%/);
 assert.match(broadRouting, /model gpt-5 and high reasoning/);
-assert.match(broadRouting, /send the original request unchanged to the AI provider/);
+assert.match(broadRouting, /send the selected AI input/);
 assert.match(broadRouting, /this request and later requests in this conversation/);
 
 const exactRouting = formatRequestRuleMatchResult(panel, {

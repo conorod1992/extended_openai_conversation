@@ -186,6 +186,7 @@ class RuleEvaluation:
     response: str | None = None
     request_override: dict[str, str] | None = None
     successful: bool = True
+    provider_input: str | None = None
 
 
 class _MatchCursor:
@@ -1341,6 +1342,8 @@ def validate_rule(
         "conditions",
         "group_id",
         "continue_matching",
+        "ai_input_mode",
+        "ai_input_capture",
     }
     unknown = set(value) - allowed
     if unknown:
@@ -1406,6 +1409,32 @@ def validate_rule(
     continue_matching = value.get("continue_matching", False)
     if not isinstance(continue_matching, bool):
         raise ValueError("continue_matching must be true or false")
+    ai_input_mode = value.get("ai_input_mode", "original")
+    if ai_input_mode not in {"original", "capture"}:
+        raise ValueError("AI input must be Original request or Captured value")
+    ai_input_capture = value.get("ai_input_capture")
+    if ai_input_mode == "capture":
+        if match_type != "sentence_pattern" or not isinstance(ai_input_capture, str):
+            raise ValueError("Captured AI input requires a Sentence Pattern capture")
+        if not sentence_valid or ai_input_capture not in slot_names:
+            raise ValueError("Captured AI input must exist in every trigger")
+        required_phrases = (
+            compiled_phrases
+            if validate_sentence_pattern
+            else [_compile_sentence_pattern(phrase) for phrase in phrases]
+        )
+        if any(
+            ai_input_capture
+            not in cast(
+                CompiledSentencePattern, item.sentence_pattern
+            ).required_capture_names
+            for item in required_phrases
+        ):
+            raise ValueError("Captured AI input must be present on every match")
+        if not action["continue_to_ai"]:
+            raise ValueError("Captured AI input requires Continue to AI")
+    elif ai_input_capture is not None:
+        raise ValueError("Original AI input cannot select a capture")
     conditions = value.get("conditions", [])
     if not isinstance(conditions, list) or len(conditions) > MAX_ACTIONS:
         raise ValueError("Only when conditions must be a list of at most 20 conditions")
@@ -1464,6 +1493,8 @@ def validate_rule(
         "conditions": deepcopy(conditions),
         "group_id": group_id,
         "continue_matching": continue_matching,
+        "ai_input_mode": ai_input_mode,
+        "ai_input_capture": ai_input_capture,
     }
 
 
@@ -2233,6 +2264,28 @@ def rule_stops_matching(rule: Mapping[str, Any]) -> bool:
     )
 
 
+def rule_provider_input(match: RuleMatch, original_text: str) -> str | None:
+    """Resolve only an explicitly selected, validated capture at handoff."""
+    rule = match.rule
+    if rule.get("ai_input_mode", "original") != "capture":
+        return None
+    capture = rule.get("ai_input_capture")
+    if not isinstance(capture, str):
+        raise HomeAssistantError("Captured AI input is unavailable for this request")
+    value = match.slots.get(capture)
+    if not isinstance(value, str) or not value.strip():
+        raise HomeAssistantError("Captured AI input is unavailable for this request")
+    # Sentence-ending punctuation is optional matcher syntax, so the capture
+    # omits it. Keep it in the provider text when the capture ends the request.
+    tail = original_text.rstrip()
+    end = len(tail)
+    while end and tail[end - 1] in ".!?。؟":
+        end -= 1
+    if end < len(tail) and tail[:end].endswith(value):
+        return value + tail[end:]
+    return value
+
+
 async def async_evaluate_rule(
     hass: HomeAssistant,
     rules: RequestRules,
@@ -2259,6 +2312,7 @@ async def async_evaluate_rule(
         return await _async_evaluate_matched_rule(
             hass,
             match,
+            text,
             runtime,
             session_id,
             configured_model,
@@ -2276,6 +2330,7 @@ async def async_evaluate_rule(
             evaluation = await _async_evaluate_matched_rule(
                 hass,
                 match,
+                text,
                 runtime,
                 session_id,
                 configured_model,
@@ -2311,6 +2366,7 @@ async def async_evaluate_rule(
                 evaluation.response,
                 dict(request_override) or None,
                 evaluation.successful,
+                evaluation.provider_input,
             )
             if not evaluation.successful or rule_stops_matching(match.rule):
                 return last
@@ -2329,6 +2385,7 @@ async def async_evaluate_rule(
 async def _async_evaluate_matched_rule(
     hass: HomeAssistant,
     match: RuleMatch,
+    original_text: str,
     runtime: RequestRuleRuntime,
     session_id: str,
     configured_model: str,
@@ -2435,7 +2492,9 @@ async def _async_evaluate_matched_rule(
                 successful=False,
             )
         if action["continue_to_ai"]:
-            return RuleEvaluation(match, False)
+            return RuleEvaluation(
+                match, False, provider_input=rule_provider_input(match, original_text)
+            )
         try:
             response = resolve_result_values(
                 action["success_response"], match.slots, result_values
@@ -2460,6 +2519,11 @@ async def _async_evaluate_matched_rule(
             not action["continue_to_ai"],
             resolve_slot_values(action["success_response"], match.slots),
             request_override,
+            provider_input=(
+                rule_provider_input(match, original_text)
+                if action["continue_to_ai"]
+                else None
+            ),
         )
 
     model = (
@@ -2523,6 +2587,9 @@ async def _async_evaluate_matched_rule(
             else None
         ),
         request_override,
+        provider_input=(
+            rule_provider_input(match, original_text) if not consume else None
+        ),
     )
 
 

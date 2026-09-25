@@ -88,7 +88,7 @@ function renderRulesPage(panel, {query = panel._query || "", inPlaceSearch = fal
   const search = inPlaceSearch ? "" : String(query).trim().toLowerCase();
   const groupFilter = panel._ruleGroupFilter || "all";
   const filtered = rules.map((rule,index)=>({rule,index})).filter(({rule}) => ruleVisible(rule,groupFilter,search));
-  return `<section class="page-intro"><h1>Request Rules</h1><p>Create fast local commands that skip the AI call, or route AI requests by phrase before they reach the AI provider.</p>${ROUTING_HELP}</section>${groupManager(panel,result)}<div class="search-row rule-toolbar" ${rules.length ? "" : "hidden"}><input id="rule-search" type="search" value="${panel._e(query)}" placeholder="Search rules" aria-label="Search Request Rules"><label class="rule-show-filter">Show <select id="rule-group-filter" aria-label="Show rules">${groupFilterOptions(panel,result.groups || [])}</select></label><span class="count">${rules.length} rule${rules.length === 1 ? "" : "s"}</span><button type="button" id="rule-add" class="secondary">Create rule</button></div><div class="rule-list-heading"><h2>Rules</h2><p class="help">Evaluated in the order shown. Drag to change priority.</p><p class="help rule-filter-help" ${groupFilter === "all" && !search ? "hidden" : ""}>Switch to All rules to change priority.</p></div><section class="rule-list">${globalRuleMarkup(panel,filtered)} ${rules.length ? "" : EMPTY_RULES_MARKUP}<section class="content-card empty-state" data-eoc-rule-search-empty ${inPlaceSearch || filtered.length || !rules.length ? "hidden" : ""}>${NO_RULES_MATCH_CONTENT}</section></section><section class="content-card rule-settings" aria-labelledby="rule-matching-title"><div class="section-heading"><div><h2 id="rule-matching-title">Matching settings</h2><p>Set the defaults used by rules and manage alternative phrases.</p></div></div><details class="eoc-details-base"><summary>Default matching settings</summary><p class="help">These settings apply to rules unless a rule has its own custom matching settings. Normal matches are always preferred before fuzzy matching is tried.</p>${matchingControls("rules-default",defaults)}</details>${wordingEditor(panel,(panel._rulesSettingsDraft || result).wording_groups || [])}</section><section class="content-card rule-test-tools"><div class="section-heading"><div><h2>Test rules</h2><p>Check a match safely, or run a live request when needed.</p></div></div>${SAFE_TESTER}${LIVE_TESTER}</section>`;
+  return `<section class="page-intro"><h1>Request Rules</h1><p>Create fast local commands that skip the AI call, or route AI requests by phrase before they reach the AI provider.</p>${ROUTING_HELP}</section>${groupManager(panel,result)}<div class="search-row rule-toolbar" ${rules.length ? "" : "hidden"}><input id="rule-search" type="search" value="${panel._e(query)}" placeholder="Search rules" aria-label="Search Request Rules"><label class="rule-show-filter">Show <select id="rule-group-filter" aria-label="Show rules">${groupFilterOptions(panel,result.groups || [])}</select></label><span class="count">${rules.length} rule${rules.length === 1 ? "" : "s"}</span><button type="button" id="rule-add" class="secondary">Create rule</button></div><div class="rule-list-heading"><h2>Rules</h2><p class="help">Evaluated in the order shown. Drag to change priority.</p><p class="help rule-filter-help" ${groupFilter === "all" && !search ? "hidden" : ""}>Switch to All rules to change priority.</p></div><section class="rule-list">${globalRuleMarkup(panel,filtered)} ${rules.length ? "" : EMPTY_RULES_MARKUP}<section class="content-card empty-state" data-eoc-rule-search-empty ${inPlaceSearch || filtered.length || !rules.length ? "hidden" : ""}>${NO_RULES_MATCH_CONTENT}</section></section><section class="content-card rule-settings" aria-labelledby="rule-matching-title"><div class="section-heading"><div><h2 id="rule-matching-title">Matching settings</h2><p>Set the defaults used by rules and manage alternative phrases.</p></div></div><details class="eoc-details-base"><summary>Default matching settings</summary><p class="help">These settings apply to rules unless a rule has its own custom matching settings. Normal matches are always preferred before fuzzy matching is tried.</p>${matchingControls("rules-default",defaults)}</details>${wordingEditor(panel,(panel._rulesSettingsDraft || result).wording_groups || [])}</section><section class="content-card rule-test-tools"><div class="section-heading"><div><h2>Test rules</h2><p>Check a match safely, or run a live request when needed.</p></div></div>${SAFE_TESTER}${LIVE_TESTER}</section><details id="rule-sharing" class="content-card eoc-details-base rule-sharing"><summary>Rule Sharing</summary><p class="help">Import or export Request Rules for reuse or sharing.</p><div id="rule-sharing-content"></div></details>`;
 }
 export function renderRequestRules(panel, presentation = {query:panel._query || "",inPlaceSearch:Boolean(panel._eocInPlaceRequestRuleSearch)}) { return renderRulesPage(panel,presentation); }
 
@@ -137,6 +137,21 @@ function syncScopeRevision(panel, result) {
     scope.revision=result.revision;
     scope.result=panel._result;
   }
+}
+export function applyRulePackImportMutation(panel, result) {
+  panel._result={...panel._result,
+    rules:[...(panel._result?.rules||[]),...result.rules],
+    groups:result.groups,
+    revision:result.revision};
+  syncScopeRevision(panel,panel._result);
+  const root=panel.shadowRoot;
+  const filter=root?.querySelector("#rule-group-filter");
+  if(filter){filter.innerHTML=groupFilterOptions(panel,result.groups);filter.value=panel._ruleGroupFilter||"all";}
+  const rows=root?.querySelector(".rule-group-manager-rows");
+  if(rows)rows.innerHTML=groupManagerRows(panel,result.groups);
+  const collection=ruleCollections.get(root?.querySelector(".rule-list"));
+  if(collection)collection.settings=ruleSettingsSignature(panel);
+  reconcileRequestRules(panel);
 }
 function finishMutation(panel,result,rules){
   panel._result={...(panel._result||{}),rules,revision:result.revision};
@@ -198,6 +213,8 @@ function bindWordingEditor(panel){
 }
 export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activateLiveTester}={}) {
   const root=panel.shadowRoot,list=root.querySelector(".rule-list"); prepareRequestRulesCollection(panel);
+  const sharing=root.querySelector("#rule-sharing");
+  if(sharing&&!sharing.dataset.eocBound){sharing.dataset.eocBound="";sharing.addEventListener("toggle",()=>{if(sharing.open&&!sharing.dataset.eocLoaded){sharing.dataset.eocLoaded="";void import("./request-rule-sharing-ui.js").then(({bindRuleSharing})=>bindRuleSharing(panel,sharing));}});}
   setFuzzyState(root,"rules-default"); root.querySelector("#rules-default-fuzzy")?.addEventListener("change",()=>setFuzzyState(root,"rules-default"),{once:false});
   bindWordingEditor(panel);
   const filter=root.querySelector("#rule-group-filter");
