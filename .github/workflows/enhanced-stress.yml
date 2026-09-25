@@ -1,8 +1,6 @@
 name: Enhanced nightly acceptance and stress
 
 on:
-  push:
-    branches: [codex/enhanced-nightly-acceptance] # Temporary branch-only validation trigger.
   schedule:
     - cron: "15 3 * * *"
   workflow_dispatch:
@@ -139,7 +137,7 @@ jobs:
 
   browser:
     needs: prepare
-    if: github.event_name == 'schedule' || github.event_name == 'push' || inputs.campaign == 'all' || inputs.campaign == 'browser'
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
