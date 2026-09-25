@@ -481,8 +481,6 @@ async def _review_rule_pack(
     snapshot = rules.snapshot()
     if len(snapshot["rules"]) + len(prepared["rules"]) > 500:
         raise HomeAssistantError("Request Rule limit reached")
-    from .request_rules import validate_wording_groups
-
     new_group_names = {group["name"].casefold() for group in snapshot["groups"]}
     added_group_names = {
         group["name"].casefold()
@@ -491,11 +489,6 @@ async def _review_rule_pack(
     }
     if len(snapshot["groups"]) + len(added_group_names) > 100:
         raise HomeAssistantError("Group limit reached")
-    wording = deepcopy(snapshot["wording_groups"])
-    for group in prepared["wording_groups"]:
-        if group not in wording:
-            wording.append(group)
-    validate_wording_groups(wording)
     group_names = {group["id"]: group["name"] for group in prepared["groups"]}
     available = {
         tool["spec"]["name"] for tool in configured_tools if function_tool_enabled(tool)
@@ -582,7 +575,6 @@ async def _review_rule_pack(
         "will_append": True,
         "will_disable": True,
         "new_groups": len(added_group_names),
-        "new_wording_groups": len(wording) - len(snapshot["wording_groups"]),
         "revision": snapshot["revision"],
     }
 
