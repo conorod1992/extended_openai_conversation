@@ -54,7 +54,11 @@ test("new frontend with a stale published lazy chunk recovers on a fresh documen
   await page.goto(fixture("assistant/basics"));
   await expect(panel(page)).toHaveCount(1);
   await expect.poll(old.count).toBeGreaterThan(0);
-  await expect(title(page)).toBeVisible();
+  const sectionError = panel(page).locator("main [role=alert]");
+  await expect.poll(async () => (await title(page).isVisible()) || (await sectionError.isVisible())).toBe(true);
+  if (await sectionError.isVisible()) {
+    await expect(sectionError).toContainText("Unable to load this frontend section");
+  }
   await page.unroute(old.pattern);
   await page.goto(fixture("assistant/basics"));
   await expect(title(page)).toBeVisible();

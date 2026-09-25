@@ -161,19 +161,37 @@ async def test_real_ha_shell_auth_expiry_and_websocket_loss(
         # strict leftover-timer audit runs.
         await asyncio.sleep(0.2)
         loop = asyncio.get_running_loop()
-        pending_sockets = {
-            socket
+        closed_sockets: set[web.WebSocketResponse] = set()
+        for _ in range(10):
+            handles = [
+                (handle, socket)
+                for handle in tuple(loop._scheduled)
+                if not handle.cancelled()
+                for socket in (
+                    getattr(getattr(handle, "_callback", None), "__self__", None),
+                )
+                if isinstance(socket, web.WebSocketResponse)
+            ]
+            if not handles:
+                break
+            for handle, socket in handles:
+                if not socket.closed:
+                    await socket.close()
+                socket._cancel_heartbeat()
+                handle.cancel()
+                closed_sockets.add(socket)
+            await asyncio.sleep(0.05)
+        assert not [
+            handle
             for handle in tuple(loop._scheduled)
             if not handle.cancelled()
-            for socket in (
+            and isinstance(
                 getattr(getattr(handle, "_callback", None), "__self__", None),
+                web.WebSocketResponse,
             )
-            if isinstance(socket, web.WebSocketResponse)
-        }
-        for socket in pending_sockets:
-            await socket.close()
-        if pending_sockets:
-            record(stress_trace, "closed_ha_test_sockets", count=len(pending_sockets))
+        ]
+        if closed_sockets:
+            record(stress_trace, "closed_ha_test_sockets", count=len(closed_sockets))
 
 
 async def test_published_frontend_assets_against_new_real_ha_backend(
