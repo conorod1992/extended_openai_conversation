@@ -120,11 +120,19 @@ def _safe_configuration(value: Any, *, schema: bool = False) -> Any:
 def _configuration_snapshot_preserving_quarantine(
     data: Any, *, frontend_shape: bool
 ) -> dict[str, Any]:
-    """Normalize config while preserving only quarantined Function fields verbatim."""
+    """Normalize known config without discarding opaque later-version fields."""
     raw = dict(data)
+    from .agent_config import AGENT_CONFIG_FIELDS
+
+    opaque = {
+        key: deepcopy(value)
+        for key, value in raw.items()
+        if key not in AGENT_CONFIG_FIELDS
+    }
+    known = {key: value for key, value in raw.items() if key in AGENT_CONFIG_FIELDS}
     normalize = agent_config_snapshot if frontend_shape else normalize_agent_config
     try:
-        return preserve_legacy_guest_policy(raw, normalize(raw))
+        return {**preserve_legacy_guest_policy(raw, normalize(known)), **opaque}
     except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
         # Backup/import is a recovery boundary: tolerate only a Function Tool
         # validation failure. Normalize every unrelated field strictly using a
@@ -138,9 +146,12 @@ def _configuration_snapshot_preserving_quarantine(
         _usable, issue = function_tools_issue(raw)
         if issue is None:
             raise
-        snapshot = preserve_legacy_guest_policy(
-            raw, normalize(safe_function_configuration(raw))
-        )
+        snapshot = {
+            **preserve_legacy_guest_policy(
+                raw, normalize(safe_function_configuration(known))
+            ),
+            **opaque,
+        }
         for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
             if key in raw:
                 snapshot[key] = deepcopy(raw[key])
