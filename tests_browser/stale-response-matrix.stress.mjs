@@ -9,15 +9,17 @@ const cases = [
   ["Memory", "data-memory/memories", "memories", "list"],
   ["Knowledge", "data-memory/knowledge", "knowledge", "list"],
   ["Guest Mode", "capabilities/guest-mode", "guest_mode", "get"],
-  ["Quiet Hours", "capabilities/quiet-hours", "configuration", "get"],
+  ["Quiet Hours", "capabilities/quiet-hours", "quiet_hours", "get"],
 ];
 
 for (const [surface, route, section, action] of cases) {
   test(`${surface} late read cannot repaint a newer route`, async ({page}, testInfo) => {
     const errors = trackPageErrors(page);
-    await page.goto(fixtureUrl("data-memory/knowledge"));
+    const landingRoute = route === "data-memory/knowledge" ? "data-memory/memories" : "data-memory/knowledge";
+    const landingHeading = route === "data-memory/knowledge" ? "Memories" : "Sources";
+    await page.goto(fixtureUrl(landingRoute));
     const panel = page.locator("extended-openai-management-panel");
-    await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
+    await expect(panel.getByRole("heading", {name: landingHeading, exact: true})).toBeVisible();
     await page.evaluate(({section, action}) => {
       const original = browserHarness.hass.callWS.bind(browserHarness.hass);
       let release;
@@ -36,14 +38,14 @@ for (const [surface, route, section, action] of cases) {
       browserHarness.panel.route = {};
     }, route);
     await expect.poll(() => page.evaluate(() => window.__lateRead.started)).toBeGreaterThan(0);
-    await page.evaluate(() => {
-      history.pushState({}, "", "/extended-openai/data-memory/knowledge");
+    await page.evaluate(landingRoute => {
+      history.pushState({}, "", `/extended-openai/${landingRoute}`);
       browserHarness.panel.route = {};
-    });
-    await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
+    }, landingRoute);
+    await expect(panel.getByRole("heading", {name: landingHeading, exact: true})).toBeVisible();
     await page.evaluate(() => window.__lateRead.release());
-    await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
-    await expect(page).toHaveURL(/\/extended-openai\/data-memory\/knowledge$/);
+    await expect(panel.getByRole("heading", {name: landingHeading, exact: true})).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/extended-openai/${landingRoute}$`));
     await expect(panel).toHaveCount(1);
     await expectHarnessClean(page, errors);
     await testInfo.attach("stale-response-injection", {body: JSON.stringify({surface, route, section, action, injections: 1}), contentType: "application/json"});

@@ -25,7 +25,7 @@ test("major management pages keep unique IDs and reachable navigation at narrow 
         return ids.filter((id, index) => ids.indexOf(id) !== index);
       });
       expect(duplicateIds, `${route} at ${width}px`).toEqual([]);
-      await expect(panel.locator(".top-nav")).toBeVisible();
+      await expect(panel.locator(width < 600 ? "#local-section" : ".top-nav")).toBeVisible();
       await expect(panel).toHaveCount(1);
       checked++;
     }

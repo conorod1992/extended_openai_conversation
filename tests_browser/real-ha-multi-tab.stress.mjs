@@ -57,3 +57,56 @@ test("a stale Request Rule editor in another tab cannot overwrite a newer save",
     await other.close();
   }
 });
+
+test("a staged Assistant edit cannot overwrite a genuine HA backup restore", async ({page, context}, testInfo) => {
+  test.setTimeout(120_000);
+  const other = await context.newPage();
+  const errorsA = trackPageErrors(page);
+  const errorsB = trackPageErrors(other);
+  const trace = [];
+  try {
+    await page.goto(realFixtureUrl("assistant/basics"));
+    await other.goto(realFixtureUrl("assistant/basics"));
+    const panelA = page.locator("extended-openai-management-panel");
+    const panelB = other.locator("extended-openai-management-panel");
+    const titleA = panelA.locator('[data-config="__title"]');
+    const titleB = panelB.locator('[data-config="__title"]');
+    await expect(titleA).toBeVisible();
+    await expect(titleB).toBeVisible();
+    await titleB.fill("Stale tab B title");
+    trace.push("B staged Assistant configuration from old revision");
+
+    const restoredTitle = "Restored authoritative Assistant";
+    await page.evaluate(async title => {
+      const call = browserHarness.calls.find(item => item.section === "configuration" && item.action === "get");
+      if (!call) throw new Error("Configuration request identity unavailable");
+      const base = {
+        type: "extended_openai_conversation_responses/management",
+        entry_id: call.entry_id,
+        subentry_id: call.subentry_id,
+        section: "backup",
+      };
+      const exported = await browserHarness.hass.callWS({...base, action: "create"});
+      const document = JSON.parse(exported.json);
+      document.agent.title = title;
+      await browserHarness.hass.callWS({...base, action: "restore", document, confirm: true});
+    }, restoredTitle);
+    trace.push("A restored a backup with different authoritative title");
+
+    await panelB.locator("#save-config").click();
+    await expect(panelB.locator("#toast")).toContainText("changed in another tab");
+    await expect(titleB).toHaveValue("Stale tab B title");
+    trace.push("B stale save rejected with draft preserved");
+
+    await other.goto(realFixtureUrl("assistant/basics"));
+    await expect(panelB.locator('[data-config="__title"]')).toHaveValue(restoredTitle);
+    trace.push("B reload read the restored authoritative title");
+    await expectHarnessClean(page, errorsA);
+    expect(errorsB).toHaveLength(0);
+    expect(errorsB.badResponses.every(item => item.startsWith("400 "))).toBe(true);
+    expect(await other.evaluate(() => ({errors: browserHarness.windowErrors, rejections: browserHarness.rejections}))).toEqual({errors: [], rejections: []});
+  } finally {
+    await testInfo.attach("multi-tab-backup-restore", {body: JSON.stringify({trace}, null, 2), contentType: "application/json"});
+    await other.close();
+  }
+});
