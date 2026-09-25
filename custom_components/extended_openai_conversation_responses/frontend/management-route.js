@@ -311,12 +311,11 @@ export function applyRequestRuleSearch(panel, root = panel?.shadowRoot) {
   const empty = list?.querySelector("[data-eoc-rule-search-empty]");
   if (empty) empty.hidden = visible > 0 || !rules.length;
 
-  const count = root.querySelector(".search-row .count");
+  const count = root.querySelector(".rule-toolbar .count");
   if (count) {
     const total = rules.length;
-    count.textContent = String(query).trim() || (panel._ruleGroupFilter || "all") !== "all"
-      ? `Showing ${visible} of ${total} rules`
-      : `${total} rule${total === 1 ? "" : "s"}`;
+    count.hidden = !String(query).trim() && (panel._ruleGroupFilter || "all") === "all";
+    count.textContent = `Showing ${visible} of ${total} rules`;
   }
   return visible;
 }

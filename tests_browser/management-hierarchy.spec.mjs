@@ -26,6 +26,18 @@ test("Assistant parent introduction stays between subsection navigation and the 
   await expectHarnessClean(page, errors);
 });
 
+test("Web search and retention use contextual page introductions without repeating navigation labels", async ({page}) => {
+  const errors = trackPageErrors(page);
+  const panel = page.locator("extended-openai-management-panel");
+  await page.goto(fixtureUrl("capabilities/web-skills"));
+  await expect(panel.locator("[data-eoc-main] > .page-intro").getByRole("heading", {name:"Web search & Skills"})).toBeVisible();
+  await expect(panel.locator("#config-capabilities .config-section-heading")).toHaveCount(0);
+  await page.goto(fixtureUrl("usage-maintenance/retention"));
+  await expect(panel.locator("[data-eoc-main] > .page-intro").getByRole("heading", {name:"Usage data retention"})).toBeVisible();
+  await expect(panel.locator("#config-retention .config-section-heading").getByRole("heading", {name:"Retention periods"})).toBeVisible();
+  await expectHarnessClean(page, errors);
+});
+
 test("subsection navigation keeps its description accessible without a desktop tagline", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
@@ -92,27 +104,30 @@ test("Memory and Knowledge keep status inside their owning cards", async ({page}
   await expectHarnessClean(page, errors);
 });
 
-test("Request Rules keeps one create path when empty and the in-place toolbar when populated", async ({page}) => {
+test("Request Rules keeps both create paths and a task-ordered layout", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#rule-search")).toBeVisible();
-  await expect(panel.locator(".rule-toolbar .count")).toHaveText("1 rule");
+  await expect(panel.locator(".rule-toolbar .count")).toBeHidden();
   await expect(panel.locator("#rule-add")).toBeVisible();
-  const order = await panel.locator(".page-intro,.rule-toolbar,.rule-list,.rule-settings,.rule-test-tools").evaluateAll(
-    (nodes) => nodes.map((node) => [...node.classList].find((name) => ["page-intro", "rule-toolbar", "rule-list", "rule-settings", "rule-test-tools"].includes(name))),
+  const order = await panel.locator(".rule-collection,.rule-settings,.rule-wording,.rule-test-tools,.rule-sharing").evaluateAll(
+    (nodes) => nodes.map((node) => [...node.classList].find((name) => ["rule-collection", "rule-settings", "rule-wording", "rule-test-tools", "rule-sharing"].includes(name))),
   );
-  expect(order).toEqual(["page-intro", "rule-toolbar", "rule-list", "rule-settings", "rule-test-tools"]);
-  await expect(panel.locator(".page-intro .rule-routing-help")).toBeVisible();
-  await expect(panel.locator(".rule-settings").getByRole("heading", {name:"Matching settings"})).toBeVisible();
+  expect(order).toEqual(["rule-collection", "rule-settings", "rule-wording", "rule-test-tools", "rule-sharing"]);
+  await expect(panel.locator(".page-intro .guide-topic-link[data-guide-topic='request-rules']")).toBeVisible();
+  await expect(panel.locator(".page-intro .rule-routing-help")).toHaveCount(0);
+  await expect(panel.locator(".rule-settings").getByRole("heading", {name:"Matching defaults"})).toBeVisible();
   await panel.locator("#rule-search").fill("no match");
+  await expect(panel.locator(".rule-toolbar .count")).toHaveText("Showing 0 of 1 rules");
+  await expect(panel.locator(".rule-toolbar .count")).toBeVisible();
   await expect(panel.locator("[data-eoc-rule-search-empty]")).toBeVisible();
   await expect(panel.locator("#rule-search")).toBeFocused();
   await panel.locator("#rule-search").fill("");
   await expect(panel.locator('[data-rule-key="rule-1"]')).toBeVisible();
   await panel.locator(".rule-settings summary").first().click();
   await expect(panel.locator("#rules-default-word-forms")).toBeVisible();
-  await panel.locator(".rule-settings summary").last().click();
+  await panel.locator(".rule-wording summary").click();
   await expect(panel.locator("#wording-add")).toBeVisible();
 
   await page.evaluate(() => {
@@ -123,7 +138,8 @@ test("Request Rules keeps one create path when empty and the in-place toolbar wh
   await page.goto(fixtureUrl("capabilities/request-rules"));
   await expect(panel.getByRole("heading", {name: "Create your first Request Rule"})).toBeVisible();
   await expect(panel.locator("#rule-search")).toBeHidden();
-  await expect(panel.getByRole("button", {name: "Create rule", exact: true})).toHaveCount(1);
+  await expect(panel.getByRole("button", {name: "Create rule", exact: true})).toHaveCount(2);
+  await expect(panel.locator("#rules-title")).toHaveText("Rules (0)");
   await panel.locator("#rule-empty-add").click();
   await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#rule-name").fill("First browser rule");
@@ -133,7 +149,8 @@ test("Request Rules keeps one create path when empty and the in-place toolbar wh
   await panel.locator("#rule-save").click();
   await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
   await expect(panel.locator("#rule-search")).toBeVisible();
-  await expect(panel.locator(".rule-toolbar .count")).toHaveText("1 rule");
+  await expect(panel.locator("#rules-title")).toHaveText("Rules (1)");
+  await expect(panel.locator(".rule-toolbar .count")).toBeHidden();
   await expect(panel.locator("#rule-add")).toBeVisible();
   await expectHarnessClean(page, errors);
 });
@@ -152,7 +169,7 @@ test("rule testing distinguishes safe preview from confirmed live execution", as
   const live = panel.locator("#eoc-rule-live-test");
   await expect(live).not.toHaveJSProperty("open", true);
   await live.locator("summary").click();
-  await expect(live.locator(".eoc-live-label")).toHaveText("Live");
+  await expect(live.locator(".eoc-live-label")).toHaveText("Live · real effects possible");
   await live.locator("#eoc-rule-live-text").fill("baseline route");
   await live.locator("#eoc-rule-live-run").click();
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
