@@ -1,6 +1,9 @@
 {
   "domain": "extended_openai_conversation_responses",
   "name": "Extended OpenAI Conversation (Responses)",
+  "after_dependencies": [
+    "llm"
+  ],
   "codeowners": [
     "@conorod1992"
   ],
