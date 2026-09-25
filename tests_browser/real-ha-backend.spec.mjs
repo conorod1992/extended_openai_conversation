@@ -262,8 +262,14 @@ test("real browser manages a Function Tool and dependent Group through genuine H
   await expect(group).toContainText("Real HA browser group edited");
   await expect(group).toContainText("Real HA browser group description edited");
 
+  const showGroupMembers = async () => {
+    const details = group.locator("details").first();
+    if (!await details.evaluate((element) => element.open)) await details.locator("summary").click();
+  };
+  await showGroupMembers();
   await tool.locator(".tool-enabled-control").click();
   await expect(tool.locator(".tool-enabled")).not.toBeChecked();
+  await showGroupMembers();
   await tool.locator(".tool-enabled-control").click();
   await expect(tool.locator(".tool-enabled")).toBeChecked();
   await group.locator(".group-enabled-control").click();
