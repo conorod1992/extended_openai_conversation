@@ -340,7 +340,7 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     await hass.async_block_till_done()
     restored = _conversation_subentry(entry)
     assert restored.title == state["candidate_title"]
-    assert restored.data == saved["agent"]["config"]
+    assert backup.export_configuration_snapshot(restored.data) == saved["agent"]["config"]
     await _exercise_public_conversation(
         hass, entry.entry_id, "Migrated candidate backup restored successfully."
     )

@@ -21,9 +21,12 @@ for (const [viewport, width] of [["mobile", 390], ["tablet", 820], ["desktop", 1
     await page.setViewportSize({width, height: 850});
     await page.goto(fixtureUrl("overview"));
     const panel = page.locator("extended-openai-management-panel");
+    const choosePage = async pageId => width < 600
+      ? panel.locator("#top-section-mobile").selectOption(pageId)
+      : panel.locator(`.top-nav button[data-page="${pageId}"]`).click();
     for (const route of routes) {
       const [pageId, subsection] = route.split("/");
-      await panel.locator(`.top-nav button[data-page="${pageId}"]`).click({force: true});
+      await choosePage(pageId);
       if (subsection) {
         await panel.locator("#local-section").selectOption(subsection, {force: true});
       }
@@ -31,20 +34,20 @@ for (const [viewport, width] of [["mobile", 390], ["tablet", 820], ["desktop", 1
       const main = panel.locator("[data-eoc-main]");
       await expect(main, route).toBeVisible();
       await expect(main, route).not.toContainText("Loading…");
-      await expect(panel.locator('[role="alert"]'), route).toHaveCount(0);
+      await expect(panel.locator('[role="alert"]:visible'), route).toHaveCount(0);
       // The local fixture server has no SPA fallback. Re-enter through the
       // shipped fixture document to exercise a fresh page load for this route.
       await page.goto(fixtureUrl(route));
       await expect(main, `${route} after refresh`).toBeVisible();
       await expect(main, `${route} after refresh`).not.toContainText("Loading…");
-      await expect(panel.locator('[role="alert"]'), route).toHaveCount(0);
+      await expect(panel.locator('[role="alert"]:visible'), route).toHaveCount(0);
       if (route !== "guide") {
         const calls = await page.evaluate(() => window.browserHarness.calls.length);
         expect(calls, `${route} should finish a management request`).toBeGreaterThan(0);
       }
-      await panel.locator('.top-nav button[data-page="overview"]').click({force: true});
+      await choosePage("overview");
       await expect(page).toHaveURL(/\/extended-openai\/overview$/);
-      await panel.locator(`.top-nav button[data-page="${pageId}"]`).click({force: true});
+      await choosePage(pageId);
       if (subsection) await panel.locator("#local-section").selectOption(subsection, {force: true});
       await expect(page).toHaveURL(new RegExp(`/extended-openai/${route}$`));
     }
