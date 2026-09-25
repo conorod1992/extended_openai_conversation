@@ -54,10 +54,16 @@ jobs:
             SEED="$(python3 -c 'import secrets; print(secrets.randbits(32))')"
           fi
           INTENSITY="${REQUESTED_INTENSITY:-normal}"
+          if [ "${{ github.event_name }}" = 'push' ]; then INTENSITY=heavy; fi
           echo "seed=$SEED" >> "$GITHUB_OUTPUT"
           echo "intensity=$INTENSITY" >> "$GITHUB_OUTPUT"
           case "${{ inputs.campaign }}" in
-            ''|all|browser) CAMPAIGNS='["runtime","backup","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos"]' ;;
+            ''|all|browser)
+              if [ "${{ github.event_name }}" = 'push' ]; then
+                CAMPAIGNS='["request-rules"]'
+              else
+                CAMPAIGNS='["runtime","backup","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos"]'
+              fi ;;
             runtime|backup|request-rules|guest-security|quiet-hours|functions|memory-knowledge|large-installation|chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
             *) echo 'Unknown campaign' >&2; exit 1 ;;
           esac
@@ -140,7 +146,7 @@ jobs:
 
   browser:
     needs: prepare
-    if: github.event_name == 'push' || github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:

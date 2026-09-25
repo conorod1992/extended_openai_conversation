@@ -159,8 +159,7 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     target = await backup.async_collect_backup_snapshot(hass, entry, subentry)
     defaults = agent_config.agent_config_defaults()
     nondefault_config_fields = sum(
-        value != defaults.get(key)
-        for key, value in target["agent"]["config"].items()
+        value != defaults.get(key) for key, value in target["agent"]["config"].items()
     )
     assert nondefault_config_fields >= 15
     assert (
