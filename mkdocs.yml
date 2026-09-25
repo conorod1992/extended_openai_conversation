@@ -38,6 +38,7 @@ nav:
   - Home: index.md
   - Getting started:
       - Installation: getting-started/installation.md
+      - Get an OpenAI API key: getting-started/api-key.md
       - First setup: getting-started/setup.md
   - Configuration: configuration.md
   - Features:
