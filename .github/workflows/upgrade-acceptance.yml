@@ -23,7 +23,7 @@ on:
       - ".github/workflows/upgrade-acceptance.yml"
 
 concurrency:
-  group: release-upgrade-acceptance-${{ github.ref }}
+  group: release-upgrade-acceptance-${{ github.ref }}-${{ inputs.from_version || 'latest' }}
   cancel-in-progress: true
 
 permissions:
