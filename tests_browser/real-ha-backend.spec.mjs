@@ -1,5 +1,6 @@
 import {expect, test} from "@playwright/test";
 import {acceptConfirmation, browserToolYaml, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
+import {expectContractCalls} from "./real-ha-contract.mjs";
 
 const backendUrl = process.env.REAL_HA_BACKEND_URL;
 test.skip(!backendUrl, "requires the dedicated genuine Home Assistant backend bridge");
@@ -28,6 +29,7 @@ test("real browser saves General Settings through the genuine HA backend", async
     .filter((call) => call.section === "configuration")
     .map((call) => call.action));
   expect(actions).toContain("get");
+  await expectContractCalls(page, "configuration");
   await expectHarnessClean(page, pageErrors);
 });
 
@@ -64,6 +66,7 @@ test("real browser creates, edits, reloads, and deletes a Memory through HA", as
   await page.goto(realFixtureUrl("data-memory/memories"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByText("Real HA browser memory edited", {exact: true})).toHaveCount(0);
+  await expectContractCalls(page, "memory");
   await expectHarnessClean(page, pageErrors);
 });
 
@@ -117,6 +120,26 @@ test("real browser creates, groups, edits, reloads, and deletes a Request Rule t
   panel = page.locator("extended-openai-management-panel");
   card = panel.locator(".request-rule-card").filter({hasText: "Real HA browser rule edited"});
   await expect(card).toContainText("gpt-5-nano");
+  await panel.locator("#rule-match-test-text").fill("real browser route");
+  await panel.locator("#rule-match-test").click();
+  await expect(panel.locator("#rule-match-test-result")).toContainText("Real HA browser rule edited");
+  await card.locator(".rule-duplicate").click();
+  await expect(panel.locator(".request-rule-card")).toHaveCount(2);
+  await panel.locator(".request-rule-card").last().locator('[data-direction="up"]').click();
+  await expect(panel.locator(".request-rule-card")).toHaveCount(2);
+  await panel.locator(".wording-editor summary").click();
+  await panel.locator("#wording-add").click();
+  await panel.locator(".wording-group").last().locator(".wording-canonical").fill("browser phrase");
+  await panel.locator(".wording-group").last().locator(".wording-alternatives").fill("browser alternative");
+  await panel.locator("#save-page").click();
+  await expect(panel.locator(".save-bar")).toHaveCount(0);
+  await page.goto(realFixtureUrl("capabilities/request-rules"));
+  panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".wording-canonical").last()).toHaveValue("browser phrase");
+  await panel.locator(".request-rule-card").last().locator(".rule-delete").click();
+  await acceptConfirmation(panel);
+  await expect(panel.locator(".request-rule-card")).toHaveCount(1);
+  card = panel.locator(".request-rule-card");
   await card.locator(".rule-delete").click();
   await acceptConfirmation(panel);
   await expect(panel.getByRole("heading", {name: "Real HA browser rule edited", exact: true})).toHaveCount(0);
@@ -138,6 +161,7 @@ test("real browser creates, groups, edits, reloads, and deletes a Request Rule t
   await expect(panel.getByRole("heading", {name: "Real HA browser rule edited", exact: true})).toHaveCount(0);
   await panel.locator(".rule-groups summary").click();
   await expect(panel.locator(".rule-group-row")).toHaveCount(0);
+  await expectContractCalls(page, "request_rules");
   await expectHarnessClean(page, pageErrors);
 });
 
@@ -203,6 +227,73 @@ test("real browser manages a Function Tool and dependent Group through genuine H
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator('.function-group-card[data-group-id="real-ha-browser-group"]')).toHaveCount(0);
   await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toHaveCount(0);
+  await expectContractCalls(page, "functions");
+  await expectHarnessClean(page, pageErrors);
+});
+
+test("real browser creates, edits, and deletes Knowledge through genuine HA", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto(realFixtureUrl("data-memory/knowledge"));
+  let panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
+  await panel.locator("#add-source").click();
+  await panel.locator("#knowledge-title").fill("Browser contract source");
+  await panel.locator("#knowledge-content").fill("Knowledge payload crossed HA WebSocket validation");
+  await panel.locator("#knowledge-save").click();
+  await expect(panel.locator(".list-card").filter({hasText: "Browser contract source"})).toBeVisible();
+
+  await page.goto(realFixtureUrl("data-memory/knowledge"));
+  panel = page.locator("extended-openai-management-panel");
+  let source = panel.locator(".list-card").filter({hasText: "Browser contract source"});
+  await source.locator(".source-edit-button").click();
+  await panel.locator("#knowledge-content").fill("Knowledge changed after authoritative reload");
+  await panel.locator("#knowledge-save").click();
+  await expect(panel.locator("#knowledge-dialog")).not.toBeVisible();
+
+  await page.goto(realFixtureUrl("data-memory/knowledge"));
+  panel = page.locator("extended-openai-management-panel");
+  source = panel.locator(".list-card").filter({hasText: "Browser contract source"});
+  await source.locator(".source-edit-button").click();
+  await expect(panel.locator("#knowledge-content")).toHaveValue("Knowledge changed after authoritative reload");
+  await panel.locator("#knowledge-dialog").getByRole("button", {name: "Close"}).click();
+  await source.locator(".delete-source").click();
+  await acceptConfirmation(panel);
+  await expect(panel.locator(".list-card").filter({hasText: "Browser contract source"})).toHaveCount(0);
+
+  await page.goto(realFixtureUrl("data-memory/knowledge"));
+  panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".list-card").filter({hasText: "Browser contract source"})).toHaveCount(0);
+  await expectContractCalls(page, "knowledge");
+  await expectHarnessClean(page, pageErrors);
+});
+
+test("real browser saves Guest and Quiet Hours policy payloads through HA", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto(realFixtureUrl("capabilities/guest-mode"));
+  let panel = page.locator("extended-openai-management-panel");
+  const reviewLegacy = panel.locator("#guest-review-converted");
+  if (await reviewLegacy.isVisible()) await reviewLegacy.click();
+  const knowledgePolicy = panel.locator('[data-guest-mode="guest_knowledge_policy"]');
+  await expect(knowledgePolicy).toBeVisible();
+  const guestValue = await knowledgePolicy.inputValue() === "on" ? "off" : "on";
+  await knowledgePolicy.selectOption(guestValue);
+  await panel.locator("#save-page").click();
+  await expect(panel.locator(".save-bar")).toHaveCount(0);
+  await page.goto(realFixtureUrl("capabilities/guest-mode"));
+  panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-guest-mode="guest_knowledge_policy"]')).toHaveValue(guestValue);
+
+  await page.goto(realFixtureUrl("capabilities/quiet-hours"));
+  panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Quiet Hours", exact: true})).toBeVisible();
+  const wakeValue = await panel.locator("#qh-wake").inputValue() === "unchanged" ? "off" : "unchanged";
+  await panel.locator("#qh-wake").selectOption(wakeValue);
+  await panel.locator("#save-page").click();
+  await expect(panel.locator(".save-bar")).toHaveCount(0);
+  await page.goto(realFixtureUrl("capabilities/quiet-hours"));
+  panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#qh-wake")).toHaveValue(wakeValue);
+  await expectContractCalls(page, "guest_quiet");
   await expectHarnessClean(page, pageErrors);
 });
 
@@ -282,5 +373,6 @@ test("real browser full backup restores cross-feature state through genuine HA",
   await page.goto(realFixtureUrl("capabilities/request-rules"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Real HA backup rule", exact: true})).toBeVisible();
+  await expectContractCalls(page, "backup");
   await expectHarnessClean(page, pageErrors);
 });

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "description": "Reviewed browser actions that cross the genuine Home Assistant management WebSocket schema. Each journey is exercised by real-ha-backend.spec.mjs.",
+  "actions": [
+    {"journey": "configuration", "section": "configuration", "action": "save", "keys": ["config", "revision", "title"]},
+    {"journey": "memory", "section": "memories", "action": "add", "keys": ["scope_id", "content", "category"]},
+    {"journey": "memory", "section": "memories", "action": "update", "keys": ["scope_id", "memory_id", "expected_revision", "content"]},
+    {"journey": "memory", "section": "memories", "action": "delete", "keys": ["scope_id", "memory_id"]},
+    {"journey": "request_rules", "section": "request_rules", "action": "groups", "keys": ["groups", "revision"], "min_calls": 3},
+    {"journey": "request_rules", "section": "request_rules", "action": "create", "keys": ["rule", "revision"]},
+    {"journey": "request_rules", "section": "request_rules", "action": "update", "keys": ["rule", "rule_id", "revision"]},
+    {"journey": "request_rules", "section": "request_rules", "action": "delete", "keys": ["rule_id", "revision", "confirm"]},
+    {"journey": "request_rules", "section": "request_rules", "action": "duplicate", "keys": ["rule_id", "revision"]},
+    {"journey": "request_rules", "section": "request_rules", "action": "move", "keys": ["rule_id", "revision", "direction"]},
+    {"journey": "request_rules", "section": "request_rules", "action": "settings", "keys": ["defaults", "wording_groups", "revision"]},
+    {"journey": "request_rules", "section": "request_rules", "action": "test_match", "keys": ["text"]},
+    {"journey": "functions", "section": "tools", "action": "save", "keys": ["tool", "revision"]},
+    {"journey": "functions", "section": "tools", "action": "save_group", "keys": ["group", "revision"]},
+    {"journey": "functions", "section": "tools", "action": "delete_group", "keys": ["group_id", "confirm"]},
+    {"journey": "functions", "section": "tools", "action": "delete", "keys": ["name", "confirm"]},
+    {"journey": "knowledge", "section": "knowledge", "action": "create", "keys": ["title", "content"]},
+    {"journey": "knowledge", "section": "knowledge", "action": "update", "keys": ["source_id", "expected_revision", "content"]},
+    {"journey": "knowledge", "section": "knowledge", "action": "delete", "keys": ["source_id", "confirm"]},
+    {"journey": "guest_quiet", "section": "guest_mode", "action": "save_policy", "keys": ["config"]},
+    {"journey": "guest_quiet", "section": "quiet_hours", "action": "update", "keys": ["config"]},
+    {"journey": "backup", "type": "extended_openai_conversation_responses/management/backup_transfer", "action": "export_start", "keys": ["data"]},
+    {"journey": "backup", "type": "extended_openai_conversation_responses/management/backup_transfer", "action": "import_start", "keys": ["data"]},
+    {"journey": "backup", "type": "extended_openai_conversation_responses/management/backup_transfer", "action": "import_restore", "keys": ["data"]}
+  ]
+}

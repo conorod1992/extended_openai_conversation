@@ -5,11 +5,14 @@ if (!backendUrl) throw new Error("Real HA browser fixture requires a backend URL
 
 history.replaceState({}, "", `/extended-openai/${route}`);
 
-const calls = [];
+// Preserve the wire trace across page refreshes in a single acceptance journey.
+// Every Playwright test gets a fresh browser context, so journeys stay isolated.
+const calls = JSON.parse(sessionStorage.getItem("eocRealHaCalls") || "[]");
 const hass = {
   config: {time_zone: "Europe/Dublin"},
   callWS: async (message) => {
     calls.push(structuredClone(message));
+    sessionStorage.setItem("eocRealHaCalls", JSON.stringify(calls));
     const response = await fetch(backendUrl, {
       method: "POST",
       body: JSON.stringify(message),
