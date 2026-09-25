@@ -46,6 +46,7 @@ jobs:
         shell: bash
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      PYTHONPATH: ${{ github.workspace }}
 
     steps:
       - name: Checkout trusted branch
