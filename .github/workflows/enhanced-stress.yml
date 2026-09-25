@@ -1,8 +1,6 @@
 name: Enhanced nightly acceptance and stress
 
 on:
-  push:
-    branches: [codex/enhanced-nightly-acceptance]
   schedule:
     - cron: "15 3 * * *"
   workflow_dispatch:
@@ -29,7 +27,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: enhanced-stress-validation-2-${{ github.ref }}-${{ github.event_name }}
+  group: enhanced-stress-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -144,7 +142,7 @@ jobs:
 
   browser:
     needs: prepare
-    if: github.event_name == 'push' || github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
