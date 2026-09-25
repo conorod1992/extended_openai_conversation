@@ -18,11 +18,12 @@ def _older_release_child() -> None:
     root = Path(os.environ[_COMPONENT]).resolve().parents[1]
     sys.path.insert(0, str(root))
     from custom_components.extended_openai_conversation_responses import backup
+    from homeassistant.exceptions import HomeAssistantError
 
     document = json.loads(Path(os.environ[_DOCUMENT]).read_text(encoding="utf-8"))
     try:
         backup.inspect_backup(document, document["agent"]["source_subentry_id"])
-    except backup.BackupError as err:
+    except HomeAssistantError as err:
         assert "unknown" in str(err).lower() or "unsupported" in str(err).lower(), err
     else:
         raise AssertionError("Older release silently accepted a later schema field")
