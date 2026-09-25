@@ -12,7 +12,7 @@ The current campaigns are:
 | `guest-security` | Cross-product of supported Guest policies for Functions, Knowledge and shared Memory, with security and Function type inventories. |
 | `quiet-hours` | Multiple repeated periods across real registry-backed satellites with distinct starting volumes and restoration checks. |
 | `functions` | Seeded Function Group loading, disabling and session-isolation model across 24 tools, 12 groups and 16 conversations. |
-| `memory-knowledge` | Hundreds of private Memory records and Knowledge sources, user-isolated reads, full durable-state comparison after reload. |
+| `memory-knowledge` | Hundreds of private Memory records and Knowledge sources with reload comparison, plus bulk Temporary Memory expiry, repeated owner-isolated reads and restart. |
 | `chaos` | Seeded valid Memory, Knowledge and Request Rule mutations, backup checkpoints and restores, reloads and public request probes after every step. |
 | `browser` | One mounted Chromium management panel through 80 seeded route changes, plus two tabs against the same genuine HA backend proving stale Request Rule saves are rejected. |
 

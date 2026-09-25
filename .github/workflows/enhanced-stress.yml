@@ -1,6 +1,8 @@
 name: Enhanced nightly acceptance and stress
 
 on:
+  push:
+    branches: [codex/enhanced-nightly-acceptance] # Temporary validation trigger.
   schedule:
     - cron: "15 3 * * *"
   workflow_dispatch:
@@ -116,7 +118,7 @@ jobs:
             guest-security) TEST_PATHS=(tests_stress/test_guest_functions_matrix.py) ;;
             quiet-hours) TEST_PATHS=(tests_stress/test_quiet_hours_multi_satellite.py) ;;
             functions) TEST_PATHS=(tests_stress/test_function_groups_state_machine.py) ;;
-            memory-knowledge) TEST_PATHS=(tests_stress/test_memory_knowledge_scale.py) ;;
+            memory-knowledge) TEST_PATHS=(tests_stress/test_memory_knowledge_scale.py tests_stress/test_temporary_memory_scale.py) ;;
             chaos) TEST_PATHS=(tests_stress/test_cross_feature_chaos.py) ;;
             *) exit 2 ;;
           esac
@@ -137,7 +139,7 @@ jobs:
 
   browser:
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
+    if: github.event_name == 'schedule' || github.event_name == 'push' || inputs.campaign == 'all' || inputs.campaign == 'browser'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
