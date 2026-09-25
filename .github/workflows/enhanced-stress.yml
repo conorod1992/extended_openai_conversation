@@ -29,7 +29,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: enhanced-stress-${{ github.ref }}-${{ github.event_name }}
+  group: enhanced-stress-validation-2-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -180,6 +180,12 @@ jobs:
           fi
       - name: Run long-lived browser campaign
         run: npx playwright test --config=playwright.stress.config.mjs
+      - name: Recheck gated stale responses and listener ownership
+        run: >-
+          npx playwright test --config=playwright.config.mjs
+          tests_browser/retained-mutation-state.spec.mjs
+          tests_browser/backend-reconnect.spec.mjs
+          tests_browser/management-lazy-ownership.spec.mjs
       - name: Run two tabs against one genuine HA backend
         run: >-
           pytest tests_stress/test_browser_multi_tab.py -v -s

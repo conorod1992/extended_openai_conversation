@@ -52,6 +52,7 @@ _OWNER = "enhanced-guest-owner"
 _PRIVATE = "GUEST-PRIVATE-PERSISTENT-東京"
 _TEMPORARY = "GUEST-PRIVATE-TEMPORARY-東京"
 _KNOWLEDGE = "GUEST-KNOWLEDGE-東京"
+_DENIED_KNOWLEDGE = "GUEST-DENIED-KNOWLEDGE-東京"
 _GROUP = "guest-safe-group"
 
 
@@ -147,6 +148,9 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
     knowledge = await agent._knowledge.async_create(
         "Guest test knowledge", "Guest policy fixture", _KNOWLEDGE
     )
+    await agent._knowledge.async_create(
+        "Denied guest knowledge", "Guest policy fixture", _DENIED_KNOWLEDGE
+    )
     # The custom allowlist uses the actual source ID, not a fabricated ID.
     subentry = next(
         item
@@ -161,6 +165,15 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
     await hass.async_block_till_done()
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
+    await agent._request_rules.async_create(
+        {
+            "name": "Guest route continuation",
+            "phrases": ["guest route probe"],
+            "match_type": "equals",
+            "action_type": "model_routing",
+            "action": {"model": "gpt-5.6", "scope": "request"},
+        }
+    )
 
     calls = []
 
@@ -210,9 +223,48 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
         == 1
     )
 
-    executed_functions = 0
-    provider_requests = 3
-    public_turns = 3
+    knowledge_wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call(
+                "call-guest-knowledge",
+                "knowledge_search",
+                {"query": "Guest policy fixture", "limit": 5},
+            ),
+            _chat_sse_text("Allowed knowledge found"),
+        ],
+    )
+    assert (
+        _speech(await _say(hass, entry.entry_id, "Search Guest policy fixture"))
+        == "Allowed knowledge found"
+    )
+    assert len(knowledge_wire.requests) == 2
+    search_result = json.dumps(
+        _chat_tool_result(knowledge_wire.requests[1]["body"], "call-guest-knowledge"),
+        ensure_ascii=False,
+    )
+    assert _KNOWLEDGE in search_result
+    assert _DENIED_KNOWLEDGE not in search_result
+    assert _PRIVATE not in json.dumps(
+        knowledge_wire.requests[0]["body"], ensure_ascii=False
+    )
+
+    routed_wire = _install_wire(
+        monkeypatch, agent, [_chat_sse_text("Routed in Guest Mode")]
+    )
+    assert (
+        _speech(await _say(hass, entry.entry_id, "guest route probe"))
+        == "Routed in Guest Mode"
+    )
+    assert routed_wire.requests[0]["body"]["model"] == "gpt-5.6"
+    assert _PRIVATE not in json.dumps(
+        routed_wire.requests[0]["body"], ensure_ascii=False
+    )
+
+    executed_functions = 1  # Knowledge search
+    provider_requests = 6
+    public_turns = 5
     if function_policy != "off":
         tool_wire = _install_wire(
             monkeypatch,
