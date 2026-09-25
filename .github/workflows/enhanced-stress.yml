@@ -181,6 +181,19 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+      - name: Stage the latest published frontend for stale-asset acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          TAG="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${{ github.repository }}/releases/latest" | python -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          OLD_ROOT="${RUNNER_TEMP}/eoai-published-frontend"
+          mkdir -p "$OLD_ROOT"
+          git archive "$TAG" custom_components/extended_openai_conversation_responses/frontend | tar -x -C "$OLD_ROOT"
+          echo "EOAI_OLD_FRONTEND_DIR=$OLD_ROOT/custom_components/extended_openai_conversation_responses/frontend" >> "$GITHUB_ENV"
+          echo "Published frontend baseline: $TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Install local Playwright runner
         run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
       - name: Reconcile current Home Assistant requirements
@@ -212,6 +225,7 @@ jobs:
           pytest
           tests_stress/test_management_ws_contract.py
           tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_talks_to_real_management_websocket
+          tests_stress/test_browser_backend_resilience.py
           -v -s --asyncio-mode=auto --timeout=600 --log-cli-level=WARNING
       - name: Summarize exercised transitions
         if: always()
