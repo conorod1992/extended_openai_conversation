@@ -230,12 +230,41 @@ def request_reauthentication(hass: Any, entry: Any, error: BaseException) -> boo
     return True
 
 
+def provider_log_remediation(error: BaseException) -> str:
+    """Return concise user-actionable guidance for common provider failures."""
+    category = classify_config_provider_error(error)
+    if category == "invalid_auth":
+        return (
+            "Check the API key or reauthenticate this Extended OpenAI provider "
+            "in Settings > Devices & services"
+        )
+    if category == "cannot_connect":
+        return (
+            "Check the configured provider Base URL and Home Assistant network "
+            "connectivity"
+        )
+    if category == "provider_forbidden":
+        return (
+            "Check the provider account/project permissions and access to the "
+            "configured model"
+        )
+    if category == "provider_rate_limited":
+        return "Check provider quota or rate limits and retry after the limit clears"
+    if category == "provider_unavailable":
+        return (
+            "The provider is currently unavailable; check provider status and the "
+            "configured endpoint"
+        )
+    return "Review the provider and model settings in Extended OpenAI"
+
+
 def log_provider_failure(
     logger: logging.Logger, context: str, error: BaseException
 ) -> None:
-    """Log only bounded, explicitly safe provider failure fields."""
+    """Log safe diagnostics with remediation for user-fixable provider failures."""
     logger.error(
-        "%s: %s",
+        "%s. %s. Technical details: %s",
         context,
+        provider_log_remediation(error),
         json.dumps(provider_error_metadata(error), sort_keys=True),
     )

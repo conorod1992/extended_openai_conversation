@@ -119,8 +119,11 @@ def test_schema_validation_accepts_nullable_nested_types_and_empty_array_items()
             },
         }
     )
-    warnings = validate_function_schema({"type": "object", "unknown": True})
+    with patch.object(execution, "_LOGGER") as logger:
+        warnings = validate_function_schema({"type": "object", "unknown": True})
     assert any("unknown" in warning for warning in warnings)
+    logger.warning.assert_called_once()
+    assert "Extended OpenAI > Functions" in logger.warning.call_args.args[0]
 
 
 def test_argument_entrypoint_rejects_bad_schema_and_non_object_result() -> None:

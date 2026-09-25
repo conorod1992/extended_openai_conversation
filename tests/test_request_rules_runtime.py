@@ -445,6 +445,7 @@ async def test_local_action_failure_unloads_script_and_clears_active_executor() 
     """A failing HA script cannot leak its function executor into later requests."""
     rule = {
         "id": "runtime-cleanup",
+        "name": "Kitchen lights",
         "action_type": "local_action",
         "action": {
             "actions": [{"action": "light.turn_on"}],
@@ -469,6 +470,7 @@ async def test_local_action_failure_unloads_script_and_clears_active_executor() 
             new=AsyncMock(side_effect=lambda _hass, actions: actions),
         ),
         patch.object(rr, "Script", return_value=script),
+        patch.object(rr, "_LOGGER") as logger,
     ):
         result = await rr.async_evaluate_rule(
             Mock(),
@@ -484,6 +486,10 @@ async def test_local_action_failure_unloads_script_and_clears_active_executor() 
     assert result.response == "Failed kitchen"
     script.async_run.assert_awaited_once()
     script.async_unload.assert_awaited_once_with()
+    logger.exception.assert_called_once()
+    log_args = logger.exception.call_args.args
+    assert "Extended OpenAI > Request Rules" in log_args[0]
+    assert log_args[1] == "Kitchen lights"
 
     with pytest.raises(HomeAssistantError, match="only available"):
         await rr.async_call_active_function("should-not-leak", {})
