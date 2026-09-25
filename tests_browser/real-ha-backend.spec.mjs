@@ -262,6 +262,22 @@ test("real browser manages a Function Tool and dependent Group through genuine H
   await expect(group).toContainText("Real HA browser group edited");
   await expect(group).toContainText("Real HA browser group description edited");
 
+  await tool.locator(".tool-enabled").uncheck();
+  await expect(tool.locator(".tool-enabled")).not.toBeChecked();
+  await tool.locator(".tool-enabled").check();
+  await expect(tool.locator(".tool-enabled")).toBeChecked();
+  await group.locator(".group-enabled").uncheck();
+  await expect(group.locator(".group-enabled")).not.toBeChecked();
+  await group.locator(".group-enabled").check();
+  await expect(group.locator(".group-enabled")).toBeChecked();
+
+  await page.goto(realFixtureUrl("capabilities/functions"));
+  panel = page.locator("extended-openai-management-panel");
+  tool = panel.locator(".tool-card").filter({hasText: "browser_tool"});
+  group = panel.locator('.function-group-card[data-group-id="real-ha-browser-group"]');
+  await expect(tool.locator(".tool-enabled")).toBeChecked();
+  await expect(group.locator(".group-enabled")).toBeChecked();
+
   await group.locator(".delete-group").click();
   await acceptConfirmation(panel);
   await expect(panel.locator('.function-group-card[data-group-id="real-ha-browser-group"]')).toHaveCount(0);
@@ -287,9 +303,12 @@ test("real browser creates, edits, and deletes Knowledge through genuine HA", as
   await panel.locator("#knowledge-content").fill("Knowledge payload crossed HA WebSocket validation");
   await panel.locator("#knowledge-save").click();
   await expect(panel.locator(".list-card").filter({hasText: "Browser contract source"})).toBeVisible();
+  await panel.locator("#knowledge-enabled-toggle").check();
+  await expect(panel.locator("#knowledge-enabled-toggle")).toBeChecked();
 
   await page.goto(realFixtureUrl("data-memory/knowledge"));
   panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#knowledge-enabled-toggle")).toBeChecked();
   let source = panel.locator(".list-card").filter({hasText: "Browser contract source"});
   await source.locator(".source-edit-button").click();
   await panel.locator("#knowledge-content").fill("Knowledge changed after authoritative reload");
@@ -305,6 +324,8 @@ test("real browser creates, edits, and deletes Knowledge through genuine HA", as
   await source.locator(".delete-source").click();
   await acceptConfirmation(panel);
   await expect(panel.locator(".list-card").filter({hasText: "Browser contract source"})).toHaveCount(0);
+  await panel.locator("#knowledge-enabled-toggle").uncheck();
+  await expect(panel.locator("#knowledge-enabled-toggle")).not.toBeChecked();
 
   await page.goto(realFixtureUrl("data-memory/knowledge"));
   panel = page.locator("extended-openai-management-panel");
