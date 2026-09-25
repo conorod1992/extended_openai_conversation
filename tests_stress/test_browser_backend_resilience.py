@@ -151,6 +151,7 @@ async def test_real_ha_shell_auth_expiry_and_websocket_loss(
     finally:
         await runner.cleanup()
         await client.close()
+        await hass.async_stop()
         await asyncio.sleep(0)
 
 
