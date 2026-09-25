@@ -217,7 +217,7 @@ jobs:
           pytest ${{ matrix.test-paths }} \
             -v \
             --asyncio-mode=auto \
-            --timeout=180 \
+            --timeout=600 \
             --durations=30
 
       - name: Upload genuine HA browser diagnostics

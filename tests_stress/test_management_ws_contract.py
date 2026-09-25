@@ -25,6 +25,7 @@ EXPECTED_JOURNEYS = {
     "configuration",
     "memory",
     "request_rules",
+    "rule_pack",
     "functions",
     "knowledge",
     "guest_quiet",
@@ -36,6 +37,9 @@ CRITICAL_ACTIONS = {
     ("request_rules", "create"),
     ("request_rules", "update"),
     ("request_rules", "delete"),
+    ("request_rules", "rule_pack_export"),
+    ("request_rules", "rule_pack_review"),
+    ("request_rules", "rule_pack_import"),
     ("configuration", "save"),
     ("tools", "save"),
     ("tools", "save_group"),
@@ -83,6 +87,7 @@ def test_reviewed_browser_payloads_are_accepted_by_websocket_schemas() -> None:
     assert "groups" in management_keys  # Regression for the original browser rejection.
     for item in actions:
         assert item["keys"] and len(item["keys"]) == len(set(item["keys"])), item
+        assert set(item.get("equals", {})) <= set(item["keys"]), item
         schema_keys = transfer_keys if "type" in item else management_keys
         assert set(item["keys"]) <= schema_keys, item
         assert item.get("min_calls", 1) >= 1, item

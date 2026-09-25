@@ -13,7 +13,8 @@ export async function expectContractCalls(page, journey) {
   for (const action of expected) {
     const matching = observed.filter((call) => (action.type ? call.type === action.type : call.section === action.section)
       && call.action === action.action
-      && action.keys.every((key) => Object.hasOwn(call, key)));
+      && action.keys.every((key) => Object.hasOwn(call, key))
+      && Object.entries(action.equals || {}).every(([key, value]) => Object.is(call[key], value)));
     expect(matching.length, `${journey}: ${action.section}/${action.action} with ${action.keys.join(", ")}`).toBeGreaterThanOrEqual(action.min_calls || 1);
   }
 }

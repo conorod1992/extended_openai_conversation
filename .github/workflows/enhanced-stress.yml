@@ -200,7 +200,7 @@ jobs:
           pytest
           tests_stress/test_management_ws_contract.py
           tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_talks_to_real_management_websocket
-          -v -s --asyncio-mode=auto --timeout=600
+          -v -s --asyncio-mode=auto --timeout=600 --log-cli-level=WARNING
       - name: Summarize exercised transitions
         if: always()
         run: python ci/enhanced_summary.py stress-artifacts
