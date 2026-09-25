@@ -45,7 +45,7 @@ on:
       - ".github/workflows/frontend.yml"
 
 permissions:
-  contents: write
+  contents: read
   packages: read
 
 concurrency:
@@ -59,8 +59,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: feature/request-rule-ai-input-sharing
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -89,18 +87,6 @@ jobs:
       - name: Build frontend bundle
         working-directory: frontend
         run: npm run build
-
-      - name: Commit regenerated frontend bundle
-        run: |
-          git add custom_components/extended_openai_conversation_responses/frontend/dist/
-          if git diff --cached --quiet; then
-            echo "Frontend bundle already current."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "Regenerate frontend bundle"
-            git push origin HEAD:feature/request-rule-ai-input-sharing
-          fi
 
       - name: Verify tracked production frontend bundle
         run: git diff --exit-code -- custom_components/extended_openai_conversation_responses/frontend/dist/
