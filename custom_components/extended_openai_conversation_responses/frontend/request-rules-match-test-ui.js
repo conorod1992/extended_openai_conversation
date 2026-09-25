@@ -39,7 +39,8 @@ export function formatRequestRuleMatchResult(panel, response) {
     : "Normal match";
   const actionType = rule.action_type === "local_action" ? "Local command" : "AI routing";
   const wouldDo = rule.action_type === "local_action" ? localActionSummary(response) : routingSummary(response);
-  return `<div class="notice on rule-match-preview"><strong>Matched: ${panel._e(rule.name || "Unnamed rule")}</strong><p>${panel._e(actionType)} · ${panel._e(matchLabel(rule.match_type))} · ${panel._e(matchKind)}</p><dl class="match-preview-details"><div><dt>Matched phrase</dt><dd>${panel._e(response.matched_phrase || "—")}</dd></div>${captured.length ? `<div><dt>Captured values</dt><dd>${captured.map(([name,value]) => `${panel._e(name)} → ${panel._e(value)}`).join("<br>")}</dd></div>` : ""}${skipped ? `<div><dt>Skipped</dt><dd>${panel._e(skipped)}: Only when conditions were false</dd></div>` : ""}<div><dt>Would happen</dt><dd>${panel._e(wouldDo)}</dd></div></dl></div>`;
+  const chain=(response.matched_rules || []).map((item)=>`<li>${panel._e(item.rule.name)} — ${item.status === "would_send_to_ai" ? "would send to AI, stopped" : item.status}</li>`).join("");
+  return `<div class="notice on rule-match-preview"><strong>Matched: ${panel._e(rule.name || "Unnamed rule")}</strong>${chain ? `<ol class="rule-match-chain">${chain}</ol>` : ""}<p>${panel._e(actionType)} · ${panel._e(matchLabel(rule.match_type))} · ${panel._e(matchKind)}</p><dl class="match-preview-details"><div><dt>Matched phrase</dt><dd>${panel._e(response.matched_phrase || "—")}</dd></div>${captured.length ? `<div><dt>Captured values</dt><dd>${captured.map(([name,value]) => `${panel._e(name)} → ${panel._e(value)}`).join("<br>")}</dd></div>` : ""}${skipped ? `<div><dt>Skipped</dt><dd>${panel._e(skipped)}: Only when conditions were false</dd></div>` : ""}<div><dt>Would happen</dt><dd>${panel._e(wouldDo)}</dd></div></dl></div>`;
 }
 
 export function renderRequestRuleMatchTester() {

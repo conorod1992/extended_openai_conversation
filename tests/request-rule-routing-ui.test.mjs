@@ -24,6 +24,7 @@ const scope = makeSelect("request", ["request", "conversation"]);
 const model = {value:"gpt-6-astra"};
 const reasoning = makeSelect("max", ["", "low", "medium", "high"]);
 const reset = {checked:false};
+const continueToAi = {checked:false};
 const help = {textContent:""};
 const elements = {
   "#rule-action-type": actionType,
@@ -32,6 +33,7 @@ const elements = {
   "#rule-model": model,
   "#rule-reasoning": reasoning,
   "#rule-reset": reset,
+  "#rule-continue-to-ai": continueToAi,
   "#rule-routing-scope-help": help,
 };
 const root = {querySelector:(selector) => elements[selector] || null};
@@ -47,6 +49,7 @@ assert.equal(reasoning.querySelector('option[value="xhigh"]').disabled, false);
 assert.equal(reasoning.querySelector('option[value="max"]').disabled, false);
 
 matchType.value = "starts_with";
+continueToAi.checked = true;
 scope.value = "request";
 syncRequestRuleRoutingControls(root, ["low", "medium", "high", "xhigh", "max"]);
 assert.equal(scope.disabled, false);

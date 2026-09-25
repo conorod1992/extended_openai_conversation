@@ -118,7 +118,7 @@ test("Request Rules: edit/save, delete and create retain unrelated cards and fil
   await panel.locator("#rule-save").click();
   await expect(rule(panel, "rule-1")).toContainText("Changed rule");
   await expect(rule(panel, "rule-1")).toBeHidden();
-  await expect(panel.locator(".search-row .count")).toHaveText("0 of 40 rules");
+  await expect(panel.locator(".search-row .count")).toHaveText("Showing 0 of 40 rules");
   await expectRetained(page, '[data-rule-key="rule-2"]');
   await panel.locator("#rule-search").fill("");
   await rule(panel, "rule-1").locator(".rule-edit").click();
@@ -275,7 +275,7 @@ test("Request Rules: duplicate preserves existing cards and fires once after rep
     await beginCollectionMeasure(page);
     await rule(panel, "rule-1").locator(".rule-duplicate").click();
     await expect(rule(panel, `rule-${41 + i}`)).toBeVisible();
-    await expect(panel.locator(".search-row .count")).toHaveText(`${2 + i} of ${41 + i} rules`);
+    await expect(panel.locator(".search-row .count")).toHaveText(`Showing ${2 + i} of ${41 + i} rules`);
     await expectRetained(page, '[data-rule-key="rule-2"]');
     const result = await finishCollectionMeasure(page);
     expect(result.mainChildReplacements).toBe(0);

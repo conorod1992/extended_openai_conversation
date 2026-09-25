@@ -44,13 +44,13 @@ test("Request Rules render diagnostics, search and global reorder boundaries", a
     const filtered = [...root.content.querySelectorAll(".rule-move")].map((node) => [node.dataset.direction, node.disabled]);
     panel._eocInPlaceRequestRuleSearch = true;
     root.innerHTML = renderRequestRules(panel);
-    return {filtered, query:root.content.querySelector("#rule-search").value, state:panel._query, count:root.content.querySelectorAll(".request-rule-card").length, moves:[...root.content.querySelectorAll(".rule-move")].map((node) => node.disabled), group:root.content.querySelector(".rule-group-section summary span")?.textContent, priorities:[...root.content.querySelectorAll(".request-rule-card .meta")].filter((node)=>node.textContent.startsWith("Global priority")).map((node)=>node.textContent), diagnostic:root.content.querySelector(".sensitive-warning").textContent, dialog:requestRulesDialog()};
+    return {filtered, query:root.content.querySelector("#rule-search").value, state:panel._query, count:root.content.querySelectorAll(".request-rule-card").length, moves:[...root.content.querySelectorAll(".rule-move")].map((node) => node.disabled), groups:[...root.content.querySelectorAll(".rule-group-chip")].map((node)=>node.textContent), priorities:[...root.content.querySelectorAll(".request-rule-card .rule-card-heading .meta")].map((node)=>node.textContent), diagnostic:root.content.querySelector(".sensitive-warning").textContent, dialog:requestRulesDialog()};
   }, frontend);
-  expect(result.filtered).toEqual([["up", false], ["down", false], ["top", false], ["bottom", false]]);
-  expect(result.moves).toEqual([true, false, true, false, false, false, false, false, false, true, false, true]);
+  expect(result.filtered).toEqual([["up", true], ["down", true], ["top", true], ["bottom", true]]);
+  expect(result.moves).toEqual(Array(12).fill(true));
   expect(result.count).toBe(3);
-  expect(result.group).toBe("Ungrouped");
-  expect(result.priorities).toEqual(["Global priority 1 · Ungrouped", "Global priority 2 · Ungrouped", "Global priority 3 · Ungrouped"]);
+  expect(result.groups).toEqual(["Ungrouped", "Ungrouped", "Ungrouped"]);
+  expect(result.priorities).toEqual(["#1 Ungrouped", "#2 Ungrouped", "#3 Ungrouped"]);
   expect(result.query).toBe("Middle");
   expect(result.state).toBe("Middle");
   expect(result.diagnostic).toContain("Old <pattern>");

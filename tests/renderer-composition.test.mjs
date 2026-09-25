@@ -111,7 +111,7 @@ try {
   ownerRules._eocInPlaceRequestRuleSearch = false;
   html = renderRequestRules(ownerRules);
   assert.equal((html.match(/class="request-rule-card/g)||[]).length,1);
-  assert.doesNotMatch(html, /class="secondary rule-move"[^>]* disabled/);
+  assert.match(html, /class="secondary rule-move"[^>]* disabled/);
   const noMatchOwner = {...panel(), _result:{rules}, _query:"Nothing here", _eocInPlaceRequestRuleSearch:false};
   html = renderRequestRules(noMatchOwner);
   assert.match(html, /data-eoc-rule-search-empty ><h2>No rules match your search/);

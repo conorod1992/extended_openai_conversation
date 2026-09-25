@@ -38,10 +38,25 @@ assert.match(html, /<h2>Test rules<\/h2>/);
 assert.match(html, /id="eoc-rule-live-test"/);
 assert.match(html, /class="eoc-live-label">Live/);
 assert.match(html, /Good night/);
-assert.match(html, /Global priority 1/);
+assert.match(html, /#1 <span class="rule-group-chip">Ungrouped/);
+assert.match(html, /id="rule-group-filter"/);
+assert.match(html, /Evaluated in the order shown/);
+assert.doesNotMatch(html, /rule-group-section/);
+const grouped = {...panel, _ruleGroupFilter:"lighting", _result:{...panel._result, groups:[{id:"lighting",name:"Lighting"}], rules:[
+  {...panel._result.rules[0], group_id:"lighting"},
+  {...panel._result.rules[1], group_id:null},
+]}};
+const groupedHtml=renderRequestRules(grouped);
+assert.match(groupedHtml, /#1 <span class="rule-group-chip">Lighting/);
+assert.doesNotMatch(groupedHtml, /data-rule-key="two"/);
+assert.match(groupedHtml, /Switch to All rules to change priority/);
+const ungroupedHtml=renderRequestRules({...grouped,_ruleGroupFilter:"ungrouped"});
+assert.match(ungroupedHtml, /#2 <span class="rule-group-chip">Ungrouped/);
+assert.doesNotMatch(ungroupedHtml, /data-rule-key="one"/);
+assert.match(renderRequestRules({...grouped,_ruleGroupFilter:"lighting",_query:"missing"}), /No rules match your search/);
 assert.match(html, /Move to top/);
 assert.match(html, /Move to bottom/);
-assert.match(html, /Groups organize rules/);
+assert.match(html, /Use Show to filter the rule list by group/);
 assert.match(html, /Default matching/);
 assert.match(html, /Create rule/);
 assert.match(html, /id="rule-search"/);
@@ -73,6 +88,7 @@ assert.match(requestRulesDialog(panel), /id="rule-action-sequence-host"/);
 assert.match(requestRulesDialog(panel), /id="rule-condition-host"/);
 assert.match(requestRulesDialog(panel), /id="rule-local-continue-to-ai"/);
 assert.match(requestRulesDialog(panel), /id="rule-group"/);
+assert.match(requestRulesDialog(panel), /id="rule-continue-matching"/);
 assert.doesNotMatch(requestRulesDialog(panel), /<ha-selector/);
 assert.match(requestRulesDialog(panel), /Conditions, delays, choose, repeat, parallel/);
 assert.match(requestRulesDialog(panel), /extended_openai_conversation_responses\.call_function/);

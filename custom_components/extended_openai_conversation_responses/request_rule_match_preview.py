@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .request_rule_patterns import SentenceMatchLimitError
-from .request_rules import RuleMatch, _iter_script_actions
+from .request_rules import RuleMatch, _iter_script_actions, rule_stops_matching
 
 
 def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
@@ -77,10 +77,49 @@ async def async_request_rule_match_preview(
 ) -> dict[str, Any]:
     """Test a match without executing actions or making a provider request."""
     try:
+        if hasattr(rules, "async_eligible_matches") and rules._has_continuation:
+            skipped: list[dict[str, str]] = []
+            chain: list[dict[str, Any]] = []
+            last: RuleMatch | None = None
+            async for match in rules.async_eligible_matches(hass, text, skipped):
+                last = match
+                handoff = bool(match.rule["action"].get("continue_to_ai", False))
+                stopped = rule_stops_matching(match.rule)
+                chain.append(
+                    {
+                        "rule": {"id": match.rule["id"], "name": match.rule["name"]},
+                        "status": "would_send_to_ai"
+                        if handoff
+                        else ("stopped" if stopped else "continued"),
+                        "would_do": request_rule_match_preview(match)["would_do"],
+                    }
+                )
+                if stopped:
+                    break
+            return {
+                **request_rule_match_preview(last),
+                "matched_rules": chain,
+                "skipped_conditions": skipped,
+            }
         if hasattr(rules, "async_match_with_skipped"):
             match, skipped = await rules.async_match_with_skipped(hass, text)
         else:
             match, skipped = await rules.async_match(hass, text), []
     except SentenceMatchLimitError as err:
         raise HomeAssistantError(str(err)) from err
-    return {**request_rule_match_preview(match), "skipped_conditions": skipped}
+    summary = request_rule_match_preview(match)
+    return {
+        **summary,
+        "skipped_conditions": skipped,
+        "matched_rules": [
+            {
+                "rule": {"id": match.rule["id"], "name": match.rule["name"]},
+                "status": "would_send_to_ai"
+                if match.rule["action"].get("continue_to_ai", False)
+                else "stopped",
+                "would_do": summary["would_do"],
+            }
+        ]
+        if match is not None
+        else [],
+    }

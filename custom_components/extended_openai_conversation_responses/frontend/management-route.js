@@ -280,6 +280,7 @@ function requestRuleSearchEntries(panel, root, rules) {
       .map((card) => [String(card.dataset.ruleKey), card]),
   );
   const entries = rules.map((rule) => ({
+    rule,
     card: cards.get(String(rule.id)),
     searchText: requestRuleSearchText(rule),
   })).filter((entry) => entry.card);
@@ -295,26 +296,26 @@ export function applyRequestRuleSearch(panel, root = panel?.shadowRoot) {
   const entries = requestRuleSearchEntries(panel, root, rules);
   let visible = 0;
 
-  for (const {card, searchText} of entries) {
-    const matches = !normalized || searchText.includes(normalized);
+  for (const {rule, card, searchText} of entries) {
+    const filter = panel._ruleGroupFilter || "all";
+    const matches = (!normalized || searchText.includes(normalized)) && (filter === "all" || (filter === "ungrouped" ? !rule?.group_id : rule?.group_id === filter));
     if (card.hidden === matches) card.hidden = !matches;
     if (matches) visible += 1;
   }
 
-  root.querySelectorAll?.(".rule-group-section").forEach((section) => {
-    section.hidden = Boolean(normalized)
-      && ![...section.querySelectorAll("[data-rule-key]")].some((card) => !card.hidden);
-  });
+  const canReorder = !normalized && (panel._ruleGroupFilter || "all") === "all";
+  root.querySelectorAll?.("[data-rule-key]").forEach((card) => { card.draggable = canReorder; card.querySelectorAll(".rule-move").forEach((button) => { button.disabled = !canReorder || button.dataset.direction === "up" && card === card.parentElement.querySelector("[data-rule-key]") || button.dataset.direction === "top" && card === card.parentElement.querySelector("[data-rule-key]") || button.dataset.direction === "down" && card === card.parentElement.querySelector("[data-rule-key]:last-of-type") || button.dataset.direction === "bottom" && card === card.parentElement.querySelector("[data-rule-key]:last-of-type"); }); });
+  const helper=root.querySelector(".rule-filter-help");if(helper)helper.hidden=canReorder;
 
   const list = root.querySelector(".rule-list");
   const empty = list?.querySelector("[data-eoc-rule-search-empty]");
-  if (empty) empty.hidden = !String(query).trim() || visible > 0 || !rules.length;
+  if (empty) empty.hidden = visible > 0 || !rules.length;
 
   const count = root.querySelector(".search-row .count");
   if (count) {
     const total = rules.length;
-    count.textContent = String(query).trim()
-      ? `${visible} of ${total} rule${total === 1 ? "" : "s"}`
+    count.textContent = String(query).trim() || (panel._ruleGroupFilter || "all") !== "all"
+      ? `Showing ${visible} of ${total} rules`
       : `${total} rule${total === 1 ? "" : "s"}`;
   }
   return visible;
