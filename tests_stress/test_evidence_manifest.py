@@ -38,7 +38,11 @@ BASE_FEATURES = {
     "multi_tab_conflict",
     "immediate_function_crash",
 }
-LAYERS = {"model", "real_ha", "provider_wire", "browser", "process"}
+LAYERS = {"model", "real_ha", "provider_wire", "browser", "browser_real_ha", "process"}
+GENUINE_HA_BROWSER_SPECS = {
+    "tests_browser/real-ha-backend.spec.mjs",
+    "tests_browser/real-ha-multi-tab.stress.mjs",
+}
 
 
 def test_supported_features_have_reviewed_evidence_layer_entries() -> None:
@@ -63,6 +67,8 @@ def test_supported_features_have_reviewed_evidence_layer_entries() -> None:
             assert references, (feature, layer)
             assert len(references) == len(set(references)), (feature, layer)
             for reference in references:
+                if layer == "browser_real_ha":
+                    assert reference in GENUINE_HA_BROWSER_SPECS, (feature, reference)
                 path = Path(reference)
                 assert not path.is_absolute() and ".." not in path.parts
                 assert path.parts[0] in {

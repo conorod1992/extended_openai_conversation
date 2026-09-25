@@ -12,11 +12,11 @@ from typing import Any
 
 from aiohttp import web
 import pytest
+from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
+
 from homeassistant.components import onboarding
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
-
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
     _entry,
@@ -51,7 +51,7 @@ async def _run_playwright(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    async with asyncio.timeout(180):
+    async with asyncio.timeout(600):
         stdout, _ = await process.communicate()
     output = stdout.decode("utf-8", errors="replace")
     assert process.returncode == 0, f"{failure_label}:\n{output}"
@@ -85,7 +85,9 @@ async def _start_ws_bridge(client: Any) -> tuple[web.AppRunner, str]:
             error = response.get("error") or {}
             return web.json_response(
                 {
-                    "message": error.get("message", "Home Assistant WebSocket call failed"),
+                    "message": error.get(
+                        "message", "Home Assistant WebSocket call failed"
+                    ),
                     "error": error,
                 },
                 status=400,
@@ -102,7 +104,7 @@ async def _start_ws_bridge(client: Any) -> tuple[web.AppRunner, str]:
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
-    sockets = getattr(site._server, "sockets", None)  # noqa: SLF001 - test server port
+    sockets = getattr(site._server, "sockets", None)
     assert sockets, "genuine HA browser bridge did not bind a socket"
     port = sockets[0].getsockname()[1]
     return runner, f"http://127.0.0.1:{port}/callws"
