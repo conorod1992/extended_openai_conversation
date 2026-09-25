@@ -269,13 +269,20 @@ test("real browser manages a Function Tool and dependent Group through genuine H
   await showGroupMembers();
   await tool.locator(".tool-enabled-control").click();
   await expect(tool.locator(".tool-enabled")).not.toBeChecked();
+  await expect(panel.locator("#toast")).toContainText("Function disabled");
+  await expect(tool.locator(".tool-enabled")).toBeEnabled();
   await showGroupMembers();
   await tool.locator(".tool-enabled-control").click();
   await expect(tool.locator(".tool-enabled")).toBeChecked();
+  await expect(panel.locator("#toast")).toContainText("Function enabled");
+  await expect(group.locator(".group-enabled")).toBeEnabled();
   await group.locator(".group-enabled-control").click();
   await expect(group.locator(".group-enabled")).not.toBeChecked();
+  await expect(panel.locator("#toast")).toContainText("Function group disabled");
+  await expect(group.locator(".group-enabled")).toBeEnabled();
   await group.locator(".group-enabled-control").click();
   await expect(group.locator(".group-enabled")).toBeChecked();
+  await expect(panel.locator("#toast")).toContainText("Function group enabled");
 
   await page.goto(realFixtureUrl("capabilities/functions"));
   panel = page.locator("extended-openai-management-panel");
@@ -311,6 +318,7 @@ test("real browser creates, edits, and deletes Knowledge through genuine HA", as
   await expect(panel.locator(".list-card").filter({hasText: "Browser contract source"})).toBeVisible();
   await panel.locator(".knowledge-availability-setting .switch-control").click();
   await expect(panel.locator("#knowledge-enabled-toggle")).toBeChecked();
+  await expect(panel.locator("#toast")).toContainText("Knowledge enabled");
 
   await page.goto(realFixtureUrl("data-memory/knowledge"));
   panel = page.locator("extended-openai-management-panel");
@@ -332,6 +340,7 @@ test("real browser creates, edits, and deletes Knowledge through genuine HA", as
   await expect(panel.locator(".list-card").filter({hasText: "Browser contract source"})).toHaveCount(0);
   await panel.locator(".knowledge-availability-setting .switch-control").click();
   await expect(panel.locator("#knowledge-enabled-toggle")).not.toBeChecked();
+  await expect(panel.locator("#toast")).toContainText("Knowledge disabled");
 
   await page.goto(realFixtureUrl("data-memory/knowledge"));
   panel = page.locator("extended-openai-management-panel");
