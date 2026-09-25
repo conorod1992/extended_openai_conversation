@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       seed: ${{ steps.seed.outputs.seed }}
-      intensity: ${{ steps.seed.outputs.intensity }}
+      intensities: ${{ steps.seed.outputs.intensities }}
       campaigns: ${{ steps.seed.outputs.campaigns }}
     steps:
       - name: Resolve reproducible run controls
@@ -53,9 +53,13 @@ jobs:
           fi
           INTENSITY="${REQUESTED_INTENSITY:-normal}"
           echo "seed=$SEED" >> "$GITHUB_OUTPUT"
-          echo "intensity=$INTENSITY" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == schedule || "$INTENSITY" == all ]]; then
+            echo 'intensities=["normal","heavy"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "intensities=[\"$INTENSITY\"]" >> "$GITHUB_OUTPUT"
+          fi
           case "${{ inputs.campaign }}" in
-            '') CAMPAIGNS='["runtime","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos"]' ;;
+            '') CAMPAIGNS='["runtime","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
             all|browser) CAMPAIGNS='["runtime","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","request-rules","guest-security","quiet-hours","functions","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
             runtime|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|request-rules|guest-security|quiet-hours|functions|memory-knowledge|large-installation|chaos|process-chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
             *) echo 'Unknown campaign' >&2; exit 1 ;;
@@ -71,15 +75,16 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   python-campaigns:
-    name: ${{ matrix.campaign }}
+    name: ${{ matrix.campaign }} / ${{ matrix.intensity }}
     needs: prepare
     if: github.event_name == 'schedule' || inputs.campaign != 'browser'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
         campaign: ${{ fromJSON(needs.prepare.outputs.campaigns) }}
+        intensity: ${{ fromJSON(needs.prepare.outputs.intensities) }}
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
@@ -91,7 +96,7 @@ jobs:
     env:
       PYTHONPATH: ${{ github.workspace }}
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
-      STRESS_INTENSITY: ${{ needs.prepare.outputs.intensity }}
+      STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: ${{ matrix.campaign }}
       STRESS_ARTIFACT_DIR: stress-artifacts
     steps:
@@ -111,7 +116,7 @@ jobs:
       - name: Run enhanced campaign
         run: |
           case "$STRESS_CAMPAIGN" in
-            runtime) TEST_PATHS=(tests_stress/test_runtime_soak.py tests_stress/test_evidence_manifest.py) ;;
+            runtime) TEST_PATHS=(tests_stress/test_runtime_soak.py tests_stress/test_evidence_manifest.py tests_stress/test_frontend_route_inventory.py tests_stress/test_management_action_inventory.py tests_stress/test_public_service_inventory.py tests_stress/test_backup_inventory.py) ;;
             ai-task) TEST_PATHS=(tests_stress/test_ai_task_mixed_campaign.py tests_real_ha/test_ai_task_runtime.py tests_real_ha/test_ai_task_lifecycle.py) ;;
             voice-intercom) TEST_PATHS=(tests_stress/test_voice_household_campaign.py tests_stress/test_intercom_endurance_campaign.py tests_real_ha/test_assist_voice_identity_precedence.py tests_real_ha/test_intercom_voice_acceptance.py) ;;
             archive) TEST_PATHS=(tests_stress/test_archive_living_campaign.py tests/test_conversation_archive.py) ;;
@@ -139,16 +144,21 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: enhanced-${{ matrix.campaign }}-seed-${{ needs.prepare.outputs.seed }}
+          name: enhanced-${{ matrix.campaign }}-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
           path: stress-artifacts/
           if-no-files-found: warn
           retention-days: 14
 
   browser:
+    name: browser / ${{ matrix.intensity }}
     needs: prepare
     if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        intensity: ${{ fromJSON(needs.prepare.outputs.intensities) }}
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
       credentials:
@@ -161,7 +171,7 @@ jobs:
     env:
       PYTHONPATH: ${{ github.workspace }}
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
-      STRESS_INTENSITY: ${{ needs.prepare.outputs.intensity }}
+      STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: browser
       STRESS_ARTIFACT_DIR: stress-artifacts
     steps:
@@ -208,7 +218,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: enhanced-browser-seed-${{ needs.prepare.outputs.seed }}
+          name: enhanced-browser-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
           path: |
             stress-artifacts/
             playwright-report/

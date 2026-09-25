@@ -1,0 +1,503 @@
+{
+  "schema_version": 1,
+  "fields": {
+    "CONF_ADVANCED_OPTIONS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_API_MODE": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_ARCHIVE_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_ARCHIVE_MODEL_SEARCH_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_ARCHIVE_RETENTION_DAYS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_CHAT_MODEL": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_CONTEXT_THRESHOLD": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_CONTEXT_TRUNCATE_STRATEGY": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_CONTINUE_CONVERSATION": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_CONVERSATION_CONTINUITY": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_CONVERSATION_TIMEOUT_MINUTES": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_CURRENT_DATETIME_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_CURRENT_DATETIME_TEMPLATE": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_EXPOSED_ENTITIES_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_EXPOSED_ENTITIES_TEMPLATE": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_EXPOSED_ENTITY_ATTRIBUTES": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_FUNCTION_GROUPS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_FUNCTION_TOOLS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_FUNCTION_TOOL_ERROR_RECOVERY": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_ALLOWED_FUNCTION_NAMES": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_ALLOWED_GROUP_IDS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_CONTROLLABLE_AREAS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_CONTROLLABLE_DOMAINS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_CONTROLLABLE_ENTITIES": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_CONTROLLABLE_LABELS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_CONTROL_EXCLUDED_AREAS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_CONTROL_EXCLUDED_DOMAINS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_CONTROL_EXCLUDED_ENTITIES": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_CONTROL_EXCLUDED_LABELS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_EXCLUDED_AREAS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_EXCLUDED_DOMAINS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_EXCLUDED_ENTITIES": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_EXCLUDED_LABELS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_FUNCTION_POLICY": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_KNOWLEDGE_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_KNOWLEDGE_POLICY": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_KNOWLEDGE_SOURCE_IDS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_MODE_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_POLICY_VERSION": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_READABLE_AREAS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_READABLE_DOMAINS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_READABLE_ENTITIES": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_READABLE_LABELS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_SEPARATE_CONTROL_RESTRICTIONS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_SHARED_MEMORY_POLICY": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_GUEST_SHARED_MEMORY_READ": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_SHARED_MEMORY_WRITE": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_GUEST_WEB_SEARCH": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_KNOWLEDGE_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_LOCAL_INTENTS_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_LOCAL_INTENT_EXCLUSIONS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_MAX_TOKENS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_MEMORY_AUTO_CREATE": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_MEMORY_AUTO_RETRIEVE_LIMIT": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_MEMORY_EMBEDDING_MODEL": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_MEMORY_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_MEMORY_MODE": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_MEMORY_RETRIEVAL_MODE": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_PROMPT": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_REASONING_EFFORT": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_SERVICE_TIER": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_SHARED_ARCHIVE_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_SHARED_MEMORY_MODE": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_SHORTEN_TOOL_CALL_ID": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_SKILLS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_SPEECH_PROCESSING_ENABLED": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_SPEECH_REGEX_REPLACEMENTS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_SPEECH_STRIP_MARKDOWN": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_SPEECH_STRIP_URLS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_TEMPERATURE": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_TEMPORARY_MEMORY": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_TOP_P": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_USAGE_REQUEST_RETENTION_DAYS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_USAGE_RUN_RETENTION_DAYS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_VOICE_DEFAULT_USER_ID": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_VOICE_DEVICE_MAPPINGS": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_VOICE_SCOPE_POLICY": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_VOICE_UNMAPPED_POLICY": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "special"
+    },
+    "CONF_WEB_SEARCH": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    },
+    "CONF_WEB_SEARCH_CONTEXT": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard"
+    }
+  }
+}
