@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
 
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
@@ -23,7 +23,14 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from tests_real_ha.test_ai_task_runtime import FakeClient, FakeStream, _chunk
+from tests_real_ha.test_ai_task_runtime import (
+    CallerAPI,
+    ContextProbeTool,
+    FakeClient,
+    FakeStream,
+    _chunk,
+    _tool_delta,
+)
 from tests_stress.conftest import record
 
 _MARKER = re.compile(r"TASK_MARKER_[0-9]{4}")
@@ -102,6 +109,25 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
         marker = next(iter(markers))
         expected_model = fast_model if int(marker[-4:]) % 2 == 0 else "gpt-5.6"
         assert kwargs["model"] == expected_model
+        if marker == "TASK_MARKER_9001":
+            assert len(kwargs["tools"]) == 1
+            if any(message["role"] == "tool" for message in kwargs["messages"]):
+                assert "from-enhanced-task" in text
+                return FakeStream([_chunk(content="Tool task completed")])
+            alias = kwargs["tools"][0]["function"]["name"]
+            return FakeStream(
+                [
+                    _chunk(
+                        content=None,
+                        finish_reason="tool_calls",
+                        tool_calls=[
+                            _tool_delta(
+                                0, alias, '{"value":"from-enhanced-task"}', "task-call"
+                            )
+                        ],
+                    )
+                ]
+            )
         if marker == failure_marker and not failed_once:
             failed_once = True
             raise RuntimeError("deterministic provider failure")
@@ -178,15 +204,35 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
     install_client()
     for index in range(sequential + concurrent + 5, sequential + concurrent + 9):
         await task(index)
-    assert len(provider_calls) == sequential + concurrent + 8
+
+    # Mix a caller-owned HA tool into the same long-lived two-agent sequence.
+    tool = ContextProbeTool()
+    caller_api = CallerAPI(hass=hass, id="enhanced-task", name="Enhanced Task")
+    caller_api.tools = [tool]
+    user = MockUser(id="enhanced-task-user", name="Enhanced Task User")
+    user.add_to_hass(hass)
+    context = Context(user_id=user.id)
+    tool_result = await ai_task.async_generate_data(
+        hass,
+        task_name="Caller tool after prolonged use",
+        entity_id=task_entities["Detailed task"],
+        instructions="Use your tool for TASK_MARKER_9001.",
+        llm_api=caller_api,
+        context=context,
+    )
+    assert tool_result.data == "Tool task completed"
+    assert len(tool.calls) == 1
+    assert tool.calls[0][1].context is context
+    assert len(provider_calls) == sequential + concurrent + 10
     record(
         stress_trace,
         "summary",
         layer="real-ha + provider-wire",
-        ai_task_turns=sequential + concurrent + 6,
+        ai_task_turns=sequential + concurrent + 7,
         ai_task_concurrent=concurrent,
         ai_task_agents=2,
         ai_task_provider_failures=1,
-        public_turns=sequential + concurrent + 7,
+        public_turns=sequential + concurrent + 8,
         provider_requests=len(provider_calls),
+        actual_tool_executions=1,
     )
