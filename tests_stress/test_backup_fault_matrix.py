@@ -44,7 +44,11 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
-from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
+from tests_real_ha.test_provider_wire_e2e import (
+    _install_wire,
+    _responses_sse_text,
+    _speech,
+)
 from tests_stress.conftest import record
 from tests_stress.maximal_agent_fixture import FIXTURE_EXCEPTIONS, maximal_agent_options
 from tests_stress.test_backup_inventory import BACKED_UP_SUBSYSTEMS
@@ -182,7 +186,9 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     ) == semantic(target)
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
-    wire = _install_wire(monkeypatch, agent, [_chat_sse_text("Backup marker restored")])
+    wire = _install_wire(
+        monkeypatch, agent, [_responses_sse_text("Backup marker restored")]
+    )
     result = await conversation.async_converse(
         hass=hass,
         text="Confirm backup marker",

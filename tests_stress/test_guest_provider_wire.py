@@ -74,6 +74,16 @@ async def _say(hass: HomeAssistant, entry_id: str, text: str):
     )
 
 
+def _native_tool_result(body: dict, call_id: str):
+    """Native tools serialize a JSON list, unlike the Knowledge tool payload."""
+    message = next(
+        item
+        for item in body["messages"]
+        if item.get("role") == "tool" and item.get("tool_call_id") == call_id
+    )
+    return json.loads(message["content"])["result"]
+
+
 @pytest.mark.parametrize("function_policy", ["off", "on", "custom"])
 async def test_guest_wire_only_subtracts_private_context_and_function_capabilities(
     hass: HomeAssistant,
@@ -314,10 +324,10 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
             ]
             == "success"
         )
-        service_result = _chat_tool_result(
+        service_result = _native_tool_result(
             tool_wire.requests[2]["body"], "call-guest-service"
         )
-        assert service_result["result"][0]["success"] is True
+        assert service_result[0]["success"] is True
         assert len(calls) == 1
         executed_functions = 2  # loader and the actual HA service Function
         provider_requests += 3
@@ -356,11 +366,13 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
             == "Control denied"
         )
         assert len(denied_wire.requests) == 3
-        denied_result = _chat_tool_result(
+        denied_result = _native_tool_result(
             denied_wire.requests[2]["body"], "call-denied-service"
         )
-        assert "success" not in json.dumps(denied_result).lower() or not any(
-            item.get("success") for item in denied_result.get("result", [])
+        assert not any(
+            item.get("success") is True
+            for item in denied_result
+            if isinstance(item, dict)
         )
         assert len(calls) == 1
         executed_functions += 1  # The loader ran; denied HA control did not.

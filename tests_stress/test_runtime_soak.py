@@ -23,6 +23,27 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from tests_stress.conftest import record
 
+_MANAGER_REGISTRIES = (
+    "memory_managers",
+    "temporary_memory_managers",
+    "knowledge_managers",
+    "archive_managers",
+    "usage_managers",
+    "guest_mode_managers",
+    "request_rule_managers",
+    "request_rule_runtimes",
+    "continuity_managers",
+)
+
+
+def _resource_footprint(hass: HomeAssistant) -> dict[str, int]:
+    """Count EOAI-owned registries that should stabilize after warm setup."""
+    counts = {
+        name: len(hass.data.get(f"{DOMAIN}.{name}", {})) for name in _MANAGER_REGISTRIES
+    }
+    counts["registered_services"] = len(hass.services.async_services().get(DOMAIN, {}))
+    return counts
+
 
 def _entry(number: int) -> MockConfigEntry:
     return MockConfigEntry(
@@ -125,6 +146,9 @@ async def test_seeded_multi_entry_runtime_soak(
 
     for index in range(2):
         install_model(index)
+    for index in range(2):
+        await converse(index, 0, -1)
+    warm_resources = _resource_footprint(hass)
     for number in range(120 * stress_scale):
         agent_index = rng.randrange(2)
         roll = rng.random()
@@ -163,6 +187,11 @@ async def test_seeded_multi_entry_runtime_soak(
             conversation.async_get_agent(hass, entry.entry_id) is not None
             for entry in entries
         )
+        current_resources = _resource_footprint(hass)
+        assert all(
+            current_resources[name] <= baseline_count
+            for name, baseline_count in warm_resources.items()
+        ), (warm_resources, current_resources)
 
     for entry in entries:
         assert await hass.config_entries.async_unload(entry.entry_id)
@@ -180,4 +209,5 @@ async def test_seeded_multi_entry_runtime_soak(
         ),
         agents=2,
         users=6,
+        warm_resource_counts=warm_resources,
     )

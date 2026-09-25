@@ -14,6 +14,7 @@ COUNT_METRICS = {
     "local_function_executions",
     "native_function_executions",
     "template_function_executions",
+    "script_function_executions",
     "ha_service_calls",
     "guest_end_to_end_combinations",
     "private_context_probes",

@@ -27,7 +27,7 @@ _TOOL = {
 
 FIXTURE_OVERRIDES = {
     "advanced_options": True,
-    "api_mode": "chat_completions",
+    "api_mode": "responses",
     "archive_enabled": True,
     "archive_model_search_enabled": True,
     "archive_retention_days": 7,

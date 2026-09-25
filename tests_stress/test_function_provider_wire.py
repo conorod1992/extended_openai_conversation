@@ -121,3 +121,80 @@ async def test_group_load_tool_execution_result_and_session_isolation(
         local_function_executions=1,
         template_function_executions=1,
     )
+
+
+async def test_script_function_executes_local_ha_service_on_provider_wire(
+    hass: HomeAssistant,
+    monkeypatch,
+    stress_trace: list[dict],
+) -> None:
+    tool_name = "enhanced_script_wire"
+    entity_id = "light.enhanced_script_wire"
+    calls = []
+
+    async def turn_off(call):
+        calls.append(call)
+
+    hass.services.async_register("light", "turn_off", turn_off)
+    hass.states.async_set(entity_id, "on")
+    entry = _make_entry(
+        "Enhanced script provider execution",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_FUNCTION_TOOLS: [
+                {
+                    "spec": {
+                        "name": tool_name,
+                        "description": "Turn off one local fixture light",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    "function": {
+                        "type": "script",
+                        "sequence": [
+                            {
+                                "action": "light.turn_off",
+                                "data": {"entity_id": entity_id},
+                            }
+                        ],
+                    },
+                    "enabled": True,
+                }
+            ],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert agent is not None
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call("call-enhanced-script", tool_name, {}),
+            _chat_sse_text("Script executed"),
+        ],
+    )
+    result = await conversation.async_converse(
+        hass=hass,
+        text="Run the local script",
+        conversation_id=None,
+        context=Context(),
+        language="en",
+        agent_id=entry.entry_id,
+    )
+    assert _speech(result) == "Script executed"
+    assert len(wire.requests) == 2
+    assert tool_name in _tool_names(wire.requests[0]["body"], API_MODE_CHAT_COMPLETIONS)
+    assert len(calls) == 1
+    assert calls[0].data["entity_id"] == entity_id
+    assert _chat_tool_result(wire.requests[1]["body"], "call-enhanced-script")
+    record(
+        stress_trace,
+        "summary",
+        layer="provider-wire",
+        public_turns=1,
+        provider_requests=2,
+        actual_function_executions=1,
+        script_function_executions=1,
+        ha_service_calls=1,
+    )
