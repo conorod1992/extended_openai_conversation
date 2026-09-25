@@ -171,13 +171,14 @@ test("live configuration routes select their final sections without reparsing", 
       } finally { document.createElement = create; }
       const host = document.createElement("template");
       host.innerHTML = html;
-      return {html, heading:host.content.querySelector(".config-section-heading .eyebrow")?.textContent, local:host.content.querySelectorAll("#config-local").length, memory:host.content.querySelectorAll('[data-config="memory_auto_retrieve_limit"],[data-config="shared_memory_mode"],[data-config="memory_mode"],[data-config="temporary_memory"]').length, voice:host.content.querySelectorAll(".voice-identity-flow").length};
+      return {html, heading:host.content.querySelector(".config-section-heading .eyebrow")?.textContent, pageHeading:host.content.querySelector(".page-intro h1")?.textContent, local:host.content.querySelectorAll("#config-local").length, memory:host.content.querySelectorAll('[data-config="memory_auto_retrieve_limit"],[data-config="shared_memory_mode"],[data-config="memory_mode"],[data-config="temporary_memory"]').length, voice:host.content.querySelectorAll(".voice-identity-flow").length};
     });
     expect(result.memory).toBe(0);
     expect(result.local).toBe(route === "capabilities/home-assistant" ? 1 : 0);
     expect(result.voice).toBe(route === "assistant/voice" ? 1 : 0);
     if (route === "capabilities/web-skills") {
-      expect(result.heading).toBe("Web search & Skills");
+      expect(result.pageHeading).toBe("Web search & Skills");
+      expect(result.heading).toBeUndefined();
       expect(result.html).not.toContain('data-config="knowledge_enabled"');
     }
   }

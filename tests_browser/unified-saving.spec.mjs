@@ -54,8 +54,8 @@ for (const [view, field, section, action, removed] of [
 test("Request Rules settings save atomically and retain drafts through search and immediate toggles", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules")); const panel = panelFor(page);
-  await expect(panel.locator(".rule-settings details")).toHaveCount(2);
-  await panel.locator(".rule-settings details").evaluateAll((details) => details.forEach((item) => { item.open = true; }));
+  await expect(panel.locator(".rule-settings details, .rule-wording details")).toHaveCount(2);
+  await panel.locator(".rule-settings details, .rule-wording details").evaluateAll((details) => details.forEach((item) => { item.open = true; }));
   await panel.locator("#rules-default-word-forms").uncheck();
   await panel.locator("#wording-add").click();
   await panel.locator(".wording-canonical").fill("turn on"); await panel.locator(".wording-alternatives").fill("enable, switch on");
@@ -321,4 +321,3 @@ test("Function Group stale revision rejects save and preserves unsaved fields", 
   expect(state.configuration.config.function_groups[0].description).toBe("Newer external group description");
   await expectHarnessClean(page, errors);
 });
-
