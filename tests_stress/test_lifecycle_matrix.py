@@ -13,6 +13,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
     SERVICE_PROCESS,
 )
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
+)
 from custom_components.extended_openai_conversation_responses.memory import (
     async_get_memory,
 )
@@ -21,7 +24,10 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from tests_real_ha.test_multi_entry_lifecycle import _integration_tasks
+from tests_real_ha.test_multi_entry_lifecycle import (
+    _assert_agent_can_answer,
+    _integration_tasks,
+)
 from tests_stress.conftest import record
 from tests_stress.test_runtime_soak import _resource_footprint
 
@@ -88,7 +94,7 @@ async def test_seeded_multi_entry_lifecycle_contract(
         index = rng.randrange(2)
         entry, sibling = entries[index], entries[1 - index]
         sibling_agent = conversation.async_get_agent(hass, sibling.entry_id)
-        assert sibling_agent is not None
+        assert isinstance(sibling_agent, ExtendedOpenAIAgentEntity)
         record(stress_trace, "unload_setup", cycle=cycle, entry=index)
         assert await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
@@ -97,12 +103,27 @@ async def test_seeded_multi_entry_lifecycle_contract(
         assert conversation.async_get_agent(hass, sibling.entry_id) is sibling_agent
         assert _rows(hass, sibling) == baseline_rows[sibling.entry_id]
         assert hass.services.has_service(DOMAIN, SERVICE_PROCESS)
+        if cycle % 10 == 0:
+            await _assert_agent_can_answer(
+                hass,
+                sibling_agent,
+                text=f"sibling stays available during cycle {cycle}",
+                reply="sibling ready",
+            )
 
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         assert entry.state is ConfigEntryState.LOADED
-        assert conversation.async_get_agent(hass, entry.entry_id) is not None
+        reloaded_agent = conversation.async_get_agent(hass, entry.entry_id)
+        assert isinstance(reloaded_agent, ExtendedOpenAIAgentEntity)
         assert conversation.async_get_agent(hass, sibling.entry_id) is sibling_agent
+        if cycle % 10 == 0:
+            await _assert_agent_can_answer(
+                hass,
+                reloaded_agent,
+                text=f"reloaded entry works in cycle {cycle}",
+                reply="reloaded ready",
+            )
         assert all(_rows(hass, item) == baseline_rows[item.entry_id] for item in entries)
         assert _resource_footprint(hass) == baseline_resources
         assert _integration_tasks() == baseline_tasks

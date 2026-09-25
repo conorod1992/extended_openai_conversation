@@ -269,6 +269,9 @@ jobs:
           if [[ "$HA_POINT" == oldest ]]; then
             MINIMUM="$(python -c 'import json; print(json.load(open("hacs.json"))["homeassistant"])')"
             python -m pip install --pre "homeassistant==$MINIMUM"
+            # The newest fixture plugin calls Core APIs added after this floor.
+            # 0.13.317 is the earliest published plugin for the 2026.3 series.
+            python -m pip install --no-deps 'pytest-homeassistant-custom-component==0.13.317'
           elif [[ "$HA_POINT" == stable ]]; then
             python -m pip install --upgrade homeassistant
           else
