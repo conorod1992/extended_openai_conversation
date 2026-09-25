@@ -190,7 +190,12 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
     wire = _install_wire(
-        monkeypatch, agent, [_responses_sse_text("Backup marker restored")]
+        monkeypatch,
+        agent,
+        [
+            _responses_sse_text("Guest backup restored"),
+            _responses_sse_text("Owner backup restored"),
+        ],
     )
     embedding_requests = []
     scripted_send = wire.send
@@ -221,7 +226,7 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
         return await scripted_send(request, *args, **kwargs)
 
     monkeypatch.setattr(_raw_client(agent)._client, "send", send)
-    result = await conversation.async_converse(
+    guest_result = await conversation.async_converse(
         hass=hass,
         text="Confirm backup marker",
         conversation_id=None,
@@ -229,12 +234,26 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
         language="en",
         agent_id=entry.entry_id,
     )
-    assert _speech(result) == "Backup marker restored"
-    assert len(wire.requests) == 1
+    assert _speech(guest_result) == "Guest backup restored"
+    assert agent._guest_mode.is_active()
+    guest_request = wire.requests[0]["body"]
+    assert "load_function_groups" not in str(guest_request)
+    assert "Distinct private memory" not in str(guest_request)
+    await agent._guest_mode.async_disable_trusted()
+    owner_result = await conversation.async_converse(
+        hass=hass,
+        text="Confirm backup marker",
+        conversation_id=None,
+        context=Context(),
+        language="en",
+        agent_id=entry.entry_id,
+    )
+    assert _speech(owner_result) == "Owner backup restored"
+    assert len(wire.requests) == 2
     assert embedding_requests
-    request = wire.requests[0]["body"]
-    assert "Preserve café 🎯" in str(request)
-    assert "load_function_groups" in str(request)
+    owner_request = wire.requests[1]["body"]
+    assert "Preserve café 🎯" in str(owner_request)
+    assert "load_function_groups" in str(owner_request)
     record(
         stress_trace,
         "summary",
@@ -242,8 +261,8 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
         restore_round_trips=1,
         reloads=1,
         nondefault_config_fields=nondefault_config_fields,
-        public_turns=1,
-        provider_requests=1 + len(embedding_requests),
+        public_turns=2,
+        provider_requests=2 + len(embedding_requests),
         embedding_provider_requests=len(embedding_requests),
     )
 
