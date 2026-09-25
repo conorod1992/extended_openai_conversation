@@ -32,7 +32,7 @@
             },
             "openai_credentials": {
                 "title": "Connect OpenAI",
-                "description": "Paste your OpenAI API key below. If you do not have one yet, follow the [simple API key guide](https://conorod1992.github.io/extended_openai_conversation/getting-started/api-key/) or go straight to [OpenAI API keys](https://platform.openai.com/api-keys). API usage is billed separately from ChatGPT subscriptions.",
+                "description": "Paste your OpenAI API key below. If you do not have one yet, follow the [simple API key guide]({api_key_guide_url}) or go straight to [OpenAI API keys]({openai_api_keys_url}). API usage is billed separately from ChatGPT subscriptions.",
                 "data": {
                     "api_key": "OpenAI API key",
                     "advanced_provider_settings": "Show advanced provider settings"
@@ -66,7 +66,7 @@
                 },
                 "data_description": {
                     "api_key": "The API key for your Azure OpenAI resource.",
-                    "base_url": "Your Azure OpenAI resource endpoint, for example https://your-resource.openai.azure.com.",
+                    "base_url": "Your Azure OpenAI resource endpoint, as shown in your Azure resource.",
                     "api_version": "The Azure OpenAI API version configured for your resource."
                 }
             }
