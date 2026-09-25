@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import timedelta
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -37,12 +38,14 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
     async_get_temporary_memory,
 )
 from custom_components.extended_openai_conversation_responses.usage import (
+    RequestUsage,
     async_get_durable_usage,
 )
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from tests_stress.conftest import record
 from tests_stress.test_backup_inventory import BACKED_UP_SUBSYSTEMS
 
@@ -74,6 +77,25 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
                     CONF_PROMPT: "Answer in English and preserve café 🎯.",
                     CONF_KNOWLEDGE_ENABLED: True,
                     CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
+                    "api_mode": "chat_completions",
+                    "max_tokens": 900,
+                    "reasoning_effort": "medium",
+                    "temperature": 0.3,
+                    "top_p": 0.8,
+                    "current_datetime_enabled": False,
+                    "exposed_entities_enabled": False,
+                    "context_threshold": 28000,
+                    "conversation_timeout_minutes": 60,
+                    "archive_enabled": True,
+                    "archive_retention_days": 14,
+                    "web_search": True,
+                    "temporary_memory": "balanced",
+                    "guest_knowledge_policy": "off",
+                    "guest_excluded_domains": ["lock"],
+                    "usage_request_retention_days": 14,
+                    "speech_processing_enabled": True,
+                    "speech_strip_markdown": False,
+                    "function_tool_error_recovery": True,
                 },
                 "subentry_type": "conversation",
                 "title": "Archive 🎯 agent",
@@ -89,16 +111,22 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
         for item in entry.subentries.values()
         if item.subentry_type == "conversation"
     )
+    blank = await backup.async_collect_backup_snapshot(hass, entry, subentry)
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
     knowledge = await async_get_knowledge(hass, entry.entry_id, subentry.subentry_id)
     rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
+    temporary = await async_get_temporary_memory(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    guest = await async_get_guest_mode(hass, entry.entry_id, subentry.subentry_id)
+    usage = await async_get_durable_usage(hass, entry.entry_id, subentry.subentry_id)
     await memory.async_add(
         "owner", "Distinct private memory 東京", "acceptance", "explicit"
     )
     await knowledge.async_create(
         "Reference 🎯", "multiline description", 'Line one\n{"json": true}\nLine three'
     )
-    created_rule = await rules.async_create(
+    await rules.async_create(
         {
             "name": "Rule café",
             "phrases": ["remember {fact}"],
@@ -107,20 +135,43 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
             "action": {"actions": [{"action": "script.turn_on"}]},
         }
     )
+    await temporary.async_add(
+        "user:owner",
+        "Temporary round-trip marker 🕒",
+        (dt_util.utcnow() + timedelta(hours=2)).isoformat(),
+        "acceptance",
+        owner_scope_id="user:owner",
+    )
+    await guest.async_update_trusted(indefinite=True)
+    async with usage.async_run(home_assistant_conversation_id="backup-journey"):
+        await usage.async_record_request(
+            successful=True,
+            usage=RequestUsage(input_tokens=12, output_tokens=4, total_tokens=16),
+            provider="openai",
+            model="gpt-5.6",
+            api_mode="chat_completions",
+            request_stage="initial",
+            tool_calls_requested=0,
+        )
     target = await backup.async_collect_backup_snapshot(hass, entry, subentry)
     assert (
         set(target) - {"format", "version", "created_at", "integration_version"}
         == BACKED_UP_SUBSYSTEMS
     )
     record(
-        stress_trace, "export", memory_records=1, knowledge_sources=1, request_rules=1
+        stress_trace,
+        "export",
+        memory_records=1,
+        knowledge_sources=1,
+        request_rules=1,
+        temporary_memories=1,
+        guest_mode_schedules=1,
+        usage_requests=1,
+        nondefault_config_fields=20,
     )
-
-    for item in await memory.async_list("owner"):
-        assert await memory.async_delete("owner", [item.memory_id]) == 1
-    for item in await knowledge.async_list():
-        assert await knowledge.async_delete(item["source_id"])
-    assert await rules.async_delete(created_rule["id"])
+    assert (await backup.async_restore_backup(hass, entry, subentry, blank))[
+        "status"
+    ] == "restored"
     hass.config_entries.async_update_subentry(
         entry, subentry, title="Mutated agent", data={}
     )

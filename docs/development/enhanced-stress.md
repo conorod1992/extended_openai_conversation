@@ -7,7 +7,7 @@ The current campaigns are:
 | Campaign | New nightly work |
 | --- | --- |
 | `runtime` | Seeded public Assist conversations across two agents and six users, concurrent batches, unload/setup cycles, registry ownership and provider ChatLog isolation. |
-| `backup` | Fault injection at all seven durable restore category writes, rollback/reload checks, a reviewed inventory of persisted agent fields, and a frozen format-2 fixture derived from tagged release `v5.3.0`'s backup schema and test document. The sanitized fixture tests migration; it is not a byte-for-byte user export. |
+| `backup` | Fault injection at all seven durable restore category writes, rollback/reload checks, a broadened non-default config and durable-state semantic round trip, a reviewed inventory of persisted agent fields, and a frozen format-2 fixture derived from tagged release `v5.3.0`'s backup schema and test document. The sanitized fixture tests migration; it is not a byte-for-byte user export. |
 | `request-rules` | Full matcher inventory, text variants, preview agreement, seeded mutations, plus all current matcher × routing scope × API-mode cases through public Assist and SDK wire, and local HA actions. |
 | `guest-security` | Cross-product of supported Guest policies for Functions, Knowledge and shared Memory, with security and Function type inventories. |
 | `quiet-hours` | Multiple repeated periods across real registry-backed satellites with distinct starting volumes and restoration checks. |
