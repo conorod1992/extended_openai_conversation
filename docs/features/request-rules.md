@@ -20,7 +20,7 @@ The editor follows the way a command is usually designed:
 
 ## Only when conditions
 
-Rules with no conditions behave exactly as before. For a conditional rule, phrase or sentence-pattern matching runs first. Only if the text matches are its Home Assistant conditions evaluated. A false condition skips that rule and checks later text-matching rules in global priority order. This also applies to fuzzy fallback candidates. The first text match whose conditions pass wins.
+Rules with no conditions behave exactly as before. For a conditional rule, phrase or sentence-pattern matching runs first. Only if the text matches are its Home Assistant conditions evaluated. A false condition skips that rule and checks later text-matching rules in global priority order. This also applies to fuzzy fallback candidates. The first text match whose conditions pass is the next eligible rule. By default it handles the request and stops matching; a rule with **Continue matching after this rule** enabled can allow later eligible rules to run too.
 
 The **Only when** editor uses Home Assistant's condition selector. For example, an Equals rule for `good night` can require a state condition that `input_boolean.bedtime` is `on`. You can use native nested `and`/`or`/`not`, numeric state, time, template, device, and other conditions offered by Home Assistant. Saved condition structures remain intact when the rule is edited.
 
