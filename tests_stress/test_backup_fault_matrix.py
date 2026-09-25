@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import timedelta
+import json
 
+import httpx
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -46,6 +48,7 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_provider_wire_e2e import (
     _install_wire,
+    _raw_client,
     _responses_sse_text,
     _speech,
 )
@@ -189,6 +192,35 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     wire = _install_wire(
         monkeypatch, agent, [_responses_sse_text("Backup marker restored")]
     )
+    embedding_requests = []
+    scripted_send = wire.send
+
+    async def send(request, *args, **kwargs):
+        if request.url.path == "/v1/embeddings":
+            body = json.loads(request.content)
+            embedding_requests.append(body)
+            inputs = body["input"]
+            if isinstance(inputs, str):
+                inputs = [inputs]
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "model": body["model"],
+                    "data": [
+                        {"object": "embedding", "index": index, "embedding": [0.5] * 8}
+                        for index, _ in enumerate(inputs)
+                    ],
+                    "usage": {
+                        "prompt_tokens": len(inputs),
+                        "total_tokens": len(inputs),
+                    },
+                },
+                request=request,
+            )
+        return await scripted_send(request, *args, **kwargs)
+
+    monkeypatch.setattr(_raw_client(agent)._client, "send", send)
     result = await conversation.async_converse(
         hass=hass,
         text="Confirm backup marker",
@@ -199,6 +231,7 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     )
     assert _speech(result) == "Backup marker restored"
     assert len(wire.requests) == 1
+    assert embedding_requests
     request = wire.requests[0]["body"]
     assert "Preserve café 🎯" in str(request)
     assert "load_function_groups" in str(request)
@@ -210,7 +243,8 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
         reloads=1,
         nondefault_config_fields=nondefault_config_fields,
         public_turns=1,
-        provider_requests=1,
+        provider_requests=1 + len(embedding_requests),
+        embedding_provider_requests=len(embedding_requests),
     )
 
 

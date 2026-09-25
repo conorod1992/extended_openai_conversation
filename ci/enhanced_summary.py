@@ -9,6 +9,7 @@ import sys
 COUNT_METRICS = {
     "public_turns",
     "provider_requests",
+    "embedding_provider_requests",
     "actual_tool_executions",
     "actual_function_executions",
     "local_function_executions",

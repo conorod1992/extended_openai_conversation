@@ -187,7 +187,13 @@ async def test_script_function_executes_local_ha_service_on_provider_wire(
     assert tool_name in _tool_names(wire.requests[0]["body"], API_MODE_CHAT_COMPLETIONS)
     assert len(calls) == 1
     assert calls[0].data["entity_id"] == entity_id
-    assert _chat_tool_result(wire.requests[1]["body"], "call-enhanced-script")
+    message = next(
+        item
+        for item in wire.requests[1]["body"]["messages"]
+        if item.get("role") == "tool"
+        and item.get("tool_call_id") == "call-enhanced-script"
+    )
+    assert "result" in json.loads(message["content"])
     record(
         stress_trace,
         "summary",
