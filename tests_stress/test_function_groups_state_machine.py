@@ -55,6 +55,19 @@ def test_seeded_group_loading_respects_current_config_and_session_scope(
         if operation == "load":
             group = rng.choice(groups)
             record(stress_trace, operation, session=key, group=group["id"])
+            # Loading revalidates all previously loaded groups for this exact
+            # session before considering the requested group.
+            expected.intersection_update(
+                current["id"]
+                for current in groups
+                if current["enabled"]
+                and current["loading_mode"] == "on_demand"
+                and any(
+                    tool["enabled"]
+                    for tool in tools
+                    if tool["spec"]["name"] in current["functions"]
+                )
+            )
             load_function_groups(session, [group["id"]], groups, tools)
             if (
                 group["enabled"]

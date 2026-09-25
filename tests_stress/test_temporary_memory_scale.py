@@ -33,7 +33,7 @@ async def test_bulk_expiry_keeps_unrelated_live_owners(
     for batch in range(stress_scale):
         raw = []
         for number in range(100):
-            owner = f"user:owner-{number % 20}"
+            owner = f"user:owner-{number // 5}"
             live = number % 5 >= 3
             raw.append(
                 {
