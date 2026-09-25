@@ -141,7 +141,7 @@ function syncScopeRevision(panel, result) {
 export function applyRulePackImportMutation(panel, result) {
   panel._result={...panel._result,
     rules:[...(panel._result?.rules||[]),...result.rules],
-    groups:result.groups,wording_groups:result.wording_groups,
+    groups:result.groups,
     revision:result.revision};
   syncScopeRevision(panel,panel._result);
   const root=panel.shadowRoot;
@@ -149,11 +149,6 @@ export function applyRulePackImportMutation(panel, result) {
   if(filter){filter.innerHTML=groupFilterOptions(panel,result.groups);filter.value=panel._ruleGroupFilter||"all";}
   const rows=root?.querySelector(".rule-group-manager-rows");
   if(rows)rows.innerHTML=groupManagerRows(panel,result.groups);
-  const wordingHost=root?.querySelector("#wording-groups");
-  if(wordingHost&&!panel._rulesSettingsDraft){
-    wordingHost.innerHTML=elementFromMarkup(wordingEditor(panel,result.wording_groups)).querySelector("#wording-groups").innerHTML;
-    bindWordingEditor(panel);
-  }
   const collection=ruleCollections.get(root?.querySelector(".rule-list"));
   if(collection)collection.settings=ruleSettingsSignature(panel);
   reconcileRequestRules(panel);
