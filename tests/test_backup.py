@@ -365,7 +365,7 @@ def test_version_four_backup_ignores_only_retired_section() -> None:
 
     prepared = inspect_backup(legacy, "agent-new")
 
-    assert prepared.request_rules["rules"] == []
+    assert prepared.request_rules["rules"][0]["id"] == "good-night"
     assert "protected_actions" not in prepared.summary()
 
 
@@ -499,7 +499,12 @@ async def test_replace_helpers_rebuild_canonical_state() -> None:
     request_rules = RequestRules(FakeStorage())
     await request_rules.async_initialize()
     await request_rules.async_replace_backup(document["request_rules"])
-    assert (await request_rules.async_backup_data())["rules"] == []
+    restored_rules = await request_rules.async_backup_data()
+    assert restored_rules["groups"] == [{"id": "home", "name": "Home"}]
+    assert restored_rules["wording_groups"] == [
+        {"canonical": "activate", "alternatives": ["power up"]}
+    ]
+    assert restored_rules["rules"][0]["group_id"] == "home"
 
 
 async def test_restore_failure_rolls_back_before_reporting(monkeypatch, hass) -> None:
