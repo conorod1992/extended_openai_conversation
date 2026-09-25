@@ -16,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.provider_errors im
     ensure_successful_responses_result,
     log_provider_failure,
     provider_error_metadata,
+    provider_log_remediation,
     provider_stream_error,
     provider_transport_error,
     provider_user_message,
@@ -295,8 +296,26 @@ def test_request_reauthentication_handles_start_failure(
     assert "Unable to start Extended OpenAI reauthentication flow" in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (401, "API key or reauthenticate"),
+        (403, "permissions and access"),
+        (429, "quota or rate limits"),
+        (503, "provider is currently unavailable"),
+        (400, "provider and model settings"),
+    ],
+)
+def test_provider_log_remediation_is_actionable(status: int, expected: str) -> None:
+    """Common provider failures tell the user what they can check."""
+    error = Exception("provider failed")
+    error.status_code = status
+
+    assert expected in provider_log_remediation(error)
+
+
 def test_log_provider_failure_serializes_only_safe_metadata() -> None:
-    """The logging boundary emits the same redacted metadata contract."""
+    """The logging boundary emits remediation plus the redacted metadata contract."""
     logger = Mock(spec=logging.Logger)
     error = Exception("api-key: super-secret")
     error.status_code = 500
@@ -305,9 +324,10 @@ def test_log_provider_failure_serializes_only_safe_metadata() -> None:
 
     logger.error.assert_called_once()
     arguments = logger.error.call_args.args
-    assert arguments[0] == "%s: %s"
+    assert arguments[0] == "%s. %s. Technical details: %s"
     assert arguments[1] == "request failed"
-    payload = json.loads(arguments[2])
+    assert "provider is currently unavailable" in arguments[2]
+    payload = json.loads(arguments[3])
     assert payload["status_code"] == 500
     assert "super-secret" not in payload["message"]
     assert "[redacted]" in payload["message"]
