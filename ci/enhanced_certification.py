@@ -39,7 +39,7 @@ def main(root: Path) -> int:
     campaigns = json.loads(os.environ["ENHANCED_CAMPAIGNS"])
     intensities = json.loads(os.environ["ENHANCED_INTENSITIES"])
     selected = os.environ.get("ENHANCED_SELECTED", "all")
-    if selected == "browser":
+    if selected in {"browser", "browser-engines"}:
         campaigns = []  # The Python matrix is intentionally skipped for browser-only runs.
     seed = os.environ["STRESS_SEED"]
     needs = json.loads(os.environ.get("ENHANCED_NEEDS", "{}"))
@@ -54,6 +54,12 @@ def main(root: Path) -> int:
             "browser-diagnostics" if selected == "diagnostics" else "browser"
         )
         expected |= {(browser_campaign, intensity, None) for intensity in intensities}
+    if selected in {"all", "browser", "browser-engines"}:
+        expected |= {
+            (f"browser-{engine}", intensity, None)
+            for engine in ("firefox", "webkit")
+            for intensity in intensities
+        }
     if selected in {"all", "lifecycle"}:
         expected |= {
             ("lifecycle-matrix", "normal", point)

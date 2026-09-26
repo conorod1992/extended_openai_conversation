@@ -2072,6 +2072,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._selectedAgent().memory_count = Math.max(0, Number(this._selectedAgent().memory_count || 0) - 1);
       this._render();
       this._toast("Memory deleted");
+      this.shadowRoot.querySelector("#add-memory")?.focus({preventScroll: true});
     } catch (err) { this._toast(`Unable to delete memory: ${err.message || String(err)}`, true); }
   }
 

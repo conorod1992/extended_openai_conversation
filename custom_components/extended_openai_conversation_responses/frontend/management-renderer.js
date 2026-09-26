@@ -158,8 +158,11 @@ function bindDynamicBase(panel) {
 const regionMarkup = new WeakMap();
 function updateRegion(host, markup) {
   if (!host || regionMarkup.get(host) === markup) return;
+  const active = host.contains(host.getRootNode().activeElement)
+    ? host.getRootNode().activeElement?.id : null;
   host.innerHTML = markup;
   regionMarkup.set(host, markup);
+  if (active) host.querySelector(`#${CSS.escape(active)}`)?.focus({preventScroll: true});
 }
 
 function updateAgentActions(panel) {

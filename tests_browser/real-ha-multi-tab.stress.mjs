@@ -213,6 +213,78 @@ test("stale Knowledge edit cannot overwrite a newer genuine HA source", async ({
   }
 });
 
+test("backgrounded Memory tab rejects stale edits and delayed reads after a newer HA save", async ({page, context}, testInfo) => {
+  test.setTimeout(120_000);
+  const other = await context.newPage();
+  const errorsA = trackPageErrors(page), errorsB = trackPageErrors(other);
+  const trace = [];
+  try {
+    await page.goto(realFixtureUrl("data-memory/memories"));
+    const panelA = page.locator("extended-openai-management-panel");
+    await expect(panelA.getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
+    await panelA.locator("#add-memory").click();
+    await panelA.locator("#memory-content").fill("Two-tab Memory original");
+    await panelA.locator("#memory-save").click();
+    await expect(panelA.getByText("Two-tab Memory original", {exact: true})).toBeVisible();
+    await other.goto(realFixtureUrl("data-memory/memories"));
+    const panelB = other.locator("extended-openai-management-panel");
+    await expect(panelB.getByText("Two-tab Memory original", {exact: true})).toBeVisible();
+
+    await panelA.locator(".list-card").filter({hasText: "Two-tab Memory original"}).locator(".memory-edit-button").click();
+    await panelB.locator(".list-card").filter({hasText: "Two-tab Memory original"}).locator(".memory-edit-button").click();
+    await panelA.locator("#memory-content").fill("Two-tab Memory authoritative");
+    await panelA.locator("#memory-save").click();
+    await expect(panelA.getByText("Two-tab Memory authoritative", {exact: true})).toBeVisible();
+    await panelB.locator("#memory-content").fill("Two-tab Memory stale draft");
+    await panelB.locator("#memory-save").click();
+    await expect(panelB.locator("#memory-error")).toContainText("changed in another tab");
+    await expect(panelB.locator("#memory-content")).toHaveValue("Two-tab Memory stale draft");
+    trace.push("same-object Memory save rejected and draft preserved");
+
+    await other.goto(realFixtureUrl("data-memory/memories"));
+    await expect(panelB.getByText("Two-tab Memory authoritative", {exact: true})).toBeVisible();
+    await page.evaluate(() => {
+      const original = browserHarness.hass.callWS;
+      browserHarness.hass.callWS = async (message) => {
+        const response = await original(message);
+        if (message.section === "memories" && message.action === "list" && !window.__staleCaptured) {
+          window.__staleCaptured = true;
+          return new Promise((resolve) => { window.__releaseStale = () => resolve(response); });
+        }
+        return response;
+      };
+      browserHarness.panel._sectionCache.clear();
+      void browserHarness.panel._loadSection();
+    });
+    await expect.poll(() => page.evaluate(() => Boolean(window.__staleCaptured))).toBe(true);
+    trace.push("old genuine HA read held while tab inactive");
+
+    await other.bringToFront();
+    await panelB.locator(".list-card").filter({hasText: "Two-tab Memory authoritative"}).locator(".memory-edit-button").click();
+    await panelB.locator("#memory-content").fill("Two-tab Memory newer backend");
+    await panelB.locator("#memory-save").click();
+    await expect(panelB.getByText("Two-tab Memory newer backend", {exact: true})).toBeVisible();
+    trace.push("foreground tab committed newer backend state");
+
+    await page.bringToFront();
+    await page.evaluate(() => {
+      browserHarness.panel._sectionCache.clear();
+      void browserHarness.panel._loadSection();
+    });
+    await expect(panelA.getByText("Two-tab Memory newer backend", {exact: true})).toBeVisible();
+    await page.evaluate(() => window.__releaseStale());
+    await expect(panelA.getByText("Two-tab Memory newer backend", {exact: true})).toBeVisible();
+    await expect(panelA.getByText("Two-tab Memory authoritative", {exact: true})).toHaveCount(0);
+    trace.push("released stale read did not overwrite current HA Memory");
+    await expectHarnessClean(page, errorsA);
+    expect(errorsB).toHaveLength(0);
+    expect(errorsB.badResponses.every(item => item.startsWith("400 "))).toBe(true);
+  } finally {
+    await testInfo.attach("multi-tab-memory-recovery", {body: JSON.stringify({layer: "browser + real-ha", trace}), contentType: "application/json"});
+    await other.close();
+  }
+});
+
 test("stale Guest policy cannot weaken a newer genuine HA policy", async ({page, context}, testInfo) => {
   test.setTimeout(120_000);
   const other = await context.newPage();

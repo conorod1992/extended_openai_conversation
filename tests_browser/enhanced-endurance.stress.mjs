@@ -20,7 +20,9 @@ function seededRandom(seed) {
 test("one mounted panel survives a long seeded route journey", async ({page}, testInfo) => {
   test.setTimeout(180_000);
   const seed = Number(process.env.STRESS_SEED || 237101);
-  const count = process.env.STRESS_INTENSITY === "heavy" ? 320 : 80;
+  const count = process.env.CROSS_BROWSER_NIGHTLY === "1"
+    ? (process.env.STRESS_INTENSITY === "heavy" ? 48 : 24)
+    : (process.env.STRESS_INTENSITY === "heavy" ? 320 : 80);
   const random = seededRandom(seed ^ 0xB20E);
   const operations = [];
   const errors = trackPageErrors(page);
