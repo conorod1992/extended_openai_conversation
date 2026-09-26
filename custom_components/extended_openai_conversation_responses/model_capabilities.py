@@ -8,7 +8,11 @@ from contextvars import ContextVar
 from typing import Any, cast
 
 from .const import API_MODE_AUTO, API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES
-from .model_catalog import function_calling_allowed, model_metadata
+from .model_catalog import (
+    compatibility_capabilities,
+    evaluate_tool_rule,
+    model_metadata,
+)
 
 
 class ModelCapabilityError(ValueError):
@@ -45,7 +49,66 @@ def get_model_capabilities(model_id: str) -> dict[str, Any]:
     return model_metadata(model_id)
 
 
-def validate_reasoning_effort(model: str, effort: str | None) -> str | None:
+def frontend_capabilities(
+    model: str, metadata: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Send evaluated choices to the UI without browser-side provider rules."""
+    metadata = metadata or model_metadata(model)
+    result = compatibility_capabilities(model, metadata=metadata)
+    with model_capability_snapshot(model, metadata):
+        result["auto_paths"] = {}
+        for effort in (None, *metadata["reasoning"]["efforts"]):
+            for functions in (False, True):
+                for web_search in (False, True):
+                    key = f"{effort if effort is not None else 'null'}:{int(functions)}:{int(web_search)}"
+                    try:
+                        result["auto_paths"][key] = select_api_path(
+                            model, API_MODE_AUTO, functions, effort, web_search
+                        )
+                    except ModelCapabilityError:
+                        result["auto_paths"][key] = None
+    return result
+
+
+def reasoning_efforts_for_api(model: str, api: str) -> list[str]:
+    return list(_request_capabilities(model)["reasoning"]["by_api"][api]["efforts"])
+
+
+def capability_allowed(
+    model: str,
+    tool: str,
+    api: str,
+    *,
+    effort: str | None = None,
+    service_tier: str | None = None,
+    streaming: bool | None = None,
+) -> bool:
+    """Evaluate the catalog's bounded, explicit condition dimensions."""
+    capabilities = _request_capabilities(model)
+    if not capabilities["api"].get(api):
+        return False
+    if "tools" not in capabilities:
+        if tool == "web_search":
+            return api == API_MODE_RESPONSES and bool(
+                capabilities.get("responses_web_search")
+            )
+        legacy = capabilities["function_calling"][api]
+        return (
+            legacy
+            if type(legacy) is bool
+            else effort in legacy["allowed_reasoning_efforts"]
+        )
+    return evaluate_tool_rule(
+        capabilities["tools"][tool][api],
+        effort=effort,
+        service_tier=service_tier,
+        streaming=streaming,
+    )
+
+
+def validate_reasoning_effort(
+    model: str, effort: str | None, api: str | None = None
+) -> str | None:
     """Validate an exact model reasoning enum without family-name heuristics."""
     reasoning = _request_capabilities(model)["reasoning"]
     if not reasoning["supported"]:
@@ -56,10 +119,13 @@ def validate_reasoning_effort(model: str, effort: str | None) -> str | None:
         return None
     if effort is None:
         return None
-    if effort not in reasoning["efforts"]:
-        allowed = ", ".join(reasoning["efforts"])
+    choices = (
+        reasoning["efforts"] if api is None else reasoning["by_api"][api]["efforts"]
+    )
+    if effort not in choices:
+        allowed = ", ".join(choices)
         raise ModelCapabilityError(
-            f"Invalid reasoning_effort {effort!r} for {model}; allowed: {allowed}."
+            f"Invalid reasoning_effort {effort!r} for {model}{' through ' + api if api else ''}; allowed: {allowed}."
         )
     return effort
 
@@ -78,7 +144,11 @@ def parameter_is_allowed(model: str, parameter: str, effort: str | None) -> bool
 
 
 def validate_api_path(
-    model: str, api: str, tools_required: bool = False, effort: str | None = None
+    model: str,
+    api: str,
+    tools_required: bool = False,
+    effort: str | None = None,
+    web_search: bool = False,
 ) -> str:
     """Validate API and function-calling support for one selected path."""
     if api not in {API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS}:
@@ -86,11 +156,19 @@ def validate_api_path(
     capabilities = _request_capabilities(model)
     if not capabilities["api"][api]:
         raise ModelCapabilityError(f"{model} does not support {api}.")
-    if tools_required and not function_calling_allowed(
-        capabilities["function_calling"][api], effort
-    ):
+    validate_reasoning_effort(model, effort, api)
+    if tools_required and not capability_allowed(model, "function", api, effort=effort):
         raise ModelCapabilityError(
-            f"{model} does not support function/tool calling through {api}."
+            f"{model} does not support function/tool calling through {api} at reasoning_effort={effort}."
+        )
+    if web_search and not capability_allowed(model, "web_search", api, effort=effort):
+        if api == API_MODE_CHAT_COMPLETIONS:
+            raise ModelCapabilityError(
+                "Web Search requires the Responses API. Select Responses API mode "
+                "or use a model for which Auto resolves to Responses."
+            )
+        raise ModelCapabilityError(
+            f"{model} does not support Web Search through {api} at reasoning_effort={effort}."
         )
     return api
 
@@ -100,22 +178,28 @@ def select_api_path(
     configured_api: str,
     tools_required: bool = False,
     effort: str | None = None,
+    web_search: bool = False,
 ) -> str:
     """Resolve Auto entirely from exact model capability metadata."""
     capabilities = _request_capabilities(model)
     if configured_api != API_MODE_AUTO:
-        return validate_api_path(model, configured_api, tools_required, effort)
+        return validate_api_path(
+            model, configured_api, tools_required, effort, web_search
+        )
+
+    def compatible(api: str) -> bool:
+        try:
+            validate_api_path(model, api, tools_required, effort, web_search)
+            return True
+        except ModelCapabilityError:
+            return False
 
     if tools_required:
         preferred = cast(str, capabilities["function_calling"]["preferred_api"])
-        if capabilities["api"].get(preferred) and function_calling_allowed(
-            capabilities["function_calling"][preferred], effort
-        ):
+        if compatible(preferred):
             return preferred
         for api in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
-            if capabilities["api"][api] and function_calling_allowed(
-                capabilities["function_calling"][api], effort
-            ):
+            if compatible(api):
                 return api
         raise ModelCapabilityError(
             f"{model} has no supported API path for function/tool calling."
@@ -130,10 +214,10 @@ def select_api_path(
         preferred = (
             cast(str | None, capabilities.get("auto_api")) or API_MODE_CHAT_COMPLETIONS
         )
-    if capabilities["api"].get(preferred):
+    if compatible(preferred):
         return preferred
     for api in (API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES):
-        if capabilities["api"][api]:
+        if compatible(api):
             return api
     raise ModelCapabilityError(f"{model} has no supported conversational API path.")
 

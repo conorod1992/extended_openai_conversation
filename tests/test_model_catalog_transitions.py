@@ -149,6 +149,7 @@ def candidate():
     value["catalog_version"] += 1
     model = next(item for item in value["models"] if item["id"] == "gpt-5.6")
     model["reasoning"]["efforts"].append("minimal")
+    model["reasoning"]["by_api"]["responses"]["efforts"].append("minimal")
     return value
 
 
@@ -178,6 +179,7 @@ def _expanded_candidate() -> dict:
     candidate["catalog_version"] += 1
     model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
     model["reasoning"]["efforts"].append("minimal")
+    model["reasoning"]["by_api"]["responses"]["efforts"].append("minimal")
     return candidate
 
 
@@ -208,7 +210,7 @@ async def test_check_stages_update_without_changing_active_catalog(
     result = await check_manager.async_check(force=True)
 
     assert result["source"] == "bundled"
-    assert result["schema_version"] == 4
+    assert result["schema_version"] == 5
     assert result["update_available"] is True
     assert result["available_catalog_version"] == value["catalog_version"]
     assert result["last_error"] is None
@@ -359,6 +361,8 @@ def test_sampling_rank_orders_supported_states() -> None:
 def test_transition_rejects_removed_reasoning_effort() -> None:
     candidate = _catalog()
     _model(candidate)["reasoning"]["efforts"].remove("max")
+    _model(candidate)["reasoning"]["by_api"]["responses"]["efforts"].remove("max")
+    _model(candidate)["reasoning"]["by_api"]["chat_completions"]["efforts"].remove("max")
 
     with pytest.raises(ValueError, match="cannot remove reasoning effort choices"):
         data.validate_catalog_transition(None, candidate)
@@ -368,10 +372,13 @@ def test_transition_rejects_removed_api_path() -> None:
     candidate = _catalog()
     model = _model(candidate)
     model["api"]["responses"] = False
+    model["reasoning"]["by_api"]["responses"]["efforts"] = []
     model["auto_api"] = "chat_completions"
     model["function_calling"].update(
         responses=False, chat_completions=True, preferred_api="chat_completions"
     )
+    model["tools"]["function"]["responses"] = {"support": "never"}
+    model["tools"]["web_search"]["responses"] = {"support": "never"}
     model["recommended_profile"]["api"] = "chat_completions"
 
     with pytest.raises(ValueError, match="cannot remove an API path"):
@@ -609,6 +616,7 @@ def test_hot_transition_cannot_remove_previously_valid_reasoning_choice() -> Non
     candidate["catalog_version"] += 1
     model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
     model["reasoning"]["efforts"].remove("minimal")
+    model["reasoning"]["by_api"]["responses"]["efforts"].remove("minimal")
 
     with pytest.raises(ValueError, match="cannot remove reasoning effort choices"):
         data.validate_catalog_transition(current, candidate)
@@ -621,7 +629,11 @@ def test_hot_transition_cannot_remove_reasoning_capability() -> None:
     model["reasoning"]["supported"] = False
     model["reasoning"]["efforts"] = []
     model["reasoning"]["openai_default"] = None
+    for api in ("responses", "chat_completions"):
+        model["reasoning"]["by_api"][api]["efforts"] = []
     model["recommended_profile"]["reasoning_effort"] = None
+    model["function_calling"]["chat_completions"] = False
+    model["tools"]["function"]["chat_completions"] = {"support": "never"}
 
     with pytest.raises(ValueError, match="cannot remove reasoning effort choices"):
         data.validate_catalog_transition(None, candidate)
@@ -661,6 +673,7 @@ async def test_manager_rejects_narrowing_and_keeps_last_good_catalog(
     candidate["catalog_version"] += 1
     model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
     model["reasoning"]["efforts"].remove("minimal")
+    model["reasoning"]["by_api"]["responses"]["efforts"].remove("minimal")
     _transport(monkeypatch, json.dumps(candidate).encode(), etag='"v3"')
 
     result = await manager.async_update(force=True)
@@ -677,6 +690,8 @@ async def test_restart_rejects_stored_override_that_narrows_bundled_choices(
     candidate["catalog_version"] += 1
     model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
     model["reasoning"]["efforts"] = ["low"]
+    model["reasoning"]["by_api"]["responses"]["efforts"] = ["low"]
+    model["reasoning"]["by_api"]["chat_completions"]["efforts"] = ["low"]
 
     manager = runtime.ModelCatalogManager(hass)
     manager.store = MemoryStore()

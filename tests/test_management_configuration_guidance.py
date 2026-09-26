@@ -9,6 +9,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_MODE,
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
+    CONF_REASONING_EFFORT,
 )
 from custom_components.extended_openai_conversation_responses.management_configuration_guidance import (
     configuration_guidance_snapshot,
@@ -19,6 +20,7 @@ def test_web_search_guidance_reuses_runtime_compatibility_rules() -> None:
     config = agent_config_defaults()
     config[CONF_CHAT_MODEL] = "gpt-5-mini"
     config[CONF_API_MODE] = "auto"
+    config[CONF_REASONING_EFFORT] = "low"
 
     chat = configuration_guidance_snapshot({}, config)
     assert chat["effective_api_mode"] == "responses"

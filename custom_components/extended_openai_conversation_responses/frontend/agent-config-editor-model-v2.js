@@ -58,6 +58,10 @@ export function bindConfiguration(panel) {
       panel._configRestoreFocus = '[data-config="reasoning_effort"]';
       panel._render();
     },
+    capabilityChanged: (control) => {
+      panel._configRestoreFocus = `[data-config="${control.dataset.config}"]`;
+      panel._render();
+    },
   });
   return result;
 }

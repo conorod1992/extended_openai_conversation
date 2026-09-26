@@ -16,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_ENABLED,
     CONF_MEMORY_MODE,
     CONF_PROMPT,
+    CONF_REASONING_EFFORT,
     CONF_SKIP_AUTHENTICATION,
     CONFIG_ENTRY_VERSION,
     DOMAIN,
@@ -29,11 +30,7 @@ from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import Context, HomeAssistant
-from tests_real_ha.test_provider_wire_e2e import (
-    _chat_sse_text,
-    _install_wire,
-    _speech,
-)
+from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
 
 _LEGACY_PROMPT = "Legacy persisted startup marker."
 _LEGACY_MODEL = "gpt-5.6"
@@ -51,6 +48,7 @@ def _legacy_entry() -> MockConfigEntry:
         options={
             CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
             CONF_CHAT_MODEL: _LEGACY_MODEL,
+            CONF_REASONING_EFFORT: "none",
             CONF_PROMPT: _LEGACY_PROMPT,
             # Exercise the compatibility conversion from the historical booleans to
             # the modern canonical memory mode rather than seeding the new field.

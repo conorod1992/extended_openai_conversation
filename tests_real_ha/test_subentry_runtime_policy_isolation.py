@@ -17,6 +17,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
     CONF_MEMORY_MODE,
+    CONF_REASONING_EFFORT,
     CONF_SKIP_AUTHENTICATION,
     CONF_TEMPORARY_MEMORY,
     CONFIG_ENTRY_VERSION,
@@ -33,7 +34,6 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-
 from tests_real_ha.test_acceptance_lifecycle import _setup_entry, _subentry
 from tests_real_ha.test_cross_feature_acceptance import _provider, _speech
 
@@ -64,6 +64,7 @@ def _entry() -> MockConfigEntry:
     common = {
         CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
         CONF_CHAT_MODEL: "gpt-5.6",
+        CONF_REASONING_EFFORT: "none",
         CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_USER,
         CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
     }

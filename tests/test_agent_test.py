@@ -599,7 +599,7 @@ async def test_agent_test_non_auth_provider_error_and_web_search_failure(
     result = await agent_test.async_test_agent(
         cast(Any, SimpleNamespace()),
         cast(Any, _coverage_entry(client)),
-        cast(Any, _coverage_subentry(web_search=True)),
+        cast(Any, _coverage_subentry(web_search=True, reasoning_effort="low")),
     )
 
     checks = _coverage_checks(result)
@@ -644,7 +644,7 @@ async def test_agent_test_successful_responses_probe_records_usage_and_web_searc
     result = await agent_test.async_test_agent(
         cast(Any, SimpleNamespace()),
         cast(Any, _coverage_entry(client)),
-        cast(Any, _coverage_subentry(web_search=True)),
+        cast(Any, _coverage_subentry(web_search=True, reasoning_effort="low")),
     )
 
     checks = _coverage_checks(result)
@@ -755,7 +755,7 @@ async def _residual_run_agent(
     web_search: bool = False,
     probe_error: BaseException | None = None,
     memory_is_enabled: bool = False,
-) -> tuple[agent_test.AgentTestResult, _Usage]:
+) -> tuple[agent_test.AgentTestResult, _ResidualUsage]:
     usage = _ResidualUsage()
     create = _ResidualCreate(result=SimpleNamespace(usage=None), error=probe_error)
     client = SimpleNamespace(responses=SimpleNamespace(create=create.create))

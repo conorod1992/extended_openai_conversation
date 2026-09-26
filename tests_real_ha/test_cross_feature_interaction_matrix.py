@@ -6,6 +6,7 @@ from datetime import timedelta
 import json
 from typing import Any
 
+from pytest_homeassistant_custom_component.common import MockUser
 import voluptuous as vol
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -25,14 +26,17 @@ from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockUser
-
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
-from tests_real_ha.test_cross_feature_acceptance import _action, _provider, _rule, _speech
+from tests_real_ha.test_cross_feature_acceptance import (
+    _action,
+    _provider,
+    _rule,
+    _speech,
+)
 from tests_real_ha.test_function_execution_composition import (
+    _ha_reference,
     _MutableAPI,
     _MutableEchoTool,
-    _ha_reference,
 )
 
 _OWNER_ID = "cross-feature-owner"
@@ -190,7 +194,7 @@ async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_le
         conversation_options={
             CONF_API_MODE: "chat_completions",
             CONF_CHAT_MODEL: "gpt-5.6",
-            CONF_REASONING_EFFORT: "medium",
+            CONF_REASONING_EFFORT: "none",
             CONF_FUNCTION_TOOLS: [saved_tool],
         },
     )
@@ -202,7 +206,7 @@ async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_le
             "model_routing",
             {
                 "model": "gpt-5.5",
-                "reasoning_effort": "xhigh",
+                "reasoning_effort": "none",
                 "scope": "request",
                 "reset": False,
                 "success_response": "Route selected",
@@ -234,7 +238,7 @@ async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_le
     assert _speech(routed) == "Routed tool complete."
     assert len(sent) == 2
     assert [request["model"] for request in sent] == ["gpt-5.5", "gpt-5.5"]
-    assert [request["reasoning_effort"] for request in sent] == ["xhigh", "xhigh"]
+    assert [request["reasoning_effort"] for request in sent] == ["none", "none"]
     assert _HA_ALIAS in _tool_names(sent[0])
     assert len(tool.calls) == 1
     assert tool.calls[0][0].tool_args == {"value": "ha"}
@@ -250,7 +254,7 @@ async def test_request_scoped_model_route_survives_ha_owned_tool_loop_without_le
     assert _speech(normal) == "Back on the default route."
     assert len(sent) == 3
     assert sent[2]["model"] == "gpt-5.6"
-    assert sent[2]["reasoning_effort"] == "medium"
+    assert sent[2]["reasoning_effort"] == "none"
 
 
 async def test_persisted_request_rule_and_function_group_reconstruct_after_reload(

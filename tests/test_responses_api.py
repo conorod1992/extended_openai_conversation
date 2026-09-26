@@ -299,6 +299,7 @@ def test_web_search_tool_schema(context_size: str) -> None:
         {
             CONF_WEB_SEARCH: True,
             CONF_WEB_SEARCH_CONTEXT: context_size,
+            CONF_REASONING_EFFORT: "low",
         },
         API_MODE_RESPONSES,
         {

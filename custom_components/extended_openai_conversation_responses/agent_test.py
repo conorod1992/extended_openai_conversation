@@ -37,7 +37,7 @@ from .guest_mode import get_loaded_guest_mode, resolve_guest_policy
 from .ha_llm_tools import is_ha_tool, validate_reference
 from .helpers import get_api_mode, get_exposed_entities, supports_openai_hosted_tools
 from .memory import async_get_memory, memory_enabled
-from .model_capabilities import model_capability_snapshot
+from .model_capabilities import capability_allowed, model_capability_snapshot
 from .model_catalog import model_metadata
 from .provider_errors import (
     classify_config_provider_error,
@@ -263,13 +263,20 @@ async def async_test_agent(
         checks.append(_check("Persistent memory", "Passed", "Disabled"))
 
     web_search = subentry.data.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH)
-    web_search_compatible = (
-        api_mode == API_MODE_RESPONSES
-        and metadata["responses_web_search"]
-        and supports_openai_hosted_tools(
-            entry.data.get(CONF_API_PROVIDER), entry.data.get(CONF_BASE_URL)
+    with model_capability_snapshot(model, metadata):
+        web_search_compatible = (
+            api_mode == API_MODE_RESPONSES
+            and capability_allowed(
+                model,
+                "web_search",
+                api_mode,
+                effort=subentry.data.get("reasoning_effort")
+                or metadata.get("recommended_profile", {}).get("reasoning_effort"),
+            )
+            and supports_openai_hosted_tools(
+                entry.data.get(CONF_API_PROVIDER), entry.data.get(CONF_BASE_URL)
+            )
         )
-    )
     if web_search and not web_search_compatible:
         checks.append(
             _check(

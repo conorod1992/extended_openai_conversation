@@ -51,6 +51,7 @@ from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
 from .memory import MEMORY_TOOL_NAMES, memory_tools
 from .model_capabilities import (
     ModelCapabilityError,
+    capability_allowed,
     get_model_capabilities,
     model_capability_snapshot,
     normalize_output_token_limit,
@@ -173,9 +174,16 @@ def build_web_search_tool(
     model_capabilities = capabilities or get_model_capabilities(
         str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
     )
-    if not model_capabilities["responses_web_search"]:
+    effort = (
+        options.get(CONF_REASONING_EFFORT)
+        or model_capabilities["recommended_profile"]["reasoning_effort"]
+    )
+    model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+    with model_capability_snapshot(model, model_capabilities):
+        allowed = capability_allowed(model, "web_search", api_mode, effort=effort)
+    if not allowed:
         raise HomeAssistantError(
-            f"{options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)} does not support Responses Web Search."
+            f"{options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)} does not support Responses Web Search at reasoning_effort={effort}."
         )
     return {
         "type": "web_search",
@@ -202,7 +210,6 @@ def _configured_tools_required(options: Mapping[str, Any]) -> bool:
             CONF_KNOWLEDGE_ENABLED,
             CONF_ARCHIVE_ENABLED,
             CONF_GUEST_MODE_ENABLED,
-            CONF_WEB_SEARCH,
         )
     )
 
@@ -272,7 +279,13 @@ def build_provider_request_snapshot(
                         stale_effort,
                         model,
                     )
-            api_mode = select_api_path(model, configured_api, needs_tools, effort)
+            api_mode = select_api_path(
+                model,
+                configured_api,
+                needs_tools,
+                effort,
+                bool(options.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH)),
+            )
             api_kwargs: dict[str, Any] = {
                 "model": model,
                 "stream": capabilities["streaming"],

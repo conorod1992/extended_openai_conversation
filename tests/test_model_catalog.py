@@ -87,8 +87,8 @@ def _websocket_handler():
 def test_bundled_catalog_is_schema_v4_and_parses_exactly():
     parsed = data.parse_catalog(Path(data.__file__).with_suffix(".json").read_bytes())
     assert parsed == data.BUNDLED_CATALOG
-    assert parsed["schema_version"] == 4
-    assert parsed["catalog_version"] >= 4
+    assert parsed["schema_version"] == 5
+    assert parsed["catalog_version"] >= 7
 
 
 def test_required_current_models_and_invalid_aliases():
@@ -201,7 +201,7 @@ async def test_stored_v1_catalog_is_migrated_to_authoritative_v4(check_manager):
         "last_checked": 0,
     }
     await check_manager.async_load()
-    assert check_manager.status()["schema_version"] == 4
+    assert check_manager.status()["schema_version"] == 5
     assert data.model_metadata("gpt-5.6")["reasoning"]["efforts"] == [
         "none",
         "low",
@@ -216,7 +216,7 @@ async def test_corrupt_storage_falls_back_to_bundled(check_manager):
     check_manager.store.saved = {"catalog": {"schema_version": 99}}
     await check_manager.async_load()
     assert check_manager.status()["source"] == "bundled"
-    assert check_manager.status()["schema_version"] == 4
+    assert check_manager.status()["schema_version"] == 5
     assert check_manager.last_error
 
 
@@ -439,14 +439,14 @@ def test_v1_migration_rejects_non_v1_and_preserves_monotonic_version() -> None:
             "catalog_version": data.BUNDLED_CATALOG["catalog_version"] + 5,
         }
     )
-    assert migrated["schema_version"] == 4
+    assert migrated["schema_version"] == 5
     assert migrated["catalog_version"] == data.BUNDLED_CATALOG["catalog_version"] + 6
 
 
 def test_validate_or_migrate_marks_legacy_schemas_as_migrated() -> None:
     migrated, changed = data.validate_or_migrate_catalog({"schema_version": 1})
     assert changed is True
-    assert migrated["schema_version"] == 4
+    assert migrated["schema_version"] == 5
 
     legacy_v2 = deepcopy(data.BUNDLED_CATALOG)
     legacy_v2["models"] = [
@@ -461,7 +461,7 @@ def test_validate_or_migrate_marks_legacy_schemas_as_migrated() -> None:
         model["service_tier"] = bool(model.pop("service_tiers"))
     migrated, changed = data.validate_or_migrate_catalog(legacy_v2)
     assert changed is True
-    assert migrated["schema_version"] == 4
+    assert migrated["schema_version"] == 5
     assert (
         migrated["models"][0]["service_tiers"]
         == data.BUNDLED_CATALOG["models"][0]["service_tiers"]
@@ -566,7 +566,7 @@ async def test_websocket_actions_return_complete_catalog_payload(
     status = {
         "source": "downloaded",
         "catalog_version": 7,
-        "schema_version": 3,
+        "schema_version": 5,
         "update_available": False,
         "available_catalog_version": None,
         "last_checked": 123.0,
@@ -585,7 +585,7 @@ async def test_websocket_actions_return_complete_catalog_payload(
     picker = [{"id": "gpt-test"}]
     monkeypatch.setattr(runtime, "model_metadata", Mock(return_value=metadata))
     monkeypatch.setattr(
-        runtime, "compatibility_capabilities", Mock(return_value=capabilities)
+        runtime, "frontend_capabilities", Mock(return_value=capabilities)
     )
     monkeypatch.setattr(runtime, "catalog_picker_models", Mock(return_value=picker))
 

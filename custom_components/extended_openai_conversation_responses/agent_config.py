@@ -1138,7 +1138,9 @@ def agent_config_snapshot(
 
 def model_capabilities(model: str) -> dict[str, Any]:
     """Return model-specific fields and choices supported by the backend."""
-    capabilities: dict[str, Any] = dict(get_model_config(model))
+    from .model_capabilities import frontend_capabilities
+
+    capabilities: dict[str, Any] = frontend_capabilities(model)
     capabilities["reasoning_effort_options"] = get_reasoning_effort_options(model)
     return capabilities
 

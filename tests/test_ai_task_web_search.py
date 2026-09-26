@@ -2,19 +2,19 @@
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_API_PROVIDER,
+    CONF_REASONING_EFFORT,
     CONF_WEB_SEARCH,
     DEFAULT_AI_TASK_OPTIONS,
 )
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def test_ai_task_web_search_uses_shared_responses_tool() -> None:
@@ -23,6 +23,7 @@ def test_ai_task_web_search_uses_shared_responses_tool() -> None:
         **DEFAULT_AI_TASK_OPTIONS,
         CONF_API_MODE: API_MODE_RESPONSES,
         CONF_WEB_SEARCH: True,
+        CONF_REASONING_EFFORT: "low",
     }
 
     snapshot = build_provider_request_snapshot(

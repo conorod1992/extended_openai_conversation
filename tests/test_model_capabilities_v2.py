@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import model_catalog
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_AUTO,
@@ -36,6 +34,7 @@ from custom_components.extended_openai_conversation_responses.model_capabilities
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def snapshot(model: str, *, api="responses", tools=False, **values):
@@ -170,7 +169,7 @@ def test_initial_gpt5_efforts_and_sampling(model):
 @pytest.mark.parametrize("model", ["gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"])
 def test_non_reasoning_models_sampling_and_reasoning_validation(model):
     caps = get_model_capabilities(model)
-    assert caps["reasoning"] == {"supported": False, "efforts": [], "openai_default": None}
+    assert caps["reasoning"] == {"supported": False, "efforts": [], "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}, "openai_default": None}
     assert parameter_is_allowed(model, "temperature", None)
     assert parameter_is_allowed(model, "top_p", None)
     with pytest.raises(ModelCapabilityError):
@@ -329,6 +328,7 @@ def test_gpt6_astra_uses_reasoning_model_parameter_profile() -> None:
     assert config["reasoning"] == {
         "supported": True,
         "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "by_api": {"responses": {"efforts": ["low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["low", "medium", "high", "xhigh", "max"]}},
         "openai_default": None,
     }
     assert config["temperature"]["support"] == "never"

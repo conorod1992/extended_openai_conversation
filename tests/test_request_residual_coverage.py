@@ -5,7 +5,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import request
 from custom_components.extended_openai_conversation_responses.const import (
@@ -26,6 +25,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def test_configured_tools_required_handles_persisted_string_forms_and_features() -> None:
@@ -39,7 +39,7 @@ def test_configured_tools_required_handles_persisted_string_forms_and_features()
     assert request._configured_tools_required({CONF_FUNCTION_GROUPS: ["group"]}) is True
     assert request._configured_tools_required({CONF_MEMORY_ENABLED: True}) is True
     assert request._configured_tools_required({CONF_KNOWLEDGE_ENABLED: True}) is True
-    assert request._configured_tools_required({CONF_WEB_SEARCH: True}) is True
+    assert request._configured_tools_required({CONF_WEB_SEARCH: True}) is False
 
 
 def test_sampling_value_omits_unconfigured_or_disallowed_values(monkeypatch) -> None:

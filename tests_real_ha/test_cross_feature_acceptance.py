@@ -37,7 +37,7 @@ async def _agent(hass, *, title="Acceptance", **options):
         conversation_options={
             CONF_API_MODE: "chat_completions",
             CONF_CHAT_MODEL: "gpt-5.6",
-            CONF_REASONING_EFFORT: "medium",
+            CONF_REASONING_EFFORT: "none",
             CONF_FUNCTION_TOOLS: [],
             **options,
         },
@@ -210,7 +210,7 @@ async def test_request_only_route_reaches_transport_without_leaking(hass, monkey
     assert _speech(second) == "Normal answer."
     assert len(sent) == 2
     assert sent[1]["model"] == "gpt-5.6"
-    assert sent[1]["reasoning_effort"] == "medium"
+    assert sent[1]["reasoning_effort"] == "none"
 
 
 async def test_on_demand_group_loads_in_tool_loop_and_is_conversation_scoped(
