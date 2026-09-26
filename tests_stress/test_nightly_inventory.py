@@ -13,7 +13,7 @@ EXCLUSIONS = ROOT / "tests_stress" / "nightly_real_ha_exclusions.json"
 
 def _workflow_test_paths(prefix: str) -> set[str]:
     text = WORKFLOW.read_text(encoding="utf-8")
-    return set(re.findall(rf"{re.escape(prefix)}/[A-Za-z0-9_./-]+\\.py", text))
+    return set(re.findall(rf"{re.escape(prefix)}/[A-Za-z0-9_./-]+\.py", text))
 
 
 def _test_files(directory: str) -> set[str]:
