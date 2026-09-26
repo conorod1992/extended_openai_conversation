@@ -44,7 +44,8 @@ from custom_components.extended_openai_conversation_responses.request import (
 
 MODE_ASSERTIONS = "assertions"
 MODE_CARTESIAN = "cartesian"
-_MODES = (MODE_ASSERTIONS, MODE_CARTESIAN)
+MODE_EXPLORATORY = "exploratory"
+_MODES = (MODE_ASSERTIONS, MODE_CARTESIAN, MODE_EXPLORATORY)
 _SAMPLE_VALUE = 0.7
 _EXPLORATORY_SAMPLING_MODELS = (
     "gpt-6-sol",
@@ -476,13 +477,20 @@ async def _run(args: argparse.Namespace) -> int:
     if not models:
         raise SystemExit("No current catalogue models matched the requested scope")
 
-    cases = _cases(
-        models,
-        mode=args.mode,
-        include_service_tiers=args.include_service_tiers,
+    exploratory_only = args.mode == MODE_EXPLORATORY
+    cases = (
+        []
+        if exploratory_only
+        else _cases(
+            models,
+            mode=args.mode,
+            include_service_tiers=args.include_service_tiers,
+        )
     )
     exploratory = (
-        _exploratory_sampling_cases(models) if args.exploratory_sampling else []
+        _exploratory_sampling_cases(models)
+        if exploratory_only or args.exploratory_sampling
+        else []
     )
     estimate = _estimate(cases)
     total_requests = estimate["requests"] + len(exploratory)
@@ -498,7 +506,8 @@ async def _run(args: argparse.Namespace) -> int:
         "model_filter": args.model_filter,
         "include_expensive_models": args.include_expensive_models,
         "include_service_tiers": args.include_service_tiers,
-        "exploratory_sampling": args.exploratory_sampling,
+        "exploratory_sampling": bool(exploratory),
+        "exploratory_only": exploratory_only,
         "planned": {
             **estimate,
             "exploratory_sampling_requests": len(exploratory),
