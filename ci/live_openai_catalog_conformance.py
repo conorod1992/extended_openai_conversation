@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from copy import deepcopy
 from datetime import datetime, timezone
 import itertools
 import json
@@ -17,7 +18,7 @@ from pathlib import Path
 import random
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 
 from ci import live_openai_acceptance as live
 from custom_components.extended_openai_conversation_responses.const import (
@@ -37,11 +38,22 @@ from custom_components.extended_openai_conversation_responses.model_capabilities
 from custom_components.extended_openai_conversation_responses.model_catalog import (
     BUNDLED_CATALOG,
 )
+from custom_components.extended_openai_conversation_responses.request import (
+    build_provider_request_snapshot,
+)
 
 MODE_ASSERTIONS = "assertions"
 MODE_CARTESIAN = "cartesian"
-_MODES = (MODE_ASSERTIONS, MODE_CARTESIAN)
+MODE_EXPLORATORY = "exploratory"
+_MODES = (MODE_ASSERTIONS, MODE_CARTESIAN, MODE_EXPLORATORY)
 _SAMPLE_VALUE = 0.7
+_EXPLORATORY_SAMPLING_MODELS = (
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-5.5",
+    "gpt-5.6",
+)
+_EXPLORATORY_SAMPLING_PARAMETERS = (CONF_TEMPERATURE, CONF_TOP_P)
 
 
 def _selected_models(
@@ -332,6 +344,8 @@ def _cases(
     mode: str,
     include_service_tiers: bool,
 ) -> list[live.ProbeCase]:
+    if mode == MODE_EXPLORATORY:
+        return []
     result: list[live.ProbeCase] = []
     for model in models:
         if mode == MODE_CARTESIAN:
@@ -349,6 +363,94 @@ def _cases(
                 )
             )
     return result
+
+
+
+def _exploratory_sampling_cases(
+    models: list[dict[str, Any]],
+) -> list[tuple[live.ProbeCase, str]]:
+    """Build the small, explicit underclaim probe set for undocumented sampling."""
+    by_id = {model["id"]: model for model in models}
+    result: list[tuple[live.ProbeCase, str]] = []
+    for model_id in _EXPLORATORY_SAMPLING_MODELS:
+        model = by_id.get(model_id)
+        if model is None:
+            continue
+        if "none" not in _efforts(model, API_MODE_RESPONSES):
+            continue
+        for parameter in _EXPLORATORY_SAMPLING_PARAMETERS:
+            options = live._base_options(model, API_MODE_RESPONSES, "none")
+            options[parameter] = _SAMPLE_VALUE
+            result.append(
+                (
+                    live.ProbeCase(
+                        model=model_id,
+                        profile="context-heavy",
+                        options=options,
+                        coverage=live._coverage_for(
+                            API_MODE_RESPONSES,
+                            "none",
+                            "exploratory_sampling",
+                            f"exploratory:{parameter}",
+                        ),
+                    ),
+                    parameter,
+                )
+            )
+    return result
+
+
+async def _run_exploratory_sampling_case(
+    client: AsyncOpenAI,
+    case: live.ProbeCase,
+    parameter: str,
+) -> dict[str, Any]:
+    """Force one undocumented sampling parameter through an EOAI-built request."""
+    metadata = deepcopy(BUNDLED_CATALOG.resolved[case.model])
+    metadata[parameter] = {
+        "support": "conditional",
+        "allowed_reasoning_efforts": ["none"],
+        "send_policy": "omit_unless_configured",
+    }
+    snapshot = build_provider_request_snapshot(
+        case.options,
+        {},
+        tools_required=False,
+        model_capabilities=metadata,
+    )
+    kwargs = dict(snapshot.api_kwargs)
+    if parameter not in kwargs:
+        raise AssertionError(f"Exploratory probe did not emit {parameter}")
+    streaming = bool(kwargs.get("stream", False))
+    try:
+        result = await client.responses.create(
+            input=live._messages(case.profile, snapshot.api_mode),
+            **kwargs,
+        )
+        await live._consume(result, streaming)
+        if streaming:
+            close = getattr(result, "close", None)
+            if close is not None:
+                await close()
+    except BadRequestError as err:
+        return {
+            "model": case.model,
+            "api_mode": snapshot.api_mode,
+            "reasoning_effort": "none",
+            "parameter": parameter,
+            "value": _SAMPLE_VALUE,
+            "outcome": "rejected",
+            "error_type": type(err).__name__,
+            "error": str(err),
+        }
+    return {
+        "model": case.model,
+        "api_mode": snapshot.api_mode,
+        "reasoning_effort": "none",
+        "parameter": parameter,
+        "value": _SAMPLE_VALUE,
+        "outcome": "accepted",
+    }
 
 
 def _estimate(cases: list[live.ProbeCase]) -> dict[str, Any]:
@@ -377,15 +479,26 @@ async def _run(args: argparse.Namespace) -> int:
     if not models:
         raise SystemExit("No current catalogue models matched the requested scope")
 
-    cases = _cases(
-        models,
-        mode=args.mode,
-        include_service_tiers=args.include_service_tiers,
+    exploratory_only = args.mode == MODE_EXPLORATORY
+    cases = (
+        []
+        if exploratory_only
+        else _cases(
+            models,
+            mode=args.mode,
+            include_service_tiers=args.include_service_tiers,
+        )
+    )
+    exploratory = (
+        _exploratory_sampling_cases(models)
+        if exploratory_only or args.exploratory_sampling
+        else []
     )
     estimate = _estimate(cases)
+    total_requests = estimate["requests"] + len(exploratory)
     print(
         f"EOAI catalogue conformance: {len(models)} models, "
-        f"{estimate['requests']} planned live requests ({args.mode})."
+        f"{total_requests} planned live requests ({args.mode})."
     )
     for model, count in estimate["by_model"].items():
         print(f"  {model}: {count}")
@@ -395,8 +508,15 @@ async def _run(args: argparse.Namespace) -> int:
         "model_filter": args.model_filter,
         "include_expensive_models": args.include_expensive_models,
         "include_service_tiers": args.include_service_tiers,
-        "planned": estimate,
+        "exploratory_sampling": bool(exploratory),
+        "exploratory_only": exploratory_only,
+        "planned": {
+            **estimate,
+            "exploratory_sampling_requests": len(exploratory),
+            "total_requests": total_requests,
+        },
         "results": [],
+        "exploratory_results": [],
     }
 
     if args.plan_only:
@@ -447,6 +567,46 @@ async def _run(args: argparse.Namespace) -> int:
                 tested_at=tested_at,
             )
             report["results"].append(item)
+
+        for index, (case, parameter) in enumerate(exploratory, start=1):
+            print(
+                f"[exploratory {index}/{len(exploratory)}] {case.model} / "
+                f"responses / reasoning:none / {parameter}",
+                flush=True,
+            )
+            tested_at = datetime.now(timezone.utc).isoformat()
+            try:
+                item = await _run_exploratory_sampling_case(
+                    client,
+                    case,
+                    parameter,
+                )
+                status = f"exploratory_{item['outcome']}"
+            except Exception as err:
+                failures += 1
+                status = "failed"
+                item = {
+                    "model": case.model,
+                    "api_mode": API_MODE_RESPONSES,
+                    "reasoning_effort": "none",
+                    "parameter": parameter,
+                    "value": _SAMPLE_VALUE,
+                    "outcome": "probe_error",
+                    "error_type": type(err).__name__,
+                    "error": str(err),
+                }
+                print(
+                    f"FAILED exploratory probe: {case.model} / {parameter}: "
+                    f"{type(err).__name__}: {err}",
+                    flush=True,
+                )
+            live._record_case(
+                history,
+                case,
+                status=status,
+                tested_at=tested_at,
+            )
+            report["exploratory_results"].append(item)
     finally:
         await client.close()
         live._write_history(args.history_out, history)
@@ -469,6 +629,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-filter")
     parser.add_argument("--include-expensive-models", action="store_true")
     parser.add_argument("--include-service-tiers", action="store_true")
+    parser.add_argument("--exploratory-sampling", action="store_true")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
         "--report",
