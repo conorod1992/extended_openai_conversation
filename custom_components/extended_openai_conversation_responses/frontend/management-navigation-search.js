@@ -219,28 +219,23 @@ function bindSearch(panel, search) {
       void ensureSearchConfiguration(panel, {retry:true});
       return;
     }
-    let button = event.target.closest(".settings-result");
+    const button = event.target.closest(".settings-result");
     if (!button) return;
     const results = search.querySelector(".search-results");
     const currentQuery = String(panel._settingsSearchQuery || "");
+    const {page, subsection, target} = button.dataset;
     if (results?.dataset.searchQuery !== currentQuery) {
-      const target = button.dataset.target;
       updateSettingsResults(panel);
-      button = target
-        ? [...search.querySelectorAll(".settings-result")].find((candidate) => candidate.dataset.target === target)
-        : null;
-      if (!button) return;
     }
-    panel._pendingSettingFocus = button.dataset.target;
+    panel._pendingSettingFocus = target;
     panel._settingsSearchQuery = "";
     input.value = "";
     updateSettingsResults(panel);
-    await panel._navigate(button.dataset.page, button.dataset.subsection);
+    await panel._navigate(page, subsection);
     // Cached same-page navigation does not rebind main content. Complete the
     // focus handoff here when the normal page binding did not consume it.
-    const target = button.dataset.target;
     if (target && panel._pendingSettingFocus === target
-        && panel._page === button.dataset.page && panel._subsection === button.dataset.subsection) {
+        && panel._page === page && panel._subsection === subsection) {
       const element = panel.shadowRoot.getElementById(target);
       if (element) {
         panel._pendingSettingFocus = null;

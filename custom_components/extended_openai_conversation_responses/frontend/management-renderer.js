@@ -91,6 +91,20 @@ function bindDynamicBase(panel) {
   if (root.__eocRouteControlsBound) return;
   root.__eocRouteControlsBound = true;
 
+  // WebKit can wrap Tab focus to a control above the current scroll position
+  // without scrolling the shadow-root page. Keep keyboard focus in view.
+  root.addEventListener("focusin", (event) => {
+    const node = event.target;
+    if (!node?.matches?.(":focus-visible")) return;
+    requestAnimationFrame(() => {
+      if (!node.isConnected || !node.matches(":focus-visible")) return;
+      const box = node.getBoundingClientRect();
+      if (box.top < 0 || box.bottom > innerHeight || box.left < 0 || box.right > innerWidth) {
+        node.scrollIntoView({block: "nearest", inline: "nearest"});
+      }
+    });
+  });
+
   root.addEventListener("click", (event) => {
     const target = event.target;
     const pageButton = target?.closest?.(".top-nav button[data-page]");

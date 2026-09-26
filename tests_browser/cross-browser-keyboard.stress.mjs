@@ -2,11 +2,11 @@ import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 async function focused(locator) {
-  return locator.evaluate((node) => node.getRootNode().activeElement === node);
+  return locator.evaluate((node) => node.matches(":focus"));
 }
 
 async function assertUsableFocus(page, allowBody = false) {
-  const state = await page.evaluate(() => {
+  const state = async () => page.evaluate(() => {
     let node = document.activeElement;
     while (node?.shadowRoot?.activeElement) node = node.shadowRoot.activeElement;
     if (!node || node === document.body) return {usable: false, reason: "body focus"};
@@ -19,8 +19,9 @@ async function assertUsableFocus(page, allowBody = false) {
       reason: node.outerHTML.slice(0, 180),
     };
   });
-  if (allowBody && state.reason === "body focus") return;
-  expect(state.usable, state.reason).toBe(true);
+  const current = await state();
+  if (allowBody && current.reason === "body focus") return;
+  await expect.poll(async () => (await state()).usable, {message: current.reason, timeout: 1500}).toBe(true);
 }
 
 async function tabTo(page, target, limit = 120) {
