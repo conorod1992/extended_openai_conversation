@@ -1761,7 +1761,9 @@ class ExtendedOpenAIAgentEntity(
         exposed_entities: list[dict[str, Any]],
     ) -> conversation.ToolResultContent:
         """Execute an integration-owned tool or a configured tool."""
-        self._assert_no_aba_configuration()
+        check_aba = getattr(self, "_assert_no_aba_configuration", None)
+        if callable(check_aba):
+            check_aba()
         function_type = function_tool.get("function", {}).get("type")
         policy = self._effective_guest_policy()
         if function_type == "ha_llm" and policy.guest_active:

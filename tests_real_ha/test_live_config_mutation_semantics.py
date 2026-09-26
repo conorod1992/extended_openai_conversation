@@ -478,10 +478,13 @@ async def test_provider_tool_call_rejects_disabled_then_restored_config(
     assert result.response.error_code is not None
     assert executed == []
 
+    await hass.async_block_till_done()
+    fresh_agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert fresh_agent is not None
     fresh_wire = _install_wire(
-        monkeypatch, agent, [_chat_sse_text("Fresh request succeeded.")]
+        monkeypatch, fresh_agent, [_chat_sse_text("Fresh request succeeded.")]
     )
-    fresh = await _say(hass, agent, "try again")
+    fresh = await _say(hass, fresh_agent, "try again")
     assert _speech(fresh) == "Fresh request succeeded."
     assert len(fresh_wire.requests) == 1
     await hass.async_block_till_done()
