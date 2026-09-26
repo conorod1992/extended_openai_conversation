@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Coverage mode: assertions is exhaustive by catalogue claim; cartesian tests every valid discrete capability combination"
+        description: "Coverage mode: assertions by claim, cartesian all valid combinations, exploratory only the 8 targeted sampling probes"
         required: true
         default: "assertions"
         type: choice
         options:
           - assertions
           - cartesian
+          - exploratory
       model_filter:
         description: "Optional model-id substring (for example: gpt-6 or gpt-5.6-luna)"
         required: false
@@ -26,7 +27,7 @@ on:
         default: false
         type: boolean
       exploratory_sampling:
-        description: "Also probe undocumented sampling at reasoning=none for GPT-6 Sol/Luna, GPT-5.5 and GPT-5.6 (8 extra calls)"
+        description: "Also add the 8 targeted sampling probes to assertions/cartesian; ignored in exploratory mode"
         required: true
         default: false
         type: boolean
