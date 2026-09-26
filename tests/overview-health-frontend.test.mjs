@@ -153,6 +153,11 @@ assert.match(claritySource, /status: "Current"/);
 assert.match(claritySource, /status: "Check failed"/);
 assert.match(
   claritySource,
+  /panel\._navigate\("assistant", "model-responses"\)/,
+  "the Model Data card should open the page that contains its catalogue controls",
+);
+assert.match(
+  claritySource,
   /panel\?\._data\?\.is_admin === false/,
   "the Model Data card should respect the existing admin-only management boundary",
 );

@@ -265,7 +265,7 @@
 .eoc-guidance-note.eoc-guidance-unavailable{border-left:3px solid var(--disabled-text-color,var(--secondary-text-color))}
 .eoc-guidance-note .eoc-guidance-actions{margin-top:4px}
 .eoc-guidance-note .eoc-guidance-route{min-height:30px;padding:4px 9px}
-.eoc-unavailable-model-setting{opacity:.82}
+.eoc-unavailable-model-setting{opacity:.5}
 .eoc-unavailable-model-setting:focus{outline:2px solid var(--primary-color);outline-offset:3px}
 
 
