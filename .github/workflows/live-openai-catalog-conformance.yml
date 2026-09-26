@@ -25,6 +25,11 @@ on:
         required: true
         default: false
         type: boolean
+      exploratory_sampling:
+        description: "Also probe undocumented sampling at reasoning=none for GPT-6 Sol/Luna, GPT-5.5 and GPT-5.6 (8 extra calls)"
+        required: true
+        default: false
+        type: boolean
       plan_only:
         description: "Only calculate and upload the request plan; make no OpenAI calls"
         required: true
@@ -108,6 +113,9 @@ jobs:
           fi
           if [ "${{ inputs.include_service_tiers }}" = "true" ]; then
             args+=(--include-service-tiers)
+          fi
+          if [ "${{ inputs.exploratory_sampling }}" = "true" ]; then
+            args+=(--exploratory-sampling)
           fi
           if [ "${{ inputs.plan_only }}" = "true" ]; then
             args+=(--plan-only)
