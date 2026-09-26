@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -44,7 +44,7 @@ async def test_runtime_timezone_switch_reconciles_the_same_instant(
          "max_volume": 0.20, "wake_sound": "off"}
     )
     try:
-        instant = datetime(2026, 1, 10, 23, 0, tzinfo=timezone.utc)
+        instant = datetime(2026, 1, 10, 23, 0, tzinfo=UTC)
         await manager.async_reconcile(now=instant)
         assert manager.active is not None
         assert _volume(hass, media) == pytest.approx(0.20)
@@ -57,14 +57,14 @@ async def test_runtime_timezone_switch_reconciles_the_same_instant(
         assert hass.states.get(wake).state == "on"
 
         await manager.async_reconcile(
-            now=datetime(2026, 1, 11, 3, 0, tzinfo=timezone.utc)
+            now=datetime(2026, 1, 11, 3, 0, tzinfo=UTC)
         )
         assert manager.active is not None
         assert _volume(hass, media) == pytest.approx(0.20)
         assert hass.states.get(wake).state == "off"
 
         await manager.async_reconcile(
-            now=datetime(2026, 1, 11, 12, 0, tzinfo=timezone.utc)
+            now=datetime(2026, 1, 11, 12, 0, tzinfo=UTC)
         )
         assert manager.active is None
         assert _volume(hass, media) == pytest.approx(0.65)

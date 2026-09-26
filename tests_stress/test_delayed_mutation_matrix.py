@@ -29,9 +29,9 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     async_get_guest_mode,
 )
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
-from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.core import HomeAssistant
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_delayed_tool_due_reauthorization import (

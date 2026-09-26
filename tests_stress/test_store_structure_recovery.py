@@ -6,16 +6,22 @@ import json
 from pathlib import Path
 
 import pytest
+
+from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_CHAT_COMPLETIONS,
+    CONF_API_MODE,
+    CONF_CHAT_MODEL,
+    CONF_KNOWLEDGE_ENABLED,
+    CONF_TEMPORARY_MEMORY,
+    SUBSYSTEM_STATUS_KEY,
+    TEMPORARY_MEMORY_BALANCED,
+)
 from homeassistant.components import conversation
 from homeassistant.core import HomeAssistant
-from custom_components.extended_openai_conversation_responses.const import (
-    API_MODE_CHAT_COMPLETIONS, CONF_API_MODE, CONF_CHAT_MODEL,
-    CONF_KNOWLEDGE_ENABLED, CONF_TEMPORARY_MEMORY,
-    SUBSYSTEM_STATUS_KEY, TEMPORARY_MEMORY_BALANCED,
-)
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_corrupt_subsystem_store_startup_isolation import (
-    _real_store_io, _purge_cached_managers,
+    _purge_cached_managers,
+    _real_store_io,  # noqa: F401 - imported fixture is registered for this module
 )
 from tests_stress.conftest import record
 
@@ -24,7 +30,7 @@ from tests_stress.conftest import record
 @pytest.mark.asyncio
 async def test_invalid_store_structure_stays_durable_until_repaired(
     hass: HomeAssistant,
-    _real_store_io: None,
+    _real_store_io: None,  # noqa: F811 - fixture name deliberately matches import
     stress_trace: list[dict],
 ) -> None:
     """A valid JSON envelope with invalid data degrades only its owner."""

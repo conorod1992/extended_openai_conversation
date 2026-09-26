@@ -6,20 +6,47 @@ import asyncio
 from typing import Any
 
 import pytest
+from pytest_homeassistant_custom_component.common import MockUser
+
+from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_CHAT_COMPLETIONS,
+    CONF_API_MODE,
+    CONF_CHAT_MODEL,
+    CONF_FUNCTION_TOOL_ERROR_RECOVERY,
+    CONF_FUNCTION_TOOLS,
+)
+from homeassistant.auth.models import Group
+from homeassistant.auth.permissions.const import (
+    CAT_ENTITIES,
+    POLICY_CONTROL,
+    POLICY_READ,
+)
+from homeassistant.auth.permissions.entities import ENTITY_ENTITY_IDS
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import Context, HomeAssistant, ServiceCall
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
-from tests_real_ha.test_knowledge_provider_wire_e2e import _chat_sse_text, _chat_sse_tool_call
+from tests_real_ha.test_knowledge_provider_wire_e2e import (
+    _chat_sse_text,
+    _chat_sse_tool_call,
+)
 from tests_real_ha.test_native_service_disappearance import (
-    _DOMAIN, _SERVICE, _ENTITY_ID, _TOOL_NAME, _native_execute_service_tool,
-    _arguments, _say, _tool_result_from_chat_request,
+    _DOMAIN,
+    _ENTITY_ID,
+    _SERVICE,
+    _TOOL_NAME,
+    _arguments,
+    _native_execute_service_tool,
+    _tool_result_from_chat_request,
 )
 from tests_real_ha.test_provider_wire_e2e import _install_wire, _raw_client, _speech
 from tests_stress.conftest import record
 
 
-@pytest.mark.parametrize("mutation", ("unexposed", "removed", "unavailable", "service_removed"))
+@pytest.mark.parametrize(
+    "mutation",
+    ("unexposed", "removed", "unavailable", "service_removed", "permission_revoked"),
+)
 async def test_active_provider_request_rechecks_live_ha_before_action(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
@@ -35,6 +62,22 @@ async def test_active_provider_request_rechecks_live_ha_before_action(
     hass.services.async_register(_DOMAIN, _SERVICE, service_handler)
     hass.states.async_set(_ENTITY_ID, "on")
     async_expose_entity(hass, conversation.DOMAIN, _ENTITY_ID, True)
+
+    def permission_group(*, control: bool) -> Group:
+        policy = {POLICY_READ: True}
+        if control:
+            policy[POLICY_CONTROL] = True
+        return Group(
+            id="active-request-mutation-group",
+            name="Active request mutation",
+            policy={CAT_ENTITIES: {ENTITY_ENTITY_IDS: {_ENTITY_ID: policy}}},
+        )
+
+    user = MockUser(
+        id="active-request-mutation-user", name="Active request mutation",
+        is_owner=False, groups=[permission_group(control=True)],
+    )
+    user.add_to_hass(hass)
     entry = _make_entry(
         f"Active request HA churn {mutation}",
         include_ai_task=False,
@@ -67,7 +110,10 @@ async def test_active_provider_request_rechecks_live_ha_before_action(
         return response
 
     monkeypatch.setattr(_raw_client(agent)._client, "send", gated_send)
-    task = asyncio.create_task(_say(hass, entry.entry_id, "Act on the light"))
+    task = asyncio.create_task(conversation.async_converse(
+        hass=hass, text="Act on the light", conversation_id=None,
+        context=Context(user_id=user.id), language="en", agent_id=entry.entry_id,
+    ))
     try:
         await asyncio.wait_for(provider_reached.wait(), timeout=10)
         if mutation == "unexposed":
@@ -76,6 +122,9 @@ async def test_active_provider_request_rechecks_live_ha_before_action(
             hass.states.async_remove(_ENTITY_ID)
         elif mutation == "unavailable":
             hass.states.async_set(_ENTITY_ID, "unavailable")
+        elif mutation == "permission_revoked":
+            user.groups = [permission_group(control=False)]
+            assert not user.permissions.check_entity(_ENTITY_ID, POLICY_CONTROL)
         else:
             hass.services.async_remove(_DOMAIN, _SERVICE)
         await hass.async_block_till_done()
