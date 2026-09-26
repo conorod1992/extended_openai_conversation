@@ -115,3 +115,46 @@ def test_model_filter_is_substring_based() -> None:
 
     assert models
     assert all("gpt-6" in model["id"] for model in models)
+
+
+
+def test_exploratory_sampling_probe_set_is_small_and_explicit() -> None:
+    models = conformance._selected_models(
+        include_expensive=False,
+        model_filter=None,
+    )
+    probes = conformance._exploratory_sampling_cases(models)
+
+    assert len(probes) == 8
+    assert {
+        (case.model, parameter)
+        for case, parameter in probes
+    } == {
+        ("gpt-6-sol", CONF_TEMPERATURE),
+        ("gpt-6-sol", CONF_TOP_P),
+        ("gpt-6-luna", CONF_TEMPERATURE),
+        ("gpt-6-luna", CONF_TOP_P),
+        ("gpt-5.5", CONF_TEMPERATURE),
+        ("gpt-5.5", CONF_TOP_P),
+        ("gpt-5.6", CONF_TEMPERATURE),
+        ("gpt-5.6", CONF_TOP_P),
+    }
+    assert all(
+        case.options["api_mode"] == API_MODE_RESPONSES
+        and case.options.get(CONF_REASONING_EFFORT) == "none"
+        and case.options[parameter] == conformance._SAMPLE_VALUE
+        for case, parameter in probes
+    )
+
+
+def test_exploratory_sampling_respects_model_filter() -> None:
+    models = conformance._selected_models(
+        include_expensive=False,
+        model_filter="gpt-6",
+    )
+    probes = conformance._exploratory_sampling_cases(models)
+
+    assert {
+        case.model for case, _parameter in probes
+    } == {"gpt-6-sol", "gpt-6-luna"}
+    assert len(probes) == 4
