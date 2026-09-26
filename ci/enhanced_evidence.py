@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,14 @@ CANARIES = (
     "PRIVATE-KNOWLEDGE-CANARY-8274",
     "SENSITIVE-PROMPT-CANARY-8274",
 )
+
+
+def evidence_filename(nodeid: str) -> str:
+    """Bound fixture filenames while distinguishing every parametrized test."""
+    test_name = nodeid.split("[", 1)[0]
+    readable = re.sub(r"[^A-Za-z0-9_.-]+", "_", test_name).strip("._-")
+    digest = hashlib.sha256(nodeid.encode("utf-8")).hexdigest()[:16]
+    return f"{readable[:160]}-{digest}.json"
 
 
 def redact_text(value: str) -> str:

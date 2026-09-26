@@ -24,6 +24,14 @@ test("repeated mount cycles plus offline and bfcache restoration keep one health
   await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
   expect(await page.locator("extended-openai-management-panel").count()).toBe(1);
 
+  // Load the route asset while online so the offline phase exercises the
+  // management transport, not the browser's dynamic module fetch.
+  await panel.locator('.top-nav button[data-page="usage-maintenance"]').click();
+  await expect(panel.getByRole("heading", {name: "Usage period", exact: true})).toBeVisible();
+  await panel.locator('.top-nav button[data-page="data-memory"]').click();
+  await panel.locator('.subsection-nav button[data-subsection="knowledge"]').click();
+  await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toBeVisible();
+
   await page.evaluate(() => {
     browserHarness.backendOnline = false;
     browserHarness.offlineAttempts = 0;

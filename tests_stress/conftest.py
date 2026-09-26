@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ci.enhanced_evidence import envelope, safe, write_json  # noqa: E402
+from ci.enhanced_evidence import envelope, evidence_filename, safe, write_json  # noqa: E402
 from tests_real_ha.conftest import real_ha_prerequisites  # noqa: F401,E402
 
 
@@ -58,13 +58,6 @@ def stress_trace(request: pytest.FixtureRequest, stress_seed: int) -> list[dict]
     yield trace
     report_dir = Path(os.environ.get("STRESS_ARTIFACT_DIR", "stress-artifacts"))
     report_dir.mkdir(parents=True, exist_ok=True)
-    name = (
-        request.node.nodeid.replace("/", "_")
-        .replace("\\", "_")
-        .replace(":", "_")
-        .replace("[", "_")
-        .replace("]", "_")
-    )
     report = getattr(request.node, "_enhanced_call_report", None)
     hass = request.node.funcargs.get("hass")
     health = None
@@ -80,7 +73,7 @@ def stress_trace(request: pytest.FixtureRequest, stress_seed: int) -> list[dict]
             },
         }
     write_json(
-        report_dir / f"{name}.json",
+        report_dir / evidence_filename(request.node.nodeid),
         {
             **envelope(seed=stress_seed),
             "test": request.node.nodeid,

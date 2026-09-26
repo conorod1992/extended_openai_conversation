@@ -52,8 +52,10 @@ async def test_packaged_release_is_discovered_and_imported_by_home_assistant(
     ]
     sys.path.insert(0, str(config_dir))
     for name in list(sys.modules):
-        if name == f"custom_components.{DOMAIN}" or name.startswith(
-            f"custom_components.{DOMAIN}."
+        if (
+            name == "custom_components"
+            or name == f"custom_components.{DOMAIN}"
+            or name.startswith(f"custom_components.{DOMAIN}.")
         ):
             del sys.modules[name]
     importlib.invalidate_caches()
