@@ -761,9 +761,7 @@ class ExtendedOpenAIAgentEntity(
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
         ):
-            subentry_id = getattr(
-                getattr(self, "subentry", None), "subentry_id", None
-            )
+            subentry_id = getattr(getattr(self, "subentry", None), "subentry_id", None)
             claimed_id = resolution.conversation_id
             if claimed_id is not None and isinstance(subentry_id, str):
                 claim_owner = (
