@@ -17,7 +17,14 @@ def _model() -> dict:
         "id": "synthetic-model",
         "status": "current",
         "api": {"responses": True, "chat_completions": True},
-        "reasoning": {"supported": True, "efforts": ["none", "low"]},
+        "reasoning": {
+            "supported": True,
+            "efforts": ["none", "low", "max"],
+            "by_api": {
+                "responses": {"efforts": ["none", "low", "max"]},
+                "chat_completions": {"efforts": ["none", "low"]},
+            },
+        },
         "temperature": {
             "support": "conditional",
             "allowed_reasoning_efforts": ["none"],
@@ -31,6 +38,19 @@ def _model() -> dict:
             "chat_completions": {
                 "support": "conditional",
                 "allowed_reasoning_efforts": ["none"],
+            },
+        },
+        "tools": {
+            "function": {
+                "responses": {"support": "always"},
+                "chat_completions": {
+                    "support": "conditional",
+                    "requires": {"reasoning_effort": ["none"]},
+                },
+            },
+            "web_search": {
+                "responses": {"support": "always"},
+                "chat_completions": {"support": "never"},
             },
         },
         "responses_web_search": True,
@@ -69,6 +89,45 @@ def test_web_search_is_only_generated_for_responses() -> None:
     web_cases = [case for case in candidates if case.options.get(CONF_WEB_SEARCH)]
     assert web_cases
     assert all(case.options["api_mode"] == API_MODE_RESPONSES for case in web_cases)
+
+
+
+
+def test_candidate_pool_respects_api_specific_reasoning_efforts() -> None:
+    candidates = live._candidate_cases(random.Random(11), _model())
+
+    chat = [
+        case
+        for case in candidates
+        if case.options["api_mode"] == "chat_completions"
+    ]
+    responses = [
+        case
+        for case in candidates
+        if case.options["api_mode"] == "responses"
+    ]
+
+    assert chat
+    assert responses
+    assert all(case.options.get("reasoning_effort") != "max" for case in chat)
+    assert any(case.options.get("reasoning_effort") == "max" for case in responses)
+
+
+def test_candidate_pool_respects_conditional_function_tool_rules() -> None:
+    candidates = live._candidate_cases(random.Random(12), _model())
+
+    chat_tool_cases = [
+        case
+        for case in candidates
+        if case.options["api_mode"] == "chat_completions"
+        and "function_tools" in case.coverage
+    ]
+
+    assert chat_tool_cases
+    assert all(
+        case.options.get("reasoning_effort") == "none"
+        for case in chat_tool_cases
+    )
 
 
 def test_case_budget_does_not_change() -> None:
