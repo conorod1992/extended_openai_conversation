@@ -328,12 +328,6 @@ jobs:
       matrix:
         engine: [firefox, webkit]
         intensity: ${{ fromJSON(needs.prepare.outputs.intensities) }}
-    container:
-      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-      options: --ipc=host
     defaults:
       run:
         shell: bash
@@ -350,19 +344,25 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
       - name: Install local runner and engine
         run: |
           npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
           npx playwright install --with-deps "$CROSS_BROWSER_ENGINE"
-      - name: Reconcile current Home Assistant requirements
+      - name: Install Home Assistant acceptance requirements
         run: |
-          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
-          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
-          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
-            pip install -r requirements_test.txt
-            pip install --upgrade homeassistant
-            python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
-          fi
+          pip install -r requirements_test.txt
+          pip install --upgrade homeassistant
+          python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          pip check
       - name: Run curated engine and keyboard journeys
         run: >-
           python ci/run_sanitized.py stress-artifacts/browser-engine.log --

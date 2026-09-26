@@ -107,3 +107,18 @@ test("keyboard-only navigation, lazy routes and large-text viewport retain reach
   await testInfo.attach("keyboard-navigation", {body: JSON.stringify({layer: "fixture", viewport: 390, textScale: 2}), contentType: "application/json"});
   await expectHarnessClean(page, errors);
 });
+
+test("malformed browser-local state cannot prevent a fresh management load", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.addInitScript(() => {
+    localStorage.setItem("extended-openai-agent", "stale-deleted-agent");
+    sessionStorage.setItem("eocRealHaCalls", "not-json");
+  });
+  await page.goto(fixtureUrl("data-memory/memories"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
+  await expect(panel.locator("#agent")).toHaveValue("agent-1");
+  await page.goto(fixtureUrl("data-memory/memories"));
+  await expect(panel.getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
+  await expectHarnessClean(page, errors);
+});

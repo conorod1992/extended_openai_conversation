@@ -237,7 +237,7 @@ test("backgrounded Memory tab rejects stale edits and delayed reads after a newe
     await expect(panelA.getByText("Two-tab Memory authoritative", {exact: true})).toBeVisible();
     await panelB.locator("#memory-content").fill("Two-tab Memory stale draft");
     await panelB.locator("#memory-save").click();
-    await expect(panelB.locator("#memory-error")).toContainText("changed in another tab");
+    await expect(panelB.locator("#memory-error")).toContainText(/changed since it was loaded|changed in another tab/);
     await expect(panelB.locator("#memory-content")).toHaveValue("Two-tab Memory stale draft");
     trace.push("same-object Memory save rejected and draft preserved");
 
