@@ -23,6 +23,7 @@ on:
         required: false
 
 permissions:
+  actions: read
   contents: read
   packages: read
 
@@ -437,6 +438,7 @@ jobs:
           python ci/verify_browser_failure.py browser-failure-evidence
       - name: Consolidate actual job results
         env:
+          GH_TOKEN: ${{ github.token }}
           ENHANCED_CAMPAIGNS: ${{ needs.prepare.outputs.campaigns }}
           ENHANCED_INTENSITIES: ${{ needs.prepare.outputs.intensities }}
           ENHANCED_SELECTED: ${{ inputs.campaign || 'all' }}

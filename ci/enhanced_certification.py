@@ -6,8 +6,33 @@ import json
 import os
 from pathlib import Path
 import sys
+from urllib.request import Request, urlopen
 
 from enhanced_evidence import SCHEMA, write_json
+
+
+def actual_jobs() -> dict[str, str]:
+    """Read final Actions conclusions; a trace written before upload is insufficient."""
+    repository = os.environ.get("GITHUB_REPOSITORY")
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    token = os.environ.get("GH_TOKEN")
+    if not all((repository, run_id, token)):
+        return {}
+    jobs: dict[str, str] = {}
+    for page in range(1, 10):
+        request = Request(
+            f"https://api.github.com/repos/{repository}/actions/runs/{run_id}/jobs?per_page=100&page={page}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+        with urlopen(request, timeout=20) as response:
+            batch = json.load(response)["jobs"]
+        jobs.update({job["name"]: job.get("conclusion") or "pending" for job in batch})
+        if len(batch) < 100:
+            break
+    return jobs
 
 
 def main(root: Path) -> int:
@@ -18,6 +43,7 @@ def main(root: Path) -> int:
         campaigns = []  # The Python matrix is intentionally skipped for browser-only runs.
     seed = os.environ["STRESS_SEED"]
     needs = json.loads(os.environ.get("ENHANCED_NEEDS", "{}"))
+    conclusions = actual_jobs()
     expected = {
         (campaign, intensity, None)
         for campaign in campaigns
@@ -55,7 +81,21 @@ def main(root: Path) -> int:
     for key in sorted(expected):
         campaign, intensity, point = key
         item = found.get(key)
-        status = item.get("status", "missing") if item else "missing"
+        job_name = (
+            f"HA {point} / shared lifecycle contract"
+            if point
+            else f"{'browser' if campaign == 'browser-diagnostics' else campaign} / {intensity}"
+        )
+        actual = conclusions.get(job_name, "unverified")
+        status = (
+            "success"
+            if item and item.get("status") == "success" and actual == "success"
+            else actual
+            if actual != "success"
+            else "evidence-inconsistent"
+            if item
+            else "missing"
+        )
         if status != "success":
             failed = True
         if item:
