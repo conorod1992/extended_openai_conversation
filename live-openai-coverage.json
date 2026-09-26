@@ -1,4 +1,189 @@
 {
-  "schema_version": 1,
-  "models": {}
+  "models": {
+    "gpt-4.1": {
+      "capabilities": {
+        "api:responses": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:28.197632+00:00"
+        },
+        "profile:context-heavy": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:27.577679+00:00"
+        },
+        "top_p": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:28.197632+00:00"
+        }
+      },
+      "cases": {
+        "count": 2,
+        "last_status": "passed",
+        "last_tested": "2026-09-26T01:03:28.197632+00:00"
+      }
+    },
+    "gpt-4.1-mini": {
+      "capabilities": {
+        "api:chat_completions": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:33.919348+00:00"
+        },
+        "api:responses": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:32.430978+00:00"
+        },
+        "function_tools": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:32.430978+00:00"
+        },
+        "temperature": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:33.919348+00:00"
+        }
+      },
+      "cases": {
+        "count": 2,
+        "last_status": "passed",
+        "last_tested": "2026-09-26T01:03:33.919348+00:00"
+      }
+    },
+    "gpt-4o-mini": {
+      "capabilities": {
+        "api:chat_completions": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:23.578536+00:00"
+        },
+        "api:responses": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:24.221756+00:00"
+        },
+        "service_tier:default": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:23.578536+00:00"
+        },
+        "top_p": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:24.221756+00:00"
+        }
+      },
+      "cases": {
+        "count": 2,
+        "last_status": "passed",
+        "last_tested": "2026-09-26T01:03:24.221756+00:00"
+      }
+    },
+    "gpt-5-nano": {
+      "capabilities": {
+        "api:responses": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:29.593357+00:00"
+        },
+        "profile:context-heavy": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:28.799191+00:00"
+        },
+        "profile:minimal": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:29.593357+00:00"
+        },
+        "reasoning:low": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:29.593357+00:00"
+        },
+        "reasoning:minimal": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:28.799191+00:00"
+        }
+      },
+      "cases": {
+        "count": 2,
+        "last_status": "passed",
+        "last_tested": "2026-09-26T01:03:29.593357+00:00"
+      }
+    },
+    "gpt-5.1": {
+      "capabilities": {
+        "api:responses": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:31.581351+00:00"
+        },
+        "profile:context-heavy": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:30.520565+00:00"
+        },
+        "profile:minimal": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:31.581351+00:00"
+        },
+        "reasoning:low": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:31.581351+00:00"
+        },
+        "reasoning:none": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:30.520565+00:00"
+        }
+      },
+      "cases": {
+        "count": 2,
+        "last_status": "passed",
+        "last_tested": "2026-09-26T01:03:31.581351+00:00"
+      }
+    },
+    "gpt-6-luna": {
+      "capabilities": {
+        "api:responses": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:22.410701+00:00"
+        },
+        "profile:minimal": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:22.410701+00:00"
+        },
+        "reasoning:max": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:18.961119+00:00"
+        },
+        "reasoning:none": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:22.410701+00:00"
+        },
+        "web_search": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-26T01:03:18.961119+00:00"
+        }
+      },
+      "cases": {
+        "count": 2,
+        "last_status": "passed",
+        "last_tested": "2026-09-26T01:03:22.410701+00:00"
+      }
+    }
+  },
+  "schema_version": 1
 }
