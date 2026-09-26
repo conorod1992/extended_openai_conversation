@@ -35,6 +35,10 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
     knowledge_tools,
 )
 from custom_components.extended_openai_conversation_responses.memory import memory_tools
+from custom_components.extended_openai_conversation_responses.model_capabilities import (
+    capability_allowed,
+    reasoning_efforts_for_api,
+)
 from custom_components.extended_openai_conversation_responses.model_catalog import (
     BUNDLED_CATALOG,
 )
@@ -214,23 +218,25 @@ def _function_calling_allowed(
     api_mode: str,
     effort: str | None,
 ) -> bool:
-    support = model["function_calling"][api_mode]
-    if support is True:
-        return True
-    if support is False:
-        return False
-    return (
-        support.get("support") == "conditional"
-        and effort in support.get("allowed_reasoning_efforts", [])
-    )
+    return capability_allowed(model["id"], "function", api_mode, effort=effort)
+
+
+def _web_search_allowed(
+    model: dict[str, Any],
+    api_mode: str,
+    effort: str | None,
+) -> bool:
+    return capability_allowed(model["id"], "web_search", api_mode, effort=effort)
 
 
 def _viable_api_efforts(model: dict[str, Any]) -> list[tuple[str, str | None]]:
-    efforts: list[str | None] = list(model["reasoning"]["efforts"]) or [None]
     result: list[tuple[str, str | None]] = []
     for api_mode in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
         if not model["api"].get(api_mode):
             continue
+        efforts: list[str | None] = reasoning_efforts_for_api(model["id"], api_mode)
+        if not efforts:
+            efforts = [None]
         result.extend((api_mode, effort) for effort in efforts)
     return result
 
@@ -322,9 +328,7 @@ def _candidate_cases(
                 )
             )
 
-        web_allowed = (
-            api_mode == API_MODE_RESPONSES and model.get("responses_web_search", False)
-        )
+        web_allowed = _web_search_allowed(model, api_mode, effort)
         if web_allowed:
             options = dict(base)
             options[CONF_WEB_SEARCH] = True
