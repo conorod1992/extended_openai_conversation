@@ -165,6 +165,7 @@ from .temporary_memory import async_get_temporary_memory, temporary_memory_as_di
 from .usage import async_get_usage
 
 _PERFORMANCE_LOGGER = logging.getLogger(f"{__name__}.performance")
+_MANAGEMENT_SERVER_EPOCH = uuid4().hex
 
 WS_COMMAND = f"{DOMAIN}/management"
 _UI_SETUP = f"{DOMAIN}.management_ui_setup"
@@ -1234,6 +1235,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             safe = safe_configuration_payload(
                 hass, entry, subentry, projection=projection
             )
+            safe["server_epoch"] = _MANAGEMENT_SERVER_EPOCH
             safe["_performance"] = {
                 **projection_diagnostics,
                 "projection_ms": projection_ms,
@@ -1321,6 +1323,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         payload = {
             "title": subentry.title,
             "revision": revision,
+            "server_epoch": _MANAGEMENT_SERVER_EPOCH,
             "config": config,
             "defaults": defaults,
             "options": options,

@@ -1047,7 +1047,9 @@ class ExtendedOpenAIAgentEntity(
         # Call the LLM
 
         try:
-            self._assert_no_aba_configuration()
+            check_aba = getattr(self, "_assert_no_aba_configuration", None)
+            if callable(check_aba):
+                check_aba()
             continue_mode = _get_continue_conversation_mode(self.subentry.data)
             conditional_decision = await self._async_handle_chat_log(
                 chat_log,
