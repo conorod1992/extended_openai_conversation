@@ -149,7 +149,7 @@ async def test_slow_invalid_and_failed_refresh_preserve_active_operations(
             assert _speech(during) == "Catalogue request completed."
             release.set()
             checked = await asyncio.wait_for(checking, timeout=10)
-            assert checked["success"] is True
+            assert checked["success"] is True, (cycle, checked, manager.status())
             assert get_reasoning_effort_options("gpt-5.6") == before
 
             applied = await _command(admin, "apply")

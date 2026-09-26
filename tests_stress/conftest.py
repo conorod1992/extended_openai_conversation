@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from pathlib import Path
 import secrets
 import sys
@@ -58,13 +59,17 @@ def stress_trace(request: pytest.FixtureRequest, stress_seed: int) -> list[dict]
     yield trace
     report_dir = Path(os.environ.get("STRESS_ARTIFACT_DIR", "stress-artifacts"))
     report_dir.mkdir(parents=True, exist_ok=True)
-    name = (
+    readable = (
         request.node.nodeid.replace("/", "_")
         .replace("\\", "_")
         .replace(":", "_")
         .replace("[", "_")
         .replace("]", "_")
     )
+    # Keep the basename below common 255-byte filesystem limits while retaining
+    # the full node ID in the JSON report for diagnostics.
+    digest = hashlib.sha256(request.node.nodeid.encode("utf-8")).hexdigest()[:16]
+    name = f"{readable[:160]}-{digest}"
     report = getattr(request.node, "_enhanced_call_report", None)
     hass = request.node.funcargs.get("hass")
     health = None
