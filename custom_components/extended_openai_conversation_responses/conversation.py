@@ -260,6 +260,7 @@ _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
     "extended_openai_process_metadata", default=None
 )
 
+
 def _request_llm_context(user_input: ConversationInput) -> Any:
     """Reuse the request-scoped LLM context, with a direct-call fallback."""
     return _ACTIVE_LLM_CONTEXT.get() or user_input.as_llm_context(DOMAIN)
