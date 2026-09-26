@@ -100,6 +100,10 @@ from .continuity import (
     async_get_continuity,
 )
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
+from .conversation_id_ownership import (
+    claim_conversation_id,
+    register_conversation_id_cleanup,
+)
 from .conversation_lifecycle import (
     async_reset_conversation_context,
     begin_conversation_lifecycle,
@@ -683,6 +687,20 @@ class ExtendedOpenAIAgentEntity(
                         else None
                     ),
                 )
+                resolved_conversation_id = getattr(
+                    resolution, "conversation_id", user_input.conversation_id
+                )
+                claimed_conversation_id = claim_conversation_id(
+                    getattr(self, "hass", None),
+                    getattr(getattr(self, "subentry", None), "subentry_id", None),
+                    scope,
+                    resolved_conversation_id,
+                    guest_active=request_policy.guest_active,
+                )
+                if claimed_conversation_id != resolved_conversation_id:
+                    resolution = replace(
+                        resolution, conversation_id=claimed_conversation_id
+                    )
                 try:
                     return await self._async_process_claimed(
                         user_input,
@@ -744,6 +762,19 @@ class ExtendedOpenAIAgentEntity(
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
         ):
+            subentry_id = getattr(getattr(self, "subentry", None), "subentry_id", None)
+            claimed_id = resolution.conversation_id
+            if claimed_id is not None and isinstance(subentry_id, str):
+                claim_owner = (
+                    subentry_id,
+                    "guest" if request_policy.guest_active else scope.scope_id,
+                )
+                register_conversation_id_cleanup(
+                    session,
+                    getattr(self, "hass", None),
+                    claimed_id,
+                    claim_owner,
+                )
             rule_session_key = request_rule_session_id(
                 resolution.key, chat_log.conversation_id
             )

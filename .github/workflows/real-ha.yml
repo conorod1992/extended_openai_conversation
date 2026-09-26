@@ -211,6 +211,8 @@ jobs:
               "test_provider_wire_truncated_tool_stream.py",
               "test_runtime_recovery_journey.py",
               "test_runtime_stress.py",
+              "test_store_write_process_crash.py",
+              "test_persistent_memory_shutdown_recovery.py",
               "test_same_title_subentry_recreation.py",
               "test_shared_conversation_and_entry_removal.py",
               "test_shared_service_lifecycle.py",
@@ -308,6 +310,8 @@ jobs:
             tests_real_ha/test_provider_wire_truncated_tool_stream.py
             tests_real_ha/test_runtime_recovery_journey.py
             tests_real_ha/test_runtime_stress.py
+            tests_real_ha/test_store_write_process_crash.py
+            tests_real_ha/test_persistent_memory_shutdown_recovery.py
             tests_real_ha/test_same_title_subentry_recreation.py
             tests_real_ha/test_shared_conversation_and_entry_removal.py
             tests_real_ha/test_shared_service_lifecycle.py
