@@ -632,6 +632,12 @@ def test_hot_transition_cannot_remove_reasoning_capability() -> None:
     for api in ("responses", "chat_completions"):
         model["reasoning"]["by_api"][api]["efforts"] = []
     model["recommended_profile"]["reasoning_effort"] = None
+    for parameter in ("temperature", "top_p"):
+        model[parameter] = {
+            "support": "undocumented",
+            "allowed_reasoning_efforts": None,
+            "send_policy": "omit",
+        }
     model["function_calling"]["chat_completions"] = False
     model["tools"]["function"]["chat_completions"] = {"support": "never"}
 
