@@ -823,7 +823,8 @@ class ExtendedOpenAIAgentEntity(
             subentry_id = getattr(
                 getattr(self, "subentry", None), "subentry_id", None
             )
-            if resolution.conversation_id is not None and isinstance(subentry_id, str):
+            claimed_id = resolution.conversation_id
+            if claimed_id is not None and isinstance(subentry_id, str):
                 claim_owner = (
                     subentry_id,
                     "guest" if request_policy.guest_active else scope.scope_id,
@@ -831,7 +832,7 @@ class ExtendedOpenAIAgentEntity(
                 _register_conversation_id_cleanup(
                     session,
                     getattr(self, "hass", None),
-                    resolution.conversation_id,
+                    claimed_id,
                     claim_owner,
                 )
             rule_session_key = request_rule_session_id(
