@@ -11,6 +11,9 @@ from typing import Any
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 
+from custom_components.extended_openai_conversation_responses.const import (
+    CONF_EXPOSED_ENTITIES_ENABLED,
+)
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context, HomeAssistant
@@ -53,7 +56,14 @@ async def test_seeded_exposure_registry_churn_never_leaks_removed_targets(
     ]
     for user in users:
         user.add_to_hass(hass)
-    agents = [await _agent(hass, title=f"Exposure Churn {index}") for index in range(2)]
+    agents = [
+        await _agent(
+            hass,
+            title=f"Exposure Churn {index}",
+            **{CONF_EXPOSED_ENTITIES_ENABLED: True},
+        )
+        for index in range(2)
+    ]
     assert agents[0].entry.entry_id != agents[1].entry.entry_id
     rounds = 12 if stress_scale == 1 else 36
     wire = _install_wire(
@@ -143,6 +153,15 @@ async def test_seeded_exposure_registry_churn_never_leaks_removed_targets(
             )
         )
         assert all(_speech(result) == "Current HA view received." for result in results)
+        record(
+            stress_trace,
+            "exposure_churn",
+            layer="Real HA and provider wire",
+            round=round_id,
+            operation=operation,
+            target=entity_id,
+            active_entities=sum(item["present"] for item in entities),
+        )
         assert len(wire.requests) == 2 * (round_id + 1)
         latest = wire.requests[-2:]
         for agent in agents:
@@ -167,14 +186,6 @@ async def test_seeded_exposure_registry_churn_never_leaks_removed_targets(
                     current["id"],
                 )
             assert all(not _contains_id(body, old_id) for old_id in historical_ids)
-        record(
-            stress_trace,
-            "exposure_churn",
-            layer="Real HA and provider wire",
-            round=round_id,
-            operation=operation,
-            active_entities=sum(item["present"] for item in entities),
-        )
     assert len(wire.requests) == 2 * rounds
     record(
         stress_trace,
