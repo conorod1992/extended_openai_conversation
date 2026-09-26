@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import secrets
 import sys
+from time import monotonic
 
 import pytest
 
@@ -14,7 +14,16 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from ci.enhanced_evidence import envelope, safe, write_json  # noqa: E402
 from tests_real_ha.conftest import real_ha_prerequisites  # noqa: F401,E402
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call":
+        item._enhanced_call_report = report
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -45,6 +54,7 @@ def stress_scale(pytestconfig: pytest.Config) -> int:
 @pytest.fixture
 def stress_trace(request: pytest.FixtureRequest, stress_seed: int) -> list[dict]:
     trace: list[dict] = []
+    started = monotonic()
     yield trace
     report_dir = Path(os.environ.get("STRESS_ARTIFACT_DIR", "stress-artifacts"))
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -55,13 +65,19 @@ def stress_trace(request: pytest.FixtureRequest, stress_seed: int) -> list[dict]
         .replace("[", "_")
         .replace("]", "_")
     )
-    (report_dir / f"{name}.json").write_text(
-        json.dumps(
-            {"seed": stress_seed, "test": request.node.nodeid, "operations": trace},
-            indent=2,
-            default=str,
-        ),
-        encoding="utf-8",
+    report = getattr(request.node, "_enhanced_call_report", None)
+    write_json(
+        report_dir / f"{name}.json",
+        {
+            **envelope(seed=stress_seed),
+            "test": request.node.nodeid,
+            "outcome": "failed" if report and report.failed else "passed",
+            "duration_seconds": round(monotonic() - started, 3),
+            "failure": str(report.longrepr).splitlines()[-1]
+            if report and report.failed
+            else None,
+            "operations": trace,
+        },
     )
     print(
         f"STRESS TRACE seed={stress_seed} test={request.node.nodeid} operations={len(trace)}",
@@ -70,4 +86,4 @@ def stress_trace(request: pytest.FixtureRequest, stress_seed: int) -> list[dict]
 
 
 def record(trace: list[dict], operation: str, **details: object) -> None:
-    trace.append({"number": len(trace) + 1, "operation": operation, **details})
+    trace.append(safe({"number": len(trace) + 1, "operation": operation, **details}))
