@@ -13,19 +13,7 @@
       "chat_completions": false,
       "preferred_api": "responses"
     },
-    "reasoning": {
-      "supported": false,
-      "efforts": [],
-      "openai_default": null,
-      "by_api": {
-        "responses": {
-          "efforts": []
-        },
-        "chat_completions": {
-          "efforts": []
-        }
-      }
-    },
+    "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
     "temperature": {
       "support": "undocumented",
       "allowed_reasoning_efforts": null,
@@ -55,24 +43,7 @@
     "service_tiers": [],
     "explicit_prompt_cache": false,
     "structured_outputs": false,
-    "tools": {
-      "function": {
-        "responses": {
-          "support": "never"
-        },
-        "chat_completions": {
-          "support": "never"
-        }
-      },
-      "web_search": {
-        "responses": {
-          "support": "never"
-        },
-        "chat_completions": {
-          "support": "never"
-        }
-      }
-    },
+    "tools": {"function": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
     "responses_web_search": false
   },
   "models": [
@@ -82,100 +53,19 @@
       "kind": "alias",
       "status": "current",
       "auto_api": "responses",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": false,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh",
-          "max"
-        ],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": false, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["low", "medium", "high", "xhigh", "max"], "openai_default": null, "by_api": {"responses": {"efforts": ["low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["low", "medium", "high", "xhigh", "max"]}}},
+      "temperature": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "top_p": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "low",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default",
-        "flex",
-        "fast",
-        "priority"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -184,116 +74,19 @@
       "kind": "alias",
       "status": "current",
       "auto_api": "responses",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": {
-          "support": "conditional",
-          "allowed_reasoning_efforts": [
-            "none"
-          ]
-        },
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh",
-          "max"
-        ],
-        "openai_default": "medium",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true,"chat_completions": true,"completions_legacy": false},
+      "function_calling": {"responses": true,"chat_completions": {"support": "conditional","allowed_reasoning_efforts": ["none"]},"preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "conditional","allowed_reasoning_efforts": ["none"],"send_policy": "omit_unless_configured"},
+      "top_p": {"support": "conditional","allowed_reasoning_efforts": ["none"],"send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 1050000,"max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "low",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default",
-        "flex",
-        "fast",
-        "priority"
-      ],
+      "output_tokens": {"responses": "max_output_tokens","chat_completions": "max_completion_tokens","legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses","reasoning_effort": "low","temperature": "omit","top_p": "omit"},
+      "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "none"
-              ]
-            }
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -302,116 +95,19 @@
       "kind": "alias",
       "status": "current",
       "auto_api": "responses",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": {
-          "support": "conditional",
-          "allowed_reasoning_efforts": [
-            "none"
-          ]
-        },
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh",
-          "max"
-        ],
-        "openai_default": "medium",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true,"chat_completions": true,"completions_legacy": false},
+      "function_calling": {"responses": true,"chat_completions": {"support": "conditional","allowed_reasoning_efforts": ["none"]},"preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "conditional","allowed_reasoning_efforts": ["none"],"send_policy": "omit_unless_configured"},
+      "top_p": {"support": "conditional","allowed_reasoning_efforts": ["none"],"send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 1050000,"max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "low",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default",
-        "flex",
-        "fast",
-        "priority"
-      ],
+      "output_tokens": {"responses": "max_output_tokens","chat_completions": "max_completion_tokens","legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses","reasoning_effort": "low","temperature": "omit","top_p": "omit"},
+      "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "none"
-              ]
-            }
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -420,112 +116,19 @@
       "kind": "alias",
       "status": "current",
       "auto_api": "responses",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh",
-          "max"
-        ],
-        "openai_default": "medium",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "conditional","allowed_reasoning_efforts": ["none"],"send_policy": "omit_unless_configured"},
+      "top_p": {"support": "conditional","allowed_reasoning_efforts": ["none"],"send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "low",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default",
-        "flex",
-        "fast",
-        "priority",
-        "ultrafast"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default","flex","fast","priority","ultrafast"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "none"
-              ]
-            }
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true,
       "alias_of": "gpt-5.6-sol"
     },
@@ -535,112 +138,19 @@
       "kind": "alias",
       "status": "current",
       "auto_api": "responses",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh",
-          "max"
-        ],
-        "openai_default": "medium",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "conditional","allowed_reasoning_efforts": ["none"],"send_policy": "omit_unless_configured"},
+      "top_p": {"support": "conditional","allowed_reasoning_efforts": ["none"],"send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "low",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default",
-        "flex",
-        "fast",
-        "priority",
-        "ultrafast"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default","flex","fast","priority","ultrafast"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "none"
-              ]
-            }
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -649,107 +159,19 @@
       "kind": "alias",
       "status": "current",
       "auto_api": "responses",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh",
-          "max"
-        ],
-        "openai_default": "medium",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "undocumented",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "undocumented",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "top_p": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "low",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default",
-        "flex",
-        "fast",
-        "priority"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "none"
-              ]
-            }
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -758,107 +180,19 @@
       "kind": "alias",
       "status": "current",
       "auto_api": "responses",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh",
-          "max"
-        ],
-        "openai_default": "medium",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "undocumented",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "undocumented",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "top_p": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "low",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default",
-        "flex",
-        "fast",
-        "priority"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "none"
-              ]
-            }
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -866,107 +200,19 @@
       "display_name": "gpt-5.5",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "openai_default": "medium",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "conditional","allowed_reasoning_efforts": ["none"],"send_policy": "omit_unless_configured"},
+      "top_p": {"support": "conditional","allowed_reasoning_efforts": ["none"],"send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "low",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default",
-        "flex"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default","flex"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "none"
-              ]
-            }
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -974,84 +220,19 @@
       "display_name": "gpt-5.5-pro",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": false,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": false,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "openai_default": "high",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          },
-          "chat_completions": {
-            "efforts": []
-          }
-        }
-      },
-      "temperature": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
+      "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["medium", "high", "xhigh"], "openai_default": "high", "by_api": {"responses": {"efforts": ["medium", "high", "xhigh"]}, "chat_completions": {"efforts": []}}},
+      "temperature": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
+      "top_p": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
+      "limits": {"context_tokens": 1050000,"max_output_tokens": 128000},
       "streaming": false,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "medium",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
+      "output_tokens": {"responses": "max_output_tokens","chat_completions": "max_completion_tokens","legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses","reasoning_effort": "medium","temperature": "omit","top_p": "omit"},
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "never"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
     },
@@ -1060,107 +241,19 @@
       "display_name": "gpt-5.4",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "openai_default": "none",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
+      "top_p": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "none",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default",
-        "flex"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default","flex"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "none"
-              ]
-            }
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -1168,84 +261,19 @@
       "display_name": "gpt-5.4-pro",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": false,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": false,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "openai_default": "medium",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          },
-          "chat_completions": {
-            "efforts": []
-          }
-        }
-      },
-      "temperature": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 1050000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
+      "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["medium", "high", "xhigh"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["medium", "high", "xhigh"]}, "chat_completions": {"efforts": []}}},
+      "temperature": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
+      "top_p": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
+      "limits": {"context_tokens": 1050000,"max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "medium",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
+      "output_tokens": {"responses": "max_output_tokens","chat_completions": "max_completion_tokens","legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses","reasoning_effort": "medium","temperature": "omit","top_p": "omit"},
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": false,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "never"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
     },
@@ -1254,106 +282,19 @@
       "display_name": "gpt-5.4-mini",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "openai_default": "none",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 400000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
+      "top_p": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "none",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "none"
-              ]
-            }
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -1361,106 +302,19 @@
       "display_name": "gpt-5.4-nano",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "openai_default": "none",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 400000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
+      "top_p": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "none",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "none"
-              ]
-            }
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -1468,101 +322,19 @@
       "display_name": "gpt-5.2",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "openai_default": "none",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 400000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
+      "temperature": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
+      "top_p": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "none",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -1570,84 +342,19 @@
       "display_name": "gpt-5.2-pro",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": false,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": false,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "medium",
-              "high",
-              "xhigh"
-            ]
-          },
-          "chat_completions": {
-            "efforts": []
-          }
-        }
-      },
-      "temperature": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 400000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
+      "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["medium", "high", "xhigh"], "openai_default": null, "by_api": {"responses": {"efforts": ["medium", "high", "xhigh"]}, "chat_completions": {"efforts": []}}},
+      "temperature": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
+      "top_p": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
+      "limits": {"context_tokens": 400000,"max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "medium",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
+      "output_tokens": {"responses": "max_output_tokens","chat_completions": "max_completion_tokens","legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses","reasoning_effort": "medium","temperature": "omit","top_p": "omit"},
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": false,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "never"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
     },
@@ -1656,98 +363,19 @@
       "display_name": "gpt-5.1",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "none",
-          "low",
-          "medium",
-          "high"
-        ],
-        "openai_default": "none",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "none",
-              "low",
-              "medium",
-              "high"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "conditional",
-        "allowed_reasoning_efforts": [
-          "none"
-        ],
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 400000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high"]}}},
+      "temperature": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
+      "top_p": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "none",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "none", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -1755,94 +383,19 @@
       "display_name": "gpt-5",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "minimal",
-          "low",
-          "medium",
-          "high"
-        ],
-        "openai_default": "medium",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "minimal",
-              "low",
-              "medium",
-              "high"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "minimal",
-              "low",
-              "medium",
-              "high"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 400000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["minimal", "low", "medium", "high"]}, "chat_completions": {"efforts": ["minimal", "low", "medium", "high"]}}},
+      "temperature": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "top_p": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "minimal",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "minimal", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -1850,80 +403,19 @@
       "display_name": "gpt-5-pro",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": false,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": false,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "high"
-        ],
-        "openai_default": "high",
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "high"
-            ]
-          },
-          "chat_completions": {
-            "efforts": []
-          }
-        }
-      },
-      "temperature": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 400000,
-        "max_output_tokens": 272000
-      },
+      "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
+      "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["high"], "openai_default": "high", "by_api": {"responses": {"efforts": ["high"]}, "chat_completions": {"efforts": []}}},
+      "temperature": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
+      "top_p": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
+      "limits": {"context_tokens": 400000,"max_output_tokens": 272000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "high",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
+      "output_tokens": {"responses": "max_output_tokens","chat_completions": "max_completion_tokens","legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses","reasoning_effort": "high","temperature": "omit","top_p": "omit"},
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "never"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
     },
@@ -1932,101 +424,19 @@
       "display_name": "gpt-5-mini",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "minimal",
-          "low",
-          "medium",
-          "high"
-        ],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "minimal",
-              "low",
-              "medium",
-              "high"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "minimal",
-              "low",
-              "medium",
-              "high"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 400000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": null, "by_api": {"responses": {"efforts": ["minimal", "low", "medium", "high"]}, "chat_completions": {"efforts": ["minimal", "low", "medium", "high"]}}},
+      "temperature": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "top_p": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "minimal",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "minimal", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "conditional",
-            "requires": {
-              "reasoning_effort": [
-                "low",
-                "medium",
-                "high"
-              ]
-            }
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "conditional", "requires": {"reasoning_effort": ["low", "medium", "high"]}}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -2034,94 +444,19 @@
       "display_name": "gpt-5-nano",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "minimal",
-          "low",
-          "medium",
-          "high"
-        ],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "minimal",
-              "low",
-              "medium",
-              "high"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "minimal",
-              "low",
-              "medium",
-              "high"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 400000,
-        "max_output_tokens": 128000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": null, "by_api": {"responses": {"efforts": ["minimal", "low", "medium", "high"]}, "chat_completions": {"efforts": ["minimal", "low", "medium", "high"]}}},
+      "temperature": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "top_p": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "minimal",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "minimal", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -2129,79 +464,19 @@
       "display_name": "gpt-4.1",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": false,
-        "efforts": [],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": []
-          },
-          "chat_completions": {
-            "efforts": []
-          }
-        }
-      },
-      "temperature": {
-        "support": "always",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "always",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 1047576,
-        "max_output_tokens": 32768
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
+      "temperature": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
+      "top_p": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 1047576, "max_output_tokens": 32768},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": null,
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -2209,79 +484,19 @@
       "display_name": "gpt-4.1-mini",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": false,
-        "efforts": [],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": []
-          },
-          "chat_completions": {
-            "efforts": []
-          }
-        }
-      },
-      "temperature": {
-        "support": "always",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "always",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 1047576,
-        "max_output_tokens": 32768
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
+      "temperature": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
+      "top_p": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 1047576, "max_output_tokens": 32768},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": null,
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -2289,79 +504,19 @@
       "display_name": "gpt-4o",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": false,
-        "efforts": [],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": []
-          },
-          "chat_completions": {
-            "efforts": []
-          }
-        }
-      },
-      "temperature": {
-        "support": "always",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "always",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 128000,
-        "max_output_tokens": 16384
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
+      "temperature": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
+      "top_p": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 128000, "max_output_tokens": 16384},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": null,
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -2369,79 +524,19 @@
       "display_name": "gpt-4o-mini",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": false,
-        "efforts": [],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": []
-          },
-          "chat_completions": {
-            "efforts": []
-          }
-        }
-      },
-      "temperature": {
-        "support": "always",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "always",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 128000,
-        "max_output_tokens": 16384
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
+      "temperature": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
+      "top_p": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 128000, "max_output_tokens": 16384},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": null,
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -2449,91 +544,19 @@
       "display_name": "o3",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": true,
-        "efforts": [
-          "low",
-          "medium",
-          "high"
-        ],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": [
-              "low",
-              "medium",
-              "high"
-            ]
-          },
-          "chat_completions": {
-            "efforts": [
-              "low",
-              "medium",
-              "high"
-            ]
-          }
-        }
-      },
-      "temperature": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 200000,
-        "max_output_tokens": 100000
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": true, "efforts": ["low", "medium", "high"], "openai_default": null, "by_api": {"responses": {"efforts": ["low", "medium", "high"]}, "chat_completions": {"efforts": ["low", "medium", "high"]}}},
+      "temperature": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "top_p": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
+      "limits": {"context_tokens": 200000, "max_output_tokens": 100000},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": "low",
-        "temperature": "omit",
-        "top_p": "omit"
-      },
-      "service_tiers": [
-        "auto",
-        "default"
-      ],
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": "low", "temperature": "omit", "top_p": "omit"},
+      "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -2541,76 +564,19 @@
       "display_name": "o3-pro",
       "kind": "alias",
       "status": "current",
-      "api": {
-        "responses": true,
-        "chat_completions": false,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": false,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": false,
-        "efforts": [],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": []
-          },
-          "chat_completions": {
-            "efforts": []
-          }
-        }
-      },
-      "temperature": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "top_p": {
-        "support": "never",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit"
-      },
-      "limits": {
-        "context_tokens": 200000,
-        "max_output_tokens": 100000
-      },
+      "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
+      "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
+      "temperature": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
+      "top_p": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
+      "limits": {"context_tokens": 200000,"max_output_tokens": 100000},
       "streaming": false,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": null,
-        "temperature": "omit",
-        "top_p": "omit"
-      },
+      "output_tokens": {"responses": "max_output_tokens","chat_completions": "max_completion_tokens","legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses","reasoning_effort": null,"temperature": "omit","top_p": "omit"},
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": false,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "never"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
     },
@@ -2625,76 +591,19 @@
       "display_name": "gpt-4-turbo",
       "kind": "alias",
       "status": "deprecated",
-      "api": {
-        "responses": true,
-        "chat_completions": true,
-        "completions_legacy": false
-      },
-      "function_calling": {
-        "responses": true,
-        "chat_completions": true,
-        "preferred_api": "responses"
-      },
-      "reasoning": {
-        "supported": false,
-        "efforts": [],
-        "openai_default": null,
-        "by_api": {
-          "responses": {
-            "efforts": []
-          },
-          "chat_completions": {
-            "efforts": []
-          }
-        }
-      },
-      "temperature": {
-        "support": "always",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit_unless_configured"
-      },
-      "top_p": {
-        "support": "always",
-        "allowed_reasoning_efforts": null,
-        "send_policy": "omit_unless_configured"
-      },
-      "limits": {
-        "context_tokens": 128000,
-        "max_output_tokens": 4096
-      },
+      "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
+      "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
+      "temperature": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
+      "top_p": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
+      "limits": {"context_tokens": 128000, "max_output_tokens": 4096},
       "streaming": true,
-      "output_tokens": {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send"
-      },
-      "recommended_profile": {
-        "api": "responses",
-        "reasoning_effort": null,
-        "temperature": "omit",
-        "top_p": "omit"
-      },
+      "output_tokens": {"responses": "max_output_tokens", "chat_completions": "max_completion_tokens", "legacy_max_tokens": "never_send"},
+      "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {
-        "function": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "always"
-          }
-        },
-        "web_search": {
-          "responses": {
-            "support": "always"
-          },
-          "chat_completions": {
-            "support": "never"
-          }
-        }
-      },
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true,
       "lifecycle_note": "Deprecated legacy alias retained for existing configurations."
     }
