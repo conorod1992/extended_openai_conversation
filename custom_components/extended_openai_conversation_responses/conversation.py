@@ -14,6 +14,7 @@ from pathlib import Path
 import time
 from types import SimpleNamespace
 from typing import Any, Literal, cast
+from uuid import uuid4
 
 import httpx
 from openai import OpenAIError
@@ -255,6 +256,41 @@ _ACTIVE_RUNTIME_RECONCILED: ContextVar[bool] = ContextVar(
 _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
     "extended_openai_process_metadata", default=None
 )
+
+_CONVERSATION_ID_OWNERS = f"{DOMAIN}.conversation_id_owners"
+_MAX_CONVERSATION_ID_OWNERS = 256
+
+
+def _claim_conversation_id(
+    hass: HomeAssistant,
+    agent_id: str,
+    scope: ResolvedDataScope,
+    conversation_id: str | None,
+    *,
+    guest_active: bool,
+) -> str | None:
+    """Prevent a caller-selected HA ChatLog ID crossing EOAI privacy boundaries."""
+    if conversation_id is None:
+        return None
+    owners: dict[str, tuple[str, str]] = hass.data.setdefault(
+        _CONVERSATION_ID_OWNERS, {}
+    )
+    owner = (agent_id, "guest" if guest_active else scope.scope_id)
+    existing = owners.get(conversation_id)
+    if existing is None:
+        owners[conversation_id] = owner
+        claimed = conversation_id
+    elif existing == owner:
+        # Refresh insertion order so active caller-selected IDs survive the bound.
+        owners.pop(conversation_id, None)
+        owners[conversation_id] = owner
+        claimed = conversation_id
+    else:
+        claimed = f"extended-openai-{agent_id}-{uuid4().hex}"
+        owners[claimed] = owner
+    while len(owners) > _MAX_CONVERSATION_ID_OWNERS:
+        owners.pop(next(iter(owners)))
+    return claimed
 
 
 def _request_llm_context(user_input: ConversationInput) -> Any:
@@ -683,6 +719,17 @@ class ExtendedOpenAIAgentEntity(
                         else None
                     ),
                 )
+                claimed_conversation_id = _claim_conversation_id(
+                    self.hass,
+                    self.subentry.subentry_id,
+                    scope,
+                    resolution.conversation_id,
+                    guest_active=request_policy.guest_active,
+                )
+                if claimed_conversation_id != resolution.conversation_id:
+                    resolution = replace(
+                        resolution, conversation_id=claimed_conversation_id
+                    )
                 try:
                     return await self._async_process_claimed(
                         user_input,
