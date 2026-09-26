@@ -117,6 +117,8 @@ async def test_agent_config_aba_rejects_suspended_management_writer(
     with pytest.raises(HomeAssistantError, match="changed in another tab"):
         await task
     record(stress_trace, "agent_config_aba", field=field, revisions=3)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 async def test_function_tools_and_groups_commit_as_one_subentry_revision(

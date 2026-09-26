@@ -9,6 +9,7 @@ from functools import lru_cache
 from hashlib import sha256
 from time import perf_counter
 from typing import Any
+from weakref import ReferenceType, ref
 
 import yaml
 
@@ -75,6 +76,27 @@ class _RepairState:
 
 
 _persisted_projections: OrderedDict[int, _PersistedProjection] = OrderedDict()
+_revision_lineages: dict[int, tuple[ReferenceType[Any], Any, str, str]] = {}
+
+
+def _remember_revision_lineage(
+    subentry: Any, data: Any, title: str, revision: str
+) -> None:
+    """Retain the last generation while a live HA subentry exists."""
+    key = id(subentry)
+
+    def forget(dead: ReferenceType[Any]) -> None:
+        current = _revision_lineages.get(key)
+        if current is not None and current[0] is dead:
+            del _revision_lineages[key]
+
+    try:
+        owner = ref(subentry, forget)
+    except TypeError:
+        # Small unit-test namespaces are not weak-referenceable. Their bounded
+        # projection cache still tracks replacement within each test.
+        return
+    _revision_lineages[key] = (owner, data, title, revision)
 
 
 def editable_function_tools(options: dict[str, Any]) -> Any:
@@ -408,11 +430,27 @@ def persisted_config_projection(
     # Content alone misses A -> B -> A. Keep the previous projection alive so
     # replacement of HA's authoritative data mapping is a new generation even
     # when the restored bytes equal the original bytes.
-    revision = (
-        sha256(f"{cached.revision}:{content_revision}".encode()).hexdigest()
+    lineage = _revision_lineages.get(key)
+    previous = (
+        lineage[3]
+        if lineage is not None and lineage[0]() is subentry
+        else cached.revision
         if cached is not None and cached.subentry is subentry
-        else content_revision
+        else None
     )
+    if (
+        lineage is not None
+        and lineage[0]() is subentry
+        and lineage[1] is subentry.data
+        and lineage[2] == subentry.title
+    ):
+        revision = lineage[3]
+    else:
+        revision = (
+            sha256(f"{previous}:{content_revision}".encode()).hexdigest()
+            if previous is not None
+            else content_revision
+        )
     defaults = {
         CONF_USAGE_REQUEST_RETENTION_DAYS: DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
         CONF_USAGE_RUN_RETENTION_DAYS: DEFAULT_USAGE_RUN_RETENTION_DAYS,
@@ -435,6 +473,7 @@ def persisted_config_projection(
     ):
         projection.repair_state = cached.repair_state
     _persisted_projections[key] = projection
+    _remember_revision_lineage(subentry, subentry.data, subentry.title, revision)
     _persisted_projections.move_to_end(key)
     if len(_persisted_projections) > _PROJECTION_CACHE_LIMIT:
         _persisted_projections.popitem(last=False)
@@ -560,6 +599,7 @@ def seed_persisted_config_projection(
         repair_snapshot=deepcopy(snapshot) if repair_state is not None else None,
     )
     _persisted_projections[key] = projection
+    _remember_revision_lineage(current, current.data, current.title, revision)
     _persisted_projections.move_to_end(key)
     if len(_persisted_projections) > _PROJECTION_CACHE_LIMIT:
         _persisted_projections.popitem(last=False)

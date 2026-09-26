@@ -515,6 +515,38 @@ async def test_agent_revision_rejects_aba_while_writer_is_suspended(
     assert dict(subentry.data) == original
 
 
+def test_agent_revision_lineage_survives_projection_cache_eviction(monkeypatch) -> None:
+    """A busy installation must not turn an evicted stale token valid again."""
+    class Agent:
+        pass
+
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    monkeypatch.setattr(function_repair, "_revision_lineages", {})
+    monkeypatch.setattr(function_repair, "_PROJECTION_CACHE_LIMIT", 2)
+    target = Agent()
+    target.data = agent_config_defaults()
+    target.title = "ABA target"
+    target.subentry_id = "aba"
+    original = deepcopy(target.data)
+    stale = function_repair.persisted_config_projection(target).revision
+    others = []
+    for index in range(3):
+        other = Agent()
+        other.data = agent_config_defaults()
+        other.title = f"Other {index}"
+        other.subentry_id = f"other-{index}"
+        others.append(other)
+        function_repair.persisted_config_projection(other)
+    assert id(target) not in function_repair._persisted_projections
+
+    target.data = {**original, "guest_mode_enabled": False}
+    target.data = deepcopy(original)
+    with pytest.raises(HomeAssistantError, match="changed in another tab"):
+        function_repair.require_agent_config_revision(target, stale)
+
+
 async def test_import_replaces_cached_configuration_projection(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
     monkeypatch.setattr(
