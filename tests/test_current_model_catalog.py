@@ -8,6 +8,7 @@ from custom_components.extended_openai_conversation_responses.model_capabilities
     ModelCapabilityError,
     get_model_capabilities,
     normalize_output_token_limit,
+    parameter_is_allowed,
 )
 from custom_components.extended_openai_conversation_responses.model_catalog import (
     BUNDLED_CATALOG,
@@ -79,6 +80,64 @@ def test_new_flagships_condition_chat_tools_on_none(model):
         tools_required=True,
     )
     assert auto.api_mode == "responses"
+
+
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["gpt-6-sol", "gpt-6-luna", "gpt-5.5", "gpt-5.6", "gpt-5.6-sol"],
+)
+def test_verified_sampling_is_conditional_on_none(model):
+    capabilities = get_model_capabilities(model)
+    expected = {
+        "support": "conditional",
+        "allowed_reasoning_efforts": ["none"],
+        "send_policy": "omit_unless_configured",
+    }
+    assert capabilities["temperature"] == expected
+    assert capabilities["top_p"] == expected
+    assert parameter_is_allowed(model, "temperature", "none") is True
+    assert parameter_is_allowed(model, "top_p", "none") is True
+    assert parameter_is_allowed(model, "temperature", "low") is False
+    assert parameter_is_allowed(model, "top_p", "low") is False
+
+    none = build_provider_request_snapshot(
+        {
+            "chat_model": model,
+            "api_mode": "responses",
+            "reasoning_effort": "none",
+            "temperature": 0.7,
+            "top_p": 0.7,
+        },
+        {},
+    )
+    assert none.api_kwargs["temperature"] == 0.7
+    assert none.api_kwargs["top_p"] == 0.7
+
+    low = build_provider_request_snapshot(
+        {
+            "chat_model": model,
+            "api_mode": "responses",
+            "reasoning_effort": "low",
+            "temperature": 0.7,
+            "top_p": 0.7,
+        },
+        {},
+    )
+    assert "temperature" not in low.api_kwargs
+    assert "top_p" not in low.api_kwargs
+
+
+@pytest.mark.parametrize("model", ["gpt-5.6-terra", "gpt-5.6-luna"])
+def test_unverified_56_variants_keep_sampling_undocumented(model):
+    capabilities = get_model_capabilities(model)
+    for parameter in ("temperature", "top_p"):
+        assert capabilities[parameter] == {
+            "support": "undocumented",
+            "allowed_reasoning_efforts": None,
+            "send_policy": "omit",
+        }
 
 
 def test_cache_and_flex_corrections():
