@@ -5,6 +5,7 @@ import {
   parameterControlState,
   pickerModels,
 } from "../custom_components/extended_openai_conversation_responses/frontend/model-catalog.js";
+import {modelFieldPresentation, webSearchControlState} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-model-presentation.js";
 
 {
   const conditional = {
@@ -66,6 +67,35 @@ import {
   assert.equal(apiPathSelectable(selectedModelMetadata, "chat_completions", false, "high"), true);
   // Reasoning changes project the metadata already held by the Configuration view.
   assert.equal(apiPathSelectable(selectedModelMetadata, "responses", true, "high"), true);
+}
+
+{
+  const capabilities = {
+    api:{responses:true,chat_completions:true},
+    reasoning:{supported:true,efforts:["none","high","max"],by_api:{responses:{efforts:["none","high","max"]},chat_completions:{efforts:["none","high"]}}},
+    recommended_profile:{reasoning_effort:"high"},
+    evaluations:{responses:{none:{reasoning:true,function:true,web_search:true},high:{reasoning:true,function:true,web_search:true},max:{reasoning:true,function:true,web_search:true}},chat_completions:{none:{reasoning:true,function:true,web_search:false},high:{reasoning:true,function:false,web_search:false},max:{reasoning:false,function:false,web_search:false}}},
+    auto_paths:{"high:0:0":"chat_completions","high:1:0":"responses","max:0:0":"responses"},
+  };
+  const panel = {_draft:{chat_model:"gpt-5.6",api_mode:"chat_completions",reasoning_effort:"high"},_result:{model_capabilities:capabilities,options:{api_mode:[{value:"auto"},{value:"responses"},{value:"chat_completions"}]}}};
+  assert.equal(apiPathSelectable(capabilities,"chat_completions",false,"max"),false);
+  assert.equal(apiPathSelectable(capabilities,"chat_completions",true,"high"),false);
+  assert.equal(apiPathSelectable(capabilities,"chat_completions",true,"none"),true);
+  assert.deepEqual(modelFieldPresentation(panel,"reasoning_effort","high").options.map(({value})=>value),["none","high"]);
+  panel._draft.api_mode="responses";
+  assert.deepEqual(modelFieldPresentation(panel,"reasoning_effort","high").options.map(({value})=>value),["none","high","max"]);
+  panel._draft.api_mode="auto";
+  panel._draft.reasoning_effort="max";
+  assert.deepEqual(modelFieldPresentation(panel,"reasoning_effort","max").options.map(({value})=>value),["none","high","max"]);
+  panel._draft.chat_model="gpt-5-mini";
+  panel._draft.api_mode="responses";
+  panel._draft.reasoning_effort="minimal";
+  panel._draft.web_search=true;
+  capabilities.evaluations.responses.minimal={reasoning:true,function:true,web_search:false};
+  assert.equal(webSearchControlState(panel).disabled,true);
+  assert.match(webSearchControlState(panel).note,/saved setting is retained/);
+  panel._draft.reasoning_effort="high";
+  assert.equal(webSearchControlState(panel).disabled,false);
 }
 
 {

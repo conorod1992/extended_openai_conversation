@@ -20,9 +20,11 @@ from custom_components.extended_openai_conversation_responses import (
 
 
 @pytest.fixture(autouse=True)
-def isolated_catalog(monkeypatch):
+def isolated_catalog():
     """Keep catalogue publication local to each test."""
-    monkeypatch.setattr(data, "_active", data.BUNDLED_CATALOG)
+    data.activate_catalog(None)
+    yield
+    data.activate_catalog(None)
 
 
 def _label_candidate():
@@ -147,6 +149,7 @@ def candidate():
     value["catalog_version"] += 1
     model = next(item for item in value["models"] if item["id"] == "gpt-5.6")
     model["reasoning"]["efforts"].append("minimal")
+    model["reasoning"]["by_api"]["responses"]["efforts"].append("minimal")
     return value
 
 
@@ -360,7 +363,7 @@ async def test_websocket_update_failure_sends_error_without_metadata_work(
     )
     monkeypatch.setattr(
         runtime,
-        "compatibility_capabilities",
+        "frontend_capabilities",
         lambda *_args: pytest.fail(
             "capabilities should not be evaluated after update failure"
         ),

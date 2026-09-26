@@ -1,6 +1,6 @@
 import {readConfigurationDraft as readConfig} from "./configuration-controls.js";
 import {bindConfigurationInputs, updateConfigurationControl} from "./configuration-inputs.js";
-import {modelFieldPresentation, modelFieldNotes} from "./agent-config-model-presentation.js";
+import {modelFieldPresentation, modelFieldNotes, webSearchControlState} from "./agent-config-model-presentation.js";
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
@@ -74,7 +74,11 @@ export const select = (panel, key, label, value, options, description = "", disa
     return option(panel, choice, value, friendlySettingValue(key, choice) || (typeof item === "string" ? null : item.label), presentation.disabledOption?.(choice));
   }).join("")}</select>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span>${modelFieldNotes(panel, presentation)}</div>`;
 };
-export const toggle = (panel, key, label, value, description = "", disabled = false, helpKey = null) => `<div class="config-toggle setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}"><span class="setting-copy">${labelRow(panel, label, key, helpKey, true, value, disabled)}${description ? `<small>${description}</small>` : ""}</span><label class="switch-control" for="config-${key}"><input id="config-${key}" data-config="${key}" data-type="boolean" type="checkbox" role="switch" ${bool(value)} ${disabled ? "disabled" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>`;
+export const toggle = (panel, key, label, value, description = "", disabled = false, helpKey = null) => {
+  const state = key === "web_search" ? webSearchControlState(panel) : {disabled:false, note:""};
+  const inactive = disabled || state.disabled;
+  return `<div class="config-toggle setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}"><span class="setting-copy">${labelRow(panel, label, key, helpKey, true, value, inactive)}${description ? `<small>${description}</small>` : ""}${state.note ? `<small class="capability-note">${panel._e(state.note)}</small>` : ""}</span><label class="switch-control" for="config-${key}"><input id="config-${key}" data-config="${key}" data-type="boolean" type="checkbox" role="switch" ${bool(value)} ${inactive ? "disabled" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>`;
+};
 
 export async function copyTextToClipboard(text, clipboardNavigator = globalThis.navigator, clipboardDocument = globalThis.document) {
   const writeText = clipboardNavigator?.clipboard?.writeText;

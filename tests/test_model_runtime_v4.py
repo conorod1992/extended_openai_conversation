@@ -36,6 +36,9 @@ def conditional_catalog():
         "support": "conditional",
         "allowed_reasoning_efforts": ["none"],
     }
+    model["tools"]["function"]["chat_completions"] = {
+        "support": "conditional", "requires": {"reasoning_effort": ["none"]},
+    }
     model["function_calling"]["preferred_api"] = "chat_completions"
     model["auto_api"] = "chat_completions"
     model_catalog.activate_catalog(catalog)
@@ -55,7 +58,7 @@ def test_v3_migration_retains_boolean_function_semantics():
         item.pop("responses_web_search")
     migrated, changed = model_catalog.validate_or_migrate_catalog(old)
     assert changed is True
-    assert migrated["schema_version"] == 4
+    assert migrated["schema_version"] == 5
     assert migrated["defaults"]["function_calling"]["responses"] is False
     assert migrated["models"][0]["function_calling"]["responses"] is True
 
@@ -69,10 +72,9 @@ def test_conditional_function_support_and_transition_safety(conditional_catalog)
     )
     with pytest.raises(ModelCapabilityError, match="function/tool calling"):
         validate_api_path("gpt-5.4", "chat_completions", True, "high")
-    # The bundled catalogue accepts Chat tools at all efforts. A downloaded
-    # conditional record must be rejected before it invalidates saved settings.
-    with pytest.raises(ValueError, match="function-calling support"):
-        model_catalog.validate_catalog_transition(None, conditional_catalog)
+    # Provider-discovered conditions may narrow one API path while preserving
+    # model-wide capability choices.
+    model_catalog.validate_catalog_transition(None, conditional_catalog)
 
 
 def test_runtime_and_preview_resolve_effort_before_api(conditional_catalog):
@@ -99,6 +101,7 @@ def test_web_search_checks_selected_model_without_another_lookup(
         item for item in conditional_catalog["models"] if item["id"] == "gpt-5.4"
     )
     model["responses_web_search"] = False
+    model["tools"]["web_search"]["responses"] = {"support": "never"}
     model_catalog.activate_catalog(conditional_catalog)
     from custom_components.extended_openai_conversation_responses import request
 
@@ -112,7 +115,7 @@ def test_web_search_checks_selected_model_without_another_lookup(
 
     monkeypatch.setattr(request, "get_model_capabilities", counted)
     with pytest.raises(
-        HomeAssistantError, match="does not support Responses Web Search"
+        HomeAssistantError, match="does not support Web Search"
     ):
         build_provider_request_snapshot(
             {"chat_model": "gpt-5.4", "web_search": True, "api_mode": "responses"},

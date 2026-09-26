@@ -56,6 +56,18 @@ def _install_capabilities(
     monkeypatch: pytest.MonkeyPatch, capabilities: dict[str, Any]
 ) -> None:
     """Make one synthetic capability record authoritative for the test."""
+    efforts = capabilities["reasoning"]["efforts"]
+    capabilities["reasoning"]["by_api"] = {
+        api: {"efforts": list(efforts) if capabilities["api"][api] else []}
+        for api in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS)
+    }
+    capabilities["tools"] = {
+        "function": {
+            api: {"support": "always" if capabilities["function_calling"][api] else "never"}
+            for api in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS)
+        },
+        "web_search": {api: {"support": "never"} for api in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS)},
+    }
     monkeypatch.setattr(
         model_capabilities,
         "get_model_capabilities",
@@ -129,6 +141,7 @@ def test_validate_api_path_rejects_unknown_unsupported_and_tool_incompatible_pat
 
     capabilities["api"][API_MODE_CHAT_COMPLETIONS] = True
     capabilities["function_calling"][API_MODE_CHAT_COMPLETIONS] = False
+    capabilities["tools"]["function"][API_MODE_CHAT_COMPLETIONS] = {"support": "never"}
     with pytest.raises(ModelCapabilityError, match="function/tool calling"):
         model_capabilities.validate_api_path(
             "model", API_MODE_CHAT_COMPLETIONS, tools_required=True

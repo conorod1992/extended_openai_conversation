@@ -36,14 +36,15 @@ export function parameterControlState(capability = {}, effort = null, configured
   };
 }
 
-export function apiPathSelectable(metadata = {}, api, toolsRequired = false, effort = null) {
+export function apiPathSelectable(metadata = {}, api, toolsRequired = false, effort = null, webSearch = false) {
   if (api === "auto") return true;
   if (!metadata?.api?.[api]) return false;
+  const evaluated = metadata?.evaluations?.[api]?.[String(effort)];
+  if (evaluated) return evaluated.reasoning && (!toolsRequired || evaluated.function) && (!webSearch || evaluated.web_search);
+  // Older fixtures and cached catalogue responses retain the v4 projection.
   if (!toolsRequired) return true;
   const support = metadata?.function_calling?.[api];
-  return typeof support === "boolean"
-    ? support
-    : support?.support === "conditional" && support.allowed_reasoning_efforts?.includes(effort);
+  return typeof support === "boolean" ? support : support?.allowed_reasoning_efforts?.includes(effort) || false;
 }
 
 export function pickerModels(result = {}, selectedModel = "") {

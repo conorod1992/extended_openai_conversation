@@ -30,6 +30,7 @@ _METADATA_REQUIRED = {
     "explicit_prompt_cache",
     "structured_outputs",
     "responses_web_search",
+    "tools",
 }
 _MODEL_WRAPPER_KEYS = {"id", "display_name", "kind"}
 _METADATA_OPTIONAL = {"alias_of", "lifecycle_note", "auto_api"}
@@ -86,6 +87,37 @@ def _validate_sampling(value: Any, efforts: list[str], label: str) -> None:
         raise ValueError(f"{label} must be omitted when unsupported or undocumented")
 
 
+def _validate_tool_rule(rule: Any, efforts: list[str]) -> None:
+    _keys(rule, {"support"}, {"requires", "excludes"})
+    if rule["support"] not in {"always", "conditional", "never"}:
+        raise ValueError("Invalid tool support")
+    conditions = 0
+    for operator in ("requires", "excludes"):
+        if operator not in rule:
+            continue
+        conditions += 1
+        dimensions = rule[operator]
+        if (
+            not isinstance(dimensions, dict)
+            or not dimensions
+            or dimensions.keys() - {"reasoning_effort"}
+        ):
+            raise ValueError("Invalid tool condition")
+        for allowed in dimensions.values():
+            domain = set(efforts)
+            if (
+                not isinstance(allowed, list)
+                or not allowed
+                or any(
+                    not isinstance(item, str) or item not in domain for item in allowed
+                )
+                or len(set(allowed)) != len(allowed)
+            ):
+                raise ValueError("Invalid tool condition values")
+    if (rule["support"] == "conditional") != bool(conditions):
+        raise ValueError("Conditional tool support requires conditions")
+
+
 def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> None:
     optional = set(_METADATA_OPTIONAL)
     if model_entry:
@@ -112,7 +144,7 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
         raise ValueError("Invalid preferred function-calling API")
 
     reasoning = value["reasoning"]
-    _keys(reasoning, {"supported", "efforts", "openai_default"})
+    _keys(reasoning, {"supported", "efforts", "by_api", "openai_default"})
     efforts = reasoning["efforts"]
     if type(reasoning["supported"]) is not bool or not isinstance(efforts, list):
         raise ValueError("Invalid reasoning capability")
@@ -128,6 +160,34 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
         and reasoning["openai_default"] not in efforts
     ):
         raise ValueError("Invalid OpenAI reasoning default")
+    _keys(reasoning["by_api"], _APIS)
+    for api in _APIS:
+        _keys(reasoning["by_api"][api], {"efforts"})
+        api_efforts = reasoning["by_api"][api]["efforts"]
+        if (
+            not isinstance(api_efforts, list)
+            or any(not isinstance(item, str) for item in api_efforts)
+            or len(set(api_efforts)) != len(api_efforts)
+            or any(item not in efforts for item in api_efforts)
+            or (api_efforts and not value["api"][api])
+        ):
+            raise ValueError("Invalid API-specific reasoning efforts")
+    if set(efforts) != set().union(
+        *(set(reasoning["by_api"][api]["efforts"]) for api in _APIS)
+    ):
+        raise ValueError("Model-wide reasoning efforts must equal the API union")
+    _keys(value["tools"], {"function", "web_search"})
+    for name in ("function", "web_search"):
+        _keys(value["tools"][name], _APIS)
+        for api in _APIS:
+            _validate_tool_rule(
+                value["tools"][name][api], reasoning["by_api"][api]["efforts"]
+            )
+            if (
+                not value["api"][api]
+                and value["tools"][name][api]["support"] != "never"
+            ):
+                raise ValueError("Tool support requires an available API")
     for api in _APIS:
         support = functions[api]
         if type(support) is bool:
@@ -173,6 +233,12 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
         and profile["reasoning_effort"] not in efforts
     ):
         raise ValueError("Invalid recommended reasoning effort")
+    if (
+        profile["reasoning_effort"] is not None
+        and profile["reasoning_effort"]
+        not in reasoning["by_api"][profile["api"]]["efforts"]
+    ):
+        raise ValueError("Invalid recommended reasoning effort for selected API")
     if profile["temperature"] != "omit" or profile["top_p"] != "omit":
         raise ValueError("Recommended sampling profile must omit temperature/top_p")
     service_tiers = value["service_tiers"]
@@ -215,12 +281,12 @@ def validate_catalog(value: Any) -> _PreparedCatalog:
     """Validate raw catalogue data and prepare exact snapshot capabilities."""
     _keys(value, {"schema_version", "catalog_version", "defaults", "models"})
     if (
-        value.get("schema_version") != 4
+        value.get("schema_version") != 5
         or type(value.get("catalog_version")) is not int
     ):
         raise ValueError("Unsupported model catalogue schema")
-    if value["catalog_version"] < 4:
-        raise ValueError("catalog_version must be at least 4")
+    if value["catalog_version"] < 7:
+        raise ValueError("catalog_version must be at least 7")
     _validate_metadata(value["defaults"])
     if value["defaults"]["status"] != "unknown":
         raise ValueError("Catalogue defaults must describe unknown models")
@@ -370,7 +436,48 @@ def migrate_catalog_v3(value: Any) -> dict[str, Any]:
     for model in migrated["models"]:
         model.setdefault("structured_outputs", True)
         model.setdefault("responses_web_search", bool(model["api"]["responses"]))
+    return migrate_catalog_v4(migrated)
+
+
+def migrate_catalog_v4(value: Any) -> dict[str, Any]:
+    """Keep legacy booleans readable while adding explicit API/tool rules."""
+    if not isinstance(value, dict) or value.get("schema_version") != 4:
+        raise ValueError("Not a model catalogue v4 document")
+    migrated = deepcopy(value)
+    migrated["schema_version"] = 5
+    migrated["catalog_version"] = max(7, migrated["catalog_version"])
+    for metadata in (migrated["defaults"], *migrated["models"]):
+        reasoning = metadata.get("reasoning")
+        if reasoning is not None:
+            reasoning["by_api"] = {
+                api: {
+                    "efforts": list(reasoning["efforts"])
+                    if metadata["api"][api]
+                    else []
+                }
+                for api in _APIS
+            }
+        if "function_calling" in metadata and "responses_web_search" in metadata:
+            metadata["tools"] = {
+                "function": {
+                    api: _legacy_tool_rule(metadata["function_calling"][api])
+                    for api in _APIS
+                },
+                "web_search": {
+                    "responses": _legacy_tool_rule(metadata["responses_web_search"]),
+                    "chat_completions": {"support": "never"},
+                },
+            }
     return validate_catalog(migrated)
+
+
+def _legacy_tool_rule(value: Any) -> dict[str, Any]:
+    if type(value) is bool:
+        return {"support": "always" if value else "never"}
+    return {
+        "support": "conditional",
+        "requires": {"reasoning_effort": list(value["allowed_reasoning_efforts"])},
+    }
 
 
 def validate_or_migrate_catalog(value: Any) -> tuple[dict[str, Any], bool]:
@@ -380,6 +487,8 @@ def validate_or_migrate_catalog(value: Any) -> tuple[dict[str, Any], bool]:
         return migrate_catalog_v2(value), True
     if isinstance(value, dict) and value.get("schema_version") == 3:
         return migrate_catalog_v3(value), True
+    if isinstance(value, dict) and value.get("schema_version") == 4:
+        return migrate_catalog_v4(value), True
     return validate_catalog(value), False
 
 
@@ -475,6 +584,28 @@ def function_calling_allowed(
     return effort in support["allowed_reasoning_efforts"]
 
 
+def evaluate_tool_rule(
+    rule: dict[str, Any],
+    *,
+    effort: str | None = None,
+    service_tier: str | None = None,
+    streaming: bool | None = None,
+) -> bool:
+    if rule["support"] == "never":
+        return False
+    values = {
+        "reasoning_effort": effort,
+        "service_tier": service_tier,
+        "streaming": streaming,
+    }
+    return all(
+        values[key] in allowed for key, allowed in rule.get("requires", {}).items()
+    ) and all(
+        values[key] not in excluded
+        for key, excluded in rule.get("excludes", {}).items()
+    )
+
+
 def _function_support_set(support: bool | dict[str, Any]) -> frozenset[str] | None:
     if support is True:
         return None  # All efforts.
@@ -506,14 +637,16 @@ def validate_catalog_transition(
                 raise ValueError("Catalogue update cannot remove an API path")
             old_allowed = _function_support_set(old["function_calling"][api])
             new_allowed = _function_support_set(new["function_calling"][api])
-            if (old_allowed is None and new_allowed is not None) or (
-                old_allowed is not None
-                and new_allowed is not None
-                and not old_allowed.issubset(new_allowed)
-            ):
+            if old_allowed != frozenset() and new_allowed == frozenset():
                 raise ValueError(
                     "Catalogue update cannot remove function-calling support"
                 )
+            for tool in ("function", "web_search"):
+                if (
+                    old["tools"][tool][api]["support"] != "never"
+                    and new["tools"][tool][api]["support"] == "never"
+                ):
+                    raise ValueError("Catalogue update cannot remove tool support")
         for capability in ("structured_outputs", "responses_web_search", "streaming"):
             if old[capability] and not new[capability]:
                 raise ValueError(f"Catalogue update cannot remove {capability} support")
@@ -569,6 +702,26 @@ def compatibility_capabilities(
     """Expose legacy projections without making them authoritative."""
     del effort
     metadata = metadata if metadata is not None else model_metadata(model)
+    evaluations = {
+        api: {
+            str(candidate): {
+                "reasoning": candidate is None
+                or candidate in metadata["reasoning"]["by_api"][api]["efforts"],
+                "function": evaluate_tool_rule(
+                    metadata["tools"]["function"][api],
+                    effort=candidate,
+                    streaming=metadata["streaming"],
+                ),
+                "web_search": evaluate_tool_rule(
+                    metadata["tools"]["web_search"][api],
+                    effort=candidate,
+                    streaming=metadata["streaming"],
+                ),
+            }
+            for candidate in (None, *metadata["reasoning"]["efforts"])
+        }
+        for api in _APIS
+    }
     return {
         "supports_top_p": metadata["top_p"]["support"] in {"always", "conditional"},
         "supports_temperature": metadata["temperature"]["support"]
@@ -582,6 +735,8 @@ def compatibility_capabilities(
         "api": deepcopy(metadata["api"]),
         "auto_api": metadata.get("auto_api"),
         "function_calling": deepcopy(metadata["function_calling"]),
+        "tools": deepcopy(metadata["tools"]),
+        "evaluations": evaluations,
         "reasoning": deepcopy(metadata["reasoning"]),
         "temperature": deepcopy(metadata["temperature"]),
         "top_p": deepcopy(metadata["top_p"]),

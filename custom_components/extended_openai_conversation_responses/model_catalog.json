@@ -1,6 +1,6 @@
 {
-  "schema_version": 4,
-  "catalog_version": 6,
+  "schema_version": 5,
+  "catalog_version": 7,
   "defaults": {
     "status": "unknown",
     "api": {
@@ -13,11 +13,7 @@
       "chat_completions": false,
       "preferred_api": "responses"
     },
-    "reasoning": {
-      "supported": false,
-      "efforts": [],
-      "openai_default": null
-    },
+    "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
     "temperature": {
       "support": "undocumented",
       "allowed_reasoning_efforts": null,
@@ -47,6 +43,7 @@
     "service_tiers": [],
     "explicit_prompt_cache": false,
     "structured_outputs": false,
+    "tools": {"function": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
     "responses_web_search": false
   },
   "models": [
@@ -58,7 +55,7 @@
       "auto_api": "responses",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": false, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["low", "medium", "high", "xhigh", "max"], "openai_default": null},
+      "reasoning": {"supported": true, "efforts": ["low", "medium", "high", "xhigh", "max"], "openai_default": null, "by_api": {"responses": {"efforts": ["low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["low", "medium", "high", "xhigh", "max"]}}},
       "temperature": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "top_p": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
@@ -68,6 +65,7 @@
       "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -78,7 +76,7 @@
       "auto_api": "responses",
       "api": {"responses": true,"chat_completions": true,"completions_legacy": false},
       "function_calling": {"responses": true,"chat_completions": {"support": "conditional","allowed_reasoning_efforts": ["none"]},"preferred_api": "responses"},
-      "reasoning": {"supported": true,"efforts": ["none","low","medium","high","xhigh","max"],"openai_default": "medium"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}}},
       "temperature": {"support": "undocumented","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "top_p": {"support": "undocumented","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "limits": {"context_tokens": 1050000,"max_output_tokens": 128000},
@@ -88,6 +86,7 @@
       "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -98,7 +97,7 @@
       "auto_api": "responses",
       "api": {"responses": true,"chat_completions": true,"completions_legacy": false},
       "function_calling": {"responses": true,"chat_completions": {"support": "conditional","allowed_reasoning_efforts": ["none"]},"preferred_api": "responses"},
-      "reasoning": {"supported": true,"efforts": ["none","low","medium","high","xhigh","max"],"openai_default": "medium"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}}},
       "temperature": {"support": "undocumented","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "top_p": {"support": "undocumented","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "limits": {"context_tokens": 1050000,"max_output_tokens": 128000},
@@ -108,6 +107,7 @@
       "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -118,7 +118,7 @@
       "auto_api": "responses",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
       "temperature": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "top_p": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
@@ -128,6 +128,7 @@
       "service_tiers": ["auto","default","flex","fast","priority","ultrafast"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true,
       "alias_of": "gpt-5.6-sol"
     },
@@ -139,7 +140,7 @@
       "auto_api": "responses",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
       "temperature": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "top_p": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
@@ -149,6 +150,7 @@
       "service_tiers": ["auto","default","flex","fast","priority","ultrafast"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -159,7 +161,7 @@
       "auto_api": "responses",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
       "temperature": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "top_p": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
@@ -169,6 +171,7 @@
       "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -179,7 +182,7 @@
       "auto_api": "responses",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
       "temperature": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "top_p": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
@@ -189,6 +192,7 @@
       "service_tiers": ["auto","default","flex","fast","priority"],
       "explicit_prompt_cache": true,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -198,7 +202,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "medium"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
       "temperature": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "top_p": {"support": "undocumented", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
@@ -208,6 +212,7 @@
       "service_tiers": ["auto","default","flex"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -217,7 +222,7 @@
       "status": "current",
       "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
       "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
-      "reasoning": {"supported": true,"efforts": ["medium","high","xhigh"],"openai_default": "high"},
+      "reasoning": {"supported": true, "efforts": ["medium", "high", "xhigh"], "openai_default": "high", "by_api": {"responses": {"efforts": ["medium", "high", "xhigh"]}, "chat_completions": {"efforts": []}}},
       "temperature": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "top_p": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "limits": {"context_tokens": 1050000,"max_output_tokens": 128000},
@@ -227,6 +232,7 @@
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
     },
@@ -237,7 +243,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
       "temperature": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
       "top_p": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
       "limits": {"context_tokens": 1050000, "max_output_tokens": 128000},
@@ -247,6 +253,7 @@
       "service_tiers": ["auto","default","flex"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -256,7 +263,7 @@
       "status": "current",
       "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
       "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
-      "reasoning": {"supported": true,"efforts": ["medium","high","xhigh"],"openai_default": "medium"},
+      "reasoning": {"supported": true, "efforts": ["medium", "high", "xhigh"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["medium", "high", "xhigh"]}, "chat_completions": {"efforts": []}}},
       "temperature": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "top_p": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "limits": {"context_tokens": 1050000,"max_output_tokens": 128000},
@@ -266,6 +273,7 @@
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": false,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
     },
@@ -276,7 +284,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
       "temperature": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
       "top_p": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
       "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
@@ -286,6 +294,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -295,7 +304,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
       "temperature": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
       "top_p": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
       "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
@@ -305,6 +314,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "conditional", "requires": {"reasoning_effort": ["none"]}}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -314,7 +324,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
       "temperature": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
       "top_p": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
       "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
@@ -324,6 +334,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -333,7 +344,7 @@
       "status": "current",
       "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
       "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
-      "reasoning": {"supported": true,"efforts": ["medium","high","xhigh"],"openai_default": null},
+      "reasoning": {"supported": true, "efforts": ["medium", "high", "xhigh"], "openai_default": null, "by_api": {"responses": {"efforts": ["medium", "high", "xhigh"]}, "chat_completions": {"efforts": []}}},
       "temperature": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "top_p": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "limits": {"context_tokens": 400000,"max_output_tokens": 128000},
@@ -343,6 +354,7 @@
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": false,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
     },
@@ -353,7 +365,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high"], "openai_default": "none"},
+      "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high"]}}},
       "temperature": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
       "top_p": {"support": "conditional", "allowed_reasoning_efforts": ["none"], "send_policy": "omit_unless_configured"},
       "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
@@ -363,6 +375,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -372,7 +385,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": "medium"},
+      "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["minimal", "low", "medium", "high"]}, "chat_completions": {"efforts": ["minimal", "low", "medium", "high"]}}},
       "temperature": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "top_p": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
@@ -382,6 +395,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -391,7 +405,7 @@
       "status": "current",
       "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
       "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
-      "reasoning": {"supported": true,"efforts": ["high"],"openai_default": "high"},
+      "reasoning": {"supported": true, "efforts": ["high"], "openai_default": "high", "by_api": {"responses": {"efforts": ["high"]}, "chat_completions": {"efforts": []}}},
       "temperature": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "top_p": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "limits": {"context_tokens": 400000,"max_output_tokens": 272000},
@@ -401,6 +415,7 @@
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
     },
@@ -411,7 +426,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": null},
+      "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": null, "by_api": {"responses": {"efforts": ["minimal", "low", "medium", "high"]}, "chat_completions": {"efforts": ["minimal", "low", "medium", "high"]}}},
       "temperature": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "top_p": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
@@ -421,6 +436,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "conditional", "requires": {"reasoning_effort": ["low", "medium", "high"]}}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -430,7 +446,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": null},
+      "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": null, "by_api": {"responses": {"efforts": ["minimal", "low", "medium", "high"]}, "chat_completions": {"efforts": ["minimal", "low", "medium", "high"]}}},
       "temperature": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "top_p": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "limits": {"context_tokens": 400000, "max_output_tokens": 128000},
@@ -440,6 +456,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -449,7 +466,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": false, "efforts": [], "openai_default": null},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
       "temperature": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
       "top_p": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
       "limits": {"context_tokens": 1047576, "max_output_tokens": 32768},
@@ -459,6 +476,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -468,7 +486,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": false, "efforts": [], "openai_default": null},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
       "temperature": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
       "top_p": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
       "limits": {"context_tokens": 1047576, "max_output_tokens": 32768},
@@ -478,6 +496,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -487,7 +506,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": false, "efforts": [], "openai_default": null},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
       "temperature": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
       "top_p": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
       "limits": {"context_tokens": 128000, "max_output_tokens": 16384},
@@ -497,6 +516,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -506,7 +526,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": false, "efforts": [], "openai_default": null},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
       "temperature": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
       "top_p": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
       "limits": {"context_tokens": 128000, "max_output_tokens": 16384},
@@ -516,6 +536,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -525,7 +546,7 @@
       "status": "current",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": true, "efforts": ["low", "medium", "high"], "openai_default": null},
+      "reasoning": {"supported": true, "efforts": ["low", "medium", "high"], "openai_default": null, "by_api": {"responses": {"efforts": ["low", "medium", "high"]}, "chat_completions": {"efforts": ["low", "medium", "high"]}}},
       "temperature": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "top_p": {"support": "never", "allowed_reasoning_efforts": null, "send_policy": "omit"},
       "limits": {"context_tokens": 200000, "max_output_tokens": 100000},
@@ -535,6 +556,7 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -544,7 +566,7 @@
       "status": "current",
       "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
       "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
-      "reasoning": {"supported": false,"efforts": [],"openai_default": null},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
       "temperature": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "top_p": {"support": "never","allowed_reasoning_efforts": null,"send_policy": "omit"},
       "limits": {"context_tokens": 200000,"max_output_tokens": 100000},
@@ -554,6 +576,7 @@
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": false,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
     },
@@ -570,7 +593,7 @@
       "status": "deprecated",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
-      "reasoning": {"supported": false, "efforts": [], "openai_default": null},
+      "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
       "temperature": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
       "top_p": {"support": "always", "allowed_reasoning_efforts": null, "send_policy": "omit_unless_configured"},
       "limits": {"context_tokens": 128000, "max_output_tokens": 4096},
@@ -580,6 +603,7 @@
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true,
       "lifecycle_note": "Deprecated legacy alias retained for existing configurations."
     }

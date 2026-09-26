@@ -19,6 +19,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
 from .const import CONF_CHAT_MODEL, CONF_REASONING_EFFORT, DEFAULT_CHAT_MODEL, DOMAIN
+from .model_capabilities import frontend_capabilities
 from .model_catalog import (
     BUNDLED_CATALOG,
     MAX_CATALOG_BYTES,
@@ -27,7 +28,6 @@ from .model_catalog import (
     catalog_model_metadata,
     catalog_picker_models,
     catalog_reasoning_efforts,
-    compatibility_capabilities,
     model_metadata,
     parse_catalog,
     validate_catalog,
@@ -467,7 +467,7 @@ async def websocket_catalog(
             return
 
     metadata = model_metadata(msg["model"])
-    capabilities = compatibility_capabilities(msg["model"], metadata=metadata)
+    capabilities = frontend_capabilities(msg["model"], metadata=metadata)
     connection.send_result(
         msg["id"],
         {
