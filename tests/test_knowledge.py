@@ -711,18 +711,21 @@ async def test_home_assistant_storage_adapter_builds_private_atomic_store_and_de
     )
     assert await storage.async_load() == {"sources": []}
     await storage.async_save({"sources": [{"source_id": "one"}]})
-    backing.async_save.assert_awaited_once_with(
-        {"sources": [{"source_id": "one"}]}
-    )
+    backing.async_save.assert_awaited_once_with({"sources": [{"source_id": "one"}]})
 
 
 @pytest.mark.asyncio
-async def test_initialize_is_idempotent_and_ignores_non_list_source_payload() -> None:
-    library, storage = await _initialized({"sources": "not-a-list"})
-
+async def test_invalid_source_structure_fails_closed_until_repaired() -> None:
+    storage = StorageDouble({"sources": "not-a-list"})
+    library = KnowledgeLibrary(storage)
+    with pytest.raises(ValueError, match="sources have invalid structure"):
+        await library.async_initialize()
+    assert storage.data == {"sources": "not-a-list"}
+    storage.data = {"sources": []}
+    await library.async_initialize()
     assert library.total_source_count == 0
     await library.async_initialize()
-    storage.async_load.assert_awaited_once()
+    assert storage.async_load.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -745,7 +748,9 @@ async def test_initialize_stops_at_per_agent_limit(monkeypatch, caplog) -> None:
     )
 
     assert library.total_source_count == 1
-    assert "Ignoring Knowledge Library records beyond the per-agent limit" in caplog.text
+    assert (
+        "Ignoring Knowledge Library records beyond the per-agent limit" in caplog.text
+    )
 
 
 @pytest.mark.asyncio
@@ -900,7 +905,9 @@ async def test_replace_backup_rebuilds_index_and_persists_canonical_sources() ->
 
 
 @pytest.mark.asyncio
-async def test_missing_and_disabled_sources_are_unavailable_to_model_retrieval() -> None:
+async def test_missing_and_disabled_sources_are_unavailable_to_model_retrieval() -> (
+    None
+):
     library, _ = await _initialized()
     disabled = await library.async_create("Disabled", "", "private text", enabled=False)
 
@@ -944,7 +951,9 @@ def test_get_loaded_knowledge_reads_existing_manager_without_creating_state() ->
 
 
 @pytest.mark.asyncio
-async def test_async_get_knowledge_creates_once_initializes_and_reuses(monkeypatch) -> None:
+async def test_async_get_knowledge_creates_once_initializes_and_reuses(
+    monkeypatch,
+) -> None:
     storage = object()
     storage_factory = Mock(return_value=storage)
     library = SimpleNamespace(async_initialize=AsyncMock())
@@ -963,7 +972,9 @@ async def test_async_get_knowledge_creates_once_initializes_and_reuses(monkeypat
     assert library.async_initialize.await_count == 2
 
 
-def test_migrated_storage_payload_handles_mapping_invalid_and_non_mapping_inputs() -> None:
+def test_migrated_storage_payload_handles_mapping_invalid_and_non_mapping_inputs() -> (
+    None
+):
     mapped = knowledge._migrated_storage_payload(
         {"sources": [{"source_id": "one"}, "preserve-malformed"]}
     )
