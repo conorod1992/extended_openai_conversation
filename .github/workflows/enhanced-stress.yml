@@ -422,6 +422,19 @@ jobs:
         with:
           pattern: evidence-*
           path: enhanced-evidence
+      - name: Download controlled browser failure artifacts
+        if: inputs.campaign == 'diagnostics'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: diagnostics-browser-*
+          path: browser-failure-evidence
+      - name: Verify uploaded failure artifacts and private canaries
+        if: inputs.campaign == 'diagnostics'
+        run: |
+          python ci/verify_enhanced_failure.py \
+            enhanced-evidence/evidence-diagnostics-${{ inputs.intensity }}-seed-${{ needs.prepare.outputs.seed }} \
+            enhanced-evidence/evidence-diagnostics-${{ inputs.intensity }}-seed-${{ needs.prepare.outputs.seed }}/pytest.log
+          python ci/verify_browser_failure.py browser-failure-evidence
       - name: Consolidate actual job results
         env:
           ENHANCED_CAMPAIGNS: ${{ needs.prepare.outputs.campaigns }}
