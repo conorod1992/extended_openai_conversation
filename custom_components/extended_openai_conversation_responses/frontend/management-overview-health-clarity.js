@@ -74,7 +74,7 @@ export function renderOverviewModelDataCard(panel) {
   grid.append(article);
 
   article.querySelector('[data-eoc-model-data-action="navigate"]')?.addEventListener("click", () => {
-    panel._navigate("assistant", "basics");
+    panel._navigate("assistant", "model-responses");
   });
   article.querySelector('[data-eoc-model-data-action="apply"]')?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
