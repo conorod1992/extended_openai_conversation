@@ -334,7 +334,7 @@ def _target_identity(
                 entity_id,
                 entry,
                 device,
-                hass.states.get(entity_id) if entry is None else None,
+                hass.states.get(entity_id),
             )
         )
     return tuple(identities)

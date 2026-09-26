@@ -130,10 +130,12 @@ async def test_registry_reassignment_between_resolution_and_dispatch_fails_close
     assert permission_calls == 2
 
 
+@pytest.mark.parametrize("replace_registry_entry", [False, True])
 @pytest.mark.asyncio
 async def test_recreated_entity_with_same_id_cannot_inherit_authorization(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
+    replace_registry_entry: bool,
 ) -> None:
     """Registry identity, not the visible entity_id, owns the authorization."""
     registry = er.async_get(hass)
@@ -166,16 +168,19 @@ async def test_recreated_entity_with_same_id_cannot_inherit_authorization(
         )
     )
     await asyncio.wait_for(entered.wait(), _WAIT_TIMEOUT)
-    registry.async_remove(original.entity_id)
     hass.states.async_remove(original.entity_id)
-    replacement = registry.async_get_or_create(
-        domain="light",
-        platform=_DOMAIN,
-        unique_id="replacement-light",
-        suggested_object_id="reused_light",
-    )
+    if replace_registry_entry:
+        registry.async_remove(original.entity_id)
+        replacement = registry.async_get_or_create(
+            domain="light",
+            platform=_DOMAIN,
+            unique_id="replacement-light",
+            suggested_object_id="reused_light",
+        )
+    else:
+        replacement = original
     assert replacement.entity_id == original.entity_id
-    assert replacement.id != original.id
+    assert (replacement.id != original.id) is replace_registry_entry
     hass.states.async_set(replacement.entity_id, "off")
     await hass.async_block_till_done()
     resume.set()
