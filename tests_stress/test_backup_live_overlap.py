@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses import backup
 from custom_components.extended_openai_conversation_responses.const import (
@@ -44,6 +45,7 @@ async def test_restore_waits_for_active_turn_then_becomes_authoritative(
             CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
         },
     )
+    MockUser(id="restore-owner", name="Restore Owner").add_to_hass(hass)
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
