@@ -104,6 +104,22 @@ function bindDynamicBase(panel) {
       }
     });
   });
+  root.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || !(event.target instanceof HTMLSelectElement)) return;
+    const select = event.target;
+    const backwards = event.shiftKey;
+    requestAnimationFrame(() => {
+      // Most engines move focus themselves. Firefox can leave a native select
+      // focused after Tab in the embedded panel; recover only in that case.
+      if (root.activeElement !== select || !select.isConnected) return;
+      const controls = [...root.querySelectorAll("a[href],button,input,select,textarea,[tabindex]")]
+        .filter((node) => node.tabIndex >= 0 && !node.disabled && !node.closest("[inert]")
+          && node.getClientRects().length && getComputedStyle(node).visibility !== "hidden");
+      const index = controls.indexOf(select);
+      if (index < 0 || controls.length < 2) return;
+      controls[(index + (backwards ? controls.length - 1 : 1)) % controls.length].focus();
+    });
+  });
 
   root.addEventListener("click", (event) => {
     const target = event.target;
