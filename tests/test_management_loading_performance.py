@@ -1744,7 +1744,7 @@ async def test_configuration_patch_preserves_omitted_fields_and_skips_local_snap
     assert subentry.data["max_tokens"] == 750
     assert hass.config_entries.updates == 1
 
-    await management_ui.async_management_command(
+    local_saved = await management_ui.async_management_command(
         hass,
         "admin",
         True,
@@ -1767,9 +1767,7 @@ async def test_configuration_patch_preserves_omitted_fields_and_skips_local_snap
             "subentry_id": "agent-1",
             "section": "configuration",
             "action": "update",
-            "revision": management_ui._agent_config_revision(
-                subentry.data, subentry.title
-            ),
+            "revision": local_saved["revision"],
             "config": {"max_tokens": 900},
         },
     )

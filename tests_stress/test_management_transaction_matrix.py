@@ -112,6 +112,7 @@ async def test_agent_config_aba_rejects_suspended_management_writer(
         entry, subentry, data={**original, field: intermediate}
     )
     hass.config_entries.async_update_subentry(entry, subentry, data=original)
+    await hass.async_block_till_done()
     assert dict(subentry.data) == original
     resume.set()
     with pytest.raises(HomeAssistantError, match="changed in another tab"):

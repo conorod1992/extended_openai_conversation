@@ -426,7 +426,8 @@ def persisted_config_projection(
 
     if diagnostics is not None:
         diagnostics["projection_cache_hit"] = False
-    content_revision = agent_config_revision(subentry.data, subentry.title)
+    data, title = subentry.data, subentry.title
+    content_revision = agent_config_revision(data, title)
     # Content alone misses A -> B -> A. Keep the previous projection alive so
     # replacement of HA's authoritative data mapping is a new generation even
     # when the restored bytes equal the original bytes.
@@ -441,8 +442,8 @@ def persisted_config_projection(
     if (
         lineage is not None
         and lineage[0]() is subentry
-        and lineage[1] is subentry.data
-        and lineage[2] == subentry.title
+        and lineage[1] is data
+        and lineage[2] == title
     ):
         revision = lineage[3]
     else:
