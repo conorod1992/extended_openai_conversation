@@ -259,16 +259,21 @@ _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
 
 _CONVERSATION_ID_OWNERS = f"{DOMAIN}.conversation_id_owners"
 def _claim_conversation_id(
-    hass: HomeAssistant,
-    agent_id: str,
+    hass: HomeAssistant | None,
+    agent_id: str | None,
     scope: ResolvedDataScope,
     conversation_id: str | None,
     *,
     guest_active: bool,
 ) -> str | None:
     """Prevent a caller-selected HA ChatLog ID crossing EOAI privacy boundaries."""
-    if conversation_id is None:
-        return None
+    if (
+        conversation_id is None
+        or hass is None
+        or not isinstance(agent_id, str)
+        or not isinstance(getattr(hass, "data", None), dict)
+    ):
+        return conversation_id
     owners: dict[str, tuple[str, str]] = hass.data.setdefault(
         _CONVERSATION_ID_OWNERS, {}
     )
@@ -289,12 +294,32 @@ def _claim_conversation_id(
 
 
 def _release_conversation_id_claim(
-    hass: HomeAssistant, conversation_id: str, owner: tuple[str, str]
+    hass: HomeAssistant | None, conversation_id: str, owner: tuple[str, str]
 ) -> None:
     """Drop one ownership claim only when it still belongs to this ChatLog."""
-    owners = hass.data.get(_CONVERSATION_ID_OWNERS)
+    hass_data = getattr(hass, "data", None)
+    if not isinstance(hass_data, dict):
+        return
+    owners = hass_data.get(_CONVERSATION_ID_OWNERS)
     if isinstance(owners, dict) and owners.get(conversation_id) == owner:
         owners.pop(conversation_id, None)
+
+
+def _register_conversation_id_cleanup(
+    session: Any,
+    hass: HomeAssistant | None,
+    conversation_id: str,
+    owner: tuple[str, str],
+) -> None:
+    """Bind an ownership claim to a real HA ChatSession when available."""
+    register = getattr(session, "async_on_cleanup", None)
+    if not callable(register):
+        return
+
+    def release_claim() -> None:
+        _release_conversation_id_claim(hass, conversation_id, owner)
+
+    register(release_claim)
 
 
 def _request_llm_context(user_input: ConversationInput) -> Any:
@@ -724,8 +749,8 @@ class ExtendedOpenAIAgentEntity(
                     ),
                 )
                 claimed_conversation_id = _claim_conversation_id(
-                    self.hass,
-                    self.subentry.subentry_id,
+                    getattr(self, "hass", None),
+                    getattr(getattr(self, "subentry", None), "subentry_id", None),
                     scope,
                     resolution.conversation_id,
                     guest_active=request_policy.guest_active,
@@ -795,17 +820,19 @@ class ExtendedOpenAIAgentEntity(
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
         ):
-            if resolution.conversation_id is not None:
+            subentry_id = getattr(
+                getattr(self, "subentry", None), "subentry_id", None
+            )
+            if resolution.conversation_id is not None and isinstance(subentry_id, str):
                 claim_owner = (
-                    self.subentry.subentry_id,
+                    subentry_id,
                     "guest" if request_policy.guest_active else scope.scope_id,
                 )
-                session.async_on_cleanup(
-                    lambda conversation_id=resolution.conversation_id, owner=claim_owner: (
-                        _release_conversation_id_claim(
-                            self.hass, conversation_id, owner
-                        )
-                    )
+                _register_conversation_id_cleanup(
+                    session,
+                    getattr(self, "hass", None),
+                    resolution.conversation_id,
+                    claim_owner,
                 )
             rule_session_key = request_rule_session_id(
                 resolution.key, chat_log.conversation_id
