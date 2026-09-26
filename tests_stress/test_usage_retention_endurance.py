@@ -27,7 +27,7 @@ from tests_stress.conftest import record
 async def _say(hass: HomeAssistant, agent: Any, user_id: str, index: int) -> Any:
     return await conversation.async_converse(
         hass=hass,
-        text=f"Account for request {index}",
+        text=f"Account for {agent.entry.title} request {index}",
         conversation_id=None,
         context=Context(user_id=user_id),
         language="en",
@@ -57,14 +57,11 @@ async def test_concurrent_usage_writes_survive_retention_jumps_and_reload(
     assert agents[0].entry.entry_id != agents[1].entry.entry_id
     assert all(agent is not None and agent._usage is not None for agent in agents)
     turns_per_agent = 10 if stress_scale == 1 else 32
-    wires = [
-        _install_wire(
-            monkeypatch,
-            agent,
-            [_chat_sse_text("Accounted.") for _ in range(turns_per_agent + 2)],
-        )
-        for agent in agents
-    ]
+    wire = _install_wire(
+        monkeypatch,
+        agents[0],
+        [_chat_sse_text("Accounted.") for _ in range(2 * (turns_per_agent + 2))],
+    )
 
     # Independent public turns may finish in any order, but each agent owns its
     # accounting and each provider request must appear exactly once.
@@ -81,14 +78,21 @@ async def test_concurrent_usage_writes_survive_retention_jumps_and_reload(
     await hass.async_block_till_done()
     base = dt_util.utcnow()
     managers = [agent._usage for agent in agents]
-    for agent, manager, wire in zip(agents, managers, wires, strict=True):
+    assert len(wire.requests) == 2 * turns_per_agent
+    for agent, manager in zip(agents, managers, strict=True):
         assert manager.totals.conversation_count == turns_per_agent
         assert manager.totals.api_request_count == turns_per_agent
         assert manager.totals.successful_request_count == turns_per_agent
         assert manager.totals.failed_request_count == 0
         assert len(manager.requests) == turns_per_agent
         assert len(manager.runs) == turns_per_agent
-        assert len(wire.requests) == turns_per_agent
+        assert (
+            sum(
+                agent.entry.title in str(request["body"]["messages"])
+                for request in wire.requests
+            )
+            == turns_per_agent
+        )
         assert {item.agent_subentry_id for item in manager.requests} == {
             agent.subentry.subentry_id
         }

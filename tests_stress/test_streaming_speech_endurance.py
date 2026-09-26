@@ -160,3 +160,78 @@ async def test_cancelled_fragment_cannot_leak_into_next_assist_stream(
         cancelled_speech_streams=1,
         recovered_speech_streams=1,
     )
+
+
+@pytest.mark.asyncio
+async def test_unload_during_fragmented_stream_recovers_clean_speech(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    stress_trace: list[dict],
+) -> None:
+    """A streaming response cannot survive unload into a recreated agent."""
+    old_agent = await _speech_agent(hass)
+    entry_id = old_agent.entry.entry_id
+    assert await async_setup_component(hass, "assist_pipeline", {})
+    raw = _chat_sse_deltas(["**Old** see ht", "tps://example.com/old done."])
+    split = raw.index(b"\n\n") + 2
+    stream = _GatedSpeechStream(raw[:split], raw[split:])
+
+    async def send(request: httpx.Request, *args: Any, **kwargs: Any) -> httpx.Response:
+        del args, kwargs
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=stream,
+            request=request,
+        )
+
+    monkeypatch.setattr(_raw_client(old_agent)._client, "send", send)
+    active = asyncio.create_task(
+        conversation.async_converse(
+            hass=hass,
+            text="Begin speech before integration unload",
+            conversation_id=None,
+            context=Context(),
+            language="en",
+            agent_id=entry_id,
+        )
+    )
+    try:
+        await asyncio.wait_for(stream.first_delivered.wait(), timeout=10)
+        assert await asyncio.wait_for(
+            hass.config_entries.async_unload(entry_id), timeout=10
+        )
+        assert conversation.async_get_agent(hass, entry_id) is None
+    finally:
+        active.cancel()
+        stream.release.set()
+        with suppress(asyncio.CancelledError):
+            await active
+
+    assert await hass.config_entries.async_setup(entry_id)
+    await hass.async_block_till_done()
+    new_agent = conversation.async_get_agent(hass, entry_id)
+    assert new_agent is not None and new_agent is not old_agent
+    wire = _install_wire(
+        monkeypatch,
+        new_agent,
+        [_chat_sse_deltas(["**New** see ht", "tps://example.com/new done."])],
+    )
+    client = await hass_ws_client(hass)
+    events = await _run_assist(
+        client,
+        pipeline_id=new_agent.entity_id,
+        conversation_id="nightly-speech-after-unload",
+    )
+    assert _progressive_text(events) == "New see done."
+    assert _final_speech(events) == "New see done."
+    assert "Old" not in str(events)
+    assert len(wire.requests) == 1
+    record(
+        stress_trace,
+        "summary",
+        layer="Real HA Assist and provider wire",
+        interrupted_speech_unloads=1,
+        recovered_speech_streams=1,
+    )

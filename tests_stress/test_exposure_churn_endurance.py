@@ -24,7 +24,7 @@ from tests_stress.conftest import record
 async def _say(hass: HomeAssistant, agent: Any, user_id: str, round_id: int) -> Any:
     return await conversation.async_converse(
         hass=hass,
-        text=f"Describe the available home entities at round {round_id}",
+        text=f"Describe available entities for {agent.entry.title} at round {round_id}",
         conversation_id=None,
         context=Context(user_id=user_id),
         language="en",
@@ -56,12 +56,11 @@ async def test_seeded_exposure_registry_churn_never_leaks_removed_targets(
     agents = [await _agent(hass, title=f"Exposure Churn {index}") for index in range(2)]
     assert agents[0].entry.entry_id != agents[1].entry.entry_id
     rounds = 12 if stress_scale == 1 else 36
-    wires = [
-        _install_wire(
-            monkeypatch, agent, [_chat_sse_text("Current HA view received.")] * rounds
-        )
-        for agent in agents
-    ]
+    wire = _install_wire(
+        monkeypatch,
+        agents[0],
+        [_chat_sse_text("Current HA view received.")] * (2 * rounds),
+    )
     entities: list[dict[str, Any]] = []
     historical_ids: set[str] = set()
     for index in range(4):
@@ -144,9 +143,18 @@ async def test_seeded_exposure_registry_churn_never_leaks_removed_targets(
             )
         )
         assert all(_speech(result) == "Current HA view received." for result in results)
-        for wire in wires:
-            assert len(wire.requests) == round_id + 1
-            body = json.dumps(wire.requests[-1]["body"])
+        assert len(wire.requests) == 2 * (round_id + 1)
+        latest = wire.requests[-2:]
+        for agent in agents:
+            assert (
+                sum(
+                    agent.entry.title in json.dumps(request["body"])
+                    for request in latest
+                )
+                == 1
+            )
+        for request in latest:
+            body = json.dumps(request["body"])
             for current in entities:
                 visible = (
                     current["present"]
@@ -167,7 +175,7 @@ async def test_seeded_exposure_registry_churn_never_leaks_removed_targets(
             operation=operation,
             active_entities=sum(item["present"] for item in entities),
         )
-    assert all(len(wire.requests) == rounds for wire in wires)
+    assert len(wire.requests) == 2 * rounds
     record(
         stress_trace,
         "summary",
