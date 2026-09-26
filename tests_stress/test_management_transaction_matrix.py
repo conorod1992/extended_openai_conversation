@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 
 import pytest
@@ -98,13 +99,23 @@ async def test_agent_config_aba_rejects_suspended_management_writer(
         hass.config_entries.async_update_subentry(entry, subentry, data=original)
     assert original.get(field) != intermediate
     expected = persisted_config_projection(subentry).revision
+    entered, resume = asyncio.Event(), asyncio.Event()
+
+    async def stale_writer() -> None:
+        entered.set()
+        await resume.wait()
+        require_agent_config_revision(subentry, expected)
+
+    task = asyncio.create_task(stale_writer())
+    await entered.wait()
     hass.config_entries.async_update_subentry(
         entry, subentry, data={**original, field: intermediate}
     )
     hass.config_entries.async_update_subentry(entry, subentry, data=original)
     assert dict(subentry.data) == original
+    resume.set()
     with pytest.raises(HomeAssistantError, match="changed in another tab"):
-        require_agent_config_revision(subentry, expected)
+        await task
     record(stress_trace, "agent_config_aba", field=field, revisions=3)
 
 

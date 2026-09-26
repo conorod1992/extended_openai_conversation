@@ -116,6 +116,7 @@ from .management_function_quarantine import (
     management_function_tools,
 )
 from .management_function_repair import (
+    agent_config_revision as _agent_config_revision,  # noqa: F401 - test seam
     has_unavailable_native_tool,
     normalized_persisted_config_snapshot,
     peek_function_tool_health,
