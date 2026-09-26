@@ -1,0 +1,136 @@
+"""Nightly backup restore overlap with an active public conversation."""
+
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from custom_components.extended_openai_conversation_responses import backup
+from custom_components.extended_openai_conversation_responses.const import (
+    CONF_ARCHIVE_ENABLED,
+    CONF_MEMORY_MODE,
+    MEMORY_MODE_MANUAL,
+)
+from custom_components.extended_openai_conversation_responses.conversation_archive import (
+    async_get_archive,
+)
+from custom_components.extended_openai_conversation_responses.memory import (
+    async_get_memory,
+)
+from custom_components.extended_openai_conversation_responses.usage import async_get_usage
+from homeassistant.components import conversation
+from homeassistant.core import Context, HomeAssistant
+from tests_real_ha.test_acceptance_lifecycle import (
+    _conversation_subentry,
+    _make_entry,
+    _setup_entry,
+)
+from tests_stress.conftest import record
+
+
+@pytest.mark.asyncio
+async def test_restore_waits_for_active_turn_then_becomes_authoritative(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    stress_trace: list[dict],
+) -> None:
+    """A restore cannot interleave with or be overwritten by an older live turn."""
+    entry = _make_entry(
+        "Restore overlap",
+        include_ai_task=False,
+        conversation_options={
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
+        },
+    )
+    await _setup_entry(hass, entry)
+    subentry = _conversation_subentry(entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert agent is not None
+    memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
+    archive = await async_get_archive(hass, entry.entry_id, subentry.subentry_id)
+    usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
+
+    await memory.async_add(
+        "restore-owner", "RESTORED-AUTHORITATIVE-MARKER", "acceptance", "explicit"
+    )
+    target = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    for item in await memory.async_list("restore-owner"):
+        assert await memory.async_delete("restore-owner", [item.memory_id]) == 1
+    await memory.async_add(
+        "restore-owner", "PRE-RESTORE-LIVE-MARKER", "acceptance", "explicit"
+    )
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_model(log: conversation.ChatLog, **kwargs) -> None:
+        del kwargs
+        entered.set()
+        await release.wait()
+        log.async_add_assistant_content_without_tools(
+            conversation.AssistantContent(
+                agent_id=agent.entity_id,
+                content="Turn completed before restore.",
+            )
+        )
+
+    monkeypatch.setattr(agent, "_async_handle_chat_log", blocked_model)
+    turn = asyncio.create_task(
+        conversation.async_converse(
+            hass=hass,
+            text="This turn must finish before backup restore can commit.",
+            conversation_id=None,
+            context=Context(user_id="restore-owner"),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=10)
+
+    restore = asyncio.create_task(
+        backup.async_restore_backup(hass, entry, subentry, target)
+    )
+    await asyncio.sleep(0)
+    assert not restore.done(), "restore crossed the active conversation maintenance lease"
+
+    release.set()
+    result = await asyncio.wait_for(turn, timeout=15)
+    assert result.response.error_code is None
+    restored = await asyncio.wait_for(restore, timeout=15)
+    assert restored["status"] == "restored"
+    await hass.async_block_till_done()
+
+    memories = await memory.async_list("restore-owner")
+    assert [item.content for item in memories] == ["RESTORED-AUTHORITATIVE-MARKER"]
+    assert (await archive.async_list_sessions("user:restore-owner", limit=20))[
+        "sessions"
+    ] == []
+    assert usage.totals.conversation_count == target["usage"]["totals"][
+        "conversation_count"
+    ]
+    assert usage.totals.api_request_count == target["usage"]["totals"][
+        "api_request_count"
+    ]
+
+    final = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    for section in (
+        "memories",
+        "temporary_memories",
+        "knowledge",
+        "archive",
+        "usage",
+        "guest_mode",
+        "request_rules",
+    ):
+        assert final[section] == target[section], section
+
+    record(
+        stress_trace,
+        "summary",
+        layer="Real HA Assist + backup restore",
+        overlapping_live_restores=1,
+        public_turns=1,
+        restore_waited_for_active_turn=1,
+    )
