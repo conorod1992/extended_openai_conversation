@@ -6,6 +6,12 @@ from typing import Any
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses.const import (
+    CONF_CONVERSATION_TIMEOUT_MINUTES,
+)
+from custom_components.extended_openai_conversation_responses.request_rules import (
+    DEFAULT_MATCHING,
+)
 from homeassistant.core import HomeAssistant
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
@@ -41,7 +47,7 @@ async def test_replayed_management_mutations_do_not_double_apply(
     config_payload = {
         "revision": before["revision"],
         "title": "Replay winner",
-        "config": {"conversation_timeout_minutes": 37},
+        "config": {CONF_CONVERSATION_TIMEOUT_MINUTES: 37},
     }
     first = await _management_response(
         client,
@@ -64,7 +70,7 @@ async def test_replayed_management_mutations_do_not_double_apply(
         client, entry=entry, section="configuration", action="get"
     )
     assert authoritative["title"] == "Replay winner"
-    assert authoritative["config"]["conversation_timeout_minutes"] == 37
+    assert authoritative["config"][CONF_CONVERSATION_TIMEOUT_MINUTES] == 37
 
     # Request Rule creation carries a stable caller-supplied identity and store
     # revision. Replaying the same create cannot produce a second rule.
@@ -80,7 +86,16 @@ async def test_replayed_management_mutations_do_not_double_apply(
             "phrases": ["replay safe command"],
             "match_type": "equals",
             "action_type": "model_routing",
-            "action": {"model": "gpt-5-mini"},
+            "action": {
+                "model": "gpt-5-mini",
+                "reasoning_effort": "medium",
+                "scope": "request",
+                "reset": False,
+                "continue_to_ai": True,
+                "success_response": "Replay route selected",
+            },
+            "matching_behavior": "defaults",
+            "matching": dict(DEFAULT_MATCHING),
             "order": len(rules_before["rules"]),
         },
     }
