@@ -31,7 +31,7 @@ def test_new_flagships_condition_chat_tools_on_none(model):
         "efforts": ["none", "low", "medium", "high", "xhigh", "max"],
         "by_api": {
             "responses": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]},
-            "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh", "max"]},
+            "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]},
         },
         "openai_default": "medium",
     }
