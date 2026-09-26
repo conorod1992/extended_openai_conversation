@@ -46,6 +46,6 @@ def test_evidence_filenames_bound_parametrized_node_ids() -> None:
     one = evidence_filename(f"{base}[chat_completions-{'x' * 4000}]")
     two = evidence_filename(f"{base}[responses-{'x' * 4000}]")
     assert one != two
-    assert one.startswith("tests_stress_test_provider_event_sequences.py__test_duplicate_events-")
+    assert one.startswith("tests_stress_test_provider_event_sequences.py_test_duplicate_events-")
     assert len(one.encode("utf-8")) < 200
     assert all(character not in one for character in ':\\/[]')
