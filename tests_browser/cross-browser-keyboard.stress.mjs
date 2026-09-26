@@ -25,12 +25,18 @@ async function assertUsableFocus(page, allowBody = false) {
 }
 
 async function tabTo(page, target, limit = 120) {
+  const visited = [];
   for (let index = 0; index < limit; index++) {
     if (await focused(target).catch(() => false)) return;
     await page.keyboard.press("Tab");
+    visited.push(await page.evaluate(() => {
+      const root = document.querySelector("extended-openai-management-panel")?.shadowRoot;
+      const active = root?.activeElement;
+      return `${active?.localName || "body"}#${active?.id || ""}`;
+    }));
     await assertUsableFocus(page, true);
   }
-  throw new Error(`Keyboard could not reach ${target} within ${limit} Tabs`);
+  throw new Error(`Keyboard could not reach ${target} within ${limit} Tabs: ${JSON.stringify({first: visited.slice(0, 20), last: visited.slice(-20)})}`);
 }
 
 test("keyboard-only Memory journey creates, cancels, edits and deletes with usable focus", async ({page}, testInfo) => {
