@@ -71,6 +71,7 @@ async def test_catalog_refresh_publishes_live_while_existing_agent_turn_is_activ
         item for item in updated_catalog["models"] if item["id"] == "gpt-5.6"
     )
     updated_model["reasoning"]["efforts"].append("minimal")
+    updated_model["reasoning"]["by_api"]["responses"]["efforts"].append("minimal")
 
     async def chunks(_size: int):
         yield json.dumps(updated_catalog).encode()
