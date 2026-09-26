@@ -476,6 +476,45 @@ def test_persisted_projection_tracks_title_and_authoritative_data_replacement(
     assert new_projection.revision != replaced.revision
 
 
+@pytest.mark.parametrize(
+    ("field", "intermediate"),
+    [
+        ("functions", []),
+        ("function_groups", [{"id": "lights", "name": "Lighting", "functions": ["demo"]}]),
+        ("guest_mode_enabled", False),
+        ("voice_device_mappings", {"kitchen": "user:one"}),
+        ("exposed_entities_enabled", False),
+    ],
+)
+async def test_agent_revision_rejects_aba_while_writer_is_suspended(
+    monkeypatch, field, intermediate
+) -> None:
+    """An in-flight management writer cannot accept a restored old value."""
+    _hass, _entry, subentry = _hass_with_agent()
+    monkeypatch.setattr(
+        function_repair, "_persisted_projections", function_repair.OrderedDict()
+    )
+    original = deepcopy(subentry.data)
+    assert original[field] != intermediate
+    expected = function_repair.persisted_config_projection(subentry).revision
+    entered, resume = asyncio.Event(), asyncio.Event()
+
+    async def stale_writer() -> None:
+        entered.set()
+        await resume.wait()
+        function_repair.require_agent_config_revision(subentry, expected)
+
+    task = asyncio.create_task(stale_writer())
+    await entered.wait()
+    subentry.data = {**original, field: intermediate}
+    assert function_repair.persisted_config_projection(subentry).revision != expected
+    subentry.data = deepcopy(original)
+    resume.set()
+    with pytest.raises(HomeAssistantError, match="changed in another tab"):
+        await task
+    assert dict(subentry.data) == original
+
+
 async def test_import_replaces_cached_configuration_projection(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
     monkeypatch.setattr(

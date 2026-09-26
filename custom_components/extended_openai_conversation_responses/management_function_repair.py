@@ -404,7 +404,15 @@ def persisted_config_projection(
 
     if diagnostics is not None:
         diagnostics["projection_cache_hit"] = False
-    revision = agent_config_revision(subentry.data, subentry.title)
+    content_revision = agent_config_revision(subentry.data, subentry.title)
+    # Content alone misses A -> B -> A. Keep the previous projection alive so
+    # replacement of HA's authoritative data mapping is a new generation even
+    # when the restored bytes equal the original bytes.
+    revision = (
+        sha256(f"{cached.revision}:{content_revision}".encode()).hexdigest()
+        if cached is not None and cached.subentry is subentry
+        else content_revision
+    )
     defaults = {
         CONF_USAGE_REQUEST_RETENTION_DAYS: DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
         CONF_USAGE_RUN_RETENTION_DAYS: DEFAULT_USAGE_RUN_RETENTION_DAYS,
@@ -431,6 +439,14 @@ def persisted_config_projection(
     if len(_persisted_projections) > _PROJECTION_CACHE_LIMIT:
         _persisted_projections.popitem(last=False)
     return projection
+
+
+def saved_agent_config_revision(subentry: Any, data: Any, title: str) -> str:
+    """Return the authoritative post-save revision after HA replaces its data."""
+    if subentry.title == title and dict(subentry.data) == dict(data):
+        return persisted_config_projection(subentry).revision
+    # Lightweight test doubles may record a save without applying it.
+    return agent_config_revision(data, title)
 
 
 def normalized_persisted_config_snapshot(
@@ -604,7 +620,7 @@ def persist_valid_function_configuration(
     )
     hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
     snapshot = agent_config_snapshot(normalized)
-    revision = agent_config_revision(normalized, subentry.title)
+    revision = saved_agent_config_revision(subentry, normalized, subentry.title)
     seed_persisted_config_projection(entry, subentry, snapshot, revision)
     return {
         "functions": snapshot[CONF_FUNCTION_TOOLS],
@@ -890,7 +906,9 @@ async def async_function_repair(
                 "valid": True,
                 "errors": {},
                 "title": saved_title,
-                "revision": agent_config_revision(persisted, saved_title),
+                "revision": saved_agent_config_revision(
+                    subentry, persisted, saved_title
+                ),
                 "config": snapshot,
                 "agent": management_loading_performance._agent_snapshot(
                     hass, entry, subentry, config=persisted, title=saved_title
@@ -989,7 +1007,7 @@ async def async_function_repair(
     return {
         "valid": True,
         "tools": deepcopy(validated_tools),
-        "revision": agent_config_revision(persisted, subentry.title),
+        "revision": saved_agent_config_revision(subentry, persisted, subentry.title),
         "agent": management_loading_performance._agent_snapshot(
             hass, entry, subentry, config=persisted
         ),

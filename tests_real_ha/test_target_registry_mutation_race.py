@@ -153,11 +153,16 @@ async def test_recreated_entity_with_same_id_cannot_inherit_authorization(
         entered.set()
         await resume.wait()
 
-    monkeypatch.setattr(ha_actions, "async_require_control_permission", gated_permission)
+    monkeypatch.setattr(
+        ha_actions, "async_require_control_permission", gated_permission
+    )
     action = asyncio.create_task(
         ha_actions.async_call_ha_action(
-            hass, _DOMAIN, _SERVICE,
-            data={ATTR_ENTITY_ID: original.entity_id}, blocking=True,
+            hass,
+            _DOMAIN,
+            _SERVICE,
+            data={ATTR_ENTITY_ID: original.entity_id},
+            blocking=True,
         )
     )
     await asyncio.wait_for(entered.wait(), _WAIT_TIMEOUT)
@@ -179,8 +184,11 @@ async def test_recreated_entity_with_same_id_cannot_inherit_authorization(
     assert calls == []
 
     await ha_actions.async_call_ha_action(
-        hass, _DOMAIN, _SERVICE,
-        data={ATTR_ENTITY_ID: replacement.entity_id}, blocking=True,
+        hass,
+        _DOMAIN,
+        _SERVICE,
+        data={ATTR_ENTITY_ID: replacement.entity_id},
+        blocking=True,
     )
     assert len(calls) == 1
 
@@ -203,11 +211,16 @@ async def test_service_reload_does_not_dispatch_stale_request(
         entered.set()
         await resume.wait()
 
-    monkeypatch.setattr(ha_actions, "async_require_control_permission", gated_permission)
+    monkeypatch.setattr(
+        ha_actions, "async_require_control_permission", gated_permission
+    )
     action = asyncio.create_task(
         ha_actions.async_call_ha_action(
-            hass, _DOMAIN, _SERVICE,
-            data={ATTR_ENTITY_ID: entity_id}, blocking=True,
+            hass,
+            _DOMAIN,
+            _SERVICE,
+            data={ATTR_ENTITY_ID: entity_id},
+            blocking=True,
         )
     )
     await asyncio.wait_for(entered.wait(), _WAIT_TIMEOUT)
@@ -219,7 +232,10 @@ async def test_service_reload_does_not_dispatch_stale_request(
     assert old_calls == new_calls == []
 
     await ha_actions.async_call_ha_action(
-        hass, _DOMAIN, _SERVICE,
-        data={ATTR_ENTITY_ID: entity_id}, blocking=True,
+        hass,
+        _DOMAIN,
+        _SERVICE,
+        data={ATTR_ENTITY_ID: entity_id},
+        blocking=True,
     )
     assert len(new_calls) == 1

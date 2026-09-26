@@ -173,6 +173,7 @@ async def test_revision_guard_rejects_aba_after_committed_changes() -> None:
         )
     assert store.saves == 2
 
+
 async def test_request_rule_settings_save_atomically_once() -> None:
     store = MemoryStore()
     rules = rr.RequestRules(store)
@@ -229,7 +230,9 @@ async def test_move_validates_direction_and_boundary_is_a_noop() -> None:
     before = rules.snapshot()["rules"]
     saves = store.saves
 
-    with pytest.raises(ValueError, match="direction must be up, down, top, bottom, before or after"):
+    with pytest.raises(
+        ValueError, match="direction must be up, down, top, bottom, before or after"
+    ):
         await rules.async_move("good-night", "sideways")
     result = await rules.async_move("good-night", "up")
 
@@ -316,7 +319,9 @@ def test_request_only_complete_routing_rule_is_rejected() -> None:
         "continue_to_ai": False,
     }
 
-    with pytest.raises(ValueError, match="Request-only routing requires Continue to AI"):
+    with pytest.raises(
+        ValueError, match="Request-only routing requires Continue to AI"
+    ):
         rr.validate_rule(rule)
 
 
@@ -384,7 +389,9 @@ def test_routing_reset_discards_supplied_model_and_effort() -> None:
         ),
     ],
 )
-def test_local_action_migration_rejects_malformed_legacy_actions(action, message) -> None:
+def test_local_action_migration_rejects_malformed_legacy_actions(
+    action, message
+) -> None:
     rule = local_rule()
     rule["action"]["actions"] = [action]
 
@@ -575,11 +582,15 @@ async def test_duplicate_orders_are_reindexed_after_mutations() -> None:
     assert [rule["order"] for rule in rules.snapshot()["rules"]] == [0, 1]
     assert store.saves == 1
 
-    created = await rules.async_create(determinism_local_rule("Middle", rule_id="m", order=0))
+    created = await rules.async_create(
+        determinism_local_rule("Middle", rule_id="m", order=0)
+    )
     assert created["id"] == "m"
     assert [rule["order"] for rule in rules.snapshot()["rules"]] == [0, 1, 2]
 
-    await rules.async_update("z", {**determinism_local_rule("Zulu", rule_id="wrong"), "order": 0})
+    await rules.async_update(
+        "z", {**determinism_local_rule("Zulu", rule_id="wrong"), "order": 0}
+    )
     assert [rule["order"] for rule in rules.snapshot()["rules"]] == [0, 1, 2]
     assert (
         next(rule for rule in rules.snapshot()["rules"] if rule["id"] == "z")["id"]
@@ -667,7 +678,9 @@ async def test_conversation_reset_still_clears_conversation_override() -> None:
 
 async def test_duplicate_names_are_bounded_and_unique() -> None:
     source_name = "x" * 120
-    rules = await determinism_manager(determinism_local_rule(source_name, rule_id="source"))
+    rules = await determinism_manager(
+        determinism_local_rule(source_name, rule_id="source")
+    )
     first = await rules.async_duplicate("source")
     second = await rules.async_duplicate("source")
 
@@ -891,7 +904,9 @@ def _routing_rule(
             "action": {
                 "model": "gpt-5-mini",
                 "reasoning_effort": None,
-                "scope": "request" if match_type not in {"equals", "sentence_pattern"} else "conversation",
+                "scope": "request"
+                if match_type not in {"equals", "sentence_pattern"}
+                else "conversation",
                 "reset": False,
                 "success_response": "Updated",
             },

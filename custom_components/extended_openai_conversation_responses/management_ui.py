@@ -116,13 +116,13 @@ from .management_function_quarantine import (
     management_function_tools,
 )
 from .management_function_repair import (
-    agent_config_revision as _agent_config_revision,
     has_unavailable_native_tool,
     normalized_persisted_config_snapshot,
     peek_function_tool_health,
     persisted_config_projection,
     repair_state_for_projection,
     require_agent_config_revision as _require_agent_config_revision,
+    saved_agent_config_revision,
     seed_persisted_config_projection,
 )
 from .management_history_queries import (
@@ -956,7 +956,9 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
         configured_tools = configured_function_tools_from_data(normalized)
         return {
-            "revision": _agent_config_revision(normalized, subentry.title),
+            "revision": saved_agent_config_revision(
+                subentry, normalized, subentry.title
+            ),
             "config": guest_policy_editor_snapshot(hass, normalized, configured_tools),
         }
     if action == "update":
@@ -1125,7 +1127,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     snapshot = _snapshot_normalized_configuration(response_data, validated=True)
     timings["response_snapshot_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
-    revision = _agent_config_revision(persisted, saved_title)
+    revision = saved_agent_config_revision(subentry, persisted, saved_title)
     timings["revision_calculation_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
     capability_hits = _cached_model_capabilities.cache_info().hits
@@ -1396,7 +1398,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         snapshot = agent_config_snapshot(normalized)
         result = {
             "title": saved_title,
-            "revision": _agent_config_revision(normalized, saved_title),
+            "revision": saved_agent_config_revision(subentry, normalized, saved_title),
             "config": snapshot,
             "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
         }
@@ -1482,7 +1484,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             snapshot = _snapshot_normalized_configuration(
                 parsed["config"], validated=True
             )
-            revision = _agent_config_revision(parsed["config"], parsed["title"])
+            revision = saved_agent_config_revision(
+                subentry, parsed["config"], parsed["title"]
+            )
             seed_persisted_config_projection(entry, subentry, snapshot, revision)
             return {
                 "status": "updated",
@@ -2344,7 +2348,9 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             with suppress(TypeError, ValueError):
                 source_count = int(stats.get("source_count", 0))
         return {
-            "revision": _agent_config_revision(persisted, request.subentry.title),
+            "revision": saved_agent_config_revision(
+                request.subentry, persisted, request.subentry.title
+            ),
             "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
             "feature_status": management_feature_status(
                 persisted, knowledge_source_count=source_count
