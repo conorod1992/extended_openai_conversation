@@ -895,9 +895,24 @@
           "last_tested": "2026-09-26T12:25:36.267216+00:00"
         },
         "api:responses": {
-          "count": 3,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T12:25:37.807777+00:00"
+          "count": 5,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:27.783637+00:00"
+        },
+        "exploratory:temperature": {
+          "count": 1,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:27.023884+00:00"
+        },
+        "exploratory:top_p": {
+          "count": 1,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:27.783637+00:00"
+        },
+        "exploratory_sampling": {
+          "count": 2,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:27.783637+00:00"
         },
         "function_tools": {
           "count": 3,
@@ -920,9 +935,9 @@
           "last_tested": "2026-09-26T12:25:37.807777+00:00"
         },
         "reasoning:none": {
-          "count": 2,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T12:25:36.999803+00:00"
+          "count": 4,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:27.783637+00:00"
         },
         "service_tier:auto": {
           "count": 1,
@@ -936,9 +951,9 @@
         }
       },
       "cases": {
-        "count": 4,
-        "last_status": "passed",
-        "last_tested": "2026-09-26T12:25:37.807777+00:00"
+        "count": 6,
+        "last_status": "exploratory_accepted",
+        "last_tested": "2026-09-26T15:24:27.783637+00:00"
       }
     },
     "gpt-5.6": {
@@ -949,9 +964,24 @@
           "last_tested": "2026-09-26T14:19:44.627329+00:00"
         },
         "api:responses": {
-          "count": 6,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:43.836766+00:00"
+          "count": 8,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:29.683695+00:00"
+        },
+        "exploratory:temperature": {
+          "count": 1,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:28.788665+00:00"
+        },
+        "exploratory:top_p": {
+          "count": 1,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:29.683695+00:00"
+        },
+        "exploratory_sampling": {
+          "count": 2,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:29.683695+00:00"
         },
         "function_tools": {
           "count": 1,
@@ -993,6 +1023,11 @@
           "last_status": "passed",
           "last_tested": "2026-09-26T12:23:13.389535+00:00"
         },
+        "reasoning:none": {
+          "count": 2,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:29.683695+00:00"
+        },
         "reasoning:xhigh": {
           "count": 2,
           "last_status": "passed",
@@ -1015,9 +1050,9 @@
         }
       },
       "cases": {
-        "count": 12,
-        "last_status": "passed",
-        "last_tested": "2026-09-26T14:19:44.627329+00:00"
+        "count": 14,
+        "last_status": "exploratory_accepted",
+        "last_tested": "2026-09-26T15:24:29.683695+00:00"
       }
     },
     "gpt-5.6-luna": {
@@ -1354,9 +1389,24 @@
           "last_tested": "2026-09-26T14:19:51.085437+00:00"
         },
         "api:responses": {
-          "count": 4,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:51.201887+00:00"
+          "count": 6,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:26.004517+00:00"
+        },
+        "exploratory:temperature": {
+          "count": 1,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:25.004113+00:00"
+        },
+        "exploratory:top_p": {
+          "count": 1,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:26.004517+00:00"
+        },
+        "exploratory_sampling": {
+          "count": 2,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:26.004517+00:00"
         },
         "function_tools": {
           "count": 1,
@@ -1384,9 +1434,9 @@
           "last_tested": "2026-09-26T14:19:51.201887+00:00"
         },
         "reasoning:none": {
-          "count": 1,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T01:03:22.410701+00:00"
+          "count": 3,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:26.004517+00:00"
         },
         "reasoning:xhigh": {
           "count": 1,
@@ -1410,9 +1460,9 @@
         }
       },
       "cases": {
-        "count": 6,
-        "last_status": "passed",
-        "last_tested": "2026-09-26T14:19:51.201887+00:00"
+        "count": 8,
+        "last_status": "exploratory_accepted",
+        "last_tested": "2026-09-26T15:24:26.004517+00:00"
       }
     },
     "gpt-6-sol": {
@@ -1423,9 +1473,24 @@
           "last_tested": "2026-09-26T14:19:56.462220+00:00"
         },
         "api:responses": {
-          "count": 8,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:55.517664+00:00"
+          "count": 10,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:23.854153+00:00"
+        },
+        "exploratory:temperature": {
+          "count": 1,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:21.259501+00:00"
+        },
+        "exploratory:top_p": {
+          "count": 1,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:23.854153+00:00"
+        },
+        "exploratory_sampling": {
+          "count": 2,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:23.854153+00:00"
         },
         "function_tools": {
           "count": 2,
@@ -1463,9 +1528,9 @@
           "last_tested": "2026-09-26T12:29:24.008447+00:00"
         },
         "reasoning:none": {
-          "count": 2,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T12:22:37.457550+00:00"
+          "count": 4,
+          "last_status": "exploratory_accepted",
+          "last_tested": "2026-09-26T15:24:23.854153+00:00"
         },
         "reasoning:xhigh": {
           "count": 2,
@@ -1489,9 +1554,9 @@
         }
       },
       "cases": {
-        "count": 15,
-        "last_status": "passed",
-        "last_tested": "2026-09-26T14:19:56.462220+00:00"
+        "count": 17,
+        "last_status": "exploratory_accepted",
+        "last_tested": "2026-09-26T15:24:23.854153+00:00"
       }
     },
     "o3": {
