@@ -158,3 +158,34 @@ def test_exploratory_sampling_respects_model_filter() -> None:
         case.model for case, _parameter in probes
     } == {"gpt-6-sol", "gpt-6-luna"}
     assert len(probes) == 4
+
+
+
+def test_exploratory_mode_runs_only_targeted_probes() -> None:
+    models = conformance._selected_models(
+        include_expensive=False,
+        model_filter=None,
+    )
+    cases = (
+        []
+        if conformance.MODE_EXPLORATORY == conformance.MODE_EXPLORATORY
+        else conformance._cases(
+            models,
+            mode=conformance.MODE_EXPLORATORY,
+            include_service_tiers=False,
+        )
+    )
+    exploratory = conformance._exploratory_sampling_cases(models)
+
+    assert cases == []
+    assert len(exploratory) == 8
+
+
+def test_exploratory_mode_model_filter_can_reduce_cost() -> None:
+    models = conformance._selected_models(
+        include_expensive=False,
+        model_filter="gpt-6",
+    )
+    exploratory = conformance._exploratory_sampling_cases(models)
+
+    assert len(exploratory) == 4
