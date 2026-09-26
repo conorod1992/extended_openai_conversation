@@ -56,7 +56,11 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
     verify()
     for index in range(operations):
         name = f"skill-{rng.randrange(24):02d}"
-        action = rng.choices(("publish", "remove", "scan"), (5, 3, 2))[0]
+        action = (
+            "publish"
+            if index == 0
+            else rng.choices(("publish", "remove", "scan"), (5, 3, 2))[0]
+        )
         if action == "publish":
             description = f"Revision {index} of {name}"
             staged = manager.staging_dir / f"{name}.stage-{index}"
