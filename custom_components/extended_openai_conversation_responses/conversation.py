@@ -14,7 +14,6 @@ from pathlib import Path
 import time
 from types import SimpleNamespace
 from typing import Any, Literal, cast
-from uuid import uuid4
 
 import httpx
 from openai import OpenAIError
@@ -107,6 +106,10 @@ from .conversation_lifecycle import (
     end_conversation_lifecycle,
     request_fresh_conversation,
     requested_conversation_reset,
+)
+from .conversation_id_ownership import (
+    claim_conversation_id,
+    register_conversation_id_cleanup,
 )
 from .debug import (
     conversation_debug_trace,
@@ -256,73 +259,6 @@ _ACTIVE_RUNTIME_RECONCILED: ContextVar[bool] = ContextVar(
 _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
     "extended_openai_process_metadata", default=None
 )
-
-_CONVERSATION_ID_OWNERS = f"{DOMAIN}.conversation_id_owners"
-
-
-def _claim_conversation_id(
-    hass: HomeAssistant | None,
-    agent_id: str | None,
-    scope: ResolvedDataScope,
-    conversation_id: str | None,
-    *,
-    guest_active: bool,
-) -> str | None:
-    """Prevent a caller-selected HA ChatLog ID crossing EOAI privacy boundaries."""
-    if (
-        conversation_id is None
-        or hass is None
-        or not isinstance(agent_id, str)
-        or not isinstance(getattr(hass, "data", None), dict)
-    ):
-        return conversation_id
-    owners: dict[str, tuple[str, str]] = hass.data.setdefault(
-        _CONVERSATION_ID_OWNERS, {}
-    )
-    owner = (agent_id, "guest" if guest_active else scope.scope_id)
-    existing = owners.get(conversation_id)
-    if existing is None:
-        owners[conversation_id] = owner
-        claimed = conversation_id
-    elif existing == owner:
-        # Refresh insertion order so active caller-selected IDs survive the bound.
-        owners.pop(conversation_id, None)
-        owners[conversation_id] = owner
-        claimed = conversation_id
-    else:
-        claimed = f"extended-openai-{agent_id}-{uuid4().hex}"
-        owners[claimed] = owner
-    return claimed
-
-
-def _release_conversation_id_claim(
-    hass: HomeAssistant | None, conversation_id: str, owner: tuple[str, str]
-) -> None:
-    """Drop one ownership claim only when it still belongs to this ChatLog."""
-    hass_data = getattr(hass, "data", None)
-    if not isinstance(hass_data, dict):
-        return
-    owners = hass_data.get(_CONVERSATION_ID_OWNERS)
-    if isinstance(owners, dict) and owners.get(conversation_id) == owner:
-        owners.pop(conversation_id, None)
-
-
-def _register_conversation_id_cleanup(
-    session: Any,
-    hass: HomeAssistant | None,
-    conversation_id: str,
-    owner: tuple[str, str],
-) -> None:
-    """Bind an ownership claim to a real HA ChatSession when available."""
-    register = getattr(session, "async_on_cleanup", None)
-    if not callable(register):
-        return
-
-    def release_claim() -> None:
-        _release_conversation_id_claim(hass, conversation_id, owner)
-
-    register(release_claim)
-
 
 def _request_llm_context(user_input: ConversationInput) -> Any:
     """Reuse the request-scoped LLM context, with a direct-call fallback."""
@@ -753,7 +689,7 @@ class ExtendedOpenAIAgentEntity(
                 resolved_conversation_id = getattr(
                     resolution, "conversation_id", user_input.conversation_id
                 )
-                claimed_conversation_id = _claim_conversation_id(
+                claimed_conversation_id = claim_conversation_id(
                     getattr(self, "hass", None),
                     getattr(getattr(self, "subentry", None), "subentry_id", None),
                     scope,
@@ -834,7 +770,7 @@ class ExtendedOpenAIAgentEntity(
                     subentry_id,
                     "guest" if request_policy.guest_active else scope.scope_id,
                 )
-                _register_conversation_id_cleanup(
+                register_conversation_id_cleanup(
                     session,
                     getattr(self, "hass", None),
                     claimed_id,
