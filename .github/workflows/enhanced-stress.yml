@@ -10,7 +10,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, persistence, request-rules, guest-security, quiet-hours, functions, provider-resilience, memory-knowledge, large-installation, browser, chaos, process-chaos, diagnostics]
+        options: [all, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, persistence, request-rules, guest-security, quiet-hours, functions, provider-resilience, memory-knowledge, large-installation, browser, browser-engines, chaos, process-chaos, diagnostics]
       intensity:
         description: Workload multiplier
         type: choice
@@ -62,6 +62,7 @@ jobs:
           case "${{ inputs.campaign }}" in
             '') CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
             all|browser) CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
+            browser-engines) CAMPAIGNS='[]' ;;
             runtime|lifecycle|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|persistence|request-rules|guest-security|quiet-hours|functions|provider-resilience|memory-knowledge|large-installation|chaos|process-chaos|diagnostics) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
             *) echo 'Unknown campaign' >&2; exit 1 ;;
           esac
@@ -78,7 +79,7 @@ jobs:
   python-campaigns:
     name: ${{ matrix.campaign }} / ${{ matrix.intensity }}
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign != 'browser'
+    if: github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines')
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
@@ -316,6 +317,88 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  browser-engines:
+    name: browser-${{ matrix.engine }} / ${{ matrix.intensity }}
+    needs: prepare
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser' || inputs.campaign == 'browser-engines'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [firefox, webkit]
+        intensity: ${{ fromJSON(needs.prepare.outputs.intensities) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      CROSS_BROWSER_ENGINE: ${{ matrix.engine }}
+      CROSS_BROWSER_NIGHTLY: "1"
+      STRESS_SEED: ${{ needs.prepare.outputs.seed }}
+      STRESS_INTENSITY: ${{ matrix.intensity }}
+      STRESS_CAMPAIGN: browser-${{ matrix.engine }}
+      STRESS_ARTIFACT_DIR: stress-artifacts
+    steps:
+      - name: Checkout candidate or nightly develop
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+      - name: Install local runner and engine
+        run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+          npx playwright install --with-deps "$CROSS_BROWSER_ENGINE"
+      - name: Install Home Assistant acceptance requirements
+        run: |
+          pip install -r requirements_test.txt
+          pip install --upgrade homeassistant
+          python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          pip check
+      - name: Run curated engine and keyboard journeys
+        run: >-
+          python ci/run_sanitized.py stress-artifacts/browser-engine.log --
+          npx playwright test --config=playwright.cross-browser-nightly.config.mjs
+      - name: Run same-object conflicts through genuine HA
+        run: >-
+          python ci/run_sanitized.py stress-artifacts/browser-real-ha-tabs.log --
+          pytest tests_stress/test_browser_multi_tab.py -v -s
+          --asyncio-mode=auto --timeout=600
+          --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
+      - name: Summarize engine evidence
+        if: always()
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+        run: |
+          python ci/enhanced_evidence.py sanitize-dir stress-artifacts
+          python ci/enhanced_summary.py stress-artifacts
+      - name: Upload engine evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: evidence-browser-${{ matrix.engine }}-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
+          path: stress-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload engine failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: diagnostics-browser-${{ matrix.engine }}-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
   ha-lifecycle-matrix:
     name: HA ${{ matrix.ha-version }} / shared lifecycle contract
     needs: prepare
@@ -410,7 +493,7 @@ jobs:
 
   certify:
     name: Consolidated nightly certification
-    needs: [prepare, python-campaigns, browser, ha-lifecycle-matrix]
+    needs: [prepare, python-campaigns, browser, browser-engines, ha-lifecycle-matrix]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     steps:

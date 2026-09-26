@@ -77,7 +77,7 @@ export function showPendingDestination(panel) {
     nav.setAttribute("aria-label", `${pageMetadata(panel._page).label} sections`);
   }
   const sectionHost = root.querySelector("#eoc-section-host");
-  updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
+  updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" tabindex="0" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
   const main = root.querySelector("[data-eoc-main]");
   if (main) {
     main.setAttribute("aria-busy", "true");
@@ -90,6 +90,36 @@ function bindDynamicBase(panel) {
   const root = panel.shadowRoot;
   if (root.__eocRouteControlsBound) return;
   root.__eocRouteControlsBound = true;
+
+  // WebKit can wrap Tab focus to a control above the current scroll position
+  // without scrolling the shadow-root page. Keep keyboard focus in view.
+  root.addEventListener("focusin", (event) => {
+    const node = event.target;
+    if (!node?.matches?.(":focus-visible")) return;
+    requestAnimationFrame(() => {
+      if (!node.isConnected || !node.matches(":focus-visible")) return;
+      const box = node.getBoundingClientRect();
+      if (box.top < 0 || box.bottom > innerHeight || box.left < 0 || box.right > innerWidth) {
+        node.scrollIntoView({block: "nearest", inline: "nearest"});
+      }
+    });
+  });
+  root.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || !(event.target instanceof HTMLSelectElement)) return;
+    const select = event.target;
+    const backwards = event.shiftKey;
+    requestAnimationFrame(() => {
+      // Most engines move focus themselves. Firefox can leave a native select
+      // focused after Tab in the embedded panel; recover only in that case.
+      if (root.activeElement !== select || !select.isConnected) return;
+      const controls = [...root.querySelectorAll("a[href],button,input,select,textarea,[tabindex]")]
+        .filter((node) => node.tabIndex >= 0 && !node.disabled && !node.closest("[inert]")
+          && node.getClientRects().length && getComputedStyle(node).visibility !== "hidden");
+      const index = controls.indexOf(select);
+      if (index < 0 || controls.length < 2) return;
+      controls[(index + (backwards ? controls.length - 1 : 1)) % controls.length].focus();
+    });
+  });
 
   root.addEventListener("click", (event) => {
     const target = event.target;
@@ -158,8 +188,11 @@ function bindDynamicBase(panel) {
 const regionMarkup = new WeakMap();
 function updateRegion(host, markup) {
   if (!host || regionMarkup.get(host) === markup) return;
+  const active = host.contains(host.getRootNode().activeElement)
+    ? host.getRootNode().activeElement?.id : null;
   host.innerHTML = markup;
   regionMarkup.set(host, markup);
+  if (active) host.querySelector(`#${CSS.escape(active)}`)?.focus({preventScroll: true});
 }
 
 function updateAgentActions(panel) {
@@ -211,7 +244,7 @@ function renderDynamicRegions(panel) {
 
   const sectionHost = root.querySelector("#eoc-section-host");
   if (sectionHost) {
-    updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
+    updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" tabindex="0" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
   }
 
   const assistantIntroHost = root.querySelector("#eoc-assistant-intro-host");

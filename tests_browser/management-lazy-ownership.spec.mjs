@@ -433,7 +433,8 @@ test("search into a cold configuration route retains focus until its assets arri
   await page.goto(fixtureUrl("guide"));
   const panel = page.locator("extended-openai-management-panel");
   await panel.locator("#settings-search").pressSequentially("assistant name");
-  await panel.locator(".settings-result").first().click();
+  await expect.poll(() => panel.locator(".search-results").getAttribute("data-search-query")).toBe("assistant name");
+  await panel.locator(".settings-result").filter({hasText: "Agent name"}).first().click();
   await expect.poll(() => requested).toBe(true);
   release();
   await expect(panel.locator('[data-config="__title"]')).toBeFocused();

@@ -22,21 +22,26 @@ test("Guest Mode primary UI paints before capability details settle", async ({pa
       navigationResolved = true;
     });
     while (!releaseDetails) await new Promise((resolve) => setTimeout(resolve, 0));
-    for (let turn = 0; turn < 30 && !navigationResolved; turn++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-
-    const primaryVisible = Boolean(
+    const primaryIsVisible = () => Boolean(
       host.shadowRoot.querySelector(".guest-intro")
       && host.shadowRoot.querySelector("#guest-now")
     );
-    const loadingDetails = host._result?.loading?.details === true
+    const detailsAreLoading = () => host._result?.loading?.details === true
       && host.shadowRoot.textContent.includes("Loading Guest capability details");
+    const primaryDeadline = Date.now() + 5000;
+    while (Date.now() < primaryDeadline
+      && (!navigationResolved || !primaryIsVisible() || !detailsAreLoading())) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    const primaryVisible = primaryIsVisible();
+    const loadingDetails = detailsAreLoading();
 
     releaseDetails();
     await pending;
-    for (let turn = 0; turn < 30 && host._result?.loading?.details; turn++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+    const detailsDeadline = Date.now() + 5000;
+    while (Date.now() < detailsDeadline && host._result?.loading?.details) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
     host._hass.callWS = original;
     return {
