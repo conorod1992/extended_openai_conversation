@@ -158,7 +158,7 @@ async def test_seeded_exposure_registry_churn_never_leaks_removed_targets(
             "exposure_churn",
             layer="Real HA and provider wire",
             round=round_id,
-            operation=operation,
+            mutation=operation,
             target=entity_id,
             active_entities=sum(item["present"] for item in entities),
         )
