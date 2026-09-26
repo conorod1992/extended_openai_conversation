@@ -77,7 +77,7 @@ export function showPendingDestination(panel) {
     nav.setAttribute("aria-label", `${pageMetadata(panel._page).label} sections`);
   }
   const sectionHost = root.querySelector("#eoc-section-host");
-  updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
+  updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" tabindex="0" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
   const main = root.querySelector("[data-eoc-main]");
   if (main) {
     main.setAttribute("aria-busy", "true");
@@ -228,7 +228,7 @@ function renderDynamicRegions(panel) {
 
   const sectionHost = root.querySelector("#eoc-section-host");
   if (sectionHost) {
-    updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
+    updateRegion(sectionHost, local.length > 1 ? `<div class="section-selector"><label><span>${panel._e(pageMetadata(panel._page).label)} section</span><select id="local-section" tabindex="0" aria-description="${panel._e(local.find((item) => item.id === panel._subsection)?.description || "")}">${local.map((item) => `<option value="${panel._e(item.id)}" ${item.id === panel._subsection ? "selected" : ""}>${panel._e(item.label)}</option>`).join("")}</select></label></div>` : "");
   }
 
   const assistantIntroHost = root.querySelector("#eoc-assistant-intro-host");

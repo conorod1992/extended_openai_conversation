@@ -1452,7 +1452,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           <div class="page-heading"><h1>Extended OpenAI</h1><p>Configure your assistant, capabilities, retained data, and maintenance.</p></div>
           ${settingsSearchShellMarkup(this)}
         </header>
-        <label class="mobile-nav"><span>Page</span><select id="top-section-mobile">${navigation.map((item) => `<option value="${item.id}" ${item.id === this._page ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
+        <label class="mobile-nav"><span>Page</span><select id="top-section-mobile" tabindex="0">${navigation.map((item) => `<option value="${item.id}" ${item.id === this._page ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
         <div class="eoc-agent-context-row" aria-label="Assistant context">
           <label class="agent-picker"><span>Conversation agent</span><select id="agent">${(this._data?.agents || []).map((a) => `<option value="${this._e(a.subentry_id)}" ${a.subentry_id === this._agentId ? "selected" : ""}>${this._e(a.title)}</option>`).join("")}</select>${agent ? `<small>${this._e(agent.provider)} · ${this._e(agent.model)}</small>` : ""}</label>
           <div id="eoc-agent-actions-host" class="eoc-agent-actions" ${configurationActions ? "" : "hidden"}>${configurationActions}</div>
@@ -1460,7 +1460,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         <nav class="top-nav" aria-label="Management sections">${navigation.map((item) => `<button type="button" data-page="${item.id}" class="${item.id === this._page ? "active" : ""}" ${item.id === this._page ? 'aria-current="page"' : ""}>${item.label}</button>`).join("")}</nav>
         <nav class="subsection-nav" aria-label="${this._e(pageMetadata(this._page).label)} sections" ${local.length > 1 ? "" : "hidden"}>${local.length > 1 ? local.map((item) => `<button type="button" data-subsection="${this._e(item.id)}" class="${item.id === this._subsection ? "active" : ""}" ${item.id === this._subsection ? 'aria-current="page"' : ""}>${this._e(item.label)}</button>`).join("") : ""}</nav>
         <div id="eoc-scope-host">${["data-memory/conversations", "data-memory/memories"].includes(this._viewKey()) ? this._scopePicker() : ""}</div>
-        <div id="eoc-section-host">${local.length > 1 ? `<div class="section-selector"><label><span>${this._e(pageMetadata(this._page).label)} section</span><select id="local-section" aria-description="${this._e(currentSection?.description || "")}">${local.map((item) => `<option value="${this._e(item.id)}" ${item.id === this._subsection ? "selected" : ""}>${this._e(item.label)}</option>`).join("")}</select></label></div>` : ""}</div>
+        <div id="eoc-section-host">${local.length > 1 ? `<div class="section-selector"><label><span>${this._e(pageMetadata(this._page).label)} section</span><select id="local-section" tabindex="0" aria-description="${this._e(currentSection?.description || "")}">${local.map((item) => `<option value="${this._e(item.id)}" ${item.id === this._subsection ? "selected" : ""}>${this._e(item.label)}</option>`).join("")}</select></label></div>` : ""}</div>
         <div id="eoc-assistant-intro-host">${agent && this._page === "assistant" ? ASSISTANT_INTRO_MARKUP : ""}</div>
         <div class="section-layout">
           <main data-eoc-main ${this._page === "guide" ? 'data-eoc-guide-layout=""' : ""}>${this._eocMainMarkup}</main>
