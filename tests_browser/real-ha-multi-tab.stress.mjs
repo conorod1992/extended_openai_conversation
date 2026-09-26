@@ -147,7 +147,7 @@ test("stale Function Tool and Group editors preserve the newer genuine HA revisi
     await panelA.locator("#group-description").fill("Initial group description");
     await panelA.locator('#group-functions input[value="browser_tool"]').check();
     await panelA.locator("#group-save").click();
-    await page.goto(realFixtureUrl("capabilities/functions"));
+    await expect(panelA.locator('.function-group-card[data-group-id="two-tab-group"]')).toBeVisible();
     await other.goto(realFixtureUrl("capabilities/functions"));
     const groupA = panelA.locator('.function-group-card[data-group-id="two-tab-group"]');
     const groupB = panelB.locator('.function-group-card[data-group-id="two-tab-group"]');
