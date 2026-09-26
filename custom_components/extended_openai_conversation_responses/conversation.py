@@ -1681,6 +1681,9 @@ class ExtendedOpenAIAgentEntity(
         successful = False
         content: Any = None
         try:
+            # A provider response may arrive after HA exposure or Guest policy
+            # changes. Tool dispatch must use the current Assist-visible set.
+            exposed_entities = self._get_exposed_entities()
             content = await self._async_dispatch_function_tool(
                 function_tool, tool_input, llm_context, exposed_entities
             )

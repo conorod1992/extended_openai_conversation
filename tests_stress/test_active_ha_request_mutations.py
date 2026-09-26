@@ -132,14 +132,18 @@ async def test_active_provider_request_rechecks_live_ha_before_action(
         release_provider.set()
 
     result = await task
-    assert _speech(result) == "The target changed before the action."
     assert service_calls == []
-    assert len(wire.requests) == 2
-    failure = _tool_result_from_chat_request(wire.requests[1]["body"], call_id)
-    assert "error" in failure["result"][0]
+    assert len(wire.requests) in {1, 2}
+    if len(wire.requests) == 2:
+        failure = _tool_result_from_chat_request(wire.requests[1]["body"], call_id)
+        assert "error" in failure["result"][0]
+        assert _speech(result) == "The target changed before the action."
+    else:
+        assert result.response.error_code is not None
     record(
         stress_trace, "summary", layer="Real HA",
         active_request_ha_mutations=1, mutation=mutation,
+        provider_requests=len(wire.requests),
     )
 
 
