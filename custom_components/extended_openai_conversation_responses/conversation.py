@@ -258,6 +258,8 @@ _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
 )
 
 _CONVERSATION_ID_OWNERS = f"{DOMAIN}.conversation_id_owners"
+
+
 def _claim_conversation_id(
     hass: HomeAssistant | None,
     agent_id: str | None,
@@ -748,14 +750,17 @@ class ExtendedOpenAIAgentEntity(
                         else None
                     ),
                 )
+                resolved_conversation_id = getattr(
+                    resolution, "conversation_id", user_input.conversation_id
+                )
                 claimed_conversation_id = _claim_conversation_id(
                     getattr(self, "hass", None),
                     getattr(getattr(self, "subentry", None), "subentry_id", None),
                     scope,
-                    resolution.conversation_id,
+                    resolved_conversation_id,
                     guest_active=request_policy.guest_active,
                 )
-                if claimed_conversation_id != resolution.conversation_id:
+                if claimed_conversation_id != resolved_conversation_id:
                     resolution = replace(
                         resolution, conversation_id=claimed_conversation_id
                     )
