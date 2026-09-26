@@ -37,6 +37,7 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
 from custom_components.extended_openai_conversation_responses.memory import memory_tools
 from custom_components.extended_openai_conversation_responses.model_capabilities import (
     capability_allowed,
+    model_capability_snapshot,
     reasoning_efforts_for_api,
 )
 from custom_components.extended_openai_conversation_responses.model_catalog import (
@@ -218,7 +219,8 @@ def _function_calling_allowed(
     api_mode: str,
     effort: str | None,
 ) -> bool:
-    return capability_allowed(model["id"], "function", api_mode, effort=effort)
+    with model_capability_snapshot(model["id"], model):
+        return capability_allowed(model["id"], "function", api_mode, effort=effort)
 
 
 def _web_search_allowed(
@@ -226,7 +228,8 @@ def _web_search_allowed(
     api_mode: str,
     effort: str | None,
 ) -> bool:
-    return capability_allowed(model["id"], "web_search", api_mode, effort=effort)
+    with model_capability_snapshot(model["id"], model):
+        return capability_allowed(model["id"], "web_search", api_mode, effort=effort)
 
 
 def _viable_api_efforts(model: dict[str, Any]) -> list[tuple[str, str | None]]:
@@ -234,7 +237,10 @@ def _viable_api_efforts(model: dict[str, Any]) -> list[tuple[str, str | None]]:
     for api_mode in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
         if not model["api"].get(api_mode):
             continue
-        efforts: list[str | None] = reasoning_efforts_for_api(model["id"], api_mode)
+        with model_capability_snapshot(model["id"], model):
+            efforts: list[str | None] = reasoning_efforts_for_api(
+                model["id"], api_mode
+            )
         if not efforts:
             efforts = [None]
         result.extend((api_mode, effort) for effort in efforts)
