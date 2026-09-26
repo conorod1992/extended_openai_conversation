@@ -6,6 +6,7 @@ from datetime import timedelta
 import json
 from typing import Any
 
+from pytest_homeassistant_custom_component.common import MockUser
 import voluptuous as vol
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -25,14 +26,17 @@ from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockUser
-
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
-from tests_real_ha.test_cross_feature_acceptance import _action, _provider, _rule, _speech
+from tests_real_ha.test_cross_feature_acceptance import (
+    _action,
+    _provider,
+    _rule,
+    _speech,
+)
 from tests_real_ha.test_function_execution_composition import (
+    _ha_reference,
     _MutableAPI,
     _MutableEchoTool,
-    _ha_reference,
 )
 
 _OWNER_ID = "cross-feature-owner"

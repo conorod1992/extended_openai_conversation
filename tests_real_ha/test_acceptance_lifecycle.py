@@ -13,6 +13,7 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     configured_function_tools_from_data,
 )
 from custom_components.extended_openai_conversation_responses.const import (
+    CONF_CHAT_MODEL,
     CONF_FUNCTION_TOOLS,
     CONF_REASONING_EFFORT,
     CONF_SKIP_AUTHENTICATION,
@@ -65,7 +66,8 @@ def _make_entry(
     conversation_data = dict(conversation_options or {})
     # Acceptance fixtures commonly expose tools through Chat Completions. Keep
     # their default request on a provider-supported reasoning effort.
-    conversation_data.setdefault(CONF_REASONING_EFFORT, "none")
+    if conversation_data.get(CONF_CHAT_MODEL) == "gpt-5.6":
+        conversation_data.setdefault(CONF_REASONING_EFFORT, "none")
     if local_intents:
         conversation_data[CONF_LOCAL_INTENTS_ENABLED] = True
 
