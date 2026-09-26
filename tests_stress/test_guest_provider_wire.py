@@ -274,8 +274,19 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
     routed_wire = _install_wire(
         monkeypatch, agent, [_chat_sse_text("Routed in Guest Mode")]
     )
+    route_errors = []
+    process = agent._async_process
+
+    async def capture_route_error(user_input):
+        try:
+            return await process(user_input)
+        except Exception as error:
+            route_errors.append(error)
+            raise
+
+    monkeypatch.setattr(agent, "_async_process", capture_route_error)
     routed = await _say(hass, entry.entry_id, "guest route probe")
-    assert routed.response.error_code is None, routed.response.as_dict()
+    assert routed.response.error_code is None, (routed.response.as_dict(), route_errors)
     assert _speech(routed) == "Routed in Guest Mode"
     assert routed_wire.requests[0]["body"]["model"] == "gpt-5.6"
     assert _PRIVATE not in json.dumps(

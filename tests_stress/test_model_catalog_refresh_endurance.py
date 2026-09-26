@@ -123,6 +123,8 @@ async def test_slow_invalid_and_failed_refresh_preserve_active_operations(
             )
             if cycle == 0:
                 model["reasoning"]["efforts"].append("minimal")
+                model["reasoning"]["by_api"]["responses"]["efforts"].append("minimal")
+                model["reasoning"]["by_api"]["chat_completions"]["efforts"].append("minimal")
             else:
                 model["display_name"] = f"Catalog endurance {cycle}"
             entered = asyncio.Event()
