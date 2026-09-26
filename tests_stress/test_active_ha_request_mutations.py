@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -151,6 +152,21 @@ async def test_active_provider_request_rechecks_live_ha_before_action(
         assert _speech(result) == "The target changed before the action."
     else:
         assert result.response.error_code is not None
+    if mutation in {"unexposed", "removed"}:
+        later_wire = _install_wire(
+            monkeypatch, agent, [_chat_sse_text("The current HA view is available.")]
+        )
+        later = await conversation.async_converse(
+            hass=hass,
+            text="Describe the currently available targets",
+            conversation_id=None,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+        assert _speech(later) == "The current HA view is available."
+        assert len(later_wire.requests) == 1
+        assert _ENTITY_ID not in json.dumps(later_wire.requests[0]["body"])
     record(
         stress_trace,
         "summary",
