@@ -1,0 +1,145 @@
+name: Live OpenAI Catalog Conformance
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Coverage mode: assertions is exhaustive by catalogue claim; cartesian tests every valid discrete capability combination"
+        required: true
+        default: "assertions"
+        type: choice
+        options:
+          - assertions
+          - cartesian
+      model_filter:
+        description: "Optional model-id substring (for example: gpt-6 or gpt-5.6-luna)"
+        required: false
+        type: string
+      include_expensive_models:
+        description: "Include models whose id contains -pro"
+        required: true
+        default: false
+        type: boolean
+      include_service_tiers:
+        description: "Also test every declared service tier (can substantially increase calls)"
+        required: true
+        default: false
+        type: boolean
+      plan_only:
+        description: "Only calculate and upload the request plan; make no OpenAI calls"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: live-openai-acceptance
+  cancel-in-progress: false
+
+jobs:
+  conformance:
+    name: Exhaustive OpenAI catalogue conformance
+    if: github.actor == 'conorod1992'
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      PYTHONPATH: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout trusted branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Checkout persistent coverage state
+        if: inputs.plan_only != true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: live-openai-state
+          path: .live-openai-state
+          persist-credentials: true
+
+      - name: Verify caller and secret
+        run: |
+          set -euo pipefail
+          test "${GITHUB_ACTOR}" = "conorod1992"
+          if [ "${{ inputs.plan_only }}" != "true" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::Repository secret OPENAI_API_KEY is not configured."
+            exit 1
+          fi
+
+      - name: Reconcile current dependencies
+        run: |
+          set -euo pipefail
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+            pip install -r requirements_test.txt
+            pip install --upgrade homeassistant
+            python ci/install_ha_dependencies.py \
+              --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
+          pip check
+
+      - name: Run catalogue conformance probes
+        run: |
+          set -euo pipefail
+          args=(
+            --mode "${{ inputs.mode }}"
+            --report live-openai-catalog-conformance-report.json
+          )
+          if [ -n "${{ inputs.model_filter }}" ]; then
+            args+=(--model-filter "${{ inputs.model_filter }}")
+          fi
+          if [ "${{ inputs.include_expensive_models }}" = "true" ]; then
+            args+=(--include-expensive-models)
+          fi
+          if [ "${{ inputs.include_service_tiers }}" = "true" ]; then
+            args+=(--include-service-tiers)
+          fi
+          if [ "${{ inputs.plan_only }}" = "true" ]; then
+            args+=(--plan-only)
+          else
+            args+=(
+              --history .live-openai-state/live-openai-coverage.json
+              --history-out live-openai-coverage-next.json
+            )
+          fi
+          python ci/live_openai_catalog_conformance.py "${args[@]}"
+
+      - name: Persist coverage history
+        if: always() && inputs.plan_only != true && hashFiles('live-openai-coverage-next.json') != ''
+        run: |
+          set -euo pipefail
+          cp live-openai-coverage-next.json .live-openai-state/live-openai-coverage.json
+          cd .live-openai-state
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add live-openai-coverage.json
+          if git diff --cached --quiet; then
+            echo "Coverage history did not change."
+            exit 0
+          fi
+          git commit -m "Update live OpenAI coverage [skip ci]"
+          git push origin HEAD:live-openai-state
+
+      - name: Upload catalogue conformance report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-openai-catalog-conformance-report
+          path: live-openai-catalog-conformance-report.json
+          if-no-files-found: warn
+          retention-days: 30
