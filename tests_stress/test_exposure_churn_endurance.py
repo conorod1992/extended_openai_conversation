@@ -53,7 +53,8 @@ async def test_seeded_exposure_registry_churn_never_leaks_removed_targets(
     ]
     for user in users:
         user.add_to_hass(hass)
-    agents = [await _agent(hass) for _ in range(2)]
+    agents = [await _agent(hass, title=f"Exposure Churn {index}") for index in range(2)]
+    assert agents[0].entry.entry_id != agents[1].entry.entry_id
     rounds = 12 if stress_scale == 1 else 36
     wires = [
         _install_wire(
@@ -144,6 +145,7 @@ async def test_seeded_exposure_registry_churn_never_leaks_removed_targets(
         )
         assert all(_speech(result) == "Current HA view received." for result in results)
         for wire in wires:
+            assert len(wire.requests) == round_id + 1
             body = json.dumps(wire.requests[-1]["body"])
             for current in entities:
                 visible = (

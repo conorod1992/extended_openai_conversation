@@ -16,6 +16,9 @@ from custom_components.extended_openai_conversation_responses.usage import Usage
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
+from tests_real_ha.test_corrupt_subsystem_store_startup_isolation import (
+    _real_store_io,  # noqa: F401 - register the genuine Store fixture for this module
+)
 from tests_real_ha.test_cross_feature_acceptance import _agent
 from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire
 from tests_stress.conftest import record
@@ -36,6 +39,7 @@ async def _say(hass: HomeAssistant, agent: Any, user_id: str, index: int) -> Any
 async def test_concurrent_usage_writes_survive_retention_jumps_and_reload(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
+    _real_store_io: None,  # noqa: F811 - the imported fixture name is intentional
     stress_seed: int,
     stress_scale: int,
     stress_trace: list[dict],
@@ -47,7 +51,10 @@ async def test_concurrent_usage_writes_survive_retention_jumps_and_reload(
     ]
     for user in users:
         user.add_to_hass(hass)
-    agents = [await _agent(hass) for _ in range(2)]
+    agents = [
+        await _agent(hass, title=f"Usage Endurance {index}") for index in range(2)
+    ]
+    assert agents[0].entry.entry_id != agents[1].entry.entry_id
     assert all(agent is not None and agent._usage is not None for agent in agents)
     turns_per_agent = 10 if stress_scale == 1 else 32
     wires = [
@@ -68,7 +75,9 @@ async def test_concurrent_usage_writes_survive_retention_jumps_and_reload(
             for index in range(start, min(start + 4, turns_per_agent))
         ]
         results = await asyncio.gather(*tasks)
-        assert all(result.response.error_code is None for result in results)
+        assert all(result.response.error_code is None for result in results), [
+            result.response.error_code for result in results
+        ]
     await hass.async_block_till_done()
     base = dt_util.utcnow()
     managers = [agent._usage for agent in agents]

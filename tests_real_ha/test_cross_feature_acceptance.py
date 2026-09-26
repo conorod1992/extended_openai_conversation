@@ -30,8 +30,9 @@ from homeassistant.core import Context
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 
 
-async def _agent(hass, **options):
+async def _agent(hass, *, title="Acceptance", **options):
     entry = _make_entry(
+        title=title,
         include_ai_task=False,
         conversation_options={
             CONF_API_MODE: "chat_completions",
