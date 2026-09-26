@@ -153,6 +153,26 @@ async def test_revision_guard_accepts_current_revision_and_changes_after_save() 
     assert rules.revision() != revision
     assert store.saves == 1
 
+
+async def test_revision_guard_rejects_aba_after_committed_changes() -> None:
+    """A writer suspended at A must not overwrite intervening B and A saves."""
+    store = MemoryStore()
+    rules = rr.RequestRules(store)
+    await rules.async_initialize()
+    original = rules.revision()
+
+    await rules.async_set_defaults({**rr.DEFAULT_MATCHING, "fuzzy": True})
+    await rules.async_set_defaults(rr.DEFAULT_MATCHING)
+    assert rules.snapshot()["defaults"] == rr.DEFAULT_MATCHING
+    assert rules.revision() != original
+
+    with pytest.raises(ValueError, match="changed in another tab"):
+        await rules.async_set_defaults(
+            {**rr.DEFAULT_MATCHING, "fuzzy_threshold": 91},
+            expected_revision=original,
+        )
+    assert store.saves == 2
+
 async def test_request_rule_settings_save_atomically_once() -> None:
     store = MemoryStore()
     rules = rr.RequestRules(store)
