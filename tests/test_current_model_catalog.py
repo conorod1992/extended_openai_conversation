@@ -86,7 +86,15 @@ def test_new_flagships_condition_chat_tools_on_none(model):
 
 @pytest.mark.parametrize(
     "model",
-    ["gpt-6-sol", "gpt-6-luna", "gpt-5.5", "gpt-5.6", "gpt-5.6-sol"],
+    [
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.5",
+        "gpt-5.6",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    ],
 )
 def test_verified_sampling_is_conditional_on_none(model):
     capabilities = get_model_capabilities(model)
@@ -127,17 +135,6 @@ def test_verified_sampling_is_conditional_on_none(model):
     )
     assert "temperature" not in low.api_kwargs
     assert "top_p" not in low.api_kwargs
-
-
-@pytest.mark.parametrize("model", ["gpt-5.6-terra", "gpt-5.6-luna"])
-def test_unverified_56_variants_keep_sampling_undocumented(model):
-    capabilities = get_model_capabilities(model)
-    for parameter in ("temperature", "top_p"):
-        assert capabilities[parameter] == {
-            "support": "undocumented",
-            "allowed_reasoning_efforts": None,
-            "send_policy": "omit",
-        }
 
 
 def test_cache_and_flex_corrections():
