@@ -21,14 +21,24 @@ def verify(folder: Path, log: Path) -> None:
         assert report["operations"][-1]["operation"] == "before_assertion"
         boundary = report["operations"][0]["boundary"]
         boundaries.add(boundary)
+        if boundary != "python":
+            assert isinstance(report["health"]["ha_state_count"], int)
         if boundary == "provider":
             assert any(
-                item.get("phase") == "after_tool_effect"
+                item.get("phase") == "before_headers" and item.get("kind") == "dns"
+                for item in report["operations"]
+            )
+            assert any(
+                item.get("operation") == "assist_failure"
+                and item.get("provider_requests") == 1
                 for item in report["operations"]
             )
         if boundary in {"lifecycle", "resource"}:
             assert any(
-                item.get("after_services") == 13 for item in report["operations"]
+                isinstance(item.get("baseline_resources"), dict)
+                and isinstance(item.get("peak_resources"), dict)
+                and isinstance(item.get("after_resources"), dict)
+                for item in report["operations"]
             )
     assert boundaries == {"python", "provider", "lifecycle", "resource"}
     inspected = [*folder.rglob("*.json"), log]

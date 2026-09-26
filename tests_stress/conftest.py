@@ -66,6 +66,19 @@ def stress_trace(request: pytest.FixtureRequest, stress_seed: int) -> list[dict]
         .replace("]", "_")
     )
     report = getattr(request.node, "_enhanced_call_report", None)
+    hass = request.node.funcargs.get("hass")
+    health = None
+    if hass is not None:
+        health = {
+            "ha_state_count": len(hass.states.async_all()),
+            "eoai_manager_counts": {
+                str(key): len(value)
+                for key, value in hass.data.items()
+                if isinstance(key, str)
+                and key.startswith("extended_openai_conversation_responses.")
+                and isinstance(value, dict)
+            },
+        }
     write_json(
         report_dir / f"{name}.json",
         {
@@ -76,6 +89,7 @@ def stress_trace(request: pytest.FixtureRequest, stress_seed: int) -> list[dict]
             "failure": str(report.longrepr).splitlines()[-1]
             if report and report.failed
             else None,
+            "health": health,
             "operations": trace,
         },
     )
