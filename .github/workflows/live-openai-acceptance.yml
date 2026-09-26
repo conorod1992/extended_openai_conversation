@@ -24,7 +24,7 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
   packages: read
 
 concurrency:
@@ -54,6 +54,13 @@ jobs:
         with:
           ref: develop
           persist-credentials: false
+
+      - name: Checkout persistent coverage state
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: live-openai-state
+          path: .live-openai-state
+          persist-credentials: true
 
       - name: Verify caller and secret
         run: |
@@ -85,6 +92,8 @@ jobs:
             --model-count "${{ inputs.model_count }}"
             --cases-per-model "${{ inputs.cases_per_model }}"
             --report live-openai-acceptance-report.json
+            --history .live-openai-state/live-openai-coverage.json
+            --history-out live-openai-coverage-next.json
           )
           if [ -n "${{ inputs.seed }}" ]; then
             args+=(--seed "${{ inputs.seed }}")
@@ -93,6 +102,23 @@ jobs:
             args+=(--include-expensive-models)
           fi
           python ci/live_openai_acceptance.py "${args[@]}"
+
+      - name: Persist coverage history
+        if: always() && hashFiles('live-openai-coverage-next.json') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp live-openai-coverage-next.json .live-openai-state/live-openai-coverage.json
+          cd .live-openai-state
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add live-openai-coverage.json
+          if git diff --cached --quiet; then
+            echo "Coverage history did not change."
+            exit 0
+          fi
+          git commit -m "Update live OpenAI coverage [skip ci]"
+          git push origin HEAD:live-openai-state
 
       - name: Upload compatibility report
         if: always()
