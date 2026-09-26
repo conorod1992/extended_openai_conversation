@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import re
 
+from ci.enhanced_evidence import evidence_filename
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "enhanced-stress.yml"
 EXCLUSIONS = ROOT / "tests_stress" / "nightly_real_ha_exclusions.json"
@@ -37,3 +39,13 @@ def test_every_real_ha_test_is_selected_or_explicitly_excluded() -> None:
 
     assert selected.isdisjoint(excluded)
     assert selected | excluded == actual
+
+
+def test_evidence_filenames_bound_parametrized_node_ids() -> None:
+    base = "tests_stress/test_provider_event_sequences.py::test_duplicate_events"
+    one = evidence_filename(f"{base}[chat_completions-{'x' * 4000}]")
+    two = evidence_filename(f"{base}[responses-{'x' * 4000}]")
+    assert one != two
+    assert one.startswith("tests_stress_test_provider_event_sequences.py__test_duplicate_events-")
+    assert len(one.encode("utf-8")) < 200
+    assert all(character not in one for character in ':\\/[]')
