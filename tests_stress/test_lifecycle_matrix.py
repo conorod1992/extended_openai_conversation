@@ -73,20 +73,31 @@ async def test_seeded_multi_entry_lifecycle_contract(
     await hass.async_block_till_done()
 
     baseline_rows = {entry.entry_id: _rows(hass, entry) for entry in entries}
-    assert all(len({subentry for _, subentry in rows}) == 2 for rows in baseline_rows.values())
+    assert all(
+        len({subentry for _, subentry in rows}) == 2 for rows in baseline_rows.values()
+    )
     assert not baseline_rows[entries[0].entry_id] & baseline_rows[entries[1].entry_id]
     markers: dict[tuple[str, str], str] = {}
     for entry in entries:
         for subentry in entry.subentries.values():
             marker = f"private-{entry.entry_id}-{subentry.subentry_id}"
             memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
-            assert (await memory.async_add(
-                "nightly-owner", marker, "acceptance", "explicit", key="private"
-            ))["status"] == "created"
+            assert (
+                await memory.async_add(
+                    "nightly-owner", marker, "acceptance", "explicit", key="private"
+                )
+            )["status"] == "created"
             markers[(entry.entry_id, subentry.subentry_id)] = marker
 
     baseline_resources = _resource_footprint(hass)
     baseline_tasks = _integration_tasks()
+    peak_resources = dict(baseline_resources)
+    record(
+        stress_trace,
+        "resource_baseline",
+        resources=baseline_resources,
+        integration_tasks=len(baseline_tasks),
+    )
     assert hass.services.has_service(DOMAIN, SERVICE_PROCESS)
 
     cycles = 60 if stress_scale == 1 else 100
@@ -124,12 +135,26 @@ async def test_seeded_multi_entry_lifecycle_contract(
                 text=f"reloaded entry works in cycle {cycle}",
                 reply="reloaded ready",
             )
-        assert all(_rows(hass, item) == baseline_rows[item.entry_id] for item in entries)
-        assert _resource_footprint(hass) == baseline_resources
+        assert all(
+            _rows(hass, item) == baseline_rows[item.entry_id] for item in entries
+        )
+        current_resources = _resource_footprint(hass)
+        for key, value in current_resources.items():
+            peak_resources[key] = max(peak_resources[key], value)
+        if cycle % 10 == 0:
+            record(
+                stress_trace,
+                "resource_checkpoint",
+                cycle=cycle,
+                resources=current_resources,
+            )
+        assert current_resources == baseline_resources
         assert _integration_tasks() == baseline_tasks
         for item in entries:
             for subentry in item.subentries.values():
-                memory = await async_get_memory(hass, item.entry_id, subentry.subentry_id)
+                memory = await async_get_memory(
+                    hass, item.entry_id, subentry.subentry_id
+                )
                 records = await memory.async_list("nightly-owner", limit=10)
                 assert [record.content for record in records] == [
                     markers[(item.entry_id, subentry.subentry_id)]
@@ -140,8 +165,20 @@ async def test_seeded_multi_entry_lifecycle_contract(
     await hass.async_block_till_done()
     # EOAI registers the shared process service once per HA instance. It remains
     # registered after the last entry unloads, but its count must not grow.
-    assert _resource_footprint(hass)["registered_services"] == baseline_resources[
-        "registered_services"
-    ]
+    assert (
+        _resource_footprint(hass)["registered_services"]
+        == baseline_resources["registered_services"]
+    )
     assert not (_integration_tasks() - baseline_tasks)
-    record(stress_trace, "summary", cycles=cycles, entries=2, subentries=4)
+    record(
+        stress_trace,
+        "summary",
+        cycles=cycles,
+        entries=2,
+        subentries=4,
+        baseline_resources=baseline_resources,
+        peak_resources=peak_resources,
+        after_resources=_resource_footprint(hass),
+        baseline_tasks=len(baseline_tasks),
+        after_tasks=len(_integration_tasks()),
+    )

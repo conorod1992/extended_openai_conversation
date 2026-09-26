@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import sys
 
+from enhanced_evidence import envelope, safe, write_json
+
 COUNT_METRICS = {
     "ai_task_turns",
     "ai_task_concurrent",
@@ -109,10 +111,13 @@ def main() -> None:
     campaign = os.environ.get("STRESS_CAMPAIGN", "unknown")
     seed = os.environ.get("STRESS_SEED", "unknown")
     intensity = os.environ.get("STRESS_INTENSITY", "normal")
+    status = os.environ.get("ENHANCED_JOB_STATUS", "unknown")
+    metadata = envelope(status=status)
     lines = [
         f"### Enhanced acceptance: {campaign}",
         "",
-        f"Seed: `{seed}` · Intensity: `{intensity}`",
+        f"SHA: `{metadata['eoai_sha']}` · Seed: `{seed}` · Intensity: `{intensity}` · Status: **{status}**",
+        f"HA: `{metadata['ha_version'] or 'not applicable'}` · Python: `{metadata['python_version']}`",
         "",
     ]
     totals: Counter[str] = Counter()
@@ -123,7 +128,9 @@ def main() -> None:
         ]
     for path in files:
         data = json.loads(path.read_text(encoding="utf-8"))
-        operations = data.get("operations", [])
+        if not data.get("test") and not path.stem.startswith("browser-"):
+            continue
+        operations = safe(data.get("operations", []))
         counts = Counter(item.get("operation", "unknown") for item in operations)
         lines += [
             f"**{data.get('test', path.stem)}**",
@@ -142,7 +149,7 @@ def main() -> None:
                     if isinstance(value, int) and not isinstance(value, bool):
                         totals[key] += value
                 details = ", ".join(
-                    f"{key}={value}"
+                    f"{key}={safe(value, key)}"
                     for key, value in item.items()
                     if key not in {"operation", "number"}
                 )
@@ -181,6 +188,19 @@ def main() -> None:
         lines += [f"| {key} | {value} |" for key, value in sorted(totals.items())]
         lines.append("")
     summary = "\n".join(lines)
+    write_json(
+        folder / "certification.json",
+        {
+            **metadata,
+            "tests_traced": sum(
+                1 for path in files if path.name != "certification.json"
+            ),
+            "measured_totals": dict(totals),
+            "artifact_files": [
+                path.name for path in files if path.name != "certification.json"
+            ],
+        },
+    )
     print(summary)
     destination = os.environ.get("GITHUB_STEP_SUMMARY")
     if destination:

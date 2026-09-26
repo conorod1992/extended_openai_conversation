@@ -121,6 +121,7 @@ async def test_stream_failure_never_runs_a_partial_tool_and_next_turn_recovers(
         [first, WireStep("sse", body=_reply(mode, "Recovered."))]
     )
     wire.install(monkeypatch, agent)
+    record(stress_trace, "fault_injected", mode=mode, phase=phase, kind=first.kind)
 
     failed = await _say(hass, agent, f"Seeded {phase} fault")
     assert failed.response.error_code is not None
@@ -157,6 +158,13 @@ async def test_disconnect_after_tool_side_effect_never_replays_it(
         ]
     )
     wire.install(monkeypatch, agent)
+    record(
+        stress_trace,
+        "fault_injected",
+        mode=mode,
+        phase="after_tool_side_effect",
+        kind="disconnect_before_headers",
+    )
 
     failed = await _say(hass, agent, "Turn off the test light")
     assert failed.response.error_code is not None

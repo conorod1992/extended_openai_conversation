@@ -10,7 +10,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, persistence, request-rules, guest-security, quiet-hours, functions, provider-resilience, memory-knowledge, large-installation, browser, chaos, process-chaos]
+        options: [all, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, persistence, request-rules, guest-security, quiet-hours, functions, provider-resilience, memory-knowledge, large-installation, browser, chaos, process-chaos, diagnostics]
       intensity:
         description: Workload multiplier
         type: choice
@@ -23,6 +23,7 @@ on:
         required: false
 
 permissions:
+  actions: read
   contents: read
   packages: read
 
@@ -61,7 +62,7 @@ jobs:
           case "${{ inputs.campaign }}" in
             '') CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
             all|browser) CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
-            runtime|lifecycle|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|persistence|request-rules|guest-security|quiet-hours|functions|provider-resilience|memory-knowledge|large-installation|chaos|process-chaos) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
+            runtime|lifecycle|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|persistence|request-rules|guest-security|quiet-hours|functions|provider-resilience|memory-knowledge|large-installation|chaos|process-chaos|diagnostics) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
             *) echo 'Unknown campaign' >&2; exit 1 ;;
           esac
           echo "campaigns=$CAMPAIGNS" >> "$GITHUB_OUTPUT"
@@ -126,8 +127,10 @@ jobs:
           mkdir -p "$OLD_ROOT"
           git archive "$TAG" custom_components/extended_openai_conversation_responses | tar -x -C "$OLD_ROOT"
           echo "DOWNGRADE_COMPONENT_DIR=$OLD_ROOT/custom_components/extended_openai_conversation_responses" >> "$GITHUB_ENV"
+          echo "EOAI_SOURCE_VERSION=$TAG" >> "$GITHUB_ENV"
           echo "Downgrade reader payload: $TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Run enhanced campaign
+        id: campaign_run
         run: |
           case "$STRESS_CAMPAIGN" in
             runtime) TEST_PATHS=(tests_stress/test_runtime_soak.py tests_stress/test_evidence_manifest.py tests_stress/test_frontend_route_inventory.py tests_stress/test_management_action_inventory.py tests_stress/test_public_service_inventory.py tests_stress/test_backup_inventory.py) ;;
@@ -149,19 +152,36 @@ jobs:
             large-installation) TEST_PATHS=(tests_stress/test_large_installation.py tests_stress/test_extreme_context_matrix.py tests_stress/test_memory_knowledge_scale.py tests_stress/test_provider_wire_privacy.py tests_stress/test_archive_living_campaign.py) ;;
             chaos) TEST_PATHS=(tests_stress/test_cross_feature_chaos.py) ;;
             process-chaos) TEST_PATHS=(tests_stress/test_backup_inventory.py tests_real_ha/test_immediate_tool_process_crash.py tests_real_ha/test_store_write_process_crash.py tests_real_ha/test_delayed_tool_process_restart.py) ;;
+            diagnostics) TEST_PATHS=(tests_stress/test_diagnostics_failure_probe.py) ;;
             *) exit 2 ;;
           esac
+          set +e
           pytest "${TEST_PATHS[@]}" -v -s --asyncio-mode=auto --log-cli-level=WARNING \
             --timeout=600 --durations=20 \
-            --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
+            --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY" \
+            --show-capture=no --tb=short > enhanced-raw.log 2>&1
+          RESULT=$?
+          python ci/enhanced_evidence.py sanitize-log enhanced-raw.log stress-artifacts/pytest.log
+          rm enhanced-raw.log
+          cat stress-artifacts/pytest.log
+          if [ "$STRESS_CAMPAIGN" = diagnostics ]; then
+            test "$RESULT" -ne 0
+            python ci/verify_enhanced_failure.py stress-artifacts stress-artifacts/pytest.log
+          else
+            exit "$RESULT"
+          fi
       - name: Summarize exercised operations
         if: always()
-        run: python ci/enhanced_summary.py stress-artifacts
-      - name: Upload failure diagnostics
-        if: failure()
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+        run: |
+          python ci/enhanced_evidence.py sanitize-dir stress-artifacts
+          python ci/enhanced_summary.py stress-artifacts
+      - name: Upload campaign evidence and diagnostics
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: enhanced-${{ matrix.campaign }}-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
+          name: evidence-${{ matrix.campaign }}-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
           path: stress-artifacts/
           if-no-files-found: warn
           retention-days: 14
@@ -169,7 +189,7 @@ jobs:
   browser:
     name: browser / ${{ matrix.intensity }}
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser'
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser' || inputs.campaign == 'diagnostics'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
@@ -189,7 +209,7 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
       STRESS_INTENSITY: ${{ matrix.intensity }}
-      STRESS_CAMPAIGN: browser
+      STRESS_CAMPAIGN: ${{ inputs.campaign == 'diagnostics' && 'browser-diagnostics' || 'browser' }}
       STRESS_ARTIFACT_DIR: stress-artifacts
     steps:
       - name: Checkout candidate or nightly develop
@@ -197,6 +217,7 @@ jobs:
         with:
           ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
       - name: Stage the latest published frontend for stale-asset acceptance
+        if: inputs.campaign != 'diagnostics'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -208,10 +229,12 @@ jobs:
           mkdir -p "$OLD_ROOT"
           git archive "$TAG" custom_components/extended_openai_conversation_responses/frontend | tar -x -C "$OLD_ROOT"
           echo "EOAI_OLD_FRONTEND_DIR=$OLD_ROOT/custom_components/extended_openai_conversation_responses/frontend" >> "$GITHUB_ENV"
+          echo "EOAI_SOURCE_VERSION=$TAG" >> "$GITHUB_ENV"
           echo "Published frontend baseline: $TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Install local Playwright runner
         run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
       - name: Reconcile current Home Assistant requirements
+        if: inputs.campaign != 'diagnostics'
         run: |
           CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
           BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
@@ -221,37 +244,73 @@ jobs:
             python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
           fi
       - name: Run long-lived browser campaign
-        run: npx playwright test --config=playwright.stress.config.mjs
+        if: inputs.campaign != 'diagnostics'
+        run: |
+          set +e
+          npx playwright test --config=playwright.stress.config.mjs > browser-raw.log 2>&1
+          RESULT=$?
+          python ci/enhanced_evidence.py sanitize-log browser-raw.log stress-artifacts/browser.log
+          rm browser-raw.log
+          cat stress-artifacts/browser.log
+          exit "$RESULT"
       - name: Recheck gated stale responses and listener ownership
+        if: inputs.campaign != 'diagnostics'
         run: >-
+          python ci/run_sanitized.py stress-artifacts/browser-recheck.log --
           npx playwright test --config=playwright.config.mjs
           tests_browser/retained-mutation-state.spec.mjs
           tests_browser/backend-reconnect.spec.mjs
           tests_browser/management-lazy-ownership.spec.mjs
       - name: Run two tabs against one genuine HA backend
+        if: inputs.campaign != 'diagnostics'
         run: >-
+          python ci/run_sanitized.py stress-artifacts/browser-real-ha-tabs.log --
           pytest tests_stress/test_browser_multi_tab.py -v -s
           --asyncio-mode=auto --timeout=240
           --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
       - name: Run browser actions through genuine HA WebSocket schemas
+        if: inputs.campaign != 'diagnostics'
         env:
           RUN_REAL_HA_BROWSER: "1"
         run: >-
+          python ci/run_sanitized.py stress-artifacts/browser-real-ha-ws.log --
           pytest
           tests_stress/test_management_ws_contract.py
           tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_talks_to_real_management_websocket
           tests_stress/test_browser_backend_resilience.py
           -v -s --asyncio-mode=auto --timeout=600 --log-cli-level=WARNING
+      - name: Verify controlled Playwright failure artifacts
+        if: inputs.campaign == 'diagnostics'
+        run: |
+          set +e
+          npx playwright test tests_browser/nightly-diagnostics-probe.mjs --config=playwright.diagnostics.config.mjs > browser-raw.log 2>&1
+          RESULT=$?
+          python ci/enhanced_evidence.py sanitize-log browser-raw.log stress-artifacts/browser.log
+          rm browser-raw.log
+          cat stress-artifacts/browser.log
+          test "$RESULT" -ne 0
+          python ci/verify_browser_failure.py test-results
       - name: Summarize exercised transitions
         if: always()
-        run: python ci/enhanced_summary.py stress-artifacts
-      - name: Upload browser diagnostics
-        if: failure()
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+        run: |
+          python ci/enhanced_evidence.py sanitize-dir stress-artifacts
+          python ci/enhanced_summary.py stress-artifacts
+      - name: Upload browser evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: enhanced-browser-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
+          name: evidence-browser-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
+          path: stress-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload browser failure diagnostics
+        if: failure() || inputs.campaign == 'diagnostics'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: diagnostics-browser-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
           path: |
-            stress-artifacts/
             playwright-report/
             test-results/
           if-no-files-found: warn
@@ -263,6 +322,12 @@ jobs:
     if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'lifecycle'
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    env:
+      STRESS_CAMPAIGN: lifecycle-matrix
+      STRESS_INTENSITY: normal
+      STRESS_SEED: ${{ needs.prepare.outputs.seed }}
+      STRESS_ARTIFACT_DIR: stress-artifacts
+      HA_POINT: ${{ matrix.ha-version }}
     strategy:
       fail-fast: false
       matrix:
@@ -316,15 +381,75 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           STRESS_SEED: ${{ needs.prepare.outputs.seed }}
           STRESS_ARTIFACT_DIR: stress-artifacts
-        run: >-
-          pytest tests_stress/test_lifecycle_matrix.py
-          -v -s --asyncio-mode=auto --timeout=600
-          --stress-seed="$STRESS_SEED" --stress-intensity=normal
-      - name: Upload failure diagnostics
-        if: failure()
+        run: |
+          set +e
+          pytest tests_stress/test_lifecycle_matrix.py \
+            -v -s --asyncio-mode=auto --timeout=600 \
+            --stress-seed="$STRESS_SEED" --stress-intensity=normal \
+            --show-capture=no --tb=short > enhanced-raw.log 2>&1
+          RESULT=$?
+          python ci/enhanced_evidence.py sanitize-log enhanced-raw.log stress-artifacts/pytest.log
+          rm enhanced-raw.log
+          cat stress-artifacts/pytest.log
+          exit "$RESULT"
+      - name: Summarize lifecycle contract
+        if: always()
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+        run: |
+          python ci/enhanced_evidence.py sanitize-dir stress-artifacts
+          python ci/enhanced_summary.py stress-artifacts
+      - name: Upload lifecycle evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: lifecycle-${{ matrix.ha-version }}-seed-${{ needs.prepare.outputs.seed }}
+          name: evidence-lifecycle-${{ matrix.ha-version }}-seed-${{ needs.prepare.outputs.seed }}
           path: stress-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
+  certify:
+    name: Consolidated nightly certification
+    needs: [prepare, python-campaigns, browser, ha-lifecycle-matrix]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact run source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+      - name: Download campaign evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: evidence-*
+          path: enhanced-evidence
+      - name: Download controlled browser failure artifacts
+        if: inputs.campaign == 'diagnostics'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: diagnostics-browser-*
+          path: browser-failure-evidence
+      - name: Verify uploaded failure artifacts and private canaries
+        if: inputs.campaign == 'diagnostics'
+        run: |
+          python ci/verify_enhanced_failure.py \
+            enhanced-evidence/evidence-diagnostics-${{ inputs.intensity }}-seed-${{ needs.prepare.outputs.seed }} \
+            enhanced-evidence/evidence-diagnostics-${{ inputs.intensity }}-seed-${{ needs.prepare.outputs.seed }}/pytest.log
+          python ci/verify_browser_failure.py browser-failure-evidence
+      - name: Consolidate actual job results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENHANCED_CAMPAIGNS: ${{ needs.prepare.outputs.campaigns }}
+          ENHANCED_INTENSITIES: ${{ needs.prepare.outputs.intensities }}
+          ENHANCED_SELECTED: ${{ inputs.campaign || 'all' }}
+          ENHANCED_NEEDS: ${{ toJSON(needs) }}
+          STRESS_SEED: ${{ needs.prepare.outputs.seed }}
+        run: python ci/enhanced_certification.py enhanced-evidence
+      - name: Upload certification index
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: certification-index-${{ needs.prepare.outputs.seed }}
+          path: certification-final.json
           if-no-files-found: warn
           retention-days: 14
