@@ -162,6 +162,11 @@ def validate_api_path(
             f"{model} does not support function/tool calling through {api} at reasoning_effort={effort}."
         )
     if web_search and not capability_allowed(model, "web_search", api, effort=effort):
+        if api == API_MODE_CHAT_COMPLETIONS:
+            raise ModelCapabilityError(
+                "Web Search requires the Responses API. Select Responses API mode "
+                "or use a model for which Auto resolves to Responses."
+            )
         raise ModelCapabilityError(
             f"{model} does not support Web Search through {api} at reasoning_effort={effort}."
         )

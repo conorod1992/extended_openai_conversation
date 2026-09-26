@@ -110,32 +110,26 @@ test("model selection has one lookup/validation path and retains reasoning defau
   expect(result).toEqual({lookups:1, model:"gpt-4.1", requested:"gpt-4.1", dirty:true, reasoning:"high"});
 });
 
-test("a dependency toggle leaves unrelated guidance groups untouched", async ({page}) => {
+test("a Web Search toggle refreshes capability controls", async ({page}) => {
   await page.goto(fixtureUrl("capabilities/web-skills"));
   const web = page.locator('extended-openai-management-panel [data-config="web_search"]');
   await expect(web).toBeVisible();
   const result = await page.evaluate(async () => {
-    const {enhanceConfigurationGuidance} = await import("/custom_components/extended_openai_conversation_responses/frontend/management-configuration-guidance.js");
     const {panel} = window.browserHarness;
-    enhanceConfigurationGuidance(panel);
-    const root = panel.shadowRoot, original = root.querySelector;
-    const scans = {model:0, memory:0, provider:0};
-    root.querySelector = function(selector) {
-      if (selector === "#config-model .form-grid") scans.model++;
-      if (selector === '[data-field="memory_retrieval_mode"]') scans.memory++;
-      if (selector === '[data-field="api_mode"]') scans.provider++;
-      return original.call(this, selector);
+    const input = panel.shadowRoot.querySelector('[data-config="web_search"]');
+    const next = !input.checked;
+    input.checked = next;
+    input.dispatchEvent(new Event("input", {bubbles:true}));
+    input.dispatchEvent(new Event("change", {bubbles:true}));
+    await Promise.resolve();
+    return {
+      draft: panel._draft.web_search,
+      checked: panel.shadowRoot.querySelector('[data-config="web_search"]').checked,
+      detailInactive: panel.shadowRoot.querySelector('[data-dependent="web_search"]').classList.contains("is-disabled"),
     };
-    try {
-      const input = root.querySelector('[data-config="web_search"]');
-      input.checked = !input.checked;
-      input.dispatchEvent(new Event("input", {bubbles:true}));
-      input.dispatchEvent(new Event("change", {bubbles:true}));
-      await Promise.resolve();
-      return scans;
-    } finally { root.querySelector = original; }
   });
-  expect(result).toEqual({model:0, memory:0, provider:1});
+  expect(result.checked).toBe(result.draft);
+  expect(result.detailInactive).toBe(!result.draft);
 });
 
 test("Memory controls share delegation, preserve the draft and toggle their dependent field", async ({page}) => {
