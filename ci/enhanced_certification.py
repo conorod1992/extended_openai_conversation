@@ -14,6 +14,8 @@ def main(root: Path) -> int:
     campaigns = json.loads(os.environ["ENHANCED_CAMPAIGNS"])
     intensities = json.loads(os.environ["ENHANCED_INTENSITIES"])
     selected = os.environ.get("ENHANCED_SELECTED", "all")
+    if selected == "browser":
+        campaigns = []  # The Python matrix is intentionally skipped for browser-only runs.
     seed = os.environ["STRESS_SEED"]
     needs = json.loads(os.environ.get("ENHANCED_NEEDS", "{}"))
     expected = {
