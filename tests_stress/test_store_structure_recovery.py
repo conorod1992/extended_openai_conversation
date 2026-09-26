@@ -86,7 +86,9 @@ async def test_invalid_store_structure_stays_durable_until_repaired(
     assert restored._knowledge is not None
     assert restored._knowledge.source_count == 1
     record(
-        stress_trace, "summary", layer="Real HA",
+        stress_trace,
+        "summary",
+        layer="Real HA",
         invalid_store_structure_recoveries=1,
     )
 
@@ -149,7 +151,9 @@ async def test_knowledge_read_failure_preserves_store_and_sibling_state(
     assert restored._knowledge is not None
     assert restored._knowledge.source_count == 1
     record(
-        stress_trace, "summary", layer="Real HA",
+        stress_trace,
+        "summary",
+        layer="Real HA",
         store_read_failure_recoveries=1,
     )
 
@@ -209,8 +213,8 @@ async def test_knowledge_write_failure_rolls_back_and_survives_reload(
     )
     assert restarted._knowledge.source_count == 2
     record(
-        stress_trace, "summary", layer="Real HA",
+        stress_trace,
+        "summary",
+        layer="Real HA",
         store_write_failure_recoveries=1,
     )
-
-

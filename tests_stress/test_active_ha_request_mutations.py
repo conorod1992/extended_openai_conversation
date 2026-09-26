@@ -74,8 +74,10 @@ async def test_active_provider_request_rechecks_live_ha_before_action(
         )
 
     user = MockUser(
-        id="active-request-mutation-user", name="Active request mutation",
-        is_owner=False, groups=[permission_group(control=True)],
+        id="active-request-mutation-user",
+        name="Active request mutation",
+        is_owner=False,
+        groups=[permission_group(control=True)],
     )
     user.add_to_hass(hass)
     entry = _make_entry(
@@ -94,9 +96,12 @@ async def test_active_provider_request_rechecks_live_ha_before_action(
 
     call_id = f"call-active-request-{mutation}"
     wire = _install_wire(
-        monkeypatch, agent,
-        [_chat_sse_tool_call(call_id, _TOOL_NAME, _arguments()),
-         _chat_sse_text("The target changed before the action.")],
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call(call_id, _TOOL_NAME, _arguments()),
+            _chat_sse_text("The target changed before the action."),
+        ],
     )
     original_send = wire.send
     provider_reached = asyncio.Event()
@@ -110,10 +115,16 @@ async def test_active_provider_request_rechecks_live_ha_before_action(
         return response
 
     monkeypatch.setattr(_raw_client(agent)._client, "send", gated_send)
-    task = asyncio.create_task(conversation.async_converse(
-        hass=hass, text="Act on the light", conversation_id=None,
-        context=Context(user_id=user.id), language="en", agent_id=entry.entry_id,
-    ))
+    task = asyncio.create_task(
+        conversation.async_converse(
+            hass=hass,
+            text="Act on the light",
+            conversation_id=None,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+    )
     try:
         await asyncio.wait_for(provider_reached.wait(), timeout=10)
         if mutation == "unexposed":
@@ -141,9 +152,10 @@ async def test_active_provider_request_rechecks_live_ha_before_action(
     else:
         assert result.response.error_code is not None
     record(
-        stress_trace, "summary", layer="Real HA",
-        active_request_ha_mutations=1, mutation=mutation,
+        stress_trace,
+        "summary",
+        layer="Real HA",
+        active_request_ha_mutations=1,
+        mutation=mutation,
         provider_requests=len(wire.requests),
     )
-
-

@@ -112,20 +112,17 @@ class Function(ABC):
         entity_ids: list[str],
         exposed_entities: list[dict[str, Any]],
     ) -> None:
-        not_found = [
-            entity_id for entity_id in entity_ids if hass.states.get(entity_id) is None
-        ]
+        states = {entity_id: hass.states.get(entity_id) for entity_id in entity_ids}
+        not_found = [entity_id for entity_id, state in states.items() if state is None]
         if not_found:
             raise EntityNotFound(", ".join(not_found))
         unavailable = [
             entity_id
-            for entity_id in entity_ids
-            if hass.states.get(entity_id).state in {STATE_UNAVAILABLE, STATE_UNKNOWN}
+            for entity_id, state in states.items()
+            if state is not None and state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}
         ]
         if unavailable:
-            raise HomeAssistantError(
-                f"Entity is unavailable: {', '.join(unavailable)}"
-            )
+            raise HomeAssistantError(f"Entity is unavailable: {', '.join(unavailable)}")
         exposed_entity_ids = {e["entity_id"] for e in exposed_entities}
         not_exposed = [
             entity_id for entity_id in entity_ids if entity_id not in exposed_entity_ids

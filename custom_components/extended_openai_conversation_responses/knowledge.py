@@ -152,8 +152,10 @@ class KnowledgeLibrary:
                 data = await self._storage.async_load()
                 if data is not None and not isinstance(data, Mapping):
                     raise ValueError("Knowledge Library store has invalid structure")
-                if isinstance(data, Mapping) and "sources" in data and not isinstance(
-                    data["sources"], list
+                if (
+                    isinstance(data, Mapping)
+                    and "sources" in data
+                    and not isinstance(data["sources"], list)
                 ):
                     raise ValueError("Knowledge Library sources have invalid structure")
                 raw_sources = (

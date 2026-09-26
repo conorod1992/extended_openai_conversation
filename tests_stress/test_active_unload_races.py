@@ -84,6 +84,9 @@ async def test_unload_cancels_blocked_provider_turn_and_new_runtime_recovers(
     assert _speech(result) == "New runtime is healthy."
     assert len(fresh_wire.requests) == 1
     record(
-        stress_trace, "summary", layer="Real HA",
-        active_unload_recoveries=1, provider_requests=2,
+        stress_trace,
+        "summary",
+        layer="Real HA",
+        active_unload_recoveries=1,
+        provider_requests=2,
     )
