@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -25,6 +25,56 @@ def _volume(hass: HomeAssistant, entity_id: str) -> float:
     state = hass.states.get(entity_id)
     assert state is not None
     return float(state.attributes["volume_level"])
+
+
+@pytest.mark.asyncio
+async def test_runtime_timezone_switch_reconciles_the_same_instant(
+    hass: HomeAssistant,
+    stress_trace: list[dict],
+) -> None:
+    """An in-place HA timezone change must close and reopen the correct period."""
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    _, media, wake = _install_satellite_entities(
+        hass, slug="live-timezone", volume=0.65, wake="on"
+    )
+    _install_control_services(hass)
+    manager = await async_get_quiet_hours(hass)
+    manager._config = _config_from_data(
+        {"enabled": True, "start": "22:00", "end": "07:00",
+         "max_volume": 0.20, "wake_sound": "off"}
+    )
+    try:
+        instant = datetime(2026, 1, 10, 23, 0, tzinfo=timezone.utc)
+        await manager.async_reconcile(now=instant)
+        assert manager.active is not None
+        assert _volume(hass, media) == pytest.approx(0.20)
+        assert hass.states.get(wake).state == "off"
+
+        await hass.config.async_set_time_zone("America/New_York")
+        await manager.async_reconcile(now=instant)
+        assert manager.active is None
+        assert _volume(hass, media) == pytest.approx(0.65)
+        assert hass.states.get(wake).state == "on"
+
+        await manager.async_reconcile(
+            now=datetime(2026, 1, 11, 3, 0, tzinfo=timezone.utc)
+        )
+        assert manager.active is not None
+        assert _volume(hass, media) == pytest.approx(0.20)
+        assert hass.states.get(wake).state == "off"
+
+        await manager.async_reconcile(
+            now=datetime(2026, 1, 11, 12, 0, tzinfo=timezone.utc)
+        )
+        assert manager.active is None
+        assert _volume(hass, media) == pytest.approx(0.65)
+        assert hass.states.get(wake).state == "on"
+        record(
+            stress_trace, "summary", layer="Real HA",
+            runtime_timezone_switches=1, quiet_time_boundary_cases=4,
+        )
+    finally:
+        await manager.async_shutdown()
 
 
 @pytest.mark.asyncio

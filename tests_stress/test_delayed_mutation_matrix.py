@@ -31,6 +31,7 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
 )
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.core import HomeAssistant
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_delayed_tool_due_reauthorization import (
@@ -38,6 +39,7 @@ from tests_real_ha.test_delayed_tool_due_reauthorization import (
     _execute_now,
     _restricted_user,
     _schedule_delayed_call,
+    _set_control_permission,
 )
 from tests_stress.conftest import record
 
@@ -51,7 +53,10 @@ MUTATIONS = (
     "backup_restore_removed_tool",
     "entity_unexposed",
     "entity_removed",
+    "entity_unavailable",
     "service_removed",
+    "permission_revoked",
+    "user_deactivated",
     "entry_reloaded",
     "entry_unloaded_and_setup",
 )
@@ -170,8 +175,17 @@ async def test_delayed_tool_uses_live_state_at_due_time(
         async_expose_entity(hass, conversation.DOMAIN, _ENTITY_ID, False)
     elif mutation == "entity_removed":
         hass.states.async_remove(_ENTITY_ID)
+    elif mutation == "entity_unavailable":
+        hass.states.async_set(_ENTITY_ID, "unavailable")
     elif mutation == "service_removed":
         hass.services.async_remove("light", "turn_off")
+    elif mutation == "permission_revoked":
+        _set_control_permission(user, allowed=False)
+        assert not user.permissions.check_entity(_ENTITY_ID, POLICY_CONTROL)
+    elif mutation == "user_deactivated":
+        await hass.auth.async_update_user(user, is_active=False)
+        await hass.async_block_till_done()
+        assert not user.is_active
     elif mutation == "entry_reloaded":
         assert await hass.config_entries.async_reload(entry.entry_id)
         await hass.async_block_till_done()
