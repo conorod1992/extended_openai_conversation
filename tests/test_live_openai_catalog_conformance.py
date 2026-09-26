@@ -166,14 +166,10 @@ def test_exploratory_mode_runs_only_targeted_probes() -> None:
         include_expensive=False,
         model_filter=None,
     )
-    cases = (
-        []
-        if conformance.MODE_EXPLORATORY == conformance.MODE_EXPLORATORY
-        else conformance._cases(
-            models,
-            mode=conformance.MODE_EXPLORATORY,
-            include_service_tiers=False,
-        )
+    cases = conformance._cases(
+        models,
+        mode=conformance.MODE_EXPLORATORY,
+        include_service_tiers=False,
     )
     exploratory = conformance._exploratory_sampling_cases(models)
 
