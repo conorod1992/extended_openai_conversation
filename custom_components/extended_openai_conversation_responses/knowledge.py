@@ -150,11 +150,15 @@ class KnowledgeLibrary:
                 return
             try:
                 data = await self._storage.async_load()
+                if data is not None and not isinstance(data, Mapping):
+                    raise ValueError("Knowledge Library store has invalid structure")
+                if isinstance(data, Mapping) and "sources" in data and not isinstance(
+                    data["sources"], list
+                ):
+                    raise ValueError("Knowledge Library sources have invalid structure")
                 raw_sources = (
                     data.get("sources", []) if isinstance(data, Mapping) else []
                 )
-                if not isinstance(raw_sources, list):
-                    raw_sources = []
                 for raw in raw_sources:
                     if len(self._sources) >= MAX_SOURCES_PER_AGENT:
                         _LOGGER.warning(

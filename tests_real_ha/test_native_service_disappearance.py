@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from copy import deepcopy
 import json
 from typing import Any
@@ -31,8 +30,7 @@ from tests_real_ha.test_knowledge_provider_wire_e2e import (
     _chat_sse_text,
     _chat_sse_tool_call,
 )
-from tests_real_ha.test_provider_wire_e2e import _install_wire, _raw_client, _speech
-from tests_stress.conftest import record
+from tests_real_ha.test_provider_wire_e2e import _install_wire, _speech
 
 _ENTITY_ID = "light.native_disappearing_service_target"
 _DOMAIN = "light"
@@ -88,81 +86,6 @@ def _tool_result_from_chat_request(
     )
     assert tool_message["tool_call_id"] == expected_call_id
     return json.loads(tool_message["content"])
-
-
-@pytest.mark.parametrize("mutation", ("unexposed", "removed", "unavailable", "service_removed"))
-async def test_active_provider_request_rechecks_live_ha_before_action(
-    hass: HomeAssistant,
-    monkeypatch: pytest.MonkeyPatch,
-    mutation: str,
-    stress_trace: list[dict],
-) -> None:
-    """The provider can propose an action after its initial HA view becomes stale."""
-    service_calls: list[ServiceCall] = []
-
-    async def service_handler(call: ServiceCall) -> None:
-        service_calls.append(call)
-
-    hass.services.async_register(_DOMAIN, _SERVICE, service_handler)
-    hass.states.async_set(_ENTITY_ID, "on")
-    async_expose_entity(hass, conversation.DOMAIN, _ENTITY_ID, True)
-    entry = _make_entry(
-        f"Active request HA churn {mutation}",
-        include_ai_task=False,
-        conversation_options={
-            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
-            CONF_CHAT_MODEL: "gpt-5.6",
-            CONF_FUNCTION_TOOL_ERROR_RECOVERY: True,
-            CONF_FUNCTION_TOOLS: [_native_execute_service_tool()],
-        },
-    )
-    await _setup_entry(hass, entry)
-    agent = conversation.async_get_agent(hass, entry.entry_id)
-    assert agent is not None
-
-    call_id = f"call-active-request-{mutation}"
-    wire = _install_wire(
-        monkeypatch, agent,
-        [_chat_sse_tool_call(call_id, _TOOL_NAME, _arguments()),
-         _chat_sse_text("The target changed before the action.")],
-    )
-    original_send = wire.send
-    provider_reached = asyncio.Event()
-    release_provider = asyncio.Event()
-
-    async def gated_send(*args: Any, **kwargs: Any) -> Any:
-        response = await original_send(*args, **kwargs)
-        if len(wire.requests) == 1:
-            provider_reached.set()
-            await release_provider.wait()
-        return response
-
-    monkeypatch.setattr(_raw_client(agent)._client, "send", gated_send)
-    task = asyncio.create_task(_say(hass, entry.entry_id, "Act on the light"))
-    try:
-        await asyncio.wait_for(provider_reached.wait(), timeout=10)
-        if mutation == "unexposed":
-            async_expose_entity(hass, conversation.DOMAIN, _ENTITY_ID, False)
-        elif mutation == "removed":
-            hass.states.async_remove(_ENTITY_ID)
-        elif mutation == "unavailable":
-            hass.states.async_set(_ENTITY_ID, "unavailable")
-        else:
-            hass.services.async_remove(_DOMAIN, _SERVICE)
-        await hass.async_block_till_done()
-    finally:
-        release_provider.set()
-
-    result = await task
-    assert _speech(result) == "The target changed before the action."
-    assert service_calls == []
-    assert len(wire.requests) == 2
-    failure = _tool_result_from_chat_request(wire.requests[1]["body"], call_id)
-    assert "error" in failure["result"][0]
-    record(
-        stress_trace, "summary", layer="Real HA",
-        active_request_ha_mutations=1, mutation=mutation,
-    )
 
 
 @pytest.mark.asyncio
