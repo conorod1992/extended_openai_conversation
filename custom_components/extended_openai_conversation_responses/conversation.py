@@ -258,9 +258,6 @@ _PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
 )
 
 _CONVERSATION_ID_OWNERS = f"{DOMAIN}.conversation_id_owners"
-_MAX_CONVERSATION_ID_OWNERS = 256
-
-
 def _claim_conversation_id(
     hass: HomeAssistant,
     agent_id: str,
@@ -288,9 +285,16 @@ def _claim_conversation_id(
     else:
         claimed = f"extended-openai-{agent_id}-{uuid4().hex}"
         owners[claimed] = owner
-    while len(owners) > _MAX_CONVERSATION_ID_OWNERS:
-        owners.pop(next(iter(owners)))
     return claimed
+
+
+def _release_conversation_id_claim(
+    hass: HomeAssistant, conversation_id: str, owner: tuple[str, str]
+) -> None:
+    """Drop one ownership claim only when it still belongs to this ChatLog."""
+    owners = hass.data.get(_CONVERSATION_ID_OWNERS)
+    if isinstance(owners, dict) and owners.get(conversation_id) == owner:
+        owners.pop(conversation_id, None)
 
 
 def _request_llm_context(user_input: ConversationInput) -> Any:
@@ -791,6 +795,18 @@ class ExtendedOpenAIAgentEntity(
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
         ):
+            if resolution.conversation_id is not None:
+                claim_owner = (
+                    self.subentry.subentry_id,
+                    "guest" if request_policy.guest_active else scope.scope_id,
+                )
+                session.async_on_cleanup(
+                    lambda conversation_id=resolution.conversation_id, owner=claim_owner: (
+                        _release_conversation_id_claim(
+                            self.hass, conversation_id, owner
+                        )
+                    )
+                )
             rule_session_key = request_rule_session_id(
                 resolution.key, chat_log.conversation_id
             )
