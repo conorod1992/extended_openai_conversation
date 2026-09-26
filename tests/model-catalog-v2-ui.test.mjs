@@ -96,6 +96,12 @@ import {modelFieldPresentation, webSearchControlState} from "../custom_component
   assert.match(webSearchControlState(panel).note,/saved setting is retained/);
   panel._draft.reasoning_effort="high";
   assert.equal(webSearchControlState(panel).disabled,false);
+  panel._draft.reasoning_effort=null;
+  panel._draft.api_mode="auto";
+  capabilities.recommended_profile.reasoning_effort=null;
+  capabilities.auto_paths["null:0:1"]="responses";
+  capabilities.evaluations.responses.null={reasoning:true,function:true,web_search:true};
+  assert.equal(webSearchControlState(panel).disabled,false);
 }
 
 {

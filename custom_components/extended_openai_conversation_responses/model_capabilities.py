@@ -60,7 +60,7 @@ def frontend_capabilities(
         for effort in (None, *metadata["reasoning"]["efforts"]):
             for functions in (False, True):
                 for web_search in (False, True):
-                    key = f"{effort}:{int(functions)}:{int(web_search)}"
+                    key = f"{effort if effort is not None else 'null'}:{int(functions)}:{int(web_search)}"
                     try:
                         result["auto_paths"][key] = select_api_path(
                             model, API_MODE_AUTO, functions, effort, web_search

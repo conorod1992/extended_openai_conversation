@@ -106,6 +106,9 @@ def test_ui_projection_uses_backend_evaluation():
         ]
         is False
     )
+    nonreasoning = frontend_capabilities("gpt-4.1")
+    assert nonreasoning["evaluations"]["responses"]["null"]["web_search"]
+    assert nonreasoning["auto_paths"]["null:0:1"] == "responses"
 
 
 def test_v4_catalog_migrates_boolean_tools():

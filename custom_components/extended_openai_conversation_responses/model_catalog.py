@@ -704,7 +704,7 @@ def compatibility_capabilities(
     metadata = metadata if metadata is not None else model_metadata(model)
     evaluations = {
         api: {
-            str(candidate): {
+            (candidate if candidate is not None else "null"): {
                 "reasoning": candidate is None
                 or candidate in metadata["reasoning"]["by_api"][api]["efforts"],
                 "function": evaluate_tool_rule(
