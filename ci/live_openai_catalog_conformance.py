@@ -344,6 +344,8 @@ def _cases(
     mode: str,
     include_service_tiers: bool,
 ) -> list[live.ProbeCase]:
+    if mode == MODE_EXPLORATORY:
+        return []
     result: list[live.ProbeCase] = []
     for model in models:
         if mode == MODE_CARTESIAN:
