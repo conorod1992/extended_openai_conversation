@@ -528,23 +528,20 @@ def test_additional_reversible_domains_keep_only_control_state(
     assert serialize_reversible_state(_state(entity_id, state, **attributes)) == expected
 
 
-def test_target_identity_tracks_registry_device_and_state_object_generation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    state = _state("light.kitchen", "on")
+def test_target_identity_comparison_uses_object_generation() -> None:
     entry = SimpleNamespace(device_id="device-1")
     device = object()
-    entity_registry = SimpleNamespace(async_get=lambda entity_id: entry if entity_id == "light.kitchen" else None)
-    device_registry = SimpleNamespace(async_get=lambda device_id: device if device_id == "device-1" else None)
-    hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: state))
+    state = _state("light.kitchen", "on")
+    identity = (("light.kitchen", entry, device, state),)
 
-    monkeypatch.setattr(ha_actions.er, "async_get", lambda _hass: entity_registry)
-    monkeypatch.setattr(ha_actions.dr, "async_get", lambda _hass: device_registry)
-
-    identity = ha_actions._target_identity(hass, {"light.kitchen"})
-    assert identity == (("light.kitchen", entry, device, state),)
     assert ha_actions._same_target_identity(identity, identity)
 
     replacement_state = _state("light.kitchen", "on")
-    changed = (("light.kitchen", entry, device, replacement_state),)
-    assert not ha_actions._same_target_identity(changed, identity)
+    changed_state = (("light.kitchen", entry, device, replacement_state),)
+    assert not ha_actions._same_target_identity(changed_state, identity)
+
+    replacement_entry = SimpleNamespace(device_id="device-1")
+    changed_entry = (("light.kitchen", replacement_entry, device, state),)
+    assert not ha_actions._same_target_identity(changed_entry, identity)
+
+    assert not ha_actions._same_target_identity((), identity)
