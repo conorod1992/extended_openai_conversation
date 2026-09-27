@@ -3,29 +3,34 @@
     "gpt-4.1": {
       "capabilities": {
         "api:chat_completions": {
-          "count": 3,
+          "count": 4,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:50.446387+00:00"
+          "last_tested": "2026-09-27T11:27:22.201300+00:00"
         },
         "api:responses": {
-          "count": 7,
+          "count": 10,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:49.894717+00:00"
+          "last_tested": "2026-09-27T11:27:22.799401+00:00"
         },
         "function_tools": {
-          "count": 1,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:48.776817+00:00"
+          "last_tested": "2026-09-27T11:27:22.799401+00:00"
         },
         "profile:context-heavy": {
           "count": 2,
           "last_status": "passed",
           "last_tested": "2026-09-26T12:26:07.325352+00:00"
         },
-        "profile:minimal": {
+        "profile:kitchen-sink": {
           "count": 1,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:50.446387+00:00"
+          "last_tested": "2026-09-27T11:27:22.799401+00:00"
+        },
+        "profile:minimal": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:21.711990+00:00"
         },
         "service_tier:auto": {
           "count": 1,
@@ -43,33 +48,33 @@
           "last_tested": "2026-09-26T12:31:49.894717+00:00"
         },
         "web_search": {
-          "count": 1,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:26:05.170733+00:00"
+          "last_tested": "2026-09-27T11:27:22.799401+00:00"
         }
       },
       "cases": {
-        "count": 10,
+        "count": 14,
         "last_status": "passed",
-        "last_tested": "2026-09-26T12:31:50.446387+00:00"
+        "last_tested": "2026-09-27T11:27:22.799401+00:00"
       }
     },
     "gpt-4.1-mini": {
       "capabilities": {
         "api:chat_completions": {
-          "count": 1,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T01:03:33.919348+00:00"
+          "last_tested": "2026-09-27T11:27:33.279336+00:00"
         },
         "api:responses": {
-          "count": 5,
+          "count": 7,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:20.249767+00:00"
+          "last_tested": "2026-09-27T11:27:33.695800+00:00"
         },
         "function_tools": {
-          "count": 2,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:13.988831+00:00"
+          "last_tested": "2026-09-27T11:27:31.257114+00:00"
         },
         "profile:context-heavy": {
           "count": 1,
@@ -85,6 +90,16 @@
           "count": 1,
           "last_status": "passed",
           "last_tested": "2026-09-26T14:19:20.249767+00:00"
+        },
+        "service_tier:auto": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:32.246489+00:00"
+        },
+        "service_tier:default": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:33.695800+00:00"
         },
         "temperature": {
           "count": 1,
@@ -103,22 +118,22 @@
         }
       },
       "cases": {
-        "count": 6,
+        "count": 10,
         "last_status": "passed",
-        "last_tested": "2026-09-26T14:19:20.249767+00:00"
+        "last_tested": "2026-09-27T11:27:33.695800+00:00"
       }
     },
     "gpt-4o": {
       "capabilities": {
         "api:chat_completions": {
-          "count": 4,
+          "count": 6,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:45.963412+00:00"
+          "last_tested": "2026-09-27T11:27:19.291405+00:00"
         },
         "api:responses": {
-          "count": 8,
+          "count": 10,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:47.445822+00:00"
+          "last_tested": "2026-09-27T11:27:19.739544+00:00"
         },
         "function_tools": {
           "count": 2,
@@ -126,9 +141,9 @@
           "last_tested": "2026-09-26T12:32:01.982131+00:00"
         },
         "profile:context-heavy": {
-          "count": 2,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:45.963412+00:00"
+          "last_tested": "2026-09-27T11:27:19.739544+00:00"
         },
         "profile:kitchen-sink": {
           "count": 1,
@@ -141,14 +156,14 @@
           "last_tested": "2026-09-26T12:25:42.526162+00:00"
         },
         "service_tier:auto": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:58.910469+00:00"
+          "last_tested": "2026-09-27T11:27:19.291405+00:00"
         },
         "service_tier:default": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:58.055928+00:00"
+          "last_tested": "2026-09-27T11:27:17.673489+00:00"
         },
         "temperature": {
           "count": 2,
@@ -156,9 +171,9 @@
           "last_tested": "2026-09-26T14:19:46.539628+00:00"
         },
         "top_p": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:25:41.857562+00:00"
+          "last_tested": "2026-09-27T11:27:18.932696+00:00"
         },
         "web_search": {
           "count": 3,
@@ -167,22 +182,22 @@
         }
       },
       "cases": {
-        "count": 12,
+        "count": 16,
         "last_status": "passed",
-        "last_tested": "2026-09-26T14:19:47.445822+00:00"
+        "last_tested": "2026-09-27T11:27:19.739544+00:00"
       }
     },
     "gpt-4o-2024-08-06": {
       "capabilities": {
         "api:chat_completions": {
-          "count": 4,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:30.984489+00:00"
-        },
-        "api:responses": {
           "count": 7,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:31.673285+00:00"
+          "last_tested": "2026-09-27T11:27:42.752766+00:00"
+        },
+        "api:responses": {
+          "count": 8,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:43.414912+00:00"
         },
         "function_tools": {
           "count": 2,
@@ -190,9 +205,9 @@
           "last_tested": "2026-09-26T12:31:31.673285+00:00"
         },
         "profile:context-heavy": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:28:52.442721+00:00"
+          "last_tested": "2026-09-27T11:27:41.894227+00:00"
         },
         "profile:kitchen-sink": {
           "count": 1,
@@ -215,25 +230,25 @@
           "last_tested": "2026-09-26T12:25:28.480352+00:00"
         },
         "temperature": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:25:32.280315+00:00"
+          "last_tested": "2026-09-27T11:27:42.260285+00:00"
         },
         "top_p": {
-          "count": 2,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:30.314918+00:00"
+          "last_tested": "2026-09-27T11:27:42.752766+00:00"
         },
         "web_search": {
-          "count": 2,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:31.673285+00:00"
+          "last_tested": "2026-09-27T11:27:43.414912+00:00"
         }
       },
       "cases": {
-        "count": 11,
+        "count": 15,
         "last_status": "passed",
-        "last_tested": "2026-09-26T12:31:31.673285+00:00"
+        "last_tested": "2026-09-27T11:27:43.414912+00:00"
       }
     },
     "gpt-4o-mini": {
@@ -441,14 +456,14 @@
           "last_tested": "2026-09-26T12:29:01.179093+00:00"
         },
         "api:responses": {
-          "count": 6,
+          "count": 10,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:29:00.596373+00:00"
+          "last_tested": "2026-09-27T11:27:16.787432+00:00"
         },
         "function_tools": {
-          "count": 2,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:28:59.208858+00:00"
+          "last_tested": "2026-09-27T11:27:14.206530+00:00"
         },
         "profile:context-heavy": {
           "count": 2,
@@ -456,24 +471,24 @@
           "last_tested": "2026-09-26T12:29:01.179093+00:00"
         },
         "profile:kitchen-sink": {
-          "count": 1,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T12:26:15.197792+00:00"
-        },
-        "profile:minimal": {
-          "count": 1,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T01:03:29.593357+00:00"
-        },
-        "reasoning:high": {
-          "count": 1,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T12:26:15.197792+00:00"
-        },
-        "reasoning:low": {
           "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:26:14.484381+00:00"
+          "last_tested": "2026-09-27T11:27:14.206530+00:00"
+        },
+        "profile:minimal": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:16.787432+00:00"
+        },
+        "reasoning:high": {
+          "count": 3,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:16.787432+00:00"
+        },
+        "reasoning:low": {
+          "count": 4,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:15.082999+00:00"
         },
         "reasoning:medium": {
           "count": 2,
@@ -496,38 +511,38 @@
           "last_tested": "2026-09-26T12:26:16.160762+00:00"
         },
         "web_search": {
-          "count": 1,
+          "count": 4,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:26:15.197792+00:00"
+          "last_tested": "2026-09-27T11:27:15.945526+00:00"
         }
       },
       "cases": {
-        "count": 9,
+        "count": 13,
         "last_status": "passed",
-        "last_tested": "2026-09-26T12:29:01.179093+00:00"
+        "last_tested": "2026-09-27T11:27:16.787432+00:00"
       }
     },
     "gpt-5.1": {
       "capabilities": {
         "api:chat_completions": {
-          "count": 7,
+          "count": 9,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:20:03.238441+00:00"
+          "last_tested": "2026-09-27T11:27:08.884880+00:00"
         },
         "api:responses": {
-          "count": 10,
+          "count": 12,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:20:01.318357+00:00"
+          "last_tested": "2026-09-27T11:27:10.051881+00:00"
         },
         "function_tools": {
-          "count": 3,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T14:20:00.059747+00:00"
-        },
-        "profile:context-heavy": {
           "count": 4,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:20:03.238441+00:00"
+          "last_tested": "2026-09-27T11:27:07.667947+00:00"
+        },
+        "profile:context-heavy": {
+          "count": 5,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:08.884880+00:00"
         },
         "profile:kitchen-sink": {
           "count": 2,
@@ -540,14 +555,14 @@
           "last_tested": "2026-09-26T14:20:01.318357+00:00"
         },
         "reasoning:high": {
-          "count": 4,
+          "count": 7,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:20:01.318357+00:00"
+          "last_tested": "2026-09-27T11:27:10.051881+00:00"
         },
         "reasoning:low": {
-          "count": 5,
+          "count": 6,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:20:03.238441+00:00"
+          "last_tested": "2026-09-27T11:27:05.922626+00:00"
         },
         "reasoning:medium": {
           "count": 3,
@@ -560,14 +575,14 @@
           "last_tested": "2026-09-26T12:31:35.634281+00:00"
         },
         "service_tier:auto": {
-          "count": 2,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:35.634281+00:00"
-        },
-        "service_tier:default": {
           "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:20:02.304617+00:00"
+          "last_tested": "2026-09-27T11:27:05.922626+00:00"
+        },
+        "service_tier:default": {
+          "count": 4,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:10.051881+00:00"
         },
         "temperature": {
           "count": 1,
@@ -586,9 +601,9 @@
         }
       },
       "cases": {
-        "count": 17,
+        "count": 21,
         "last_status": "passed",
-        "last_tested": "2026-09-26T14:20:03.238441+00:00"
+        "last_tested": "2026-09-27T11:27:10.051881+00:00"
       }
     },
     "gpt-5.2": {
@@ -747,29 +762,34 @@
     "gpt-5.4-mini": {
       "capabilities": {
         "api:chat_completions": {
-          "count": 6,
+          "count": 7,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:39.679587+00:00"
+          "last_tested": "2026-09-27T11:26:49.665413+00:00"
         },
         "api:responses": {
-          "count": 5,
+          "count": 8,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:40.281536+00:00"
+          "last_tested": "2026-09-27T11:26:51.612564+00:00"
         },
         "function_tools": {
-          "count": 2,
-          "last_status": "failed",
-          "last_tested": "2026-09-26T12:29:09.205610+00:00"
+          "count": 5,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:26:51.612564+00:00"
         },
         "profile:context-heavy": {
           "count": 3,
           "last_status": "passed",
           "last_tested": "2026-09-26T12:31:40.281536+00:00"
         },
-        "profile:minimal": {
-          "count": 1,
+        "profile:kitchen-sink": {
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:22:54.506233+00:00"
+          "last_tested": "2026-09-27T11:26:51.612564+00:00"
+        },
+        "profile:minimal": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:26:49.665413+00:00"
         },
         "reasoning:high": {
           "count": 2,
@@ -777,19 +797,19 @@
           "last_tested": "2026-09-26T12:31:40.281536+00:00"
         },
         "reasoning:low": {
-          "count": 3,
+          "count": 5,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:38.416362+00:00"
+          "last_tested": "2026-09-27T11:26:51.612564+00:00"
         },
         "reasoning:medium": {
-          "count": 2,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:38.926249+00:00"
+          "last_tested": "2026-09-27T11:26:45.974943+00:00"
         },
         "reasoning:none": {
-          "count": 2,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:31:39.679587+00:00"
+          "last_tested": "2026-09-27T11:26:50.329795+00:00"
         },
         "reasoning:xhigh": {
           "count": 2,
@@ -812,15 +832,15 @@
           "last_tested": "2026-09-26T12:31:39.679587+00:00"
         },
         "web_search": {
-          "count": 1,
+          "count": 4,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:29:07.419114+00:00"
+          "last_tested": "2026-09-27T11:26:51.612564+00:00"
         }
       },
       "cases": {
-        "count": 11,
+        "count": 15,
         "last_status": "passed",
-        "last_tested": "2026-09-26T12:31:40.281536+00:00"
+        "last_tested": "2026-09-27T11:26:51.612564+00:00"
       }
     },
     "gpt-5.4-nano": {
@@ -831,29 +851,39 @@
           "last_tested": "2026-09-26T14:19:58.797513+00:00"
         },
         "api:responses": {
-          "count": 7,
+          "count": 11,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:59.550576+00:00"
+          "last_tested": "2026-09-27T11:27:12.785423+00:00"
         },
         "function_tools": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:22:29.932796+00:00"
+          "last_tested": "2026-09-27T11:27:12.785423+00:00"
         },
         "profile:context-heavy": {
-          "count": 3,
+          "count": 4,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:58.797513+00:00"
+          "last_tested": "2026-09-27T11:27:12.011650+00:00"
+        },
+        "profile:kitchen-sink": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:12.785423+00:00"
         },
         "profile:minimal": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:22:26.997349+00:00"
+          "last_tested": "2026-09-27T11:27:11.411825+00:00"
+        },
+        "reasoning:high": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:11.411825+00:00"
         },
         "reasoning:low": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:22:26.997349+00:00"
+          "last_tested": "2026-09-27T11:27:12.011650+00:00"
         },
         "reasoning:medium": {
           "count": 2,
@@ -866,38 +896,43 @@
           "last_tested": "2026-09-26T14:19:59.550576+00:00"
         },
         "reasoning:xhigh": {
-          "count": 3,
+          "count": 4,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:58.797513+00:00"
+          "last_tested": "2026-09-27T11:27:12.785423+00:00"
         },
         "service_tier:auto": {
           "count": 2,
           "last_status": "passed",
           "last_tested": "2026-09-26T14:19:59.550576+00:00"
         },
-        "web_search": {
+        "service_tier:default": {
           "count": 1,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:57.232560+00:00"
+          "last_tested": "2026-09-27T11:27:10.819602+00:00"
+        },
+        "web_search": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:12.785423+00:00"
         }
       },
       "cases": {
-        "count": 8,
+        "count": 12,
         "last_status": "passed",
-        "last_tested": "2026-09-26T14:19:59.550576+00:00"
+        "last_tested": "2026-09-27T11:27:12.785423+00:00"
       }
     },
     "gpt-5.5": {
       "capabilities": {
         "api:chat_completions": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:25:36.267216+00:00"
+          "last_tested": "2026-09-27T11:27:03.034415+00:00"
         },
         "api:responses": {
-          "count": 5,
-          "last_status": "exploratory_accepted",
-          "last_tested": "2026-09-26T15:24:27.783637+00:00"
+          "count": 8,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:04.789173+00:00"
         },
         "exploratory:temperature": {
           "count": 1,
@@ -915,14 +950,29 @@
           "last_tested": "2026-09-26T15:24:27.783637+00:00"
         },
         "function_tools": {
-          "count": 3,
+          "count": 4,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:25:37.807777+00:00"
+          "last_tested": "2026-09-27T11:27:01.959125+00:00"
+        },
+        "profile:context-heavy": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:04.789173+00:00"
         },
         "profile:kitchen-sink": {
           "count": 1,
           "last_status": "passed",
           "last_tested": "2026-09-26T12:25:37.807777+00:00"
+        },
+        "profile:minimal": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:03.034415+00:00"
+        },
+        "reasoning:high": {
+          "count": 3,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:04.789173+00:00"
         },
         "reasoning:low": {
           "count": 1,
@@ -939,21 +989,26 @@
           "last_status": "exploratory_accepted",
           "last_tested": "2026-09-26T15:24:27.783637+00:00"
         },
+        "reasoning:xhigh": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:01.959125+00:00"
+        },
         "service_tier:auto": {
           "count": 1,
           "last_status": "passed",
           "last_tested": "2026-09-26T12:25:36.999803+00:00"
         },
         "web_search": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:25:37.807777+00:00"
+          "last_tested": "2026-09-27T11:27:03.684912+00:00"
         }
       },
       "cases": {
-        "count": 6,
-        "last_status": "exploratory_accepted",
-        "last_tested": "2026-09-26T15:24:27.783637+00:00"
+        "count": 10,
+        "last_status": "passed",
+        "last_tested": "2026-09-27T11:27:04.789173+00:00"
       }
     },
     "gpt-5.6": {
@@ -1221,19 +1276,19 @@
     "gpt-5.6-terra": {
       "capabilities": {
         "api:chat_completions": {
-          "count": 4,
+          "count": 6,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:29:27.282851+00:00"
+          "last_tested": "2026-09-27T11:26:54.283750+00:00"
         },
         "api:responses": {
-          "count": 7,
+          "count": 9,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:32:12.599243+00:00"
+          "last_tested": "2026-09-27T11:26:54.854647+00:00"
         },
         "function_tools": {
-          "count": 3,
+          "count": 4,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:32:12.599243+00:00"
+          "last_tested": "2026-09-27T11:26:54.854647+00:00"
         },
         "profile:context-heavy": {
           "count": 2,
@@ -1241,9 +1296,9 @@
           "last_tested": "2026-09-26T12:32:11.532411+00:00"
         },
         "profile:kitchen-sink": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:29:25.280425+00:00"
+          "last_tested": "2026-09-27T11:26:54.854647+00:00"
         },
         "profile:minimal": {
           "count": 2,
@@ -1251,9 +1306,9 @@
           "last_tested": "2026-09-26T12:29:27.282851+00:00"
         },
         "reasoning:high": {
-          "count": 2,
+          "count": 3,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:32:08.716776+00:00"
+          "last_tested": "2026-09-27T11:26:54.283750+00:00"
         },
         "reasoning:low": {
           "count": 1,
@@ -1271,9 +1326,9 @@
           "last_tested": "2026-09-26T12:32:11.532411+00:00"
         },
         "reasoning:none": {
-          "count": 2,
+          "count": 5,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:32:09.544660+00:00"
+          "last_tested": "2026-09-27T11:26:54.854647+00:00"
         },
         "reasoning:xhigh": {
           "count": 3,
@@ -1286,33 +1341,38 @@
           "last_tested": "2026-09-26T12:29:27.900464+00:00"
         },
         "service_tier:default": {
-          "count": 1,
-          "last_status": "passed",
-          "last_tested": "2026-09-26T12:23:05.187383+00:00"
-        },
-        "web_search": {
           "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:32:09.544660+00:00"
+          "last_tested": "2026-09-27T11:26:54.283750+00:00"
+        },
+        "top_p": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:26:53.313988+00:00"
+        },
+        "web_search": {
+          "count": 3,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:26:54.854647+00:00"
         }
       },
       "cases": {
-        "count": 11,
+        "count": 15,
         "last_status": "passed",
-        "last_tested": "2026-09-26T12:32:12.599243+00:00"
+        "last_tested": "2026-09-27T11:26:54.854647+00:00"
       }
     },
     "gpt-6-astra": {
       "capabilities": {
         "api:chat_completions": {
-          "count": 3,
+          "count": 5,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:36.179062+00:00"
+          "last_tested": "2026-09-27T11:26:58.240723+00:00"
         },
         "api:responses": {
-          "count": 8,
+          "count": 10,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:40.150083+00:00"
+          "last_tested": "2026-09-27T11:27:00.714197+00:00"
         },
         "function_tools": {
           "count": 3,
@@ -1320,9 +1380,9 @@
           "last_tested": "2026-09-26T14:19:37.846298+00:00"
         },
         "profile:context-heavy": {
-          "count": 4,
+          "count": 5,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:40.150083+00:00"
+          "last_tested": "2026-09-27T11:26:56.168259+00:00"
         },
         "profile:kitchen-sink": {
           "count": 2,
@@ -1330,19 +1390,19 @@
           "last_tested": "2026-09-26T14:19:37.846298+00:00"
         },
         "profile:minimal": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:29:16.720123+00:00"
+          "last_tested": "2026-09-27T11:26:58.240723+00:00"
         },
         "reasoning:high": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:29:19.001743+00:00"
+          "last_tested": "2026-09-27T11:26:56.168259+00:00"
         },
         "reasoning:low": {
-          "count": 3,
+          "count": 4,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:29:20.444472+00:00"
+          "last_tested": "2026-09-27T11:27:00.714197+00:00"
         },
         "reasoning:max": {
           "count": 2,
@@ -1355,14 +1415,14 @@
           "last_tested": "2026-09-26T14:19:34.568650+00:00"
         },
         "reasoning:xhigh": {
-          "count": 3,
+          "count": 5,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:40.150083+00:00"
+          "last_tested": "2026-09-27T11:26:59.653600+00:00"
         },
         "service_tier:auto": {
-          "count": 2,
+          "count": 4,
           "last_status": "passed",
-          "last_tested": "2026-09-26T12:22:46.198228+00:00"
+          "last_tested": "2026-09-27T11:27:00.714197+00:00"
         },
         "service_tier:default": {
           "count": 1,
@@ -1376,22 +1436,22 @@
         }
       },
       "cases": {
-        "count": 11,
+        "count": 15,
         "last_status": "passed",
-        "last_tested": "2026-09-26T14:19:40.150083+00:00"
+        "last_tested": "2026-09-27T11:27:00.714197+00:00"
       }
     },
     "gpt-6-luna": {
       "capabilities": {
         "api:chat_completions": {
-          "count": 2,
-          "last_status": "failed",
-          "last_tested": "2026-09-26T14:19:51.085437+00:00"
+          "count": 5,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:25.465012+00:00"
         },
         "api:responses": {
-          "count": 6,
-          "last_status": "exploratory_accepted",
-          "last_tested": "2026-09-26T15:24:26.004517+00:00"
+          "count": 7,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:26.015599+00:00"
         },
         "exploratory:temperature": {
           "count": 1,
@@ -1409,19 +1469,29 @@
           "last_tested": "2026-09-26T15:24:26.004517+00:00"
         },
         "function_tools": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:26.015599+00:00"
+        },
+        "profile:context-heavy": {
           "count": 1,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:49.458735+00:00"
+          "last_tested": "2026-09-27T11:27:25.465012+00:00"
         },
         "profile:kitchen-sink": {
-          "count": 1,
+          "count": 2,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:49.458735+00:00"
+          "last_tested": "2026-09-27T11:27:26.015599+00:00"
         },
         "profile:minimal": {
           "count": 1,
           "last_status": "passed",
           "last_tested": "2026-09-26T01:03:22.410701+00:00"
+        },
+        "reasoning:high": {
+          "count": 2,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:26.015599+00:00"
         },
         "reasoning:max": {
           "count": 3,
@@ -1434,9 +1504,9 @@
           "last_tested": "2026-09-26T14:19:51.201887+00:00"
         },
         "reasoning:none": {
-          "count": 3,
-          "last_status": "exploratory_accepted",
-          "last_tested": "2026-09-26T15:24:26.004517+00:00"
+          "count": 5,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:24.716037+00:00"
         },
         "reasoning:xhigh": {
           "count": 1,
@@ -1453,16 +1523,26 @@
           "last_status": "passed",
           "last_tested": "2026-09-26T14:19:50.494555+00:00"
         },
-        "web_search": {
-          "count": 3,
+        "temperature": {
+          "count": 1,
           "last_status": "passed",
-          "last_tested": "2026-09-26T14:19:51.201887+00:00"
+          "last_tested": "2026-09-27T11:27:24.081138+00:00"
+        },
+        "top_p": {
+          "count": 1,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:24.716037+00:00"
+        },
+        "web_search": {
+          "count": 4,
+          "last_status": "passed",
+          "last_tested": "2026-09-27T11:27:26.015599+00:00"
         }
       },
       "cases": {
-        "count": 8,
-        "last_status": "exploratory_accepted",
-        "last_tested": "2026-09-26T15:24:26.004517+00:00"
+        "count": 12,
+        "last_status": "passed",
+        "last_tested": "2026-09-27T11:27:26.015599+00:00"
       }
     },
     "gpt-6-sol": {
