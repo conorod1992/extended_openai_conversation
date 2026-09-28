@@ -448,7 +448,7 @@ async def test_options_update_reloads_runtime(hass) -> None:
 
 
 async def test_live_subentry_update_does_not_reload_runtime(hass) -> None:
-    """A live Function Tool write must not start provider reauthentication."""
+    """A live subentry write must not start provider reauthentication."""
     hass.config_entries.async_reload = AsyncMock()
 
     with live_subentry_update():

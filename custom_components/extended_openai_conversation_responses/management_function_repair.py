@@ -39,7 +39,7 @@ from .const import (
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
 )
-from .live_subentry_updates import live_subentry_update
+from .live_subentry_updates import update_live_subentry
 from .request import canonical_json
 
 _STALE_CONFIGURATION_ERROR = (
@@ -665,8 +665,7 @@ def persist_valid_function_configuration(
     )
     normalization_ms = (perf_counter() - phase) * 1000
     phase = perf_counter()
-    with live_subentry_update():
-        hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+    update_live_subentry(hass, entry, subentry, data=normalized)
     subentry_update_ms = (perf_counter() - phase) * 1000
     phase = perf_counter()
     snapshot = agent_config_snapshot(normalized)
@@ -804,7 +803,7 @@ def _persist_raw_tools(
         tools, sort_keys=False, allow_unicode=True
     )
     persisted[CONF_FUNCTION_GROUPS] = deepcopy(groups)
-    hass.config_entries.async_update_subentry(entry, subentry, data=persisted)
+    update_live_subentry(hass, entry, subentry, data=persisted)
     return persisted
 
 
@@ -947,7 +946,8 @@ async def async_function_repair(
             if isinstance(requested_title, str)
             else subentry.title
         )
-        hass.config_entries.async_update_subentry(
+        update_live_subentry(
+            hass,
             entry,
             subentry,
             data=persisted,
@@ -1062,7 +1062,7 @@ async def async_function_repair(
     persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         validated_tools, sort_keys=False, allow_unicode=True
     )
-    hass.config_entries.async_update_subentry(entry, subentry, data=persisted)
+    update_live_subentry(hass, entry, subentry, data=persisted)
     return {
         "valid": True,
         "tools": deepcopy(validated_tools),

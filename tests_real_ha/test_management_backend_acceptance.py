@@ -539,12 +539,12 @@ async def test_function_tools_and_groups_round_trip_through_management_websocket
 
 
 @pytest.mark.asyncio
-async def test_consecutive_function_deletes_do_not_start_reload_or_block_overview(
+async def test_consecutive_live_management_writes_do_not_reload_or_block_overview(
     hass: HomeAssistant,
     hass_ws_client: Any,
 ) -> None:
-    """Committed tool writes stay live while the next WS operation proceeds."""
-    entry = _entry("Consecutive Function Delete Acceptance")
+    """Live subentry writes leave the next WS operation immediately available."""
+    entry = _entry("Consecutive Live Management Write Acceptance")
     await _setup_entry(hass, entry)
     client = await _admin_client(hass, hass_ws_client)
     reload_entry = AsyncMock(return_value=True)
@@ -569,6 +569,33 @@ async def test_consecutive_function_deletes_do_not_start_reload_or_block_overvie
         )
         revision = saved["revision"]
 
+    group_saved = await _management_call(
+        client,
+        entry=entry,
+        section="tools",
+        action="save_group",
+        revision=revision,
+        group={
+            "id": "delete_probe_group",
+            "name": "Delete probe group",
+            "description": "Exercises the shared Function Tool persistence boundary.",
+            "loading_mode": FUNCTION_GROUP_LOADING_ON_DEMAND,
+            "functions": ["delete_probe_a"],
+            "enabled": True,
+        },
+    )
+    revision = group_saved["revision"]
+    group_deleted = await _management_call(
+        client,
+        entry=entry,
+        section="tools",
+        action="delete_group",
+        group_id="delete_probe_group",
+        confirm=True,
+        revision=revision,
+    )
+    revision = group_deleted["revision"]
+
     results = []
     for name in ("delete_probe_a", "delete_probe_b"):
         deleted = await _management_call(
@@ -583,6 +610,34 @@ async def test_consecutive_function_deletes_do_not_start_reload_or_block_overvie
         revision = deleted["revision"]
         results.append(deleted)
 
+    knowledge = await _management_call(
+        client,
+        entry=entry,
+        section="knowledge",
+        action="set_enabled",
+        enabled=True,
+    )
+    assert knowledge["knowledge_enabled"] is True
+
+    guest = await _management_call(
+        client, entry=entry, section="guest_mode", action="get"
+    )
+    guest_saved = await _management_call(
+        client,
+        entry=entry,
+        section="guest_mode",
+        action="save_policy",
+        revision=guest["revision"],
+        config=guest["config"],
+    )
+    settings_saved = await _management_call(
+        client,
+        entry=entry,
+        section="settings",
+        action="update",
+        settings={},
+    )
+
     overview = await _management_call(
         client, entry=entry, section="overview", action="summary"
     )
@@ -590,6 +645,8 @@ async def test_consecutive_function_deletes_do_not_start_reload_or_block_overvie
 
     assert overview["agent"]["subentry_id"] == _conversation_subentry(entry).subentry_id
     assert reload_entry.await_count == 0
+    assert guest_saved["revision"]
+    assert "settings" in settings_saved
     assert all(result["_performance"]["live_runtime_update"] for result in results)
     assert all(
         result["_performance"]["maintenance_lease_ms"] >= 0 for result in results

@@ -274,10 +274,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
     if is_live_subentry_update():
-        # Function Tool mutations replace subentry.data in place. Conversation,
-        # AI Task and sensor runtimes already consume that live object, while the
-        # conversation request boundary reconciles optional managers. Reloading
-        # here needlessly reauthenticates the provider and rebuilds every platform.
+        # Live management writes replace subentry.data in place. Conversation,
+        # AI Task and sensor runtimes already consume that live object, while each
+        # request boundary reconciles optional managers. Reloading here needlessly
+        # reauthenticates the provider and rebuilds every platform.
         return
     await hass.config_entries.async_reload(entry.entry_id)
 

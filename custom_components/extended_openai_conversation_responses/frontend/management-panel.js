@@ -822,6 +822,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (agentId && ((section === "configuration" && ["save", "update", "import"].includes(action))
         || (section === "function_repair" && action === "configuration_save")
         || (section === "tools" && TOOL_MUTATIONS.has(action))
+        || (section === "knowledge" && action === "set_enabled")
+        || (section === "guest_mode" && action === "save_policy")
+        || (section === "settings" && action === "update")
         || (section === "backup" && action === "restore"))) {
       this._invalidateCleanConfiguration(agentId);
     }
@@ -845,8 +848,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     } else {
       const mutations = {
         request_rules: new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate"]),
-        knowledge: new Set(["create", "update", "delete"]),
-        memories: new Set(["add", "update", "delete", "temporary_update", "temporary_delete", "temporary_clear", "reassign_legacy"]),
+        knowledge: new Set(["create", "update", "delete", "set_enabled"]),
+        memories: new Set(["add", "update", "delete", "clear", "temporary_update", "temporary_delete", "temporary_clear", "reassign_legacy"]),
       };
       if (agentId && mutations[section]?.has(action)) {
         this._cacheGeneration += 1;

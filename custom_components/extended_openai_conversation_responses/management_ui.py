@@ -96,6 +96,7 @@ from .ha_llm_tools import (
 )
 from .helpers import get_exposed_entities
 from .knowledge import async_get_knowledge, knowledge_source_as_dict
+from .live_subentry_updates import update_live_subentry
 from .local_intents import (
     CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
     CONF_LOCAL_INTENT_EXCLUSIONS,
@@ -955,7 +956,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             raise HomeAssistantError("Guest policy contains unknown fields")
         updates[CONF_GUEST_POLICY_VERSION] = GUEST_POLICY_VERSION
         normalized = merge_agent_config(subentry.data, updates)
-        hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+        update_live_subentry(hass, entry, subentry, data=normalized)
         configured_tools = configured_function_tools_from_data(normalized)
         return {
             "revision": saved_agent_config_revision(
@@ -2359,8 +2360,8 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         persisted = preserve_legacy_guest_policy(
             dict(request.subentry.data), deepcopy(normalized)
         )
-        request.hass.config_entries.async_update_subentry(
-            request.entry, request.subentry, data=persisted
+        update_live_subentry(
+            request.hass, request.entry, request.subentry, data=persisted
         )
         stats = library.stats()
         source_count = 0
@@ -2454,8 +2455,8 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
         if not isinstance(updates, dict):
             raise HomeAssistantError("settings must be an object")
         normalized = _validate_settings(updates)
-        hass.config_entries.async_update_subentry(
-            entry, subentry, data={**subentry.data, **normalized}
+        update_live_subentry(
+            hass, entry, subentry, data={**subentry.data, **normalized}
         )
         return {"settings": settings_snapshot({**subentry.data, **normalized})}
 
