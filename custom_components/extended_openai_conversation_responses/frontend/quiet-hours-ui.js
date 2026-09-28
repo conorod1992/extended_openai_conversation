@@ -153,6 +153,27 @@ function refreshSatelliteSummary(panel, card, satellite) {
 
 export function bindQuietHours(panel) {
   const root = panel.shadowRoot;
+  if (!root.__eocQuietSummaryBound) {
+    root.__eocQuietSummaryBound = true;
+    let snapshot = panel._result;
+    // Page saves preserve the route DOM. Refresh resolved entity summaries when
+    // the save coordinator announces dirty-state changes with a new snapshot.
+    root.addEventListener("eoc-config-dirty-changed", () => {
+      if (panel._viewKey?.() !== VIEW || snapshot === panel._result) return;
+      snapshot = panel._result;
+      for (const card of root.querySelectorAll("[data-qh-satellite]")) {
+        const satellite = (snapshot?.satellites || []).find(item => item.satellite_entity_id === card.dataset.qhSatellite);
+        if (!satellite) continue;
+        refreshSatelliteSummary(panel, card, satellite);
+        for (const picker of card.querySelectorAll(".qh-override")) {
+          const source = picker.dataset.kind === "media_player_entity_id" ? satellite.media_player_source : satellite.wake_sound_source;
+          const automatic = source === "auto" ? satellite[picker.dataset.kind] || "" : "";
+          picker.dataset.autoEntity = automatic;
+          picker.placeholder = automatic ? `Automatic · ${automatic}` : "Automatic";
+        }
+      }
+    });
+  }
   root.querySelector("#qh-enabled")?.addEventListener("change", (event) => { panel._quietHoursDraft.enabled = event.target.checked; });
   root.querySelector("#qh-start")?.addEventListener("input", (event) => { panel._quietHoursDraft.start = event.target.value; });
   root.querySelector("#qh-end")?.addEventListener("input", (event) => { panel._quietHoursDraft.end = event.target.value; });
@@ -189,7 +210,7 @@ export function bindQuietHours(panel) {
       const value = String(event?.detail?.value || picker.value || "");
       picker.value = value;
       setOverride(panel, picker.dataset.satellite, picker.dataset.kind, value);
-      refreshSatelliteSummary(panel, picker.closest(".qh-satellite"), satellite);
+      refreshSatelliteSummary(panel, picker.closest(".qh-satellite"), (panel._result?.satellites || []).find(item => item.satellite_entity_id === picker.dataset.satellite));
     });
   });
 

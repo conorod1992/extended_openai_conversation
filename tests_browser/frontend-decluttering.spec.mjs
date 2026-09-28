@@ -255,5 +255,31 @@ test("Quiet Hours uses compact healthy satellites and reveals problems and draft
   });
   await expect(kitchen.locator("[data-qh-media-summary]")).toContainText("Manual · media_player.manual");
   expect(await panel.evaluate(p => p._quietHoursDraft.overrides)).toEqual({"assist_satellite.kitchen":{media_player_entity_id:"media_player.manual"}});
+  await panel.evaluate(p => {
+    const original=p._call.bind(p);
+    p._call=async (section,action,...args) => {
+      const result=await original(section,action,...args);
+      if (section!=="quiet_hours" || action!=="update") return result;
+      const selected=result.config.overrides?.["assist_satellite.kitchen"]?.media_player_entity_id;
+      return {...result,satellites:p._result.satellites.map(item => item.satellite_entity_id==="assist_satellite.kitchen"
+        ? {...item,media_player_entity_id:selected || "media_player.kitchen",media_player_source:selected ? "manual" : "auto"} : item)};
+    };
+    window.savedQuietPicker=p.shadowRoot.querySelector('[data-qh-satellite="assist_satellite.kitchen"] .qh-override');
+  });
+  await panel.locator("#save-page").click();
+  await expect(panel.locator(".save-bar")).toHaveCount(0);
+  const media=kitchen.locator('[data-kind="media_player_entity_id"]');
+  await media.evaluate(node => {
+    node.value="";
+    node.dispatchEvent(new CustomEvent("value-changed",{detail:{value:""},bubbles:true,composed:true}));
+  });
+  await expect(kitchen.locator("[data-qh-media-summary]")).toContainText("resolved after saving");
+  await panel.locator("#save-page").click();
+  await expect(panel.locator(".save-bar")).toHaveCount(0);
+  await expect(kitchen.locator("[data-qh-media-summary]")).toContainText("Automatic · Kitchen speaker (media_player.kitchen)");
+  await expect(kitchen.locator("[data-qh-speaker-status]")).toHaveText("Speaker ready");
+  await expect(media).toHaveJSProperty("placeholder","Automatic · media_player.kitchen");
+  await expect(kitchen.locator("details")).toHaveJSProperty("open",true);
+  expect(await media.evaluate(node => node===window.savedQuietPicker)).toBe(true);
   await expectHarnessClean(page,errors);
 });
