@@ -2535,18 +2535,23 @@ async def async_management_command(
     authorization precedes agent lookup; section-specific authorization stays with
     its handler. No setup/feature installer replaces this function.
     """
-    trace_configuration = message.get("section") == "configuration" and message.get(
-        "action"
-    ) in {"get", "save", "update"}
+    action = message.get("action")
+    trace_configuration = (
+        message.get("section") == "configuration"
+        and isinstance(action, str)
+        and action in {"get", "save", "update"}
+    )
     trace_tool_mutation = (
-        message.get("section") == "tools" and message.get("action") in _TOOL_MUTATIONS
+        message.get("section") == "tools"
+        and isinstance(action, str)
+        and action in _TOOL_MUTATIONS
     )
     started = perf_counter() if trace_configuration or trace_tool_mutation else None
     async with management_command_lease(hass, message):
         lease_ms = _elapsed_ms(started) if started is not None else None
         result = await _async_management_request(hass, user_id, is_admin, message)
-    if started is not None:
-        performance = result.setdefault("_performance", {})
+    performance = result.get("_performance")
+    if started is not None and isinstance(performance, dict):
         performance["maintenance_lease_ms"] = lease_ms
         performance["command_total_ms"] = _elapsed_ms(started)
     return result
@@ -2641,10 +2646,11 @@ async def _async_management_request(
                 performance["agent_resolution_ms"] = resolution_ms
                 performance["handler_ms"] = handler_ms
     elif trace_tool_mutation:
-        performance = result.setdefault("_performance", {})
-        performance["dispatch_ms"] = dispatch_ms
-        performance["agent_resolution_ms"] = resolution_ms
-        performance["handler_ms"] = handler_ms
+        performance = result.get("_performance")
+        if isinstance(performance, dict):
+            performance["dispatch_ms"] = dispatch_ms
+            performance["agent_resolution_ms"] = resolution_ms
+            performance["handler_ms"] = handler_ms
     return result
 
 
