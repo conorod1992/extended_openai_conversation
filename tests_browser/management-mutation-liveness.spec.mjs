@@ -275,7 +275,12 @@ test("a blocked Knowledge background read does not block an unrelated Memory mut
     };
   });
 
-  const heldRefresh = panel.evaluate((host) => host._loadSection(true));
+  const heldRefresh = panel.evaluate((host) => {
+    const key = host._sectionCacheKey();
+    host._sectionCache.delete(key);
+    host._eocSectionCacheTimes.delete(key);
+    return host._loadSection(true);
+  });
   await expect.poll(() => page.evaluate(() => window.browserHarness.heldKnowledgeReadStarted)).toBe(true);
 
   await panel.evaluate((host) => {
@@ -344,10 +349,14 @@ test("a failed Request Rule update leaves a different rule action usable", async
   });
 
   const firstToggle = panel.locator(".request-rule-card .rule-enabled").first();
-  if (await firstToggle.isChecked()) await firstToggle.uncheck();
-  else await firstToggle.check();
+  const initialEnabled = await firstToggle.isChecked();
+  await firstToggle.evaluate((input, checked) => {
+    input.checked = !checked;
+    input.dispatchEvent(new Event("change", {bubbles: true}));
+  }, initialEnabled);
   await expect.poll(() => page.evaluate(() => window.browserHarness.failedRuleUpdateCalls)).toBe(1);
   await expect(firstToggle).toBeEnabled();
+  await expect(firstToggle).toBeChecked({checked: initialEnabled});
 
   const deletesBefore = await page.evaluate(() => browserHarness.calls.filter(
     (call) => call.section === "request_rules" && call.action === "delete",
