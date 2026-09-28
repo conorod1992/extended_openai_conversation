@@ -458,3 +458,37 @@ test("a compact cross-feature mutation chain remains live without intermediate r
   await expectOverviewLive(panel);
   await expectHarnessClean(page, errors);
 });
+
+
+test("a completed mutation does not leave the agent picker or next agent blocked", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics", "&agents=2"));
+  const panel = page.locator("extended-openai-management-panel");
+  const picker = panel.locator("#agent");
+  await expect(picker).toHaveValue("agent-1");
+
+  const maxTokens = panel.locator('[data-config="max_tokens"]');
+  await maxTokens.fill("764");
+  await panel.locator("#save-config").click();
+  await expect.poll(() => panel.evaluate((host) => host._configDirty)).toBe(false);
+  await expect(picker).toBeEnabled();
+
+  await picker.selectOption("scale-agent-1");
+  await expect(picker).toHaveValue("scale-agent-1");
+  await expect(panel.locator('[data-config="max_tokens"]')).toBeVisible();
+
+  const savesBefore = await page.evaluate(() => browserHarness.calls.filter(
+    (call) => call.section === "configuration" && call.action === "save"
+      && call.subentry_id === "scale-agent-1",
+  ).length);
+  await panel.locator('[data-config="max_tokens"]').fill("765");
+  await panel.locator("#save-config").click();
+  await expect.poll(() => page.evaluate((count) => browserHarness.calls.filter(
+    (call) => call.section === "configuration" && call.action === "save"
+      && call.subentry_id === "scale-agent-1",
+  ).length, savesBefore)).toBe(savesBefore + 1);
+  await expect.poll(() => panel.evaluate((host) => host._configDirty)).toBe(false);
+
+  await expectOverviewLive(panel);
+  await expectHarnessClean(page, errors);
+});
