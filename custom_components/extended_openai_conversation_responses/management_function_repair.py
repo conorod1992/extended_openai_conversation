@@ -39,6 +39,7 @@ from .const import (
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
 )
+from .live_subentry_updates import live_subentry_update
 from .request import canonical_json
 
 _STALE_CONFIGURATION_ERROR = (
@@ -648,7 +649,10 @@ def persist_valid_function_configuration(
     expected_revision: str | None = None,
 ) -> dict[str, Any]:
     """Persist a fully valid Function Tool transition behind one revision boundary."""
+    started = perf_counter()
     require_agent_config_revision(subentry, expected_revision)
+    revision_check_ms = (perf_counter() - started) * 1000
+    phase = perf_counter()
     updates: dict[str, Any] = {
         CONF_FUNCTION_TOOLS: tools,
         CONF_FUNCTION_GROUPS: groups,
@@ -659,14 +663,28 @@ def persist_valid_function_configuration(
         subentry.data,
         _strict_merge_agent_config(subentry.data, updates),
     )
-    hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+    normalization_ms = (perf_counter() - phase) * 1000
+    phase = perf_counter()
+    with live_subentry_update():
+        hass.config_entries.async_update_subentry(entry, subentry, data=normalized)
+    subentry_update_ms = (perf_counter() - phase) * 1000
+    phase = perf_counter()
     snapshot = agent_config_snapshot(normalized)
     revision = saved_agent_config_revision(subentry, normalized, subentry.title)
     seed_persisted_config_projection(entry, subentry, snapshot, revision)
+    projection_ms = (perf_counter() - phase) * 1000
     return {
         "functions": snapshot[CONF_FUNCTION_TOOLS],
         "function_groups": snapshot[CONF_FUNCTION_GROUPS],
         "revision": revision,
+        "_performance": {
+            "revision_check_ms": round(revision_check_ms, 3),
+            "normalization_ms": round(normalization_ms, 3),
+            "subentry_update_ms": round(subentry_update_ms, 3),
+            "post_save_projection_ms": round(projection_ms, 3),
+            "live_runtime_update": True,
+            "persistence_total_ms": round((perf_counter() - started) * 1000, 3),
+        },
     }
 
 
