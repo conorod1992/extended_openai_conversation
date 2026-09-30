@@ -119,6 +119,7 @@ def test_ci_dependency_install_respects_selected_ha_constraints(
         lambda _name: [
             "pydantic==2.13.4",
             "aiohttp[speedups]>=3.9",
+            "voluptuous-openapi==0.2.0",
             "unavailable==1; extra == 'unused'",
         ],
     )

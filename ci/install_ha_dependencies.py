@@ -61,12 +61,17 @@ def main() -> None:
     if not requirements:
         return
 
-    # Preserve the installed core's dependencies and its OpenAI integration pin.
-    # Some HA releases have other integration constraints that disagree with
-    # their own manifests; importing every such constraint prevents installation.
+    # Preserve core dependencies that the SDK might otherwise upgrade, and its
+    # OpenAI integration pin. Keep the existing installer behavior for other
+    # explicit integration requirements rather than changing their policy here.
+    explicit_names = {
+        canonicalize_name(Requirement(value).name) for value in requirements
+    }
     constraints = []
     for value in requires("homeassistant") or []:
         requirement = Requirement(value)
+        if canonicalize_name(requirement.name) in explicit_names:
+            continue
         if requirement.marker is None or requirement.marker.evaluate():
             constraints.append(f"{requirement.name}{requirement.specifier}")
     for value in (
