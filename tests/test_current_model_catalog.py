@@ -22,6 +22,71 @@ from custom_components.extended_openai_conversation_responses.request import (
 from homeassistant.exceptions import HomeAssistantError
 
 
+def test_gpt_61_sol_requires_responses_for_tools():
+    model = "gpt-6.1-sol"
+    capabilities = get_model_capabilities(model)
+    assert capabilities["status"] == "current"
+    assert capabilities["kind"] == "alias"
+    assert capabilities["reasoning"] == {
+        "supported": True,
+        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "by_api": {
+            "responses": {"efforts": ["low", "medium", "high", "xhigh", "max"]},
+            "chat_completions": {"efforts": ["low", "medium", "high", "xhigh", "max"]},
+        },
+        "openai_default": "medium",
+    }
+    assert capabilities["limits"] == {
+        "context_tokens": 1050000,
+        "max_output_tokens": 128000,
+    }
+    assert capabilities["function_calling"]["responses"] is True
+    assert capabilities["function_calling"]["chat_completions"] is False
+    assert capabilities["temperature"] == {
+        "support": "never",
+        "allowed_reasoning_efforts": None,
+        "send_policy": "omit",
+    }
+    assert capabilities["top_p"] == capabilities["temperature"]
+    assert capabilities["responses_web_search"] is True
+    assert capabilities["structured_outputs"] is True
+    assert capabilities["explicit_prompt_cache"] is True
+    assert capabilities["service_tiers"] == [
+        "auto",
+        "default",
+        "flex",
+        "fast",
+        "priority",
+    ]
+
+    with pytest.raises(HomeAssistantError, match="function/tool calling"):
+        build_provider_request_snapshot(
+            {
+                "chat_model": model,
+                "api_mode": "chat_completions",
+                "reasoning_effort": "low",
+            },
+            {},
+            tools_required=True,
+        )
+    auto = build_provider_request_snapshot(
+        {"chat_model": model, "api_mode": "auto", "reasoning_effort": "high"},
+        {},
+        tools_required=True,
+    )
+    assert auto.api_mode == "responses"
+
+    with pytest.raises(HomeAssistantError, match="reasoning_effort"):
+        build_provider_request_snapshot(
+            {
+                "chat_model": model,
+                "api_mode": "responses",
+                "reasoning_effort": "none",
+            },
+            {},
+        )
+
+
 @pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
 def test_new_flagships_condition_chat_tools_on_none(model):
     capabilities = get_model_capabilities(model)
