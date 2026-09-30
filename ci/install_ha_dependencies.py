@@ -47,9 +47,7 @@ def main() -> None:
                 f"Home Assistant dependency manifest not found: {domain}"
             )
 
-        dependency_manifest = json.loads(
-            manifest_path.read_text(encoding="utf-8")
-        )
+        dependency_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         requirements.update(dependency_manifest.get("requirements", []))
         pending.extend(dependency_manifest.get("dependencies", []))
         pending.extend(dependency_manifest.get("after_dependencies", []))
@@ -59,7 +57,15 @@ def main() -> None:
         return
 
     subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", *sorted(requirements)]
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--constraint",
+            str(components.parent / "package_constraints.txt"),
+            *sorted(requirements),
+        ]
     )
 
 
