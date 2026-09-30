@@ -18,9 +18,9 @@ for(const width of [360,390])for(const route of ["usage-maintenance/usage","capa
     }
     const bounds=await page.evaluate(()=>{
       const host=document.querySelector("extended-openai-management-panel");
-      return {document:document.documentElement.scrollWidth,host:host.scrollWidth,viewport:innerWidth};
+      return {document:document.documentElement.scrollWidth,host:host.scrollWidth,viewport:innerWidth,overflow:[...host.shadowRoot.querySelectorAll("*")].map(el=>({tag:el.tagName,class:el.className,width:el.getBoundingClientRect().width,right:el.getBoundingClientRect().right})).filter(el=>el.right>innerWidth+1).slice(-12)};
     });
-    expect(bounds.document).toBeLessThanOrEqual(width+1);
+    expect(bounds.document,JSON.stringify(bounds)).toBeLessThanOrEqual(width+1);
     expect(bounds.host).toBeLessThanOrEqual(width+1);
     await expectHarnessClean(page,errors);
   });
