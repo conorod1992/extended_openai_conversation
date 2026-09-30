@@ -55,7 +55,14 @@ async def test_running_script_keeps_snapshot_outcome(
     )
     await asyncio.wait_for(entered.wait(), 2)
     target = other if mutation == "unrelated" else original
-    await rules.async_update(target["id"], {**target, "name": "Edited during delay"})
+    await rules.async_update(
+        target["id"],
+        {
+            **target,
+            "name": "Edited during delay",
+            "action": {**target["action"], "success_response": "Future requests only"},
+        },
+    )
     release.set()
     result = await asyncio.wait_for(pending, 2)
     assert result.successful is not fails
