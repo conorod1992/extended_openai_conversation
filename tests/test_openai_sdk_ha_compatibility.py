@@ -87,13 +87,18 @@ def test_ci_dependency_install_respects_selected_ha_constraints(
     ha_package = tmp_path / "homeassistant"
     (ha_package / "components" / "conversation").mkdir(parents=True)
     constraints = ha_package / "package_constraints.txt"
-    constraints.write_text(f"openai=={sdk}\n")
+    constraints.write_text(
+        f"openai=={sdk}\nvoluptuous-openapi==0.2.0\npydantic==2.13.5\n"
+    )
     (ha_package / "components" / "conversation" / "manifest.json").write_text("{}")
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
             {
-                "requirements": ["openai>=2.21.0,<=3.10.0"],
+                "requirements": [
+                    "openai>=2.21.0,<=3.10.0",
+                    "voluptuous-openapi==0.4.1",
+                ],
                 "dependencies": ["conversation"],
             }
         )
@@ -107,11 +112,27 @@ def test_ci_dependency_install_respects_selected_ha_constraints(
         lambda: SimpleNamespace(manifest=manifest),
     )
     commands = []
+    captured_constraints = []
     monkeypatch.setattr(
-        install_ha_dependencies.subprocess, "check_call", commands.append
+        install_ha_dependencies,
+        "requires",
+        lambda _name: [
+            "pydantic==2.13.4",
+            "aiohttp[speedups]>=3.9",
+            "unavailable==1; extra == 'unused'",
+        ],
     )
+
+    def capture(command):
+        commands.append(command)
+        captured_constraints.append(
+            Path(command[command.index("--constraint") + 1]).read_text()
+        )
+
+    monkeypatch.setattr(install_ha_dependencies.subprocess, "check_call", capture)
     install_ha_dependencies.main()
     assert len(commands) == 1
     command = commands[0]
-    assert command[command.index("--constraint") + 1] == str(constraints)
+    assert captured_constraints == [f"pydantic==2.13.4\naiohttp>=3.9\nopenai=={sdk}\n"]
+    assert "voluptuous-openapi==0.4.1" in command
     assert "openai>=2.21.0,<=3.10.0" in command

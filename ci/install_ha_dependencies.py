@@ -4,10 +4,15 @@
 from __future__ import annotations
 
 import argparse
+from importlib.metadata import requires
 import json
 from pathlib import Path
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
+
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 import homeassistant
 
@@ -56,17 +61,34 @@ def main() -> None:
     if not requirements:
         return
 
-    subprocess.check_call(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--constraint",
-            str(components.parent / "package_constraints.txt"),
-            *sorted(requirements),
-        ]
-    )
+    # Preserve the installed core's dependencies and its OpenAI integration pin.
+    # Some HA releases have other integration constraints that disagree with
+    # their own manifests; importing every such constraint prevents installation.
+    constraints = []
+    for value in requires("homeassistant") or []:
+        requirement = Requirement(value)
+        if requirement.marker is None or requirement.marker.evaluate():
+            constraints.append(f"{requirement.name}{requirement.specifier}")
+    for value in (
+        (components.parent / "package_constraints.txt").read_text().splitlines()
+    ):
+        value = value.split("#", 1)[0].strip()
+        if value and canonicalize_name(Requirement(value).name) == "openai":
+            constraints.append(value)
+    with TemporaryDirectory() as directory:
+        constraint_path = Path(directory) / "ha-core-and-openai.txt"
+        constraint_path.write_text("\n".join(constraints) + "\n", encoding="utf-8")
+        subprocess.check_call(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--constraint",
+                str(constraint_path),
+                *sorted(requirements),
+            ]
+        )
 
 
 if __name__ == "__main__":
