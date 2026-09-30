@@ -146,7 +146,10 @@ test("native Request Rule add-condition button has an accessible name and still 
       connectedCallback() {
         if (this.selector?.condition) {
           this.shadowRoot.innerHTML = '<ha-selector-condition></ha-selector-condition>';
-          setTimeout(() => customElements.define("ha-selector-condition", ConditionSelector), 0);
+          // HA's lazy module registers once even when fresh selectors connect.
+          setTimeout(() => {
+            if (!customElements.get("ha-selector-condition")) customElements.define("ha-selector-condition", ConditionSelector);
+          }, 0);
         }
       }
       get updateComplete() { return Promise.resolve(); }
