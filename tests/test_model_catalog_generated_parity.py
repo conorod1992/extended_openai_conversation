@@ -59,7 +59,8 @@ def test_projected_api_and_tool_choices_match_backend_for_every_model(model):
 
 
 @pytest.mark.parametrize(
-    "model", ["gpt-6-astra", "gpt-6-sol", "gpt-5-mini", "gpt-5.6", "gpt-4.1"]
+    "model",
+    ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-5-mini", "gpt-5.6", "gpt-4.1"],
 )
 def test_selectable_representative_choices_build_safe_requests(model):
     projection = frontend_capabilities(model)
