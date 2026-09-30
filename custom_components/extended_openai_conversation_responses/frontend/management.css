@@ -333,3 +333,12 @@
 .voice-policy-grid:has(> :only-child){grid-template-columns:1fr}
 .voice-inactive-settings [data-voice-inactive-host]{display:grid;gap:12px}
 .voice-identity-help{margin-top:0;padding-top:0;border-top:0}
+
+/* Keep wide data tables inside their grid cell rather than widening the page. */
+main,main>*{min-width:0;max-width:100%}
+.table{min-width:0;max-width:100%;overflow-x:auto}
+@media(max-width:680px){
+  .metric-grid.compact{grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr))}
+  .usage-range-copy,.usage-range-control,.chart-legend{min-width:0;max-width:100%}
+  .chart-legend{flex-wrap:wrap}
+}

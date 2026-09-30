@@ -841,7 +841,11 @@ def normalize_agent_config(
 
     selected_model = str(result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
     reasoning_options = get_reasoning_effort_options(selected_model)
-    if not reasoning_effort_explicit:
+    if not reasoning_options:
+        # Hidden defaults/drafts from another model are inactive, not request
+        # parameters. Keep explicit enum validation for reasoning-capable models.
+        result.pop(CONF_REASONING_EFFORT, None)
+    elif not reasoning_effort_explicit:
         recommended_effort = (
             get_model_config(selected_model)
             .get("recommended_profile", {})
@@ -982,7 +986,11 @@ def normalize_agent_config(
         raise AgentConfigError(CONF_TOP_P, "must be 0 to 1")
     if not 0 <= float(result[CONF_TEMPERATURE]) <= 2:
         raise AgentConfigError(CONF_TEMPERATURE, "must be 0 to 2")
-    for key in (CONF_CURRENT_DATETIME_TEMPLATE, CONF_EXPOSED_ENTITIES_TEMPLATE):
+    for key in (
+        CONF_PROMPT,
+        CONF_CURRENT_DATETIME_TEMPLATE,
+        CONF_EXPOSED_ENTITIES_TEMPLATE,
+    ):
         value = result[key]
         if not value.strip():
             continue

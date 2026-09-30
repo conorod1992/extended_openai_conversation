@@ -560,6 +560,7 @@ def test_normalize_agent_config_rejects_residual_invalid_values(config, match) -
 
 def test_normalize_agent_config_template_and_list_edges() -> None:
     for key in (
+        agent_config.CONF_PROMPT,
         agent_config.CONF_CURRENT_DATETIME_TEMPLATE,
         agent_config.CONF_EXPOSED_ENTITIES_TEMPLATE,
     ):
@@ -574,6 +575,21 @@ def test_normalize_agent_config_template_and_list_edges() -> None:
         }
     )
     assert result[agent_config.CONF_GUEST_ALLOWED_GROUP_IDS] == ["one", "two"]
+
+
+def test_model_switch_ignores_inactive_reasoning_from_full_editor_draft() -> None:
+    current = normalize_agent_config(
+        {"chat_model": "gpt-5-mini", "reasoning_effort": "minimal"}
+    )
+    changed = merge_agent_config(
+        current, {**current, "chat_model": "gpt-4o", "api_mode": "chat_completions"}
+    )
+    assert "reasoning_effort" not in changed
+
+
+def test_system_prompt_allows_advanced_home_assistant_templates() -> None:
+    prompt = "{% for s in states.light | selectattr('state', 'eq', 'on') %}{{ s.name }}{% endfor %} {{ now() | as_timestamp }}"
+    assert normalize_agent_config({"prompt": prompt})["prompt"] == prompt
 
 
 def test_reasoning_default_and_explicit_validation(monkeypatch) -> None:

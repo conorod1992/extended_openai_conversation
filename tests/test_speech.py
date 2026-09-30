@@ -54,6 +54,34 @@ def test_common_markdown_is_simplified_conservatively() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("*one* _two_ **three** __four__", "one two three four"),
+        ("(*one*), _two_!", "(one), two!"),
+        ("*an ordinary longer sentence with emphasis*", "an ordinary longer sentence with emphasis"),
+        (
+            "sensor.kitchen_temperature and ordinary_under_scores",
+            "sensor.kitchen_temperature and ordinary_under_scores",
+        ),
+        ("2 * 3 and _ unmatched *", "2 * 3 and _ unmatched *"),
+        (r"\*literal\* and \_literal\_", r"\*literal\* and \_literal\_"),
+        ("*one* https://example.com/a_b _two_", "one two"),
+    ],
+)
+def test_single_emphasis_preserves_prose_and_stream_boundaries(text, expected):
+    assert process_speech_text(text, _config()) == expected
+    assert _stream(list(text)).strip() == expected
+
+
+def test_unresolved_single_emphasis_is_bounded_and_preserves_word_boundary():
+    sanitizer = StreamingSpeechSanitizer(max_buffer_chars=64)
+    malformed = "*" + "x" * 65
+    assert sanitizer.feed(malformed) == malformed
+    assert sanitizer.buffered_chars == 0
+    assert sanitizer.feed("_tail_") + sanitizer.finish() == "_tail_"
+
+
 def test_custom_replacements_run_in_order_and_allow_empty_replacement() -> None:
     config = _config(
         speech_regex_replacements=[
