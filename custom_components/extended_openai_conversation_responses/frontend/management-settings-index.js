@@ -11,7 +11,7 @@ export const SETTINGS_INDEX = [
     ["Chat model", "Provider model used for responses.", "model provider", "chat_model", {format:"text"}],
     ["Provider API format", "How requests are formatted for the configured provider.", "api responses chat completions auto provider format", "api_mode"],
     ["Maximum response length", "Maximum tokens the model may use in one response.", "tokens max output response length", "max_tokens", {suffix:" tokens"}],
-    ["Maximum tool calls per conversation", "Stops runaway action loops after this many tool calls.", "function tools calls budget conversation", "max_function_calls_per_conversation"],
+    ["Maximum tool calls per request", "Limits tool calls within each request (conversation turn); resets on the next turn.", "function tools calls budget conversation", "max_function_calls_per_conversation"],
     ["Listen for a follow-up", "Whether Home Assistant keeps listening after a response.", "continue conversation follow up voice", "continue_conversation"],
   ]),
 

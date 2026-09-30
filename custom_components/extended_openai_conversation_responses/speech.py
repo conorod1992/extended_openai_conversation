@@ -66,6 +66,7 @@ class StreamingSpeechSanitizer:
         self.max_buffered_chars = 0
         self._buffer = ""
         self._format_buffer = ""
+        self._format_previous = ""
         self._line_start = True
         self._needs_separator = False
         self._last_output = ""
@@ -275,6 +276,7 @@ class StreamingSpeechSanitizer:
         self._format_buffer += text
         output: list[str] = []
         index = 0
+        unresolved_emphasis = False
 
         while index < len(self._format_buffer):
             if self._line_start:
@@ -297,6 +299,38 @@ class StreamingSpeechSanitizer:
                 index += 1
                 continue
             pair = self._format_buffer[index : index + 2]
+            previous = (
+                self._format_buffer[index - 1] if index else self._format_previous
+            )
+            if (
+                char in "*_"
+                and pair not in _FORMAT_MARKERS
+                and not previous.isalnum()
+                and previous not in ("\\", char)
+                and len(pair) == 2
+                and not pair[1].isspace()
+            ):
+                # Buffer a possible emphasis span until its matching delimiter.
+                # Word-internal underscores, arithmetic and unmatched markers
+                # remain prose; the existing bounded buffer also applies here.
+                end = index + 1
+                while True:
+                    end = self._format_buffer.find(char, end + 1)
+                    if end < 0:
+                        break
+                    after = self._format_buffer[end + 1 : end + 2]
+                    if not self._format_buffer[end - 1].isspace() and (
+                        not after or (not after.isalnum() and after != char)
+                    ):
+                        break
+                if end < 0 or (end == len(self._format_buffer) - 1 and not final):
+                    if not final:
+                        unresolved_emphasis = True
+                        break
+                else:
+                    output.append(self._format_buffer[index + 1 : end])
+                    index = end + 1
+                    continue
             if pair in _FORMAT_MARKERS:
                 if len(pair) < 2 and not final:
                     break
@@ -313,9 +347,15 @@ class StreamingSpeechSanitizer:
             output.append(char)
             index += 1
 
+        if index:
+            self._format_previous = self._format_buffer[index - 1]
         self._format_buffer = self._format_buffer[index:]
-        if not final and len(self._format_buffer) > _FORMAT_PREFIX_LIMIT:
+        buffer_limit = (
+            self.max_buffer_chars if unresolved_emphasis else _FORMAT_PREFIX_LIMIT
+        )
+        if not final and len(self._format_buffer) > buffer_limit:
             output.append(self._format_buffer)
+            self._format_previous = self._format_buffer[-1]
             self._format_buffer = ""
             self._line_start = False
         elif final and self._format_buffer:

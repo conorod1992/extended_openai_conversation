@@ -17,8 +17,8 @@ export const SETTING_LOOKUP = Object.freeze({
     "aliases": "maximum response length maximum tokens the model may use in one response. tokens max output response length max_tokens"
   },
   "max_function_calls_per_conversation": {
-    "label": "Maximum tool calls per conversation",
-    "aliases": "maximum tool calls per conversation stops runaway action loops after this many tool calls. function tools calls budget conversation max_function_calls_per_conversation"
+    "label": "Maximum tool calls per request",
+    "aliases": "maximum tool calls per request limits tool calls within each request (conversation turn); resets on the next turn. function tools calls budget conversation max_function_calls_per_conversation"
   },
   "continue_conversation": {
     "label": "Listen for a follow-up",

@@ -3,7 +3,7 @@ export {dirtyConfigurationKeys, configurationDestinations, dirtyConfigurationDes
 
 const FRIENDLY_LABEL_OVERRIDES = Object.freeze({
   memory_retrieval_mode: "Relevance matching",
-  max_function_calls_per_conversation: "Tool-call limit per conversation",
+  max_function_calls_per_conversation: "Tool-call limit per request",
   speech_processing_enabled: "Clean responses for speech",
   speech_strip_markdown: "Remove Markdown formatting",
 });
