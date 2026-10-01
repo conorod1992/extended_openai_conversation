@@ -1,8 +1,8 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+// Backup uses a page heading above its card; its order is covered in ux-simplification.
 const CARDS = [
-  ["usage-maintenance/backup-restore", "Export, Backup, Import & Restore"],
   ["usage-maintenance/retention", "Retention periods"],
   ["usage-maintenance/diagnostics", "Test assistant"],
   ["usage-maintenance/usage", "Recent runs"],

@@ -70,7 +70,7 @@ The integration supports several implementation types:
 
 See [Function types and examples](function-types.md), [Native Function Tools](native-details.md), [File Function Tools](file-tools.md), [Bash Function Tool](bash.md), [SQLite Function Tool](sqlite.md), and [Scrape Function Tool](scrape.md) for details.
 
-Use **Add LLM Tools** to select capabilities supplied by Home Assistant or installed
+Use **+ Add**, then **Home Assistant tool** to select capabilities supplied by Home Assistant or installed
 services, including registered MCP APIs. These are live references, with the same
 enabled controls and Function Groups, rather than editable Function YAML. Bulk
 addition saves only the individual tools selected now; future source tools are not

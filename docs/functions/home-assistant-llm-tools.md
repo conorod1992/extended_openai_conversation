@@ -6,7 +6,7 @@ you own. An HA LLM Tool is a reference to a capability owned elsewhere: its curr
 description, input schema and implementation come from Home Assistant at runtime.
 There is no editable YAML or duplicate-definition action for these cards.
 
-In **Functions**, choose **Add LLM Tools**. Search by name, description or source,
+In **Functions**, choose **+ Add**, then **Home Assistant tool**. Search by name, description or source,
 select individual tools, or filter sources and choose **Select all shown**. You can
 assign the selected tools to an existing Function Group in the same dialog.
 Already-added tools are marked and cannot be added twice.

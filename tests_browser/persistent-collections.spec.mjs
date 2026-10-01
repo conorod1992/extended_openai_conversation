@@ -262,7 +262,7 @@ test("Functions: adding HA tools refreshes saved metadata without rebinding exis
   });
   await panel.locator("#function-add").click();
   await panel.locator("#add-ha-tools").click();
-  const dialog = panel.locator('dialog[aria-label="Add Home Assistant LLM Tools"]');
+  const dialog = panel.locator('dialog[aria-label="Add Home Assistant tools"]');
   await dialog.locator("[data-tools] input").check();
   await dialog.locator("[data-add]").click();
   await expect(dialog).toHaveCount(0);

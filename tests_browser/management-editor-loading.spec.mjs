@@ -130,8 +130,9 @@ for (const kind of ["knowledge", "memory"]) {
         } finally { window.requestAnimationFrame = original; }
       }, kind);
       const first = panel.locator(kind === "knowledge" ? "#knowledge-title" : "#memory-content");
-      const next = panel.locator(kind === "knowledge" ? "#knowledge-content" : "#memory-subject");
+      const next = panel.locator(kind === "knowledge" ? "#knowledge-content" : "#memory-category");
       await first.fill("First field");
+      await next.fill("");
       await next.focus();
       await page.evaluate(() => { for (const callback of window.editorOpeningFrames) callback(performance.now()); });
       await expect(next).toBeFocused();
