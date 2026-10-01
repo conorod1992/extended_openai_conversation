@@ -116,4 +116,6 @@ outcome. Mobile WebKit additionally downloads a real backup and uploads it for
 preview without applying a destructive restore. Each lane validates both pytest
 and Playwright execution evidence and uploads version/profile-specific artifacts.
 
-The 390px WebKit lane uses touch input and a narrow genuine HA shell. It does not certify an iOS virtual keyboard or physical Companion device: iPhone emulation cannot reliably replace CodeMirror content through Playwright keyboard input. The lane retains native YAML validation/save and backup download/upload preview assertions.
+The 390px WebKit lane uses a narrow genuine HA shell. It does not certify an iOS virtual keyboard or physical Companion device: iPhone emulation cannot reliably replace CodeMirror content through Playwright keyboard input. The lane retains native YAML validation/save and backup download/upload preview assertions.
+
+The added minimum-HA feature selection, Firefox/WebKit/narrow native-shell lanes, semantic picker extension and execution gates run only on scheduled or manual overnight invocations. PR/push selections remain the existing four public version cases and the three Chromium native-shell version lanes. New governance and SDK cache regression cases live in existing overnight stress files.

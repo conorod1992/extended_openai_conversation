@@ -63,6 +63,7 @@ test("direct Request Rule testers bind once through repeated binding and normal 
   expect(markup).toContain("No Home Assistant action executes");
   expect(markup).toContain('id="eoc-rule-live-test"');
   await panel.locator("#eoc-rule-live-test summary").click();
+  await expect(panel.locator("#eoc-rule-live-test")).toHaveAttribute("data-eoc-bound", "");
   await panel.locator("#eoc-rule-live-text").fill("hello");
   await panel.locator("#eoc-rule-live-run").click();
   await acceptConfirmation(panel);

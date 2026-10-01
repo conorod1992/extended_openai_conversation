@@ -22,7 +22,14 @@ export async function replaceNativeYaml(page, editor, yaml) {
   await expect(editor).toBeVisible({timeout: 30000});
   const surface = editor.locator('[contenteditable="true"], textarea').first();
   await surface.click();
-  await page.keyboard.press("ControlOrMeta+A");
+  const selectedAll = () => editor.evaluate(element => {
+    const view = element.shadowRoot.querySelector("ha-code-editor")?.codemirror;
+    return Boolean(view?.hasFocus && view.state.selection.main.from === 0
+      && view.state.selection.main.to === view.state.doc.length);
+  });
+  await surface.press("ControlOrMeta+A");
+  if (!await selectedAll()) await surface.press("Meta+A");
+  await expect.poll(selectedAll).toBe(true);
   await page.keyboard.insertText(yaml);
   await expect.poll(() => editor.evaluate(element => element.yaml)).toBe(yaml);
 }

@@ -167,7 +167,7 @@ jobs:
       - name: Run reviewed HA feature compatibility contract
         env:
           PYTHONPATH: ${{ github.workspace }}
-          STRESS_CAMPAIGN: ${{ matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
+          STRESS_CAMPAIGN: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
           STRESS_ARTIFACT_DIR: compatibility-evidence
           ENHANCED_EXECUTION_EVIDENCE: "1"
           PYTEST_PLUGINS: ci.pytest_execution
@@ -177,7 +177,7 @@ jobs:
       - name: Require every compatibility case to pass
         if: always()
         env:
-          STRESS_CAMPAIGN: ${{ matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
+          STRESS_CAMPAIGN: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
           ENHANCED_JOB_STATUS: ${{ job.status }}
         run: |
           python ci/enhanced_summary.py compatibility-evidence

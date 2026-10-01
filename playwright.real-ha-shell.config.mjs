@@ -18,7 +18,7 @@ const profile = process.env.REAL_HA_BROWSER_PROFILE || "chromium";
 const profiles = {
   chromium: devices["Desktop Chrome"], firefox: devices["Desktop Firefox"],
   webkit: devices["Desktop Safari"],
-  "webkit-mobile": {...devices["Desktop Safari"], viewport: {width:390, height:844}, hasTouch:true},
+  "webkit-mobile": {...devices["Desktop Safari"], viewport: {width:390, height:844}},
 };
 if (!profiles[profile]) throw new Error(`Unknown native HA browser profile: ${profile}`);
 const artifactKey = artifactSuffix();

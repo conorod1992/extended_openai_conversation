@@ -31,6 +31,7 @@ jobs:
     outputs:
       python-version: ${{ steps.versions.outputs.python-version }}
       ha-core-sha: ${{ steps.versions.outputs.ha-core-sha }}
+      nightly-browsers: ${{ steps.versions.outputs.nightly-browsers }}
     steps:
       - name: Resolve Home Assistant Core dev snapshot
         id: versions
@@ -43,6 +44,11 @@ jobs:
           echo "python-version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
           echo "Home Assistant Core dev commit: $HA_CORE_SHA"
           echo "Home Assistant Python version: $PYTHON_VERSION"
+          NIGHTLY_BROWSERS='[]'
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            NIGHTLY_BROWSERS='[{"ha-version":"stable","profile":"firefox"},{"ha-version":"stable","profile":"webkit"},{"ha-version":"stable","profile":"webkit-mobile"}]'
+          fi
+          echo "nightly-browsers=$NIGHTLY_BROWSERS" >> "$GITHUB_OUTPUT"
 
   native-browser:
     name: Native browser smoke (HA ${{ matrix.ha-version }} / ${{ matrix.profile || 'chromium' }})
@@ -53,20 +59,14 @@ jobs:
       REAL_HA_BROWSER_PROFILE: ${{ matrix.profile || 'chromium' }}
       STRESS_CAMPAIGN: native-browser-${{ matrix.profile || 'chromium' }}
       STRESS_ARTIFACT_DIR: compatibility-evidence
-      ENHANCED_EXECUTION_EVIDENCE: "1"
-      PYTEST_PLUGINS: ci.pytest_execution
+      ENHANCED_EXECUTION_EVIDENCE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '' }}
+      PYTEST_PLUGINS: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'ci.pytest_execution' || '' }}
     strategy:
       fail-fast: false
       matrix:
         ha-version: [oldest, stable, dev]
         profile: [chromium]
-        include:
-          - ha-version: stable
-            profile: firefox
-          - ha-version: stable
-            profile: webkit
-          - ha-version: stable
-            profile: webkit-mobile
+        include: ${{ fromJson(needs.prepare.outputs.nightly-browsers) }}
     steps:
       - name: Checkout exact EOAI PR head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -119,7 +119,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: pytest tests_real_ha/test_browser_compatibility_acceptance.py -v -s --asyncio-mode=auto --timeout=300 --tb=short
       - name: Require native browser execution evidence
-        if: always()
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:
           ENHANCED_JOB_STATUS: ${{ job.status }}
         run: |

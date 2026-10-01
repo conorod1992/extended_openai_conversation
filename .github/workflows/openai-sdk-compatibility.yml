@@ -50,6 +50,7 @@ jobs:
         run: |
           python -m pytest -q \
             tests/test_openai_sdk_wire.py \
+            tests_stress/test_provider_real_connection_pool.py::test_explicit_prompt_cache_crosses_supported_sdk_wire \
             tests/test_openai_sdk_malformed_wire.py \
             tests/test_openai_sdk_error_matrix.py \
             tests/test_openai_sdk_catalog_matrix.py \
