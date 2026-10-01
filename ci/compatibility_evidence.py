@@ -22,6 +22,8 @@ def main():
         (Path(sys.argv[2]) / "certification.json").read_text(encoding="utf-8")
     )
     errors = check_candidate(item, checkout_sha()) + check_execution(item, contract)
+    if item.get("campaign") != campaign:
+        errors.append(f"Expected campaign {campaign}, received {item.get('campaign')}")
     if item["status"] != "success":
         errors.append("Compatibility job did not succeed")
     print(
