@@ -1,3 +1,4 @@
+import {localRuleActionSummary} from "./request-rule-response-summary.js";
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys} from "./keyed-collection.js";
 import {requestRuleEmptyContent, updateRequestRuleEmptyState} from "./request-rule-empty-state.js";
 
@@ -24,10 +25,8 @@ export function requestRuleSummary(rule = {}, defaults = {}) {
     matching = `${phraseLabel} · ${match} · ${source}${fuzzy}`;
   }
   if (rule.action_type === "local_action") {
-    const actions = Array.isArray(rule.action?.actions) ? rule.action.actions : [];
-    const response = String(rule.action?.success_response || "").trim();
     return {
-      action: `Runs ${actions.length} local step${actions.length === 1 ? "" : "s"}${rule.action?.continue_to_ai ? " then continues to AI" : ` without an AI request${response ? ` · replies “${response}”` : ""}`}`,
+      action: localRuleActionSummary(rule.action),
       matching,
       hiddenPhrases: Math.max(0, phrases.length - 4),
     };

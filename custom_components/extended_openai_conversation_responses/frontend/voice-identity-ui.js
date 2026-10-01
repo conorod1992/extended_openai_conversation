@@ -1,3 +1,4 @@
+import {initializeVoiceUserPicker, voiceUserCatalogue} from "./voice-user-picker.js";
 const SHARED_SCOPE = "shared:household";
 const UNRETAINED_SCOPE = "unretained";
 
@@ -19,21 +20,7 @@ const e = (panel,value) => panel._e(String(value ?? ""));
 const rawUserId = (value) => String(value || "").replace(/^user:/,"");
 const panelHass = (panel) => panel?.hass || panel?._hass || null;
 
-export function voiceUsers(panel) {
-  // Kept as a compatibility/fallback catalogue for summaries and older callers.
-  // The editable controls themselves use Home Assistant's native user picker.
-  const scopes = panel?._baseScopes?.length ? panel._baseScopes : panel?._data?.scopes || [];
-  const seen = new Set();
-  const result = [];
-  for (const scope of scopes) {
-    if (scope?.scope_type !== "user") continue;
-    const id = rawUserId(scope.scope_id);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    result.push({id,name:String(scope.display_name || id)});
-  }
-  return result;
-}
+export const voiceUsers = voiceUserCatalogue;
 
 export function voiceUserLabel(panel,userId) {
   const id = rawUserId(userId);
@@ -145,8 +132,7 @@ async function entityRegistry(panel) {
 
 function configureUserPicker(panel,picker,value) {
   if (!picker) return;
-  picker.hass = panelHass(panel);
-  picker.value = rawUserId(value);
+  initializeVoiceUserPicker(panel, picker, value, () => updateDependencies(panel));
 }
 
 function configureEntityPicker(panel,picker,value="") {

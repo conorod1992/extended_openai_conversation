@@ -386,3 +386,81 @@ test("genuine HA YAML keyboard edits validate before one persisted save", async 
   await panel.locator("#confirm-accept").click();
   await expect(card).toHaveCount(0);
 });
+
+test("cold Voice user pickers select a secondary HA user and keep its name after save/reload", async ({context,page}) => {
+  await authenticate(context);
+  await page.goto(`${baseUrl}/extended-openai/assistant/voice`, {waitUntil:"domcontentloaded"});
+  const panel=page.locator("extended-openai-management-panel");
+  const defaultPicker=panel.locator('#config-voice_default_user_picker');
+  await expect(defaultPicker.locator('ha-generic-picker')).toHaveCount(1);
+  const secondaryName="Cold Voice secondary user";
+  const secondaryId=await panel.evaluate(async(host,name)=>{
+    let users=await host.hass.callWS({type:"config/auth/list"});
+    if(!users.some(user=>user.name===name)) {
+      await host.hass.callWS({type:"config/auth/create",name});
+      users=await host.hass.callWS({type:"config/auth/list"});
+    }
+    const user=users.find(user=>user.name===name);
+    // Seed an unavailable device to exercise saved ownership without hardware.
+    host._draft.voice_default_user_id="";
+    host._draft.voice_device_mappings={"cold-voice-regression-device":"unretained"};
+    host._configDirty=true;
+    host._render();
+    return user.id;
+  },secondaryName);
+  await panel.locator('[data-config="voice_scope_policy"]').selectOption('device_mapping');
+  await panel.locator('[data-config="voice_unmapped_policy"]').selectOption('default_user');
+  // The user was created after the initial catalogue fetch; a fresh cold reload
+  // verifies native registration and obtains the current HA users.
+  await panel.locator('#save-config').click();
+  await expect.poll(()=>panel.evaluate(host=>host._configDirty)).toBe(false);
+  await page.reload();
+  await expect(defaultPicker.locator('ha-generic-picker')).toHaveCount(1);
+  await defaultPicker.locator('ha-picker-field').click();
+  await defaultPicker.locator('ha-picker-combo-box ha-combo-box-item').filter({hasText:secondaryName}).locator('button').click();
+  await expect(defaultPicker).toHaveJSProperty('value',secondaryId);
+  const mappingPicker=panel.locator('.voice-owner-user-picker');
+  await panel.locator('.voice-owner-type').selectOption('user');
+  await expect(mappingPicker.locator('ha-generic-picker')).toHaveCount(1);
+  await mappingPicker.locator('ha-picker-field').click();
+  await mappingPicker.locator('ha-picker-combo-box ha-combo-box-item').filter({hasText:secondaryName}).locator('button').click();
+  await expect(mappingPicker).toHaveJSProperty('value',secondaryId);
+  await panel.locator('#save-config').click();
+  await expect.poll(()=>panel.evaluate(host=>host._configDirty)).toBe(false);
+  await page.reload();
+  await expect(defaultPicker).toHaveJSProperty('value',secondaryId);
+  await expect(mappingPicker).toHaveJSProperty('value',secondaryId);
+  await expect(defaultPicker).toContainText(secondaryName);
+  await expect(mappingPicker).toContainText(secondaryName);
+  await expect(panel.locator('#voice-current-summary')).toContainText(secondaryName);
+  await expect(defaultPicker).not.toContainText('Unknown user selected');
+  await expect(mappingPicker).not.toContainText('Unknown user selected');
+  const saved=await panel.evaluate(host=>host._draft.voice_device_mappings);
+  expect(saved['cold-voice-regression-device']).toBe(`user:${secondaryId}`);
+});
+
+test("cold Prompt entity editor switches immediately and saves through the native HA shell", async ({context,page}) => {
+  await authenticate(context);
+  await page.goto(`${baseUrl}/extended-openai/assistant/prompt-context`,{waitUntil:"domcontentloaded"});
+  const panel=page.locator('extended-openai-management-panel');
+  await panel.locator('#exposed-entity-picker').waitFor({state:"attached"});
+  await panel.locator('[data-config="exposed_entities_enabled"]').check();
+  const select=async entityId=>{
+    const picker=panel.locator('#exposed-entity-picker');
+    await picker.evaluate((element,value)=>{element.value=value;element.dispatchEvent(new CustomEvent('value-changed',{detail:{value},bubbles:true}));},entityId);
+  };
+  await select('sensor.cold_attribute_kitchen');
+  await expect(panel.locator('[data-exposed-editor]')).toContainText('sensor.cold_attribute_kitchen');
+  await select('sensor.cold_attribute_hall');
+  await expect(panel.locator('[data-exposed-editor]')).toContainText('sensor.cold_attribute_hall');
+  await panel.locator('[data-exposed-attribute][data-attribute="battery_level"]').check();
+  await panel.locator('[data-close-exposed-editor]').click();
+  await expect(panel.locator('[data-exposed-editor]')).toHaveCount(0);
+  await panel.locator('[data-edit-exposed-entity="sensor.cold_attribute_hall"]').click();
+  await expect(panel.locator('[data-exposed-attribute][data-attribute="battery_level"]')).toBeChecked();
+  await panel.locator('#save-config').click();
+  await expect.poll(()=>panel.evaluate(host=>host._configDirty)).toBe(false);
+  await page.reload();
+  await panel.locator('[data-edit-exposed-entity="sensor.cold_attribute_hall"]').click();
+  await expect(panel.locator('[data-exposed-attribute][data-attribute="battery_level"]')).toBeChecked();
+});

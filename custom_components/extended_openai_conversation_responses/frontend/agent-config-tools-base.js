@@ -947,11 +947,32 @@ function openFunctionGroup(panel, groupId = null) {
   root.querySelector("#group-function-search").value="";
   root.querySelector("#group-functions-empty").hidden=true;
   root.querySelector("#group-error").textContent="";
+  delete root.querySelector("#group-error").dataset.field;
   renderGroupFunctionChoices(panel,group?.functions||[]);
   panel._groupRevision = panel._configData?.revision;
   root.querySelector("#group-dialog").showModal();
   panel._captureDialogBaseline?.(root.querySelector("#group-dialog"));
   root.querySelector("#group-name").focus();
+}
+
+function functionGroupValidation(root) {
+  if (!root.querySelector("#group-name").value.trim()) return {field: "name", message: "Group name is required."};
+  if (!/^[a-z][a-z0-9_-]{0,63}$/.test(root.querySelector("#group-id").value.trim())) return {field: "id", message: "Group ID must start with a lowercase letter and use only lowercase letters, numbers, underscores, or hyphens."};
+  if (!root.querySelector("#group-description").value.trim()) return {field: "description", message: "Add a concise description so the model knows when this group is relevant."};
+  return null;
+}
+
+function refreshFunctionGroupValidation(root) {
+  const error = root.querySelector("#group-error");
+  if (!error?.dataset.field) return;
+  const validation = functionGroupValidation(root);
+  if (validation) {
+    error.dataset.field = validation.field;
+    error.textContent = validation.message;
+  } else {
+    delete error.dataset.field;
+    error.textContent = "";
+  }
 }
 
 async function saveFunctionGroup(panel) {
@@ -965,9 +986,13 @@ async function saveFunctionGroup(panel) {
   const guest_allowed=(panel._draft.function_groups||[]).find((group)=>group.id===panel._groupOriginalId)?.guest_allowed===true;
   const functions=[...root.querySelectorAll("#group-functions input:checked")].map((input)=>input.value);
   const error=root.querySelector("#group-error");
-  if(!name){error.textContent="Group name is required.";return;}
-  if(!/^[a-z][a-z0-9_-]{0,63}$/.test(id)){error.textContent="Group ID must start with a lowercase letter and use only lowercase letters, numbers, underscores, or hyphens.";return;}
-  if(!description){error.textContent="Add a concise description so the model knows when this group is relevant.";return;}
+  const validation = functionGroupValidation(root);
+  if (validation) {
+    error.dataset.field = validation.field;
+    error.textContent = validation.message;
+    return;
+  }
+  delete error.dataset.field;
   error.textContent="Saving...";
   panel._setSaving(button, true);
   try {
@@ -976,7 +1001,7 @@ async function saveFunctionGroup(panel) {
     root.querySelector("#group-dialog").close();
     panel._toast("Function group saved");
     panel._render();
-  } catch(err) { error.textContent=err.message||String(err); }
+  } catch(err) { delete error.dataset.field; error.textContent=err.message||String(err); }
   finally { panel._setSaving(button, false); }
 }
 
@@ -1082,8 +1107,9 @@ export function bindTools(panel) {
       root.querySelector("#tool-error").textContent = err.message || String(err);
     } finally { panel._setSaving(button, false); }
   });
-  root.querySelector("#group-name")?.addEventListener("input",(event)=>{if(!panel._groupIdEdited)root.querySelector("#group-id").value=functionGroupIdFromName(event.target.value);});
-  root.querySelector("#group-id")?.addEventListener("input",()=>{panel._groupIdEdited=true;});
+  root.querySelector("#group-name")?.addEventListener("input",(event)=>{if(!panel._groupIdEdited)root.querySelector("#group-id").value=functionGroupIdFromName(event.target.value);refreshFunctionGroupValidation(root);});
+  root.querySelector("#group-id")?.addEventListener("input",()=>{panel._groupIdEdited=true;refreshFunctionGroupValidation(root);});
+  root.querySelector("#group-description")?.addEventListener("input",()=>refreshFunctionGroupValidation(root));
   bindOwnedEvent(root.querySelector("#group-function-search"), "input", "group-assignment", (event)=>{
     const queryTokens=searchTokens(event.target.value);
     const choices=[...root.querySelectorAll("#group-functions .group-function-choice")];
