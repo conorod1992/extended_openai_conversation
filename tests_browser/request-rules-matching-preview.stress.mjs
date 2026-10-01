@@ -251,6 +251,9 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
         if (await card.count()) {
           await card.locator(".rule-delete").click();
           await panel.locator("#confirm-accept").click();
+          // Deletion reconciles the whole page asynchronously. Wait before
+          // opening the wording editor so its replacement does not close it.
+          await expect(card).toHaveCount(0);
         }
       }
       if (wordingCreated) {
