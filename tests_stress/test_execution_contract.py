@@ -265,6 +265,26 @@ def test_only_stable_adds_native_browser_engines():
         "compatibility_evidence.py check" in step.get("run", "") for step in steps
     )
 
+    real_ha = yaml.safe_load(
+        (ROOT / ".github/workflows/real-ha.yml").read_text(encoding="utf-8")
+    )["jobs"]
+    public_steps = real_ha["public-journeys"]["steps"]
+    run = next(
+        step
+        for step in public_steps
+        if step["name"] == "Run reviewed HA feature compatibility contract"
+    )
+    for key in ["STRESS_CAMPAIGN", "ENHANCED_EXECUTION_EVIDENCE", "PYTEST_PLUGINS"]:
+        assert "github.event_name == 'schedule'" in run["env"][key]
+        assert "github.event_name == 'workflow_dispatch'" in run["env"][key]
+    for step in public_steps:
+        if step["name"] in {
+            "Require every compatibility case to pass",
+            "Upload feature execution evidence",
+        }:
+            assert "github.event_name == 'schedule'" in step["if"]
+            assert "github.event_name == 'workflow_dispatch'" in step["if"]
+
 
 def test_minimum_feature_contract_covers_distinct_native_boundaries():
     policy = json.loads(CONTRACT.read_text(encoding="utf-8"))

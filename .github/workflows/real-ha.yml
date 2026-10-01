@@ -169,13 +169,17 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           STRESS_CAMPAIGN: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
           STRESS_ARTIFACT_DIR: compatibility-evidence
-          ENHANCED_EXECUTION_EVIDENCE: "1"
-          PYTEST_PLUGINS: ci.pytest_execution
+          ENHANCED_EXECUTION_EVIDENCE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '' }}
+          PYTEST_PLUGINS: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'ci.pytest_execution' || '' }}
         run: |
-          read -ra TEST_PATHS <<< "$(python ci/compatibility_evidence.py select)"
+          if [ "$ENHANCED_EXECUTION_EVIDENCE" = 1 ]; then
+            read -ra TEST_PATHS <<< "$(python ci/compatibility_evidence.py select)"
+          else
+            TEST_PATHS=(tests_real_ha/test_public_version_journeys.py)
+          fi
           pytest "${TEST_PATHS[@]}" -v --asyncio-mode=auto --timeout=600 --tb=short
       - name: Require every compatibility case to pass
-        if: always()
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:
           STRESS_CAMPAIGN: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
           ENHANCED_JOB_STATUS: ${{ job.status }}
@@ -183,7 +187,7 @@ jobs:
           python ci/enhanced_summary.py compatibility-evidence
           python ci/compatibility_evidence.py check compatibility-evidence
       - name: Upload feature execution evidence
-        if: always()
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ha-feature-compatibility-${{ matrix.ha-version }}
