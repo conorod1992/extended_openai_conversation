@@ -31,6 +31,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONTINUE_CONVERSATION_CONDITIONAL,
     CONVERSATION_CONTINUITY_USER,
     DEFAULT_PROMPT,
+    LEGACY_DEFAULT_PROMPT_6_8_3,
     LEGACY_DEFAULT_PROMPT_WITH_SKILLS,
     MEMORY_MODE_AUTOMATIC,
     TEMPORARY_MEMORY_BALANCED,
@@ -73,13 +74,23 @@ def test_new_agent_defaults_use_first_class_volatile_context() -> None:
     assert "load_skill" not in DEFAULT_PROMPT
 
 
-def test_legacy_default_prompt_normalizes_to_clean_default() -> None:
-    """Untouched persisted defaults adopt integration-owned Skills injection."""
-    normalized = normalize_agent_config(
-        {CONF_PROMPT: LEGACY_DEFAULT_PROMPT_WITH_SKILLS}
-    )
+@pytest.mark.parametrize(
+    "legacy_prompt",
+    [LEGACY_DEFAULT_PROMPT_6_8_3, LEGACY_DEFAULT_PROMPT_WITH_SKILLS],
+)
+def test_legacy_default_prompt_normalizes_to_clean_default(legacy_prompt) -> None:
+    """Untouched historical defaults adopt the current integration-owned guidance."""
+    normalized = normalize_agent_config({CONF_PROMPT: legacy_prompt})
 
     assert normalized[CONF_PROMPT] == DEFAULT_PROMPT
+
+
+def test_custom_prompt_is_not_migrated() -> None:
+    """Prompt migration is exact-match only."""
+    custom = LEGACY_DEFAULT_PROMPT_6_8_3 + "\nCustom instruction"
+    normalized = normalize_agent_config({CONF_PROMPT: custom})
+
+    assert normalized[CONF_PROMPT] == custom
 
 
 def _options() -> dict:
