@@ -122,6 +122,7 @@ def test_invalid_schema_number_is_not_an_incompatible_update():
 def test_required_current_models_and_invalid_aliases():
     expected = {
         "gpt-6-astra",
+        "gpt-6.1-sol",
         "gpt-5.6",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
@@ -178,6 +179,7 @@ def test_current_models_have_exact_non_streaming_exceptions():
 def test_bundled_service_tiers_match_current_openai_support() -> None:
     expected_latest = {
         "gpt-6-astra": ["auto", "default", "flex", "fast", "priority"],
+        "gpt-6.1-sol": ["auto", "default", "flex", "fast", "priority"],
         "gpt-6-sol": ["auto", "default", "flex", "fast", "priority"],
         "gpt-6-luna": ["auto", "default", "flex", "fast", "priority"],
         "gpt-5.6": ["auto", "default", "flex", "fast", "priority", "ultrafast"],
