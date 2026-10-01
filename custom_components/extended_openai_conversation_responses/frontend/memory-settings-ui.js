@@ -35,14 +35,14 @@ export function renderMemorySettings(panel) {
     <div class="content-card config-surface">
       <section id="config-memory" class="config-section" data-config-section data-search="memory persistent temporary short term long term automatic retrieval embeddings shared household">
         <div class="config-stack">
-          <div class="setting-group"><div class="subheading"><h3>Personal memory</h3><p>Control durable memories and automatically expiring short-term details.</p></div>
-            ${select(panel, "memory_mode", "Long-term memory", config.memory_mode, "Choose whether durable memories are off, saved only when explicitly requested, or may also be created automatically.")}
+          <div class="setting-group"><div class="subheading"><h3>Personal memory</h3><p>Control long-term memories and automatically expiring short-term details.</p></div>
+            ${select(panel, "memory_mode", "Long-term memory", config.memory_mode, "Choose whether long-term memories are off, saved only when explicitly requested, or may also be created automatically.")}
             ${select(panel, "temporary_memory", "Short-term memory", config.temporary_memory, "Choose how readily useful temporary details are remembered until they expire automatically.")}
           </div>
-          <div class="setting-group"><div class="subheading"><h3>Retrieval</h3><p>Control which stored memories are supplied automatically and how relevance is calculated.</p></div>
+          <div class="setting-group"><div class="subheading"><h3>Matching memories</h3><p>Choose which memories are included automatically and how they are matched.</p></div>
             ${numberField(panel, "memory_auto_retrieve_limit", "Automatically include memories", config.memory_auto_retrieve_limit, "Select up to this many relevant memories when a new conversation starts. Set to 0 to use long-term memory only on demand.", 0, 10)}
-            ${select(panel, "memory_retrieval_mode", "Memory retrieval", config.memory_retrieval_mode, "Lexical retrieval is local and dependency-free. Hybrid retrieval combines lexical matching with semantic embeddings.")}
-            <div class="dependent ${hybrid ? "" : "is-disabled"}" data-memory-hybrid>${textField(panel, "memory_embedding_model", "Embedding model", config.memory_embedding_model || "text-embedding-3-small", "Used only for Hybrid retrieval. The configured provider must support embeddings.", !hybrid)}</div>
+            ${select(panel, "memory_retrieval_mode", "How memories are matched", config.memory_retrieval_mode, "Keyword matching finds memories using similar words. Keyword + meaning can also find memories that use different wording but mean something similar.")}
+            <div class="dependent ${hybrid ? "" : "is-disabled"}" data-memory-hybrid>${textField(panel, "memory_embedding_model", "Embedding model", config.memory_embedding_model || "text-embedding-3-small", "Model used to compare memories by meaning. Only needed when Keyword + meaning matching is selected. Your provider must support this model.", !hybrid)}</div>
           </div>
           <div class="setting-group"><div class="subheading"><h3>Shared household memory</h3><p>Keep household-wide memory behavior separate from private user memories.</p></div>
             ${select(panel, "shared_memory_mode", "Shared household memory", config.shared_memory_mode, "Choose whether shared memories are disabled, saved only when explicitly requested, or may also be created automatically.")}

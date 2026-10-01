@@ -32,9 +32,9 @@ test("configuration and Knowledge return final markup before any enhancement can
   expect(result.text).toContain("Auto is recommended unless your provider requires a specific API");
   expect(result.text).not.toContain("Recommended default: Automatic (Auto)");
   expect(result.text).toContain("Uses Home Assistant sessions");
-  expect(result.text).toContain("Requires embeddings");
+  expect(result.text).toContain("Uses a model to compare meaning");
   expect(result.text).not.toContain("Default: Ha Default");
-  expect(result.selected).toBe("Semantic + keyword matching (Hybrid)");
+  expect(result.selected).toBe("Keyword + meaning");
   expect(result).toMatchObject({disabled:true,hidden:true,available:true,update:"Apply v3 update"});
   expect(result.knowledge).toContain("Unavailable");
   const panel = page.locator("extended-openai-management-panel");

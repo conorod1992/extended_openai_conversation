@@ -85,8 +85,8 @@ export const SETTING_LOOKUP = Object.freeze({
     "aliases": "unidentified voice requests choose which retained-data scope is used when home assistant does not identify the speaker. voice unidentified speaker scope household user voice_scope_policy"
   },
   "voice_unmapped_policy": {
-    "label": "Unmapped-device fallback",
-    "aliases": "unmapped-device fallback choose the retained-data scope used when device assignment is active but the source device has no assignment. voice unmapped satellite device fallback scope voice_unmapped_policy"
+    "label": "When a voice device is not assigned",
+    "aliases": "when a voice device is not assigned choose whose saved data to use when a voice device has no assignment. voice unmapped satellite device fallback scope unmapped-device fallback voice_unmapped_policy"
   },
   "voice_default_user_id": {
     "label": "Default voice user",
@@ -94,7 +94,7 @@ export const SETTING_LOOKUP = Object.freeze({
   },
   "voice_device_mappings": {
     "label": "Voice device assignments",
-    "aliases": "voice device assignments assign source voice devices to users, shared household data, or no retained personal data. voice mappings satellite devices assignments users household voice_device_mappings"
+    "aliases": "voice device assignments assign source voice devices to users, shared household data, or no saved personal data. voice mappings satellite devices assignments users household voice_device_mappings"
   },
   "speech_processing_enabled": {
     "label": "Speech post-processing",
@@ -138,7 +138,7 @@ export const SETTING_LOOKUP = Object.freeze({
   },
   "memory_mode": {
     "label": "Long-term memory",
-    "aliases": "long-term memory whether durable memories are disabled, explicit-only, or automatic. memory persistent durable automatic manual memory_mode"
+    "aliases": "long-term memory whether long-term memories are disabled, explicit-only, or automatic. memory persistent durable automatic manual memory_mode"
   },
   "temporary_memory": {
     "label": "Short-term memory",
@@ -149,12 +149,12 @@ export const SETTING_LOOKUP = Object.freeze({
     "aliases": "automatically include memories maximum relevant memories automatically supplied to a new conversation. memory automatic include retrieve limit memory_auto_retrieve_limit"
   },
   "memory_retrieval_mode": {
-    "label": "Memory retrieval",
-    "aliases": "memory retrieval lexical or hybrid relevance matching for stored memories. memory retrieval lexical hybrid semantic memory_retrieval_mode"
+    "label": "How memories are matched",
+    "aliases": "how memories are matched choose keyword matching or compare memories by meaning as well. memory retrieval lexical hybrid semantic memory_retrieval_mode"
   },
   "memory_embedding_model": {
     "label": "Embedding model",
-    "aliases": "embedding model embedding model used by hybrid memory retrieval. memory embeddings semantic hybrid model memory_embedding_model"
+    "aliases": "embedding model model used to compare memories by meaning. only needed when keyword + meaning matching is selected. memory embeddings semantic hybrid model memory_embedding_model"
   },
   "shared_memory_mode": {
     "label": "Shared household memory",

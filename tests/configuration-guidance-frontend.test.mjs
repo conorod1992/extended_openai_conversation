@@ -28,9 +28,9 @@ assert.match(
 
 const lexical = hybridMemoryGuidance({memory_retrieval_mode: "lexical"});
 assert.equal(lexical.kind, "dormant");
-assert.match(lexical.text, /saved model is retained/);
+assert.match(lexical.text, /saved model is kept/);
 const hybrid = hybridMemoryGuidance({memory_retrieval_mode: "hybrid"});
-assert.match(hybrid.text, /falls back to keyword matching/);
+assert.match(hybrid.text, /keyword matching is used/);
 
 assert.deepEqual(
   apiModeConsequence(

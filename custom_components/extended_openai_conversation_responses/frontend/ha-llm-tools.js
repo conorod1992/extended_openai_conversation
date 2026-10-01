@@ -42,8 +42,8 @@ export function bindHALlmTools(panel, synchronize) {
     dialog.dataset.haLlmToolsDialog = "";
     dialog.setAttribute("aria-label", "Add Home Assistant tools");
     dialog.innerHTML = `<div class="dialog-header"><h2>Add Home Assistant tools</h2></div><div class="dialog-body">
-      <p>These capabilities are supplied by Home Assistant or installed integrations/services. A source can be an integration's contribution or a complete LLM API, including an MCP server.</p>
-      <p>Adding all saves the individual tools selected now. Future tools require explicit addition. Many schemas can increase input tokens; use Function Groups to load them when needed. HA tools are unavailable in Guest Mode.</p>
+      <p>These tools are provided by Home Assistant or installed integrations. Choose the ones you want this assistant to use.</p>
+      <p>Only the tools you select now are added. New tools must be added separately. Adding many tools can increase how much information is sent with each request. Function Groups can help by loading tools only when needed. Home Assistant tools are unavailable in Guest Mode.</p>
       <p role="status" data-status>Loading available tools…</p>
       <label>Search<input type="search" data-search></label><label>Sources<select multiple data-sources aria-label="Filter by sources"></select><small>Leave sources unselected to show all sources.</small></label>
       <label>Function Group<select data-group><option value="">Available on every request</option>${(panel._draft.function_groups || []).map(group => `<option value="${panel._e(group.id)}">${panel._e(group.name)}</option>`).join("")}</select></label>
@@ -97,7 +97,7 @@ export function bindHALlmTools(panel, synchronize) {
             panel._haCatalogLoadedAt = Date.now();
           }
           dialog.close();
-          panel._toast("HA LLM Tool references added");
+          panel._toast("Home Assistant tools added");
           panel._render();
         } catch (err) { status.textContent = err.message || String(err); button.disabled = false; }
       };

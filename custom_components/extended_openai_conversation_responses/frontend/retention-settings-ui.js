@@ -33,7 +33,7 @@ export function renderRetentionSettings(panel) {
     <section id="config-retention" data-config-section data-search="usage history retention request run details totals">
       <div class="card-heading"><div>
         <h2>Retention periods</h2>
-        <p>Set separate periods for request and run details. Saving Disabled immediately deletes existing detailed history of that type. Aggregate usage counters remain.</p>
+        <p>Set separate periods for request and run details. Saving Disabled immediately deletes existing detailed history of that type. Overall usage totals are kept.</p>
       </div></div>
       <div class="form-grid">
         ${FIELDS.map(([key, label]) => selectMarkup(panel, key, label)).join("")}

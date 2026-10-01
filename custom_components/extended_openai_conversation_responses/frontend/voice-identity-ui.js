@@ -3,14 +3,14 @@ const SHARED_SCOPE = "shared:household";
 const UNRETAINED_SCOPE = "unretained";
 
 const POLICY_LABELS = Object.freeze({
-  unretained: "Do not retain personal data",
+  unretained: "Don’t use saved personal data",
   shared: "Use shared household data",
   default_user: "Use the default user",
   device_mapping: "Use a device assignment",
 });
 
 const OWNER_TYPES = Object.freeze({
-  unretained: "No retained personal data",
+  unretained: "Don’t use saved personal data",
   shared: "Shared household",
   user: "Home Assistant user",
 });
@@ -41,7 +41,7 @@ export function satelliteForDeviceId(entries,deviceId) {
 }
 
 function policyLabel(value,fallback=false) {
-  if (fallback && value === "device_mapping") return "Device mapping again (no retained data)";
+  if (fallback && value === "device_mapping") return "Device mapping again (no saved personal data)";
   return POLICY_LABELS[value] || String(value || "").replaceAll("_"," ");
 }
 
@@ -80,16 +80,16 @@ function mappingRow(panel,deviceId="",owner=UNRETAINED_SCOPE) {
 // Loaded only after the policy core has painted and device assignment is active.
 export function renderVoiceMappings(panel) {
   const entries = mappingEntries(panel?._draft || panel?._result?.config || {});
-  return `<section id="voice-mappings" class="voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h3>Voice device assignments</h3><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no retained personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(([deviceId,owner]) => mappingRow(panel,deviceId,owner)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the unmapped-device fallback will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span></section>`;
+  return `<section id="voice-mappings" class="voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h3>Voice device assignments</h3><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no saved personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(([deviceId,owner]) => mappingRow(panel,deviceId,owner)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the setting for unassigned voice devices will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span></section>`;
 }
 
 export function voiceIdentitySummary(config={},users=[]) {
   const userName = (value) => users.find((user) => user.id === rawUserId(value))?.name || "the selected Home Assistant user";
   const target = (policy) => {
     if (policy === "shared") return "shared household data";
-    if (policy === "default_user") return config.voice_default_user_id ? `the default user (${userName(config.voice_default_user_id)})` : "the default user, but none is selected — so no personal data is retained";
+    if (policy === "default_user") return config.voice_default_user_id ? `the default user (${userName(config.voice_default_user_id)})` : "the default user, but none is selected — so no personal data is used or saved";
     if (policy === "device_mapping") return "a device assignment";
-    return "no retained personal data";
+    return "no saved personal data";
   };
   const main = String(config.voice_scope_policy || "unretained");
   if (main !== "device_mapping") return `Unidentified voice requests use ${target(main)}.`;
@@ -103,11 +103,11 @@ export function renderVoiceIdentity(panel) {
   const entries = mappingEntries(config);
   const selectedUser = String(config.voice_default_user_id || "");
   return `<div class="config-section-heading"><p class="eyebrow">Voice & identity</p><p>Choose whose memories and conversation history may be used when Home Assistant does not identify the speaker.</p></div>
-    <div class="voice-identity-flow"><div class="voice-flow-step"><strong>1 · Signed-in identity wins</strong><small>If Home Assistant supplies an authenticated user, that user's personal scope is used regardless of the settings below.</small></div><div class="voice-flow-step"><strong>2 · Otherwise use the voice policy</strong><small>Unidentified requests can use no retained personal data, shared household data, a default user, or a device assignment.</small></div><div class="voice-flow-step"><strong>3 · No identity guessing</strong><small>Device assignments use Home Assistant's source device ID only; room, presence, Bluetooth, and camera data are not used to guess a speaker.</small></div></div>
+    <div class="voice-identity-flow"><div class="voice-flow-step"><strong>1 · Signed-in identity wins</strong><small>If Home Assistant supplies an authenticated user, that user's personal scope is used regardless of the settings below.</small></div><div class="voice-flow-step"><strong>2 · Otherwise use the voice policy</strong><small>Unidentified requests can use no saved personal data, shared household data, a default user, or a device assignment.</small></div><div class="voice-flow-step"><strong>3 · No identity guessing</strong><small>Device assignments use Home Assistant's source device ID only; room, presence, Bluetooth, and camera data are not used to guess a speaker.</small></div></div>
     <div class="notice on"><strong>Current unidentified voice behavior</strong><p id="voice-current-summary">${e(panel,voiceIdentitySummary(config,voiceUsers(panel)))}</p></div>
-    <div class="voice-policy-grid"><section class="voice-policy-card"><h3>Unidentified voice requests</h3><p>Applies only when Home Assistant has not already attached a user to the request.</p>${policySelect(panel,"voice_scope_policy","Use retained data from",String(config.voice_scope_policy || "unretained"),"Choose the data owner for unidentified voice requests.")}</section><section class="voice-policy-card" data-voice-fallback-card><h3>Unmapped-device fallback</h3><p>Used only when device assignment is selected and the source device has no saved assignment.</p>${policySelect(panel,"voice_unmapped_policy","If the device is not assigned",String(config.voice_unmapped_policy || "unretained"),"Choose the safe fallback for an unidentified device.",true)}</section></div>
+    <div class="voice-policy-grid"><section class="voice-policy-card"><h3>Unidentified voice requests</h3><p>Applies only when Home Assistant has not already attached a user to the request.</p>${policySelect(panel,"voice_scope_policy","Use saved data from",String(config.voice_scope_policy || "unretained"),"Choose the data owner for unidentified voice requests.")}</section><section class="voice-policy-card" data-voice-fallback-card><h3>When a voice device is not assigned</h3><p>Used only when device assignment is selected and the source device has no saved assignment.</p>${policySelect(panel,"voice_unmapped_policy","If the device is not assigned",String(config.voice_unmapped_policy || "unretained"),"Choose the safe fallback for an unidentified device.",true)}</section></div>
     <section class="voice-default-card" data-voice-default-card><h3>Default voice user</h3><p>Used only when an unidentified-voice policy explicitly chooses the default user.</p><div class="setting" data-field="voice_default_user_id" data-setting><label>Home Assistant user</label>${nativeUserPicker(panel,"config-voice_default_user_picker",selectedUser)}<input type="hidden" id="config-voice_default_user_id" data-config="voice_default_user_id" value="${e(panel,selectedUser)}"><small>Choose from Home Assistant's user list. The user ID is stored internally.</small><span class="field-error" data-error="voice_default_user_id"></span></div></section>
-    <section id="voice-mappings" class="voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h3>Voice device assignments</h3><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no retained personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(([deviceId,owner]) => mappingRow(panel,deviceId,owner)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the unmapped-device fallback will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span></section>`;
+    <section id="voice-mappings" class="voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h3>Voice device assignments</h3><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no saved personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(([deviceId,owner]) => mappingRow(panel,deviceId,owner)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the setting for unassigned voice devices will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span></section>`;
 }
 
 function setWarning(element,message="") {
@@ -219,7 +219,7 @@ function syncOwner(row) {
       setWarning(warning);
     } else {
       hidden.value = UNRETAINED_SCOPE;
-      setWarning(warning,"Choose a Home Assistant user. Until then, no personal data is retained for this assignment.");
+      setWarning(warning,"Choose a Home Assistant user. Until then, no personal data is used or saved for this assignment.");
     }
   }
 }
@@ -284,7 +284,7 @@ function bindRows(panel) {
     });
     row.querySelector(".remove-voice-mapping")?.addEventListener("click",() => {
       row.remove();
-      if (!root.querySelector("[data-voice-mapping-row]")) root.querySelector("#voice-mapping-list").innerHTML = '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the unmapped-device fallback will be used.</div>';
+      if (!root.querySelector("[data-voice-mapping-row]")) root.querySelector("#voice-mapping-list").innerHTML = '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the setting for unassigned voice devices will be used.</div>';
       syncMappings(panel);
     });
     updateOwnerPicker(row,true);

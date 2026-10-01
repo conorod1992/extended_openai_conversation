@@ -10,7 +10,7 @@ test("Usage renders aggregate detail and navigates into retention settings", asy
   await expect(panel.getByRole("heading", {name: "Tokens by recorded day", exact: true})).toBeVisible();
   await expect(panel.getByRole("heading", {name: "Recent runs", exact: true})).toBeVisible();
   await expect(panel.getByText("9,999", {exact: true})).toBeVisible();
-  await expect(panel.getByText("No retained recent runs.", {exact: true})).toBeVisible();
+  await expect(panel.getByText("No saved recent runs.", {exact: true})).toBeVisible();
 
   const usageCalls = await page.evaluate(() => window.browserHarness.calls.filter(
     (call) => call.section === "usage",

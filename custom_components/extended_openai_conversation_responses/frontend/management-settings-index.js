@@ -40,9 +40,9 @@ export const SETTINGS_INDEX = [
 
   ...settingsFor("assistant", "voice", [
     ["Unidentified voice requests", "Choose which retained-data scope is used when Home Assistant does not identify the speaker.", "voice unidentified speaker scope household user", "voice_scope_policy"],
-    ["Unmapped-device fallback", "Choose the retained-data scope used when device assignment is active but the source device has no assignment.", "voice unmapped satellite device fallback scope", "voice_unmapped_policy"],
+    ["When a voice device is not assigned", "Choose whose saved data to use when a voice device has no assignment.", "voice unmapped satellite device fallback scope unmapped-device fallback", "voice_unmapped_policy"],
     ["Default voice user", "Home Assistant user whose retained data is used when a voice policy selects the default user.", "voice default user identity home assistant", "voice_default_user_id", {format:"text"}],
-    ["Voice device assignments", "Assign source voice devices to users, shared household data, or no retained personal data.", "voice mappings satellite devices assignments users household", "voice_device_mappings", {target:"voice-mappings", format:"mapping"}],
+    ["Voice device assignments", "Assign source voice devices to users, shared household data, or no saved personal data.", "voice mappings satellite devices assignments users household", "voice_device_mappings", {target:"voice-mappings", format:"mapping"}],
   ]),
 
   ...settingsFor("assistant", "speech", [
@@ -77,11 +77,11 @@ export const SETTINGS_INDEX = [
   ]),
 
   ...settingsFor("data-memory", "memory-settings", [
-    ["Long-term memory", "Whether durable memories are disabled, explicit-only, or automatic.", "memory persistent durable automatic manual", "memory_mode"],
+    ["Long-term memory", "Whether long-term memories are disabled, explicit-only, or automatic.", "memory persistent durable automatic manual", "memory_mode"],
     ["Short-term memory", "How readily temporary details are remembered until they expire.", "memory temporary short term eager balanced", "temporary_memory"],
     ["Automatically include memories", "Maximum relevant memories automatically supplied to a new conversation.", "memory automatic include retrieve limit", "memory_auto_retrieve_limit"],
-    ["Memory retrieval", "Lexical or Hybrid relevance matching for stored memories.", "memory retrieval lexical hybrid semantic", "memory_retrieval_mode"],
-    ["Embedding model", "Embedding model used by Hybrid memory retrieval.", "memory embeddings semantic hybrid model", "memory_embedding_model", {format:"text"}],
+    ["How memories are matched", "Choose keyword matching or compare memories by meaning as well.", "memory retrieval lexical hybrid semantic", "memory_retrieval_mode"],
+    ["Embedding model", "Model used to compare memories by meaning. Only needed when Keyword + meaning matching is selected.", "memory embeddings semantic hybrid model", "memory_embedding_model", {format:"text"}],
     ["Shared household memory", "Whether household-wide durable memories may be used and saved.", "memory shared household explicit automatic", "shared_memory_mode"],
   ]),
 
