@@ -201,7 +201,7 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
     await invalidRow.locator(".wording-canonical").fill("   ");
     await invalidRow.locator(".wording-alternatives").fill("blank alternative");
     await panel.locator("#save-page").click();
-    await expect(panel.locator("#toast")).toContainText("non-empty");
+    await expect(panel.locator("#toast")).toContainText("canonical wording is required");
     await expect(panel.locator(".save-bar")).toBeVisible();
     await invalidRow.locator(".wording-remove").click();
     await panel.locator("#save-page").click();
