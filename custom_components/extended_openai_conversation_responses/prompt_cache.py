@@ -136,10 +136,16 @@ class _PerformanceResponsesProxy:
         self._direct_openai = direct_openai
 
     async def create(self, *args: Any, **kwargs: Any) -> Any:
-        return await self._delegate.create(
-            *args,
-            **optimize_responses_kwargs(kwargs, direct_openai=self._direct_openai),
-        )
+        optimized = optimize_responses_kwargs(kwargs, direct_openai=self._direct_openai)
+        if "prompt_cache_options" in optimized:
+            # The supported SDK floor lacks this typed keyword. extra_body sends
+            # the same provider field without relying on the SDK's generated API.
+            optimized = dict(optimized)
+            cache_options = optimized.pop("prompt_cache_options")
+            extra_body = dict(optimized.get("extra_body") or {})
+            extra_body.setdefault("prompt_cache_options", cache_options)
+            optimized["extra_body"] = extra_body
+        return await self._delegate.create(*args, **optimized)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._delegate, name)

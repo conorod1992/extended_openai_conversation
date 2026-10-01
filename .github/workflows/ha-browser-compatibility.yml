@@ -108,7 +108,7 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
-      - name: Install the existing Playwright runner and Chromium
+      - name: Install the existing Playwright runner and selected browser
         run: |
           npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
           npx playwright install --with-deps "${REAL_HA_BROWSER_PROFILE%-mobile}"

@@ -191,6 +191,8 @@ test("real browser creates, groups, edits, reloads, and deletes a Request Rule t
   await panel.locator("#rule-name").fill("Real HA browser rule edited");
   await panel.locator("#rule-model").fill("gpt-5-nano");
   await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
+  await expect(panel.locator(".request-rule-card").filter({hasText: "Real HA browser rule edited"})).toContainText("gpt-5-nano");
 
   await page.goto(realFixtureUrl("capabilities/request-rules"));
   panel = page.locator("extended-openai-management-panel");

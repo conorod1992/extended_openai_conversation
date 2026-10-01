@@ -35,7 +35,6 @@ from homeassistant.components.assist_pipeline.pipeline import (
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import chat_session
 from homeassistant.setup import async_setup_component
-
 from tests_real_ha.test_acceptance_lifecycle import (
     _conversation_subentry,
     _make_entry,
@@ -80,7 +79,9 @@ async def _agent(hass: HomeAssistant, device_user: MockUser, satellite_user: Moc
     return entry, agent
 
 
-async def _run_genuine_assist(hass: HomeAssistant, *, pipeline_id: str) -> list[PipelineEvent]:
+async def _run_genuine_assist(
+    hass: HomeAssistant, *, pipeline_id: str
+) -> list[PipelineEvent]:
     assert await async_setup_component(hass, "assist_pipeline", {})
     events: list[PipelineEvent] = []
     with chat_session.async_get_chat_session(hass, _CONVERSATION_ID) as session:
@@ -98,7 +99,9 @@ async def _run_genuine_assist(hass: HomeAssistant, *, pipeline_id: str) -> list[
                 event_callback=events.append,
             ),
         )
-        await pipeline_input.execute(validate=True)
+        # Explicit validation works before and after HA added execute(validate=...).
+        await pipeline_input.validate()
+        await pipeline_input.execute()
     return events
 
 

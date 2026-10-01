@@ -84,6 +84,20 @@ test("HA native components and actual Assist path remain compatible", async ({co
     await panel.locator("#backup-file-transfer").setInputFiles(path);
     await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
     await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    // WebKit's document scrollWidth differs from the visible shell bounds.
+    // Gate the visible EOAI surfaces and viewport bounds.
+    const geometry = await panel.evaluate(host => {
+      const dialog = host.shadowRoot.querySelector("#restore-dialog");
+      const box = dialog.getBoundingClientRect();
+      return {
+        panelWidth:host.clientWidth, panelScroll:host.scrollWidth,
+        dialogWidth:dialog.clientWidth, dialogScroll:dialog.scrollWidth,
+        left:box.left, right:box.right, viewport:innerWidth,
+      };
+    });
+    expect(geometry.panelScroll, JSON.stringify(geometry)).toBeLessThanOrEqual(geometry.panelWidth + 1);
+    expect(geometry.dialogScroll, JSON.stringify(geometry)).toBeLessThanOrEqual(geometry.dialogWidth + 1);
+    expect(geometry.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.right).toBeLessThanOrEqual(geometry.viewport + 1);
   }
 });
