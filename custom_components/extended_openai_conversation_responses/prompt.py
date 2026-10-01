@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -32,6 +33,7 @@ from .const import (
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_PROMPT,
     DEFAULT_TEMPORARY_MEMORY,
+    LEGACY_DEFAULT_PROMPTS,
     TEMPORARY_MEMORY_EAGER,
     TEMPORARY_MEMORY_OFF,
 )
@@ -59,7 +61,7 @@ _DEFAULT_CURRENT_DATETIME_CONTEXT = """## Current date and time
 {{ now().isoformat(timespec='seconds') }}
 """
 
-_DEFAULT_PROMPT_STABLE_PREFIX = DEFAULT_PROMPT.split("{%- if skills %}", 1)[0].rstrip()
+_DEFAULT_PROMPT_STABLE_PREFIX = DEFAULT_PROMPT.split("## Context", 1)[0].rstrip()
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +164,16 @@ def _default_exposed_entities_context(
         exposed_entities,
         include_attributes=_has_selected_values(exposed_entities),
     )
+
+
+def _skills_instructions(skills: list[Any]) -> str:
+    """Return integration-owned guidance for configured Skills."""
+    lines = [
+        "## Skills",
+        "Use load_skill with a skill name when one of these skills is relevant:",
+    ]
+    lines.extend(f"- {skill.name}: {skill.description}" for skill in skills)
+    return "\n".join(lines) + "\n"
 
 
 def _persistent_memory_instructions(options: Any) -> str:
@@ -286,6 +298,12 @@ def render_effective_prompt(
     """Render and assemble the production system prompt in deterministic order."""
     exposed_entities = enrich_exposed_entities(hass, options, exposed_entities)
     raw_prompt: str = options.get(CONF_PROMPT, DEFAULT_PROMPT)
+    if raw_prompt in LEGACY_DEFAULT_PROMPTS:
+        raw_prompt = DEFAULT_PROMPT
+    embedded_skills_guidance = (
+        re.search(r"\{%-?\s*for\s+\w+\s+in\s+skills\b", raw_prompt) is not None
+        and "load_skill" in raw_prompt
+    )
     rendered_prompt = _render_template(
         hass,
         raw_prompt,
@@ -385,6 +403,16 @@ def render_effective_prompt(
                 "conditional_continuation_instructions",
                 "Conditional-continuation instructions",
                 CONTINUATION_GUIDANCE,
+                "stable",
+            )
+        )
+
+    if skills and not embedded_skills_guidance:
+        sections.append(
+            PromptSection(
+                "skills_instructions",
+                "Skills instructions",
+                _skills_instructions(skills),
                 "stable",
             )
         )

@@ -157,6 +157,7 @@ from .const import (
     GUEST_ACCESS_POLICIES,
     GUEST_POLICY_VERSION,
     GUEST_SHARED_MEMORY_POLICIES,
+    LEGACY_DEFAULT_PROMPTS,
     MAX_MEMORY_AUTO_RETRIEVE_LIMIT,
     MAX_SPEECH_REGEX_PATTERN_LENGTH,
     MAX_SPEECH_REGEX_REPLACEMENT_LENGTH,
@@ -837,6 +838,8 @@ def normalize_agent_config(
     reasoning_effort_explicit = CONF_REASONING_EFFORT in data
     result = agent_config_defaults() if apply_defaults else {}
     result.update(deepcopy(data))
+    if result.get(CONF_PROMPT) in LEGACY_DEFAULT_PROMPTS:
+        result[CONF_PROMPT] = DEFAULT_PROMPT
     _coerce_legacy_numbers(result)
 
     selected_model = str(result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))

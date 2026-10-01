@@ -48,6 +48,7 @@ from .const import (
     CONF_MEMORY_ENABLED,
     CONF_MEMORY_MODE,
     CONF_ORGANIZATION,
+    CONF_PROMPT,
     CONF_SHARED_ARCHIVE_ENABLED,
     CONF_SHARED_MEMORY_MODE,
     CONF_SKIP_AUTHENTICATION,
@@ -71,6 +72,7 @@ from .const import (
     DEFAULT_CURRENT_DATETIME_TEMPLATE,
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_FUNCTION_GROUPS,
+    DEFAULT_PROMPT,
     DEFAULT_SHARED_ARCHIVE_ENABLED,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_SKIP_AUTHENTICATION,
@@ -84,6 +86,7 @@ from .const import (
     DEFAULT_VOICE_UNMAPPED_POLICY,
     DOMAIN,
     LEGACY_CONTEXT_TRUNCATE_STRATEGY,
+    LEGACY_DEFAULT_PROMPTS,
     MEMORY_MODE_AUTOMATIC,
     MEMORY_MODE_OFF,
 )
@@ -282,6 +285,14 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
+def _migrate_saved_default_prompt(data: dict) -> bool:
+    """Advance only exact historical stock prompts; preserve every custom prompt."""
+    if data.get(CONF_PROMPT) not in LEGACY_DEFAULT_PROMPTS:
+        return False
+    data[CONF_PROMPT] = DEFAULT_PROMPT
+    return True
+
+
 def _migrate_saved_native_function_schemas(data: dict) -> bool:
     """Persist exact-stock native schema upgrades in one agent data mapping."""
     migrated_yaml, changed = migrate_legacy_stock_native_function_tools_yaml(
@@ -293,7 +304,7 @@ def _migrate_saved_native_function_schemas(data: dict) -> bool:
 
 
 async def async_migrate_integration(hass: HomeAssistant) -> None:
-    """Migrate integration entry structure and exact historical stock tool schemas."""
+    """Migrate entry structure plus exact historical stock prompts and tool schemas."""
 
     entries = sorted(
         hass.config_entries.async_entries(DOMAIN),
@@ -310,7 +321,9 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             if subentry.subentry_type != "conversation":
                 continue
             data = dict(subentry.data)
-            if _migrate_saved_native_function_schemas(data):
+            changed = _migrate_saved_native_function_schemas(data)
+            changed = _migrate_saved_default_prompt(data) or changed
+            if changed:
                 hass.config_entries.async_update_subentry(entry, subentry, data=data)
 
     if not any(entry.version < CONFIG_ENTRY_VERSION for entry in entries):
@@ -354,6 +367,7 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 continue
             data = dict(subentry.data)
             _migrate_saved_native_function_schemas(data)
+            _migrate_saved_default_prompt(data)
             mode = get_memory_mode(data)
             data[CONF_MEMORY_MODE] = mode
             data[CONF_MEMORY_ENABLED] = mode != MEMORY_MODE_OFF
