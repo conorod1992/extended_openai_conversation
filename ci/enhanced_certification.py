@@ -8,7 +8,12 @@ from pathlib import Path
 import sys
 from urllib.request import Request, urlopen
 
-from enhanced_evidence import SCHEMA, write_json
+try:
+    from .enhanced_evidence import SCHEMA, write_json
+    from .execution_contract import check_execution
+except ImportError:
+    from enhanced_evidence import SCHEMA, write_json
+    from execution_contract import check_execution
 
 
 def actual_jobs() -> dict[str, str]:
@@ -84,6 +89,7 @@ def main(root: Path) -> int:
     ]
     failed = False
     shas = set()
+    execution_errors = []
     for key in sorted(expected):
         campaign, intensity, point = key
         item = found.get(key)
@@ -106,6 +112,8 @@ def main(root: Path) -> int:
             failed = True
         if item:
             shas.add(item["eoai_sha"])
+            if selected != "diagnostics":
+                execution_errors.extend(check_execution(item))
         lines.append(
             f"| {campaign} | {point or intensity} | **{status}** | "
             f"`{item['eoai_sha'][:12]}` | `{item.get('ha_version') or '-'}` | "
@@ -113,6 +121,10 @@ def main(root: Path) -> int:
             if item
             else f"| {campaign} | {point or intensity} | **missing** | - | - | - |"
         )
+    if execution_errors:
+        failed = True
+        lines += ["", "**Mandatory execution evidence rejected:**", ""]
+        lines += [f"- {error}" for error in execution_errors]
     if len(shas) > 1:
         failed = True
         lines += ["", "**Mixed tested SHAs: certification invalid.**"]
@@ -158,6 +170,7 @@ def main(root: Path) -> int:
             "selected": selected,
             "passed": not failed,
             "jobs": list(found.values()),
+            "execution_errors": execution_errors,
         },
     )
     return int(failed)

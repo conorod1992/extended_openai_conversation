@@ -101,6 +101,8 @@ jobs:
       STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: ${{ matrix.campaign }}
       STRESS_ARTIFACT_DIR: stress-artifacts
+      ENHANCED_EXECUTION_EVIDENCE: "1"
+      PYTEST_PLUGINS: ci.pytest_execution
     steps:
       - name: Checkout candidate or nightly develop
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -150,7 +152,7 @@ jobs:
         id: campaign_run
         run: |
           case "$STRESS_CAMPAIGN" in
-            runtime) TEST_PATHS=(tests_real_ha/test_management_backend_acceptance.py::test_configuration_transfer_survives_reload tests_real_ha/test_provider_serialization_invariants.py tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload tests_stress/test_runtime_soak.py tests_stress/test_conversation_id_collision.py tests_stress/test_evidence_manifest.py tests_stress/test_frontend_route_inventory.py tests_stress/test_frontend_interaction_inventory.py tests_stress/test_management_action_inventory.py tests_stress/test_public_service_inventory.py tests_stress/test_backup_inventory.py tests_stress/test_nightly_inventory.py tests_real_ha/test_runtime_recovery_journey.py) ;;
+            runtime) TEST_PATHS=(tests_stress/test_execution_contract.py tests_real_ha/test_management_backend_acceptance.py::test_configuration_transfer_survives_reload tests_real_ha/test_provider_serialization_invariants.py tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload tests_stress/test_runtime_soak.py tests_stress/test_conversation_id_collision.py tests_stress/test_evidence_manifest.py tests_stress/test_frontend_route_inventory.py tests_stress/test_frontend_interaction_inventory.py tests_stress/test_management_action_inventory.py tests_stress/test_public_service_inventory.py tests_stress/test_backup_inventory.py tests_stress/test_nightly_inventory.py tests_real_ha/test_runtime_recovery_journey.py) ;;
             lifecycle) TEST_PATHS=(tests_stress/test_lifecycle_matrix.py tests_stress/test_installed_lifecycle.py tests_stress/test_active_unload_races.py tests_stress/test_active_removal_races.py tests_stress/test_management_replay_safety.py tests_stress/test_complete_user_journeys.py tests_real_ha/test_multi_entry_lifecycle.py tests_real_ha/test_config_flow_lifecycle_contracts.py tests_real_ha/test_partial_platform_setup_retry.py) ;;
             ai-task) TEST_PATHS=(tests_stress/test_ai_task_mixed_campaign.py tests_real_ha/test_ai_task_runtime.py tests_real_ha/test_ai_task_lifecycle.py tests_real_ha/test_ai_task_provider_wire.py) ;;
             voice-intercom) TEST_PATHS=(tests_stress/test_voice_household_campaign.py tests_stress/test_intercom_endurance_campaign.py tests_real_ha/test_assist_voice_identity_precedence.py tests_real_ha/test_intercom_voice_acceptance.py) ;;
@@ -228,6 +230,8 @@ jobs:
       STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: ${{ inputs.campaign == 'diagnostics' && 'browser-diagnostics' || 'browser' }}
       STRESS_ARTIFACT_DIR: stress-artifacts
+      ENHANCED_EXECUTION_EVIDENCE: "1"
+      PYTEST_PLUGINS: ci.pytest_execution
     steps:
       - name: Checkout candidate or nightly develop
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -358,6 +362,8 @@ jobs:
       STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: browser-${{ matrix.engine }}
       STRESS_ARTIFACT_DIR: stress-artifacts
+      ENHANCED_EXECUTION_EVIDENCE: "1"
+      PYTEST_PLUGINS: ci.pytest_execution
     steps:
       - name: Checkout candidate or nightly develop
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -425,10 +431,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
+      PYTHONPATH: ${{ github.workspace }}
       STRESS_CAMPAIGN: lifecycle-matrix
       STRESS_INTENSITY: normal
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
       STRESS_ARTIFACT_DIR: stress-artifacts
+      ENHANCED_EXECUTION_EVIDENCE: "1"
+      PYTEST_PLUGINS: ci.pytest_execution
       HA_POINT: ${{ matrix.ha-version }}
     strategy:
       fail-fast: false
