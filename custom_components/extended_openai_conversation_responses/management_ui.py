@@ -2180,21 +2180,24 @@ async def _async_temporary_memories_command(
             _selected_scope(user_id, is_admin, message.get("target_scope_id", owner))
         )
         if target is None:
-            raise HomeAssistantError("Short-term memories require a Personal or Shared owner")
+            raise HomeAssistantError(
+                "Short-term memories require a Personal or Shared owner"
+            )
         content = message.get("content")
         category = message.get("category", "general")
         expires_at = message.get("expires_at")
         if not all(isinstance(value, str) for value in (content, category, expires_at)):
             raise HomeAssistantError("Memory, category, and expiry are required")
         try:
-            result = await manager_any.async_add_owned(target, content, expires_at, category)
+            result = await manager_any.async_add_owned(
+                target, content, expires_at, category
+            )
         except ValueError as err:
             raise HomeAssistantError(str(err)) from err
         return {
             "status": result["status"],
             "scope_id": target,
-            "memory": result["memory"]
-            | {"scope_id": target, "owner_scope_id": target},
+            "memory": result["memory"] | {"scope_id": target, "owner_scope_id": target},
         }
     if action == "temporary_clear":
         if message.get("confirm") is not True:

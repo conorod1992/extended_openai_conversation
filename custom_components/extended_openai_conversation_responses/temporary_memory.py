@@ -246,7 +246,9 @@ class TemporaryMemory:
                 if content is not None
                 else current.content
             )
-            validate_memory_privacy(new_content, automatic=current.source == "automatic")
+            validate_memory_privacy(
+                new_content, automatic=current.source == "automatic"
+            )
             new_expiry = (
                 _parse_future_expiry(expires_at).isoformat()
                 if expires_at is not None

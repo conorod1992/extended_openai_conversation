@@ -390,11 +390,12 @@
       "tests_stress/test_function_provider_wire.py::test_group_load_tool_execution_result_and_session_isolation"
     ]
   },
-  "data-memory/memories::persistent_memory_crud_metadata": {
+  "data-memory/memories::memory_crud_metadata": {
     "controls": [
       "memory-save",
       "memory-delete",
-      "memory-importance",
+      "memory-type",
+      "memory-expiry",
       "memory-owner",
       "memory-valid-from"
     ],
@@ -402,7 +403,8 @@
     "effect": "Saved Memory reaches the owning user provider context and is retrieved after durable reconstruction.",
     "evidence": [
       "tests_real_ha/test_memory_provider_wire_e2e.py::test_chat_memory_crosses_provider_tool_and_durable_retrieval_boundaries",
-      "tests_stress/test_provider_wire_privacy.py::test_concurrent_users_never_cross_private_provider_wire"
+      "tests_stress/test_provider_wire_privacy.py::test_concurrent_users_never_cross_private_provider_wire",
+      "tests/test_memory_simplification.py::test_temporary_add_manual_privacy_ownership_and_fresh_manager"
     ]
   },
   "data-memory/knowledge::knowledge_crud_search": {

@@ -476,7 +476,10 @@ class PersistentMemory:
                 _set_updated_at_if_substantive(current, changes, timestamp)
                 updated = self._replace_record(current, **changes)
                 await self._async_save_locked()
-                return {"status": "unchanged" if updated == current else "updated", "memory": memory_as_dict(updated)}
+                return {
+                    "status": "unchanged" if updated == current else "updated",
+                    "memory": memory_as_dict(updated),
+                }
 
             if not keyed_identity:
                 duplicate = self._find_duplicate(user_id, content)
