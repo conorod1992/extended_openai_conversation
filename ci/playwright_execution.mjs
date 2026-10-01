@@ -16,7 +16,8 @@ export default class ExecutionReporter {
       collected: true,
       executed: test.results.some(item => item.status !== "skipped"),
       outcome: test.results.length === 0 ? "incomplete"
-        : test.expectedStatus === "failed" ? (test.results.at(-1).status === "passed" ? "xpassed" : "xfailed")
+        : test.expectedStatus === "failed" && test.results.at(-1).status === "passed" ? "xpassed"
+        : test.expectedStatus === "failed" && test.results.at(-1).status === "failed" ? "xfailed"
         : test.results.some(item => item.status === "failed" || item.status === "timedOut" || item.status === "interrupted") ? "failed"
         : test.results.at(-1).status,
     }));

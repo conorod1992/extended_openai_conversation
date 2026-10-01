@@ -16,6 +16,8 @@ test("execution reporter preserves skipped, failed, xfail and missing browser ex
       ["healthy", "passed", "passed", true],
       ["no-browser-prerequisite", "skipped", "skipped", false],
       ["xfail", "failed", "xfailed", true],
+      ["xfail-skipped", "skipped", "skipped", false],
+      ["xfail-timeout", "timedOut", "failed", true],
       ["xpass", "passed", "xpassed", true],
       ["broken", "failed", "failed", true],
       ["lost", null, "incomplete", false],
@@ -24,7 +26,7 @@ test("execution reporter preserves skipped, failed, xfail and missing browser ex
     reporter.onBegin({rootDir: process.cwd()}, {allTests: () => scenarios.map(([title, status]) => ({
       location: {file: path.join(process.cwd(), "tests_browser", "probe.spec.mjs")},
       titlePath: () => ["", "chromium", "probe.spec.mjs", title],
-      expectedStatus: title === "xfail" || title === "xpass" ? "failed" : "passed",
+      expectedStatus: title.startsWith("xfail") || title === "xpass" ? "failed" : "passed",
       results: status ? [{status, errors: [{message: "PRIVATE-MEMORY-CANARY-8274"}]}] : [],
     }))});
     reporter.onEnd({status: "failed"});
