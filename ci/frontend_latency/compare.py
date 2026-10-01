@@ -36,7 +36,9 @@ def browser_medians(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
         bucket["ready"].append(float(sample["wall_ready_ms"]))
         if float(sample.get("lcp_ms", 0)) > 0:
             bucket["lcp"].append(float(sample["lcp_ms"]))
-        bucket["assets"].append(float(sample.get("integration_assets_response_end_ms", 0)))
+        bucket["assets"].append(
+            float(sample.get("integration_assets_response_end_ms", 0))
+        )
 
     result: dict[str, dict[str, Any]] = {}
     for route, values in by_route.items():
@@ -66,6 +68,30 @@ def row(label: str, baseline: float, current: float) -> str:
     )
 
 
+def regression_alerts(comparison: dict[str, Any], policy: dict[str, Any]) -> list[str]:
+    """Require both generous absolute and relative changes; never gate timing yet."""
+    alerts = []
+    for group, threshold in (
+        ("browser", policy["ready_regression"]),
+        ("backend", policy["backend_regression"]),
+    ):
+        for name, item in comparison[group].items():
+            if group == "browser":
+                before = (item.get("baseline") or {}).get("ready_ms")
+                after = (item.get("current") or {}).get("ready_ms")
+            else:
+                before, after = item.get("baseline_ms"), item.get("current_ms")
+            if before is None or after is None:
+                continue
+            delta = after - before
+            if (
+                delta > threshold["absolute_ms"]
+                and delta > before * threshold["relative"]
+            ):
+                alerts.append(f"{group}/{name}: +{delta:.0f} ms ({pct(delta, before)})")
+    return alerts
+
+
 def main() -> None:
     baseline_path, current_path, output_dir = map(Path, sys.argv[1:4])
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
@@ -82,10 +108,23 @@ def main() -> None:
         "| Operation | baseline ms | current ms | delta ms | delta % |",
         "| --- | ---: | ---: | ---: | ---: |",
     ]
-    comparison: dict[str, Any] = {"backend": {}, "browser": {}}
+    policy = json.loads(
+        Path(__file__).with_name("overnight_policy.json").read_text(encoding="utf-8")
+    )
+    comparison: dict[str, Any] = {
+        "backend": {},
+        "browser": {},
+        "baseline_sha": baseline.get("eoai_sha"),
+        "candidate_sha": current.get("eoai_sha"),
+        "environment": current.get("environment"),
+        "environment_sha256": current.get("environment_sha256"),
+        "performance_mode": policy["performance_mode"],
+    }
 
     backend_names = list(baseline["backend"])
-    backend_names.extend(name for name in current["backend"] if name not in baseline["backend"])
+    backend_names.extend(
+        name for name in current["backend"] if name not in baseline["backend"]
+    )
     for name in backend_names:
         before_entry = baseline["backend"].get(name, {})
         after_entry = current["backend"].get(name, {})
@@ -149,6 +188,20 @@ def main() -> None:
             "current_supported": after_entry.get("supported", after is not None),
         }
 
+    alerts = regression_alerts(comparison, policy)
+    comparison["regression_alerts"] = alerts
+    lines += [
+        "",
+        "## Reporting-only regression review",
+        "",
+        f"Candidate: `{current.get('eoai_sha')}` · reviewed baseline: `{baseline.get('eoai_sha')}`",
+        "",
+        "Performance changes are reported, not gated, while overnight runner variance is measured.",
+        "",
+    ]
+    lines += [f"- {alert}" for alert in alerts] or [
+        "No changes exceeded both the absolute and percentage reporting thresholds."
+    ]
     lines += [
         "",
         "## Notes",

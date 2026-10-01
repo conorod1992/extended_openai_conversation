@@ -329,3 +329,239 @@ def test_stable_compatibility_point_cannot_follow_fixture_prerelease(tested, acc
     assert not check_frontend_point(item, "20260826.7")
     assert check_frontend_point(item, "20260930.1")
     assert check_frontend_point(item, None)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing-route",
+        "missing-backend",
+        "missing-sample",
+        "wrong-sha",
+        "wrong-environment",
+        "nan",
+    ],
+)
+def test_overnight_latency_evidence_rejects_incomplete_or_wrong_candidate(failure):
+    from copy import deepcopy
+
+    from ci.enhanced_evidence import environment_fingerprint
+    from ci.frontend_latency.review import backend_operations, check_latency, routes
+
+    sha = "a" * 40
+    environment = {"packages": {"homeassistant": "fixture"}}
+    item = {
+        "eoai_sha": sha,
+        "harness_sha": sha,
+        "environment": environment,
+        "environment_sha256": environment_fingerprint(environment),
+        "runs": 3,
+        "backend": {
+            name: {"samples_ms": [10, 10, 10], "median_ms": 10}
+            for name in backend_operations()
+        },
+        "browser": {
+            "samples": [
+                {
+                    "route": route,
+                    "iteration": iteration,
+                    "supported": True,
+                    "wall_ready_ms": 500,
+                    "failures": [],
+                }
+                for route in routes()
+                for iteration in range(1, 4)
+            ]
+        },
+    }
+    assert not check_latency(item, sha, sha)
+    altered = deepcopy(item)
+    if failure == "missing-route":
+        altered["browser"]["samples"] = [
+            sample
+            for sample in altered["browser"]["samples"]
+            if sample["route"] != routes()[0]
+        ]
+    elif failure == "missing-backend":
+        altered["backend"].pop(next(iter(altered["backend"])))
+    elif failure == "missing-sample":
+        altered["browser"]["samples"].pop()
+    elif failure == "wrong-sha":
+        altered["eoai_sha"] = "b" * 40
+    elif failure == "wrong-environment":
+        altered["environment"]["packages"]["homeassistant"] = "changed"
+    else:
+        altered["browser"]["samples"][0]["wall_ready_ms"] = float("nan")
+    assert check_latency(altered, sha, sha)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing-scan",
+        "duplicate-scan",
+        "empty-scanner",
+        "wrong-theme",
+        "serious",
+        "critical",
+        "expired-allowance",
+    ],
+)
+def test_overnight_accessibility_semantics_fail_closed(failure):
+    from copy import deepcopy
+
+    from ci.enhanced_evidence import environment_fingerprint
+    from ci.frontend_latency.review import check_accessibility, expected_scans
+
+    sha = "a" * 40
+    environment = {"packages": {"homeassistant": "fixture"}}
+    item = {
+        "eoai_sha": sha,
+        "environment": environment,
+        "environment_sha256": environment_fingerprint(environment),
+        "scans": [
+            {
+                "route": route,
+                "state": state,
+                "theme": theme,
+                "theme_colour": {
+                    "background": "#111111" if theme == "dark" else "#fafafa",
+                    "brightness": 17 if theme == "dark" else 250,
+                },
+                "width": width,
+                "axe_version": "4.11.0",
+                "passes": 15,
+                "violations": [],
+            }
+            for route, state, theme, width in sorted(expected_scans())
+        ],
+    }
+    policy = {"accessibility_allowances": []}
+    assert not check_accessibility(item, sha, policy)
+    altered = deepcopy(item)
+    if failure == "missing-scan":
+        altered["scans"].pop()
+    elif failure == "duplicate-scan":
+        altered["scans"].append(deepcopy(altered["scans"][0]))
+    elif failure == "empty-scanner":
+        altered["scans"][0]["passes"] = 0
+    elif failure == "wrong-theme":
+        altered["scans"][0]["theme_colour"]["brightness"] = (
+            250 if altered["scans"][0]["theme"] == "dark" else 17
+        )
+    elif failure in {"serious", "critical"}:
+        altered["scans"][0]["violations"] = [
+            {"id": "label", "impact": failure, "nodes": [{"target": ["#new-control"]}]}
+        ]
+    else:
+        policy["accessibility_allowances"] = [
+            {
+                "case": ["overview", "route", "light", 1280],
+                "rule": "label",
+                "target": ["#new-control"],
+                "impact": "serious",
+                "reason": "reviewed fixture",
+                "reviewed_by": "repository review",
+                "review_until": "2020-01-01",
+            }
+        ]
+    assert check_accessibility(altered, sha, policy)
+
+
+def test_overnight_performance_alerts_require_absolute_and_relative_growth():
+    from ci.frontend_latency.compare import regression_alerts
+
+    policy = {
+        "ready_regression": {"absolute_ms": 1000, "relative": 0.5},
+        "backend_regression": {"absolute_ms": 100, "relative": 1.0},
+    }
+    healthy = {
+        "browser": {
+            "route": {"baseline": {"ready_ms": 10000}, "current": {"ready_ms": 11500}}
+        },
+        "backend": {"read": {"baseline_ms": 1, "current_ms": 2}},
+    }
+    assert not regression_alerts(healthy, policy)
+    healthy["browser"]["route"]["current"]["ready_ms"] = 30000
+    assert len(regression_alerts(healthy, policy)) == 1
+
+
+def test_frontend_quality_workflow_has_no_pr_or_push_execution():
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/frontend-latency-diagnostics.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    events = workflow.get("on", workflow.get(True))
+    assert set(events) == {"schedule", "workflow_dispatch"}
+    steps = workflow["jobs"]["diagnose"]["steps"]
+    checkout = next(
+        step for step in steps if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert checkout["with"]["ref"] == "${{ github.sha }}"
+    assert any(
+        step.get("if") == "always()"
+        and "frontend_latency.review" in step.get("run", "")
+        for step in steps
+    )
+
+
+def test_reviewed_accessibility_allowance_cannot_hide_node_growth():
+    from ci.enhanced_evidence import environment_fingerprint
+    from ci.frontend_latency.review import check_accessibility, expected_scans
+
+    environment = {"packages": {"homeassistant": "fixture"}}
+    sha = "a" * 40
+    scans = [
+        {
+            "route": r,
+            "state": s,
+            "theme": t,
+            "theme_colour": {
+                "background": "#111111" if t == "dark" else "#fafafa",
+                "brightness": 17 if t == "dark" else 250,
+            },
+            "width": w,
+            "axe_version": "4.11.0",
+            "passes": 10,
+            "violations": [],
+        }
+        for r, s, t, w in sorted(expected_scans())
+    ]
+    first = scans[0]
+    node = {"target": ["#existing"]}
+    first["violations"] = [
+        {"id": "color-contrast", "impact": "serious", "nodes": [node]}
+    ]
+    item = {
+        "eoai_sha": sha,
+        "environment": environment,
+        "environment_sha256": environment_fingerprint(environment),
+        "scans": scans,
+    }
+    policy = {
+        "accessibility_allowances": [
+            {
+                "case": [
+                    first["route"],
+                    first["state"],
+                    first["theme"],
+                    first["width"],
+                ],
+                "rule": "color-contrast",
+                "impact": "serious",
+                "target": node["target"],
+                "max_nodes": 1,
+                "reason": "Existing measured contrast",
+                "reviewed_by": "Repository audit",
+                "review_until": "2099-01-01",
+            }
+        ]
+    }
+    assert not check_accessibility(item, sha, policy)
+    first["violations"][0]["nodes"].append(node)
+    assert any(
+        "count grew" in error for error in check_accessibility(item, sha, policy)
+    )
+    first["violations"] = []
+    assert any("obsolete" in error for error in check_accessibility(item, sha, policy))

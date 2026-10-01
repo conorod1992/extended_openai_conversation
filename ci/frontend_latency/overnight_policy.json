@@ -1,0 +1,16 @@
+{
+  "schema": "eoai-overnight-frontend-policy/v1",
+  "baseline_sha": "832541dcc8fc44a999517a9cf5c582b3654b9aa0",
+  "baseline_review": "Fixed post-compatibility develop baseline; update only after reviewing measurements and dependency changes.",
+  "performance_mode": "reporting-only",
+  "ready_regression": {
+    "absolute_ms": 1000,
+    "relative": 0.5
+  },
+  "backend_regression": {
+    "absolute_ms": 100,
+    "relative": 1.0
+  },
+  "accessibility_allowances": [],
+  "accessibility_baseline": "accessibility_baseline.json"
+}

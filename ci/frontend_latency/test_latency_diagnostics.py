@@ -1,8 +1,7 @@
-"""Manual genuine-HA frontend/backend latency diagnostics."""
+"""Scheduled/manual genuine-HA frontend/backend latency diagnostics."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from pathlib import Path
@@ -11,11 +10,16 @@ import time
 from typing import Any
 
 import pytest
+from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
+
+from ci.enhanced_evidence import (
+    checkout_sha,
+    environment_fingerprint,
+    environment_identity,
+)
 from homeassistant.components import onboarding
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
-
 from tests_real_ha.test_browser_backend_acceptance import _run_playwright
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
@@ -26,7 +30,7 @@ from tests_real_ha.test_management_backend_acceptance import (
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_EOAI_LATENCY_DIAGNOSTICS") != "1",
-    reason="manual latency diagnostics only",
+    reason="overnight/manual latency diagnostics only",
 )
 
 
@@ -94,6 +98,7 @@ async def test_manual_frontend_latency_diagnostics(
         optional_on_baseline: bool = False,
         **payload: Any,
     ) -> dict[str, Any]:
+        print(f"Latency {label}: backend {name}", flush=True)
         samples: list[float] = []
         last_result: dict[str, Any] = {}
         for _ in range(runs):
@@ -203,6 +208,7 @@ async def test_manual_frontend_latency_diagnostics(
 
     repo_root = Path(__file__).resolve().parents[2]
     browser_output = output.with_name(f"{output.stem}-browser.json")
+    print(f"Latency {label}: genuine cold-route browser samples", flush=True)
     await _run_playwright(
         repo_root=repo_root,
         spec="ci/frontend_latency/latency.spec.mjs",
@@ -219,9 +225,17 @@ async def test_manual_frontend_latency_diagnostics(
 
     browser = json.loads(browser_output.read_text(encoding="utf-8"))
     browser_output.unlink(missing_ok=True)
+    environment = environment_identity()
+    environment["browser"] = browser["environment"]
     output.write_text(
         json.dumps(
             {
+                "eoai_sha": checkout_sha(),
+                "harness_sha": os.environ.get(
+                    "EOAI_LATENCY_HARNESS_SHA", checkout_sha()
+                ),
+                "environment": environment,
+                "environment_sha256": environment_fingerprint(environment),
                 "label": label,
                 "runs": runs,
                 "backend": backend,
