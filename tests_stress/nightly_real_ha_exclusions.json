@@ -48,7 +48,6 @@
     "tests_real_ha/test_persisted_startup_migration.py",
     "tests_real_ha/test_persistence_state_round_trips.py",
     "tests_real_ha/test_provider_protocol_outcomes.py",
-    "tests_real_ha/test_provider_serialization_invariants.py",
     "tests_real_ha/test_quiet_hours_acceptance.py",
     "tests_real_ha/test_readiness_archive_continuity.py",
     "tests_real_ha/test_release_upgrade_custom_function_tool.py",
@@ -71,9 +70,11 @@
   "partial_selected": {
     "tests_real_ha/test_management_backend_acceptance.py": {
       "nodes": [
-        "test_consecutive_live_management_writes_do_not_reload_or_block_overview"
+        "test_consecutive_live_management_writes_do_not_reload_or_block_overview",
+        "test_undercovered_management_mutations_survive_reload",
+        "test_configuration_transfer_survives_reload"
       ],
-      "remaining_evidence": "The remaining management acceptance cases run in the ordinary genuine-HA acceptance workflow; enhanced nightly repeats the no-reload management contract."
+      "remaining_evidence": "The remaining management acceptance cases run in ordinary genuine-HA acceptance; enhanced nightly repeats live-write and committed-effect durability contracts."
     },
     "tests_real_ha/test_browser_backend_acceptance.py": {
       "nodes": [

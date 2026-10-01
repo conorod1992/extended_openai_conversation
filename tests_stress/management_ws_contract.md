@@ -15,3 +15,22 @@ When adding a browser management mutation, update the manifest and exercise the 
 This is a reviewed list of high-value mutation payloads, not a claim that every browser read or preview action is exercised. The fixture-backed endurance and stale-response suites continue to cover long-lived UI state; their mocked backend calls are not counted as genuine-HA WebSocket evidence.
 
 `management_ws_field_contract.json` and `tests/test_management_ws_field_parity.py` separately guard the complete registered WebSocket schema. The test compares every accepted field, required/optional status, nullable and container form, and enumerated value against a reviewed snapshot, then validates representative boundary values for every management and backup-transfer action. This covers the Home Assistant schema boundary; feature tests remain responsible for handler behavior and user-visible effects.
+
+Configuration outcome evidence lives in `evidence_manifest.json` under
+`configuration_semantics`, keyed to the existing frontend interaction inventory.
+Each runtime form/toggle records its control markers, intended effect, and named
+behavioural tests. Adding an interaction or changing its markers requires a new
+semantic review. Presentation-only assistant/rule-group labels and read-only history filters are
+explicit exceptions; a persistence test alone is not appropriate evidence for a
+runtime policy. The guard resolves named tests with assertions, while review must
+check that those assertions establish the recorded effect (including enabled and
+disabled availability where relevant).
+
+Persistent management actions also record `durability_evidence` in
+`management_action_inventory.json`: the committed outcome, named test, and one
+appropriate boundary. Authoritative saved-data readback, fresh pages/managers,
+config-entry reload and process restart are alternatives, not a required chain.
+Denied writes and successful response envelopes alone do not establish durability.
+Existing tests are reused; the undercovered mutation journey explicitly evicts
+cached archive, Guest Mode and Temporary Memory managers before reconstruction.
+`conversations/settings` is read-only and requires no artificial mutation journey.

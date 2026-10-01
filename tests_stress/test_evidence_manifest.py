@@ -78,3 +78,52 @@ def test_supported_features_have_reviewed_evidence_layer_entries() -> None:
                     "tests_browser",
                 }
                 assert (ROOT / path).is_file(), (feature, layer, reference)
+
+
+def _behavior_test(reference: str) -> None:
+    """Resolve named assertions, not a file that merely happens to exist."""
+    import ast
+
+    path, separator, node = reference.partition("::")
+    assert separator and path.startswith(("tests/", "tests_real_ha/", "tests_stress/")), reference
+    assert ".." not in Path(path).parts, reference
+    assert "inventory" not in Path(path).stem and "manifest" not in Path(path).stem, reference
+    tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+    matches = [item for item in ast.walk(tree) if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == node]
+    assert len(matches) == 1, reference
+    assert any(isinstance(item, ast.Assert) for item in ast.walk(matches[0])), reference
+
+
+def test_configuration_controls_require_semantic_outcomes() -> None:
+    """New form controls cannot inherit persistence-only coverage silently."""
+    interactions = json.loads((ROOT / "tests_stress/frontend_interaction_inventory.json").read_text())
+    actions = json.loads((ROOT / "tests_stress/management_action_inventory.json").read_text())["sections"]
+    expected = {
+        f"{route}::{item['id']}": item
+        for route, data in interactions["routes"].items()
+        for item in data["interactions"]
+        if item["kind"] in {"form", "dynamic_form", "form_action", "toggle", "collection", "runtime_journey"} and item["backend_actions"]
+    }
+    classified = json.loads(MANIFEST.read_text())["configuration_semantics"]
+    assert set(classified) == set(expected), "Review runtime effects for every new configuration/control interaction"
+    for key, contract in classified.items():
+        interaction = expected[key]
+        assert contract["controls"] == interaction["source_markers"], f"{key}: controls changed; review semantic evidence"
+        kind = contract["classification"]
+        if kind == "presentation_only":
+            assert key in {"assistant/basics::agent_title_save_revert", "capabilities/request-rules::group_management"} and contract["reason"].strip()
+        elif kind == "read_only_filter":
+            assert contract["reason"].strip()
+            assert all(actions[section]["semantic_classes"][action] == "read_only" for section, action in (value.split("/") for value in interaction["backend_actions"]))
+        else:
+            assert kind == "runtime_effect" and contract["effect"].strip(), key
+            assert contract["evidence"], key
+            for reference in contract["evidence"]:
+                _behavior_test(reference)
+
+
+def test_governance_cannot_cite_itself_as_semantic_evidence() -> None:
+    import pytest
+
+    with pytest.raises(AssertionError):
+        _behavior_test("tests_stress/test_evidence_manifest.py::test_supported_features_have_reviewed_evidence_layer_entries")

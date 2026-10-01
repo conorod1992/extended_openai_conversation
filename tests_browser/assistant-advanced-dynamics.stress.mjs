@@ -1,9 +1,11 @@
+import {waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 test("nightly model capability transitions and dedicated reset stay coherent", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));
+  await waitForManagementRouteReady(page, {name:"basics", path:"assistant/basics"}, 30000);
   const panel = page.locator("extended-openai-management-panel");
 
   await panel.evaluate((host) => {

@@ -24,6 +24,13 @@
         "create": "tests_real_ha/test_management_authorization_matrix.py::test_reviewed_admin_sections_reject_non_admin_at_real_websocket",
         "inspect": "tests/test_management_ui.py::test_backup_preview_and_diagnostics_success_routes",
         "restore": "tests_real_ha/test_backup_restore_live_runtime_refresh.py::test_successful_loaded_restore_refreshes_live_subsystem_objects_and_turns"
+      },
+      "durability_evidence": {
+        "restore": {
+          "boundary": "authoritative_readback",
+          "evidence": "tests_real_ha/test_backup_restore_live_runtime_refresh.py::test_successful_loaded_restore_refreshes_live_subsystem_objects_and_turns",
+          "outcome": "Restored subsystem objects and subsequent conversation turns use restored data."
+        }
       }
     },
     "configuration": {
@@ -90,6 +97,28 @@
         "speech_preview": "tests_real_ha/test_management_command_contracts.py::test_configuration_speech_preview_returns_exact_success_payload",
         "update": "tests_real_ha/test_management_command_contracts.py::test_mixed_validity_function_tools_update_is_atomic_and_recovers",
         "validate": "tests/test_management_ui.py::test_configuration_transfer_and_validation_routes"
+      },
+      "durability_evidence": {
+        "duplicate": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_configuration_transfer_survives_reload",
+          "outcome": "New assistant retains copied configuration while the source stays unchanged."
+        },
+        "import": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_configuration_transfer_survives_reload",
+          "outcome": "Imported title and token budget survive fresh entry setup."
+        },
+        "save": {
+          "boundary": "authoritative_readback",
+          "evidence": "tests_real_ha/test_native_yaml_management_acceptance.py::test_native_yaml_validate_save_readback_atomic_rejection_and_recovery",
+          "outcome": "An independent configuration GET returns saved native YAML; a rejected save leaves it intact."
+        },
+        "update": {
+          "boundary": "authoritative_readback",
+          "evidence": "tests_real_ha/test_management_command_contracts.py::test_mixed_validity_function_tools_update_is_atomic_and_recovers",
+          "outcome": "After atomic mixed-validity rejection, a valid retry appears in canonical Function Tool readback."
+        }
       }
     },
     "conversations": {
@@ -116,7 +145,7 @@
         "get": "read_only",
         "list": "read_only",
         "search": "read_only",
-        "settings": "durable_mutation"
+        "settings": "read_only"
       },
       "authorization_classes": {
         "active": "admin_only",
@@ -139,6 +168,23 @@
         "list": "tests_real_ha/test_user_ownership_privacy.py::test_management_websocket_lists_only_the_authenticated_users_personal_data",
         "search": "tests/test_management_ui.py::test_conversation_memory_and_knowledge_dispatch",
         "settings": "tests/test_management_ui.py::test_conversation_memory_and_knowledge_dispatch"
+      },
+      "durability_evidence": {
+        "clear": {
+          "boundary": "fresh_manager",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+          "outcome": "Committed conversations/clear effect is reconstructed from storage after config-entry reload with cache eviction."
+        },
+        "delete": {
+          "boundary": "fresh_manager",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+          "outcome": "Committed conversations/delete effect is reconstructed from storage after config-entry reload with cache eviction."
+        },
+        "delete_range": {
+          "boundary": "fresh_manager",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+          "outcome": "Committed conversations/delete_range effect is reconstructed from storage after config-entry reload with cache eviction."
+        }
       }
     },
     "diagnostics": {
@@ -156,7 +202,8 @@
       },
       "behavioral_evidence": {
         "test_agent": "tests/test_management_ui.py::test_backup_preview_and_diagnostics_success_routes"
-      }
+      },
+      "durability_evidence": {}
     },
     "function_repair": {
       "actions": [
@@ -197,6 +244,28 @@
         "get": "tests/test_management_function_repair.py::test_function_repair_get_returns_only_invalid_tool_metadata",
         "save": "tests/test_management_function_repair.py::test_function_repair_save_replaces_invalid_collection",
         "save_one": "tests/test_management_function_repair.py::test_function_repair_save_one_replaces_only_selected_invalid_tool"
+      },
+      "durability_evidence": {
+        "configuration_save": {
+          "boundary": "authoritative_readback",
+          "evidence": "tests/test_function_repair_configuration_contract.py::test_repair_configuration_validate_and_save_preserve_quarantined_tools",
+          "outcome": "Canonical subentry data retains repaired configuration alongside quarantined tools."
+        },
+        "delete_one": {
+          "boundary": "authoritative_readback",
+          "evidence": "tests/test_management_loading_performance.py::test_delete_quarantined_tools_immediately_restores_normal_get",
+          "outcome": "Fresh normal configuration GET no longer contains quarantined tools."
+        },
+        "save": {
+          "boundary": "authoritative_readback",
+          "evidence": "tests/test_management_function_repair.py::test_function_repair_save_replaces_invalid_collection",
+          "outcome": "Canonical stored collection contains the valid replacement and has no quarantine issue."
+        },
+        "save_one": {
+          "boundary": "authoritative_readback",
+          "evidence": "tests/test_management_function_repair.py::test_function_repair_save_one_replaces_only_selected_invalid_tool",
+          "outcome": "Canonical stored tools retain the valid sibling and replace only the selected quarantined tool."
+        }
       }
     },
     "guest_mode": {
@@ -231,6 +300,23 @@
         "get": "tests/test_management_loading_performance.py::test_guest_mode_primary_get_skips_heavy_catalogues",
         "save_policy": "tests/test_management_ui.py::test_guest_policy_save_rejects_stale_revision_and_returns_new_baseline",
         "update": "tests/test_management_ui.py::test_guest_backup_and_service_dispatch_edges"
+      },
+      "durability_evidence": {
+        "disable": {
+          "boundary": "fresh_manager",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+          "outcome": "Committed guest_mode/disable effect is reconstructed from storage after config-entry reload with cache eviction."
+        },
+        "save_policy": {
+          "boundary": "fresh_page",
+          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser saves Guest and Quiet Hours policy payloads through HA",
+          "outcome": "Saved Guest policy is re-read by a fresh page."
+        },
+        "update": {
+          "boundary": "fresh_manager",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+          "outcome": "Committed guest_mode/update effect is reconstructed from storage after config-entry reload with cache eviction."
+        }
       }
     },
     "knowledge": {
@@ -269,6 +355,28 @@
         "list": "tests_real_ha/test_management_backend_acceptance.py::test_only_unified_memory_and_knowledge_commands_are_registered",
         "set_enabled": "tests/test_knowledge_availability.py::test_management_set_enabled_updates_only_knowledge_config",
         "update": "tests_real_ha/test_knowledge_management_lifecycle.py::test_management_mutations_update_loaded_agent_knowledge_immediately"
+      },
+      "durability_evidence": {
+        "create": {
+          "boundary": "fresh_page",
+          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser creates, edits, and deletes Knowledge through genuine HA",
+          "outcome": "Created source is visible on a fresh page."
+        },
+        "delete": {
+          "boundary": "fresh_page",
+          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser creates, edits, and deletes Knowledge through genuine HA",
+          "outcome": "Deleted source stays absent on a fresh page."
+        },
+        "set_enabled": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_browser_golden_acceptance.py::test_native_shell_golden_runtime_journey",
+          "outcome": "Disabling availability survives reload and removes Knowledge from runtime tool requests."
+        },
+        "update": {
+          "boundary": "fresh_page",
+          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser creates, edits, and deletes Knowledge through genuine HA",
+          "outcome": "Edited source content survives a fresh page."
+        }
       }
     },
     "memories": {
@@ -327,6 +435,48 @@
         "temporary_list": "tests_real_ha/test_user_ownership_privacy.py::test_management_websocket_rejects_explicit_cross_user_scope",
         "temporary_update": "tests_real_ha/test_user_ownership_privacy.py::test_known_cross_user_record_ids_cannot_be_read_or_modified",
         "update": "tests_real_ha/test_management_backend_acceptance.py::test_only_unified_memory_and_knowledge_commands_are_registered"
+      },
+      "durability_evidence": {
+        "add": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_memories_round_trip_through_management_websocket",
+          "outcome": "Personal memory content and category are rehydrated from HA storage after reload."
+        },
+        "clear": {
+          "boundary": "fresh_manager",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+          "outcome": "Committed memories/clear effect is reconstructed from storage after config-entry reload with cache eviction."
+        },
+        "delete": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_acceptance_seams.py::test_memory_edit_and_delete_survive_real_reload",
+          "outcome": "Deleted personal memory stays absent after manager reconstruction."
+        },
+        "reassign_legacy": {
+          "boundary": "fresh_manager",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+          "outcome": "Committed memories/reassign_legacy effect is reconstructed from storage after config-entry reload with cache eviction."
+        },
+        "temporary_clear": {
+          "boundary": "fresh_manager",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+          "outcome": "Committed memories/temporary_clear effect is reconstructed from storage after config-entry reload with cache eviction."
+        },
+        "temporary_delete": {
+          "boundary": "fresh_manager",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+          "outcome": "Committed memories/temporary_delete effect is reconstructed from storage after config-entry reload with cache eviction."
+        },
+        "temporary_update": {
+          "boundary": "fresh_manager",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+          "outcome": "Committed memories/temporary_update effect is reconstructed from storage after config-entry reload with cache eviction."
+        },
+        "update": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_acceptance_seams.py::test_memory_edit_and_delete_survive_real_reload",
+          "outcome": "Edited content persists and a later deletion stays deleted."
+        }
       }
     },
     "overview": {
@@ -352,7 +502,8 @@
         "detail": "tests/test_management_loading_performance.py::test_overview_detail_loads_only_requested_manager",
         "primary": "tests/test_management_loading_performance.py::test_overview_primary_does_not_initialize_storage_managers",
         "summary": "tests/test_management_permissions.py::test_overview_bounds_and_sanitizes_usage_once"
-      }
+      },
+      "durability_evidence": {}
     },
     "quiet_hours": {
       "actions": [
@@ -377,6 +528,13 @@
         "discover": "tests/test_management_permissions.py::test_quiet_hours_read_actions_return_manager_snapshot",
         "get": "tests/test_management_permissions.py::test_quiet_hours_global_command_needs_no_agent_selection",
         "update": "tests/test_management_permissions.py::test_quiet_hours_update_validates_config_and_translates_value_error"
+      },
+      "durability_evidence": {
+        "update": {
+          "boundary": "fresh_page",
+          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser saves Guest and Quiet Hours policy payloads through HA",
+          "outcome": "Wake policy persists into a fresh page."
+        }
       }
     },
     "request_rules": {
@@ -451,6 +609,53 @@
         "test_match": "tests/test_request_rule_match_preview.py::test_match_preview_requires_admin_and_text",
         "update": "tests_real_ha/test_public_version_journeys.py::test_management_save_durable_rule_and_conversation_after_reload",
         "wording_groups": "tests_browser/real-ha-backend.spec.mjs::real browser creates, groups, edits, reloads, and deletes a Request Rule through HA"
+      },
+      "durability_evidence": {
+        "create": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_management_backend_acceptance.py::test_request_rules_round_trip_through_management_websocket",
+          "outcome": "Created phrase, matching policy and action are read after fresh entry setup."
+        },
+        "delete": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_acceptance_seams.py::test_request_rule_edit_reorder_delete_survive_real_reload",
+          "outcome": "Deleted rule stays absent from the fresh rule manager."
+        },
+        "duplicate": {
+          "boundary": "fresh_page",
+          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser creates, groups, edits, reloads, and deletes a Request Rule through HA",
+          "outcome": "A duplicated rule appears on the fresh page in its saved position."
+        },
+        "groups": {
+          "boundary": "fresh_page",
+          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser creates, groups, edits, reloads, and deletes a Request Rule through HA",
+          "outcome": "Edited rule-group names and assignments appear on a fresh page."
+        },
+        "move": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_acceptance_seams.py::test_request_rule_edit_reorder_delete_survive_real_reload",
+          "outcome": "Reordered rule IDs keep their precedence after manager reconstruction."
+        },
+        "rule_pack_import": {
+          "boundary": "fresh_page",
+          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser exports, reviews, and imports a Request Rule Pack through HA",
+          "outcome": "Reviewed imported rules remain disabled and retain content on a fresh page."
+        },
+        "settings": {
+          "boundary": "fresh_page",
+          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser creates, groups, edits, reloads, and deletes a Request Rule through HA",
+          "outcome": "Matching defaults retain the chosen fuzzy policy after a fresh page read."
+        },
+        "update": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_public_version_journeys.py::test_management_save_durable_rule_and_conversation_after_reload",
+          "outcome": "Updated routing model persists after reload and drives the next conversation."
+        },
+        "wording_groups": {
+          "boundary": "fresh_page",
+          "evidence": "tests_browser/real-ha-backend.spec.mjs::real browser creates, groups, edits, reloads, and deletes a Request Rule through HA",
+          "outcome": "Saved wording aliases reappear on a fresh page."
+        }
       }
     },
     "scopes": {
@@ -468,7 +673,8 @@
       },
       "behavioral_evidence": {
         "catalog": "tests_real_ha/test_user_ownership_privacy.py::test_management_websocket_rejects_explicit_cross_user_scope"
-      }
+      },
+      "durability_evidence": {}
     },
     "service_catalog": {
       "actions": [
@@ -485,7 +691,8 @@
       },
       "behavioral_evidence": {
         "get": "tests/test_management_ui.py::test_guest_backup_and_service_dispatch_edges"
-      }
+      },
+      "durability_evidence": {}
     },
     "settings": {
       "actions": [
@@ -502,6 +709,13 @@
       },
       "behavioral_evidence": {
         "update": "tests_real_ha/test_management_command_contracts.py::test_settings_update_returns_snapshot_and_mutates_canonical_subentry"
+      },
+      "durability_evidence": {
+        "update": {
+          "boundary": "authoritative_readback",
+          "evidence": "tests_real_ha/test_management_command_contracts.py::test_settings_update_returns_snapshot_and_mutates_canonical_subentry",
+          "outcome": "Canonical HA subentry data contains the chosen archive retention days."
+        }
       }
     },
     "tools": {
@@ -568,6 +782,38 @@
         "validate": "tests/test_management_ui.py::test_function_tool_validation_and_save_boundaries",
         "validate_current": "tests/test_management_ui.py::test_function_tool_validation_and_save_boundaries",
         "validate_yaml": "tests_real_ha/test_native_yaml_management_acceptance.py::test_native_yaml_validate_save_readback_atomic_rejection_and_recovery"
+      },
+      "durability_evidence": {
+        "delete": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_acceptance_seams.py::test_function_tool_and_group_edit_delete_survive_real_reload",
+          "outcome": "Deleted Function Tool remains absent from reconstructed configuration."
+        },
+        "delete_group": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_acceptance_seams.py::test_function_tool_and_group_edit_delete_survive_real_reload",
+          "outcome": "Deleted group remains absent from reconstructed configuration."
+        },
+        "ha_add": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_ha_llm_tool_acceptance.py::test_real_ha_llm_tool_catalog_add_reload_and_dispatch",
+          "outcome": "Added HA LLM tool survives reload and dispatches the intended HA service."
+        },
+        "save": {
+          "boundary": "authoritative_readback",
+          "evidence": "tests_real_ha/test_native_yaml_management_acceptance.py::test_native_yaml_validate_save_readback_atomic_rejection_and_recovery",
+          "outcome": "Independent configuration GET returns validated native YAML and preserves it across rejected writes."
+        },
+        "save_group": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_acceptance_seams.py::test_function_tool_and_group_edit_delete_survive_real_reload",
+          "outcome": "Edited group bindings are reconstructed after reload."
+        },
+        "set_enabled": {
+          "boundary": "config_entry_reload",
+          "evidence": "tests_real_ha/test_browser_golden_acceptance.py::test_native_shell_golden_runtime_journey",
+          "outcome": "Disabled native-authored tool remains unavailable to the provider after reload."
+        }
       }
     },
     "usage": {
@@ -609,6 +855,13 @@
         "retention": "tests/test_management_ui.py::test_usage_dispatch_covers_all_read_routes",
         "runs": "tests_real_ha/test_management_history_runtime.py::test_history_command_empty_returns_stable_empty_payload",
         "summary": "tests/test_management_permissions.py::test_usage_summary_keeps_aggregates_and_only_exposes_admin_latest"
+      },
+      "durability_evidence": {
+        "clear_details": {
+          "boundary": "fresh_manager",
+          "evidence": "tests/test_usage.py::test_prune_and_clear_details_cover_zero_retention_and_confirmation",
+          "outcome": "A newly initialized manager sees no cleared request/run details with retention enabled."
+        }
       }
     }
   }
