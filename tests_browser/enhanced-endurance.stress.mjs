@@ -1,3 +1,4 @@
+import {retentionGrowth, sampleRetainedRuntime} from "./browser-retention-metrics.mjs";
 import {expect, test} from "@playwright/test";
 import {mkdirSync, writeFileSync} from "node:fs";
 import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
@@ -18,7 +19,7 @@ function seededRandom(seed) {
 }
 
 test("one mounted panel survives a long seeded route journey", async ({page}, testInfo) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   const seed = Number(process.env.STRESS_SEED || 237101);
   const count = process.env.CROSS_BROWSER_NIGHTLY === "1"
     ? (process.env.STRESS_INTENSITY === "heavy" ? 48 : 24)
@@ -33,6 +34,8 @@ test("one mounted panel survives a long seeded route journey", async ({page}, te
   let maxNodes = 0;
   let mutations = 0;
   const counts = {creates: 0, edits: 0, deletes: 0, refreshes: 0, backForward: 0};
+  const retention = [];
+  let retentionFindings = [];
   const owned = {memory: [], knowledge: [], rule: []};
   try {
     for (let index = 0; index < count; index++) {
@@ -149,9 +152,30 @@ test("one mounted panel survives a long seeded route journey", async ({page}, te
       expect(nodes).toBeLessThan(6000);
       if (index % 12 === 0) await expect(panel.getByRole("alert")).toHaveCount(0);
     }
+    if (testInfo.project.name === "chromium") {
+      const session = await page.context().newCDPSession(page);
+      const visit = async route => {
+        await page.evaluate(next => { history.replaceState({}, "", `/extended-openai/${next}`); window.browserHarness.panel.route = {}; }, route);
+        await expect(panel.locator("#agent")).toHaveValue("agent-1");
+        await panel.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      };
+      try {
+        // Warm all lazy modules/cards twice, then keep this document mounted and
+        // fixture data constant. Earlier hard refreshes cannot mask retention.
+        for (let pass = 0; pass < 2; pass++) for (const route of routes) await visit(route);
+        const windows = process.env.STRESS_INTENSITY === "heavy" ? 16 : 8;
+        for (let window = 0; window < windows; window++) {
+          for (const route of routes) await visit(route);
+          await visit("assistant/basics");
+          retention.push({window, ...await sampleRetainedRuntime(session)});
+        }
+        retentionFindings = retentionGrowth(retention);
+        expect(retentionFindings, JSON.stringify(retention)).toEqual([]);
+      } finally { await session.detach(); }
+    }
     await expectHarnessClean(page, errors);
   } finally {
-    const report = {seed, test: testInfo.title, count, mutations, ...counts, maxNodes, operations};
+    const report = {seed, test: testInfo.title, count, mutations, ...counts, maxNodes, operations, retention, retentionFindings};
     mkdirSync(process.env.STRESS_ARTIFACT_DIR || "stress-artifacts", {recursive: true});
     writeFileSync(`${process.env.STRESS_ARTIFACT_DIR || "stress-artifacts"}/browser-endurance.json`, JSON.stringify(report, null, 2));
     await testInfo.attach("endurance-operations", {body: JSON.stringify(report, null, 2), contentType: "application/json"});

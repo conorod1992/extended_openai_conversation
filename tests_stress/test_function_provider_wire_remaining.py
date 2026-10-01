@@ -474,3 +474,472 @@ async def test_composite_late_failure_preserves_one_completed_side_effect(
     assert result == {"error": f"File not found: {missing}"}
     assert side_effects.read_text(encoding="utf-8").splitlines() == ["first"]
     record(stress_trace, "composite_partial_failure", mode=api_mode, side_effects=1)
+
+
+@pytest.mark.parametrize("api_mode", API_MODES)
+@pytest.mark.parametrize("mixed", [False, True], ids=["safe-overlap", "mixed-serial"])
+async def test_public_assist_multicall_dispatch_concurrency(
+    hass, monkeypatch, stress_trace, api_mode, mixed
+):
+    """SDK parsing and public Assist retain safe overlap and serial side effects."""
+    import asyncio
+
+    from pytest_homeassistant_custom_component.common import MockUser
+
+    from custom_components.extended_openai_conversation_responses.functions import (
+        get_function,
+    )
+    from tests.test_openai_sdk_wire import _chat_chunk, _sse
+    from tests_real_ha.test_function_execution_composition import (
+        _responses_sse_tool_calls,
+    )
+
+    owner = MockUser(
+        id="parallel-owner", name="Parallel owner", is_owner=True
+    ).add_to_hass(hass)
+    started = {name: asyncio.Event() for name in ("a", "b")}
+    release = {name: asyncio.Event() for name in ("a", "b")}
+    completed = {name: asyncio.Event() for name in ("a", "b")}
+    effects = []
+    native = get_function("native")
+    original = native.get_user_from_user_id
+
+    async def gated(*args):
+        marker = args[2]["marker"]
+        started[marker].set()
+        await release[marker].wait()
+        result = await original(*args)
+        completed[marker].set()
+        return result
+
+    monkeypatch.setattr(native, "get_user_from_user_id", gated)
+
+    async def effect(call):
+        started["b"].set()
+        effects.append(call.data["marker"])
+        completed["b"].set()
+
+    hass.services.async_register("concurrency_probe", "record", effect)
+    tools = [
+        {
+            "spec": {
+                "name": f"probe_{marker}",
+                "description": "Read caller identity",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"marker": {"type": "string"}},
+                    "required": ["marker"],
+                },
+            },
+            "function": {"type": "native", "name": "get_user_from_user_id"},
+        }
+        for marker in ("a", "b")
+    ]
+    if mixed:
+        tools[1]["function"] = {
+            "type": "script",
+            "sequence": [
+                {
+                    "action": "concurrency_probe.record",
+                    "data": {"marker": "{{ marker }}"},
+                }
+            ],
+        }
+    entry = _make_entry(
+        "Assist concurrency",
+        include_ai_task=False,
+        conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: tools},
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    calls = [
+        (f"call-{marker}", f"probe_{marker}", {"marker": marker})
+        for marker in ("a", "b")
+    ]
+    first = (
+        _responses_sse_tool_calls(calls)
+        if api_mode == API_MODE_RESPONSES
+        else _sse(
+            [
+                _chat_chunk(
+                    delta={
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "index": index,
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": json.dumps(arguments),
+                                },
+                            }
+                            for index, (call_id, name, arguments) in enumerate(calls)
+                        ],
+                    },
+                    finish_reason="tool_calls",
+                )
+            ]
+        )
+    )
+    final = _responses_sse_text if api_mode == API_MODE_RESPONSES else _chat_sse_text
+    wire = _install_wire(monkeypatch, agent, [first, final("Both complete")])
+    turn = asyncio.create_task(
+        conversation.async_converse(
+            hass=hass,
+            text="Run both probes",
+            conversation_id=None,
+            context=Context(user_id=owner.id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+    )
+    try:
+        await asyncio.wait_for(started["a"].wait(), 10)
+        if mixed:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(started["b"].wait(), 0.1)
+            assert effects == []
+        else:
+            await asyncio.wait_for(started["b"].wait(), 10)
+            assert not completed["a"].is_set()
+            release["b"].set()
+            await asyncio.wait_for(completed["b"].wait(), 10)
+        release["a"].set()
+        result = await asyncio.wait_for(turn, 10)
+        assert _speech(result) == "Both complete"
+        assert all(event.is_set() for event in completed.values())
+        assert effects == (["b"] if mixed else [])
+        body = wire.requests[1]["body"]
+        outputs = (
+            [
+                item
+                for item in body["input"]
+                if item.get("type") == "function_call_output"
+            ]
+            if api_mode == API_MODE_RESPONSES
+            else [item for item in body["messages"] if item.get("role") == "tool"]
+        )
+        assert [
+            item["call_id" if api_mode == API_MODE_RESPONSES else "tool_call_id"]
+            for item in outputs
+        ] == ["call-a", "call-b"]
+        assert "Parallel owner" in json.dumps(outputs[0])
+        assert len(wire.requests) == 2
+        record(
+            stress_trace,
+            "summary",
+            campaign_action="public_assist_concurrency",
+            layer="provider-wire",
+            api_mode=api_mode,
+            mixed=mixed,
+            function_executions=2,
+            conversations=1,
+            safe_overlap=int(not mixed),
+            assist_safe_overlap=int(not mixed),
+            assist_mixed_serial=int(mixed),
+        )
+    finally:
+        for event in release.values():
+            event.set()
+        if not turn.done():
+            turn.cancel()
+        await asyncio.gather(turn, return_exceptions=True)
+
+
+@pytest.mark.parametrize("api_mode", API_MODES)
+@pytest.mark.parametrize("kind", ["rest", "scrape"])
+@pytest.mark.parametrize(
+    "fault", ["length", "chunked", "trickle", "disconnect", "encoding"]
+)
+async def test_remote_function_socket_fault_recovers(
+    hass, monkeypatch, socket_enabled, tmp_path, stress_trace, api_mode, kind, fault
+):
+    """Real HA aiohttp/RestData bounds malformed remote Function Tool responses."""
+    import asyncio
+    from contextlib import suppress
+
+    from custom_components.extended_openai_conversation_responses.resource_limits import (
+        MAX_REMOTE_RESPONSE_BYTES,
+    )
+
+    del socket_enabled
+    attempts = []
+    release = asyncio.Event()
+    healthy = False
+
+    async def remote(request):
+        attempts.append("healthy" if healthy else fault)
+        if healthy:
+            return web.Response(
+                text='<html><span class="probe">RECOVERED-REMOTE</span></html>'
+                if kind == "scrape"
+                else "RECOVERED-REMOTE",
+                content_type="text/html" if kind == "scrape" else "text/plain",
+            )
+        response = web.StreamResponse(
+            headers={"Content-Type": "text/html; charset=utf-8"}
+        )
+        if fault == "length":
+            response.headers["Content-Length"] = str(MAX_REMOTE_RESPONSE_BYTES + 1)
+        elif fault == "disconnect":
+            response.headers["Content-Length"] = "4096"
+        await response.prepare(request)
+        try:
+            if fault == "length":
+                await release.wait()
+            elif fault == "chunked":
+                # If the body limit regresses, Scrape must return a real match
+                # instead of failing coincidentally because its selector is absent.
+                await response.write(b'<span class="probe">OVERSIZED-REMOTE</span>')
+                for _ in range(MAX_REMOTE_RESPONSE_BYTES // 65536 + 2):
+                    await response.write(b"<p>" + b"x" * 65530 + b"</p>")
+            elif fault == "trickle":
+                await response.write(b"<html>")
+                await release.wait()
+            elif fault == "disconnect":
+                await response.write(b"incomplete-body")
+                request.transport.close()
+            else:
+                await response.write(b"\xff\xfeinvalid-utf8")
+            await response.write_eof()
+        except ConnectionError, RuntimeError:
+            pass  # The expected client rejection closes an oversized response.
+        return response
+
+    app = web.Application()
+    app.router.add_get("/{path}", remote)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    try:
+        url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+        config = _configuration(kind, tmp_path, url)
+        config["timeout"] = 1
+        name = "remote_boundary"
+        tool = {
+            "spec": {
+                "name": name,
+                "description": "Read local remote fixture",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": config,
+        }
+        entry = _make_entry(
+            "Remote boundary",
+            include_ai_task=False,
+            conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]},
+        )
+        await _setup_entry(hass, entry)
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            _provider_replies(api_mode, "call-fault", name, "Remote fault handled"),
+        )
+
+        async def say():
+            return await conversation.async_converse(
+                hass=hass,
+                text="Read remote probe",
+                conversation_id=None,
+                context=Context(),
+                language="en",
+                agent_id=entry.entry_id,
+            )
+
+        failed = await asyncio.wait_for(say(), 10)
+        if failed.response.error_code is None:
+            assert len(wire.requests) == 2
+            value = _provider_result(wire.requests[1], api_mode, "call-fault")
+            assert value is None or (
+                isinstance(value, dict) and value.get("status") == "error"
+            ), value
+        assert attempts == [fault]
+        healthy = True
+        release.set()
+        recovered_wire = _install_wire(
+            monkeypatch,
+            agent,
+            _provider_replies(api_mode, "call-recovery", name, "Recovered remote"),
+        )
+        recovered = await asyncio.wait_for(say(), 10)
+        assert _speech(recovered) == "Recovered remote"
+        assert (
+            _provider_result(recovered_wire.requests[1], api_mode, "call-recovery")
+            == "RECOVERED-REMOTE"
+        )
+        assert attempts == [fault, "healthy"]
+        record(
+            stress_trace,
+            "summary",
+            campaign_action="remote_resource_boundary",
+            layer="provider-wire",
+            api_mode=api_mode,
+            kind=kind,
+            fault=fault,
+            remote_resource_recovery_cases=1,
+            remote_failures=1,
+            recovery_conversations=1,
+            response_limit_bytes=MAX_REMOTE_RESPONSE_BYTES,
+        )
+    finally:
+        release.set()
+        with suppress(ConnectionError):
+            await runner.cleanup()
+
+
+@pytest.mark.parametrize("shape", ["deep", "deep-singleton", "wide", "cyclic"])
+async def test_composite_resource_tree_rejected_before_effects(
+    hass, monkeypatch, stress_trace, shape
+):
+    from custom_components.extended_openai_conversation_responses.functions import (
+        get_function,
+    )
+    from homeassistant.exceptions import HomeAssistantError
+
+    leaf = {"type": "native", "name": "get_user_from_user_id"}
+    config = leaf
+    if shape in {"deep", "deep-singleton"}:
+        for _ in range(512):
+            config = {
+                "type": "composite",
+                "sequence": [config] if shape == "deep" else config,
+            }
+    elif shape == "wide":
+        config = {"type": "composite", "sequence": [leaf] * 257}
+    else:
+        config = {"type": "composite", "sequence": []}
+        config["sequence"].append(config)
+    composite = get_function("composite")
+    dispatched = []
+
+    async def unexpected(*args):
+        dispatched.append(args)
+        raise AssertionError("Rejected tree dispatched a child")
+
+    monkeypatch.setattr(get_function("native"), "execute", unexpected)
+    with pytest.raises(
+        HomeAssistantError, match=r"Composite function.*(safety limits|recursive)"
+    ):
+        composite.validate_schema(config)
+    with pytest.raises(
+        HomeAssistantError, match=r"Composite function.*(safety limits|recursive)"
+    ):
+        await composite.execute(hass, config, {}, None, [])
+    assert dispatched == []
+    record(
+        stress_trace,
+        "summary",
+        campaign_action="composite_resource_rejection",
+        layer="model-level",
+        shape=shape,
+        composite_rejected_trees=1,
+        rejected_trees=1,
+        dispatched_children=0,
+    )
+
+
+async def test_nested_composite_cancellation_stops_later_side_effect_and_recovers(
+    hass, monkeypatch, stress_trace
+):
+    import asyncio
+
+    started, release = asyncio.Event(), asyncio.Event()
+    effects = []
+
+    async def action(call):
+        effects.append(call.data["marker"])
+        if call.data["marker"] == "first":
+            started.set()
+            await release.wait()
+
+    hass.services.async_register("composite_probe", "record", action)
+    config = {
+        "type": "composite",
+        "sequence": [
+            {
+                "type": "script",
+                "sequence": [
+                    {"action": "composite_probe.record", "data": {"marker": marker}}
+                ],
+            }
+            for marker in ("first", "later")
+        ],
+    }
+    for _ in range(8):
+        config = {"type": "composite", "sequence": [config]}
+    name = "nested_probe"
+    entry = _make_entry(
+        "Nested cancellation",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_RESPONSES,
+            CONF_FUNCTION_TOOLS: [
+                {
+                    "spec": {
+                        "name": name,
+                        "description": "Nested cancellation probe",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    "function": config,
+                }
+            ],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        _provider_replies(
+            API_MODE_RESPONSES, "call-cancel", name, "Should not complete"
+        ),
+    )
+
+    async def say():
+        return await conversation.async_converse(
+            hass=hass,
+            text="Run nested probe",
+            conversation_id=None,
+            context=Context(),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+
+    turn = asyncio.create_task(say())
+    try:
+        await asyncio.wait_for(started.wait(), 10)
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+        assert effects == ["first"]
+        assert len(wire.requests) == 1
+        release.set()
+        fresh = _install_wire(
+            monkeypatch,
+            agent,
+            _provider_replies(
+                API_MODE_RESPONSES, "call-fresh", name, "Nested recovered"
+            ),
+        )
+        result = await asyncio.wait_for(say(), 10)
+        assert _speech(result) == "Nested recovered"
+        assert effects == ["first", "first", "later"]
+        assert len(fresh.requests) == 2
+        record(
+            stress_trace,
+            "summary",
+            campaign_action="composite_cancellation",
+            layer="provider-wire",
+            composite_cancelled_exchanges=1,
+            cancelled_exchanges=1,
+            recovery_conversations=1,
+            effects_after_cancel=1,
+        )
+    finally:
+        release.set()
+        if not turn.done():
+            turn.cancel()
+        await asyncio.gather(turn, return_exceptions=True)

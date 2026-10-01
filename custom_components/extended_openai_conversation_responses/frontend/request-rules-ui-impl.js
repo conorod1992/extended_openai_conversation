@@ -159,12 +159,32 @@ export function createRequestRuleConditionSelector(panel, host) {
   return selector;
 }
 
+async function waitForConditionLabel(panelRef, registry) {
+  try {
+    await registry.whenDefined("ha-selector");
+    const panel = panelRef.deref();
+    if (!panel?.isConnected) return;
+    const selector = panel.shadowRoot?.querySelector("#rule-condition-host ha-selector");
+    if (selector) await labelConditionAddControl(panel, selector);
+  } finally {
+    const panel = panelRef.deref();
+    if (panel) panel._eocConditionLabelPending = false;
+  }
+}
+
 async function labelConditionAddControl(panel, selector) {
   // The native selector owns the plus button inside its nested shadow roots.
   // Label that control after Lit finishes rendering, without replacing its UI.
   const registry = selector.ownerDocument?.defaultView?.customElements || globalThis.customElements;
   if (!registry) return;
-  await registry.whenDefined("ha-selector");
+  if (!registry.get("ha-selector")) {
+    // One weak waiter per panel: repeated renders must not retain obsolete
+    // selectors while HA's lazy component definition is still unavailable.
+    if (panel._eocConditionLabelPending) return;
+    panel._eocConditionLabelPending = true;
+    return waitForConditionLabel(new WeakRef(panel), registry);
+  }
+
   let element = selector;
   for (const tag of ["ha-selector-condition", "ha-automation-condition"]) {
     await element.updateComplete;
@@ -339,9 +359,8 @@ function refreshEditor(panel) {
   const model=q("#rule-model")?.value.trim();
   if(!model)return;
   const state=editorState(panel), current=++state.modelRevision;
-  const selected=(panel._result?.rules||[]).find((item)=>item.id===panel._editingRuleId)?.action?.reasoning_effort || q("#rule-reasoning")?.value || "";
   void ensureModelCatalog().then((module)=>module.lookupModelData(panel,model)).then((data)=>{
-    if(current===state.modelRevision && root.querySelector("#rule-dialog")?.open) syncRequestRuleRoutingControls(root,data.reasoning_effort_options,selected);
+    if(current===state.modelRevision && root.querySelector("#rule-dialog")?.open) syncRequestRuleRoutingControls(root,data.reasoning_effort_options);
   }).catch((err)=>panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true));
 }
 
@@ -459,7 +478,10 @@ export function openRequestRuleEditor(panel,id=null) {
   groupSelect.replaceChildren(...[{id:"",name:"Ungrouped"},...(panel._result?.groups||[])].map((group)=>{const option=groupSelect.ownerDocument.createElement("option");option.value=group.id;option.textContent=group.name;return option;}));
   groupSelect.value=rule?.group_id||"";
   q("#rule-model").value=rule?.action?.model||"";
-  q("#rule-reasoning").value=rule?.action?.reasoning_effort||"";
+  const savedEffort = rule?.action?.reasoning_effort || "";
+  // Keep a saved effort representable while its model's catalogue is loading.
+  const initialEfforts = [...q("#rule-reasoning").options].map(option => option.value).filter(Boolean);
+  setReasoningOptions(root, [...new Set([...initialEfforts, ...(savedEffort ? [savedEffort] : [])])], savedEffort);
   q("#rule-scope").value=rule?.action?.scope||"request";
   q("#rule-reset").checked=rule?.action?.reset||false;
   q("#rule-continue-to-ai").checked=rule?.action_type==="model_routing"?(rule?.action?.continue_to_ai??!["equals","sentence_pattern"].includes(rule?.match_type)):true;

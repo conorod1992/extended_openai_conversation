@@ -565,3 +565,88 @@ def test_reviewed_accessibility_allowance_cannot_hide_node_growth():
     )
     first["violations"] = []
     assert any("obsolete" in error for error in check_accessibility(item, sha, policy))
+
+
+@pytest.mark.parametrize("metric", ["heap_used", "nodes", "documents", "listeners"])
+def test_browser_retention_gate_rejects_sustained_growth_but_accepts_plateau(metric):
+    import subprocess
+
+    source = """
+import {retentionGrowth} from './tests_browser/browser-retention-metrics.mjs';
+const metric = process.argv[1];
+const base = {heap_used:1000000, nodes:500, documents:1, listeners:20};
+const steps = {heap_used:4000000, nodes:1000, documents:4, listeners:100};
+const stable = Array.from({length:8}, (_, i) => ({...base, heap_used:1000000 + i % 2 * 100000}));
+if (retentionGrowth(stable).length) throw new Error('Plateau rejected');
+const growth = Array.from({length:8}, (_, i) => ({...base, [metric]:base[metric] + i * steps[metric]}));
+if (!retentionGrowth(growth).some(item => item.metric === metric)) throw new Error('Leak accepted');
+const blip = stable.map(item => ({...item})); blip[4][metric] *= 100;
+if (retentionGrowth(blip).length) throw new Error('Transient blip rejected');
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", source, metric],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_critical_campaign_counts_reach_certification_summary(tmp_path, monkeypatch):
+    """Critical traces must use the collector's reviewed summary convention."""
+    import ast
+    import subprocess
+    import sys
+
+    policy = json.loads(CONTRACT.read_text())
+    expected = {}
+    for campaign in ("functions", "large-installation", "process-chaos"):
+        expected.update(policy["minimums"][campaign])
+    for name in (
+        "test_function_provider_wire_remaining.py",
+        "test_extreme_context_matrix.py",
+        "test_delayed_backlog.py",
+    ):
+        tree = ast.parse((ROOT / "tests_stress" / name).read_text())
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+                continue
+            if call.func.id != "record" or not expected.keys() & {
+                keyword.arg for keyword in call.keywords
+            }:
+                continue
+            assert isinstance(call.args[1], ast.Constant)
+            assert call.args[1].value == "summary", (
+                f"{name}:{call.lineno}: critical metric discarded"
+            )
+    for outcome, multiplier in (("passed", 1), ("failed", 100)):
+        (tmp_path / f"{outcome}.json").write_text(
+            json.dumps(
+                {
+                    "test": f"tests_stress/test_probe.py::{outcome}",
+                    "outcome": outcome,
+                    "operations": [
+                        {
+                            "operation": "summary",
+                            **{
+                                key: value * multiplier
+                                for key, value in expected.items()
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "step-summary.md"))
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "ci" / "enhanced_summary.py"), str(tmp_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    actual = json.loads((tmp_path / "certification.json").read_text())
+    assert actual["measured_totals"] == expected
+    assert actual["trace_outcomes"] == {"passed": 1, "failed": 1}
