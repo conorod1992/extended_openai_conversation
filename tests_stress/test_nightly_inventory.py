@@ -63,3 +63,18 @@ def test_evidence_filenames_bound_parametrized_node_ids() -> None:
     assert one.startswith("tests_stress_test_provider_event_sequences.py_test_duplicate_events-")
     assert len(one.encode("utf-8")) < 200
     assert all(character not in one for character in ':\\/[]')
+
+
+def test_native_browser_version_matrix_stays_compact_and_names_its_points() -> None:
+    import yaml
+
+    workflow = ROOT / ".github/workflows/ha-browser-compatibility.yml"
+    text = workflow.read_text(encoding="utf-8")
+    jobs = yaml.safe_load(text)["jobs"]
+    smoke = jobs["native-browser"]
+    assert set(smoke["strategy"]["matrix"]["ha-version"]) == {"oldest", "stable", "dev"}
+    paths = set(re.findall(r"tests_real_ha/[A-Za-z0-9_./-]+\.py", text))
+    assert paths == {"tests_real_ha/test_browser_compatibility_acceptance.py"}
+    assert "git+https://github.com/home-assistant/core.git@$HA_DEV_SHA" in text
+    assert "ha-native-browser-${{ matrix.ha-version }}" in text
+    assert 'RUN_REAL_HA_BROWSER_COMPATIBILITY: "1"' in text

@@ -8,6 +8,7 @@
     "tests_real_ha/test_backup_restore_delayed_tool_collision.py",
     "tests_real_ha/test_backup_restore_live_runtime_refresh.py",
     "tests_real_ha/test_backup_transfer_protocol.py",
+    "tests_real_ha/test_browser_compatibility_acceptance.py",
     "tests_real_ha/test_browser_process_restart_acceptance.py",
     "tests_real_ha/test_browser_refresh_boundary_acceptance.py",
     "tests_real_ha/test_browser_release_upgrade_acceptance.py",
@@ -86,6 +87,7 @@
     "tests_real_ha/test_provider_protocol_outcomes.py": "Covered by the ordinary genuine-HA acceptance workflow; no additional enhanced stress campaign is needed.",
     "tests_real_ha/test_readiness_archive_continuity.py": "Covered by the ordinary genuine-HA acceptance workflow; no additional enhanced stress campaign is needed.",
     "tests_real_ha/test_request_rules_live_management.py": "Covered by the ordinary genuine-HA acceptance workflow; no additional enhanced stress campaign is needed.",
-    "tests_real_ha/test_template_shutdown_acceptance.py": "Covered by the ordinary genuine-HA acceptance workflow; no additional enhanced stress campaign is needed."
+    "tests_real_ha/test_template_shutdown_acceptance.py": "Covered by the ordinary genuine-HA acceptance workflow; no additional enhanced stress campaign is needed.",
+    "tests_real_ha/test_browser_compatibility_acceptance.py": "Dedicated nightly HA browser compatibility workflow runs one native-shell smoke on minimum, stable and a pinned dev snapshot."
   }
 }
