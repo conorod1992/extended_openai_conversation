@@ -114,9 +114,18 @@ test("nightly Sentence Pattern helpers replace selections, insert at the caret, 
 
 test("nightly Safe Preview presents match, captures, skipped conditions, no-match, and never starts a live request", async ({page}) => {
   const errors = trackPageErrors(page);
+  let releaseModule;
+  const moduleReady = new Promise(resolve => { releaseModule = resolve; });
+  let moduleRequested = false;
+  await page.route(/\/request-rules-match-test-ui(?:-[A-Za-z0-9_-]+)?\.js(?:\?.*)?$/, async route => {
+    moduleRequested = true;
+    await moduleReady;
+    await route.continue();
+  });
   await page.goto(fixtureUrl("capabilities/request-rules"));
   const panel = panelFor(page);
   await expect(panel.locator("#rule-match-test-text")).toBeVisible();
+  await page.waitForFunction(() => browserHarness.panel._result && !browserHarness.panel._busy);
   const responses = {
     "ask weather":{matched:true,rule:{name:"Preview capture",action_type:"model_routing",match_type:"sentence_pattern"},matched_phrase:"ask {question}",captured_values:{question:"weather"},would_do:{model:"gpt-5-mini",scope:"request"}},
     door:{matched:false,skipped_conditions:[{name:"Home is occupied"}]},
@@ -138,7 +147,9 @@ test("nightly Safe Preview presents match, captures, skipped conditions, no-matc
 
   for (const [text, expected] of [["ask weather", "Captured values"], ["door", "Only when conditions were false"], ["unmatched", "No Request Rule matched"]]) {
     await panel.locator("#rule-match-test-text").fill(text);
+    await expect.poll(() => moduleRequested).toBe(true);
     await panel.locator("#rule-match-test").click();
+    releaseModule(); // The initial click must survive a cold module dependency.
     await expect(panel.locator("#rule-match-test-result")).toContainText(expected);
   }
   expect(await page.evaluate(() => window.browserHarness.previewCalls.filter((call) => call.action === "test").length)).toBe(0);

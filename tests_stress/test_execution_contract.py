@@ -174,3 +174,37 @@ def test_ok(): pass
     }
     assert all(case["collected"] for case in cases.values())
     assert cases["test_probe.py::test_teardown"]["phases"]["teardown"] == "failed"
+
+
+def test_reviewed_skip_exception_is_explicit_and_scoped():
+    policy = contract()
+    policy["allowances"] = {
+        NODE: {
+            "outcomes": ["skipped"],
+            "requires_pass": False,
+            "reason": "Explicit temporary exception",
+            "review": "https://example.test/review/1",
+            "expires": "2099-01-01",
+        }
+    }
+    item = evidence()
+    item["execution_cases"][0].update(executed=False, outcome="skipped")
+    assert check_execution(item, policy) == []
+    item["execution_cases"][1].update(executed=False, outcome="skipped")
+    assert check_execution(item, policy)  # No global browser exception.
+
+
+def test_expired_reviewed_allowance_fails_closed():
+    policy = contract()
+    policy["allowances"] = {
+        NODE: {
+            "outcomes": ["skipped"],
+            "requires_pass": False,
+            "reason": "Expired exception",
+            "review": "https://example.test/review/1",
+            "expires": "2000-01-01",
+        }
+    }
+    item = evidence()
+    item["execution_cases"][0].update(executed=False, outcome="skipped")
+    assert any("expired" in error for error in check_execution(item, policy))

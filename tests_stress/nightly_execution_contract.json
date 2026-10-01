@@ -668,8 +668,10 @@
     "tests_stress/test_execution_contract.py::test_browser_prerequisite_missing_rejects_successful_job",
     "tests_stress/test_execution_contract.py::test_complete_reviewed_execution_passes",
     "tests_stress/test_execution_contract.py::test_conditional_copy_skip_requires_a_genuine_execution",
+    "tests_stress/test_execution_contract.py::test_expired_reviewed_allowance_fails_closed",
     "tests_stress/test_execution_contract.py::test_missing_node_rejects_successful_job",
     "tests_stress/test_execution_contract.py::test_real_pytest_ledger_records_collection_skips_xfail_and_teardown",
+    "tests_stress/test_execution_contract.py::test_reviewed_skip_exception_is_explicit_and_scoped",
     "tests_stress/test_execution_contract.py::test_selected_cases_and_new_test_functions_require_review",
     "tests_stress/test_execution_contract.py::test_unexpected_pytest_outcomes_reject_successful_job[deselected]",
     "tests_stress/test_execution_contract.py::test_unexpected_pytest_outcomes_reject_successful_job[failed]",
@@ -1312,7 +1314,8 @@
       "public_turns": 1
     },
     "guest-security": {
-      "public_turns": 1
+      "public_turns": 1,
+      "private_context_probes": 1
     },
     "memory-knowledge": {
       "public_turns": 1
@@ -1330,6 +1333,17 @@
     },
     "browser-webkit": {
       "multi_tab_conflicts": 1
+    },
+    "voice-intercom": {
+      "voice_private_context_probes": 1,
+      "intercom_deliveries": 1
+    },
+    "backup": {
+      "rollback_phases": 1
+    },
+    "backup-transfer": {
+      "backup_chunks_transferred": 1,
+      "transfer_previews": 1
     }
   }
 }

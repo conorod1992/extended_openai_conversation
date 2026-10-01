@@ -53,7 +53,8 @@ export function bindRequestRuleMatchTester(panel) {
   const input = root.querySelector("#rule-match-test-text");
   const button = root.querySelector("#rule-match-test");
   const output = root.querySelector("#rule-match-test-result");
-  if (!input || !button || !output) return;
+  if (!input || !button || !output || button.dataset.eocSafeTesterBound) return;
+  button.dataset.eocSafeTesterBound = "1";
 
   const run = async () => {
     const text = input.value;

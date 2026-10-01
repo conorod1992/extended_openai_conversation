@@ -364,6 +364,19 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
     });
   }
   const add=root.querySelector("#rule-add");if(add&&!add.dataset.eocRuleCoreBound){add.dataset.eocRuleCoreBound="";add.addEventListener("click",()=>{void openEditor?.(null);});}
-  const safe=root.querySelector("#rule-match-tester");if(safe&&!safe.dataset.eocLazyBound){safe.dataset.eocLazyBound="";for(const type of ["focusin","pointerdown"])safe.addEventListener(type,()=>{void activateSafeTester?.();},{once:true,capture:true});}
+  const safe=root.querySelector("#rule-match-tester");
+  if(safe&&!safe.dataset.eocLazyBound){
+    safe.dataset.eocLazyBound="1";
+    for(const type of ["focusin","pointerdown"])safe.addEventListener(type,()=>{void activateSafeTester?.();},{once:true,capture:true});
+    // Retain the first click while the handler module is still in flight.
+    safe.addEventListener("click",event=>{
+      const button=event.target.closest?.("#rule-match-test");
+      if(!button||button.dataset.eocSafeTesterBound)return;
+      event.preventDefault();event.stopImmediatePropagation();
+      void Promise.resolve(activateSafeTester?.()).then(()=>{
+        if(button.isConnected&&button.dataset.eocSafeTesterBound&&!button.disabled)button.click();
+      }).catch(error=>{const output=root.querySelector("#rule-match-test-result");if(output)output.textContent=error.message||String(error);});
+    },{capture:true});
+  }
   const live=root.querySelector("#eoc-rule-live-test");if(live&&!live.dataset.eocLazyBound){live.dataset.eocLazyBound="";live.addEventListener("toggle",()=>{if(live.open)void activateLiveTester?.();},{once:true});}
 }
