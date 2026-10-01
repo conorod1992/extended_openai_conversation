@@ -37,6 +37,7 @@ test("HA native components and actual Assist path remain compatible", async ({co
     element.dispatchEvent(new CustomEvent("value-changed", {detail:{value:element.value}, bubbles:true}));
   });
   await expect(panel.locator("[data-exposed-editor]")).toContainText("sensor.cold_attribute_kitchen");
+  await panel.locator('[data-exposed-attribute][data-attribute="battery_level"]').check();
   await panel.locator("[data-close-exposed-editor]").click();
   await panel.locator("#save-config").click();
   await expect.poll(() => panel.evaluate(host => host._configDirty)).toBe(false);
