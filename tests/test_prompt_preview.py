@@ -55,8 +55,8 @@ from homeassistant.helpers import (
     area_registry as ar,
     device_registry as dr,
     entity_registry as er,
+    template as ha_template,
 )
-from homeassistant.helpers import template as ha_template
 
 
 def test_new_agent_defaults_use_first_class_volatile_context() -> None:
@@ -77,15 +77,16 @@ def test_new_agent_defaults_use_first_class_volatile_context() -> None:
 @pytest.mark.parametrize(
     "legacy_prompt",
     [LEGACY_DEFAULT_PROMPT_6_8_3, LEGACY_DEFAULT_PROMPT_WITH_SKILLS],
+    ids=["6.8.3", "previous"],
 )
-def test_legacy_default_prompt_normalizes_to_clean_default(legacy_prompt) -> None:
+def test_legacy_default_prompt_normalizes_to_clean_default(hass, legacy_prompt) -> None:
     """Untouched historical defaults adopt the current integration-owned guidance."""
     normalized = normalize_agent_config({CONF_PROMPT: legacy_prompt})
 
     assert normalized[CONF_PROMPT] == DEFAULT_PROMPT
 
 
-def test_custom_prompt_is_not_migrated() -> None:
+def test_custom_prompt_is_not_migrated(hass) -> None:
     """Prompt migration is exact-match only."""
     custom = LEGACY_DEFAULT_PROMPT_6_8_3 + "\nCustom instruction"
     normalized = normalize_agent_config({CONF_PROMPT: custom})
@@ -227,7 +228,12 @@ def test_default_prompt_segmentation_is_byte_identical(
     assert user_section.volatility == "mixed"
 
 
-def test_legacy_default_prompt_injects_skills_once(hass) -> None:
+@pytest.mark.parametrize(
+    "legacy_prompt",
+    [LEGACY_DEFAULT_PROMPT_6_8_3, LEGACY_DEFAULT_PROMPT_WITH_SKILLS],
+    ids=["6.8.3", "previous"],
+)
+def test_legacy_default_prompt_injects_skills_once(hass, legacy_prompt) -> None:
     """Runtime fallback avoids duplicate guidance before persisted config is normalized."""
     _setup_area_template_registries(hass)
     for key in (
@@ -240,7 +246,7 @@ def test_legacy_default_prompt_injects_skills_once(hass) -> None:
         }
 
     options = agent_config_defaults()
-    options[CONF_PROMPT] = LEGACY_DEFAULT_PROMPT_WITH_SKILLS
+    options[CONF_PROMPT] = legacy_prompt
     options[CONF_CURRENT_DATETIME_ENABLED] = False
     options[CONF_EXPOSED_ENTITIES_ENABLED] = False
     result = render_effective_prompt(
@@ -255,6 +261,63 @@ def test_legacy_default_prompt_injects_skills_once(hass) -> None:
     assert result.text.count("## Skills") == 1
     assert "- lighting: Lighting guidance" in result.text
     assert "{% if skills" not in result.text
+
+
+@pytest.mark.parametrize(
+    "loop",
+    [
+        "{% for skill in skills %}",
+        "{%- for skill in skills %}",
+        "{%\nfor skill in skills -%}",
+    ],
+)
+@pytest.mark.parametrize("enabled", [False, True])
+def test_custom_embedded_skills_guidance_is_not_duplicated(hass, loop, enabled) -> None:
+    """Custom Jinja loops keep their wording and whitespace-control semantics."""
+    custom = (
+        "Custom instruction\n{% if skills %}\n## Skills\nUse load_skill:\n"
+        + loop
+        + "\n- {{ skill.name }}: {{ skill.description }}\n{% endfor %}\n{% endif %}"
+    )
+    options = {CONF_PROMPT: custom}
+    skills = (
+        [SimpleNamespace(name="lighting", description="Lighting guidance")]
+        if enabled
+        else []
+    )
+    result = render_effective_prompt(
+        hass,
+        options,
+        exposed_entities=[],
+        current_device_id=None,
+        user_input=None,
+        skills=skills,
+    )
+
+    assert normalize_agent_config(options)[CONF_PROMPT] == custom
+    assert [section.key for section in result.sections] == ["user_prompt"]
+    assert result.text.startswith("Custom instruction")
+    assert result.text.count("## Skills") == int(enabled)
+    assert result.text.count("- lighting: Lighting guidance") == int(enabled)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_custom_prompt_without_skills_receives_conditional_guidance(
+    hass, enabled
+) -> None:
+    """Skills are discoverable with an ordinary custom prompt only when enabled."""
+    result = render_effective_prompt(
+        hass,
+        {CONF_PROMPT: "Custom instruction"},
+        exposed_entities=[],
+        current_device_id=None,
+        user_input=None,
+        skills=[SimpleNamespace(name="lighting", description="Lighting guidance")]
+        if enabled
+        else [],
+    )
+    assert result.text.endswith("Custom instruction")
+    assert result.text.count("## Skills") == int(enabled)
 
 
 def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last(

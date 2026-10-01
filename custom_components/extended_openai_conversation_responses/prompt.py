@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -32,7 +33,7 @@ from .const import (
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_PROMPT,
     DEFAULT_TEMPORARY_MEMORY,
-    LEGACY_DEFAULT_PROMPT_WITH_SKILLS,
+    LEGACY_DEFAULT_PROMPTS,
     TEMPORARY_MEMORY_EAGER,
     TEMPORARY_MEMORY_OFF,
 )
@@ -297,10 +298,11 @@ def render_effective_prompt(
     """Render and assemble the production system prompt in deterministic order."""
     exposed_entities = enrich_exposed_entities(hass, options, exposed_entities)
     raw_prompt: str = options.get(CONF_PROMPT, DEFAULT_PROMPT)
-    if raw_prompt == LEGACY_DEFAULT_PROMPT_WITH_SKILLS:
+    if raw_prompt in LEGACY_DEFAULT_PROMPTS:
         raw_prompt = DEFAULT_PROMPT
     embedded_skills_guidance = (
-        "{% for skill in skills" in raw_prompt and "load_skill" in raw_prompt
+        re.search(r"\{%-?\s*for\s+\w+\s+in\s+skills\b", raw_prompt) is not None
+        and "load_skill" in raw_prompt
     )
     rendered_prompt = _render_template(
         hass,
