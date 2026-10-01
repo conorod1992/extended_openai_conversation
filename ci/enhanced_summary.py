@@ -9,6 +9,11 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "audio_deliveries",
+    "audio_playback_acknowledgements",
+    "process_soak_windows",
+    "tls_verified_requests",
+    "transport_tool_recovery_cases",
     "conversation_turns",
     "lifecycle_cycles",
     "public_conversation_turns",

@@ -784,6 +784,8 @@
     "tests_stress/test_management_ws_contract.py::test_shipped_frontend_mutation_actions_are_reviewed",
     "tests_stress/test_memory_knowledge_scale.py::test_scaled_private_records_survive_reload_without_cross_user_reads",
     "tests_stress/test_model_catalog_refresh_endurance.py::test_slow_invalid_and_failed_refresh_preserve_active_operations",
+    "tests_stress/test_native_audio_delivery.py::test_recorded_audio_native_assist_delivery_recovers[cancel_stt]",
+    "tests_stress/test_native_audio_delivery.py::test_recorded_audio_native_assist_delivery_recovers[disconnect_output]",
     "tests_stress/test_native_broadcast_authorization.py::test_native_broadcast_obeys_ha_control_and_guest_policy[guest-mode-denied]",
     "tests_stress/test_native_broadcast_authorization.py::test_native_broadcast_obeys_ha_control_and_guest_policy[ha-control-allowed]",
     "tests_stress/test_native_broadcast_authorization.py::test_native_broadcast_obeys_ha_control_and_guest_policy[ha-control-denied]",
@@ -811,6 +813,14 @@
     "tests_stress/test_persistence_forward_and_clock.py::test_opaque_future_rule_store_field_survives_group_edit_and_restore",
     "tests_stress/test_persistence_forward_and_clock.py::test_temporary_memory_forward_backward_jump_is_irreversible",
     "tests_stress/test_persistence_forward_and_clock.py::test_usage_buckets_survive_dst_folds_and_backward_clock_jump",
+    "tests_stress/test_process_resource_soak.py::test_booted_process_resources_and_latency_survive_mixed_traffic",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[assist]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[descriptors]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[executor_pending]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[loop_lag]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[management]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[rss_bytes]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[storage_bytes]",
     "tests_stress/test_provider_concurrent_backpressure.py::test_concurrent_429_burst_has_bounded_independent_sdk_retries[chat_completions]",
     "tests_stress/test_provider_concurrent_backpressure.py::test_concurrent_429_burst_has_bounded_independent_sdk_retries[responses]",
     "tests_stress/test_provider_concurrent_backpressure.py::test_slow_provider_saturation_isolates_mixed_failure_and_success[chat_completions]",
@@ -861,8 +871,12 @@
     "tests_stress/test_provider_fault_phases.py::test_tool_group_aba_after_side_effect_keeps_lost_ack_replay_safe[None]",
     "tests_stress/test_provider_fault_phases.py::test_tool_group_aba_after_side_effect_keeps_lost_ack_replay_safe[call-compound-new-id]",
     "tests_stress/test_provider_fault_phases.py::test_unknown_responses_event_is_ignored_before_valid_completion",
+    "tests_stress/test_provider_real_connection_pool.py::test_https_socket_break_after_tool_preserves_once_only_actions[chat_completions]",
+    "tests_stress/test_provider_real_connection_pool.py::test_https_socket_break_after_tool_preserves_once_only_actions[responses]",
     "tests_stress/test_provider_real_connection_pool.py::test_real_pool_wait_and_cancellation_release_sdk_stream[chat_completions]",
     "tests_stress/test_provider_real_connection_pool.py::test_real_pool_wait_and_cancellation_release_sdk_stream[responses]",
+    "tests_stress/test_provider_real_connection_pool.py::test_verified_https_buffered_sse_and_idle_close_recover[chat_completions]",
+    "tests_stress/test_provider_real_connection_pool.py::test_verified_https_buffered_sse_and_idle_close_recover[responses]",
     "tests_stress/test_provider_valid_chunking.py::test_valid_sse_chunk_boundaries_preserve_assist_meaning[False-chat_completions]",
     "tests_stress/test_provider_valid_chunking.py::test_valid_sse_chunk_boundaries_preserve_assist_meaning[False-responses]",
     "tests_stress/test_provider_valid_chunking.py::test_valid_sse_chunk_boundaries_preserve_assist_meaning[True-chat_completions]",
@@ -1304,7 +1318,8 @@
   },
   "minimums": {
     "runtime": {
-      "conversation_turns": 1
+      "conversation_turns": 1,
+      "process_soak_windows": 5
     },
     "functions": {
       "actual_function_executions": 1
@@ -1336,7 +1351,8 @@
     },
     "voice-intercom": {
       "voice_private_context_probes": 1,
-      "intercom_deliveries": 1
+      "intercom_deliveries": 1,
+      "audio_deliveries": 2
     },
     "backup": {
       "rollback_phases": 1
@@ -1344,6 +1360,10 @@
     "backup-transfer": {
       "backup_chunks_transferred": 1,
       "transfer_previews": 1
+    },
+    "provider-resilience": {
+      "tls_verified_requests": 4,
+      "transport_tool_recovery_cases": 2
     }
   }
 }

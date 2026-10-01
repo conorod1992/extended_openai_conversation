@@ -59,3 +59,43 @@ The Step Summary labels evidence layers. **Model-level** means a manager or stat
 `tests_stress/evidence_manifest.json` is the reviewed feature-to-evidence map. The runtime campaign checks it against supported Function types, Request Rule actions, backed-up subsystems, and referenced test files. Render its Markdown table with `python ci/enhanced_manifest.py`. Blank cells are not claimed evidence; each feature needs only the layers that make sense for its behavior.
 
 The suite is complementary to the bounded PR tests and deliberately reuses selected Real-HA acceptance where that adds cross-feature nightly evidence. A failing operation trace identifies the seed and last completed operation; use the same seed to reproduce, then inspect the first violated invariant and Playwright trace or HA log. The suite is broad evidence, not proof of all supported histories. Remaining deliberate gaps are increasingly combinatorial, including a complete provider-wire error matrix for every Function type, every possible browser same-object conflict surface, and deterministic process kills around every durable store write.
+
+
+The `voice-intercom` campaign also runs `test_native_audio_delivery.py`. A
+software integration registers native HA STT, TTS and Assist satellite entities.
+A deterministic PCM WAV recording passes through the native satellite pipeline,
+real EOAI/SDK conversation and TTS HTTP output. The fixture checks transcription,
+user/device/satellite identity, spoken reply, decoded WAV frames and playback
+acknowledgement. STT cancellation and output disconnect/reconnect each precede a
+successful next interaction. This covers software delivery, not speech recognition
+quality or physical speaker acoustics; normal CI needs no microphone or satellite.
+
+The `runtime` campaign boots the unchanged delivered integration in an independent
+HA process for `test_process_resource_soak.py`. Fragmented local provider streams,
+concurrent Assist turns, durable Memory adds/readbacks/deletes, background usage
+accounting, two config-entry reloads, a broken request and cancellation recovery
+exercise real runtime lifetimes. After warm-up it records four resource windows:
+RSS, descriptors/handles, thread and inspectable executor queue counts, config/storage
+bytes and files, event-loop lag, and Assist/management p95 latency. Normal windows
+span 15 seconds each; heavy spans 60 seconds each, plus a 10-second warm-up and
+process startup/shutdown. JSON metrics and the seed survive in existing stress
+artifacts on failure. Broad baseline-growth ceilings and repeated material growth
+catch runaway resources; generous 5-second loop-lag and 15/20-second management/Assist
+ceilings avoid hosted-runner microbenchmark gating. Negative tests reject artificial
+leaks/stalls while accepting a warmed plateau and modest timing variation.
+
+`test_provider_real_connection_pool.py` extends the existing socket acceptance with
+an ephemeral local TLS CA and a real reverse proxy that buffers a slow, fragmented
+SSE upstream. Certificate rejection must produce a handled EOAI failure before the
+same verified client recovers after trusting the CA; idle closure requires a fresh
+connection. A TLS/TCP break during the continuation after a committed HA tool action
+must reject replay, recover on a subsequent conversation and allow a new intentional
+action. Both Chat Completions and Responses use the actual SDK. Only the deliberate
+rejected handshake on the fixture server is accounted for; unrelated asynchronous
+errors remain failures. No provider internet requests or live OpenAI calls are used.
+
+The mandatory-case catalog includes these journeys and resource negative proofs.
+Certification additionally requires five process windows, two audio deliveries,
+four trusted proxy requests and two socket/tool recovery cases. Existing Voice
+Identity/Quiet Hours/intercom semantics, logical leak counters and synthetic fault
+matrices remain complementary coverage.
