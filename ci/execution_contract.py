@@ -13,25 +13,30 @@ CONTRACT = ROOT / "tests_stress/nightly_execution_contract.json"
 
 
 def python_selections(workflow=None):
-    text = (workflow or ROOT / ".github/workflows/enhanced-stress.yml").read_text()
+    text = (workflow or ROOT / ".github/workflows/enhanced-stress.yml").read_text(
+        encoding="utf-8"
+    )
     selections = {
         campaign: paths.split()
         for campaign, paths in re.findall(r"([a-z-]+)\) TEST_PATHS=\(([^)]+)\)", text)
     }
-    selections["lifecycle-matrix"] = [
-        "tests_stress/test_lifecycle_matrix.py",
-        "tests_real_ha/test_public_version_journeys.py",
-    ]
-    selections["browser"] = [
-        "tests_stress/test_browser_multi_tab.py",
-        "tests_stress/test_management_ws_contract.py",
-        "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_talks_to_real_management_websocket",
-        "tests_real_ha/test_browser_golden_acceptance.py",
-        "tests_stress/test_browser_management_contract.py",
-        "tests_stress/test_browser_backend_resilience.py",
-    ]
-    selections["browser-firefox"] = ["tests_stress/test_browser_multi_tab.py"]
-    selections["browser-webkit"] = ["tests_stress/test_browser_multi_tab.py"]
+    jobs = {
+        "lifecycle-matrix": "ha-lifecycle-matrix",
+        "browser": "browser",
+        "browser-firefox": "browser-engines",
+        "browser-webkit": "browser-engines",
+    }
+    for campaign, job in jobs.items():
+        section = text.split(f"\n  {job}:\n", 1)[1]
+        section = re.split(r"\n  [a-z-]+:\n", section, maxsplit=1)[0]
+        selections[campaign] = sorted(
+            set(
+                re.findall(
+                    r"tests(?:_stress|_real_ha)?/[A-Za-z0-9_./-]+\.py(?:::[A-Za-z0-9_]+)?",
+                    section,
+                )
+            )
+        )
     return selections
 
 
@@ -54,7 +59,7 @@ def expected_cases(contract, campaign):
 
 
 def check_execution(item, contract=None):
-    contract = contract or json.loads(CONTRACT.read_text())
+    contract = contract or json.loads(CONTRACT.read_text(encoding="utf-8"))
     campaign = item["campaign"]
     expected = expected_cases(contract, campaign)
     errors = []

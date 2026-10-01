@@ -1060,6 +1060,7 @@
       "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly Request Rules defaults and wording edits persist, recover from failure, and control rule matching modes",
       "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly Safe Preview presents match, captures, skipped conditions, no-match, and never starts a live request",
       "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly Sentence Pattern helpers replace selections, insert at the caret, and edit empty fields",
+      "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly saved wording defaults change the real Safe Preview matcher result",
       "tests_browser/request-rules-mutation-queue.stress.mjs::chromium::request-rules-mutation-queue.stress.mjs::nightly Request Rules queue serializes a burst of distinct mutations",
       "tests_browser/request-rules-sharing-live.stress.mjs::chromium::request-rules-sharing-live.stress.mjs::nightly Live Request confirmation, repeated activation, results, errors, stale navigation, and preview independence",
       "tests_browser/request-rules-sharing-live.stress.mjs::chromium::request-rules-sharing-live.stress.mjs::nightly Rule Pack UI rejects malformed and oversized files, preserves review cancellation, retries failures, and round-trips priority",
@@ -1134,9 +1135,7 @@
       "tests_browser/stale-response-ordering.spec.mjs::webkit::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
     ]
   },
-  "fixture_only": {
-    "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly saved wording defaults change the real Safe Preview matcher result": "This fixture-only collection requires a dedicated matcher bridge, exercised by ordinary frontend genuine-HA acceptance."
-  },
+  "fixture_only": {},
   "allowances": {
     "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::a stale Request Rule editor in another tab cannot overwrite a newer save": {
       "outcomes": [
@@ -1144,7 +1143,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::a staged Assistant edit cannot overwrite a genuine HA backup restore": {
@@ -1153,7 +1152,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions": {
@@ -1162,7 +1161,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source": {
@@ -1171,7 +1170,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::backgrounded Memory tab rejects stale edits and delayed reads after a newer HA save": {
@@ -1180,7 +1179,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy": {
@@ -1189,7 +1188,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::dropped save keeps its draft and the authoritative HA state": {
@@ -1198,7 +1197,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::expired transport and owner-to-restricted change never claim a successful save": {
@@ -1207,7 +1206,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::slow reads and a dropped read converge on real HA state": {
@@ -1216,7 +1215,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::long-lived browser and fresh browser agree after seeded saves": {
@@ -1225,7 +1224,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::slow genuine HA WebSocket save never reports success before the backend replies": {
@@ -1234,7 +1233,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::revoked HA session while editing cannot commit a save": {
@@ -1243,7 +1242,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::genuine HA WebSocket drop during a save leaves the backend authoritative": {
@@ -1252,7 +1251,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::old frontend shell kept open against new HA backend converges after hard refresh": {
@@ -1261,7 +1260,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::new frontend with a stale published lazy chunk recovers on a fresh document": {
@@ -1270,7 +1269,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::lazy chunk 404 reports a section error and refresh loads current assets": {
@@ -1279,7 +1278,7 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     },
     "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::malformed browser-local cache clears through normal reload": {
@@ -1288,7 +1287,16 @@
       ],
       "requires_pass": true,
       "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/956",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly saved wording defaults change the real Safe Preview matcher result": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Static fixture copy skips without a real backend; the saved-defaults journey must pass through the genuine HA management bridge.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
       "expires": "2027-10-01"
     }
   },

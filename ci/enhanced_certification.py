@@ -10,10 +10,10 @@ from urllib.request import Request, urlopen
 
 try:
     from .enhanced_evidence import SCHEMA, write_json
-    from .execution_contract import check_execution
+    from .execution_contract import CONTRACT, check_execution, expected_cases
 except ImportError:
     from enhanced_evidence import SCHEMA, write_json
-    from execution_contract import check_execution
+    from execution_contract import CONTRACT, check_execution, expected_cases
 
 
 def actual_jobs() -> dict[str, str]:
@@ -171,6 +171,15 @@ def main(root: Path) -> int:
             "passed": not failed,
             "jobs": list(found.values()),
             "execution_errors": execution_errors,
+            "expected_cases": {
+                campaign: sorted(
+                    expected_cases(
+                        json.loads(CONTRACT.read_text(encoding="utf-8")), campaign
+                    )
+                )
+                for campaign, _, _ in expected
+                if selected != "diagnostics"
+            },
         },
     )
     return int(failed)

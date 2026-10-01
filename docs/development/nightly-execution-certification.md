@@ -14,9 +14,8 @@ New selected Python functions and unreviewed collected cases fail review guards.
 Diagnostic campaigns intentionally test failures and do not grant full certification.
 
 Conditional fixture copies may skip only under an explicit allowance. Their genuine
-HA invocation must still pass (`requires_pass: true`). The one fixture-only matcher
-copy belongs to the dedicated ordinary genuine-HA matcher harness. A genuine
-exception must record exact node ID, allowed outcomes, review link, reason and an
+HA invocation must still pass (`requires_pass: true`). Saved Request Rule wording/defaults now execute through the genuine HA bridge
+as well as the fixture campaign. A genuine exception must record exact node ID, allowed outcomes, review link, reason and an
 expiry; `requires_pass: false` explicitly acknowledges that exception. No campaign
 has a blanket prerequisite-based skip allowance. Expired allowances fail closed.
 
