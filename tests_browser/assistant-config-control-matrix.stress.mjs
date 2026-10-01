@@ -1,3 +1,4 @@
+import {waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
@@ -66,6 +67,7 @@ test("nightly assistant configuration control matrix edits, saves, and reloads e
   const coverage = {};
   for (const route of routes) {
     await page.goto(fixtureUrl(route));
+    await waitForManagementRouteReady(page, {name: route, path: route}, 30000);
     const panel = panelFor(page);
     await expect(panel.locator("main")).toBeVisible();
     const initial = await controlValues(panel);
@@ -100,6 +102,7 @@ test("nightly assistant configuration control matrix edits, saves, and reloads e
     coverage[route] = {keys, changed, dependentDisabled:keys.filter(key => !changed.includes(key)), visibleBeforeSave};
 
     await page.goto(fixtureUrl(route));
+    await waitForManagementRouteReady(page, {name: route, path: route}, 30000);
     const reloaded = await controlValues(panelFor(page));
     for (const field of visibleBeforeSave) {
       if (!changed.includes(field.key)) continue;

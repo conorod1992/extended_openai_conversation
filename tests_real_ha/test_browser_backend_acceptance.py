@@ -160,13 +160,13 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
         await runner.cleanup()
 
 
-@pytest.mark.asyncio
-async def test_shipped_browser_frontend_loads_inside_real_home_assistant_shell(
+@pytest.fixture
+async def real_ha_shell(
     hass: HomeAssistant,
     aiohttp_client: Any,
     hass_storage: dict[str, Any],
     socket_enabled: Any,
-) -> None:
+) -> dict[str, Any]:
     """HA itself must register, serve, instantiate, and connect the shipped panel."""
     # A pristine pytest HA instance is in onboarding mode. Persist the normal
     # completed-onboarding state so Chromium reaches the actual application shell.
@@ -216,14 +216,19 @@ async def test_shipped_browser_frontend_loads_inside_real_home_assistant_shell(
         "expires_in": expires_in,
     }
 
-    repo_root = Path(__file__).resolve().parent.parent
+    return {"entry": entry, "admin": admin, "env": {
+        "REAL_HA_FRONTEND_URL": base_url,
+        "REAL_HA_FRONTEND_AUTH": json.dumps(auth_data),
+    }}
+
+
+@pytest.mark.asyncio
+async def test_shipped_browser_frontend_loads_inside_real_home_assistant_shell(real_ha_shell) -> None:
+    """Reuse the same genuine shell bootstrap for acceptance and compact journeys."""
     await _run_playwright(
-        repo_root=repo_root,
+        repo_root=Path(__file__).resolve().parent.parent,
         spec="tests_browser/real-ha-shell.spec.mjs",
         config="playwright.real-ha-shell.config.mjs",
-        env={
-            "REAL_HA_FRONTEND_URL": base_url,
-            "REAL_HA_FRONTEND_AUTH": json.dumps(auth_data),
-        },
+        env=real_ha_shell["env"],
         failure_label="Playwright genuine Home Assistant frontend-shell acceptance failed",
     )

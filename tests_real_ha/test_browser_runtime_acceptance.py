@@ -9,9 +9,6 @@ import shutil
 from typing import Any
 
 import pytest
-from homeassistant.components import conversation
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import Context, HomeAssistant
 
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
@@ -21,14 +18,13 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
     CONF_REASONING_EFFORT,
 )
+from homeassistant.components import conversation
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import Context, HomeAssistant
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_browser_backend_acceptance import _start_ws_bridge
 from tests_real_ha.test_management_backend_acceptance import _admin_client
-from tests_real_ha.test_provider_wire_e2e import (
-    _chat_sse_text,
-    _install_wire,
-    _speech,
-)
+from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_REAL_HA_BROWSER") != "1",
@@ -177,3 +173,20 @@ async def test_browser_created_request_rule_survives_unload_reload_and_stays_liv
     assert request["body"]["model"] == "gpt-6-astra"
     assert request["body"]["reasoning_effort"] == "xhigh"
 
+
+    runner, backend_url = await _start_ws_bridge(client)
+    try:
+        await _run_reload_browser_phase(repo_root, backend_url, "edit")
+    finally:
+        await runner.cleanup()
+    await hass.async_block_till_done()
+    edited_agent = conversation.async_get_agent(hass, entry.entry_id)
+    edited_wire = _install_wire(monkeypatch, edited_agent, [_chat_sse_text("Edited route is live.")])
+    edited = await conversation.async_converse(
+        hass=hass, text="browser reload runtime route", conversation_id=None,
+        context=Context(), language="en", agent_id=entry.entry_id,
+    )
+    assert _speech(edited) == "Edited route is live."
+    assert len(edited_wire.requests) == 1
+    assert edited_wire.requests[0]["body"]["model"] == "gpt-5-mini"
+    assert edited_wire.requests[0]["body"]["reasoning_effort"] == "high"
