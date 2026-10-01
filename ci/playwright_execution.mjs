@@ -3,14 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import {execFileSync} from "node:child_process";
-import {createRequire} from "node:module";
 import {fileURLToPath} from "node:url";
-const require = createRequire(import.meta.url);
 const sourceRoot = fileURLToPath(new URL("../", import.meta.url));
 
 export default class ExecutionReporter {
   onBegin(config, suite) {
     this.root = config.rootDir;
+    this.playwrightVersion = config.version;
     this.tests = suite.allTests();
   }
   onEnd(result) {
@@ -21,7 +20,7 @@ export default class ExecutionReporter {
         {encoding: "utf8", stdio: ["ignore", "pipe", "ignore"]}).trim();
     } catch {}
     const identity = {architecture: process.arch, node: process.versions.node,
-      platform: process.platform, playwright: require("@playwright/test/package.json").version};
+      platform: process.platform, playwright: this.playwrightVersion};
     const fingerprint = crypto.createHash("sha256").update(JSON.stringify(identity)).digest("hex");
     const executionId = crypto.randomUUID();
     const cases = this.tests.map(test => ({
