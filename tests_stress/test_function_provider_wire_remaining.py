@@ -689,6 +689,9 @@ async def test_remote_function_socket_fault_recovers(
             if fault == "length":
                 await release.wait()
             elif fault == "chunked":
+                # If the body limit regresses, Scrape must return a real match
+                # instead of failing coincidentally because its selector is absent.
+                await response.write(b'<span class="probe">OVERSIZED-REMOTE</span>')
                 for _ in range(MAX_REMOTE_RESPONSE_BYTES // 65536 + 2):
                     await response.write(b"<p>" + b"x" * 65530 + b"</p>")
             elif fault == "trickle":
