@@ -129,6 +129,7 @@ def test_environment_records_key_versions_and_ha_commit_without_installation_url
     assert identity["homeassistant_source_commit"] == WRONG
     assert set(identity["packages"]) == {
         "homeassistant",
+        "home-assistant-frontend",
         "openai",
         "httpx",
         "aiohttp",
