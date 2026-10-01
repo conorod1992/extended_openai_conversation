@@ -4,7 +4,7 @@ import {expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 const backendUrl = process.env.REAL_HA_BACKEND_URL;
 const phase = process.env.REAL_HA_RUNTIME_RELOAD_PHASE;
 test.skip(!backendUrl, "requires the dedicated genuine Home Assistant backend bridge");
-test.skip(!["create", "verify"].includes(phase), "requires a runtime reload acceptance phase");
+test.skip(!["create", "verify", "edit"].includes(phase), "requires a runtime reload acceptance phase");
 const realFixtureUrl = (route) => `/tests_browser/real-ha-fixture.html?route=${encodeURIComponent(route)}&backend=${encodeURIComponent(backendUrl)}`;
 
 const ruleName = "Browser reload runtime route";
@@ -52,7 +52,19 @@ test("browser-authored runtime route survives a Home Assistant reload", async ({
     await expect(panel.locator("#rule-reasoning")).toHaveValue("xhigh");
     await expect(panel.locator("#rule-continue-to-ai")).toBeChecked();
     await expect(panel.locator("#rule-scope")).toHaveValue("conversation");
+    if (phase === "edit") {
+      await panel.locator("#rule-model").fill("gpt-5-mini");
+      await panel.locator("#rule-reasoning").selectOption("high");
+      await panel.locator("#rule-save").click();
+      await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
+      await expect(card).toContainText("gpt-5-mini");
+    } else {
+      await panel.locator("#rule-dialog .rule-close").filter({hasText: "Cancel"}).click();
+    }
   }
 
+  await panel.locator("#rule-match-test-text").fill(triggerPhrase);
+  await panel.locator("#rule-match-test").click();
+  await expect(panel.locator("#rule-match-test-result")).toContainText(ruleName);
   await expectHarnessClean(page, pageErrors);
 });
