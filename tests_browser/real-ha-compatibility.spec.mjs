@@ -15,9 +15,9 @@ test("HA native components and actual Assist path remain compatible", async ({co
   await panel.locator("#agent").selectOption(primary);
   await waitForManagementRouteReady(page, {name:"voice", path:"assistant/voice"}, 30000);
   const picker = panel.locator("#config-voice_default_user_picker");
-  await expect(picker).toBeVisible();
   await panel.locator('[data-config="voice_scope_policy"]').selectOption("device_mapping");
   await panel.locator('[data-config="voice_unmapped_policy"]').selectOption("default_user");
+  await expect(picker).toBeVisible();
   await picker.locator("ha-picker-field").click();
   await picker.locator("ha-combo-box-item").filter({hasText:"Browser Frontend Shell Admin"}).locator("button").click();
   await expect(picker).toHaveJSProperty("value", process.env.REAL_HA_SMOKE_USER_ID);
