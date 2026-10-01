@@ -688,6 +688,7 @@
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[critical]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[duplicate-scan]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[empty-scanner]",
+      "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[wrong-theme]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[expired-allowance]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[missing-scan]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[serious]",

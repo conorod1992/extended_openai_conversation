@@ -168,6 +168,14 @@ def check_accessibility(item, sha, policy):
             errors.append("Invalid/expired accessibility allowance")
     observed = Counter()
     for scan in scans:
+        colour = scan.get("theme_colour", {})
+        brightness = colour.get("brightness")
+        if (
+            not colour.get("background")
+            or not finite(brightness)
+            or (brightness < 128) != (scan["theme"] == "dark")
+        ):
+            errors.append(f"Rendered HA theme was not verified: {scan_key(scan)}")
         if (
             scan.get("axe_version") != "4.11.0"
             or not isinstance(scan.get("passes"), int)

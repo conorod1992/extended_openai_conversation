@@ -401,6 +401,7 @@ def test_overnight_latency_evidence_rejects_incomplete_or_wrong_candidate(failur
         "missing-scan",
         "duplicate-scan",
         "empty-scanner",
+        "wrong-theme",
         "serious",
         "critical",
         "expired-allowance",
@@ -423,6 +424,10 @@ def test_overnight_accessibility_semantics_fail_closed(failure):
                 "route": route,
                 "state": state,
                 "theme": theme,
+                "theme_colour": {
+                    "background": "#111111" if theme == "dark" else "#fafafa",
+                    "brightness": 17 if theme == "dark" else 250,
+                },
                 "width": width,
                 "axe_version": "4.11.0",
                 "passes": 15,
@@ -440,6 +445,10 @@ def test_overnight_accessibility_semantics_fail_closed(failure):
         altered["scans"].append(deepcopy(altered["scans"][0]))
     elif failure == "empty-scanner":
         altered["scans"][0]["passes"] = 0
+    elif failure == "wrong-theme":
+        altered["scans"][0]["theme_colour"]["brightness"] = (
+            250 if altered["scans"][0]["theme"] == "dark" else 17
+        )
     elif failure in {"serious", "critical"}:
         altered["scans"][0]["violations"] = [
             {"id": "label", "impact": failure, "nodes": [{"target": ["#new-control"]}]}
@@ -508,6 +517,10 @@ def test_reviewed_accessibility_allowance_cannot_hide_node_growth():
             "route": r,
             "state": s,
             "theme": t,
+            "theme_colour": {
+                "background": "#111111" if t == "dark" else "#fafafa",
+                "brightness": 17 if t == "dark" else 250,
+            },
             "width": w,
             "axe_version": "4.11.0",
             "passes": 10,

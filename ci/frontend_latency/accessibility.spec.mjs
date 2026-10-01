@@ -48,7 +48,20 @@ test("scan genuine HA route and editor accessibility semantics", async ({browser
           await page.goto(`${process.env.REAL_HA_FRONTEND_URL}/extended-openai/${route.path}`, {waitUntil:"domcontentloaded"});
           await waitForManagementRouteReady(page, route, 30000);
           const panel = page.locator("extended-openai-management-panel");
-          await expect.poll(() => page.locator("home-assistant").evaluate(host => host.hass.themes.darkMode)).toBe(theme === "dark");
+          const themeColour = () => panel.evaluate(host => {
+            const background = getComputedStyle(host).getPropertyValue("--primary-background-color").trim();
+            const canvas = document.createElement("canvas");
+            canvas.width = canvas.height = 1;
+            const drawing = canvas.getContext("2d");
+            drawing.fillStyle = background;
+            drawing.fillRect(0, 0, 1, 1);
+            const [r, g, b] = drawing.getImageData(0, 0, 1, 1).data;
+            return {background, brightness:(r + g + b) / 3};
+          });
+          await expect.poll(async () => {
+            const colour = await themeColour();
+            return Boolean(colour.background) && (colour.brightness < 128) === (theme === "dark");
+          }).toBe(true);
           await page.evaluate(() => document.fonts.ready);
           await page.addScriptTag({path:axePath});
           const scan = async state => {
@@ -62,7 +75,7 @@ test("scan genuine HA route and editor accessibility semantics", async ({browser
               return {native_editor, axe_version:result.testEngine.version, passes:result.passes.length, violations:result.violations.map(compact), incomplete:result.incomplete.map(compact)};
             });
             expect(result.passes).toBeGreaterThan(0);
-            scans.push({route:route.name, theme, width, state, ...result});
+            scans.push({route:route.name, theme, theme_colour:await themeColour(), width, state, ...result});
             await mkdir(dirname(output), {recursive:true});
             await writeFile(output, JSON.stringify({scans, browser_environment:{chromium:browser.version(), playwright:require("@playwright/test/package.json").version, axe:require("axe-core/package.json").version}}, null, 2));
           };
