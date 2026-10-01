@@ -284,6 +284,12 @@ def test_only_stable_adds_native_browser_engines():
         }:
             assert "github.event_name == 'schedule'" in step["if"]
             assert "github.event_name == 'workflow_dispatch'" in step["if"]
+            if step["name"] == "Require every compatibility case to pass":
+                assert step["env"]["HA_POINT"] == "${{ matrix.ha-version }}"
+                assert (
+                    step["env"]["HA_STABLE_VERSION"]
+                    == "${{ needs.prepare.outputs.stable-ha-version }}"
+                )
 
 
 def test_minimum_feature_contract_covers_distinct_native_boundaries():
@@ -306,3 +312,21 @@ def test_minimum_feature_contract_covers_distinct_native_boundaries():
         assert any(node.startswith(f"tests_real_ha/{file}.py::") for node in nodes), (
             file
         )
+
+
+@pytest.mark.parametrize(
+    "tested,accepted",
+    [("2026.9.4", True), ("2026.10.0b0", False), ("2026.9.3", False)],
+    ids=["final", "beta", "older"],
+)
+def test_stable_compatibility_point_cannot_follow_fixture_prerelease(tested, accepted):
+    from ci.compatibility_evidence import check_frontend_point, check_stable_point
+
+    item = {"environment": {"packages": {"homeassistant": tested}}}
+    assert bool(check_stable_point(item, "stable", "2026.9.4")) != accepted
+    assert check_stable_point(item, "stable", "2026.10.0b0")
+    assert not check_stable_point(item, "oldest", None)
+    item["environment"]["packages"]["home-assistant-frontend"] = "20260826.7"
+    assert not check_frontend_point(item, "20260826.7")
+    assert check_frontend_point(item, "20260930.1")
+    assert check_frontend_point(item, None)

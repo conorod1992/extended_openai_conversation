@@ -104,6 +104,7 @@ jobs:
     outputs:
       python-version: ${{ steps.versions.outputs.python-version }}
       ha-core-sha: ${{ steps.versions.outputs.ha-core-sha }}
+      stable-ha-version: ${{ steps.versions.outputs.stable-ha-version }}
     steps:
       - name: Resolve Home Assistant Core dev snapshot
         id: versions
@@ -116,6 +117,12 @@ jobs:
           echo "python-version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
           echo "Home Assistant Core dev commit: $HA_CORE_SHA"
           echo "Home Assistant Python version: $PYTHON_VERSION"
+          STABLE_HA_VERSION=''
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            STABLE_HA_VERSION="$(python -c 'import json,urllib.request; print(json.load(urllib.request.urlopen("https://pypi.org/pypi/homeassistant/json",timeout=30))["info"]["version"])')"
+            [[ "$STABLE_HA_VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]
+          fi
+          echo "stable-ha-version=$STABLE_HA_VERSION" >> "$GITHUB_OUTPUT"
 
   public-journeys:
     name: Public journeys (HA ${{ matrix.ha-version }})
@@ -149,7 +156,11 @@ jobs:
             python -m pip install 'pytest-homeassistant-custom-component==0.13.317'
             python -m pip install --pre "homeassistant==$MINIMUM"
           elif [[ "$HA_POINT" == stable ]]; then
-            python -m pip install --upgrade homeassistant pytest-homeassistant-custom-component
+            if [ -n "${{ needs.prepare.outputs.stable-ha-version }}" ]; then
+              python -m pip install --upgrade "homeassistant==${{ needs.prepare.outputs.stable-ha-version }}" pytest-homeassistant-custom-component
+            else
+              python -m pip install --upgrade homeassistant pytest-homeassistant-custom-component
+            fi
           else
             python -m pip install "git+https://github.com/home-assistant/core.git@$HA_DEV_SHA"
           fi
@@ -183,6 +194,8 @@ jobs:
         env:
           STRESS_CAMPAIGN: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
           ENHANCED_JOB_STATUS: ${{ job.status }}
+          HA_POINT: ${{ matrix.ha-version }}
+          HA_STABLE_VERSION: ${{ needs.prepare.outputs.stable-ha-version }}
         run: |
           python ci/enhanced_summary.py compatibility-evidence
           python ci/compatibility_evidence.py check compatibility-evidence
