@@ -65,8 +65,11 @@ test("shipped frontend persists an empty Request Rule wording list through genui
   await expect(panel.locator(".wording-group")).toHaveCount(0);
   await expect.poll(() => panel.evaluate((element) => element._rulesSettingsDraft?.wording_groups)).toEqual([]);
   await panel.locator("#save-page").click();
+  // Do not abandon the document while its committed settings response is pending.
+  await expect(panel.locator(".save-bar")).toHaveCount(0);
   await page.goto(realFixtureUrl("capabilities/request-rules"));
   panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Request Rules", exact: true})).toBeVisible();
   await expect(panel.locator(".wording-group")).toHaveCount(0);
   await expectContractCalls(page, "request_rules_empty");
   await expectHarnessClean(page, pageErrors);
