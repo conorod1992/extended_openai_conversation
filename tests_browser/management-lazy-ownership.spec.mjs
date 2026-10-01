@@ -316,6 +316,13 @@ test("hover does not compete with a cold route but pointerdown still warms the d
   await page.goto(fixtureUrl("overview"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".dashboard-grid")).toBeVisible();
+  // The snapshot paints before lazy Overview hydration. Let that replacement
+  // finish before simulating a busy route, otherwise hydration clears aria-busy
+  // while the hover timer is pending and the test no longer exercises its premise.
+  await expect(panel.locator(".eoc-overview-snapshot")).toHaveCount(0);
+  await expect(panel.locator(".setup-health")).toBeVisible();
+  await expect(panel.locator("#broadcast-card")).not.toContainText("Loading Broadcast…");
+  await expect.poll(() => panel.evaluate(host => host._busy)).toBe(false);
   const warmed = await panel.evaluate(async host => {
     const target = host.shadowRoot.querySelector('.top-nav button[data-page="capabilities"]');
     const calls = [];
