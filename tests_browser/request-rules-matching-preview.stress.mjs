@@ -204,8 +204,11 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
     await expect(panel.locator("#toast")).toContainText("canonical wording is required");
     await expect(panel.locator(".save-bar")).toBeVisible();
     await invalidRow.locator(".wording-remove").click();
-    await panel.locator("#save-page").click();
+    // Removing the rejected row restores the already-saved draft: no Save
+    // button should exist and no redundant settings mutation is needed.
     await expect(panel.locator(".save-bar")).toHaveCount(0);
+    await expect(panel.locator(".wording-canonical").last()).toHaveValue("activate");
+    await expect(panel.locator(".wording-alternatives").last()).toHaveValue("power on");
 
     await panel.locator("#wording-add").click();
     invalidRow = panel.locator(".wording-group").last();
@@ -215,8 +218,11 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
     await expect(panel.locator("#toast")).toContainText("duplicate phrase");
     await expect(panel.locator(".save-bar")).toBeVisible();
     await invalidRow.locator(".wording-remove").click();
-    await panel.locator("#save-page").click();
+    // Removing the rejected row restores the already-saved draft: no Save
+    // button should exist and no redundant settings mutation is needed.
     await expect(panel.locator(".save-bar")).toHaveCount(0);
+    await expect(panel.locator(".wording-canonical").last()).toHaveValue("activate");
+    await expect(panel.locator(".wording-alternatives").last()).toHaveValue("power on");
 
     await panel.getByRole("button", {name:"Create rule", exact:true}).first().click();
     await panel.locator("#rule-name").fill(unique);
