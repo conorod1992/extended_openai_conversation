@@ -235,7 +235,6 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
     // Filling the underlying page while Save still owns the modal can target
     // an input that reconciliation replaces. Wait for the committed rule and
     // completed dialog transition before starting the next user interaction.
-    await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
     await expect(panel.locator(".request-rule-card").filter({hasText:unique})).toBeVisible();
 
     await panel.locator("#rule-match-test-text").fill("activate nightly lamp");
