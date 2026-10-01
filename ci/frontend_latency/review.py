@@ -150,7 +150,7 @@ def check_accessibility(item, sha, policy):
                         "target": finding["target"],
                         "impact": finding["impact"],
                         "max_nodes": count,
-                        "reason": baseline["reason"],
+                        "reason": finding.get("reason", baseline["reason"]),
                         "reviewed_by": baseline["reviewed_by"],
                         "review_until": baseline["review_until"],
                     }

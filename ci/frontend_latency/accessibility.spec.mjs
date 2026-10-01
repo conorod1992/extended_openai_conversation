@@ -10,6 +10,30 @@ test.skip(!process.env.REAL_HA_FRONTEND_URL || !output, "overnight genuine HA ha
 
 export const NARROW_ROUTES = ["assistant-basics", "assistant-voice", "capabilities-request-rules", "capabilities-functions", "usage-maintenance-backup-restore"];
 
+async function settlePanel(panel) {
+  // Route readiness precedes native/Lit descendants and deferred card hydration.
+  await panel.evaluate(async host => {
+    const roots = new Set();
+    let changedAt = performance.now();
+    const observer = new MutationObserver(() => { changedAt = performance.now(); observe(host); });
+    const observe = element => {
+      if (element.shadowRoot && !roots.has(element.shadowRoot)) {
+        roots.add(element.shadowRoot);
+        observer.observe(element.shadowRoot, {subtree:true, childList:true, attributes:true, characterData:true});
+      }
+      for (const child of element.shadowRoot?.querySelectorAll("*") || []) observe(child);
+    };
+    observe(host);
+    const started = performance.now();
+    try {
+      while (performance.now() - changedAt < 350) {
+        if (performance.now() - started > 10000) throw new Error("EOAI descendants did not settle before semantic scan");
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    } finally { observer.disconnect(); }
+  });
+}
+
 test("scan genuine HA route and editor accessibility semantics", async ({browser}) => {
   test.setTimeout(300000);
   const scans = [];
@@ -28,10 +52,14 @@ test("scan genuine HA route and editor accessibility semantics", async ({browser
           await page.evaluate(() => document.fonts.ready);
           await page.addScriptTag({path:axePath});
           const scan = async state => {
+            await settlePanel(panel);
             const result = await panel.evaluate(async host => {
               const result = await window.axe.run(host, {runOnly:{type:"tag", values:["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]}});
               const compact = item => ({id:item.id, impact:item.impact, nodes:item.nodes.map(node => ({target:node.target, failureSummary:node.failureSummary}))});
-              return {axe_version:result.testEngine.version, passes:result.passes.length, violations:result.violations.map(compact), incomplete:result.incomplete.map(compact)};
+              const yaml = host.shadowRoot.querySelector("#tool-yaml-native");
+              const content = yaml?.shadowRoot?.querySelector("ha-code-editor")?.shadowRoot?.querySelector(".cm-content");
+              const native_editor = content ? {role:content.getAttribute("role"), name:content.getAttribute("aria-label"), tabIndex:content.tabIndex, contenteditable:content.getAttribute("contenteditable"), outer_name:yaml.getAttribute("aria-label")} : null;
+              return {native_editor, axe_version:result.testEngine.version, passes:result.passes.length, violations:result.violations.map(compact), incomplete:result.incomplete.map(compact)};
             });
             expect(result.passes).toBeGreaterThan(0);
             scans.push({route:route.name, theme, width, state, ...result});
@@ -42,6 +70,8 @@ test("scan genuine HA route and editor accessibility semantics", async ({browser
           if (route.name === "capabilities-functions") {
             await panel.locator("#add-tool").click();
             await expect(panel.locator("#tool-yaml-native")).toBeVisible();
+            await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(host => Boolean(host.codemirror))).toBe(true);
+            await expect(panel.locator("#tool-yaml-native .cm-content")).toHaveAttribute("contenteditable", "true");
             await scan("tool-editor");
           }
           if (route.name === "capabilities-request-rules") {
