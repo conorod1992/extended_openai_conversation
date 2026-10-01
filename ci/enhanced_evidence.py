@@ -105,7 +105,7 @@ def checkout_sha() -> str:
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-    except OSError, subprocess.CalledProcessError:
+    except (OSError, subprocess.CalledProcessError):  # noqa: UP039 - standalone gates run on Python 3.12
         return "unknown"
 
 
@@ -123,7 +123,7 @@ def environment_identity() -> dict[str, Any]:
         commit = json.loads(direct or "{}").get("vcs_info", {}).get("commit_id")
         if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit):
             ha_source = commit
-    except PackageNotFoundError, ValueError:
+    except (PackageNotFoundError, ValueError):  # noqa: UP039 - standalone gates run on Python 3.12
         pass
     built_environment = Path("/opt/eoai-ci/environment.sha256")
     built_digest = None

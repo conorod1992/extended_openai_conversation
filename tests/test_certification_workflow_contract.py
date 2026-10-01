@@ -1,5 +1,6 @@
 """Keep candidate checkout and release matrix policy aligned with actual workflows."""
 
+import ast
 import json
 from pathlib import Path
 import re
@@ -93,3 +94,14 @@ def test_supported_sdk_policy_matches_matrix_and_manifest_ceiling():
     )
     floor, ceiling = re.fullmatch(r"openai>=([0-9.]+),<=([0-9.]+)", supported).groups()
     assert (SUPPORTED_SDK_LANES[0], SUPPORTED_SDK_LANES[-1]) == (floor, ceiling)
+
+
+def test_standalone_certification_imports_support_the_lightweight_runner_python():
+    # The final gate uses ubuntu-latest's Python, independently of HA's Python.
+    # Parse its complete dependency chain using that runner's older grammar.
+    for filename in (
+        "enhanced_certification.py", "candidate_evidence.py", "enhanced_evidence.py",
+        "execution_contract.py", "release_certification.py",
+    ):
+        path = ROOT / "ci" / filename
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path), feature_version=(3, 12))
