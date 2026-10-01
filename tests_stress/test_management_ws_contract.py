@@ -55,6 +55,7 @@ CRITICAL_ACTIONS = {
     ("tools", "save_group"),
     ("tools", "set_enabled"),
     ("memories", "add"),
+    ("memories", "temporary_add"),
     ("memories", "update"),
     ("memories", "delete"),
     ("knowledge", "create"),

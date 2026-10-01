@@ -12,7 +12,7 @@ Persistent memory keeps concise durable facts after chat history ends. It is off
 
 ## Retrieval modes
 
-**Lightweight lexical** is the default and is fully local. It uses deterministic BM25-style IDF and term-frequency scoring, phrase bonuses, stemming and normalization, conservative prefix/one-edit typo matching, and category, subject, and canonical-key matches. Importance is applied only after a minimum relevance threshold. Freshness is only a small tie-breaker, and ties finish in stable memory-ID order.
+**Lightweight lexical** is the default and is fully local. It uses deterministic BM25-style IDF and term-frequency scoring, phrase bonuses, stemming and normalization, conservative prefix/one-edit typo matching, and category, subject, and canonical-key matches. A minimum relevance threshold filters weak matches, and equal scores use stable memory-ID order.
 
 **Hybrid semantic** combines lexical relevance with locally calculated cosine similarity. It uses embeddings, not another LLM, classifier, or reranker call. Memory embeddings are generated when retrieval-relevant data changes and regenerated after restore when needed; one query embedding is requested for a new conversation. No vector database is used and raw embeddings are excluded from normal results, diagnostics, prompts, and backups. If the configured OpenAI-compatible provider or embedding model does not support embeddings, retrieval logs the failure and falls back to lexical without breaking the conversation. Semantic matching remains probabilistic and should not be treated as perfect.
 
