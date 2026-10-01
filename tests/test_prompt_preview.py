@@ -31,6 +31,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONTINUE_CONVERSATION_CONDITIONAL,
     CONVERSATION_CONTINUITY_USER,
     DEFAULT_PROMPT,
+    LEGACY_DEFAULT_PROMPT_WITH_SKILLS,
     MEMORY_MODE_AUTOMATIC,
     TEMPORARY_MEMORY_BALANCED,
 )
@@ -70,6 +71,15 @@ def test_new_agent_defaults_use_first_class_volatile_context() -> None:
     assert "exposed_entities" not in DEFAULT_PROMPT
     assert "{% if skills" not in DEFAULT_PROMPT
     assert "load_skill" not in DEFAULT_PROMPT
+
+
+def test_legacy_default_prompt_normalizes_to_clean_default() -> None:
+    """Untouched persisted defaults adopt integration-owned Skills injection."""
+    normalized = normalize_agent_config(
+        {CONF_PROMPT: LEGACY_DEFAULT_PROMPT_WITH_SKILLS}
+    )
+
+    assert normalized[CONF_PROMPT] == DEFAULT_PROMPT
 
 
 def _options() -> dict:
@@ -204,6 +214,36 @@ def test_default_prompt_segmentation_is_byte_identical(
     assert default_section.volatility == "stable"
     assert default_section.text == _DEFAULT_PROMPT_STABLE_PREFIX
     assert user_section.volatility == "mixed"
+
+
+def test_legacy_default_prompt_injects_skills_once(hass) -> None:
+    """Runtime fallback avoids duplicate guidance before persisted config is normalized."""
+    _setup_area_template_registries(hass)
+    for key in (
+        "template.environment",
+        "template.environment_limited",
+        "template.environment_strict",
+    ):
+        hass.data[key].globals["extended_openai"] = {
+            "working_directory": lambda: "/config/extended_openai"
+        }
+
+    options = agent_config_defaults()
+    options[CONF_PROMPT] = LEGACY_DEFAULT_PROMPT_WITH_SKILLS
+    options[CONF_CURRENT_DATETIME_ENABLED] = False
+    options[CONF_EXPOSED_ENTITIES_ENABLED] = False
+    result = render_effective_prompt(
+        hass,
+        options,
+        exposed_entities=[],
+        current_device_id=None,
+        user_input=SimpleNamespace(extra_system_prompt=""),
+        skills=[SimpleNamespace(name="lighting", description="Lighting guidance")],
+    )
+
+    assert result.text.count("## Skills") == 1
+    assert "- lighting: Lighting guidance" in result.text
+    assert "{% if skills" not in result.text
 
 
 def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last(
