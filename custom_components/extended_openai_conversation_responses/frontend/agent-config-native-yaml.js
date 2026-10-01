@@ -33,17 +33,19 @@ const NATIVE_STYLE = `
     min-height: 0;
     overflow: hidden;
   }
-  #tool-dialog #tool-editor-label {
+  #tool-dialog .tool-editor-label {
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
+    height: auto;
     min-height: 0;
+    overflow: hidden;
   }
   #${NATIVE_EDITOR_ID} {
     display: block;
     flex: 1 1 auto;
     width: 100%;
-    min-height: 240px;
+    min-height: 0;
     height: 100%;
     cursor: text;
   }
@@ -113,6 +115,19 @@ export function repairToolConfig(panel) {
   return tool;
 }
 
+function constrainNativeCodeEditor(nativeEditor) {
+  const codeEditor = nativeEditor.shadowRoot?.querySelector("ha-code-editor");
+  const viewport = codeEditor?.shadowRoot?.querySelector(".cm-editor");
+  if (!codeEditor || !viewport) return;
+
+  // HA's YAML editor hosts CodeMirror in nested shadow roots. Constrain both
+  // hosts so CodeMirror can scroll its document instead of expanding to it.
+  codeEditor.style.height = "100%";
+  codeEditor.style.minHeight = "0";
+  viewport.style.height = "100%";
+  viewport.style.minHeight = "0";
+}
+
 function installNativeStyle(root) {
   if (!root || root.querySelector("style[data-native-tool-yaml]")) return;
   const style = document.createElement("style");
@@ -149,6 +164,7 @@ export function bindNativeToolYaml(panel) {
   const setNativeValue = (value) => {
     try {
       nativeEditor.setValue(value);
+      constrainNativeCodeEditor(nativeEditor);
       return true;
     } catch (_err) {
       showFallback();
@@ -245,6 +261,7 @@ export function bindNativeToolYaml(panel) {
       textarea.hidden = true;
       nativeEditor.hidden = false;
       nativeEditor.inDialog = true;
+      constrainNativeCodeEditor(nativeEditor);
       void syncNativeFromYaml(rawYaml);
     } catch (_err) {
       showFallback();

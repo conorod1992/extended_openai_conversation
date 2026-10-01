@@ -331,6 +331,86 @@ test("genuine HA native YAML editor saves with Ctrl+S and survives a fresh panel
   await expect(panel.locator(".tool-card").filter({hasText: "real_shell_native_tool"})).toHaveCount(0);
 });
 
+test("long native Function YAML scrolls inside the editor while dialog actions stay visible", async ({context, page}) => {
+  await authenticate(context);
+  const panel = await openFunctionsFromOverview(page);
+  await panel.locator("#add-tool").click();
+  const dialog = panel.locator("#tool-dialog");
+  const editor = panel.locator("#tool-yaml-native");
+  await expect(editor).toBeVisible({timeout: 30_000});
+
+  const properties = Object.fromEntries(Array.from({length: 90}, (_, index) => [
+    `long_field_${String(index).padStart(3, "0")}`,
+    {type: "string", description: `A long YAML editor scroll fixture field ${index}`},
+  ]));
+  const longTool = {
+    spec: {
+      name: "real_shell_long_yaml_scroll_tool",
+      description: "Long YAML editor scroll fixture",
+      parameters: {type: "object", properties},
+    },
+    function: {type: "native", name: "get_user_from_user_id"},
+  };
+  await editor.evaluate((element, value) => {
+    element.setValue(value);
+    element.dispatchEvent(new CustomEvent("value-changed", {
+      bubbles: true,
+      composed: true,
+      detail: {value, isValid: true, errorMsg: ""},
+    }));
+  }, longTool);
+  await expect.poll(() => editor.evaluate((element) => element.yaml.split("\n").length)).toBeGreaterThan(200);
+
+  const actions = dialog.locator(".dialog-actions");
+  const initialLayout = await dialog.evaluate((element) => {
+    const rect = (node) => {
+      const {top, bottom} = node.getBoundingClientRect();
+      return {top, bottom};
+    };
+    return {dialog: rect(element), actions: rect(element.querySelector(".dialog-actions"))};
+  });
+  expect(initialLayout.dialog.top).toBeGreaterThanOrEqual(0);
+  expect(initialLayout.dialog.bottom).toBeLessThanOrEqual(await page.evaluate(() => window.innerHeight));
+  expect(initialLayout.actions.bottom).toBeLessThanOrEqual(initialLayout.dialog.bottom);
+  await expect(actions.getByRole("button", {name: "Save", exact: true})).toBeVisible();
+
+  const scrollState = () => editor.evaluate((host) => {
+    const scrollables = [];
+    const visit = (root) => {
+      for (const element of root.querySelectorAll("*")) {
+        const style = getComputedStyle(element);
+        if (element.scrollHeight > element.clientHeight + 2 && /auto|scroll/.test(style.overflowY)) {
+          scrollables.push(element);
+        }
+        if (element.shadowRoot) visit(element.shadowRoot);
+      }
+    };
+    if (host.scrollHeight > host.clientHeight + 2 && /auto|scroll/.test(getComputedStyle(host).overflowY)) {
+      scrollables.push(host);
+    }
+    if (host.shadowRoot) visit(host.shadowRoot);
+    return {
+      count: scrollables.length,
+      top: Math.max(0, ...scrollables.map((element) => element.scrollTop)),
+    };
+  });
+  await expect.poll(async () => (await scrollState()).count).toBeGreaterThan(0);
+  const editorRect = await editor.boundingBox();
+  expect(editorRect).not.toBeNull();
+  await page.mouse.move(editorRect.x + editorRect.width / 2, editorRect.y + editorRect.height / 2);
+  await page.mouse.wheel(0, 700);
+  await page.waitForTimeout(300);
+  await expect.poll(async () => (await scrollState()).top).toBeGreaterThan(0);
+
+  const finalActions = await actions.boundingBox();
+  expect(finalActions).not.toBeNull();
+  expect(finalActions.y).toBeCloseTo(initialLayout.actions.top, 0);
+  expect(finalActions.y + finalActions.height).toBeLessThanOrEqual(await page.evaluate(() => window.innerHeight));
+  await expect(actions.getByRole("button", {name: "Save", exact: true})).toBeVisible();
+  await panel.locator("#tool-cancel").click();
+  await expect(dialog).toHaveJSProperty("open", false);
+});
+
 test("genuine HA YAML keyboard edits validate before one persisted save", async ({context, page}) => {
   await authenticate(context);
   let panel = await openFunctionsFromOverview(page);
