@@ -44,7 +44,6 @@ def _record(
     content: str,
     category: str,
     *,
-    importance: str = "normal",
     subject: str | None = None,
     key: str | None = None,
 ) -> MemoryRecord:
@@ -56,10 +55,8 @@ def _record(
         source="explicit",
         created_at="2026-08-01T10:00:00+00:00",
         updated_at="2026-08-01T10:00:00+00:00",
-        importance=importance,
         subject=subject,
         key=key,
-        last_confirmed_at="2026-08-01T10:00:00+00:00",
     )
 
 
@@ -77,7 +74,6 @@ _RECORDS = [
         "alice",
         "Oscar is the user's dog.",
         "pets",
-        importance="high",
         subject="Oscar",
         key="pets.oscar",
     ),

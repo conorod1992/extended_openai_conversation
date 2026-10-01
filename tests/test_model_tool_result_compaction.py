@@ -31,11 +31,9 @@ def _memory(**overrides) -> MemoryRecord:
         "source": "explicit",
         "created_at": "2026-09-03T00:00:00+00:00",
         "updated_at": "2026-09-03T00:00:00+00:00",
-        "importance": "normal",
         "subject": None,
         "key": None,
         "valid_from": None,
-        "last_confirmed_at": None,
     }
     values.update(overrides)
     return MemoryRecord(**values)
@@ -76,7 +74,7 @@ def test_model_memory_projection_omits_only_absent_optional_fields() -> None:
     admin = memory_as_dict(record)
     model = model_memory_as_dict(record)
 
-    for key in ("subject", "key", "valid_from", "last_confirmed_at"):
+    for key in ("subject", "key", "valid_from"):
         assert key in admin
         assert admin[key] is None
         assert key not in model
@@ -87,7 +85,6 @@ def test_model_memory_projection_omits_only_absent_optional_fields() -> None:
         "source",
         "created_at",
         "updated_at",
-        "importance",
     ):
         assert model[key] == admin[key]
 
@@ -98,7 +95,6 @@ def test_model_memory_projection_keeps_every_populated_optional_field() -> None:
         subject="hot drinks",
         key="drink.preference",
         valid_from="2026-09-01T00:00:00+00:00",
-        last_confirmed_at="2026-09-03T00:00:00+00:00",
     )
 
     assert model_memory_as_dict(record) == memory_as_dict(record)
@@ -113,11 +109,9 @@ def test_nested_memory_results_only_remove_null_optional_fields() -> None:
             "content": "Tea",
             "category": "preference",
             "source": "explicit",
-            "importance": "normal",
             "subject": None,
             "key": "drink.preference",
             "valid_from": None,
-            "last_confirmed_at": "2026-09-03T00:00:00+00:00",
             "scope_id": "shared:household",
             "scope": "Shared household",
         },
@@ -130,7 +124,6 @@ def test_nested_memory_results_only_remove_null_optional_fields() -> None:
     assert compacted["memory"]["scope_id"] == "shared:household"
     assert compacted["memory"]["scope"] == "Shared household"
     assert compacted["memory"]["key"] == "drink.preference"
-    assert compacted["memory"]["last_confirmed_at"]
     assert "subject" not in compacted["memory"]
     assert "valid_from" not in compacted["memory"]
 

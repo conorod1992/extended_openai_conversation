@@ -7,6 +7,7 @@ test("Function Tools support create, reload, edit, and delete through YAML", asy
 
   let panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#tool-yaml").fill(browserToolYaml());
@@ -46,6 +47,7 @@ test("Function Groups persist membership across create, reload, edit, and delete
 
   let panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
+  await panel.locator("#function-add").click();
   await panel.locator("#add-group").click();
   await expect(panel.locator("#group-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#group-name").fill("Browser group");

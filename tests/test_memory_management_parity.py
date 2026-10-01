@@ -1,7 +1,6 @@
 """Unified Management parity and shared Memory store safety regressions."""
 
 from copy import deepcopy
-from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -68,13 +67,11 @@ async def test_rich_metadata_revision_and_clear_fields(store):
         "add",
         content="Bins go out Friday",
         category="home",
-        importance="high",
         subject="Bins",
         key="bins.day",
         valid_from="2026-09-01T00:00:00+00:00",
     )
     record = (await command("list"))["memories"][0]
-    assert record["importance"] == "high"
     assert record["subject"] == "Bins"
     assert record["key"] == "bins.day"
     assert record["valid_from"] == "2026-09-01T00:00:00+00:00"
@@ -86,15 +83,12 @@ async def test_rich_metadata_revision_and_clear_fields(store):
         expected_revision=record["revision"],
         content="Bins go out Thursday",
         category="chores",
-        importance="low",
         clear_fields=["subject", "key", "valid_from"],
     )
     updated = result["memory"]
     assert updated["revision"] != record["revision"]
     assert updated["category"] == "chores"
-    assert updated["importance"] == "low"
     assert all(updated[field] is None for field in ("subject", "key", "valid_from"))
-    assert updated["last_confirmed_at"] == record["last_confirmed_at"]
     with pytest.raises(ValueError, match="changed since it was loaded"):
         await command(
             "update",
@@ -199,7 +193,6 @@ async def test_disabled_shared_destination_and_invalid_controls(store):
             memory_id=record["memory_id"],
         )
     for values, error in [
-        ({"refresh_confirmation": "yes"}, HomeAssistantError),
         ({"clear_fields": "subject"}, ValueError),
         ({"expected_revision": "bad"}, ValueError),
     ]:
@@ -267,7 +260,6 @@ async def test_persistent_revision_rejects_stale_save_without_mutation() -> None
         content="Oscar is a Cavachon dog.",
         clear_fields=["subject"],
         expected_revision=first_revision,
-        refresh_confirmation=False,
     )
     second_revision = memory_revision(updated)
     assert second_revision != first_revision
@@ -319,36 +311,22 @@ def test_websocket_schema_accepts_rich_edit_controls():
         "scope_id": "user:user-7",
         "target_scope_id": "shared:household",
         "memory_id": "m",
-        "importance": "high",
         "subject": "Bins",
         "key": "bins.day",
         "valid_from": "2026-09-01T00:00:00Z",
         "clear_fields": [],
         "expected_revision": "a" * 64,
-        "refresh_confirmation": False,
     }
     assert management_ui.websocket_management._ws_schema(payload) == payload
 
 
-async def test_explicit_confirmation_refresh_preserves_substantive_revision(
-    store, monkeypatch
-):
+async def test_unchanged_edit_preserves_revision_and_timestamp(store):
     await command("add", content="Fact remains true")
     original = (await command("list"))["memories"][0]
-    from homeassistant.util import dt as dt_util
-
-    confirmed = datetime.fromisoformat(original["last_confirmed_at"]) + timedelta(
-        hours=1
-    )
-    monkeypatch.setattr(dt_util, "utcnow", lambda: confirmed)
-    result = await command(
-        "update",
-        memory_id=original["memory_id"],
-        expected_revision=original["revision"],
-        refresh_confirmation=True,
-    )
-    assert result["memory"]["revision"] == original["revision"]
-    assert result["memory"]["last_confirmed_at"] == confirmed.isoformat()
+    result = await command("update", memory_id=original["memory_id"], expected_revision=original["revision"])
+    assert result["memory"] == original
+    assert "last_confirmed_at" not in result["memory"]
+    assert "importance" not in result["memory"]
 
 
 @pytest.mark.parametrize(

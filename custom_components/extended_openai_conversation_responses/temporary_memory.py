@@ -174,12 +174,15 @@ class TemporaryMemory:
         category: str = "general",
         *,
         owner_scope_id: str | None = None,
+        source: str = "automatic",
     ) -> dict[str, Any]:
-        """Add an automatic fact, coalescing an exact owned active duplicate."""
+        """Add a fact, coalescing an exact owned active duplicate."""
+        if source not in {"automatic", "manual"}:
+            raise ValueError("source must be automatic or manual")
         owner_scope_id = _require_owner_scope_id(owner_scope_id)
         content = _clean(content, MAX_CONTENT_LENGTH, "content")
         category = _clean(category, MAX_CATEGORY_LENGTH, "category")
-        validate_memory_privacy(content, automatic=True)
+        validate_memory_privacy(content, automatic=source == "automatic")
         expiry = _parse_future_expiry(expires_at)
         async with self._lock:
             await self._async_prune_locked()
@@ -194,7 +197,7 @@ class TemporaryMemory:
                         current.scope_id,
                         content,
                         category,
-                        "automatic",
+                        source,
                         expiry.isoformat(),
                         current.created_at,
                         now,
@@ -213,7 +216,7 @@ class TemporaryMemory:
                 scope_id,
                 content,
                 category,
-                "automatic",
+                source,
                 expiry.isoformat(),
                 now,
                 now,
@@ -243,7 +246,7 @@ class TemporaryMemory:
                 if content is not None
                 else current.content
             )
-            validate_memory_privacy(new_content, automatic=True)
+            validate_memory_privacy(new_content, automatic=current.source == "automatic")
             new_expiry = (
                 _parse_future_expiry(expires_at).isoformat()
                 if expires_at is not None
@@ -372,7 +375,7 @@ class TemporaryMemory:
                     record.owner_scope_id is not None
                     and (not record.owner_scope_id or len(record.owner_scope_id) > 128)
                 )
-                or record.source != "automatic"
+                or record.source not in {"automatic", "manual"}
             ):
                 raise ValueError("temporary memory metadata is invalid")
             _clean(record.content, MAX_CONTENT_LENGTH, "content")
@@ -521,6 +524,20 @@ class TemporaryMemory:
                 MAX_ACTIVE_RECORDS,
                 overflow,
             )
+
+    async def async_add_owned(
+        self,
+        owner_scope_id: str,
+        content: str,
+        expires_at: str,
+        category: str = "general",
+    ) -> dict[str, Any]:
+        """Create an explicitly requested fact for a retained Personal/Shared owner."""
+        owner = _require_owner_scope_id(owner_scope_id)
+        await self.async_initialize()
+        return await self.async_add(
+            owner, content, expires_at, category, owner_scope_id=owner, source="manual"
+        )
 
     async def async_list_owned(
         self, owner_scope_id: str

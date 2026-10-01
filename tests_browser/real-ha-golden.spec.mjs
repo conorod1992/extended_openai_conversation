@@ -24,7 +24,7 @@ test("cold native shell authoring reaches runtime and availability boundaries", 
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   if (feature === "tool") {
-    await expect(panel.locator("#add-tool")).toBeVisible();
+    await expect(panel.locator("#function-add")).toBeVisible();
     const card = panel.locator('[data-tool-key="golden_shell_tool"]');
     if (phase === "disable") {
       await expect(card).toBeVisible();
@@ -32,7 +32,7 @@ test("cold native shell authoring reaches runtime and availability boundaries", 
       await expect(card.locator(".tool-enabled")).toBeEnabled();
       await expect(card.locator(".tool-enabled")).not.toBeChecked();
     } else {
-      if (phase === "create") await panel.locator("#add-tool").click();
+      if (phase === "create") { await panel.locator("#function-add").click(); await panel.locator("#add-tool").click(); }
       else await card.locator(".edit-tool").click();
       const editor = panel.locator("#tool-yaml-native");
       await replaceNativeYaml(page, editor, toolYaml(phase === "create" ? "v1" : "v2"));

@@ -57,8 +57,6 @@ MEMORY_TOOL_NAMES = {
     "memory_update",
     "memory_delete",
 }
-MEMORY_IMPORTANCES = {"low", "normal", "high"}
-IMPORTANCE_MULTIPLIERS = {"low": 0.85, "normal": 1.0, "high": 1.2}
 MIN_LEXICAL_RELEVANCE_SCORE = 0.08
 MIN_SEMANTIC_SIMILARITY = 0.55
 EmbeddingProvider = Callable[[list[str]], Awaitable[list[list[float]]]]
@@ -145,11 +143,9 @@ class MemoryRecord:
     source: str
     created_at: str
     updated_at: str
-    importance: str = "normal"
     subject: str | None = None
     key: str | None = None
     valid_from: str | None = None
-    last_confirmed_at: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -317,6 +313,9 @@ class PersistentMemory:
                 seen_ids: set[str] = set()
                 seen_keys: set[tuple[str, str]] = set()
                 for raw in raw_memories:
+                    needs_save |= isinstance(raw, Mapping) and bool(
+                        {"importance", "last_confirmed_at"} & raw.keys()
+                    )
                     legacy_embeddings_found |= (
                         isinstance(raw, Mapping) and "embedding" in raw
                     )
@@ -385,7 +384,6 @@ class PersistentMemory:
         content: str,
         category: str,
         source: str,
-        importance: str = "normal",
         subject: str | None = None,
         key: str | None = None,
         valid_from: str | None = None,
@@ -393,7 +391,6 @@ class PersistentMemory:
         """Add a memory, or return a likely duplicate for an unkeyed fact."""
         content = _clean_content(content)
         category = _clean_category(category)
-        importance = _clean_importance(importance)
         subject = _clean_optional(subject, "subject", MAX_SUBJECT_LENGTH)
         key = _clean_key(key)
         valid_from = _clean_timestamp(valid_from, "valid_from")
@@ -422,11 +419,9 @@ class PersistentMemory:
                 source=source,
                 created_at=timestamp,
                 updated_at=timestamp,
-                importance=importance,
                 subject=subject,
                 key=key,
                 valid_from=valid_from,
-                last_confirmed_at=timestamp,
             )
             self._assert_key_available(memory)
             self._memories[memory.memory_id] = memory
@@ -440,19 +435,13 @@ class PersistentMemory:
         content: str,
         category: str,
         source: str,
-        importance: str | _UnsetType = _UNSET,
         subject: str | _UnsetType | None = _UNSET,
         key: str | _UnsetType | None = _UNSET,
         valid_from: str | _UnsetType | None = _UNSET,
     ) -> dict[str, Any]:
-        """Create, confirm, update by canonical key, or surface a likely conflict."""
+        """Create or update by canonical key, or surface a likely conflict."""
         content = _clean_content(content)
         category = _clean_category(category)
-        cleaned_importance = (
-            _UNSET
-            if isinstance(importance, _UnsetType)
-            else _clean_importance(importance)
-        )
         cleaned_subject = (
             _UNSET
             if isinstance(subject, _UnsetType)
@@ -479,10 +468,7 @@ class PersistentMemory:
                     "content": content,
                     "category": category,
                     "key": cleaned_key,
-                    "last_confirmed_at": timestamp,
                 }
-                if cleaned_importance is not _UNSET:
-                    changes["importance"] = cleaned_importance
                 if cleaned_subject is not _UNSET:
                     changes["subject"] = cleaned_subject
                 if cleaned_valid_from is not _UNSET:
@@ -490,17 +476,14 @@ class PersistentMemory:
                 _set_updated_at_if_substantive(current, changes, timestamp)
                 updated = self._replace_record(current, **changes)
                 await self._async_save_locked()
-                return {"status": "updated", "memory": memory_as_dict(updated)}
+                return {"status": "unchanged" if updated == current else "updated", "memory": memory_as_dict(updated)}
 
             if not keyed_identity:
                 duplicate = self._find_duplicate(user_id, content)
                 if duplicate:
                     changes = {
                         "category": category,
-                        "last_confirmed_at": timestamp,
                     }
-                    if cleaned_importance is not _UNSET:
-                        changes["importance"] = cleaned_importance
                     if cleaned_subject is not _UNSET:
                         changes["subject"] = cleaned_subject
                     if cleaned_key is not _UNSET:
@@ -508,9 +491,12 @@ class PersistentMemory:
                     if cleaned_valid_from is not _UNSET:
                         changes["valid_from"] = cleaned_valid_from
                     _set_updated_at_if_substantive(duplicate, changes, timestamp)
-                    confirmed = self._replace_record(duplicate, **changes)
+                    updated = self._replace_record(duplicate, **changes)
                     await self._async_save_locked()
-                    return {"status": "confirmed", "memory": memory_as_dict(confirmed)}
+                    return {
+                        "status": "unchanged" if updated == duplicate else "updated",
+                        "memory": memory_as_dict(updated),
+                    }
                 candidate = self._find_related_candidate(
                     user_id,
                     content,
@@ -535,17 +521,11 @@ class PersistentMemory:
                 source=source,
                 created_at=timestamp,
                 updated_at=timestamp,
-                importance=(
-                    cleaned_importance
-                    if isinstance(cleaned_importance, str)
-                    else "normal"
-                ),
                 subject=(cleaned_subject if isinstance(cleaned_subject, str) else None),
                 key=cleaned_key if isinstance(cleaned_key, str) else None,
                 valid_from=(
                     cleaned_valid_from if isinstance(cleaned_valid_from, str) else None
                 ),
-                last_confirmed_at=timestamp,
             )
             self._assert_key_available(memory)
             self._memories[memory.memory_id] = memory
@@ -595,7 +575,7 @@ class PersistentMemory:
                     document_frequency[token] += 1
         average_length = max(1.0, total_length / len(corpus))
         normalized_query = _normalize(query)
-        ranked: list[tuple[float, float, str, MemoryRecord]] = []
+        ranked: list[tuple[float, str, MemoryRecord]] = []
         for memory in corpus:
             terms, token_set = document_data[memory.memory_id]
             lexical = _bm25_score(
@@ -627,11 +607,9 @@ class PersistentMemory:
                 or (semantic is not None and semantic >= MIN_SEMANTIC_SIMILARITY)
             ):
                 continue
-            final_score = relevance * IMPORTANCE_MULTIPLIERS[memory.importance]
-            freshness = _freshness_tiebreak(memory)
-            ranked.append((final_score, freshness, memory.memory_id, memory))
-        ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
-        return [memory for _, _, _, memory in ranked[:limit]]
+            ranked.append((relevance, memory.memory_id, memory))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return [memory for _, _, memory in ranked[:limit]]
 
     async def async_prepare_hybrid(
         self, scope_ids: Sequence[str], query: str
@@ -765,11 +743,9 @@ class PersistentMemory:
         memory_id: str,
         content: str | None = None,
         category: str | None = None,
-        importance: str | None = None,
         subject: str | None = None,
         key: str | None = None,
         valid_from: str | None = None,
-        refresh_confirmation: bool = True,
         target_user_id: str | None = None,
         clear_fields: Sequence[str] | None = None,
         expected_revision: str | None = None,
@@ -833,11 +809,6 @@ class PersistentMemory:
                 "user_id": target_user_id,
                 "content": new_content,
                 "category": new_category,
-                "importance": (
-                    _clean_importance(importance)
-                    if importance is not None
-                    else current.importance
-                ),
                 "subject": (
                     None
                     if "subject" in clear
@@ -852,9 +823,6 @@ class PersistentMemory:
                     else _clean_timestamp(valid_from, "valid_from")
                     if valid_from is not None
                     else current.valid_from
-                ),
-                "last_confirmed_at": (
-                    timestamp if refresh_confirmation else current.last_confirmed_at
                 ),
             }
             _set_updated_at_if_substantive(current, changes, timestamp)
@@ -1378,11 +1346,9 @@ def memory_as_dict(
         "source": memory.source,
         "created_at": memory.created_at,
         "updated_at": memory.updated_at,
-        "importance": getattr(memory, "importance", "normal"),
         "subject": getattr(memory, "subject", None),
         "key": getattr(memory, "key", None),
         "valid_from": getattr(memory, "valid_from", None),
-        "last_confirmed_at": getattr(memory, "last_confirmed_at", None),
     }
     if include_scope:
         owner = getattr(memory, "user_id", personal_scope_id)
@@ -1406,7 +1372,6 @@ def memory_revision(memory: MemoryRecord) -> str:
             memory.content,
             memory.category,
             memory.source,
-            memory.importance,
             memory.subject,
             memory.key,
             memory.valid_from,
@@ -1456,7 +1421,7 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_upsert",
-                "description": "Create, confirm, or replace a durable fact using a stable canonical key when available.",
+                "description": "Create or replace a durable fact using a stable canonical key when available.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1560,7 +1525,6 @@ def memory_tools() -> list[dict[str, Any]]:
 
 def _memory_metadata_schema(*, include_scope: bool) -> dict[str, Any]:
     schema: dict[str, Any] = {
-        "importance": {"type": "string", "enum": ["low", "normal", "high"]},
         "subject": {"type": "string"},
         "key": {
             "type": "string",
@@ -1711,11 +1675,6 @@ def _cosine_similarity(
     )
 
 
-def _freshness_tiebreak(memory: MemoryRecord) -> float:
-    parsed = dt_util.parse_datetime(memory.last_confirmed_at or memory.updated_at)
-    return parsed.timestamp() if parsed else 0.0
-
-
 def _embedding_text(memory: MemoryRecord) -> str:
     return " | ".join(
         filter(None, (memory.subject, memory.key, memory.category, memory.content))
@@ -1766,7 +1725,6 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
             record.source,
             record.created_at,
             record.updated_at,
-            record.importance,
         )
     ):
         raise ValueError("persistent memory fields must be strings")
@@ -1776,7 +1734,6 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
         or not record.user_id
         or len(record.user_id) > 128
         or record.source not in {"explicit", "implicit"}
-        or record.importance not in MEMORY_IMPORTANCES
     ):
         raise ValueError("persistent memory metadata is invalid")
     _clean_content(record.content)
@@ -1788,7 +1745,7 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
         or dt_util.parse_datetime(record.updated_at) is None
     ):
         raise ValueError("persistent memory timestamp is invalid")
-    for value in (record.valid_from, record.last_confirmed_at):
+    for value in (record.valid_from,):
         if value is not None and (
             not isinstance(value, str) or dt_util.parse_datetime(value) is None
         ):
@@ -1798,13 +1755,11 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
 
 def _migrate_raw_record(raw: Mapping[str, Any]) -> dict[str, Any]:
     result = dict(raw)
-    result.setdefault("importance", "normal")
+    result.pop("importance", None)
+    result.pop("last_confirmed_at", None)
     result.setdefault("subject", None)
     result.setdefault("key", None)
     result.setdefault("valid_from", None)
-    result.setdefault(
-        "last_confirmed_at", result.get("updated_at") or result.get("created_at")
-    )
     result.pop("embedding", None)
     return result
 
@@ -1829,12 +1784,6 @@ def _clean_category(value: str) -> str:
     value = _SPACE_PATTERN.sub(" ", value).strip().casefold()
     if not value or len(value) > MAX_CATEGORY_LENGTH:
         raise ValueError(f"category must be 1 to {MAX_CATEGORY_LENGTH} characters")
-    return value
-
-
-def _clean_importance(value: str) -> str:
-    if not isinstance(value, str) or value not in MEMORY_IMPORTANCES:
-        raise ValueError("importance must be low, normal, or high")
     return value
 
 
@@ -1882,7 +1831,6 @@ def _set_updated_at_if_substantive(
         "content",
         "category",
         "source",
-        "importance",
         "subject",
         "key",
         "valid_from",

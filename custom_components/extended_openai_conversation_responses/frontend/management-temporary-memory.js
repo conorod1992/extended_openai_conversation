@@ -1,3 +1,4 @@
+import {memoryLocalDateTime, memoryExpiryISO} from "./memory-datetime.js";
 import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
 import {ensureTemporaryScope, memoryCollectionIdentity} from "./management-data-state.js";
 import {embeddedFeatureStatusMarkup} from "./management-feature-status-core.js";
@@ -61,7 +62,7 @@ function temporaryMemoryStatus(panel) {
 function renderTemporaryMemories(panel) {
   const items = panel._result?.memories || [];
   return `<section class="content-card" data-temporary-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}">
-    <div class="section-heading"><div><h2>Memories</h2><p>Review short-term details saved for a Personal or Shared scope. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><button type="button" class="danger" id="clear-temporary">Clear short-term memories</button></div>
+    <div class="section-heading"><div><h2>Memories</h2><p>Review short-term details saved for a Personal or Shared scope. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><div class="actions"><button type="button" id="add-memory">+ Add memory</button><button type="button" class="danger" id="clear-temporary">Clear short-term memories</button></div></div>
     <div data-temporary-feature-status>${temporaryMemoryStatus(panel)}</div>
     <div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent">Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary" disabled>Short-term</button></div>
     <p class="help">Once stored, short-term memories remain until their expiry time, even if short-term memory is later turned off. Conversation and device continuity do not determine ownership.</p>
@@ -115,8 +116,8 @@ function temporaryDialog(panel) {
       <div class="dialog-body">
         <label>Memory<textarea id="temporary-memory-content" maxlength="${CONTENT_LIMIT}" required spellcheck="true"></textarea></label>
         <label>Category<input id="temporary-memory-category" maxlength="${CATEGORY_LIMIT}" required></label>
-        <label>Expires at<input id="temporary-memory-expiry" type="text" required placeholder="2026-09-07T18:30:00+01:00"></label>
-        <p class="help">Use an ISO 8601 date-time including its timezone. Expiry must remain in the future and within the existing one-year Temporary Memory limit.</p>
+        <label>Type<input value="Short-term" readonly></label><label>Expires<input id="temporary-memory-expiry" type="datetime-local" step="1" required></label>
+        <p class="help">Home Assistant local time. Choose a future time within one year.</p>
         <p id="temporary-memory-meta" class="meta"></p>
         <div id="temporary-memory-error" class="inline-error" role="alert"></div>
       </div>
@@ -134,7 +135,8 @@ function openTemporaryMemory(panel, memoryId) {
     memory_id: memory.memory_id,
     content: memory.content || "",
     category: memory.category || "general",
-    expires_at: memory.expires_at || "",
+    expires_at: memoryLocalDateTime(panel, memory.expires_at),
+    original_expiry: memory.expires_at,
     owner_scope_id: memory.owner_scope_id || panel._scopeId,
   };
   const dialog = panel.shadowRoot.querySelector("#temporary-memory-dialog");
@@ -183,7 +185,7 @@ async function saveTemporaryMemory(panel) {
       memory_id: draft.memory_id,
       content,
       category,
-      expires_at: expiresAt,
+      expires_at: memoryExpiryISO(panel, expiresAt, draft.original_expiry),
     });
     if (!panel._ownsRetainedMutation(owner)) return;
     if (!response?.memory?.memory_id) throw new Error("The saved memory response was incomplete.");
@@ -239,7 +241,8 @@ export function bindTemporaryMemory(panel) {
     reconcileTemporaryMemories(panel);
     host.querySelector("#list-search").addEventListener("input", event => { panel._query = event.target.value; filterTemporaryMemories(panel); });
   }
-  delegateCollectionActions(host, ".edit-temporary-memory,.delete-temporary,.memory-kind,#clear-temporary", control => {
+  delegateCollectionActions(host, ".edit-temporary-memory,.delete-temporary,.memory-kind,#clear-temporary,#add-memory", control => {
+    if (control.matches("#add-memory")) { void panel._openMemory(); return; }
     if (control.matches("#clear-temporary")) { void clearTemporaryMemories(panel, control); return; }
     if (control.matches(".delete-temporary")) void deleteTemporaryMemory(panel, control.dataset.id, control);
     else if (control.matches(".memory-kind")) {

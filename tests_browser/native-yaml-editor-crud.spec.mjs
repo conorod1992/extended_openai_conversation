@@ -74,6 +74,7 @@ test("native YAML editor validates, duplicates, isolates tool state, deletes, an
     };
   });
 
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   let nativeEditor = panel.locator("#tool-yaml-native");
   await waitForNativeTool(nativeEditor, "browser_tool");
@@ -149,6 +150,7 @@ test("modified native YAML requires confirmation before built-in preset replacem
     };
   }, presetYaml);
 
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   const nativeEditor = panel.locator("#tool-yaml-native");
   await waitForNativeTool(nativeEditor, "browser_tool");

@@ -62,7 +62,6 @@ def _memory_record() -> MemoryRecord:
         source="explicit",
         created_at="2026-09-11T12:00:00+00:00",
         updated_at="2026-09-11T12:00:00+00:00",
-        importance="high",
     )
 
 
@@ -107,7 +106,6 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
         {
             "memory_id": "memory-1",
             "content": "Oscar is a Cavachon.",
-            "importance": "high",
             "clear_fields": ["subject"],
         },
         llm_context,
@@ -127,7 +125,6 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
         "memory-1",
         "Oscar is a Cavachon.",
         None,
-        importance="high",
         clear_fields=["subject"],
     )
     entity._memory.async_delete.assert_awaited_once_with(

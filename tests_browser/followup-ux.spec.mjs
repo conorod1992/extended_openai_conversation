@@ -143,6 +143,7 @@ test("disabled Model and Speech explanations remain readable while their control
 test("group validation follows corrected fields and preserves unrelated server errors", async ({page}) => {
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel=page.locator("extended-openai-management-panel");
+  await panel.locator("#function-add").click();
   await panel.locator('#add-group').click();
   await panel.locator('#group-description').fill('Test description');
   await panel.locator('#group-save').click();

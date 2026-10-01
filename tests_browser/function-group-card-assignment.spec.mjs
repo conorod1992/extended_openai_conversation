@@ -22,6 +22,7 @@ test("Function Tool cards can move between groups and always available", async (
   await expect(card.locator(".function-group-assignment")).toHaveValue("");
   await expect(baselineGroup.locator(".tool-card").filter({hasText: "baseline_tool"})).toHaveCount(0);
 
+  await panel.locator("#function-add").click();
   await panel.locator("#add-group").click();
   await expect(panel.locator("#group-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#group-name").fill("Card assignment group");

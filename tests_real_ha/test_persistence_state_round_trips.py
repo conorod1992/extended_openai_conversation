@@ -172,7 +172,6 @@ async def test_real_ha_unload_reload_rehydrates_durable_agent_state(
         "Oscar is a Cavachon.",
         "pets",
         "explicit",
-        importance="high",
         subject="Oscar",
         key="pet.oscar.breed",
         valid_from="2026-09-01T12:00:00+00:00",
@@ -324,7 +323,6 @@ async def test_real_ha_repeated_store_reload_is_idempotent(hass: HomeAssistant) 
         "The user prefers Celsius.",
         "preferences",
         "explicit",
-        importance="normal",
         subject="temperature units",
         key="preference.temperature.units",
     )

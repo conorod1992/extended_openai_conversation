@@ -188,11 +188,9 @@ def test_persistent_memory_context_preserves_record_fields_with_compact_json() -
         source="explicit",
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-02-01T00:00:00+00:00",
-        importance="high",
         subject="boiler",
         key="boiler-service",
         valid_from="2026-02-01T00:00:00+00:00",
-        last_confirmed_at="2026-08-01T00:00:00+00:00",
     )
 
     context = _persistent_memory_context([memory])
@@ -202,11 +200,9 @@ def test_persistent_memory_context_preserves_record_fields_with_compact_json() -
             "memory_id": "memory-1",
             "scope": "shared_household",
             "category": "household",
-            "importance": "high",
             "subject": "boiler",
             "key": "boiler-service",
             "valid_from": "2026-02-01T00:00:00+00:00",
-            "last_confirmed_at": "2026-08-01T00:00:00+00:00",
             "content": "The boiler is serviced each October.",
         }
     ]

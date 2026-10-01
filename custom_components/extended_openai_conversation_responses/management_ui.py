@@ -2175,6 +2175,27 @@ async def _async_temporary_memories_command(
             "scope_id": owner,
             "stats": manager.stats(),
         }
+    if action == "temporary_add":
+        target = _valid_owner_scope_id(
+            _selected_scope(user_id, is_admin, message.get("target_scope_id", owner))
+        )
+        if target is None:
+            raise HomeAssistantError("Short-term memories require a Personal or Shared owner")
+        content = message.get("content")
+        category = message.get("category", "general")
+        expires_at = message.get("expires_at")
+        if not all(isinstance(value, str) for value in (content, category, expires_at)):
+            raise HomeAssistantError("Memory, category, and expiry are required")
+        try:
+            result = await manager_any.async_add_owned(target, content, expires_at, category)
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+        return {
+            "status": result["status"],
+            "scope_id": target,
+            "memory": result["memory"]
+            | {"scope_id": target, "owner_scope_id": target},
+        }
     if action == "temporary_clear":
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
@@ -2227,6 +2248,7 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
     action = request.message["action"]
     if action in {
         "temporary_list",
+        "temporary_add",
         "temporary_update",
         "temporary_delete",
         "temporary_clear",
@@ -2249,7 +2271,7 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
 
         metadata = {
             field: message[field]
-            for field in ("importance", "subject", "key", "valid_from")
+            for field in ("subject", "key", "valid_from")
             if field in message
         }
         target = scope_id
@@ -2294,9 +2316,6 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
                 "scope_id": target,
                 "memory": management_memory_dict(records[0], include_scope=is_admin),
             }
-        refresh_confirmation = message.get("refresh_confirmation", False)
-        if not isinstance(refresh_confirmation, bool):
-            raise HomeAssistantError("refresh_confirmation must be true or false")
         record = await memory.async_update(
             owner,
             str(message.get("memory_id", "")),
@@ -2306,7 +2325,6 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
             target_user_id=_memory_scope(target),
             expected_revision=message.get("expected_revision"),
             clear_fields=message.get("clear_fields"),
-            refresh_confirmation=refresh_confirmation,
         )
         return {
             "status": "updated",
@@ -2592,6 +2610,7 @@ async def _async_management_request(
     entry_id, subentry_id = message.get("entry_id"), message.get("subentry_id")
     if section == "memories" and action in {
         "temporary_list",
+        "temporary_add",
         "temporary_update",
         "temporary_delete",
         "temporary_clear",
@@ -2720,13 +2739,12 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("document"): vol.Any(str, dict),
         vol.Optional("sample_text"): str,
         vol.Optional("mode"): str,
-        vol.Optional("importance"): vol.In(["low", "normal", "high"]),
         vol.Optional("subject"): str,
         vol.Optional("key"): str,
         vol.Optional("valid_from"): str,
+        vol.Optional("expires_at"): str,
         vol.Optional("clear_fields"): [vol.In(["subject", "key", "valid_from"])],
         vol.Optional("expected_revision"): str,
-        vol.Optional("refresh_confirmation"): bool,
         vol.Optional("memory_ids"): list,
         vol.Optional("metadata_keys"): list,
         vol.Optional("memory_id"): str,

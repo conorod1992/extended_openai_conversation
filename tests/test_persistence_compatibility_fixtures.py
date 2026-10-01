@@ -86,11 +86,9 @@ async def test_memory_v0_fixture_migrates_with_v2_defaults() -> None:
     records = await memory.async_list("alice")
     assert len(records) == 1
     assert records[0].content == "User prefers Celsius."
-    assert records[0].importance == "normal"
     assert records[0].subject is None
     assert records[0].key is None
     assert records[0].valid_from is None
-    assert records[0].last_confirmed_at == "2025-01-02T03:04:05+00:00"
 
 
 async def test_memory_mixed_corruption_self_heals_without_losing_good_record() -> None:

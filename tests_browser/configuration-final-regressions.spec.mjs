@@ -75,8 +75,9 @@ test("group assignment no-match search can clear without changing selections",as
   const errors=trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel=page.locator("extended-openai-management-panel");
-  await expect(panel.locator("#add-group")).toBeVisible();
+  await expect(panel.locator("#function-add")).toBeVisible();
   await expect(panel.locator(".function-groups-help")).toContainText("Always available groups send full tool schemas");
+  await panel.locator("#function-add").click();
   await panel.locator("#add-group").click();
   const first=panel.locator("#group-functions input").first();
   await first.check();

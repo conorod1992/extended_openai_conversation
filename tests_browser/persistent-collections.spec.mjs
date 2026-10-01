@@ -224,6 +224,7 @@ test("Functions: create and rename a group preserve tool and other group identit
   const panel = await openCollection(page, "capabilities/functions");
   await remember(page, '[data-tool-key="tool_0"]');
   await page.evaluate(() => { window.retainedGroup = browserHarness.panel.shadowRoot.querySelector('.function-group-card[data-group-id="group-0"]'); });
+  await panel.locator("#function-add").click();
   await panel.locator("#add-group").click();
   await panel.locator("#group-name").fill("New group");
   await panel.locator("#group-description").fill("Fixture group description");
@@ -259,6 +260,7 @@ test("Functions: adding HA tools refreshes saved metadata without rebinding exis
       return original(message);
     };
   });
+  await panel.locator("#function-add").click();
   await panel.locator("#add-ha-tools").click();
   const dialog = panel.locator('dialog[aria-label="Add Home Assistant LLM Tools"]');
   await dialog.locator("[data-tools] input").check();

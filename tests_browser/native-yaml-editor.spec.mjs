@@ -66,6 +66,7 @@ test("Function Tool YAML uses the Home Assistant editor when it is registered", 
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
 
   const dialog = panel.locator("#tool-dialog");
@@ -100,6 +101,7 @@ test("Function Tool YAML activates after Home Assistant defines the editor late"
 
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   const nativeEditor = panel.locator("#tool-yaml-native");
   const fallback = panel.locator("#tool-yaml");
@@ -134,6 +136,7 @@ test("built-in Function Tool presets replace the raw YAML bridge and refresh the
     };
   }, presetYaml);
 
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   const nativeEditor = panel.locator("#tool-yaml-native");
   await waitForNativeStarter(nativeEditor);
@@ -152,6 +155,7 @@ test("native YAML validation errors are surfaced and a valid edit can recover an
 
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   const nativeEditor = panel.locator("#tool-yaml-native");
   const status = panel.locator("#tool-error");
@@ -176,6 +180,7 @@ test("native editor save shortcut respects dialog lifecycle and cancelled YAML i
 
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   let nativeEditor = panel.locator("#tool-yaml-native");
   await waitForNativeStarter(nativeEditor);
@@ -219,6 +224,7 @@ test("Function Tool YAML falls back to the textarea if native editor initialisat
       return originalCall(section, action, payload);
     };
   });
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
 
   await expect(panel.locator("#tool-yaml-native")).toBeHidden();
@@ -235,6 +241,7 @@ test("Function Tool YAML keeps the textarea fallback when the HA editor is unava
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
 
   await expect(panel.locator("#tool-yaml-native")).toBeHidden();

@@ -4,6 +4,7 @@ import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} fro
 const toolYaml = (name) => `spec:\n  name: ${name}\n  description: ${name} lifecycle probe\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: native\n  name: get_user_from_user_id\n`;
 
 async function addTool(panel, name) {
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   await panel.locator("#tool-yaml").fill(toolYaml(name));
   await panel.locator("#tool-save").click();

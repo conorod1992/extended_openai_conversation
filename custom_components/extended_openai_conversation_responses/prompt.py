@@ -204,19 +204,9 @@ def _persistent_memory_context(memories: list[MemoryRecord]) -> str:
                         else "personal"
                     ),
                     "category": memory.category,
-                    **(
-                        {"importance": memory.importance}
-                        if memory.importance != "normal"
-                        else {}
-                    ),
                     **({"subject": memory.subject} if memory.subject else {}),
                     **({"key": memory.key} if memory.key else {}),
                     **({"valid_from": memory.valid_from} if memory.valid_from else {}),
-                    **(
-                        {"last_confirmed_at": memory.last_confirmed_at}
-                        if memory.last_confirmed_at
-                        else {}
-                    ),
                     "content": memory.content,
                 }
                 for memory in memories

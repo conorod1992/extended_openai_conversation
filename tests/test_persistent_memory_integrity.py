@@ -7,8 +7,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import memory as memory_module
-from custom_components.extended_openai_conversation_responses.memory import PersistentMemory
+from custom_components.extended_openai_conversation_responses import (
+    memory as memory_module,
+)
+from custom_components.extended_openai_conversation_responses.memory import (
+    PersistentMemory,
+)
 
 
 class FakeStorage:
@@ -124,7 +128,7 @@ async def test_new_keyed_upsert_does_not_merge_with_another_key() -> None:
     assert other.content == "Oscar is a Cavachon."
 
 
-async def test_reconfirmation_updates_confirmation_not_fact_timestamp(
+async def test_unchanged_upsert_preserves_fact_timestamp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     moments = iter(
@@ -140,19 +144,18 @@ async def test_reconfirmation_updates_confirmation_not_fact_timestamp(
     created = await memory.async_upsert(
         "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
     )
-    confirmed = await memory.async_upsert(
+    existing = await memory.async_upsert(
         "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
     )
     changed = await memory.async_upsert(
         "alice", "Oscar is a Cavapoo.", "pets", "explicit", key="pet.oscar.breed"
     )
 
-    assert confirmed["memory"]["updated_at"] == created["memory"]["updated_at"]
-    assert confirmed["memory"]["last_confirmed_at"] > created["memory"]["last_confirmed_at"]
-    assert changed["memory"]["updated_at"] > confirmed["memory"]["updated_at"]
+    assert existing["memory"]["updated_at"] == created["memory"]["updated_at"]
+    assert changed["memory"]["updated_at"] > existing["memory"]["updated_at"]
 
 
-async def test_metadata_change_during_unkeyed_confirmation_updates_fact_timestamp(
+async def test_metadata_change_during_unkeyed_upsert_updates_fact_timestamp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     moments = iter(
@@ -163,12 +166,12 @@ async def test_metadata_change_during_unkeyed_confirmation_updates_fact_timestam
     created = await memory.async_add(
         "alice", "Tea is in the pantry.", "home", "explicit"
     )
-    confirmed = await memory.async_upsert(
+    existing = await memory.async_upsert(
         "alice", "Tea is in the pantry.", "preferences", "explicit"
     )
 
-    assert confirmed["status"] == "confirmed"
-    assert confirmed["memory"]["updated_at"] > created["memory"]["updated_at"]
+    assert existing["status"] == "updated"
+    assert existing["memory"]["updated_at"] > created["memory"]["updated_at"]
 
 
 async def test_key_collision_does_not_mutate_memory_or_indexes() -> None:
@@ -278,7 +281,7 @@ async def test_memory_metadata_can_be_explicitly_cleared() -> None:
     )
     memory_id = created["memory"]["memory_id"]
 
-    unchanged = await memory.async_update("alice", memory_id, importance="high")
+    unchanged = await memory.async_update("alice", memory_id)
     assert unchanged.subject == "Oscar"
     assert unchanged.key == "pet.oscar.breed"
     assert unchanged.valid_from == "2026-01-01T00:00:00+00:00"
@@ -337,7 +340,7 @@ async def test_memory_startup_canonical_validation_self_heals_bad_records() -> N
 
     assert [item.memory_id for item in await memory.async_list("alice")] == ["valid"]
     assert storage.save_count == 1
-    assert storage.data == {"memories": [valid]}
+    assert storage.data == {"memories": [{key: value for key, value in valid.items() if key not in {"importance", "last_confirmed_at"}}]}
 
     reloaded = PersistentMemory(storage)
     await reloaded.async_initialize()
