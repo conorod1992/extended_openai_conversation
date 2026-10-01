@@ -31,6 +31,12 @@ function setDependent(root, key, enabled) {
   if (!container) return;
   container.classList.toggle("is-disabled", !enabled);
   container.querySelectorAll("input:not([readonly]),select,textarea:not([readonly]),button:not(.help-button)").forEach((control) => { control.disabled = !enabled; });
+  if (key === "local_intents_enabled") {
+    const review = container.querySelector(".local-handling-review");
+    const summary = container.querySelector(".local-handling-saved-summary");
+    if (review) review.open = enabled;
+    if (summary) summary.hidden = enabled;
+  }
 }
 
 export function updateConfigurationControl(panel, control, eventType = "input") {

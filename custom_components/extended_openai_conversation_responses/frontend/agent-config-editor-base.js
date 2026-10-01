@@ -151,6 +151,10 @@ export function renderLocalHandling(panel, config) {
   const state = panel._result?.local_handling || {};
   const intents = state.intents || [];
   const excluded = new Set(config.local_intent_exclusions || []);
+  const savedExclusionCount = excluded.size + Number(Boolean(config.local_intent_delayed_commands_to_ai));
+  const savedExclusionSummary = savedExclusionCount
+    ? `${savedExclusionCount} command type${savedExclusionCount === 1 ? " is" : "s are"} set to continue to AI when Local Handling is enabled.`
+    : "No command exclusions are currently saved.";
   const conflicts = state.pipeline_conflicts || [];
   const conflictNames = conflicts.map((item) => item.name).filter(Boolean);
   const conflictText = conflictNames.length === 1
@@ -164,13 +168,22 @@ export function renderLocalHandling(panel, config) {
       <summary>What's the difference from Home Assistant's “Prefer local handling”?</summary>
       <div class="local-handling-help-body"><p>Home Assistant's own option runs before a request reaches Extended OpenAI. That is simple and fast, but Extended OpenAI cannot then apply Request Rules or choose a Function Tool for that command.</p><p><strong>Extended OpenAI local handling</strong> runs after Request Rules, so built-in commands can still stay fast while selected command types continue to Function Tools or the AI model.</p><p><strong>Example:</strong> “Turn on the kitchen light” can stay local, while “turn off the kitchen light in 20 minutes” can continue to a deferred-action Function Tool.</p></div>
     </details>
-    <div class="dependent ${config.local_intents_enabled ? "" : "is-disabled"}" data-dependent="local_intents_enabled">
-        <div class="setting-group" data-setting data-search="local handling exceptions always send command types ai home assistant intents">
-        <div class="subheading"><h3>Send these command types to AI</h3><p>Choose any commands that should skip local handling and continue to your Function Tools or AI model.</p></div>
-        ${intents.length ? `<label class="tool-search"><span class="sr-only">Find a command type</span><input id="local-intent-search" type="search" placeholder="Find a command type..." aria-label="Find a command type" ${config.local_intents_enabled ? "" : "disabled"}></label><div id="local-intent-list" class="group-function-choices"><label class="group-function-choice" data-local-intent-choice data-choice-search="delayed device commands scheduled deferred actions turn off later"><input type="checkbox" data-config="local_intent_delayed_commands_to_ai" data-type="boolean" ${config.local_intent_delayed_commands_to_ai ? "checked" : ""} ${config.local_intents_enabled ? "" : "disabled"}><span><strong>Delayed device commands</strong><small>For example, “turn off the lights in 20 minutes”. Normal timers such as “set a 20 minute timer” can still stay local.</small></span></label>${intents.map((item) => `<label class="group-function-choice ${item.available === false ? "is-disabled" : ""}" data-local-intent-choice data-choice-search="${panel._e(`${item.label} ${item.intent}`.toLowerCase())}"><input type="checkbox" data-local-intent-exclusion value="${panel._e(item.intent)}" ${excluded.has(item.intent) ? "checked" : ""} ${config.local_intents_enabled ? "" : "disabled"}><span><strong>${panel._e(item.label)}</strong><small><code>${panel._e(item.intent)}</code>${item.available === false ? " · Not currently available in Home Assistant" : ""}</small></span></label>`).join("")}</div><div id="local-intents-empty" class="empty" hidden>No command types match this search. <button type="button" class="secondary compact-button" id="local-intents-clear">Clear search</button></div>` : `<p class="help">No Home Assistant command types are currently registered.</p>`}
-        <span class="field-error" data-error="local_intent_exclusions"></span>
+    <div class="dependent local-handling-dependent ${config.local_intents_enabled ? "" : "is-disabled"}" data-dependent="local_intents_enabled">
+      <div class="local-handling-saved-summary" ${config.local_intents_enabled ? "hidden" : ""}>
+        <h3>Saved Local Handling choices</h3>
+        <p>${savedExclusionSummary}</p>
       </div>
-      <p class="help">Request Rules always get the first chance. While Guest Mode is active, requests keep using the existing Guest Mode safeguards instead of this local shortcut.</p>
+      <details class="local-handling-review" ${config.local_intents_enabled ? "open" : ""}>
+        <summary>Review saved choices</summary>
+        <div class="local-handling-review-content">
+          <div class="setting-group" data-setting data-search="local handling exceptions always send command types ai home assistant intents">
+            <div class="subheading"><h3>Send these command types to AI</h3><p>Choose any commands that should skip local handling and continue to your Function Tools or AI model.</p></div>
+            ${intents.length ? `<label class="tool-search"><span class="sr-only">Find a command type</span><input id="local-intent-search" type="search" placeholder="Find a command type..." aria-label="Find a command type" ${config.local_intents_enabled ? "" : "disabled"}></label><div id="local-intent-list" class="group-function-choices"><label class="group-function-choice" data-local-intent-choice data-choice-search="delayed device commands scheduled deferred actions turn off later"><input type="checkbox" data-config="local_intent_delayed_commands_to_ai" data-type="boolean" ${config.local_intent_delayed_commands_to_ai ? "checked" : ""} ${config.local_intents_enabled ? "" : "disabled"}><span><strong>Delayed device commands</strong><small>For example, “turn off the lights in 20 minutes”. Normal timers such as “set a 20 minute timer” can still stay local.</small></span></label>${intents.map((item) => `<label class="group-function-choice ${item.available === false ? "is-disabled" : ""}" data-local-intent-choice data-choice-search="${panel._e(`${item.label} ${item.intent}`.toLowerCase())}"><input type="checkbox" data-local-intent-exclusion value="${panel._e(item.intent)}" ${excluded.has(item.intent) ? "checked" : ""} ${config.local_intents_enabled ? "" : "disabled"}><span><strong>${panel._e(item.label)}</strong><small><code>${panel._e(item.intent)}</code>${item.available === false ? " · Not currently available in Home Assistant" : ""}</small></span></label>`).join("")}</div><div id="local-intents-empty" class="empty" hidden>No command types match this search. <button type="button" class="secondary compact-button" id="local-intents-clear">Clear search</button></div>` : `<p class="help">No Home Assistant command types are currently registered.</p>`}
+            <span class="field-error" data-error="local_intent_exclusions"></span>
+          </div>
+        <p class="help">Request Rules always get the first chance. While Guest Mode is active, requests keep using the existing Guest Mode safeguards instead of this local shortcut.</p>
+        </div>
+      </details>
     </div>
   </div>`;
 }

@@ -265,7 +265,16 @@
 .eoc-guidance-note.eoc-guidance-unavailable{border-left:3px solid var(--disabled-text-color,var(--secondary-text-color))}
 .eoc-guidance-note .eoc-guidance-actions{margin-top:4px}
 .eoc-guidance-note .eoc-guidance-route{min-height:30px;padding:4px 9px}
-.eoc-unavailable-model-setting{opacity:.5}
+.dependent.is-disabled{opacity:1}
+.dependent.is-disabled :is(input:not([type="checkbox"]),select,textarea,button:not(.help-button)){opacity:.55;cursor:not-allowed}
+.local-handling-saved-summary{padding:8px 12px;border:1px solid var(--divider-color);border-radius:9px;background:var(--secondary-background-color)}
+.local-handling-saved-summary h3{margin:0;font-size:15px;color:var(--primary-text-color)}
+.local-handling-saved-summary p{margin:5px 0 0;color:var(--secondary-text-color);line-height:1.45}
+.local-handling-review>summary{cursor:pointer;font-weight:600;color:var(--primary-text-color)}
+.local-handling-dependent:not(.is-disabled)>.local-handling-review>summary{display:none}
+.local-handling-review-content{display:grid;gap:16px}
+.eoc-unavailable-model-setting{opacity:1}
+.eoc-unavailable-model-setting :is(input:not([type="checkbox"]),select,textarea,button:not(.help-button)){opacity:.55;cursor:not-allowed}
 .eoc-unavailable-model-setting:focus{outline:2px solid var(--primary-color);outline-offset:3px}
 
 
