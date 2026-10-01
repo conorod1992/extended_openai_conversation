@@ -228,7 +228,9 @@ def test_overdue_backlog_drains_once_across_two_restarts(
             health = json.loads((root / f"backlog-health-{phase}.json").read_text())
             record(
                 stress_trace,
-                "delayed_backlog",
+                "summary",
+                campaign_action="delayed_backlog",
+                layer="process",
                 phase=phase,
                 pending_calls=count,
                 delayed_backlog_restarts=1,

@@ -64,9 +64,32 @@ async function configureCase(panel, item, index, groupId) {
   } else {
     await panel.locator("#rule-action-type").selectOption("model_routing");
     if (!item.reset) {
+      if (index === 1) await panel.evaluate(host => {
+        const hass = host._hass, original = hass.callWS.bind(hass);
+        const state = window.browserHarness.routingLookup = {started: false, finished: false};
+        hass.callWS = async message => {
+          if (!state.started && message.type.endsWith("/model_catalog") && message.action === "lookup" && message.model === "gpt-5-mini") {
+            state.started = true;
+            await new Promise(resolve => { state.release = () => { hass.callWS = original; resolve(); }; });
+            const result = await original(message);
+            state.finished = true;
+            return result;
+          }
+          return original(message);
+        };
+      });
       await panel.locator("#rule-model").fill("gpt-5-mini");
+      if (index === 1) await expect.poll(() => panel.evaluate(() => window.browserHarness.routingLookup.started)).toBe(true);
       await expect.poll(() => panel.locator("#rule-reasoning option").allTextContents()).toContain("Medium");
       await panel.locator("#rule-reasoning").selectOption(index % 2 ? "medium" : "low");
+      if (index === 1) {
+        // A delayed catalogue response must preserve a selection made while
+        // it was pending, and the saved/reopened rule must keep that choice.
+        await panel.evaluate(() => window.browserHarness.routingLookup.release());
+        await expect.poll(() => panel.evaluate(() => window.browserHarness.routingLookup.finished)).toBe(true);
+        await panel.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await expect(panel.locator("#rule-reasoning")).toHaveValue("medium");
+      }
     } else {
       await panel.locator("#rule-reset").check();
     }
@@ -178,6 +201,7 @@ test("nightly Request Rule editor matrix round-trips all matchers and major form
       actionTypes:[...new Set(MATCH_CASES.map((item) => item.action))],
       rules:created.length,
       freshLoadVerified:true,
+      pendingModelLookupPreservesSelection:true,
     }, null, 2),
     contentType:"application/json",
   });

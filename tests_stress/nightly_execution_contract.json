@@ -685,6 +685,7 @@
     "tests_stress/test_execution_contract.py::test_compatibility_requires_each_reviewed_case[public-version-journeys]",
     "tests_stress/test_execution_contract.py::test_complete_reviewed_execution_passes",
     "tests_stress/test_execution_contract.py::test_conditional_copy_skip_requires_a_genuine_execution",
+    "tests_stress/test_execution_contract.py::test_critical_campaign_counts_reach_certification_summary",
     "tests_stress/test_execution_contract.py::test_expired_reviewed_allowance_fails_closed",
     "tests_stress/test_execution_contract.py::test_frontend_quality_workflow_has_no_pr_or_push_execution",
     "tests_stress/test_execution_contract.py::test_minimum_feature_contract_covers_distinct_native_boundaries",

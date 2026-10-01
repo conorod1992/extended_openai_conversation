@@ -591,3 +591,62 @@ if (retentionGrowth(blip).length) throw new Error('Transient blip rejected');
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_critical_campaign_counts_reach_certification_summary(tmp_path, monkeypatch):
+    """Critical traces must use the collector's reviewed summary convention."""
+    import ast
+    import subprocess
+    import sys
+
+    policy = json.loads(CONTRACT.read_text())
+    expected = {}
+    for campaign in ("functions", "large-installation", "process-chaos"):
+        expected.update(policy["minimums"][campaign])
+    for name in (
+        "test_function_provider_wire_remaining.py",
+        "test_extreme_context_matrix.py",
+        "test_delayed_backlog.py",
+    ):
+        tree = ast.parse((ROOT / "tests_stress" / name).read_text())
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+                continue
+            if call.func.id != "record" or not expected.keys() & {
+                keyword.arg for keyword in call.keywords
+            }:
+                continue
+            assert isinstance(call.args[1], ast.Constant)
+            assert call.args[1].value == "summary", (
+                f"{name}:{call.lineno}: critical metric discarded"
+            )
+    for outcome, multiplier in (("passed", 1), ("failed", 100)):
+        (tmp_path / f"{outcome}.json").write_text(
+            json.dumps(
+                {
+                    "test": f"tests_stress/test_probe.py::{outcome}",
+                    "outcome": outcome,
+                    "operations": [
+                        {
+                            "operation": "summary",
+                            **{
+                                key: value * multiplier
+                                for key, value in expected.items()
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "step-summary.md"))
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "ci" / "enhanced_summary.py"), str(tmp_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    actual = json.loads((tmp_path / "certification.json").read_text())
+    assert actual["measured_totals"] == expected
+    assert actual["trace_outcomes"] == {"passed": 1, "failed": 1}

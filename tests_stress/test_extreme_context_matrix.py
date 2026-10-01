@@ -745,7 +745,9 @@ async def test_concurrent_deferred_summaries_keep_owner_and_recent_turns(
         assert manager._pending == {}
         record(
             stress_trace,
-            "concurrent_summary_isolation",
+            "summary",
+            campaign_action="concurrent_summary_isolation",
+            layer="provider-wire",
             mode=mode,
             conversations=6,
             owners=3,

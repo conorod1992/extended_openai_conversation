@@ -628,7 +628,9 @@ async def test_public_assist_multicall_dispatch_concurrency(
         assert len(wire.requests) == 2
         record(
             stress_trace,
-            "public_assist_concurrency",
+            "summary",
+            campaign_action="public_assist_concurrency",
+            layer="provider-wire",
             api_mode=api_mode,
             mixed=mixed,
             function_executions=2,
@@ -768,7 +770,9 @@ async def test_remote_function_socket_fault_recovers(
         assert attempts == [fault, "healthy"]
         record(
             stress_trace,
-            "remote_resource_boundary",
+            "summary",
+            campaign_action="remote_resource_boundary",
+            layer="provider-wire",
             api_mode=api_mode,
             kind=kind,
             fault=fault,
@@ -824,7 +828,9 @@ async def test_composite_resource_tree_rejected_before_effects(
     assert dispatched == []
     record(
         stress_trace,
-        "composite_resource_rejection",
+        "summary",
+        campaign_action="composite_resource_rejection",
+        layer="model-level",
         shape=shape,
         composite_rejected_trees=1,
         rejected_trees=1,
@@ -921,7 +927,9 @@ async def test_nested_composite_cancellation_stops_later_side_effect_and_recover
         assert len(fresh.requests) == 2
         record(
             stress_trace,
-            "composite_cancellation",
+            "summary",
+            campaign_action="composite_cancellation",
+            layer="provider-wire",
             composite_cancelled_exchanges=1,
             cancelled_exchanges=1,
             recovery_conversations=1,

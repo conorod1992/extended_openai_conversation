@@ -359,9 +359,8 @@ function refreshEditor(panel) {
   const model=q("#rule-model")?.value.trim();
   if(!model)return;
   const state=editorState(panel), current=++state.modelRevision;
-  const selected=(panel._result?.rules||[]).find((item)=>item.id===panel._editingRuleId)?.action?.reasoning_effort || q("#rule-reasoning")?.value || "";
   void ensureModelCatalog().then((module)=>module.lookupModelData(panel,model)).then((data)=>{
-    if(current===state.modelRevision && root.querySelector("#rule-dialog")?.open) syncRequestRuleRoutingControls(root,data.reasoning_effort_options,selected);
+    if(current===state.modelRevision && root.querySelector("#rule-dialog")?.open) syncRequestRuleRoutingControls(root,data.reasoning_effort_options);
   }).catch((err)=>panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true));
 }
 
