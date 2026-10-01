@@ -20,7 +20,7 @@ const reportFolder = artifactKey ? `playwright-report/${artifactKey}` : "playwri
 
 export default defineConfig({
   testDir: "./tests_browser",
-  testMatch: ["real-ha-shell.spec.mjs", "real-ha-golden.spec.mjs"],
+  testMatch: ["real-ha-shell.spec.mjs", "real-ha-golden.spec.mjs", "real-ha-compatibility.spec.mjs"],
   outputDir,
   fullyParallel: false,
   workers: 1,
