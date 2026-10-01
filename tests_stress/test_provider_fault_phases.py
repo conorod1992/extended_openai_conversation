@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 import json
 from typing import Any
@@ -26,6 +27,7 @@ from tests_real_ha.test_provider_wire_e2e import (
     _raw_client,
     _responses_sse_text,
     _responses_sse_tool_call,
+    _speech,
     _tool_result_from_chat_request,
     _tool_result_from_responses_request,
 )
@@ -302,6 +304,19 @@ async def test_tool_group_aba_after_side_effect_keeps_lost_ack_replay_safe(
 
     conversation_id = uuid4().hex
     requests: list[dict[str, Any]] = []
+    # The lost-ack replay is deliberately on the still-registered old runtime.
+    # Hold the scheduled reload until that public Assist turn has completed;
+    # otherwise UUID/timing-independent registry removal can win the race and
+    # async_converse raises "Agent not found" before exercising replay safety.
+    release_reload = asyncio.Event()
+    original_reload = hass.config_entries.async_reload
+
+    async def held_reload(entry_id):
+        if entry_id == agent.entry.entry_id:
+            await release_reload.wait()
+        return await original_reload(entry_id)
+
+    monkeypatch.setattr(hass.config_entries, "async_reload", held_reload)
 
     def replace_config(
         tools: list[dict[str, Any]], groups: list[dict[str, Any]]
@@ -321,6 +336,30 @@ async def test_tool_group_aba_after_side_effect_keeps_lost_ack_replay_safe(
         del args, kwargs
         body = json.loads(request.content.decode())
         requests.append({"path": request.url.path, "body": body})
+        # Choose the fresh-turn wire response from the actual conversation,
+        # not a presumed number of provider requests. The stale runtime may
+        # reject replay at admission without making any provider request.
+        if any(
+            message.get("role") == "user"
+            and message.get("content") == "Turn off the test light again"
+            for message in body["messages"]
+        ):
+            completed = any(
+                message.get("role") == "tool"
+                and message.get("tool_call_id") == "call-compound-intentional"
+                for message in body["messages"]
+            )
+            payload = (
+                _chat_sse_text("New call completed.")
+                if completed
+                else _chat_sse_tool_call(call_id="call-compound-intentional")
+            )
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=payload,
+                request=request,
+            )
         index = len(requests) - 1
         if index in {0, 2, 4}:
             call_id = (
@@ -380,12 +419,15 @@ async def test_tool_group_aba_after_side_effect_keeps_lost_ack_replay_safe(
             agent_id=agent.entry.entry_id,
         )
 
-    first = await turn("Turn off the test light")
-    assert first.response.error_code is not None
-    assert len(calls) == len(executions) == 1
-    replay = await turn("Retry the interrupted action")
-    assert replay.response.error_code is not None
-    assert len(calls) == len(executions) == 1
+    try:
+        first = await turn("Turn off the test light")
+        assert first.response.error_code is not None
+        assert len(calls) == len(executions) == 1
+        replay = await turn("Retry the interrupted action")
+        assert replay.response.error_code is not None
+        assert len(calls) == len(executions) == 1
+    finally:
+        release_reload.set()
     await hass.async_block_till_done()
     current_agent = conversation.async_get_agent(hass, agent.entry.entry_id)
     assert current_agent is not None and current_agent is not agent
@@ -410,6 +452,7 @@ async def test_tool_group_aba_after_side_effect_keeps_lost_ack_replay_safe(
         agent_id=current_agent.entry.entry_id,
     )
     assert intentional.response.error_code is None
+    assert "New call completed." in _speech(intentional)
     assert len(calls) == len(executions) == 2
     record(
         stress_trace,

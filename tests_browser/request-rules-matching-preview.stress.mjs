@@ -114,9 +114,18 @@ test("nightly Sentence Pattern helpers replace selections, insert at the caret, 
 
 test("nightly Safe Preview presents match, captures, skipped conditions, no-match, and never starts a live request", async ({page}) => {
   const errors = trackPageErrors(page);
+  let releaseModule;
+  const moduleReady = new Promise(resolve => { releaseModule = resolve; });
+  let moduleRequested = false;
+  await page.route(/\/request-rules-match-test-ui(?:-[A-Za-z0-9_-]+)?\.js(?:\?.*)?$/, async route => {
+    moduleRequested = true;
+    await moduleReady;
+    await route.continue();
+  });
   await page.goto(fixtureUrl("capabilities/request-rules"));
   const panel = panelFor(page);
   await expect(panel.locator("#rule-match-test-text")).toBeVisible();
+  await page.waitForFunction(() => browserHarness.panel._result && !browserHarness.panel._busy);
   const responses = {
     "ask weather":{matched:true,rule:{name:"Preview capture",action_type:"model_routing",match_type:"sentence_pattern"},matched_phrase:"ask {question}",captured_values:{question:"weather"},would_do:{model:"gpt-5-mini",scope:"request"}},
     door:{matched:false,skipped_conditions:[{name:"Home is occupied"}]},
@@ -138,7 +147,9 @@ test("nightly Safe Preview presents match, captures, skipped conditions, no-matc
 
   for (const [text, expected] of [["ask weather", "Captured values"], ["door", "Only when conditions were false"], ["unmatched", "No Request Rule matched"]]) {
     await panel.locator("#rule-match-test-text").fill(text);
+    await expect.poll(() => moduleRequested).toBe(true);
     await panel.locator("#rule-match-test").click();
+    releaseModule(); // The initial click must survive a cold module dependency.
     await expect(panel.locator("#rule-match-test-result")).toContainText(expected);
   }
   expect(await page.evaluate(() => window.browserHarness.previewCalls.filter((call) => call.action === "test").length)).toBe(0);
@@ -190,11 +201,14 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
     await invalidRow.locator(".wording-canonical").fill("   ");
     await invalidRow.locator(".wording-alternatives").fill("blank alternative");
     await panel.locator("#save-page").click();
-    await expect(panel.locator("#toast")).toContainText("non-empty");
+    await expect(panel.locator("#toast")).toContainText("canonical wording is required");
     await expect(panel.locator(".save-bar")).toBeVisible();
     await invalidRow.locator(".wording-remove").click();
-    await panel.locator("#save-page").click();
+    // Removing the rejected row restores the already-saved draft: no Save
+    // button should exist and no redundant settings mutation is needed.
     await expect(panel.locator(".save-bar")).toHaveCount(0);
+    await expect(panel.locator(".wording-canonical").last()).toHaveValue("activate");
+    await expect(panel.locator(".wording-alternatives").last()).toHaveValue("power on");
 
     await panel.locator("#wording-add").click();
     invalidRow = panel.locator(".wording-group").last();
@@ -204,8 +218,11 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
     await expect(panel.locator("#toast")).toContainText("duplicate phrase");
     await expect(panel.locator(".save-bar")).toBeVisible();
     await invalidRow.locator(".wording-remove").click();
-    await panel.locator("#save-page").click();
+    // Removing the rejected row restores the already-saved draft: no Save
+    // button should exist and no redundant settings mutation is needed.
     await expect(panel.locator(".save-bar")).toHaveCount(0);
+    await expect(panel.locator(".wording-canonical").last()).toHaveValue("activate");
+    await expect(panel.locator(".wording-alternatives").last()).toHaveValue("power on");
 
     await panel.getByRole("button", {name:"Create rule", exact:true}).first().click();
     await panel.locator("#rule-name").fill(unique);
@@ -234,6 +251,9 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
         if (await card.count()) {
           await card.locator(".rule-delete").click();
           await panel.locator("#confirm-accept").click();
+          // Deletion reconciles the whole page asynchronously. Wait before
+          // opening the wording editor so its replacement does not close it.
+          await expect(card).toHaveCount(0);
         }
       }
       if (wordingCreated) {
@@ -250,5 +270,12 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
       throw cleanupError;
     }
   }
+  // Both deliberately rejected saves cross the HTTP bridge as 400s. Account
+  // for exactly those diagnostics; retain strict checks for every other error.
+  expect(errors.badResponses).toEqual(Array(2).fill(`400 POST ${realBackendUrl}`));
+  expect(errors.consoleErrors).toEqual(Array(2).fill(
+    `Failed to load resource: the server responded with a status of 400 (Bad Request) (${realBackendUrl}:0)`));
+  errors.badResponses.splice(0, 2);
+  errors.consoleErrors.splice(0, 2);
   await expectHarnessClean(page, errors);
 });

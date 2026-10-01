@@ -32,7 +32,9 @@ export default defineConfig({
   expect: {
     timeout: 7_500,
   },
-  reporter: process.env.CI
+  reporter: process.env.ENHANCED_EXECUTION_EVIDENCE === "1"
+    ? [["line"], ["./ci/playwright_execution.mjs"], ["html", {outputFolder: reportFolder, open: "never"}]]
+    : process.env.CI
     ? [["line"], ["html", {outputFolder: reportFolder, open: "never"}]]
     : "list",
   use: {

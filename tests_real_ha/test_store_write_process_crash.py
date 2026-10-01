@@ -123,7 +123,9 @@ def _env(config_dir: Path, phase: str, kind: str) -> dict[str, str]:
 
 
 @pytest.mark.parametrize("kind", ["memory", "knowledge"])
-def test_completed_store_write_survives_process_kill(tmp_path: Path, kind: str) -> None:
+def test_completed_store_write_survives_process_kill(
+    tmp_path: Path, kind: str, request: pytest.FixtureRequest
+) -> None:
     source = Path(__file__).resolve().parents[1] / "custom_components" / DOMAIN
     config_dir = tmp_path / "ha-config"
     destination = config_dir / "custom_components" / DOMAIN
@@ -179,7 +181,7 @@ def test_completed_store_write_survives_process_kill(tmp_path: Path, kind: str) 
     (artifact_dir / f"process-store-{kind}.json").write_text(
         json.dumps(
             {
-                "test": f"process-store-{kind}",
+                "test": request.node.nodeid,
                 "operations": [
                     {
                         "operation": "summary",

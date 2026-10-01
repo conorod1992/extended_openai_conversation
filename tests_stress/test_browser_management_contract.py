@@ -43,6 +43,13 @@ async def test_nightly_management_mutations_cross_real_websocket(
             env={"REAL_HA_BACKEND_URL": backend_url},
             failure_label="Nightly Playwright genuine-HA management acceptance failed",
         )
+        await _run_playwright(
+            repo_root=Path(__file__).resolve().parent.parent,
+            spec="tests_browser/request-rules-matching-preview.stress.mjs",
+            config="playwright.stress.config.mjs",
+            env={"REAL_HA_BACKEND_URL": backend_url},
+            failure_label="Nightly genuine-HA saved matching defaults acceptance failed",
+        )
     finally:
         await runner.cleanup()
 

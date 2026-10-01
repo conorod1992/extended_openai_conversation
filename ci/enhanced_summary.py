@@ -9,6 +9,9 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "conversation_turns",
+    "lifecycle_cycles",
+    "public_conversation_turns",
     "ai_task_turns",
     "ai_task_concurrent",
     "ai_task_agents",
@@ -120,6 +123,11 @@ def main() -> None:
         f"HA: `{metadata['ha_version'] or 'not applicable'}` · Python: `{metadata['python_version']}`",
         "",
     ]
+    execution_cases = []
+    for path in files:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("execution_schema") == "eoai-test-execution/v1":
+            execution_cases.extend(data["cases"])
     totals: Counter[str] = Counter()
     outcomes: Counter[str] = Counter()
     if not files:
@@ -132,7 +140,14 @@ def main() -> None:
         if not data.get("test") and not path.stem.startswith("browser-"):
             continue
         operations = safe(data.get("operations", []))
-        outcome = data.get("outcome", "unreported")
+        outcome = data.get("outcome") or next(
+            (
+                case["outcome"]
+                for case in execution_cases
+                if case["nodeid"] == data.get("test")
+            ),
+            "unreported",
+        )
         outcomes[outcome] += 1
         counts = Counter(item.get("operation", "unknown") for item in operations)
         lines += [
@@ -203,6 +218,7 @@ def main() -> None:
                 1 for path in files if path.name != "certification.json"
             ),
             "measured_totals": dict(totals),
+            "execution_cases": execution_cases,
             "trace_outcomes": dict(outcomes),
             "artifact_files": [
                 path.name for path in files if path.name != "certification.json"

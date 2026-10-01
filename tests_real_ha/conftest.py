@@ -21,8 +21,14 @@ if str(repo_root) not in sys.path:
 async def real_ha_prerequisites(
     hass: HomeAssistant,
     enable_custom_integrations,
+    tmp_path: Path,
 ) -> None:
     """Initialize HA services that bootstrap normally provides before integrations."""
+    # The upstream fixture uses one package-owned testing_config directory.
+    # Genuine startup creates TTS cache and Recorder files there; xdist workers
+    # can race mkdir/schema creation. Give each HA instance its own filesystem.
+    hass.config.config_dir = str(tmp_path)
+
     # Core tests explicitly set up the Home Assistant integration before tests that
     # rely on exposed-entity preferences.  The lightweight test ``hass`` fixture does
     # not run the full bootstrap sequence itself.
