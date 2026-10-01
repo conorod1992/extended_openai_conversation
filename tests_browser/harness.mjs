@@ -2,7 +2,7 @@ import {createBackupTransferBackend} from "/tests_browser/backup-transfer-harnes
 import {createStateBackend} from "/tests_browser/harness-state.mjs";
 
 const params = new URLSearchParams(location.search);
-const route = params.get("route") || "guide";
+const route = params.get("route") || (location.pathname.startsWith("/extended-openai/") ? location.pathname.slice("/extended-openai/".length) : "guide");
 const isAdmin = params.get("admin") !== "0";
 const predefine = params.get("predefine") === "1";
 const agentCount = Math.max(1, Math.min(100, Number.parseInt(params.get("agents") || "1", 10) || 1));

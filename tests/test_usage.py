@@ -552,6 +552,8 @@ async def test_prune_and_clear_details_cover_zero_retention_and_confirmation() -
     result = await manager.async_clear_details(confirm=True)
     assert result == {"deleted_requests": 1, "deleted_runs": 1}
     assert details.data == {"requests": [], "runs": []}
+    rebuilt = await _coverage_manager(detail_storage=details, request_retention_days=30, run_retention_days=30)
+    assert rebuilt.requests == [] and rebuilt.runs == []
 
 
 async def test_summary_series_pagination_breakdowns_and_listener_lifecycle() -> None:

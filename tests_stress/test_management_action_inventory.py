@@ -139,7 +139,7 @@ def test_management_actions_have_reviewed_evidence() -> None:
                 "save", "update", "delete", "clear", "restore", "import",
                 "duplicate", "set_enabled", "reassign",
             )) or action in {"add", "create", "disable", "end_active", "ha_add", "move", "settings", "groups", "wording_groups"}
-            if mutating_name and (section, action) != ("backup", "create"):
+            if mutating_name and (section, action) not in {("backup", "create"), ("conversations", "settings")}:
                 assert contract["semantic_classes"][action] != "read_only", (section, action)
 
 
@@ -149,3 +149,44 @@ def test_dummy_management_action_requires_review() -> None:
     assert actual["configuration"] | {"nightly_dummy"} != set(
         json.loads(INVENTORY.read_text(encoding="utf-8"))["sections"]["configuration"]["actions"]
     )
+
+
+def _validate_durability(section: str, contract: dict) -> None:
+    from tests_stress.test_evidence_manifest import _behavior_test
+
+    durable = {action for action, kind in contract["semantic_classes"].items() if kind in {"durable_mutation", "destructive_mutation"}}
+    evidence = contract["durability_evidence"]
+    assert set(evidence) == durable, f"{section}: persistent mutations need committed-effect durability evidence"
+    boundaries = {"authoritative_readback", "fresh_page", "fresh_manager", "config_entry_reload", "process_restart"}
+    for action, record in evidence.items():
+        assert record["boundary"] in boundaries, (section, action)
+        assert record["outcome"].strip(), (section, action)
+        reference = record["evidence"]
+        path, _, node = reference.partition("::")
+        if path.endswith(".py"):
+            _behavior_test(reference)
+        else:
+            source = (ROOT / path).read_text(encoding="utf-8")
+            assert path.startswith("tests_browser/") and re.search(r'test\(["\']' + re.escape(node) + r'["\']', source), reference
+            start = re.search(r'test\(["\']' + re.escape(node) + r'["\']', source)
+            body = source[start.start():].split("\ntest(", 1)[0]
+            assert "expect(" in body, reference
+
+
+def test_persistent_management_actions_have_durability_boundaries() -> None:
+    for section, contract in json.loads(INVENTORY.read_text())["sections"].items():
+        _validate_durability(section, contract)
+
+
+def test_missing_durability_evidence_cannot_ship() -> None:
+    import pytest
+
+    contract = {"semantic_classes":{"create":"durable_mutation", "get":"read_only"}, "durability_evidence":{}}
+    with pytest.raises(AssertionError, match="persistent mutations"):
+        _validate_durability("dummy", contract)
+    # Read-only and ephemeral actions need no manufactured restart journey.
+    _validate_durability("dummy", {"semantic_classes":{"get":"read_only", "cancel":"ephemeral_mutation"}, "durability_evidence":{}})
+
+
+def test_conversation_settings_inventory_matches_read_only_handler() -> None:
+    assert json.loads(INVENTORY.read_text())["sections"]["conversations"]["semantic_classes"]["settings"] == "read_only"

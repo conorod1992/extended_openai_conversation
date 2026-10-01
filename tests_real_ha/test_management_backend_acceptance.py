@@ -288,7 +288,7 @@ def _evict_durable_management_managers(hass: HomeAssistant) -> None:
     hass.data.pop(request_rules_module._RUNTIMES, None)
 
 
-async def _fresh_reload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+async def _fresh_reload(hass: HomeAssistant, entry: MockConfigEntry, *, extra_manager_keys: tuple[str, ...] = ()) -> None:
     """Reload the entry with fresh durable managers, approximating a restart boundary."""
     # Config-subentry writes can schedule the integration's update listener. Let any
     # such reload finish before deliberately crossing our own unload/load boundary.
@@ -299,6 +299,8 @@ async def _fresh_reload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     assert entry.state is ConfigEntryState.NOT_LOADED
 
     _evict_durable_management_managers(hass)
+    for key in extra_manager_keys:
+        hass.data.pop(key, None)
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -742,3 +744,101 @@ async def test_memories_round_trip_through_management_websocket(
     assert [(item["content"], item["category"]) for item in reloaded["memories"]] == [
         ("Management WebSocket persistence acceptance marker.", "acceptance")
     ]
+
+@pytest.mark.parametrize(("section", "action"), [
+    ("conversations", "clear"), ("conversations", "delete"), ("conversations", "delete_range"),
+    ("memories", "clear"), ("memories", "reassign_legacy"),
+    ("memories", "temporary_update"), ("memories", "temporary_delete"), ("memories", "temporary_clear"),
+    ("guest_mode", "update"), ("guest_mode", "disable"),
+])
+async def test_undercovered_management_mutations_survive_reload(hass, hass_ws_client, section, action):
+    """Committed effects survive fresh managers; rejected cross-user writes aren't durability evidence."""
+    from custom_components.extended_openai_conversation_responses.memory import (
+        ANONYMOUS_USER_ID,
+        async_get_memory,
+    )
+    from tests_real_ha.test_user_ownership_privacy import (
+        _seed_personal_data,
+        _seed_temporary_memory,
+    )
+
+    entry = _entry(f"Durability {section}/{action}")
+    await _setup_entry(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+    admin = await hass.auth.async_get_user(ADMIN_ID)
+    assert admin is not None
+    _memory_id, session_id = await _seed_personal_data(hass, entry, user=admin, memory_text="Committed memory", conversation_text="Committed archive")
+    temporary_id = await _seed_temporary_memory(hass, entry, user=admin, content="Committed temporary memory")
+    other = MockUser(id="durability-other", name="Unaffected owner")
+    other.add_to_hass(hass)
+    await _seed_personal_data(hass, entry, user=other, memory_text="Unaffected personal memory", conversation_text="Unaffected archive")
+    await _seed_temporary_memory(hass, entry, user=other, content="Unaffected temporary memory")
+    payload = {"confirm":True}
+    if section == "conversations":
+        payload.update(session_id=session_id, start_date="2000-01-01", end_date="2100-01-01")
+    elif action == "reassign_legacy":
+        subentry = _conversation_subentry(entry)
+        memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
+        legacy = await memory.async_add(ANONYMOUS_USER_ID, "Moved legacy memory", "general", "explicit")
+        payload.update(memory_ids=[legacy["memory"]["memory_id"]], target_scope_id=f"user:{ADMIN_ID}")
+    elif action.startswith("temporary_"):
+        payload.update(memory_id=temporary_id, content="Edited temporary memory")
+    elif section == "guest_mode":
+        if action == "disable":
+            await _management_call(client, entry=entry, section=section, action="update", indefinite=True)
+        payload.update(indefinite=True)
+    await _management_call(client, entry=entry, section=section, action=action, **payload)
+    manager_keys = tuple(f"{DOMAIN}.{kind}_managers" for kind in ("archive", "temporary_memory", "guest_mode"))
+    before_managers = {key: dict(hass.data.get(key, {})) for key in manager_keys}
+    await _fresh_reload(hass, entry, extra_manager_keys=manager_keys)
+    read_action = "temporary_list" if action.startswith("temporary_") else "get" if section == "guest_mode" else "list"
+    observed = await _management_call(client, entry=entry, section=section, action=read_action)
+    for key, managers in before_managers.items():
+        for identity, manager in hass.data.get(key, {}).items():
+            assert manager is not managers.get(identity)
+    if section == "conversations":
+        assert observed["sessions"] == []
+    elif section == "guest_mode":
+        assert observed["status"]["state"] == ("active_indefinitely" if action == "update" else "inactive")
+    elif action == "temporary_update":
+        assert [(item["memory_id"], item["content"]) for item in observed["memories"]] == [(temporary_id, "Edited temporary memory")]
+    elif action == "reassign_legacy":
+        assert {item["content"] for item in observed["memories"]} == {"Committed memory", "Moved legacy memory"}
+    else:
+        assert observed["memories"] == []
+    if section != "guest_mode":
+        unaffected = await _management_call(client, entry=entry, section=section, action=read_action, scope_id=f"user:{other.id}")
+        if section == "conversations":
+            assert len(unaffected["sessions"]) == 1
+        else:
+            expected = "Unaffected temporary memory" if action.startswith("temporary_") else "Unaffected personal memory"
+            assert [item["content"] for item in unaffected["memories"]] == [expected]
+
+@pytest.mark.parametrize("action", ["duplicate", "import"])
+async def test_configuration_transfer_survives_reload(hass, hass_ws_client, action):
+    entry = _entry("Durable configuration transfer")
+    await _setup_entry(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+    before = await _management_call(client, entry=entry, section="configuration", action="get")
+    saved = await _management_call(client, entry=entry, section="configuration", action="save", revision=before["revision"], config={"max_tokens":777})
+    source_id = _conversation_subentry(entry).subentry_id
+    if action == "duplicate":
+        result = await _management_call(client, entry=entry, section="configuration", action=action, title="Durable transferred assistant")
+        target_id = result["subentry_id"]
+        expected_tokens = 777
+    else:
+        exported = await _management_call(client, entry=entry, section="configuration", action="export")
+        document = exported["document"]
+        document["title"] = "Durable transferred assistant"
+        document["config"]["max_tokens"] = 888
+        await _management_call(client, entry=entry, section="configuration", action=action, document=document, mode="current", confirm=True, revision=saved["revision"])
+        target_id = source_id
+        expected_tokens = 888
+    await _fresh_reload(hass, entry)
+    readback = await _management_call(client, entry=entry, section="configuration", action="get", subentry_id=target_id)
+    assert readback["title"] == "Durable transferred assistant"
+    assert readback["config"]["max_tokens"] == expected_tokens
+    if action == "duplicate":
+        original = await _management_call(client, entry=entry, section="configuration", action="get", subentry_id=source_id)
+        assert original["title"] != readback["title"]
+        assert original["config"]["max_tokens"] == 777

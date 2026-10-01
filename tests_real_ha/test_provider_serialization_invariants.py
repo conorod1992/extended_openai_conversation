@@ -237,3 +237,41 @@ async def test_serialized_tool_exposure_respects_disabled_and_on_demand_groups(
 
     newly_exposed = loaded_names - initial_names
     assert newly_exposed == {intended_name}
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+async def test_model_parameter_controls_reach_raw_provider_wire(hass, monkeypatch, api_mode):
+    """A saved parameter must affect the request, not merely its editor value."""
+    entry = _make_entry("Parameter semantics", include_ai_task=False, conversation_options={
+        CONF_API_MODE:api_mode, CONF_CHAT_MODEL:"gpt-4o", CONF_FUNCTION_TOOLS:[],
+        "temperature":0.3, "top_p":0.7, "max_tokens":321, "service_tier":"default",
+        "prompt":"Parameter semantics marker",
+    })
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    reply = _chat_sse_text("Parameters applied") if api_mode == API_MODE_CHAT_COMPLETIONS else _responses_sse_text("Parameters applied")
+    wire = _install_wire(monkeypatch, agent, [reply])
+    result = await _say(hass, agent, "Check configured parameters")
+    assert _speech(result) == "Parameters applied"
+    assert len(wire.requests) == 1
+    body = wire.requests[0]["body"]
+    assert body["model"] == "gpt-4o"
+    assert body["temperature"] == 0.3
+    assert body["top_p"] == 0.7
+    assert body["service_tier"] == "default"
+    assert body["max_completion_tokens" if api_mode == API_MODE_CHAT_COMPLETIONS else "max_output_tokens"] == 321
+    assert "Parameter semantics marker" in str(body)
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_web_search_control_and_context_reach_raw_provider_wire(hass, monkeypatch, enabled):
+    entry = _make_entry("Search semantics", include_ai_task=False, conversation_options={
+        CONF_API_MODE:API_MODE_RESPONSES, CONF_CHAT_MODEL:"gpt-5.6", CONF_FUNCTION_TOOLS:[],
+        "web_search":enabled, "web_search_context":"low",
+    })
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    wire = _install_wire(monkeypatch, agent, [_responses_sse_text("Search policy applied")])
+    assert _speech(await _say(hass, agent, "Check search policy")) == "Search policy applied"
+    assert len(wire.requests) == 1
+    searches = [tool for tool in wire.requests[0]["body"].get("tools", []) if tool["type"] == "web_search"]
+    assert searches == ([{"type":"web_search", "search_context_size":"low"}] if enabled else [])

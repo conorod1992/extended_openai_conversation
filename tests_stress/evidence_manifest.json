@@ -46,5 +46,377 @@
     "browser_reconnect": {"browser": ["tests_browser/reconnect-endurance.stress.mjs"]},
     "multi_tab_conflict": {"browser_real_ha": ["tests_browser/real-ha-multi-tab.stress.mjs"]},
     "immediate_function_crash": {"process": ["tests_real_ha/test_immediate_tool_process_crash.py"]}
+  },
+  "configuration_semantics": {
+  "assistant/basics::general_configuration": {
+    "controls": [
+      "chat_model",
+      "max_tokens",
+      "max_function_calls_per_conversation",
+      "function_tool_error_recovery",
+      "continue_conversation"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Provider model and token budget reach the request; continuation policy affects conversation results.",
+    "evidence": [
+      "tests_real_ha/test_provider_serialization_invariants.py::test_model_parameter_controls_reach_raw_provider_wire",
+      "tests/test_conversation_orchestration.py::test_assist_continue_mode_reaches_final_conversation_result"
+    ]
+  },
+  "assistant/basics::agent_title_save_revert": {
+    "controls": [
+      "__title"
+    ],
+    "classification": "presentation_only",
+    "reason": "Assistant title changes labels; it does not alter conversation/provider policy."
+  },
+  "assistant/model-responses::model_parameters": {
+    "controls": [
+      "temperature",
+      "top_p",
+      "reasoning_effort",
+      "service_tier",
+      "shorten_tool_call_id",
+      "reset-model-parameters"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Sampling, output budget and service tier serialize to the SDK; reasoning overrides remain request scoped.",
+    "evidence": [
+      "tests_real_ha/test_provider_serialization_invariants.py::test_model_parameter_controls_reach_raw_provider_wire",
+      "tests_real_ha/test_provider_serialization_invariants.py::test_request_scoped_routing_is_serialized_and_does_not_leak"
+    ]
+  },
+  "assistant/conversation::continuity_and_timeout": {
+    "controls": [
+      "conversation_continuity",
+      "conversation-timeout-preset",
+      "conversation_timeout_minutes"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Configured scope and timeout govern retained continuity and fresh conversation boundaries.",
+    "evidence": [
+      "tests/test_conversation_orchestration.py::test_assist_passes_configured_continuity_scope_timeout_and_guest_namespace",
+      "tests/test_continuity.py::test_guest_continuity_respects_timeout_and_explicit_end"
+    ]
+  },
+  "assistant/conversation::history_trimming": {
+    "controls": [
+      "context_threshold",
+      "context_truncate_strategy"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Truncation retains complete tool turns and the latest user turn; summarize has a usable fallback.",
+    "evidence": [
+      "tests/test_context_management.py::test_clear_strategy_keeps_only_system_and_latest_turn",
+      "tests/test_context_management.py::test_summarization_failure_falls_back_to_keep_recent"
+    ]
+  },
+  "assistant/prompt-context::prompt_edit_reset_preview": {
+    "controls": [
+      "prompt-editor",
+      "preview-request",
+      "reset-prompt"
+    ],
+    "classification": "runtime_effect",
+    "effect": "The configured system prompt is present in the actual provider request.",
+    "evidence": [
+      "tests_real_ha/test_provider_serialization_invariants.py::test_model_parameter_controls_reach_raw_provider_wire"
+    ]
+  },
+  "assistant/prompt-context::context_toggles_templates_attributes": {
+    "controls": [
+      "current_datetime_enabled",
+      "exposed_entities_enabled",
+      "reset-context-template",
+      "exposed_entities_template"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Selected entity attributes enter live provider context with bounded values and exposure checks.",
+    "evidence": [
+      "tests_real_ha/test_entity_attribute_runtime_integrity.py::test_selected_attribute_runtime_bounding_reaches_both_provider_apis",
+      "tests/test_dynamic_context_compaction.py::test_full_prompt_uses_compact_memory_context_without_disabling_features"
+    ]
+  },
+  "assistant/voice::voice_identity_policies": {
+    "controls": [
+      "voice_scope_policy",
+      "voice_unmapped_policy",
+      "voice_default_user_id",
+      "shared_memory_mode"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Resolved Voice identity selects the intended personal/shared context rather than another household member.",
+    "evidence": [
+      "tests_stress/test_voice_household_campaign.py::test_voice_household_scopes_survive_concurrency_mapping_edits_and_reload"
+    ]
+  },
+  "assistant/voice::voice_device_mappings": {
+    "controls": [
+      "voice_device_mappings"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Mapping edits change the scope of subsequent household requests and survive reload.",
+    "evidence": [
+      "tests_stress/test_voice_household_campaign.py::test_voice_household_scopes_survive_concurrency_mapping_edits_and_reload"
+    ]
+  },
+  "assistant/speech::speech_processing": {
+    "controls": [
+      "speech_processing_enabled",
+      "speech_strip_markdown",
+      "speech_strip_urls",
+      "add-regex",
+      "preview-speech"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Configured processing sanitizes actual split Assist speech deltas.",
+    "evidence": [
+      "tests_real_ha/test_assist_streaming_speech_processing.py::test_actual_assist_stream_sanitizes_split_provider_deltas"
+    ]
+  },
+  "capabilities/home-assistant::home_assistant_capability_settings": {
+    "controls": [
+      "local"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Allowed local intents bypass the provider; excluded intents fall through.",
+    "evidence": [
+      "tests_real_ha/test_local_intent_exclusions.py::test_real_ha_allowed_local_intent_stays_provider_free",
+      "tests_real_ha/test_local_intent_exclusions.py::test_real_ha_excluded_local_intent_falls_through_to_provider"
+    ]
+  },
+  "capabilities/web-skills::web_search_and_skills": {
+    "controls": [
+      "web_search",
+      "web_search_context",
+      "skills"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Search availability/context alters provider tools; selected usable skills control loader exposure.",
+    "evidence": [
+      "tests_real_ha/test_provider_serialization_invariants.py::test_web_search_control_and_context_reach_raw_provider_wire",
+      "tests/test_skill_availability.py::test_live_entity_assembly_uses_effective_skill_availability"
+    ]
+  },
+  "capabilities/request-rules::editor_round_trip": {
+    "controls": [
+      "rule-action-type",
+      "rule-match",
+      "rule-continue-to-ai",
+      "rule-local-continue-to-ai",
+      "rule-continue-matching",
+      "rule-matching-behavior",
+      "rule-fuzzy"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Matching and routed model/scope affect real provider requests and later turns.",
+    "evidence": [
+      "tests_stress/test_request_rules_provider_wire.py::test_matcher_route_scope_reaches_wire_and_next_turn"
+    ]
+  },
+  "capabilities/request-rules::captures_result_aliases": {
+    "controls": [
+      "rule-ai-input-mode",
+      "rule-ai-input-capture",
+      "rule-result-alias"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Rule captures and local result aliases reach the intended conversation input.",
+    "evidence": [
+      "tests_real_ha/test_request_rules_script_semantics.py::test_function_capture_preserves_ha_variables_and_survives_reload"
+    ]
+  },
+  "capabilities/request-rules::matching_defaults_wording_pattern_helpers": {
+    "controls": [
+      "rules-default-fuzzy",
+      "wording-add",
+      "pattern-helper"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Reviewed matching defaults and wording determine which route reaches the provider.",
+    "evidence": [
+      "tests_stress/test_request_rules_provider_wire.py::test_matcher_route_scope_reaches_wire_and_next_turn"
+    ]
+  },
+  "capabilities/quiet-hours::schedule_controls": {
+    "controls": [
+      "qh-enabled",
+      "qh-start",
+      "qh-end",
+      "qh-volume",
+      "qh-wake"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Schedules and active policy changes apply and restore actual satellite controls.",
+    "evidence": [
+      "tests_stress/test_quiet_hours_ownership_time.py::test_exact_boundaries_dst_and_jumps_reconcile_multiple_satellites"
+    ]
+  },
+  "capabilities/quiet-hours::satellite_overrides": {
+    "controls": [
+      "qh-override",
+      "data-qh-satellite"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Per-satellite policy preserves newer owner state during restore.",
+    "evidence": [
+      "tests_stress/test_quiet_hours_ownership_time.py::test_active_policy_change_and_new_control_keep_pre_quiet_baselines"
+    ]
+  },
+  "capabilities/guest-mode::guest_policy": {
+    "controls": [
+      "guest-controls-enabled"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Guest availability subtracts private context and provider-visible capabilities.",
+    "evidence": [
+      "tests_stress/test_guest_provider_wire.py::test_guest_wire_only_subtracts_private_context_and_function_capabilities"
+    ]
+  },
+  "data-memory/memory-settings::memory_configuration": {
+    "controls": [
+      "memory_retrieval_mode",
+      "memory_embedding_model",
+      "memory_auto_retrieve_limit"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Memory retrieval reaches the provider and disabling Memory removes context.",
+    "evidence": [
+      "tests_real_ha/test_browser_golden_acceptance.py::test_native_shell_golden_runtime_journey",
+      "tests_real_ha/test_memory_provider_wire_e2e.py::test_chat_memory_crosses_provider_tool_and_durable_retrieval_boundaries"
+    ]
+  },
+  "data-memory/knowledge::knowledge_availability": {
+    "controls": [
+      "knowledge-enabled-toggle"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Disabled or deleted Knowledge stops contributing provider tool results.",
+    "evidence": [
+      "tests_stress/test_provider_wire_privacy.py::test_knowledge_enabled_and_deleted_sources_on_tool_wire"
+    ]
+  },
+  "usage-maintenance/usage::history_window": {
+    "controls": [
+      "usage-window"
+    ],
+    "classification": "read_only_filter",
+    "reason": "Date range selects existing usage history; it changes no saved runtime policy."
+  },
+  "usage-maintenance/retention::usage_retention": {
+    "controls": [
+      "usage_request_retention_days",
+      "usage_run_retention_days"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Retention prunes detail rows while preserving accounting through reload.",
+    "evidence": [
+      "tests_stress/test_usage_retention_endurance.py::test_concurrent_usage_writes_survive_retention_jumps_and_reload"
+    ]
+  },
+  "capabilities/request-rules::rule_crud_toggle_duplicate_move": {
+    "controls": [
+      "rule-add",
+      "rule-enabled",
+      "rule-duplicate",
+      "rule-delete",
+      "rule-move"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Saved rule matching, precedence and enabled state govern which real conversation route executes.",
+    "evidence": [
+      "tests_stress/test_request_rules_provider_wire.py::test_matcher_route_scope_reaches_wire_and_next_turn",
+      "tests_real_ha/test_live_config_mutation_semantics.py::test_conversation_route_survives_rule_edit_disable_and_delete"
+    ]
+  },
+  "capabilities/request-rules::continue_matching_execution": {
+    "controls": [
+      "rule-continue-matching"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Eligible chained rules execute in priority order and stop at terminal/provider outcomes.",
+    "evidence": [
+      "tests_stress/test_request_rules_provider_wire.py::test_continue_matching_skips_false_condition_and_reaches_later_rule",
+      "tests_stress/test_request_rules_provider_wire.py::test_continue_matching_stops_on_provider_handoff",
+      "tests_stress/test_request_rules_provider_wire.py::test_continue_matching_stops_on_terminal_local_outcome"
+    ]
+  },
+  "capabilities/request-rules::group_management": {
+    "controls": [
+      "rule-groups-manage",
+      "rule-group-add",
+      "rule-group-rename",
+      "rule-group-delete"
+    ],
+    "classification": "presentation_only",
+    "reason": "Rule group names organize the editor and sharing; grouping alone changes no matching or execution policy."
+  },
+  "capabilities/functions::tool_crud_yaml_validate_duplicate": {
+    "controls": [
+      "add-tool",
+      "tool-save",
+      "tool-validate",
+      "duplicate-tool",
+      "delete-tool"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Native-authored template content executes and edits alter actual tool results after reload.",
+    "evidence": [
+      "tests_real_ha/test_browser_golden_acceptance.py::test_native_shell_golden_runtime_journey"
+    ]
+  },
+  "capabilities/functions::tool_enable_assignment": {
+    "controls": [
+      "tool-enabled",
+      "function-group-assignment"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Disabled tools disappear from provider exposure; group bindings control on-demand execution.",
+    "evidence": [
+      "tests_real_ha/test_provider_serialization_invariants.py::test_serialized_tool_exposure_respects_disabled_and_on_demand_groups",
+      "tests_stress/test_function_provider_wire.py::test_group_load_tool_execution_result_and_session_isolation"
+    ]
+  },
+  "capabilities/functions::group_crud": {
+    "controls": [
+      "add-group",
+      "group-save",
+      "edit-group",
+      "delete-group"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Group loading exposes the intended tools while conversation sessions remain isolated.",
+    "evidence": [
+      "tests_stress/test_function_provider_wire.py::test_group_load_tool_execution_result_and_session_isolation"
+    ]
+  },
+  "data-memory/memories::persistent_memory_crud_metadata": {
+    "controls": [
+      "memory-save",
+      "memory-delete",
+      "memory-importance",
+      "memory-owner",
+      "memory-valid-from"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Saved Memory reaches the owning user provider context and is retrieved after durable reconstruction.",
+    "evidence": [
+      "tests_real_ha/test_memory_provider_wire_e2e.py::test_chat_memory_crosses_provider_tool_and_durable_retrieval_boundaries",
+      "tests_stress/test_provider_wire_privacy.py::test_concurrent_users_never_cross_private_provider_wire"
+    ]
+  },
+  "data-memory/knowledge::knowledge_crud_search": {
+    "controls": [
+      "add-source",
+      "source-edit-button",
+      "delete-source",
+      "list-search"
+    ],
+    "classification": "runtime_effect",
+    "effect": "Enabled Knowledge content crosses actual retrieval/tool wire; deletion removes availability.",
+    "evidence": [
+      "tests_stress/test_provider_wire_privacy.py::test_knowledge_enabled_and_deleted_sources_on_tool_wire"
+    ]
   }
+}
 }
