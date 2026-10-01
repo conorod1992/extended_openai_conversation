@@ -38,6 +38,10 @@ for (const bundled of [false, true]) {
       await expect(panel.locator("#temporary-memory-expiry")).toHaveValue("2026-10-02T18:30");
       await expect(panel.locator("#temporary-memory-expiry")).toHaveAttribute("type", "datetime-local");
       await expect(panel.locator('#temporary-memory-dialog input[readonly]')).toHaveValue("Short-term");
+      await panel.locator("#temporary-memory-expiry").press("Escape");
+      await expect(panel.locator("#temporary-memory-dialog")).not.toHaveJSProperty("open", true);
+      await expect(panel.locator("#confirm-dialog")).not.toHaveJSProperty("open", true);
+      await panel.locator('.list-card').filter({hasText: "Manual short-term fact"}).locator('.actions .edit-temporary-memory').click();
       await panel.locator("#temporary-memory-expiry").fill("2026-10-03T19:00");
       await panel.locator("#temporary-memory-save").click();
       await expect(panel.locator("#temporary-memory-dialog")).not.toHaveJSProperty("open", true);

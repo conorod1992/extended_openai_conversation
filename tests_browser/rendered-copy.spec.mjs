@@ -19,7 +19,7 @@ for (const admin of [true, false]) {
       const conversations = [false, true].map(enabled => {
         panel._contentData = null;
         panel._result = {settings: {archive_enabled: enabled}, sessions: {sessions: []}, active: {active: [{label: "<escaped>", key: "one"}]}};
-        const root = dom(panel._conversations());
+        const root = dom(panel._scopePicker() + panel._conversations());
         return {
           hasIntro: Boolean(root.querySelector(".page-intro h1")?.textContent.trim()),
           hasOrphanHelp: Boolean(root.querySelector(":scope > p.help")),

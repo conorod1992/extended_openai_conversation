@@ -142,7 +142,10 @@ function openTemporaryMemory(panel, memoryId) {
   const dialog = panel.shadowRoot.querySelector("#temporary-memory-dialog");
   panel.shadowRoot.querySelector("#temporary-memory-content").value = panel._temporaryMemoryDraft.content;
   panel.shadowRoot.querySelector("#temporary-memory-category").value = panel._temporaryMemoryDraft.category;
-  panel.shadowRoot.querySelector("#temporary-memory-expiry").value = panel._temporaryMemoryDraft.expires_at;
+  const expiry = panel.shadowRoot.querySelector("#temporary-memory-expiry");
+  expiry.value = panel._temporaryMemoryDraft.expires_at;
+  // Native datetime inputs normalize zero seconds; baseline the displayed value.
+  panel._temporaryMemoryDraft.expires_at = expiry.value;
   panel.shadowRoot.querySelector("#temporary-memory-meta").textContent = `Owner: ${ownerLabel(panel, panel._temporaryMemoryDraft.owner_scope_id)}`;
   panel.shadowRoot.querySelector("#temporary-memory-error").textContent = "";
   dialog?.showModal();
