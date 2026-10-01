@@ -47,7 +47,7 @@ async def test_native_shell_golden_runtime_journey(hass, real_ha_shell, monkeypa
             repo_root=Path(__file__).resolve().parents[1],
             spec="tests_browser/real-ha-golden.spec.mjs",
             config="playwright.real-ha-shell.config.mjs",
-            env={**shell["env"], "REAL_HA_GOLDEN_FEATURE": feature, "REAL_HA_GOLDEN_PHASE": phase},
+            env={**shell["env"], "REAL_HA_GOLDEN_FEATURE": feature, "REAL_HA_GOLDEN_PHASE": phase, "PLAYWRIGHT_ARTIFACT_SUFFIX": f"golden-{feature}-{phase}"},
             failure_label=f"Native shell golden {feature}/{phase} failed",
         )
         await hass.async_block_till_done()
