@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import uuid
 
-from ci.enhanced_evidence import final_pytest_outcome, write_json
+from ci.enhanced_evidence import envelope, final_pytest_outcome, write_json
 
 
 class ExecutionLedger:
@@ -29,6 +29,7 @@ class ExecutionLedger:
         self.reports.setdefault(report.nodeid, {})[report.when] = report
 
     def pytest_sessionfinish(self, session, exitstatus):
+        execution_id = uuid.uuid4().hex
         cases = []
         for node in sorted(self.collected):
             reports = self.reports.get(node, {})
@@ -45,8 +46,10 @@ class ExecutionLedger:
             )
         root = Path(os.environ.get("STRESS_ARTIFACT_DIR", "stress-artifacts"))
         write_json(
-            root / f"execution-pytest-{uuid.uuid4().hex}.json",
+            root / f"execution-pytest-{execution_id}.json",
             {
+                **envelope(),
+                "execution_id": execution_id,
                 "execution_schema": "eoai-test-execution/v1",
                 "runner": "pytest",
                 "exit_status": int(exitstatus),

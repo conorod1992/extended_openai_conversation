@@ -40,3 +40,19 @@ review, not an automatic consequence of a successful job.
 The Real-HA inventory separately classifies full-file selection, node-only partial
 selection and excluded files. Those guards remain enforced; execution evidence
 adds case-level certification rather than replacing selection governance.
+
+The preparation job checks out the workflow invocation's immutable `github.sha`
+and publishes `candidate_sha`. Python, Chromium, Firefox/WebKit, HA lifecycle
+lanes and the final certification job all check out that exact output. They never
+resolve a moving branch independently. Certification requires each job envelope
+and each pytest/Playwright execution ledger to identify this intended SHA; mutual
+agreement on a different commit is insufficient. Cases link to their ledger IDs.
+The final index records intended candidate and tested identities separately.
+
+Python evidence records key HA/OpenAI SDK/HTTPX/aiohttp/HA fixture versions,
+Python/platform/architecture, the HA source commit for VCS installations, and the
+container image tag plus its prebuilt dependency fingerprint where available.
+An image digest is recorded when supplied by the environment. Playwright ledgers
+record Node and Playwright versions. Canonical environment fingerprints accompany
+these compact records; installation URLs, local paths and full dependency dumps
+are omitted. Unknown checkout identity cannot fall back to invocation metadata.

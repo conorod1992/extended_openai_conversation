@@ -232,6 +232,10 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
     await panel.locator("#rule-model").fill("gpt-5-mini");
     await panel.locator("#rule-save").click();
     ruleCreated = true;
+    // Filling the underlying page while Save still owns the modal can target
+    // an input that reconciliation replaces. Wait for the committed rule and
+    // completed dialog transition before starting the next user interaction.
+    await expect(panel.locator(".request-rule-card").filter({hasText:unique})).toBeVisible();
 
     await panel.locator("#rule-match-test-text").fill("activate nightly lamp");
     await panel.locator("#rule-match-test").click();

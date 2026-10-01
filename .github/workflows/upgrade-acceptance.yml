@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       from_version:
-        description: "Published release tag to upgrade from, or 'latest'"
+        description: "Published release tag, 'latest', or 'all' reviewed migration epochs"
         required: false
         default: "latest"
         type: string
@@ -38,7 +38,7 @@ jobs:
       matrix:
         # Reviewed migration epochs. Keep release-created state at each boundary.
         # 6.2.0 is the oldest coherent tagged Responses payload in this fork.
-        from_version: ${{ fromJSON(github.event_name == 'schedule' && '["latest","6.8.2","6.5.0","6.3.1","6.2.0"]' || format('["{0}"]', inputs.from_version || 'latest')) }}
+        from_version: ${{ fromJSON((github.event_name == 'schedule' || inputs.from_version == 'all') && '["latest","6.8.2","6.5.0","6.3.1","6.2.0"]' || format('["{0}"]', inputs.from_version || 'latest')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     container:
@@ -50,11 +50,13 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
     steps:
       - name: Checkout candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'develop' }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Trust mounted checkout for Git
@@ -101,6 +103,7 @@ jobs:
             exit 1
           fi
 
+          echo "from_sha=$(git rev-parse "refs/tags/${FROM_VERSION}^{commit}")" >> "$GITHUB_OUTPUT"
           echo "from_version=$FROM_VERSION" >> "$GITHUB_OUTPUT"
           echo "to_version=$TO_MANIFEST_VERSION" >> "$GITHUB_OUTPUT"
           echo "from_component=$FROM_COMPONENT" >> "$GITHUB_OUTPUT"
@@ -162,6 +165,25 @@ jobs:
             TEST_PATHS+=(tests_real_ha/test_release_upgrade_custom_function_tool.py)
           fi
           pytest "${TEST_PATHS[@]}" -v --asyncio-mode=auto --timeout=300
+
+      - name: Record exact-source upgrade evidence
+        if: always()
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+          EOAI_SOURCE_VERSION: ${{ steps.payloads.outputs.from_version }}
+          EOAI_TARGET_VERSION: ${{ steps.payloads.outputs.to_version }}
+          UPGRADE_SOURCE_SHA: ${{ steps.payloads.outputs.from_sha }}
+          EVIDENCE_LANE: ${{ matrix.from_version }}
+        run: python ci/workflow_evidence.py upgrade workflow-evidence.json
+
+      - name: Upload exact-source upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: upgrade-evidence-${{ matrix.from_version }}
+          path: workflow-evidence.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload browser diagnostics
         if: failure()

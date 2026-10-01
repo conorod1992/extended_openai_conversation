@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 import hashlib
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError, distribution, version
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import subprocess
 import sys
@@ -78,6 +80,7 @@ def safe(value: Any, key: str = "") -> Any:
     return redact_text(str(value))[:2000]
 
 
+@lru_cache
 def _version(package: str) -> str | None:
     try:
         return version(package)
@@ -85,14 +88,77 @@ def _version(package: str) -> str | None:
         return None
 
 
+def checkout_sha() -> str:
+    """Read the exercised checkout; invocation metadata cannot substitute for it."""
+    root = Path(__file__).resolve().parents[1]
+    try:
+        return subprocess.check_output(
+            [
+                "git",
+                "-c",
+                f"safe.directory={root}",
+                "-C",
+                str(root),
+                "rev-parse",
+                "HEAD",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):  # fmt: skip - standalone gates also run on Python 3.12
+        return "unknown"
+
+
+def environment_fingerprint(identity: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def environment_identity() -> dict[str, Any]:
+    """Compact dependency identity, without installation URLs or local paths."""
+    ha_source = None
+    try:
+        direct = distribution("homeassistant").read_text("direct_url.json")
+        commit = json.loads(direct or "{}").get("vcs_info", {}).get("commit_id")
+        if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit):
+            ha_source = commit
+    except (PackageNotFoundError, ValueError):  # fmt: skip - standalone gates also run on Python 3.12
+        pass
+    built_environment = Path("/opt/eoai-ci/environment.sha256")
+    built_digest = None
+    if built_environment.is_file():
+        candidate = built_environment.read_text(encoding="utf-8").strip().split()[0]
+        if re.fullmatch(r"[0-9a-f]{64}", candidate):
+            built_digest = candidate
+    image_digest = os.environ.get("EOAI_CONTAINER_DIGEST")
+    if not image_digest or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest):
+        image_digest = None
+    return {
+        "python": sys.version.split()[0],
+        "platform": platform.system(),
+        "architecture": platform.machine(),
+        "packages": {
+            package: _version(package)
+            for package in (
+                "homeassistant",
+                "openai",
+                "httpx",
+                "aiohttp",
+                "pytest-homeassistant-custom-component",
+            )
+        },
+        "homeassistant_source_commit": ha_source,
+        "container_image": os.environ.get("EOAI_CONTAINER_IMAGE"),
+        "container_digest": image_digest,
+        "container_environment_sha256": built_digest,
+    }
+
+
 def envelope(**specific: Any) -> dict[str, Any]:
     """Describe exactly the checkout and environment exercised by one job."""
-    try:
-        sha = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except (OSError, subprocess.CalledProcessError):
-        sha = os.environ.get("GITHUB_SHA", "unknown")
+    sha = checkout_sha()
+    identity = environment_identity()
     manifest = Path(
         "custom_components/extended_openai_conversation_responses/manifest.json"
     )
@@ -104,6 +170,8 @@ def envelope(**specific: Any) -> dict[str, Any]:
     return {
         "schema": SCHEMA,
         "eoai_sha": sha,
+        "environment": identity,
+        "environment_fingerprint": environment_fingerprint(identity),
         "campaign": os.environ.get("STRESS_CAMPAIGN", "unknown"),
         "intensity": os.environ.get("STRESS_INTENSITY", "normal"),
         "seed": os.environ.get("STRESS_SEED", "unknown"),
