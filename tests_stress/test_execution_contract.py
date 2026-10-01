@@ -127,7 +127,6 @@ def test_real_pytest_ledger_records_collection_skips_xfail_and_teardown(tmp_path
 
     root = Path(__file__).resolve().parents[1]
     (tmp_path / "test_probe.py").write_text("""import pytest
-import yaml
 @pytest.mark.skipif(True, reason='missing browser prerequisite')
 def test_browser(): pass
 @pytest.mark.xfail(reason='unexpected mandatory xfail')
