@@ -133,7 +133,7 @@ from .const import (
     DEFAULT_MEMORY_MODE,
     DEFAULT_MEMORY_RETRIEVAL_MODE,
     DEFAULT_PROMPT,
-    LEGACY_DEFAULT_PROMPT_WITH_SKILLS,
+    LEGACY_DEFAULT_PROMPTS,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_SERVICE_TIER,
     DEFAULT_SHARED_ARCHIVE_ENABLED,
@@ -838,7 +838,7 @@ def normalize_agent_config(
     reasoning_effort_explicit = CONF_REASONING_EFFORT in data
     result = agent_config_defaults() if apply_defaults else {}
     result.update(deepcopy(data))
-    if result.get(CONF_PROMPT) == LEGACY_DEFAULT_PROMPT_WITH_SKILLS:
+    if result.get(CONF_PROMPT) in LEGACY_DEFAULT_PROMPTS:
         result[CONF_PROMPT] = DEFAULT_PROMPT
     _coerce_legacy_numbers(result)
 
