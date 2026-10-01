@@ -4,7 +4,7 @@ import {waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
 
 test.skip(process.env.RUN_REAL_HA_BROWSER_COMPATIBILITY !== "1", "dedicated compact HA version matrix");
 
-test("HA native components and actual Assist path remain compatible", async ({context, page}) => {
+test("HA native components and actual Assist path remain compatible", async ({context, page}, testInfo) => {
   test.setTimeout(120000);
   const panel = await openColdHaRoute(context, page, "assistant/voice");
   const primary = await panel.locator("#agent").inputValue();
@@ -30,12 +30,10 @@ test("HA native components and actual Assist path remain compatible", async ({co
   const entity = panel.locator("#exposed-entity-picker");
   await panel.locator('[data-config="exposed_entities_enabled"]').check();
   await expect(entity).toBeVisible();
-  // Use the same public value-changed contract as the existing genuine-shell
-  // exposed-entity regression, then require native editor hydration.
-  await entity.evaluate(element => {
-    element.value = "sensor.cold_attribute_kitchen";
-    element.dispatchEvent(new CustomEvent("value-changed", {detail:{value:element.value}, bubbles:true}));
-  });
+  await entity.locator("ha-picker-field").click();
+  const choice = entity.locator("ha-combo-box-item").filter({hasText:"sensor.cold_attribute_kitchen"}).locator("button");
+  await choice.click();
+  await expect(entity).toHaveJSProperty("value", "sensor.cold_attribute_kitchen");
   await expect(panel.locator("[data-exposed-editor]")).toContainText("sensor.cold_attribute_kitchen");
   await panel.locator('[data-exposed-attribute][data-attribute="battery_level"]').check();
   await panel.locator("[data-close-exposed-editor]").click();
@@ -74,4 +72,18 @@ test("HA native components and actual Assist path remain compatible", async ({co
   await panel.locator("#confirm-accept").click();
   await expect(panel.locator("#eoc-rule-live-result")).toContainText("Compatibility Assist response");
   await expect(panel.locator("#eoc-rule-live-run")).toBeEnabled();
+  if (testInfo.project.name === "webkit-mobile") {
+    await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
+    await panel.locator("#transfer-export-mode").selectOption("full");
+    const downloaded = page.waitForEvent("download");
+    await panel.locator("#create-backup-transfer").click();
+    const download = await downloaded;
+    expect(await download.failure()).toBeNull();
+    const path = await download.path();
+    expect(path).toBeTruthy();
+    await panel.locator("#backup-file-transfer").setInputFiles(path);
+    await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
+    await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  }
 });

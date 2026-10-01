@@ -45,14 +45,28 @@ jobs:
           echo "Home Assistant Python version: $PYTHON_VERSION"
 
   native-browser:
-    name: Native browser smoke (HA ${{ matrix.ha-version }})
+    name: Native browser smoke (HA ${{ matrix.ha-version }} / ${{ matrix.profile || 'chromium' }})
     runs-on: ubuntu-latest
     needs: prepare
     timeout-minutes: 25
+    env:
+      REAL_HA_BROWSER_PROFILE: ${{ matrix.profile || 'chromium' }}
+      STRESS_CAMPAIGN: native-browser-${{ matrix.profile || 'chromium' }}
+      STRESS_ARTIFACT_DIR: compatibility-evidence
+      ENHANCED_EXECUTION_EVIDENCE: "1"
+      PYTEST_PLUGINS: ci.pytest_execution
     strategy:
       fail-fast: false
       matrix:
         ha-version: [oldest, stable, dev]
+        profile: [chromium]
+        include:
+          - ha-version: stable
+            profile: firefox
+          - ha-version: stable
+            profile: webkit
+          - ha-version: stable
+            profile: webkit-mobile
     steps:
       - name: Checkout exact EOAI PR head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -97,19 +111,27 @@ jobs:
       - name: Install the existing Playwright runner and Chromium
         run: |
           npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps "${REAL_HA_BROWSER_PROFILE%-mobile}"
       - name: Run one genuine native shell compatibility journey
         env:
           RUN_REAL_HA_BROWSER_COMPATIBILITY: "1"
           HA_POINT: ${{ matrix.ha-version }}
           PYTHONPATH: ${{ github.workspace }}
         run: pytest tests_real_ha/test_browser_compatibility_acceptance.py -v -s --asyncio-mode=auto --timeout=300 --tb=short
+      - name: Require native browser execution evidence
+        if: always()
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+        run: |
+          python ci/enhanced_summary.py compatibility-evidence
+          python ci/compatibility_evidence.py check compatibility-evidence
       - name: Upload version-specific browser diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ha-native-browser-${{ matrix.ha-version }}
+          name: ha-native-browser-${{ matrix.ha-version }}-${{ matrix.profile || 'chromium' }}
           path: |
+            compatibility-evidence/
             playwright-report/
             test-results/
           if-no-files-found: warn

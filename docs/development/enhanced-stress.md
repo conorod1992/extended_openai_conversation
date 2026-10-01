@@ -99,3 +99,19 @@ Certification additionally requires five process windows, two audio deliveries,
 four trusted proxy requests and two socket/tool recovery cases. Existing Voice
 Identity/Quiet Hours/intercom semantics, logical leak counters and synthetic fault
 matrices remain complementary coverage.
+
+
+Native HA compatibility also uses the same mandatory-case catalog and structural
+execution ledgers. Real-HA public journeys retain their four-case contract on stable
+and dev; minimum HA additionally selects representative native tools/targets,
+permissions, Local Handling, voice identity, Script actions/waits, registry changes,
+Knowledge/Memory wire behaviour, Quiet Hours and Intercom cases. These selectors
+live once in `nightly_execution_contract.json`; missing, skipped or xfailed cases
+fail the compatibility lane even when pytest exits successfully.
+
+`ha-browser-compatibility.yml` retains Chromium on minimum/stable/dev and adds only
+stable Firefox, WebKit and 390px WebKit. All profiles exercise the genuine HA shell,
+native user/entity picker selection, YAML validation/save and an actual Assist
+outcome. Mobile WebKit additionally downloads a real backup and uploads it for
+preview without applying a destructive restore. Each lane validates both pytest
+and Playwright execution evidence and uploads version/profile-specific artifacts.

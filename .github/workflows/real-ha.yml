@@ -164,10 +164,31 @@ jobs:
         run: |
           echo "EOAI_SHA=$(git rev-parse HEAD)"
           python -c 'from importlib.metadata import version; print("HA_POINT=" + __import__("os").environ["HA_POINT"] + " HA_VERSION=" + version("homeassistant"))'
-      - name: Run compact public journey contract
+      - name: Run reviewed HA feature compatibility contract
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: pytest tests_real_ha/test_public_version_journeys.py -v --asyncio-mode=auto --timeout=600 --tb=short
+          STRESS_CAMPAIGN: ${{ matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
+          STRESS_ARTIFACT_DIR: compatibility-evidence
+          ENHANCED_EXECUTION_EVIDENCE: "1"
+          PYTEST_PLUGINS: ci.pytest_execution
+        run: |
+          read -ra TEST_PATHS <<< "$(python ci/compatibility_evidence.py select)"
+          pytest "${TEST_PATHS[@]}" -v --asyncio-mode=auto --timeout=600 --tb=short
+      - name: Require every compatibility case to pass
+        if: always()
+        env:
+          STRESS_CAMPAIGN: ${{ matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+        run: |
+          python ci/enhanced_summary.py compatibility-evidence
+          python ci/compatibility_evidence.py check compatibility-evidence
+      - name: Upload feature execution evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ha-feature-compatibility-${{ matrix.ha-version }}
+          path: compatibility-evidence/
+          retention-days: 14
 
   stable:
     name: Genuine Home Assistant lifecycle (stable / ${{ matrix.shard }})

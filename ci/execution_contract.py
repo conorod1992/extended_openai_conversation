@@ -50,7 +50,9 @@ def selected(node, selector):
 
 
 def expected_cases(contract, campaign):
-    selectors = python_selections().get(campaign, [])
+    selectors = contract.get("selections", {}).get(
+        campaign, python_selections().get(campaign, [])
+    )
     python = {
         node for node in contract["pytest"] if any(selected(node, p) for p in selectors)
     }
