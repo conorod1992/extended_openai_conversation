@@ -99,3 +99,25 @@ Certification additionally requires five process windows, two audio deliveries,
 four trusted proxy requests and two socket/tool recovery cases. Existing Voice
 Identity/Quiet Hours/intercom semantics, logical leak counters and synthetic fault
 matrices remain complementary coverage.
+
+
+Native HA compatibility also uses the same mandatory-case catalog and structural
+execution ledgers. Real-HA public journeys retain their four-case contract on stable
+and dev; minimum HA additionally selects representative native tools/targets,
+permissions, Local Handling, voice identity, Script actions/waits, registry changes,
+Knowledge/Memory wire behaviour, Quiet Hours and Intercom cases. These selectors
+live once in `nightly_execution_contract.json`; missing, skipped or xfailed cases
+fail the compatibility lane even when pytest exits successfully.
+
+`ha-browser-compatibility.yml` retains Chromium on minimum/stable/dev and adds only
+stable Firefox, WebKit and 390px WebKit. All profiles exercise the genuine HA shell,
+native user/entity picker selection, YAML validation/save and an actual Assist
+outcome. Mobile WebKit additionally downloads a real backup and uploads it for
+preview without applying a destructive restore. Each lane validates both pytest
+and Playwright execution evidence and uploads version/profile-specific artifacts.
+
+The 390px WebKit lane uses a narrow genuine HA shell. It does not certify an iOS virtual keyboard or physical Companion device: iPhone emulation cannot reliably replace CodeMirror content through Playwright keyboard input. The lane retains native YAML validation/save and backup download/upload preview assertions.
+
+The added minimum-HA feature selection, Firefox/WebKit/narrow native-shell lanes, semantic picker extension and execution gates run only on scheduled or manual overnight invocations. PR/push selections remain the existing four public version cases and the three Chromium native-shell version lanes. New governance and SDK cache regression cases live in existing overnight stress files.
+
+Overnight stable compatibility resolves the final Home Assistant release from PyPI once per workflow and installs a matching pytest fixture version. Evidence must report that exact HA release; a newer fixture pulling a beta cannot satisfy the stable lane. Existing PR environment selection is retained.

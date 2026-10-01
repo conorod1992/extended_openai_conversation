@@ -427,6 +427,7 @@
     "tests_real_ha/test_assist_voice_identity_precedence.py::test_genuine_assist_prefers_registry_device_voice_identity_when_both_ids_exist",
     "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_loads_inside_real_home_assistant_shell",
     "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_talks_to_real_management_websocket",
+    "tests_real_ha/test_browser_compatibility_acceptance.py::test_compact_native_frontend_version_contract",
     "tests_real_ha/test_browser_golden_acceptance.py::test_native_shell_golden_runtime_journey[context]",
     "tests_real_ha/test_browser_golden_acceptance.py::test_native_shell_golden_runtime_journey[tool]",
     "tests_real_ha/test_cancel_after_side_effect.py::test_cancel_after_service_side_effect_does_not_replay_action",
@@ -459,8 +460,10 @@
     "tests_real_ha/test_entity_attribute_runtime_integrity.py::test_selected_attribute_is_live_missing_safe_and_exposure_bound",
     "tests_real_ha/test_entity_attribute_runtime_integrity.py::test_selected_attribute_runtime_bounding_reaches_both_provider_apis",
     "tests_real_ha/test_entity_registry_customization.py::test_conversation_registry_customization_survives_reload_and_service_resolution",
+    "tests_real_ha/test_ha_llm_tool_acceptance.py::test_real_ha_llm_tool_catalog_add_reload_and_dispatch",
     "tests_real_ha/test_immediate_tool_process_crash.py::test_immediate_tool_side_effect_is_not_replayed_after_process_crash",
     "tests_real_ha/test_intercom_voice_acceptance.py::test_real_ha_voice_broadcast_waits_for_idle_target_and_skips_origin",
+    "tests_real_ha/test_knowledge_provider_wire_e2e.py::test_chat_knowledge_search_get_and_answer_cross_real_provider_wire",
     "tests_real_ha/test_live_config_mutation_semantics.py::test_config_entry_reload_resets_transient_conversation_route",
     "tests_real_ha/test_live_config_mutation_semantics.py::test_conversation_route_survives_rule_edit_disable_and_delete",
     "tests_real_ha/test_live_config_mutation_semantics.py::test_loaded_group_selection_resolves_current_configuration_each_turn",
@@ -496,9 +499,11 @@
     "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload[memories-temporary_clear]",
     "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload[memories-temporary_delete]",
     "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload[memories-temporary_update]",
+    "tests_real_ha/test_memory_provider_wire_e2e.py::test_responses_memory_prompt_injection_uses_real_sdk_wire",
     "tests_real_ha/test_model_catalog_live_refresh.py::test_catalog_refresh_publishes_live_while_existing_agent_turn_is_active",
     "tests_real_ha/test_multi_entry_lifecycle.py::test_real_ha_multi_entry_reload_isolated_without_lifecycle_leaks",
     "tests_real_ha/test_native_automation_acceptance.py::test_native_add_automation_validates_reloads_and_triggers_once",
+    "tests_real_ha/test_native_indirect_target_resolution.py::test_native_area_and_device_targets_follow_live_ha_registries",
     "tests_real_ha/test_native_recorder_acceptance.py::test_native_history_reads_real_recorder_and_serializes_tool_result",
     "tests_real_ha/test_native_recorder_acceptance.py::test_native_statistics_reads_real_recorder_and_enforces_exposure",
     "tests_real_ha/test_native_service_disappearance.py::test_native_service_disappears_before_dispatch_and_next_turn_recovers",
@@ -547,6 +552,7 @@
     "tests_real_ha/test_public_version_journeys.py::test_config_flow_basic_assist_and_healthy_reload",
     "tests_real_ha/test_public_version_journeys.py::test_function_tool_side_effect_and_provider_continuation",
     "tests_real_ha/test_public_version_journeys.py::test_management_save_durable_rule_and_conversation_after_reload",
+    "tests_real_ha/test_quiet_hours_acceptance.py::test_real_ha_quiet_hours_discovers_applies_survives_restart_and_restores",
     "tests_real_ha/test_quiet_hours_resilience.py::test_control_failure_isolated_to_one_satellite_and_retried_cleanly",
     "tests_real_ha/test_quiet_hours_resilience.py::test_enable_disable_services_enforce_admin_but_allow_system_automation",
     "tests_real_ha/test_quiet_hours_resilience.py::test_live_policy_replacement_restores_old_policy_before_applying_new_one",
@@ -579,6 +585,7 @@
     "tests_real_ha/test_target_registry_mutation_race.py::test_service_reload_does_not_dispatch_stale_request",
     "tests_real_ha/test_usage_accounting_failure_recovery.py::test_post_provider_tool_failure_keeps_request_success_separate_from_run_failure",
     "tests_real_ha/test_usage_accounting_failure_recovery.py::test_provider_transport_failure_accounts_once_then_next_turn_recovers",
+    "tests_real_ha/test_user_permission_acceptance.py::test_restricted_user_cannot_bypass_ha_entity_or_management_permissions",
     "tests_stress/test_acknowledgement_loss.py::test_atomic_commit_survives_lost_acknowledgement[delayed_tools]",
     "tests_stress/test_acknowledgement_loss.py::test_atomic_commit_survives_lost_acknowledgement[knowledge]",
     "tests_stress/test_acknowledgement_loss.py::test_atomic_commit_survives_lost_acknowledgement[persistent_memory]",
@@ -666,13 +673,23 @@
     "tests_stress/test_evidence_manifest.py::test_governance_cannot_cite_itself_as_semantic_evidence",
     "tests_stress/test_evidence_manifest.py::test_supported_features_have_reviewed_evidence_layer_entries",
     "tests_stress/test_execution_contract.py::test_browser_prerequisite_missing_rejects_successful_job",
+    "tests_stress/test_execution_contract.py::test_compatibility_requires_each_reviewed_case[minimum-ha-features]",
+    "tests_stress/test_execution_contract.py::test_compatibility_requires_each_reviewed_case[native-browser-firefox]",
+    "tests_stress/test_execution_contract.py::test_compatibility_requires_each_reviewed_case[native-browser-webkit-mobile]",
+    "tests_stress/test_execution_contract.py::test_compatibility_requires_each_reviewed_case[native-browser-webkit]",
+    "tests_stress/test_execution_contract.py::test_compatibility_requires_each_reviewed_case[public-version-journeys]",
     "tests_stress/test_execution_contract.py::test_complete_reviewed_execution_passes",
     "tests_stress/test_execution_contract.py::test_conditional_copy_skip_requires_a_genuine_execution",
     "tests_stress/test_execution_contract.py::test_expired_reviewed_allowance_fails_closed",
+    "tests_stress/test_execution_contract.py::test_minimum_feature_contract_covers_distinct_native_boundaries",
     "tests_stress/test_execution_contract.py::test_missing_node_rejects_successful_job",
+    "tests_stress/test_execution_contract.py::test_only_stable_adds_native_browser_engines",
     "tests_stress/test_execution_contract.py::test_real_pytest_ledger_records_collection_skips_xfail_and_teardown",
     "tests_stress/test_execution_contract.py::test_reviewed_skip_exception_is_explicit_and_scoped",
     "tests_stress/test_execution_contract.py::test_selected_cases_and_new_test_functions_require_review",
+    "tests_stress/test_execution_contract.py::test_stable_compatibility_point_cannot_follow_fixture_prerelease[beta]",
+    "tests_stress/test_execution_contract.py::test_stable_compatibility_point_cannot_follow_fixture_prerelease[final]",
+    "tests_stress/test_execution_contract.py::test_stable_compatibility_point_cannot_follow_fixture_prerelease[older]",
     "tests_stress/test_execution_contract.py::test_unexpected_pytest_outcomes_reject_successful_job[deselected]",
     "tests_stress/test_execution_contract.py::test_unexpected_pytest_outcomes_reject_successful_job[failed]",
     "tests_stress/test_execution_contract.py::test_unexpected_pytest_outcomes_reject_successful_job[incomplete]",
@@ -871,6 +888,8 @@
     "tests_stress/test_provider_fault_phases.py::test_tool_group_aba_after_side_effect_keeps_lost_ack_replay_safe[None]",
     "tests_stress/test_provider_fault_phases.py::test_tool_group_aba_after_side_effect_keeps_lost_ack_replay_safe[call-compound-new-id]",
     "tests_stress/test_provider_fault_phases.py::test_unknown_responses_event_is_ignored_before_valid_completion",
+    "tests_stress/test_provider_real_connection_pool.py::test_explicit_prompt_cache_crosses_supported_sdk_wire[caller]",
+    "tests_stress/test_provider_real_connection_pool.py::test_explicit_prompt_cache_crosses_supported_sdk_wire[default]",
     "tests_stress/test_provider_real_connection_pool.py::test_https_socket_break_after_tool_preserves_once_only_actions[chat_completions]",
     "tests_stress/test_provider_real_connection_pool.py::test_https_socket_break_after_tool_preserves_once_only_actions[responses]",
     "tests_stress/test_provider_real_connection_pool.py::test_real_pool_wait_and_cancellation_release_sdk_stream[chat_completions]",
@@ -1149,6 +1168,18 @@
       "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy",
       "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
       "tests_browser/stale-response-ordering.spec.mjs::webkit::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
+    ],
+    "native-browser-chromium": [
+      "tests_browser/real-ha-compatibility.spec.mjs::chromium::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
+    ],
+    "native-browser-firefox": [
+      "tests_browser/real-ha-compatibility.spec.mjs::firefox::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
+    ],
+    "native-browser-webkit": [
+      "tests_browser/real-ha-compatibility.spec.mjs::webkit::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
+    ],
+    "native-browser-webkit-mobile": [
+      "tests_browser/real-ha-compatibility.spec.mjs::webkit-mobile::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
     ]
   },
   "fixture_only": {},
@@ -1365,5 +1396,37 @@
       "tls_verified_requests": 4,
       "transport_tool_recovery_cases": 2
     }
+  },
+  "selections": {
+    "public-version-journeys": [
+      "tests_real_ha/test_public_version_journeys.py"
+    ],
+    "minimum-ha-features": [
+      "tests_real_ha/test_public_version_journeys.py",
+      "tests_real_ha/test_ha_llm_tool_acceptance.py::test_real_ha_llm_tool_catalog_add_reload_and_dispatch",
+      "tests_real_ha/test_native_indirect_target_resolution.py::test_native_area_and_device_targets_follow_live_ha_registries",
+      "tests_real_ha/test_user_permission_acceptance.py::test_restricted_user_cannot_bypass_ha_entity_or_management_permissions",
+      "tests_real_ha/test_local_intent_exclusions.py",
+      "tests_real_ha/test_assist_voice_identity_precedence.py::test_genuine_assist_prefers_registry_device_voice_identity_when_both_ids_exist",
+      "tests_real_ha/test_request_rules_script_semantics.py::test_variables_delay_and_action_keep_one_ha_script_context",
+      "tests_real_ha/test_request_rules_script_semantics.py::test_wait_timeout_stops_actions_and_next_request_works",
+      "tests_real_ha/test_entity_registry_customization.py::test_conversation_registry_customization_survives_reload_and_service_resolution",
+      "tests_real_ha/test_knowledge_provider_wire_e2e.py::test_chat_knowledge_search_get_and_answer_cross_real_provider_wire",
+      "tests_real_ha/test_memory_provider_wire_e2e.py::test_responses_memory_prompt_injection_uses_real_sdk_wire",
+      "tests_real_ha/test_quiet_hours_acceptance.py::test_real_ha_quiet_hours_discovers_applies_survives_restart_and_restores",
+      "tests_real_ha/test_intercom_voice_acceptance.py::test_real_ha_voice_broadcast_waits_for_idle_target_and_skips_origin"
+    ],
+    "native-browser-chromium": [
+      "tests_real_ha/test_browser_compatibility_acceptance.py::test_compact_native_frontend_version_contract"
+    ],
+    "native-browser-firefox": [
+      "tests_real_ha/test_browser_compatibility_acceptance.py::test_compact_native_frontend_version_contract"
+    ],
+    "native-browser-webkit": [
+      "tests_real_ha/test_browser_compatibility_acceptance.py::test_compact_native_frontend_version_contract"
+    ],
+    "native-browser-webkit-mobile": [
+      "tests_real_ha/test_browser_compatibility_acceptance.py::test_compact_native_frontend_version_contract"
+    ]
   }
 }

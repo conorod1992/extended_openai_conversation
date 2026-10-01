@@ -31,6 +31,8 @@ jobs:
     outputs:
       python-version: ${{ steps.versions.outputs.python-version }}
       ha-core-sha: ${{ steps.versions.outputs.ha-core-sha }}
+      stable-ha-version: ${{ steps.versions.outputs.stable-ha-version }}
+      nightly-browsers: ${{ steps.versions.outputs.nightly-browsers }}
     steps:
       - name: Resolve Home Assistant Core dev snapshot
         id: versions
@@ -43,16 +45,35 @@ jobs:
           echo "python-version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
           echo "Home Assistant Core dev commit: $HA_CORE_SHA"
           echo "Home Assistant Python version: $PYTHON_VERSION"
+          STABLE_HA_VERSION=''
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            STABLE_HA_VERSION="$(python -c 'import json,urllib.request; print(json.load(urllib.request.urlopen("https://pypi.org/pypi/homeassistant/json",timeout=30))["info"]["version"])')"
+            [[ "$STABLE_HA_VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]
+          fi
+          echo "stable-ha-version=$STABLE_HA_VERSION" >> "$GITHUB_OUTPUT"
+          NIGHTLY_BROWSERS='[]'
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            NIGHTLY_BROWSERS='[{"ha-version":"stable","profile":"firefox"},{"ha-version":"stable","profile":"webkit"},{"ha-version":"stable","profile":"webkit-mobile"}]'
+          fi
+          echo "nightly-browsers=$NIGHTLY_BROWSERS" >> "$GITHUB_OUTPUT"
 
   native-browser:
-    name: Native browser smoke (HA ${{ matrix.ha-version }})
+    name: Native browser smoke (HA ${{ matrix.ha-version }} / ${{ matrix.profile || 'chromium' }})
     runs-on: ubuntu-latest
     needs: prepare
     timeout-minutes: 25
+    env:
+      REAL_HA_BROWSER_PROFILE: ${{ matrix.profile || 'chromium' }}
+      STRESS_CAMPAIGN: native-browser-${{ matrix.profile || 'chromium' }}
+      STRESS_ARTIFACT_DIR: compatibility-evidence
+      ENHANCED_EXECUTION_EVIDENCE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '' }}
+      PYTEST_PLUGINS: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'ci.pytest_execution' || '' }}
     strategy:
       fail-fast: false
       matrix:
         ha-version: [oldest, stable, dev]
+        profile: [chromium]
+        include: ${{ fromJson(needs.prepare.outputs.nightly-browsers) }}
     steps:
       - name: Checkout exact EOAI PR head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -75,7 +96,11 @@ jobs:
             python -m pip install 'pytest-homeassistant-custom-component==0.13.317'
             python -m pip install --pre "homeassistant==$MINIMUM"
           elif [[ "$HA_POINT" == stable ]]; then
-            python -m pip install --upgrade homeassistant pytest-homeassistant-custom-component
+            if [ -n "${{ needs.prepare.outputs.stable-ha-version }}" ]; then
+              python -m pip install --upgrade "homeassistant==${{ needs.prepare.outputs.stable-ha-version }}" pytest-homeassistant-custom-component
+            else
+              python -m pip install --upgrade homeassistant pytest-homeassistant-custom-component
+            fi
           else
             python -m pip install "git+https://github.com/home-assistant/core.git@$HA_DEV_SHA"
           fi
@@ -94,22 +119,32 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
-      - name: Install the existing Playwright runner and Chromium
+      - name: Install the existing Playwright runner and selected browser
         run: |
           npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps "${REAL_HA_BROWSER_PROFILE%-mobile}"
       - name: Run one genuine native shell compatibility journey
         env:
           RUN_REAL_HA_BROWSER_COMPATIBILITY: "1"
           HA_POINT: ${{ matrix.ha-version }}
           PYTHONPATH: ${{ github.workspace }}
         run: pytest tests_real_ha/test_browser_compatibility_acceptance.py -v -s --asyncio-mode=auto --timeout=300 --tb=short
+      - name: Require native browser execution evidence
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+          HA_POINT: ${{ matrix.ha-version }}
+          HA_STABLE_VERSION: ${{ needs.prepare.outputs.stable-ha-version }}
+        run: |
+          python ci/enhanced_summary.py compatibility-evidence
+          python ci/compatibility_evidence.py check compatibility-evidence
       - name: Upload version-specific browser diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ha-native-browser-${{ matrix.ha-version }}
+          name: ha-native-browser-${{ matrix.ha-version }}-${{ matrix.profile || 'chromium' }}
           path: |
+            compatibility-evidence/
             playwright-report/
             test-results/
           if-no-files-found: warn

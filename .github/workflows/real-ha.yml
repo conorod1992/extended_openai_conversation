@@ -104,6 +104,7 @@ jobs:
     outputs:
       python-version: ${{ steps.versions.outputs.python-version }}
       ha-core-sha: ${{ steps.versions.outputs.ha-core-sha }}
+      stable-ha-version: ${{ steps.versions.outputs.stable-ha-version }}
     steps:
       - name: Resolve Home Assistant Core dev snapshot
         id: versions
@@ -116,6 +117,12 @@ jobs:
           echo "python-version=$PYTHON_VERSION" >> "$GITHUB_OUTPUT"
           echo "Home Assistant Core dev commit: $HA_CORE_SHA"
           echo "Home Assistant Python version: $PYTHON_VERSION"
+          STABLE_HA_VERSION=''
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            STABLE_HA_VERSION="$(python -c 'import json,urllib.request; print(json.load(urllib.request.urlopen("https://pypi.org/pypi/homeassistant/json",timeout=30))["info"]["version"])')"
+            [[ "$STABLE_HA_VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]
+          fi
+          echo "stable-ha-version=$STABLE_HA_VERSION" >> "$GITHUB_OUTPUT"
 
   public-journeys:
     name: Public journeys (HA ${{ matrix.ha-version }})
@@ -149,7 +156,11 @@ jobs:
             python -m pip install 'pytest-homeassistant-custom-component==0.13.317'
             python -m pip install --pre "homeassistant==$MINIMUM"
           elif [[ "$HA_POINT" == stable ]]; then
-            python -m pip install --upgrade homeassistant pytest-homeassistant-custom-component
+            if [ -n "${{ needs.prepare.outputs.stable-ha-version }}" ]; then
+              python -m pip install --upgrade "homeassistant==${{ needs.prepare.outputs.stable-ha-version }}" pytest-homeassistant-custom-component
+            else
+              python -m pip install --upgrade homeassistant pytest-homeassistant-custom-component
+            fi
           else
             python -m pip install "git+https://github.com/home-assistant/core.git@$HA_DEV_SHA"
           fi
@@ -164,10 +175,37 @@ jobs:
         run: |
           echo "EOAI_SHA=$(git rev-parse HEAD)"
           python -c 'from importlib.metadata import version; print("HA_POINT=" + __import__("os").environ["HA_POINT"] + " HA_VERSION=" + version("homeassistant"))'
-      - name: Run compact public journey contract
+      - name: Run reviewed HA feature compatibility contract
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: pytest tests_real_ha/test_public_version_journeys.py -v --asyncio-mode=auto --timeout=600 --tb=short
+          STRESS_CAMPAIGN: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
+          STRESS_ARTIFACT_DIR: compatibility-evidence
+          ENHANCED_EXECUTION_EVIDENCE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '' }}
+          PYTEST_PLUGINS: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'ci.pytest_execution' || '' }}
+        run: |
+          if [ "$ENHANCED_EXECUTION_EVIDENCE" = 1 ]; then
+            read -ra TEST_PATHS <<< "$(python ci/compatibility_evidence.py select)"
+          else
+            TEST_PATHS=(tests_real_ha/test_public_version_journeys.py)
+          fi
+          pytest "${TEST_PATHS[@]}" -v --asyncio-mode=auto --timeout=600 --tb=short
+      - name: Require every compatibility case to pass
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        env:
+          STRESS_CAMPAIGN: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+          HA_POINT: ${{ matrix.ha-version }}
+          HA_STABLE_VERSION: ${{ needs.prepare.outputs.stable-ha-version }}
+        run: |
+          python ci/enhanced_summary.py compatibility-evidence
+          python ci/compatibility_evidence.py check compatibility-evidence
+      - name: Upload feature execution evidence
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ha-feature-compatibility-${{ matrix.ha-version }}
+          path: compatibility-evidence/
+          retention-days: 14
 
   stable:
     name: Genuine Home Assistant lifecycle (stable / ${{ matrix.shard }})

@@ -142,6 +142,7 @@ def environment_identity() -> dict[str, Any]:
             package: _version(package)
             for package in (
                 "homeassistant",
+                "home-assistant-frontend",
                 "openai",
                 "httpx",
                 "aiohttp",

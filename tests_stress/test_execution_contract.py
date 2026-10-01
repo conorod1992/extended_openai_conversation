@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ci.execution_contract import (
     CONTRACT,
@@ -208,3 +209,123 @@ def test_expired_reviewed_allowance_fails_closed():
     item = evidence()
     item["execution_cases"][0].update(executed=False, outcome="skipped")
     assert any("expired" in error for error in check_execution(item, policy))
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(
+    "campaign",
+    [
+        "minimum-ha-features",
+        "public-version-journeys",
+        "native-browser-firefox",
+        "native-browser-webkit",
+        "native-browser-webkit-mobile",
+    ],
+)
+def test_compatibility_requires_each_reviewed_case(campaign):
+    policy = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    nodes = expected_cases(policy, campaign)
+    assert nodes
+    item = {
+        "campaign": campaign,
+        "execution_cases": [
+            {"nodeid": node, "collected": True, "executed": True, "outcome": "passed"}
+            for node in sorted(nodes)
+        ],
+    }
+    assert not check_execution(item, policy)
+    for index in range(len(item["execution_cases"])):
+        altered = json.loads(json.dumps(item))
+        altered["execution_cases"][index].update(executed=False, outcome="skipped")
+        assert check_execution(altered, policy)
+        altered["execution_cases"].pop(index)
+        assert check_execution(altered, policy)
+
+
+def test_only_stable_adds_native_browser_engines():
+    jobs = yaml.safe_load(
+        (ROOT / ".github/workflows/ha-browser-compatibility.yml").read_text(
+            encoding="utf-8"
+        )
+    )["jobs"]
+    matrix = jobs["native-browser"]["strategy"]["matrix"]
+    assert matrix["ha-version"] == ["oldest", "stable", "dev"]
+    assert matrix["profile"] == ["chromium"]
+    assert (
+        matrix["include"] == "${{ fromJson(needs.prepare.outputs.nightly-browsers) }}"
+    )
+    preparation = jobs["prepare"]["steps"][0]["run"]
+    assert '"${{ github.event_name }}" = schedule' in preparation
+    assert '"${{ github.event_name }}" = workflow_dispatch' in preparation
+    steps = jobs["native-browser"]["steps"]
+    assert any(
+        "compatibility_evidence.py check" in step.get("run", "") for step in steps
+    )
+
+    real_ha = yaml.safe_load(
+        (ROOT / ".github/workflows/real-ha.yml").read_text(encoding="utf-8")
+    )["jobs"]
+    public_steps = real_ha["public-journeys"]["steps"]
+    run = next(
+        step
+        for step in public_steps
+        if step["name"] == "Run reviewed HA feature compatibility contract"
+    )
+    for key in ["STRESS_CAMPAIGN", "ENHANCED_EXECUTION_EVIDENCE", "PYTEST_PLUGINS"]:
+        assert "github.event_name == 'schedule'" in run["env"][key]
+        assert "github.event_name == 'workflow_dispatch'" in run["env"][key]
+    for step in public_steps:
+        if step["name"] in {
+            "Require every compatibility case to pass",
+            "Upload feature execution evidence",
+        }:
+            assert "github.event_name == 'schedule'" in step["if"]
+            assert "github.event_name == 'workflow_dispatch'" in step["if"]
+            if step["name"] == "Require every compatibility case to pass":
+                assert step["env"]["HA_POINT"] == "${{ matrix.ha-version }}"
+                assert (
+                    step["env"]["HA_STABLE_VERSION"]
+                    == "${{ needs.prepare.outputs.stable-ha-version }}"
+                )
+
+
+def test_minimum_feature_contract_covers_distinct_native_boundaries():
+    policy = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    nodes = expected_cases(policy, "minimum-ha-features")
+    for file in [
+        "test_public_version_journeys",
+        "test_ha_llm_tool_acceptance",
+        "test_native_indirect_target_resolution",
+        "test_user_permission_acceptance",
+        "test_local_intent_exclusions",
+        "test_assist_voice_identity_precedence",
+        "test_request_rules_script_semantics",
+        "test_entity_registry_customization",
+        "test_knowledge_provider_wire_e2e",
+        "test_memory_provider_wire_e2e",
+        "test_quiet_hours_acceptance",
+        "test_intercom_voice_acceptance",
+    ]:
+        assert any(node.startswith(f"tests_real_ha/{file}.py::") for node in nodes), (
+            file
+        )
+
+
+@pytest.mark.parametrize(
+    "tested,accepted",
+    [("2026.9.4", True), ("2026.10.0b0", False), ("2026.9.3", False)],
+    ids=["final", "beta", "older"],
+)
+def test_stable_compatibility_point_cannot_follow_fixture_prerelease(tested, accepted):
+    from ci.compatibility_evidence import check_frontend_point, check_stable_point
+
+    item = {"environment": {"packages": {"homeassistant": tested}}}
+    assert bool(check_stable_point(item, "stable", "2026.9.4")) != accepted
+    assert check_stable_point(item, "stable", "2026.10.0b0")
+    assert not check_stable_point(item, "oldest", None)
+    item["environment"]["packages"]["home-assistant-frontend"] = "20260826.7"
+    assert not check_frontend_point(item, "20260826.7")
+    assert check_frontend_point(item, "20260930.1")
+    assert check_frontend_point(item, None)
