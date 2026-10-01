@@ -138,6 +138,14 @@ function markConfigDirty(panel) {
 function rerenderKeepingEditor(panel, entityId = null) {
   panel._exposedAttributeEntityId = entityId;
   panel._render?.();
+  reconcileExposedAttributeSettings(panel);
+}
+
+export function reconcileExposedAttributeSettings(panel) {
+  const section = panel.shadowRoot?.querySelector(".exposed-attribute-settings");
+  if (!section) return;
+  section.outerHTML = renderExposedAttributeSettings(panel);
+  bindExposedAttributeSettings(panel);
 }
 
 function bindEntityPicker(panel, entities) {
@@ -212,5 +220,6 @@ export function bindExposedAttributeSettings(panel) {
       panel._exposedAttributeEntityId = null;
     }
     panel._render?.();
+    reconcileExposedAttributeSettings(panel);
   }));
 }

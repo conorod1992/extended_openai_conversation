@@ -166,7 +166,7 @@ export function renderLocalHandling(panel, config) {
     <div class="dependent ${config.local_intents_enabled ? "" : "is-disabled"}" data-dependent="local_intents_enabled">
         <div class="setting-group" data-setting data-search="local handling exceptions always send command types ai home assistant intents">
         <div class="subheading"><h3>Send these command types to AI</h3><p>Choose any commands that should skip local handling and continue to your Function Tools or AI model.</p></div>
-        ${intents.length ? `<label class="tool-search"><span class="sr-only">Find a command type</span><input id="local-intent-search" type="search" placeholder="Find a command type..." aria-label="Find a command type" ${config.local_intents_enabled ? "" : "disabled"}></label><div id="local-intent-list" class="group-function-choices"><label class="group-function-choice" data-local-intent-choice data-choice-search="delayed device commands scheduled deferred actions turn off later"><input type="checkbox" data-config="local_intent_delayed_commands_to_ai" data-type="boolean" ${config.local_intent_delayed_commands_to_ai ? "checked" : ""} ${config.local_intents_enabled ? "" : "disabled"}><span><strong>Delayed device commands</strong><small>For example, “turn off the lights in 20 minutes”. Normal timers such as “set a 20 minute timer” can still stay local.</small></span></label>${intents.map((item) => `<label class="group-function-choice ${item.available === false ? "is-disabled" : ""}" data-local-intent-choice data-choice-search="${panel._e(`${item.label} ${item.intent}`.toLowerCase())}"><input type="checkbox" data-local-intent-exclusion value="${panel._e(item.intent)}" ${excluded.has(item.intent) ? "checked" : ""} ${config.local_intents_enabled ? "" : "disabled"}><span><strong>${panel._e(item.label)}</strong><small><code>${panel._e(item.intent)}</code>${item.available === false ? " · Not currently available in Home Assistant" : ""}</small></span></label>`).join("")}</div>` : `<p class="help">No Home Assistant command types are currently registered.</p>`}
+        ${intents.length ? `<label class="tool-search"><span class="sr-only">Find a command type</span><input id="local-intent-search" type="search" placeholder="Find a command type..." aria-label="Find a command type" ${config.local_intents_enabled ? "" : "disabled"}></label><div id="local-intent-list" class="group-function-choices"><label class="group-function-choice" data-local-intent-choice data-choice-search="delayed device commands scheduled deferred actions turn off later"><input type="checkbox" data-config="local_intent_delayed_commands_to_ai" data-type="boolean" ${config.local_intent_delayed_commands_to_ai ? "checked" : ""} ${config.local_intents_enabled ? "" : "disabled"}><span><strong>Delayed device commands</strong><small>For example, “turn off the lights in 20 minutes”. Normal timers such as “set a 20 minute timer” can still stay local.</small></span></label>${intents.map((item) => `<label class="group-function-choice ${item.available === false ? "is-disabled" : ""}" data-local-intent-choice data-choice-search="${panel._e(`${item.label} ${item.intent}`.toLowerCase())}"><input type="checkbox" data-local-intent-exclusion value="${panel._e(item.intent)}" ${excluded.has(item.intent) ? "checked" : ""} ${config.local_intents_enabled ? "" : "disabled"}><span><strong>${panel._e(item.label)}</strong><small><code>${panel._e(item.intent)}</code>${item.available === false ? " · Not currently available in Home Assistant" : ""}</small></span></label>`).join("")}</div><div id="local-intents-empty" class="empty" hidden>No command types match this search. <button type="button" class="secondary compact-button" id="local-intents-clear">Clear search</button></div>` : `<p class="help">No Home Assistant command types are currently registered.</p>`}
         <span class="field-error" data-error="local_intent_exclusions"></span>
       </div>
       <p class="help">Request Rules always get the first chance. While Guest Mode is active, requests keep using the existing Guest Mode safeguards instead of this local shortcut.</p>
@@ -307,9 +307,17 @@ export function bindConfiguration(panel) {
   bindConfigurationInputs(panel);
   root.querySelector("#local-intent-search")?.addEventListener("input", (event) => {
     const query = event.target.value;
-    root.querySelectorAll("[data-local-intent-choice]").forEach((choice) => {
+    const choices = [...root.querySelectorAll("[data-local-intent-choice]")];
+    choices.forEach((choice) => {
       choice.hidden = !matchesFunctionSearch(query, choice.dataset.choiceSearch);
     });
+    root.querySelector("#local-intents-empty").hidden = !query.trim() || choices.some(choice => !choice.hidden);
+  });
+  bindOwnedEvent(root.querySelector("#local-intents-clear"), "click", "local-search", () => {
+    const search = root.querySelector("#local-intent-search");
+    search.value = "";
+    search.dispatchEvent(new Event("input", {bubbles: true}));
+    search.focus();
   });
   bindRegexRules(panel);
   const actionsMenu = root.querySelector(".agent-actions-menu");

@@ -236,11 +236,11 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       return {
         ...(requested.has("local_handling") ? {local_handling: clone(state.configuration.local_handling)} : {}),
         ...(requested.has("exposed_attribute_catalog") ? {
-          exposed_attribute_catalog: {
+          exposed_attribute_catalog: clone(state.configuration.exposed_attribute_catalog || {
             entities: [],
             saved_unexposed: [],
             identity_policy: "entity_registry",
-          },
+          }),
         } : {}),
       };
     }

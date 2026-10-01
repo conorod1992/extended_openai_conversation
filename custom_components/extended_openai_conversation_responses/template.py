@@ -185,6 +185,8 @@ class ExtendedOpenAITemplateManager:
 
     async def _async_stop(self, _event: Any) -> None:
         """Release process globals even when HA stops without unloading entries."""
+        # HA removes a one-shot listener before invoking its callback.
+        self._remove_stop_listener = None
         await self.async_on_unload()
         domain_data = self.hass.data.get(DOMAIN, {})
         if domain_data.get(DATA_TEMPLATE_MANAGER) is self:
@@ -205,8 +207,9 @@ class ExtendedOpenAITemplateManager:
         self._replacement_init = None
         self._original_init = None
         if self._remove_stop_listener is not None:
-            self._remove_stop_listener()
+            remove_listener = self._remove_stop_listener
             self._remove_stop_listener = None
+            remove_listener()
         for environment, original in self._environments.items():
             if (
                 environment.globals.get(TEMPLATE_EXTENDED_OPENAI)

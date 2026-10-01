@@ -1,3 +1,4 @@
+import {localRuleActionSummary} from "./request-rule-response-summary.js";
 import {assistantScopeLabel} from "./management-confirmation-scope.js";
 export {DECISION_GUIDANCE_STYLES, assistantScopeLabel, enhanceConfirmationScope} from "./management-confirmation-scope.js";
 import {friendlySettingValue, settingEffectMarkup} from "./management-setting-metadata.js";
@@ -60,10 +61,8 @@ export function requestRuleSummary(rule = {}, defaults = {}) {
   }
 
   if (rule.action_type === "local_action") {
-    const actions = Array.isArray(rule.action?.actions) ? rule.action.actions : [];
-    const response = String(rule.action?.success_response || "").trim();
     return {
-      action: `Runs ${actions.length} local step${actions.length === 1 ? "" : "s"} without an AI request${response ? ` · replies “${response}”` : ""}`,
+      action: localRuleActionSummary(rule.action),
       matching,
       hiddenPhrases: Math.max(0, phrases.length - 4),
     };

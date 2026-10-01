@@ -14,8 +14,10 @@ from aiohttp import web
 import pytest
 from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
 
-from homeassistant.components import onboarding
+from homeassistant.components import conversation, onboarding
+from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
@@ -178,6 +180,17 @@ async def test_shipped_browser_frontend_loads_inside_real_home_assistant_shell(
 
     entry = _entry("Browser Frontend Shell Acceptance")
     await _setup_entry(hass, entry)
+
+    registry = er.async_get(hass)
+    for room in ("kitchen", "hall"):
+        entity = registry.async_get_or_create(
+            "sensor",
+            "followup_fixture",
+            f"cold-attribute-{room}",
+            suggested_object_id=f"cold_attribute_{room}",
+        )
+        hass.states.async_set(entity.entity_id, "21", {"battery_level": 84})
+        async_expose_entity(hass, conversation.DOMAIN, entity.entity_id, True)
 
     admin = MockUser(
         id="browser-frontend-shell-admin",

@@ -1,3 +1,4 @@
+import {initializeVoiceUserPicker, voiceUserCatalogue} from "./voice-user-picker.js";
 const escape = (panel, value) => panel._e(String(value ?? ""));
 const rawUserId = (value) => String(value || "").replace(/^user:/, "");
 const policyLabels = {
@@ -7,11 +8,7 @@ const policyLabels = {
   device_mapping: "Use a device assignment",
 };
 
-function users(panel) {
-  const scopes = panel?._baseScopes?.length ? panel._baseScopes : panel?._data?.scopes || [];
-  return scopes.filter((scope) => scope?.scope_type === "user")
-    .map((scope) => ({id: rawUserId(scope.scope_id), name: scope.display_name || rawUserId(scope.scope_id)}));
-}
+const users = voiceUserCatalogue;
 
 function summary(config, catalogue) {
   const target = (policy) => {
@@ -115,8 +112,7 @@ export function bindVoiceIdentityCore(panel) {
   const picker = root.querySelector("#config-voice_default_user_picker");
   const hidden = root.querySelector('[data-config="voice_default_user_id"]');
   if (picker) {
-    picker.hass = panel.hass || panel._hass;
-    picker.value = rawUserId(hidden?.value);
+    initializeVoiceUserPicker(panel, picker, hidden?.value, () => updatePolicy(panel));
     picker.addEventListener("value-changed", (event) => {
       const value = rawUserId(event.detail?.value || "");
       picker.value = value;
