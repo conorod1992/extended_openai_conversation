@@ -87,14 +87,6 @@ DEFAULT_PROMPT = """You are a helpful, friendly and concise Home Assistant voice
 - Use the available Home Assistant context to infer the most relevant devices or entities when the user does not name them explicitly.
 - Check entity attributes when state alone is insufficient to determine what actions are available.
 
-{%- if skills %}
-## Skills
-Use load_skill with a skill name when one of these skills is relevant:
-{%- for skill in skills %}
-- {{ skill.name }}: {{ skill.description }}
-{%- endfor %}
-{% endif %}
-
 ## Context
 - Current area: {{ area_id(current_device_id) }}
 - Workspace: {{ extended_openai.working_directory() }}
