@@ -385,8 +385,6 @@ fixed conversation-start bundle; call memory_search when a later topic needs oth
 - Never store passwords, authentication tokens, API keys, security codes, financial
   account details, or other secrets. Sensitive personal information must not be
   stored automatically.
-- Importance describes future usefulness, not truth or authority. Use normal unless
-  low or high is clearly warranted; an explicit request alone does not imply high.
 - Persistent memories do not automatically expire. Current user statements override
   conflicting stored facts; refresh or correct durable facts with memory_upsert.
 - Keep memory content concise, self-contained, and meaningful months later.

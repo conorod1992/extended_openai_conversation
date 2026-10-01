@@ -7,7 +7,7 @@ export function createDataCollectionBackend(size = 100) {
   const timestamp = () => `2026-09-01T12:${String(revision++).padStart(2, "0")}:00Z`;
   const state = {
     sources: Array.from({length: size}, (_, i) => ({source_id: `source-${i}`, title: `Source ${i}`, description: `Reference category ${i % 5}`, content: `Reference text ${i}`, character_count: 18, enabled: true, updated_at: "2026-09-01T12:00:00Z"})),
-    memories: Array.from({length: size}, (_, i) => ({memory_id: `memory-${i}`, scope_id: "user:test-user", content: `Memory ${i}`, category: `category-${i % 5}`, scope: i % 2 ? "Shared household" : "Personal", importance: ["low", "normal", "high"][i % 3], source: "manual", revision: 1, updated_at: "2026-09-01T12:00:00Z"})),
+    memories: Array.from({length: size}, (_, i) => ({memory_id: `memory-${i}`, scope_id: "user:test-user", content: `Memory ${i}`, category: `category-${i % 5}`, scope: i % 2 ? "Shared household" : "Personal", source: "manual", revision: 1, updated_at: "2026-09-01T12:00:00Z"})),
     temporary: Array.from({length: 12}, (_, i) => ({memory_id: `temporary-${i}`, scope_id: "user:test-user", owner_scope_id: "user:test-user", content: `Temporary ${i}`, category: "general", source: "manual", expires_at: "2099-09-01T12:00:00Z", updated_at: "2026-09-01T12:00:00Z"})),
   };
   const calls = [];
@@ -58,13 +58,20 @@ export function createDataCollectionBackend(size = 100) {
     if (action === "temporary_list") return {memories: clone(scoped(state.temporary, message)), stats: {}};
     if (action === "temporary_delete") { const before = state.temporary.length; state.temporary = state.temporary.filter(item => item.memory_id !== message.memory_id); return {deleted: before - state.temporary.length}; }
     if (action === "temporary_clear") { if (!message.confirm) throw new Error("Confirmation required"); const before = state.temporary.length; state.temporary = state.temporary.filter(item => item.scope_id !== message.scope_id || (item.subentry_id || "agent-1") !== message.subentry_id); return {deleted: before - state.temporary.length}; }
+    if (action === "temporary_add") {
+      const owner = message.target_scope_id || message.scope_id;
+      const memory = {memory_id: `temporary-${nextId++}`, content: message.content, category: message.category,
+        expires_at: message.expires_at, owner_scope_id: owner, scope_id: owner, source: "manual", updated_at: timestamp()};
+      state.temporary.push(memory);
+      return {status: "created", scope_id: owner, memory: clone(memory)};
+    }
     if (action === "temporary_update") {
       const item = state.temporary.find(item => item.memory_id === message.memory_id);
       Object.assign(item, {content: message.content, category: message.category, expires_at: message.expires_at, updated_at: timestamp()});
       return {memory: clone(item)};
     }
     if (action === "add") {
-      const memory = {memory_id: `memory-${nextId++}`, scope_id: message.target_scope_id || message.scope_id || "user:test-user", content: message.content, category: message.category, scope: message.scope === "household" ? "Shared household" : "Personal", importance: message.importance || "normal", source: "manual", revision: 1, updated_at: timestamp(), ...Object.fromEntries(["subject", "key", "valid_from"].filter(key => message[key] !== undefined).map(key => [key, message[key]]))};
+      const memory = {memory_id: `memory-${nextId++}`, scope_id: message.target_scope_id || message.scope_id || "user:test-user", content: message.content, category: message.category, scope: message.scope === "household" ? "Shared household" : "Personal", source: "manual", revision: 1, updated_at: timestamp(), ...Object.fromEntries(["subject", "key", "valid_from"].filter(key => message[key] !== undefined).map(key => [key, message[key]]))};
       state.memories.push(memory);
       return {status: "created", scope_id: memory.scope_id, memory: clone(memory)};
     }
@@ -73,8 +80,7 @@ export function createDataCollectionBackend(size = 100) {
       if (!memory) throw new Error("Memory not found");
       if (message.expected_revision !== memory.revision) throw new Error("memory changed since it was loaded; reopen it before saving");
       if (message.target_scope_id) memory.scope_id = message.target_scope_id;
-      if (message.refresh_confirmation) memory.last_confirmed_at = timestamp();
-      for (const key of ["content", "category", "importance", "subject", "key", "valid_from"]) if (message[key] !== undefined) memory[key] = message[key];
+      for (const key of ["content", "category", "subject", "key", "valid_from"]) if (message[key] !== undefined) memory[key] = message[key];
       if (message.scope) memory.scope = message.scope === "household" ? "Shared household" : "Personal";
       for (const key of message.clear_fields || []) delete memory[key];
       memory.revision++; memory.updated_at = timestamp();

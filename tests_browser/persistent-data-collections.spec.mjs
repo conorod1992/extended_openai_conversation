@@ -283,7 +283,7 @@ test("Temporary Memory: edit metadata and expiry submits once and retains unrela
   await panel.locator('[data-memory-id="temporary-4"] button.edit-temporary-memory').click();
   await panel.locator("#temporary-memory-content").fill("Edited short-term detail");
   await panel.locator("#temporary-memory-category").fill("new-category");
-  await panel.locator("#temporary-memory-expiry").fill("2026-10-01T18:00:00+01:00");
+  await panel.locator("#temporary-memory-expiry").fill("2026-10-01T18:00");
   await beginDataMeasure(page); await panel.locator("#temporary-memory-save").click();
   await expect(panel.locator('[data-memory-id="temporary-4"]')).toContainText("Edited short-term detail");
   expect(await finishDataMeasure(page)).toMatchObject({retainedCards: 11, initialCards: 12, mainChildReplacements: 0});

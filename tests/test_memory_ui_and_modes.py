@@ -148,11 +148,9 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
         source="explicit",
         created_at="now",
         updated_at="now",
-        importance="normal",
         subject=None,
         key=None,
         valid_from=None,
-        last_confirmed_at="now",
     )
     memory = SimpleNamespace(
         async_list_page=AsyncMock(return_value=([record], False)),
@@ -214,7 +212,6 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
         "memory-1",
         "User prefers Fahrenheit.",
         "preferences",
-        refresh_confirmation=False,
         target_user_id="user-7",
         clear_fields=None,
         expected_revision=None,

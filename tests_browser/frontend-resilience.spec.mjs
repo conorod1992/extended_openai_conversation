@@ -101,6 +101,7 @@ test("malformed Function Tool YAML stays editable and cannot mutate persisted to
   await page.goto(fixtureUrl("capabilities/functions"));
 
   let panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
   const malformed = "spec:\n  description: Missing name on purpose\nfunction:\n  type: script\n  sequence: []\n";
@@ -134,6 +135,7 @@ test("server-rejected Function Tool save preserves YAML and persisted state, the
   await page.goto(fixtureUrl("capabilities/functions"));
 
   let panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   const draft = browserToolYaml("Server rejection draft");
   await panel.locator("#tool-yaml").fill(draft);
@@ -160,6 +162,7 @@ test("server-rejected Function Group save preserves every field and membership b
   await page.goto(fixtureUrl("capabilities/functions"));
 
   let panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#function-add").click();
   await panel.locator("#add-group").click();
   await panel.locator("#group-name").fill("Rejected browser group");
   await panel.locator("#group-id").fill("rejected-browser-group");

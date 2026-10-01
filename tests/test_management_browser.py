@@ -58,11 +58,9 @@ def record(index: int, *, owner: str = "user-a", content: str | None = None):
         source="explicit",
         created_at=f"2026-01-{(index % 28) + 1:02d}T00:00:00+00:00",
         updated_at=f"2026-02-{(index % 28) + 1:02d}T{index % 24:02d}:00:00+00:00",
-        importance="normal",
         subject=None,
         key=None,
         valid_from=None,
-        last_confirmed_at=None,
     )
 
 

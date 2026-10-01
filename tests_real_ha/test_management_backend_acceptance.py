@@ -73,7 +73,6 @@ async def test_only_unified_memory_and_knowledge_commands_are_registered(
         action="add",
         content="Bins go out Friday",
         category="home",
-        importance="high",
         subject="Bins",
         key="bins.day",
         valid_from="2026-09-01T00:00:00Z",
@@ -89,14 +88,11 @@ async def test_only_unified_memory_and_knowledge_commands_are_registered(
         memory_id=listed_memory["memory_id"],
         content="Bins go out Thursday",
         expected_revision=listed_memory["revision"],
-        refresh_confirmation=False,
         clear_fields=["subject"],
     )
     assert updated_memory["memory"]["subject"] is None
-    assert (
-        updated_memory["memory"]["last_confirmed_at"]
-        == listed_memory["last_confirmed_at"]
-    )
+    assert "last_confirmed_at" not in updated_memory["memory"]
+    assert "importance" not in updated_memory["memory"]
     conflict = await _management_response(
         client,
         entry=entry,

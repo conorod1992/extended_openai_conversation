@@ -1,4 +1,4 @@
-"""Persistent Memory management confirmation semantics."""
+"""Persistent Memory management metadata semantics."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,8 +17,8 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
 )
 
 
-async def test_manual_management_update_does_not_confirm_by_default() -> None:
-    """A management edit only refreshes confirmation when explicitly requested."""
+async def test_manual_management_update_has_no_removed_controls() -> None:
+    """Management edits do not pass removed controls to the store."""
     subentry = SimpleNamespace(
         subentry_id="agent-1",
         subentry_type="conversation",
@@ -46,11 +46,9 @@ async def test_manual_management_update_does_not_confirm_by_default() -> None:
         source="explicit",
         created_at="2026-09-01T10:00:00+00:00",
         updated_at="2026-09-01T10:00:00+00:00",
-        importance="normal",
         subject=None,
         key=None,
         valid_from=None,
-        last_confirmed_at="2026-09-01T10:00:00+00:00",
     )
     persistent = SimpleNamespace(
         async_get_many=AsyncMock(return_value=[record]),
@@ -76,4 +74,5 @@ async def test_manual_management_update_does_not_confirm_by_default() -> None:
             },
         )
 
-    assert persistent.async_update.await_args.kwargs["refresh_confirmation"] is False
+    assert "refresh_confirmation" not in persistent.async_update.await_args.kwargs
+    assert "importance" not in persistent.async_update.await_args.kwargs

@@ -100,7 +100,6 @@ async def test_durable_save_failure_rolls_back_live_manager(operation: str) -> N
             created_at="2026-09-10T09:00:00+00:00",
             updated_at="2026-09-10T09:00:00+00:00",
             key="home.tea.location",
-            last_confirmed_at="2026-09-10T09:00:00+00:00",
         )
     ]
 

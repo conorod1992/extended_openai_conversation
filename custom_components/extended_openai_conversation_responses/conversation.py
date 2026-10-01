@@ -2304,7 +2304,7 @@ class ExtendedOpenAIAgentEntity(
             )
             metadata = {
                 name: arguments[name]
-                for name in ("importance", "subject", "key", "valid_from")
+                for name in ("subject", "key", "valid_from")
                 if name in arguments
             }
             return _compact_memory_result(
@@ -2376,7 +2376,7 @@ class ExtendedOpenAIAgentEntity(
             category = arguments.get("category")
             metadata = {
                 key: arguments[key]
-                for key in ("importance", "subject", "key", "valid_from")
+                for key in ("subject", "key", "valid_from")
                 if arguments.get(key) is not None
             }
             clear_fields = arguments.get("clear_fields")

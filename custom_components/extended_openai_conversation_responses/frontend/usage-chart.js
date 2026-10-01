@@ -382,22 +382,12 @@ export function renderUsagePage(panel, result = {}) {
   const chartByMonth = ["year", "all"].includes(history.id);
   const chartAxis = buckets.length ? `<div class="chart-axis" aria-hidden="true"><span>${panel._e(formatUsageDate(buckets[0].label, undefined, chartByMonth))}</span><span>${panel._e(formatUsageDate(buckets[Math.floor((buckets.length - 1) / 2)].label, undefined, chartByMonth))}</span><span>${panel._e(formatUsageDate(buckets.at(-1).label, undefined, chartByMonth))}</span></div>` : "";
   const cachedMeta = (value) => `${formatUsageNumber(value || 0)} cached input`;
-  const completeHistory = result.days?.complete_history === true;
-  const dailyMismatch = completeHistory && usageLifetimeDiffersFromDaily(lifetime, history.allSummary);
   const availableText = history.availableStart
-    ? `${formatUsageDate(history.availableStart)} to ${formatUsageDate(history.availableEnd)}${completeHistory ? "" : " (loaded window)"}`
-    : "No recorded daily aggregates yet";
+    ? `${formatUsageDate(history.availableStart)} to ${formatUsageDate(history.availableEnd)}`
+    : "No daily usage history yet";
   const selectedText = history.id === "all"
     ? availableText
     : `${formatUsageDate(history.startDate)} to ${formatUsageDate(history.endDate)}`;
-  const gapText = !completeHistory
-    ? " Older daily aggregates are loaded only when you select a wider history window."
-    : dailyMismatch
-      ? " Lifetime counters contain accounting that is not represented exactly by the stored daily aggregates; this can include usage recorded before daily aggregate history became available."
-      : " Lifetime counters are stored separately from daily history even when their current totals agree.";
-  const partialText = history.partialStart
-    ? ` The first stored daily aggregate is ${formatUsageDate(history.availableStart)}, after the selected period begins.`
-    : "";
   const options = USAGE_WINDOW_OPTIONS.map((item) => `<option value="${item.id}" ${item.id === history.id ? "selected" : ""}>${panel._e(item.label)}</option>`).join("");
 
   return `<style>
@@ -410,13 +400,13 @@ export function renderUsagePage(panel, result = {}) {
       ${panel._metric("Input tokens", summary.input_tokens || 0, `${formatUsageNumber(summary.output_tokens || 0)} output`)}
       ${panel._metric("Provider requests", summary.api_request_count || 0, `${formatUsageNumber(summary.run_count || 0)} conversation runs`)}
       ${panel._metric("Lifetime tokens", lifetime.total_tokens || 0, "Separate cumulative counter")}
-      ${panel._metric("Latest response", latest?.total_tokens ?? "—", latest ? cachedMeta(latest.cached_input_tokens) : "Retained run detail")}
+      ${panel._metric("Latest response", latest?.total_tokens ?? "—", latest ? cachedMeta(latest.cached_input_tokens) : "Saved individual run")}
     </section>
     <section class="content-card"><div class="card-heading"><h2>Tokens by ${chartByMonth ? "month" : "recorded day"}</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" aria-label="Token usage for the selected period; cached input tokens are included within each total">${buckets.map((bucket) => renderUsageBar(panel, bucket, chartMax)).join("") || panel._empty("No daily usage is recorded in this period.")}</div>${chartAxis}<p class="chart-note"><strong>Cached input</strong> is input recognised as cached by the provider. It is included in total tokens and may be billed at a lower rate.</p></section>
-    <section class="notice usage-history-note"><strong>Daily aggregate history: ${panel._e(availableText)}</strong><p>The selected period is ${panel._e(selectedText)}.${panel._e(partialText)}${panel._e(gapText)} “All available” therefore means all stored daily aggregate history, not necessarily the same value as lifetime usage.</p></section>
+    <section class="notice usage-history-note"><strong>Daily usage history: ${panel._e(availableText)}</strong><p>You’re viewing ${panel._e(selectedText)}. Older daily history is loaded only when you choose a longer history range. “All available” means all stored daily history, which may differ from your lifetime usage total.</p></section>
     <div data-eoc-usage-diagnostics>${renderUsageDiagnostics(panel, result)}</div>
-    <section class="content-card"><div class="card-heading"><div><h2>Recent runs</h2><p>This table uses retained run detail and is not expanded by the selected aggregate-history period.</p></div></div><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody data-eoc-usage-runs>${usageRecentRows(panel, result)}</tbody></table></div></section>
-    ${panel._data?.is_admin ? `<section class="content-card"><div class="card-heading"><h2>Manage usage history</h2></div><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Daily, monthly, selected-period, and lifetime aggregates are never removed by detail pruning.</small></section>` : ""}`;
+    <section class="content-card"><div class="card-heading"><div><h2>Recent runs</h2><p>This table shows saved individual runs. Changing the history range above does not load additional detailed records.</p></div></div><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody data-eoc-usage-runs>${usageRecentRows(panel, result)}</tbody></table></div></section>
+    ${panel._data?.is_admin ? `<section class="content-card"><div class="card-heading"><h2>Manage usage history</h2></div><div class="section-actions"><button type="button" class="secondary inline-route" data-page="usage-maintenance" data-subsection="retention">Configure retention</button><button type="button" id="clear-details" class="danger secondary-danger">Clear recent details</button></div><small>Usage totals are kept even when detailed records are deleted. Daily, monthly, selected-period, and lifetime totals remain available after older detailed usage records are removed.</small></section>` : ""}`;
 }
 
 export function bindUsageDiagnostics(panel) {

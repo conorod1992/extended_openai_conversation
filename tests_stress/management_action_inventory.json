@@ -387,6 +387,7 @@
         "list",
         "reassign_legacy",
         "search",
+        "temporary_add",
         "temporary_clear",
         "temporary_delete",
         "temporary_list",
@@ -408,7 +409,8 @@
         "temporary_delete": "destructive_mutation",
         "temporary_list": "read_only",
         "temporary_update": "durable_mutation",
-        "update": "durable_mutation"
+        "update": "durable_mutation",
+        "temporary_add": "durable_mutation"
       },
       "authorization_classes": {
         "add": "authenticated_user_scoped",
@@ -421,7 +423,8 @@
         "temporary_delete": "authenticated_user_scoped",
         "temporary_list": "authenticated_user_scoped",
         "temporary_update": "authenticated_user_scoped",
-        "update": "authenticated_user_scoped"
+        "update": "authenticated_user_scoped",
+        "temporary_add": "authenticated_user_scoped"
       },
       "behavioral_evidence": {
         "add": "tests_real_ha/test_management_backend_acceptance.py::test_memories_round_trip_through_management_websocket",
@@ -434,7 +437,8 @@
         "temporary_delete": "tests_real_ha/test_user_ownership_privacy.py::test_known_cross_user_record_ids_cannot_be_read_or_modified",
         "temporary_list": "tests_real_ha/test_user_ownership_privacy.py::test_management_websocket_rejects_explicit_cross_user_scope",
         "temporary_update": "tests_real_ha/test_user_ownership_privacy.py::test_known_cross_user_record_ids_cannot_be_read_or_modified",
-        "update": "tests_real_ha/test_management_backend_acceptance.py::test_only_unified_memory_and_knowledge_commands_are_registered"
+        "update": "tests_real_ha/test_management_backend_acceptance.py::test_only_unified_memory_and_knowledge_commands_are_registered",
+        "temporary_add": "tests/test_memory_simplification.py::test_temporary_add_manual_privacy_ownership_and_fresh_manager"
       },
       "durability_evidence": {
         "add": {
@@ -476,6 +480,11 @@
           "boundary": "config_entry_reload",
           "evidence": "tests_real_ha/test_acceptance_seams.py::test_memory_edit_and_delete_survive_real_reload",
           "outcome": "Edited content persists and a later deletion stays deleted."
+        },
+        "temporary_add": {
+          "boundary": "fresh_manager",
+          "evidence": "tests/test_memory_simplification.py::test_temporary_add_manual_privacy_ownership_and_fresh_manager",
+          "outcome": "Manual short-term creation preserves its owner, manual source, content and absolute expiry after manager reconstruction."
         }
       }
     },

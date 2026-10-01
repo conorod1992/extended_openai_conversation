@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {memoryMutationValues} from "../custom_components/extended_openai_conversation_responses/frontend/management-memory-feature.js";
-const values = {content: " Edited ", category: "home", importance: "high", target_scope_id: "shared:household", subject: "", key: "fact.key", valid_from: "", refresh_confirmation: false};
-assert.deepEqual(memoryMutationValues(values, {subject: "old", valid_from: "2026-01-01"}), {content: "Edited", category: "home", importance: "high", target_scope_id: "shared:household", key: "fact.key", refresh_confirmation: false, clear_fields: ["subject", "valid_from"]});
-assert.equal(memoryMutationValues({...values, refresh_confirmation: true}, {}).refresh_confirmation, true);
+const values = {type: "persistent", content: " Edited ", category: "home", target_scope_id: "shared:household", subject: "", key: "fact.key", valid_from: ""};
+assert.deepEqual(memoryMutationValues(values, {subject: "old", valid_from: "2026-01-01"}), {content: "Edited", category: "home", target_scope_id: "shared:household", key: "fact.key", clear_fields: ["subject", "valid_from"]});
+assert.deepEqual(memoryMutationValues({...values, type: "temporary"}, null), {content: "Edited", category: "home", target_scope_id: "shared:household"});
 assert.equal("clear_fields" in memoryMutationValues(values, null), false);
 assert.equal("refresh_confirmation" in memoryMutationValues(values, null), false);
 const panel = readFileSync(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");

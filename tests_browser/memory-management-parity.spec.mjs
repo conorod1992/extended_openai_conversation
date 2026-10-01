@@ -6,10 +6,10 @@ test.beforeEach(async ({page}) => { errors = trackPageErrors(page); });
 test.afterEach(async ({page}) => { await expectHarnessClean(page, errors); });
 
 for (const bundled of [false, true]) {
-  test(`rich Memory editing preserves metadata, confirmation, keyed identity and search (${bundled})`, async ({page}) => {
+  test(`rich Memory editing preserves metadata, keyed identity and search (${bundled})`, async ({page}) => {
     const panel = await openDataCollection(page, "persistent", 80, bundled);
     await page.evaluate(async () => {
-      Object.assign(dataCollectionBackend.state.memories[3], {subject: "Bins", key: "bins.day", valid_from: "2026-09-01T00:00:00Z", last_confirmed_at: "2026-09-01T00:00:00Z"});
+      Object.assign(dataCollectionBackend.state.memories[3], {subject: "Bins", key: "bins.day", valid_from: "2026-09-01T00:00:00Z"});
       await browserHarness.panel._loadSection(true);
       browserHarness.panel._bindActions(); browserHarness.panel._bindActions();
     });
@@ -19,11 +19,8 @@ for (const bundled of [false, true]) {
     await expect(panel.locator("#memory-subject")).toHaveValue("Bins");
     await expect(panel.locator("#memory-key")).toHaveValue("bins.day");
     await expect(panel.locator("#memory-valid-from")).toHaveValue("2026-09-01T00:00:00Z");
-    await expect(panel.locator("#memory-importance")).toHaveValue("low");
-    await expect(panel.locator("#memory-refresh-confirmation")).not.toBeChecked();
     await panel.locator("#memory-content").fill("Memory updated");
     await panel.locator("#memory-category").fill("chores");
-    await panel.locator("#memory-importance").selectOption("high");
     await panel.locator("#memory-subject").fill("");
     await beginDataMeasure(page);
     await panel.locator("#memory-save").click();
@@ -32,15 +29,14 @@ for (const bundled of [false, true]) {
     await expect(panel.locator("#list-search")).toHaveValue("Memory");
     const calls = await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "update"));
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({importance: "high", key: "bins.day", valid_from: "2026-09-01T00:00:00Z", clear_fields: ["subject"], expected_revision: 1, refresh_confirmation: false});
-    expect(await page.evaluate(() => dataCollectionBackend.state.memories[3].last_confirmed_at)).toBe("2026-09-01T00:00:00Z");
+    expect(calls[0]).not.toHaveProperty("importance");
+    expect(calls[0]).not.toHaveProperty("refresh_confirmation");
+    await expect(panel.locator("#memory-importance,#memory-refresh-confirmation")).toHaveCount(0);
+    expect(calls[0]).toMatchObject({key: "bins.day", valid_from: "2026-09-01T00:00:00Z", clear_fields: ["subject"], expected_revision: 1});
     await panel.locator('[data-memory-id="memory-3"] .memory-edit-button').click();
     await expect(panel.locator("#memory-subject")).toHaveValue("");
-    await expect(panel.locator("#memory-importance")).toHaveValue("high");
-    await panel.locator("#memory-refresh-confirmation").check();
     await panel.locator("#memory-save").click();
     await expect(panel.locator("#memory-dialog")).not.toHaveJSProperty("open", true);
-    expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "update").at(-1).refresh_confirmation)).toBe(true);
   });
 }
 

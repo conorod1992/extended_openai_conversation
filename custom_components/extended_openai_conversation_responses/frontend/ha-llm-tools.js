@@ -40,8 +40,8 @@ export function bindHALlmTools(panel, synchronize) {
     const dialog = document.createElement("dialog");
     dialog.className = "editor-dialog";
     dialog.dataset.haLlmToolsDialog = "";
-    dialog.setAttribute("aria-label", "Add Home Assistant LLM Tools");
-    dialog.innerHTML = `<div class="dialog-header"><h2>Add LLM Tools</h2></div><div class="dialog-body">
+    dialog.setAttribute("aria-label", "Add Home Assistant tools");
+    dialog.innerHTML = `<div class="dialog-header"><h2>Add Home Assistant tools</h2></div><div class="dialog-body">
       <p>These capabilities are supplied by Home Assistant or installed integrations/services. A source can be an integration's contribution or a complete LLM API, including an MCP server.</p>
       <p>Adding all saves the individual tools selected now. Future tools require explicit addition. Many schemas can increase input tokens; use Function Groups to load them when needed. HA tools are unavailable in Guest Mode.</p>
       <p role="status" data-status>Loading available tools…</p>

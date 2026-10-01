@@ -62,7 +62,7 @@ async def _memory(data=None) -> PersistentMemory:
     return memory
 
 
-async def test_metadata_defaults_freshness_and_backup_round_trip() -> None:
+async def test_metadata_defaults_and_backup_round_trip() -> None:
     memory = await _memory()
     created = await memory.async_add(
         "alice",
@@ -74,9 +74,7 @@ async def test_metadata_defaults_freshness_and_backup_round_trip() -> None:
         valid_from="2025-01-01T00:00:00+00:00",
     )
     record = (await memory.async_list("alice"))[0]
-    assert record.importance == "normal"
     assert record.key == "pet.oscar.breed"
-    assert record.last_confirmed_at == record.created_at
     assert record.valid_from == "2025-01-01T00:00:00+00:00"
     backup = await memory.async_backup_data()
     assert "embedding" not in backup["memories"][0]
@@ -85,14 +83,13 @@ async def test_metadata_defaults_freshness_and_backup_round_trip() -> None:
     assert restored[0].subject == "Oscar"
 
 
-async def test_bm25_phrase_stemming_typo_metadata_and_importance() -> None:
+async def test_bm25_phrase_stemming_typo_metadata() -> None:
     memory = await _memory()
     rare = await memory.async_add(
         "alice",
         "Oscar is a Cavachon family dog.",
         "pets",
         "explicit",
-        "normal",
         "Oscar",
         "pet.oscar.breed",
     )
@@ -112,18 +109,17 @@ async def test_bm25_phrase_stemming_typo_metadata_and_importance() -> None:
         "Bedroom heating target is 19 Celsius.",
         "heating",
         "explicit",
-        "high",
     )
     unrelated = await memory.async_add(
-        "alice", "Passport is in the blue drawer.", "travel", "explicit", "high"
+        "alice", "Passport is in the blue drawer.", "travel", "explicit"
     )
     ranked = await memory.async_search("alice", "heating target 19 Celsius")
-    assert ranked[0].memory_id == high["memory"]["memory_id"]
+    assert {item.memory_id for item in ranked} == {high["memory"]["memory_id"], normal["memory"]["memory_id"]}
     assert normal["memory"]["memory_id"] in {item.memory_id for item in ranked}
     assert unrelated["memory"]["memory_id"] not in {item.memory_id for item in ranked}
 
 
-async def test_upsert_key_uniqueness_confirmation_conflict_and_scope() -> None:
+async def test_upsert_key_uniqueness_duplicate_conflict_and_scope() -> None:
     memory = await _memory()
     created = await memory.async_upsert(
         "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
@@ -142,10 +138,10 @@ async def test_upsert_key_uniqueness_confirmation_conflict_and_scope() -> None:
         key="pet.oscar.breed",
     )
     assert household["status"] == "created"
-    confirmed = await memory.async_upsert(
+    existing = await memory.async_upsert(
         "alice", "Oscar is a Cockapoo", "pets", "explicit"
     )
-    assert confirmed["status"] == "confirmed"
+    assert existing["status"] == "unchanged"
     conflict = await memory.async_upsert(
         "alice", "Oscar is a Labrador.", "pets", "explicit", subject="Oscar"
     )
@@ -170,20 +166,18 @@ async def test_upsert_key_uniqueness_confirmation_conflict_and_scope() -> None:
     }
 
 
-async def test_upsert_preserves_omitted_metadata_for_key_and_confirmation() -> None:
+async def test_upsert_preserves_omitted_metadata_for_key_and_duplicate() -> None:
     memory = await _memory()
     valid_from = "2025-01-01T00:00:00+00:00"
-    created = await memory.async_upsert(
+    await memory.async_upsert(
         "alice",
         "Oscar is a Cavachon.",
         "pets",
         "explicit",
-        importance="high",
         subject="Oscar",
         key="pet.oscar.breed",
         valid_from=valid_from,
     )
-    original_confirmation = created["memory"]["last_confirmed_at"]
 
     updated = await memory.async_upsert(
         "alice",
@@ -193,19 +187,16 @@ async def test_upsert_preserves_omitted_metadata_for_key_and_confirmation() -> N
         key="pet.oscar.breed",
     )
     assert updated["status"] == "updated"
-    assert updated["memory"]["importance"] == "high"
     assert updated["memory"]["subject"] == "Oscar"
     assert updated["memory"]["valid_from"] == valid_from
-    assert updated["memory"]["last_confirmed_at"] >= original_confirmation
 
-    confirmed = await memory.async_upsert(
+    existing = await memory.async_upsert(
         "alice", "Oscar is a Cavapoo", "pets", "explicit"
     )
-    assert confirmed["status"] == "confirmed"
-    assert confirmed["memory"]["importance"] == "high"
-    assert confirmed["memory"]["subject"] == "Oscar"
-    assert confirmed["memory"]["key"] == "pet.oscar.breed"
-    assert confirmed["memory"]["valid_from"] == valid_from
+    assert existing["status"] == "unchanged"
+    assert existing["memory"]["subject"] == "Oscar"
+    assert existing["memory"]["key"] == "pet.oscar.breed"
+    assert existing["memory"]["valid_from"] == valid_from
 
 
 async def test_upsert_replaces_explicitly_supplied_metadata() -> None:
@@ -215,7 +206,6 @@ async def test_upsert_replaces_explicitly_supplied_metadata() -> None:
         "Oscar is a Cavachon.",
         "pets",
         "explicit",
-        importance="high",
         subject="Oscar",
         key="pet.oscar.breed",
         valid_from="2025-01-01T00:00:00+00:00",
@@ -226,12 +216,10 @@ async def test_upsert_replaces_explicitly_supplied_metadata() -> None:
         "Oscar is a Cavapoo.",
         "pets",
         "explicit",
-        importance="low",
         subject="Oscar James",
         key="pet.oscar.breed",
         valid_from="2026-01-01T00:00:00+00:00",
     )
-    assert updated["memory"]["importance"] == "low"
     assert updated["memory"]["subject"] == "Oscar James"
     assert updated["memory"]["valid_from"] == "2026-01-01T00:00:00+00:00"
 
@@ -333,7 +321,7 @@ async def test_embedding_relevant_updates_invalidate_cache(
     assert calls[1] == ["breed"]
 
 
-async def test_importance_only_update_keeps_cached_embedding() -> None:
+async def test_valid_from_update_keeps_cached_embedding() -> None:
     memory = PersistentMemory(FakeStorage(), FakeStorage())
     await memory.async_initialize()
     created = await memory.async_add(
@@ -349,7 +337,7 @@ async def test_importance_only_update_keeps_cached_embedding() -> None:
     await memory.async_prepare_hybrid(["alice"], "breed")
     calls.clear()
     await memory.async_update(
-        "alice", created["memory"]["memory_id"], importance="high"
+        "alice", created["memory"]["memory_id"], valid_from="2026-01-01T00:00:00Z"
     )
     await memory.async_prepare_hybrid(["alice"], "breed")
     assert calls == [["breed"]]
@@ -448,13 +436,13 @@ async def test_hybrid_relevance_gate_accepts_semantic_and_rejects_unrelated() ->
     memory = PersistentMemory(FakeStorage(), FakeStorage())
     await memory.async_initialize()
     oscar = await memory.async_add(
-        "alice", "Oscar is a Cavachon.", "pets", "explicit", importance="high"
+        "alice", "Oscar is a Cavachon.", "pets", "explicit"
     )
     heating = await memory.async_add(
         "alice", "User dislikes very warm rooms.", "preferences", "explicit"
     )
     await memory.async_add(
-        "alice", "Passport expires in 2028.", "travel", "explicit", importance="high"
+        "alice", "Passport expires in 2028.", "travel", "explicit"
     )
     await memory.async_add(
         "alice", "User prefers horror games.", "preferences", "explicit"

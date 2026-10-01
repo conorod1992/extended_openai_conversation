@@ -133,6 +133,27 @@ test("real browser creates, edits, reloads, and deletes a Memory through HA", as
   await page.goto(realFixtureUrl("data-memory/memories"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByText("Real HA browser memory edited", {exact: true})).toHaveCount(0);
+  await panel.locator('.memory-kind[data-kind="temporary"]').click();
+  await panel.locator("#add-memory").click();
+  await expect(panel.locator("#memory-type")).toHaveValue("temporary");
+  await panel.locator("#memory-content").fill("Manual real HA short-term fact");
+  const expiry = await panel.evaluate(async host => {
+    const {memoryLocalDateTime} = await import("/custom_components/extended_openai_conversation_responses/frontend/memory-datetime.js");
+    return memoryLocalDateTime(host, new Date(Date.now() + 86400000).toISOString()).slice(0, 16);
+  });
+  await panel.locator("#memory-expiry").fill(expiry);
+  await panel.locator("#memory-save").click();
+  await expect(panel.locator(".memory-list")).toContainText("Manual real HA short-term fact");
+  await page.goto(realFixtureUrl("data-memory/memories"));
+  panel = page.locator("extended-openai-management-panel");
+  await panel.locator('.memory-kind[data-kind="temporary"]').click();
+  const temporary = panel.locator(".list-card").filter({hasText: "Manual real HA short-term fact"});
+  await expect(temporary).toBeVisible();
+  const source = await panel.evaluate(host => host._result.memories.find(memory => memory.content === "Manual real HA short-term fact").source);
+  expect(source).toBe("manual");
+  await temporary.locator(".delete-temporary").click();
+  await acceptConfirmation(panel);
+  await expect(temporary).toHaveCount(0);
   await expectContractCalls(page, "memory");
   await expectHarnessClean(page, pageErrors);
 });
@@ -295,6 +316,7 @@ test("real browser manages a Function Tool and dependent Group through genuine H
   let panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
 
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#tool-yaml").fill(browserToolYaml("Real HA browser tool"));
@@ -302,6 +324,7 @@ test("real browser manages a Function Tool and dependent Group through genuine H
   let tool = panel.locator(".tool-card").filter({hasText: "browser_tool"});
   await expect(tool).toContainText("Real HA browser tool");
 
+  await panel.locator("#function-add").click();
   await panel.locator("#add-group").click();
   await expect(panel.locator("#group-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#group-name").fill("Real HA browser group");

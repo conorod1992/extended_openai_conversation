@@ -7,9 +7,9 @@ this change does not remove a reachable production endpoint or add a redirect.
 
 ## Memory parity delivered
 
-- Persistent editing supports content, category, importance, subject, key and
+- Persistent editing supports content, category, subject, key and
   valid-from, including explicit clearing of optional metadata. Source, creation
-  timestamps and raw confirmation timestamps remain read-only.
+  timestamps remain read-only.
 - Personal/shared moves use `PersistentMemory.async_update(target_user_id=...)`.
   Both scopes pass current Management authorization. Shared scopes remain admin-only;
   moving into disabled shared memory is rejected. The same Memory ID survives the
@@ -17,9 +17,6 @@ this change does not remove a reachable production endpoint or add a redirect.
 - Management list/search/update projections expose `memory_revision`; editors retain
   their original token and send `expected_revision`. Conflicts leave the draft open
   and the store unchanged. Cancel, refresh the list, and reopen to use fresh data.
-- Ordinary edits explicitly preserve confirmation age. The deliberate "Refresh
-  confirmation on save" checkbox opts into the store's existing refresh operation.
-  Confirmation-only changes retain the existing substantive revision semantics.
 - Temporary bulk clear confirms first and clears all records in the selected
   Personal/Shared owner scope and agent, regardless of search. It uses owned delete
   batches of at most 50. Persistent records are unaffected.

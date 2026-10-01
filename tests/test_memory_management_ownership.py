@@ -46,7 +46,6 @@ def _record(
         source=source,
         created_at=updated_at,
         updated_at=updated_at,
-        last_confirmed_at=updated_at,
     )
 
 

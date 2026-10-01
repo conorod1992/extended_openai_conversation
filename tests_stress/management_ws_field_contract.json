@@ -79,6 +79,10 @@
       "required": false,
       "kind": "string"
     },
+    "expires_at": {
+      "required": false,
+      "kind": "string"
+    },
     "group": {
       "required": false,
       "kind": "object"
@@ -98,15 +102,6 @@
     "id": {
       "required": true,
       "kind": "nonnegative_integer"
-    },
-    "importance": {
-      "required": false,
-      "kind": "enum",
-      "values": [
-        "low",
-        "normal",
-        "high"
-      ]
     },
     "indefinite": {
       "required": false,
@@ -179,10 +174,6 @@
     "query": {
       "required": false,
       "kind": "string"
-    },
-    "refresh_confirmation": {
-      "required": false,
-      "kind": "boolean"
     },
     "review_token": {
       "required": false,

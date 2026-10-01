@@ -57,7 +57,6 @@ def _record(
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         key=key,
-        last_confirmed_at="2026-01-01T00:00:00+00:00",
     )
 
 
@@ -74,9 +73,7 @@ async def test_store_migration_accepts_legacy_mapping_and_version_one() -> None:
     store = MemoryStore.__new__(MemoryStore)
     legacy = {"memories": [{"memory_id": "one"}, "bad"]}
 
-    assert (await store._async_migrate_func(0, 0, legacy))["memories"][0][
-        "importance"
-    ] == "normal"
+    assert "importance" not in (await store._async_migrate_func(0, 0, legacy))["memories"][0]
     assert (await store._async_migrate_func(1, 0, legacy))["memories"][0][
         "memory_id"
     ] == "one"
@@ -167,23 +164,21 @@ async def test_upsert_confirmation_applies_all_explicit_metadata() -> None:
         key="pet.oscar.breed",
     )
 
-    confirmed = await manager.async_upsert(
+    existing = await manager.async_upsert(
         "alice",
         "Oscar is a Cavachon",
         "animals",
         "explicit",
-        importance="high",
         subject="Oscar",
         key=None,
         valid_from="2025-01-01T00:00:00+00:00",
     )
 
-    assert confirmed["status"] == "confirmed"
-    assert confirmed["memory"]["memory_id"] == created["memory"]["memory_id"]
-    assert confirmed["memory"]["importance"] == "high"
-    assert confirmed["memory"]["subject"] == "Oscar"
-    assert confirmed["memory"]["key"] is None
-    assert confirmed["memory"]["valid_from"] == "2025-01-01T00:00:00+00:00"
+    assert existing["status"] == "updated"
+    assert existing["memory"]["memory_id"] == created["memory"]["memory_id"]
+    assert existing["memory"]["subject"] == "Oscar"
+    assert existing["memory"]["key"] is None
+    assert existing["memory"]["valid_from"] == "2025-01-01T00:00:00+00:00"
 
 
 async def test_empty_search_and_noop_mutations_do_not_save() -> None:
@@ -479,7 +474,6 @@ def test_input_cleaners_reject_wrong_types_lengths_and_timestamps() -> None:
     for function, value in (
         (memory_module._clean_content, 1),
         (memory_module._clean_category, 1),
-        (memory_module._clean_importance, "urgent"),
     ):
         with pytest.raises(ValueError):
             function(value)

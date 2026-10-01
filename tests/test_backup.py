@@ -470,11 +470,9 @@ async def test_replace_helpers_rebuild_canonical_state() -> None:
     original = document["memories"]["memories"][0]
     assert memory_backup["memories"][0] == {
         **original,
-        "importance": "normal",
         "subject": None,
         "key": None,
         "valid_from": None,
-        "last_confirmed_at": original["updated_at"],
     }
 
     temporary = TemporaryMemory(FakeStorage({"records": []}))

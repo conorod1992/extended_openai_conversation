@@ -21,11 +21,10 @@ Temporary records use a separate private Home Assistant Store. They survive rest
 only while their expiry is in the future, are filtered and opportunistically pruned
 before every injection, and are pruned at startup. Injection is local and bounded.
 The model can add, supersede, or forget records only in the scope derived from the
-current request; it cannot choose another owner. Per-device and per-user continuity
-use their matching scope. Home Assistant-default mode uses the current HA conversation
-only, so temporary context does not follow an unrelated new Assist session.
+current request; it cannot choose another owner. Personal and Shared owners determine access; conversation and device continuity are metadata and do not grant access to another owner’s records.
 
 Existing secret, credential, payment-card, banking, and automatic-sensitive-memory
 protections also apply to temporary memory. Current user statements override stored
-temporary facts. The Memories page has lightweight Persistent and Temporary views,
-with expiry and deletion controls.
+temporary facts. The Memories page has Long-term and Short-term views. **+ Add memory** on either tab opens one dialog with Memory, Type, Category and Owner; Short-term also asks for Expires using Home Assistant local date/time. The type defaults to the current tab and is fixed when editing.
+
+Manual short-term creation uses an explicit privacy policy and records `source: manual`; model-created records retain `source: automatic` and automatic sensitivity restrictions. Both reject secrets and credentials. Expiry must include a timezone internally, remain in the future, and be within one year. The configured automatic mode does not prevent manual creation.

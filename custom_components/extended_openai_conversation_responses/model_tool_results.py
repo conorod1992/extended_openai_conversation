@@ -12,7 +12,6 @@ _OPTIONAL_MEMORY_FIELDS = {
     "subject",
     "key",
     "valid_from",
-    "last_confirmed_at",
 }
 
 

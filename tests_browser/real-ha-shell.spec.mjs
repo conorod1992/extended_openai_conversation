@@ -247,6 +247,7 @@ test("genuine HA native YAML editor saves with Ctrl+S and survives a fresh panel
   await authenticate(context);
   let panel = await openFunctionsFromOverview(page);
 
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
   const nativeEditor = panel.locator("#tool-yaml-native");
@@ -334,6 +335,7 @@ test("genuine HA native YAML editor saves with Ctrl+S and survives a fresh panel
 test("long native Function YAML scrolls inside the editor while dialog actions stay visible", async ({context, page}) => {
   await authenticate(context);
   const panel = await openFunctionsFromOverview(page);
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   const dialog = panel.locator("#tool-dialog");
   const editor = panel.locator("#tool-yaml-native");
@@ -424,6 +426,7 @@ test("genuine HA YAML keyboard edits validate before one persisted save", async 
       return original(message);
     };
   });
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   const dialog = panel.locator("#tool-dialog");
   const editor = panel.locator("#tool-yaml-native");

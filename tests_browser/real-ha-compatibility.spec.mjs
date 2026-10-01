@@ -49,6 +49,7 @@ test("HA native components and actual Assist path remain compatible", async ({co
   await expect.poll(() => panel.evaluate(host => host._configDirty)).toBe(false);
 
   await panel.evaluate(host => host._navigate("capabilities", "functions"));
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   const yaml = "spec:\n  name: compatibility_tool\n  description: Compact native editor smoke\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: template\n  value_template: compatibility-result\n";
   await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), yaml);

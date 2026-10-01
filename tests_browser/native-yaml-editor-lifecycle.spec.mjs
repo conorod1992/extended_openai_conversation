@@ -59,6 +59,7 @@ test("native Function Tool routes retain enable, config-check, and open-dialog a
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
 
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   let editor = panel.locator("#tool-yaml-native");
   await waitForTool(editor, "browser_tool");
@@ -124,6 +125,7 @@ test("native editor survives repeated dialog cycles, rapid edits, and large comp
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
 
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   let editor = panel.locator("#tool-yaml-native");
   await waitForTool(editor, "browser_tool");

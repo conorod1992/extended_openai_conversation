@@ -879,7 +879,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const mutations = {
         request_rules: new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate"]),
         knowledge: new Set(["create", "update", "delete", "set_enabled"]),
-        memories: new Set(["add", "update", "delete", "clear", "temporary_update", "temporary_delete", "temporary_clear", "reassign_legacy"]),
+        memories: new Set(["add", "update", "delete", "clear", "temporary_add", "temporary_update", "temporary_delete", "temporary_clear", "reassign_legacy"]),
       };
       if (agentId && mutations[section]?.has(action)) {
         this._cacheGeneration += 1;
@@ -1854,7 +1854,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const owned = this._dialogOwnership();
     const view = this._viewKey();
     const content = `${view === "data-memory/knowledge" && owned.has("knowledge-dialog") ? `<dialog id="knowledge-dialog" class="editor-dialog wide" aria-labelledby="knowledge-dialog-title"><form id="knowledge-form"><div class="dialog-header"><h2 id="knowledge-dialog-title">Add Knowledge source</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Title<input id="knowledge-title" maxlength="${KNOWLEDGE_TITLE_LIMIT}" required></label><label>Description<textarea id="knowledge-description" class="short-textarea" maxlength="${KNOWLEDGE_DESCRIPTION_LIMIT}" spellcheck="true"></textarea></label>${knowledgeSourceAvailabilityControl()}<label>Content<textarea id="knowledge-content" class="knowledge-editor" maxlength="${KNOWLEDGE_LIMIT}" required spellcheck="true"></textarea></label><div id="knowledge-counter" class="counter">0 / ${KNOWLEDGE_LIMIT.toLocaleString()} characters</div><div id="knowledge-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="knowledge-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="knowledge-save">Save</button></div></form></dialog>` : ""}
-      ${view === "data-memory/memories" && this._memoryKind !== "temporary" && owned.has("memory-dialog") ? `<dialog id="memory-dialog" class="editor-dialog" aria-labelledby="memory-dialog-title"><form id="memory-form"><div class="dialog-header"><h2 id="memory-dialog-title">Add memory</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Memory<textarea id="memory-content" required spellcheck="true" placeholder="What should the agent remember?"></textarea></label><label>Category<input id="memory-category" value="general" required></label><div id="memory-metadata"></div><p id="memory-meta" class="meta"></p><div id="memory-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="memory-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="memory-save">Save</button></div></form></dialog>` : ""}
+      ${view === "data-memory/memories" && owned.has("memory-dialog") ? `<dialog id="memory-dialog" class="editor-dialog" aria-labelledby="memory-dialog-title"><form id="memory-form"><div class="dialog-header"><h2 id="memory-dialog-title">Add memory</h2><button type="button" class="icon close-editor" aria-label="Close">×</button></div><div class="dialog-body"><label>Memory<textarea id="memory-content" required spellcheck="true" placeholder="What should the agent remember?"></textarea></label><div id="memory-metadata"></div><p id="memory-meta" class="meta"></p><div id="memory-error" class="inline-error" role="alert"></div></div><div class="dialog-actions"><button type="button" id="memory-delete" class="danger" hidden>Delete</button><button type="button" class="secondary close-editor">Cancel</button><button type="submit" id="memory-save">Save</button></div></form></dialog>` : ""}
       ${view === "data-memory/conversations" && owned.has("session-dialog") ? `<dialog id="session-dialog" class="editor-dialog wide" aria-labelledby="session-title"><div class="dialog-header"><h2 id="session-title">Conversation</h2><button type="button" class="icon close-session" aria-label="Close">×</button></div><div id="session-body" class="dialog-body session-body"></div><div class="dialog-actions"><button type="button" class="secondary close-session">Close</button></div></dialog>` : ""}
       ${view === "data-memory/memories" && this._memoryKind !== "temporary" && owned.has("reassign-dialog") ? `<dialog id="reassign-dialog" class="editor-dialog" aria-labelledby="reassign-title"><div class="dialog-header"><h2 id="reassign-title">Assign unowned memory</h2></div><div class="dialog-body"><p class="help">Choose the user or household that should be able to use this older memory.</p><label>Assign to<select id="reassign-scope"></select></label></div><div class="dialog-actions"><button type="button" class="secondary" id="reassign-cancel">Cancel</button><button type="button" id="reassign-save">Assign memory</button></div></dialog>` : ""}
       <dialog id="confirm-dialog" class="editor-dialog confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-header"><h2 id="confirm-title">Confirm</h2></div><div class="dialog-body"><p id="confirm-message"></p></div><div class="dialog-actions"><button type="button" class="secondary" id="confirm-cancel">Cancel</button><button type="button" class="danger" id="confirm-accept">Confirm</button></div></dialog>
@@ -2056,8 +2056,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._editorKind = "memory";
     root.querySelector("#memory-dialog-title").textContent = memory ? "Edit memory" : "Add memory";
     root.querySelector("#memory-content").value = memory?.content || "";
-    root.querySelector("#memory-category").value = memory?.category || "general";
     getRouteFeature("data-memory/memories").populateMemoryMetadata(this, memory);
+    root.querySelector("#memory-category").value = memory?.category || "general";
     root.querySelector("#memory-delete").hidden = !memory;
     root.querySelector("#memory-meta").textContent = memory ? [memory.source, memory.created_at ? `Created ${this._formatDate(memory.created_at)}` : "", memory.updated_at ? `Updated ${this._formatDate(memory.updated_at)}` : ""].filter(Boolean).join(" · ") : "Categories help organise memories.";
     this._setDialogError("memory", "");
@@ -2146,21 +2146,30 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     try {
       if (this._memoryEditorAgent !== this._agentId || this._memoryEditorScope !== this._scopeId) throw new Error("The selected agent or scope changed. Close and reopen this editor.");
       if (this._editingMemory && !this._editingMemory.revision) throw new Error("Refresh the Memory list and reopen this editor before saving.");
-      const response = await this._call("memories", this._editingMemory ? "update" : "add", {
+      const temporary = values.type === "temporary";
+      const feature = getRouteFeature("data-memory/memories");
+      const response = await this._call("memories", temporary ? "temporary_add" : this._editingMemory ? "update" : "add", {
         scope_id: this._memoryEditorScope,
         ...(this._editingMemory ? {memory_id: this._editingMemory.memory_id, expected_revision: this._editingMemory.revision} : {}),
-        ...getRouteFeature("data-memory/memories").memoryMutationValues(values, this._editingMemory),
+        ...feature.memoryMutationValues(values, this._editingMemory),
+        ...(temporary ? {expires_at: feature.memoryExpiryISO(this, values.expires_at)} : {}),
       });
       if (!this._ownsRetainedMutation(owner)) return;
-      if (!getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
+      if (!response?.memory?.memory_id) throw new Error("The saved memory response was incomplete.");
+      if (temporary) {
+        if (response.scope_id === owner.scope && owner.kind === "temporary") {
+          this._result = {...this._result, memories: [...(this._result.memories || []).filter(memory => memory.memory_id !== response.memory.memory_id), response.memory]};
+        }
+        if (response.status === "created") this._patchScopeCount(response.scope_id, "temporary_memory_count", 1);
+      } else if (owner.kind === "persistent" && !getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
       this.shadowRoot.querySelector("#memory-dialog").close();
-      if (response.status === "created") this._patchScopeCount(response.scope_id, "memory_count", 1);
+      if (!temporary && response.status === "created") this._patchScopeCount(response.scope_id, "memory_count", 1);
       else if (this._editingMemory && response.scope_id !== owner.scope) {
         this._patchScopeCount(owner.scope, "memory_count", -1);
         this._patchScopeCount(response.scope_id, "memory_count", 1);
       }
       this._patchScopeCount(owner.scope, "memory_count", 0);
-      if (response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
+      if (!temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
       this._render();
       this._toast(this._editingMemory ? "Memory updated" : "Memory added");
     } catch (err) {
@@ -2355,7 +2364,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._viewKey() === "data-memory/memories" && this._memoryKind === "temporary") return getRouteFeature("data-memory/memories")?.renderTemporaryScopePicker(this);
     const memories = this._viewKey() === "data-memory/memories";
     const hasEmpty = (this._data?.scopes || []).some((scope) => (memories ? scope.memory_count : scope.conversation_count) === 0 && scope.scope_type === "user" && !scope.is_current_user);
-    return `<section class="scope-bar" aria-label="${memories ? "Memory scope" : "Conversation scope"}"><span class="scope-title">${memories ? "Memory scope" : "Conversation scope"}</span><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
+    return `${memories ? "" : `<section class="page-intro"><h1>Conversation history</h1><p>Recent conversations can continue when the same user or device speaks again. Review or search retained conversations below.</p></section>`}<section class="scope-bar" aria-label="${memories ? "Memory scope" : "Conversation scope"}"><span class="scope-title">${memories ? "Memory scope" : "Conversation scope"}</span><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
   }
 
   _scopeOptions(section, includeEmpty = this._showEmptyScopes, excludeLegacy = false) {

@@ -9,6 +9,7 @@ test("Functions list paints before optional YAML and HA catalogue modules load",
   expect(loaded.some(url => url.endsWith("/agent-config-native-yaml.js"))).toBe(false);
   expect(loaded.some(url => url.endsWith("/ha-llm-tools.js"))).toBe(false);
 
+  await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
   await expect(panel.locator("#tool-yaml")).toBeEditable();
   await expect.poll(() => page.evaluate(() => performance.getEntriesByType("resource")
