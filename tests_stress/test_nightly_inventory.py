@@ -73,7 +73,8 @@ def test_native_browser_version_matrix_stays_compact_and_names_its_points() -> N
     jobs = yaml.safe_load(text)["jobs"]
     smoke = jobs["native-browser"]
     assert set(smoke["strategy"]["matrix"]["ha-version"]) == {"oldest", "stable", "dev"}
-    paths = set(re.findall(r"tests_real_ha/[A-Za-z0-9_./-]+\.py", text))
+    commands = "\n".join(step.get("run", "") for step in smoke["steps"])
+    paths = set(re.findall(r"tests_real_ha/[A-Za-z0-9_./-]+\.py", commands))
     assert paths == {"tests_real_ha/test_browser_compatibility_acceptance.py"}
     assert "git+https://github.com/home-assistant/core.git@$HA_DEV_SHA" in text
     assert "ha-native-browser-${{ matrix.ha-version }}" in text
