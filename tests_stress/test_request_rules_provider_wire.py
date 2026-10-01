@@ -263,6 +263,16 @@ def _rule(match_type: str, action_type: str, action: dict) -> dict:
     }
 
 
+async def _create_ordered_chain(agent, *items: dict) -> None:
+    """Priority is part of each scenario, independent of generated UUID order."""
+    created = []
+    for priority, item in enumerate(items):
+        created.append(await agent._request_rules.async_create({**item, "order": priority}))
+    saved = agent._request_rules.snapshot()["rules"]
+    assert [rule["id"] for rule in saved] == [rule["id"] for rule in created]
+    assert [rule["order"] for rule in saved] == list(range(len(items)))
+
+
 @pytest.mark.parametrize("match_type", MATCHERS)
 @pytest.mark.parametrize("scope", ["request", "conversation"])
 @pytest.mark.parametrize("api_mode", API_MODES)
@@ -407,8 +417,7 @@ async def test_continue_matching_skips_false_condition_and_reaches_later_rule(
         success="Final complete",
     )
 
-    for item in (first, skipped, final):
-        await agent._request_rules.async_create(item)
+    await _create_ordered_chain(agent, first, skipped, final)
 
     wire = _install_wire(monkeypatch, agent, [])
     result = await _say(hass, agent, "run chain")
@@ -450,8 +459,7 @@ async def test_continue_matching_stops_on_provider_handoff(
         phrase="handoff chain",
         success="Later should not run",
     )
-    await agent._request_rules.async_create(first)
-    await agent._request_rules.async_create(later)
+    await _create_ordered_chain(agent, first, later)
 
     wire = _install_wire(monkeypatch, agent, [_chat_sse_text("Provider response")])
     result = await _say(hass, agent, "handoff chain")
@@ -509,8 +517,7 @@ async def test_continue_matching_stops_on_terminal_local_outcome(
         phrase="terminal chain",
         success="Later should not run",
     )
-    await agent._request_rules.async_create(first)
-    await agent._request_rules.async_create(later)
+    await _create_ordered_chain(agent, first, later)
 
     wire = _install_wire(monkeypatch, agent, [])
     result = await _say(hass, agent, "terminal chain")
@@ -555,8 +562,7 @@ async def test_continue_matching_stops_on_local_failure(
         phrase="failure chain",
         success="Later should not run",
     )
-    await agent._request_rules.async_create(first)
-    await agent._request_rules.async_create(later)
+    await _create_ordered_chain(agent, first, later)
 
     wire = _install_wire(monkeypatch, agent, [])
     result = await _say(hass, agent, "failure chain")

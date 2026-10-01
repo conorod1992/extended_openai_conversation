@@ -36,6 +36,20 @@ def test_every_real_ha_test_is_selected_or_explicitly_excluded() -> None:
     selected = _workflow_test_paths("tests_real_ha")
     payload = json.loads(EXCLUSIONS.read_text(encoding="utf-8"))
     excluded = set(payload["excluded"])
+    partial = payload.get("partial_selected", {})
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    for path, classification in partial.items():
+        assert path in selected and path not in excluded
+        assert classification["remaining_evidence"].strip()
+        nodes = set(re.findall(rf"{re.escape(path)}::([A-Za-z0-9_]+)", workflow))
+        assert nodes == set(classification["nodes"]), f"{path}: partial selection drifted"
+        source = (ROOT / path).read_text(encoding="utf-8")
+        for node in nodes:
+            assert re.search(rf"(?:async )?def {re.escape(node)}\(", source), f"{path}::{node} missing"
+        # A bare file selection would make the partial classification obsolete.
+        assert not re.search(rf"{re.escape(path)}(?![A-Za-z0-9_.:/-])", workflow)
+    node_files = {path for path in selected if re.search(rf"{re.escape(path)}::", workflow)}
+    assert node_files == set(partial), "node-only selections must explicitly classify the remainder"
 
     assert selected.isdisjoint(excluded)
     assert selected | excluded == actual

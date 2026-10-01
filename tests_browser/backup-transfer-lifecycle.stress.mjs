@@ -71,8 +71,19 @@ test("Restore rejects corrupt input, supports cancel and requires file reselecti
   await acceptConfirmation(panel);
   await expect(panel.getByText(/Re-select the transfer file to retry/)).toBeVisible();
   expect(await panel.evaluate(host => host._backupTransferSession)).toBeNull();
-  await panel.locator("#restore-transfer-apply").click();
+  await expect(panel.locator("#restore-transfer-apply")).toBeDisabled();
   expect(await page.evaluate(() => window.restoreFailureCalls)).toBe(1);
+  const previewsBefore = await page.evaluate(() => browserHarness.calls.filter(call => call.action === "import_inspect").length);
+  await panel.locator("#restore-transfer-cancel").click();
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
+  await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(call => call.action === "import_inspect").length)).toBeGreaterThan(previewsBefore);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+  expect(await panel.evaluate(host => host._backupTransferSession)).not.toBeNull();
+  await panel.locator("#restore-transfer-apply").click();
+  await acceptConfirmation(panel);
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
+  expect(await page.evaluate(() => window.restoreFailureCalls)).toBe(2);
   await expectHarnessClean(page, errors);
 });
 
