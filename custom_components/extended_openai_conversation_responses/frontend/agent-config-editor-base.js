@@ -1,4 +1,5 @@
 import {bindOwnedEvent} from "./management-owned-events.js";
+import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
 import {readConfigurationDraft as readConfig} from "./configuration-controls.js";
 import {bindConfigurationInputs, updateConfigurationControl} from "./configuration-inputs.js";
 import {modelFieldPresentation, modelFieldNotes, webSearchControlState} from "./agent-config-model-presentation.js";
@@ -125,18 +126,18 @@ const searchTokens = (value) => String(value || "")
     return token;
   });
 
-function matchesFunctionSearchTokens(queryTokens, textTokens) {
+function matchesFunctionSearchTokens(queryTokens, textTokens, minimumPrefixLength = 3) {
   if (!queryTokens.length) return true;
   return queryTokens.every((queryToken) => textTokens.some((textToken) =>
     textToken === queryToken || (
-      Math.min(textToken.length, queryToken.length) >= 3
+      Math.min(textToken.length, queryToken.length) >= minimumPrefixLength
       && (textToken.startsWith(queryToken) || queryToken.startsWith(textToken))
     )
   ));
 }
 
-export function matchesFunctionSearch(query, searchableText) {
-  return matchesFunctionSearchTokens(searchTokens(query), searchTokens(searchableText));
+export function matchesFunctionSearch(query, searchableText, minimumPrefixLength = 3) {
+  return matchesFunctionSearchTokens(searchTokens(query), searchTokens(searchableText), minimumPrefixLength);
 }
 
 export function section(panel, id, title, description, keywords, body, includeHeading = true) {
@@ -301,6 +302,7 @@ function bindSaveBar(panel) {
 
 export function bindConfiguration(panel) {
   const root = panel.shadowRoot;
+  if (root.querySelector("#local-intent-list")) ensureCompactChoiceStyle(panel);
   bindModelDataControls(panel, (message) => { readConfig(panel); panel._render(); panel._toast(message); });
   bindHelp(panel);
   bindSaveBar(panel);
@@ -309,7 +311,7 @@ export function bindConfiguration(panel) {
     const query = event.target.value;
     const choices = [...root.querySelectorAll("[data-local-intent-choice]")];
     choices.forEach((choice) => {
-      choice.hidden = !matchesFunctionSearch(query, choice.dataset.choiceSearch);
+      choice.hidden = !matchesFunctionSearch(query, choice.dataset.choiceSearch, 1);
     });
     root.querySelector("#local-intents-empty").hidden = !query.trim() || choices.some(choice => !choice.hidden);
   });

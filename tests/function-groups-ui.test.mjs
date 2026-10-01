@@ -25,6 +25,8 @@ assert.equal(matchesFunctionSearch("café", "Quick Reads / Cafe 📚"), true);
 assert.equal(matchesFunctionSearch("Reminder", "remind family native"), true);
 assert.equal(matchesFunctionSearch("manage calendar", "Calendar Manage calendars"), true);
 assert.equal(matchesFunctionSearch("weather", "Reminders Manage reminders"), false);
+assert.equal(matchesFunctionSearch("de", "Delayed device commands"), false, "Function Tools keeps the existing short-prefix threshold");
+assert.equal(matchesFunctionSearch("de", "Delayed device commands", 1), true, "Local Handling can opt into first-character matching");
 assert.equal(isFunctionToolEnabled(tool("enabled")), true);
 assert.equal(isFunctionToolEnabled({...tool("disabled"), enabled: false}), false);
 assert.equal(isFunctionGroupEnabled({id: "legacy"}), true);
@@ -40,10 +42,20 @@ const managementStyles = await readFile(
   ),
   "utf8",
 );
+const compactChoiceStyles = await readFile(
+  new URL(
+    "../custom_components/extended_openai_conversation_responses/frontend/compact-choice-styles.js",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.ok(
   managementStyles.includes("[hidden]{display:none!important}"),
   "dialog search results marked hidden must actually be removed from layout",
 );
+assert.match(compactChoiceStyles, /grid-template-columns:auto 1fr/);
+assert.match(compactChoiceStyles, /\.group-function-choice input\{width:18px;min-height:18px;margin-top:2px\}/);
+assert.match(compactChoiceStyles, /\.group-function-choice span\{display:grid;gap:3px\}/);
 
 const categorized = categorizeFunctionTools(config);
 assert.deepEqual(categorized.alwaysAvailable.map((item) => item.spec.name), ["general"]);
