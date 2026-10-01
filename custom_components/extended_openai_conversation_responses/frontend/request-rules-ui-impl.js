@@ -478,7 +478,10 @@ export function openRequestRuleEditor(panel,id=null) {
   groupSelect.replaceChildren(...[{id:"",name:"Ungrouped"},...(panel._result?.groups||[])].map((group)=>{const option=groupSelect.ownerDocument.createElement("option");option.value=group.id;option.textContent=group.name;return option;}));
   groupSelect.value=rule?.group_id||"";
   q("#rule-model").value=rule?.action?.model||"";
-  q("#rule-reasoning").value=rule?.action?.reasoning_effort||"";
+  const savedEffort = rule?.action?.reasoning_effort || "";
+  // Keep a saved effort representable while its model's catalogue is loading.
+  const initialEfforts = [...q("#rule-reasoning").options].map(option => option.value).filter(Boolean);
+  setReasoningOptions(root, [...new Set([...initialEfforts, ...(savedEffort ? [savedEffort] : [])])], savedEffort);
   q("#rule-scope").value=rule?.action?.scope||"request";
   q("#rule-reset").checked=rule?.action?.reset||false;
   q("#rule-continue-to-ai").checked=rule?.action_type==="model_routing"?(rule?.action?.continue_to_ai??!["equals","sentence_pattern"].includes(rule?.match_type)):true;
