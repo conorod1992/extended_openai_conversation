@@ -308,7 +308,8 @@ async def test_recorded_audio_native_assist_delivery_recovers(
     assert hass.states.get(satellite.entity_id).state == "idle"
     record(
         stress_trace,
-        "native_audio_delivery",
+        "summary",
+        journey="native_audio_delivery",
         interruption=interruption,
         audio_deliveries=1,
         audio_playback_acknowledgements=1,

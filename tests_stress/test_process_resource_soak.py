@@ -152,6 +152,7 @@ async def _booted_soak(config_dir, seed, scale):
     helpers = importlib.import_module(f"custom_components.{DOMAIN}.helpers")
     held_started, release_held = asyncio.Event(), asyncio.Event()
     provider_requests = 0
+    config_entry_reloads = 0
 
     async def provider(request):
         nonlocal provider_requests
@@ -327,6 +328,7 @@ async def _booted_soak(config_dir, seed, scale):
                 # and background lifetimes, rather than counting logical managers.
                 if window in (1, 3):
                     assert await hass.config_entries.async_reload(entry.entry_id)
+                    config_entry_reloads += 1
                     await hass.async_block_till_done()
                     _raw_client(
                         conversation.async_get_agent(hass, entry.entry_id)
@@ -353,7 +355,7 @@ async def _booted_soak(config_dir, seed, scale):
                             "seed": seed,
                             "windows": windows,
                             "provider_requests": provider_requests,
-                            "config_entry_reloads": 2,
+                            "config_entry_reloads": config_entry_reloads,
                         },
                         indent=2,
                     ),
@@ -402,7 +404,8 @@ def test_booted_process_resources_and_latency_survive_mixed_traffic(
     report = json.loads(report_path.read_text()) if report_path.exists() else {}
     record(
         stress_trace,
-        "booted_process_resource_soak",
+        "summary",
+        journey="booted_process_resource_soak",
         returncode=result.returncode,
         process_soak_windows=len(report.get("windows", [])),
         metrics=report,

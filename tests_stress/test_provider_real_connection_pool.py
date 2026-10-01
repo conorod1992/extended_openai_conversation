@@ -241,10 +241,12 @@ def _local_tls(tmp_path: Path) -> tuple[ssl.SSLContext, ssl.SSLContext, Path]:
     return server, ssl.create_default_context(), cert_path
 
 
-async def _local_endpoint(handler, *, tls=None):
+async def _local_endpoint(handler, *, tls=None, idle_probe=None):
     app = web.Application()
     app.router.add_post("/v1/chat/completions", handler)
     app.router.add_post("/v1/responses", handler)
+    if idle_probe is not None:
+        app.router.add_get("/v1/models", idle_probe)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0, ssl_context=tls)
@@ -270,7 +272,6 @@ async def test_verified_https_buffered_sse_and_idle_close_recover(
         _local_tls, tmp_path
     )
     upstream_bodies, transports = [], []
-    idle_closed = asyncio.Event()
     payload = (
         _responses_sse_text("Buffered audio-ready reply")
         if mode == API_MODE_RESPONSES
@@ -297,22 +298,28 @@ async def test_verified_https_buffered_sse_and_idle_close_recover(
         ) as upstream_response:
             buffered = await upstream_response.read()
         assert buffered == payload  # Real buffering, rather than an exception shim.
-        response = web.StreamResponse(headers={"content-type": "text/event-stream"})
+        response = web.StreamResponse(
+            headers={
+                "content-type": "text/event-stream",
+                "content-length": str(len(buffered)),
+            }
+        )
         await response.prepare(request)
         for start in range(0, len(buffered), 61):
             await response.write(buffered[start : start + 61])
             await asyncio.sleep(0.005)
         await response.write_eof()
-        if len(transports) == 1:
-
-            def close_idle():
-                transports[0].close()
-                idle_closed.set()
-
-            asyncio.get_running_loop().call_later(0.05, close_idle)
         return response
 
-    proxy_runner, proxy_url = await _local_endpoint(proxy, tls=server_tls)
+    idle_transports = []
+
+    async def idle_probe(request):
+        idle_transports.append(request.transport)
+        return web.json_response({"object": "list", "data": []})
+
+    proxy_runner, proxy_url = await _local_endpoint(
+        proxy, tls=server_tls, idle_probe=idle_probe
+    )
     # An intentionally rejected certificate also closes the peer's incoming
     # handshake. Account for only that server socket; retain HA's strict handler
     # for every unrelated background exception and all later trusted traffic.
@@ -370,18 +377,26 @@ async def test_verified_https_buffered_sse_and_idle_close_recover(
             _speech(await _say(hass, entry.entry_id, "Trusted proxy"))
             == "Buffered audio-ready reply"
         )
-        await asyncio.wait_for(idle_closed.wait(), 5)
+        # Chat SSE may close its connection when the SDK stops at [DONE].
+        # A completed native SDK JSON request deterministically leaves an idle
+        # verified socket in the SAME client pool for either API mode. Close it
+        # at the server, then require the actual Assist path to recover.
+        assert (await _raw_client(agent).models.list()).data == []
+        assert len(idle_transports) == 1 and not idle_transports[0].is_closing()
+        idle_transports[0].close()
+        await asyncio.sleep(0.05)
         assert (
             _speech(await _say(hass, entry.entry_id, "After idle close"))
             == "Buffered audio-ready reply"
         )
         assert len(upstream_bodies) == 2 and len(transports) == 2
-        assert transports[0] is not transports[1]
+        assert idle_transports[0] is not transports[1]
         assert "Trusted proxy" in json.dumps(upstream_bodies[0])
         assert "After idle close" in json.dumps(upstream_bodies[1])
         record(
             stress_trace,
-            "verified_https_proxy",
+            "summary",
+            journey="verified_https_proxy",
             mode=mode,
             tls_verified_requests=2,
             provider_requests=2,
@@ -499,7 +514,8 @@ async def test_https_socket_break_after_tool_preserves_once_only_actions(
         assert len(calls) == 2 and len(bodies) == 6
         record(
             stress_trace,
-            "https_tool_socket_recovery",
+            "summary",
+            journey="https_tool_socket_recovery",
             mode=mode,
             ha_service_calls=2,
             provider_requests=len(bodies),

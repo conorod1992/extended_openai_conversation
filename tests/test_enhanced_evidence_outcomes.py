@@ -119,13 +119,21 @@ def test_saved_trace_does_not_invent_a_call_report(
 
 
 def test_summary_counts_only_passed_scenario_metrics(tmp_path) -> None:
+    metrics = {
+        "provider_requests": 2,
+        "audio_deliveries": 2,
+        "audio_playback_acknowledgements": 2,
+        "process_soak_windows": 5,
+        "tls_verified_requests": 4,
+        "transport_tool_recovery_cases": 2,
+    }
     for name, outcome in (("passed", "passed"), ("failed", "failed")):
         (tmp_path / f"{name}.json").write_text(
             json.dumps(
                 {
                     "test": f"test_{name}",
                     "outcome": outcome,
-                    "operations": [{"operation": "summary", "provider_requests": 2}],
+                    "operations": [{"operation": "summary", **metrics}],
                 }
             ),
             encoding="utf-8",
@@ -145,4 +153,4 @@ def test_summary_counts_only_passed_scenario_metrics(tmp_path) -> None:
         (tmp_path / "certification.json").read_text(encoding="utf-8")
     )
     assert certification["trace_outcomes"] == {"failed": 1, "passed": 1}
-    assert certification["measured_totals"] == {"provider_requests": 2}
+    assert certification["measured_totals"] == metrics
