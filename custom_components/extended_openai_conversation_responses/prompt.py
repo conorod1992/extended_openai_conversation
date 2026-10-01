@@ -59,7 +59,7 @@ _DEFAULT_CURRENT_DATETIME_CONTEXT = """## Current date and time
 {{ now().isoformat(timespec='seconds') }}
 """
 
-_DEFAULT_PROMPT_STABLE_PREFIX = DEFAULT_PROMPT.split("{%- if skills %}", 1)[0].rstrip()
+_DEFAULT_PROMPT_STABLE_PREFIX = DEFAULT_PROMPT.split("## Context", 1)[0].rstrip()
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +162,16 @@ def _default_exposed_entities_context(
         exposed_entities,
         include_attributes=_has_selected_values(exposed_entities),
     )
+
+
+def _skills_instructions(skills: list[Any]) -> str:
+    """Return integration-owned guidance for configured Skills."""
+    lines = [
+        "## Skills",
+        "Use load_skill with a skill name when one of these skills is relevant:",
+    ]
+    lines.extend(f"- {skill.name}: {skill.description}" for skill in skills)
+    return "\n".join(lines) + "\n"
 
 
 def _persistent_memory_instructions(options: Any) -> str:
@@ -385,6 +395,16 @@ def render_effective_prompt(
                 "conditional_continuation_instructions",
                 "Conditional-continuation instructions",
                 CONTINUATION_GUIDANCE,
+                "stable",
+            )
+        )
+
+    if skills:
+        sections.append(
+            PromptSection(
+                "skills_instructions",
+                "Skills instructions",
+                _skills_instructions(skills),
                 "stable",
             )
         )
