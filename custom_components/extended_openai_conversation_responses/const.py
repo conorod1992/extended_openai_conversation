@@ -93,6 +93,20 @@ DEFAULT_PROMPT = """You are a helpful, friendly and concise Home Assistant voice
 
 {{ user_input.extra_system_prompt | default('', true) }}
 """
+LEGACY_DEFAULT_PROMPT_WITH_SKILLS = DEFAULT_PROMPT.replace(
+    "\n## Context",
+    """\n{%- if skills %}
+## Skills
+Use load_skill with a skill name when one of these skills is relevant:
+{%- for skill in skills %}
+- {{ skill.name }}: {{ skill.description }}
+{%- endfor %}
+{% endif %}
+
+## Context""",
+    1,
+)
+
 CONF_CHAT_MODEL = "chat_model"
 DEFAULT_CHAT_MODEL = "gpt-5-mini"
 
