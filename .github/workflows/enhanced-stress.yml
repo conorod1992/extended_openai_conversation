@@ -35,10 +35,24 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
       seed: ${{ steps.seed.outputs.seed }}
       intensities: ${{ steps.seed.outputs.intensities }}
       campaigns: ${{ steps.seed.outputs.campaigns }}
     steps:
+      - name: Checkout invocation commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Resolve immutable candidate
+        id: candidate
+        env:
+          INVOCATION_SHA: ${{ github.sha }}
+        run: |
+          CANDIDATE_SHA="$(git rev-parse HEAD)"
+          test "$CANDIDATE_SHA" = "$INVOCATION_SHA"
+          echo "sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+          echo "Candidate SHA: $CANDIDATE_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Resolve reproducible run controls
         id: seed
         env:
@@ -100,14 +114,15 @@ jobs:
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
       STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: ${{ matrix.campaign }}
+      EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       STRESS_ARTIFACT_DIR: stress-artifacts
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
     steps:
-      - name: Checkout candidate or nightly develop
+      - name: Checkout immutable run candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
       - name: Reconcile current test requirements
         run: |
           CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
@@ -229,14 +244,15 @@ jobs:
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
       STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: ${{ inputs.campaign == 'diagnostics' && 'browser-diagnostics' || 'browser' }}
+      EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
       STRESS_ARTIFACT_DIR: stress-artifacts
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
     steps:
-      - name: Checkout candidate or nightly develop
+      - name: Checkout immutable run candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
       - name: Stage the latest published frontend for stale-asset acceptance
         if: inputs.campaign != 'diagnostics'
         env:
@@ -365,10 +381,10 @@ jobs:
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
     steps:
-      - name: Checkout candidate or nightly develop
+      - name: Checkout immutable run candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -444,10 +460,10 @@ jobs:
       matrix:
         ha-version: [oldest, stable, dev]
     steps:
-      - name: Checkout candidate or nightly develop
+      - name: Checkout immutable run candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
       - name: Resolve Python version required by HA dev
         id: python
         run: |
@@ -528,7 +544,7 @@ jobs:
       - name: Checkout exact run source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'schedule' && 'develop' || github.ref }}
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
       - name: Download campaign evidence
         uses: actions/download-artifact@v4
         with:
@@ -550,6 +566,7 @@ jobs:
       - name: Consolidate actual job results
         env:
           GH_TOKEN: ${{ github.token }}
+          ENHANCED_CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
           ENHANCED_CAMPAIGNS: ${{ needs.prepare.outputs.campaigns }}
           ENHANCED_INTENSITIES: ${{ needs.prepare.outputs.intensities }}
           ENHANCED_SELECTED: ${{ inputs.campaign || 'all' }}

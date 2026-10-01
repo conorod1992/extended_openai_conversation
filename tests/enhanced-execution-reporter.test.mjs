@@ -33,6 +33,10 @@ test("execution reporter preserves skipped, failed, xfail and missing browser ex
     const raw = fs.readFileSync(path.join(root, fs.readdirSync(root)[0]), "utf8");
     const ledger = JSON.parse(raw);
     assert.equal(ledger.runner, "playwright");
+    assert.match(ledger.eoai_sha, /^[0-9a-f]{40}$/);
+    assert.ok(ledger.execution_id);
+    assert.match(ledger.environment.playwright, /^\d+\.\d+\.\d+/);
+    assert.match(ledger.environment_fingerprint, /^[0-9a-f]{64}$/);
     assert.deepEqual(ledger.cases.map(item => [item.nodeid.split("::").at(-1), item.outcome, item.executed]),
       scenarios.map(([title, _status, outcome, executed]) => [title, outcome, executed]));
     assert.ok(ledger.cases.every(item => item.collected));

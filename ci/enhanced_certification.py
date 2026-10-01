@@ -9,9 +9,11 @@ import sys
 from urllib.request import Request, urlopen
 
 try:
+    from .candidate_evidence import check_candidate, valid_sha
     from .enhanced_evidence import SCHEMA, write_json
     from .execution_contract import CONTRACT, check_execution, expected_cases
 except ImportError:
+    from candidate_evidence import check_candidate, valid_sha
     from enhanced_evidence import SCHEMA, write_json
     from execution_contract import CONTRACT, check_execution, expected_cases
 
@@ -41,6 +43,7 @@ def actual_jobs() -> dict[str, str]:
 
 
 def main(root: Path) -> int:
+    candidate_sha = os.environ.get("ENHANCED_CANDIDATE_SHA", "unknown")
     campaigns = json.loads(os.environ["ENHANCED_CAMPAIGNS"])
     intensities = json.loads(os.environ["ENHANCED_INTENSITIES"])
     selected = os.environ.get("ENHANCED_SELECTED", "all")
@@ -82,12 +85,17 @@ def main(root: Path) -> int:
     lines = [
         "## Enhanced nightly certification",
         "",
+        f"Intended candidate SHA: `{candidate_sha}`",
+        "",
         f"Run: `{os.environ.get('GITHUB_RUN_ID', 'local')}` · Seed: `{seed}` · Selected: `{selected}`",
         "",
         "| Campaign | Intensity / HA | Result | SHA | HA | Evidence |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
-    failed = False
+    failed = not valid_sha(candidate_sha)
+    identity_errors = (
+        [] if not failed else [f"Invalid intended candidate SHA: {candidate_sha!r}"]
+    )
     shas = set()
     execution_errors = []
     for key in sorted(expected):
@@ -112,6 +120,7 @@ def main(root: Path) -> int:
             failed = True
         if item:
             shas.add(item["eoai_sha"])
+            identity_errors.extend(check_candidate(item, candidate_sha))
             if selected != "diagnostics":
                 execution_errors.extend(check_execution(item))
         lines.append(
@@ -121,6 +130,10 @@ def main(root: Path) -> int:
             if item
             else f"| {campaign} | {point or intensity} | **missing** | - | - | - |"
         )
+    if identity_errors:
+        failed = True
+        lines += ["", "**Candidate/environment evidence rejected:**", ""]
+        lines += [f"- {error}" for error in identity_errors]
     if execution_errors:
         failed = True
         lines += ["", "**Mandatory execution evidence rejected:**", ""]
@@ -166,6 +179,8 @@ def main(root: Path) -> int:
         Path("certification-final.json"),
         {
             "schema": SCHEMA,
+            "candidate_sha": candidate_sha,
+            "identity_errors": identity_errors,
             "seed": seed,
             "selected": selected,
             "passed": not failed,

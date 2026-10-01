@@ -2,6 +2,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import {execFileSync} from "node:child_process";
+import {createRequire} from "node:module";
+import {fileURLToPath} from "node:url";
+const require = createRequire(import.meta.url);
+const sourceRoot = fileURLToPath(new URL("../", import.meta.url));
 
 export default class ExecutionReporter {
   onBegin(config, suite) {
@@ -10,6 +15,15 @@ export default class ExecutionReporter {
   }
   onEnd(result) {
     if (process.env.ENHANCED_EXECUTION_EVIDENCE !== "1") return;
+    let eoaiSha = "unknown";
+    try {
+      eoaiSha = execFileSync("git", ["-c", `safe.directory=${sourceRoot}`, "-C", sourceRoot, "rev-parse", "HEAD"],
+        {encoding: "utf8", stdio: ["ignore", "pipe", "ignore"]}).trim();
+    } catch {}
+    const identity = {architecture: process.arch, node: process.versions.node,
+      platform: process.platform, playwright: require("@playwright/test/package.json").version};
+    const fingerprint = crypto.createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+    const executionId = crypto.randomUUID();
     const cases = this.tests.map(test => ({
       nodeid: [path.relative(process.cwd(), test.location.file).replaceAll("\\", "/"),
         ...test.titlePath().slice(1)].join("::"),
@@ -23,7 +37,7 @@ export default class ExecutionReporter {
     }));
     const root = process.env.STRESS_ARTIFACT_DIR || "stress-artifacts";
     fs.mkdirSync(root, {recursive: true});
-    fs.writeFileSync(path.join(root, `execution-playwright-${crypto.randomUUID()}.json`),
-      JSON.stringify({execution_schema: "eoai-test-execution/v1", runner: "playwright", status: result.status, cases}, null, 2));
+    fs.writeFileSync(path.join(root, `execution-playwright-${executionId}.json`),
+      JSON.stringify({eoai_sha: eoaiSha, execution_id: executionId, environment: identity, environment_fingerprint: fingerprint, execution_schema: "eoai-test-execution/v1", runner: "playwright", status: result.status, cases}, null, 2));
   }
 }

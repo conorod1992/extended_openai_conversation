@@ -124,10 +124,28 @@ def main() -> None:
         "",
     ]
     execution_cases = []
+    execution_runs = []
     for path in files:
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("execution_schema") == "eoai-test-execution/v1":
-            execution_cases.extend(data["cases"])
+            execution_id = data.get("execution_id")
+            execution_runs.append(
+                {
+                    key: data.get(key)
+                    for key in (
+                        "execution_id",
+                        "eoai_sha",
+                        "runner",
+                        "exit_status",
+                        "status",
+                        "environment",
+                        "environment_fingerprint",
+                    )
+                }
+            )
+            execution_cases.extend(
+                {**case, "execution_id": execution_id} for case in data["cases"]
+            )
     totals: Counter[str] = Counter()
     outcomes: Counter[str] = Counter()
     if not files:
@@ -219,6 +237,7 @@ def main() -> None:
             ),
             "measured_totals": dict(totals),
             "execution_cases": execution_cases,
+            "execution_runs": execution_runs,
             "trace_outcomes": dict(outcomes),
             "artifact_files": [
                 path.name for path in files if path.name != "certification.json"

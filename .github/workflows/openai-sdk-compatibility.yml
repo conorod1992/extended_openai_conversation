@@ -12,6 +12,7 @@ permissions:
 jobs:
   sdk-contract:
     name: SDK wire contract / ${{ matrix.sdk }}
+    continue-on-error: ${{ matrix.sdk == 'latest-3x-early-warning' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -25,11 +26,13 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
     steps:
-      - name: Checkout live develop
+      - name: Checkout exact invocation source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || 'develop' }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Select SDK version for early warning
         run: |
@@ -53,3 +56,17 @@ jobs:
             tests/test_openai_sdk_multicall_wire.py \
             tests/test_openai_sdk_ha_compatibility.py \
             tests/test_openai_compat.py
+      - name: Record exact-source SDK evidence
+        if: always()
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+          EVIDENCE_LANE: ${{ matrix.sdk }}
+        run: python ci/workflow_evidence.py sdk workflow-evidence.json
+      - name: Upload exact-source SDK evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sdk-evidence-${{ matrix.sdk }}
+          path: workflow-evidence.json
+          if-no-files-found: error
+          retention-days: 30
