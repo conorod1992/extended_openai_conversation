@@ -100,7 +100,7 @@ export const HELP_METADATA = Object.freeze({
   voice_scope_policy: Object.freeze({
     title: "When the speaker is not identified",
     items: [
-      { term: "Do not retain personal data", text: "Uses no personal owner, so long-term memory and conversation archiving are unavailable for the request." },
+      { term: "Don’t use saved personal data", text: "Uses no personal owner, so long-term memory and conversation archiving are unavailable for the request." },
       { term: "Use shared household data", text: "Uses memories and history shared by the household." },
       { term: "Use the default user", text: "Uses the configured Home Assistant user's memories and history." },
       { term: "Use a device-to-user mapping", text: "Looks up the source satellite or device. If it has no assignment, the unmapped-device setting is used." },
@@ -112,10 +112,10 @@ export const HELP_METADATA = Object.freeze({
     title: "When a device has no mapping",
     paragraphs: ["This setting is used when device-to-user mapping is selected but the request comes from a device with no assignment."],
     items: [
-      { term: "Do not retain personal data", text: "Uses no personal memories or archived conversation history." },
+      { term: "Don’t use saved personal data", text: "Uses no personal memories or archived conversation history." },
       { term: "Use shared household data", text: "Uses memories and history shared by the household." },
       { term: "Use the default user", text: "Uses the configured default user's memories and history." },
-      { term: "Device mapping (no retained data)", text: "A second device lookup cannot resolve the request, so this option uses no retained personal data." },
+      { term: "Device mapping (no saved personal data)", text: "A second device lookup cannot resolve the request, so this option uses no saved personal data." },
     ],
     keywords: "speaker unresolved unknown device satellite fallback owner mapping unretained shared",
     href: `${DOCS_ROOT}/features/persistent-memory.md`,

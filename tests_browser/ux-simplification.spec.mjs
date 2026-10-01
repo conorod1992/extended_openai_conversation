@@ -115,6 +115,33 @@ for (const bundled of [false, true]) {
     await panel.locator("#add-ha-tools").click();
     await expect(panel.locator("dialog[data-ha-llm-tools-dialog]")).toHaveJSProperty("open", true);
     await expect(panel.getByRole("heading", {name: "Add Home Assistant tools"})).toBeVisible();
+    await expect(panel.locator("dialog[data-ha-llm-tools-dialog]")).toContainText("These tools are provided by Home Assistant or installed integrations.");
+    await expect(panel.locator("dialog[data-ha-llm-tools-dialog]")).toContainText("Function Groups can help by loading tools only when needed.");
+  });
+
+  test(`Matching and privacy settings use plain language without changing values (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const panel = page.locator("extended-openai-management-panel");
+    const go = route => page.goto(fixtureUrl(route, bundled ? "&bundle=1" : ""));
+    await go("data-memory/memory-settings");
+    const matching = panel.locator('[data-memory-config="memory_retrieval_mode"]');
+    await expect(panel.getByText("How memories are matched", {exact: true}).first()).toBeVisible();
+    await expect(matching.locator('option[value="lexical"]')).toHaveText("Keyword matching");
+    await expect(matching.locator('option[value="hybrid"]')).toHaveText("Keyword + meaning");
+    await expect(panel.locator("main")).toContainText("Keyword matching finds memories using similar words.");
+    await expect(panel.locator("main")).toContainText("Model used to compare memories by meaning.");
+    await go("assistant/voice");
+    await expect(panel.getByText("Use saved data from", {exact: true})).toBeVisible();
+    await expect(panel.locator('[data-config="voice_scope_policy"] option[value="unretained"]')).toHaveText("Don’t use saved personal data");
+    await expect(panel.locator("main")).toContainText("When a voice device is not assigned");
+    await go("capabilities/guest-mode");
+    await expect(panel.locator("main")).toContainText("New Guest Mode restrictions apply immediately to actions.");
+    await expect(panel.locator("main")).toContainText("Information already sent to the AI for the current response cannot be taken back");
+    await go("capabilities/quiet-hours");
+    await expect(panel.locator("main")).toContainText("volumes previously lowered by Quiet Hours may briefly be restored before the new limit is applied");
+    await go("usage-maintenance/retention");
+    await expect(panel.locator("main")).toContainText("Overall usage totals are kept.");
+    await expectHarnessClean(page, errors);
   });
 
   test(`Usage explains daily history and saved runs in plain language (${bundled})`, async ({page}) => {
@@ -125,6 +152,9 @@ for (const bundled of [false, true]) {
     await expect(panel.locator("main")).toContainText("This table shows saved individual runs.");
     await expect(panel.locator("main")).toContainText("Usage totals are kept even when detailed records are deleted.");
     await expect(panel.locator("main")).not.toContainText("loaded window");
+    await expect(panel.locator("main")).toContainText("Runs without provider requests");
+    await expect(panel.locator("main")).toContainText("Recent failed runs");
+    await expect(panel.locator("main")).toContainText("Recent individual runs are stored separately, so they may cover a shorter period.");
   });
 }
 

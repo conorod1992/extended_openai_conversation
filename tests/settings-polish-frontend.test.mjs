@@ -19,9 +19,9 @@ assert.doesNotMatch(config, /eoc-decision-badge default[^>]*>Default: Automatic/
 assert.match(config, /Uses Home Assistant sessions/);
 assert.doesNotMatch(config, /Default: Ha Default/);
 const memory = renderMemorySettings(panel);
-assert.match(memory, /Relevance matching/);
-assert.match(memory, /Semantic \+ keyword matching \(Hybrid\)/);
-assert.match(memory, /Requires embeddings/);
+assert.match(memory, /How memories are matched/);
+assert.match(memory, /Keyword \+ meaning/);
+assert.match(memory, /Uses a model to compare meaning/);
 for (const key of ["temperature", "archive_enabled", "temporary_memory", "current_datetime_enabled"]) {
   assert.doesNotMatch(settingBadgesMarkup(panel, key, true), /eoc-effect-badge/);
 }

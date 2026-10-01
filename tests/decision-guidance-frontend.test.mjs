@@ -23,7 +23,7 @@ assert.equal(
 );
 
 assert.equal(displayDefaultValue("api_mode", "auto"), "Automatic (Auto)");
-assert.equal(displayDefaultValue("memory_retrieval_mode", "lexical"), "Keyword matching (Lexical)");
+assert.equal(displayDefaultValue("memory_retrieval_mode", "lexical"), "Keyword matching");
 assert.deepEqual(
   configurationDecisionBadges("api_mode", {api_mode:"auto"}),
   [],

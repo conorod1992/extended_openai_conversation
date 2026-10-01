@@ -62,7 +62,7 @@ function renderFallbackRepair(panel, issue) {
   return `<section class="card function-repair" aria-labelledby="function-repair-title">
     <h2 id="function-repair-title">Function Tools need repair</h2>
     <div class="error" role="alert">${escapeHtml(panel, validationError)}</div>
-    <p>The saved Function Tool collection cannot be separated safely into valid and invalid entries. This fallback editor is only used for collection-level corruption.</p>
+    <p>This recovery editor appears only when the saved Function Tools cannot be repaired individually.</p>
     <label class="field"><span>Saved Function Tools</span><textarea id="function-repair-editor" rows="20" spellcheck="false">${escapeHtml(panel, editableToolsText(result.tools))}</textarea></label>
     <div class="actions"><button id="function-repair-save" type="button">Validate and save repair</button></div>
   </section>`;

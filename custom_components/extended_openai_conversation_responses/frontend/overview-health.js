@@ -12,13 +12,13 @@ function providerRuntimeCheck(facts, fallback = {}) {
   return {
     id: "provider_runtime",
     state: loaded ? "ready" : "error",
-    title: "Provider runtime",
+    title: "Provider connection",
     value: `${provider} · ${model}`,
     detail: loaded
       ? facts.can_manage
-        ? "API client is loaded. Overview does not make a live provider request; use Diagnostics for an on-demand connection test."
-        : "API client is loaded. Overview does not make a live provider request; an administrator can run Diagnostics for a live connection test."
-      : "The configured provider and model are retained, but the provider API client is not currently available to this config entry.",
+        ? "The provider connection is available. Overview does not make a live provider request; use Diagnostics for an on-demand connection test."
+        : "The provider connection is available. Overview does not make a live provider request; an administrator can run Diagnostics for a live connection test."
+      : "The provider connection is not currently available for this assistant. Your provider and model settings are still saved.",
     action: action("usage-maintenance", "diagnostics"),
   };
 }
@@ -43,7 +43,7 @@ function functionToolsCheck(facts) {
       state: "error",
       title: "Function Tools",
       value: "Configuration needs repair",
-      detail: "The saved Function Tool collection cannot be safely separated into valid and invalid entries. Repair it before Function Tools can be used.",
+      detail: "The saved Function Tools need to be repaired together before they can be used.",
       action: action("capabilities", "functions"),
     };
   }
@@ -53,7 +53,7 @@ function functionToolsCheck(facts) {
       state: "warning",
       title: "Function Tools",
       value: `${invalid} ${invalid === 1 ? "function needs" : "functions need"} repair`,
-      detail: `${usable} valid ${usable === 1 ? "Function Tool remains" : "Function Tools remain"} available. Invalid tools are quarantined until repaired.`,
+      detail: `${usable} valid ${usable === 1 ? "Function Tool remains" : "Function Tools remain"} available. Invalid tools remain unavailable until they are repaired.`,
       action: action("capabilities", "functions"),
     };
   }

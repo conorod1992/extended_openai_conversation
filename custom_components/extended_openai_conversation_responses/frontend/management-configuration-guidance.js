@@ -60,14 +60,14 @@ export function hybridMemoryGuidance(config = {}) {
   if (config.memory_retrieval_mode === "hybrid") {
     return {
       kind: "info",
-      title: "Hybrid matching uses embeddings when available",
-      text: "Semantic matching uses the configured embedding model. If embedding generation is unavailable or fails, memory retrieval falls back to keyword matching.",
+      title: "Keyword + meaning uses a model to compare meaning",
+      text: "Keyword + meaning uses the configured model to compare memories by meaning. If this model is unavailable or fails, keyword matching is used.",
     };
   }
   return {
     kind: "dormant",
     title: "Embedding model is inactive",
-    text: "It is used only with Semantic + keyword matching (Hybrid). The saved model is retained while Keyword matching (Lexical) is selected.",
+    text: "It is used only with Keyword + meaning matching. The saved model is kept while Keyword matching is selected.",
   };
 }
 
@@ -206,8 +206,8 @@ function decorateMemory(panel) {
   const description = embedding?.querySelector(":scope > small");
   if (description) {
     description.textContent = config.memory_retrieval_mode === "hybrid"
-      ? "Used for semantic matching in Hybrid mode; embedding failures fall back to keyword matching."
-      : "Used only with Semantic + keyword matching (Hybrid).";
+      ? "Model used to compare memories by meaning. If meaning matching is unavailable, keyword matching is used."
+      : "Model used to compare memories by meaning. Only needed when Keyword + meaning matching is selected.";
   }
 }
 

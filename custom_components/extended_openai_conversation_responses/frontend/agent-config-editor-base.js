@@ -28,16 +28,16 @@ const CHOICE_LABELS = Object.freeze({
     user: "Remember by user across devices",
   }),
   voice_scope_policy: Object.freeze({
-    unretained: "Do not retain personal data",
+    unretained: "Don’t use saved personal data",
     shared: "Use shared household data",
     default_user: "Use the default user",
     device_mapping: "Use a device-to-user mapping",
   }),
   voice_unmapped_policy: Object.freeze({
-    unretained: "Do not retain personal data",
+    unretained: "Don’t use saved personal data",
     shared: "Use shared household data",
     default_user: "Use the default user",
-    device_mapping: "Device mapping (no retained data)",
+    device_mapping: "Device mapping (no saved personal data)",
   }),
 });
 export const configurationChoiceLabel = (key, item) => friendlySettingValue(key, item.value) || CHOICE_LABELS[key]?.[item.value] || item.label;
@@ -59,8 +59,8 @@ export const field = (panel, key, label, value, type = "text", description = "",
   if (key === "memory_auto_retrieve_limit") {
     const config = panel._draft || panel._result?.config || {};
     const choices = panel._result?.options?.memory_retrieval_mode || [];
-    result += select(panel, "memory_retrieval_mode", "Memory retrieval", config.memory_retrieval_mode, choices, "Semantic matching can find memories with related meaning, not just similar words. It falls back to local matching if unavailable.");
-    result += field(panel, "memory_embedding_model", "Embedding model", config.memory_embedding_model || "text-embedding-3-small", "text", "Used only for hybrid semantic retrieval; the provider must support embeddings.");
+    result += select(panel, "memory_retrieval_mode", "How memories are matched", config.memory_retrieval_mode, choices, "Keyword matching finds memories using similar words. Keyword + meaning can also find memories that use different wording but mean something similar. If meaning matching is unavailable, keyword matching is used.");
+    result += field(panel, "memory_embedding_model", "Embedding model", config.memory_embedding_model || "text-embedding-3-small", "text", "Model used to compare memories by meaning. Only needed when Keyword + meaning matching is selected. Your provider must support this model.");
   }
   return result;
 };

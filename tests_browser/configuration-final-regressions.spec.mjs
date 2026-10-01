@@ -68,7 +68,7 @@ test("retention explains immediate detail deletion before Save",async({page})=>{
   await page.goto(fixtureUrl("usage-maintenance/retention"));
   const panel=page.locator("extended-openai-management-panel");
   await expect(panel.locator(".card-heading")).toContainText("Saving Disabled immediately deletes existing detailed history");
-  await expect(panel.locator(".card-heading")).toContainText("Aggregate usage counters remain");
+  await expect(panel.locator(".card-heading")).toContainText("Overall usage totals are kept");
 });
 
 test("group assignment no-match search can clear without changing selections",async({page})=>{

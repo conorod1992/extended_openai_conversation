@@ -55,7 +55,7 @@ describe("Voice & identity management UX", () => {
     expect(html).toContain('value="user:user-1"');
     expect(html).toContain("Home Assistant user");
     expect(html).toContain("Shared household");
-    expect(html).toContain("No retained personal data");
+    expect(html).toContain("Don’t use saved personal data");
     expect(html).not.toContain("Voice device assignments (JSON)");
     expect(html).not.toContain("Default Home Assistant user ID");
     expect(html).not.toContain("Device ID<input");
@@ -89,7 +89,7 @@ describe("Voice & identity management UX", () => {
       "Unidentified voice requests use 2 saved device assignments. Devices without an assignment use the default user (Conor).",
     );
     expect(voiceIdentitySummary({...panel._result.config,voice_scope_policy:"default_user",voice_default_user_id:""},voiceUsers(panel))).toContain(
-      "none is selected — so no personal data is retained",
+      "none is selected — so no personal data is used or saved",
     );
   });
 

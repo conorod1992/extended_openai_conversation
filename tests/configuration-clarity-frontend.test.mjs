@@ -13,13 +13,13 @@ import {
 import {SETTINGS_INDEX} from "../custom_components/extended_openai_conversation_responses/frontend/management-settings-index.js";
 import {CONFIG_OWNER_BY_KEY} from "../custom_components/extended_openai_conversation_responses/frontend/management-config-owners.js";
 
-assert.equal(friendlySettingLabel("memory_retrieval_mode"), "Relevance matching");
+assert.equal(friendlySettingLabel("memory_retrieval_mode"), "How memories are matched");
 assert.equal(friendlySettingLabel("temperature"), "Response creativity (temperature)");
-assert.equal(friendlySettingValue("memory_retrieval_mode", "lexical"), "Keyword matching (Lexical)");
-assert.equal(friendlySettingValue("memory_retrieval_mode", "hybrid"), "Semantic + keyword matching (Hybrid)");
+assert.equal(friendlySettingValue("memory_retrieval_mode", "lexical"), "Keyword matching");
+assert.equal(friendlySettingValue("memory_retrieval_mode", "hybrid"), "Keyword + meaning");
 assert.equal(friendlySettingValue("api_mode", "responses"), "Responses API");
-assert.deepEqual(settingEffectBadges("memory_retrieval_mode", "hybrid"), ["Requires embeddings"]);
-assert.deepEqual(settingEffectBadges("memory_retrieval_mode", "lexical"), ["No embedding request"]);
+assert.deepEqual(settingEffectBadges("memory_retrieval_mode", "hybrid"), ["Uses a model to compare meaning"]);
+assert.deepEqual(settingEffectBadges("memory_retrieval_mode", "lexical"), ["Matches words locally"]);
 assert.deepEqual(settingEffectBadges("local_intents_enabled", true), ["No AI call when matched"]);
 assert.deepEqual(settingEffectBadges("archive_enabled", true), []);
 assert.deepEqual(settingEffectBadges("temperature", 0.8), []);

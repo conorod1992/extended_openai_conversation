@@ -2,7 +2,7 @@ import {SETTING_LOOKUP} from "./management-setting-lookup.js";
 export {dirtyConfigurationKeys, configurationDestinations, dirtyConfigurationDestinations} from "./management-config-destinations.js";
 
 const FRIENDLY_LABEL_OVERRIDES = Object.freeze({
-  memory_retrieval_mode: "Relevance matching",
+  memory_retrieval_mode: "How memories are matched",
   max_function_calls_per_conversation: "Tool-call limit per request",
   speech_processing_enabled: "Clean responses for speech",
   speech_strip_markdown: "Remove Markdown formatting",
@@ -29,8 +29,8 @@ const FRIENDLY_VALUE_LABELS = Object.freeze({
     eager: "Eager",
   }),
   memory_retrieval_mode: Object.freeze({
-    lexical: "Keyword matching (Lexical)",
-    hybrid: "Semantic + keyword matching (Hybrid)",
+    lexical: "Keyword matching",
+    hybrid: "Keyword + meaning",
   }),
   shared_memory_mode: Object.freeze({
     disabled: "Off",
@@ -55,8 +55,8 @@ export function friendlySettingValue(key, value) {
 export function settingEffectBadges(key, value, {disabled = false} = {}) {
   if (disabled) return [];
   if (key === "memory_retrieval_mode") {
-    if (value === "hybrid") return ["Requires embeddings"];
-    if (value === "lexical") return ["No embedding request"];
+    if (value === "hybrid") return ["Uses a model to compare meaning"];
+    if (value === "lexical") return ["Matches words locally"];
   }
   if (key === "local_intents_enabled" && value === true) return ["No AI call when matched"];
   return [];

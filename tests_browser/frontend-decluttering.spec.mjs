@@ -204,7 +204,7 @@ test("Voice policies retain native picker identity and saved inactive choices ac
   });
   const inactive = panel.locator("[data-voice-inactive-settings]");
   const picker = panel.locator("#config-voice_default_user_picker");
-  await expect(panel.locator("#voice-current-summary")).toContainText("no retained personal data");
+  await expect(panel.locator("#voice-current-summary")).toContainText("no saved personal data");
   await expect(inactive).toHaveJSProperty("open",false);
   await expect(picker).toBeHidden();
   await panel.evaluate(p => {window.savedVoicePicker=p.shadowRoot.querySelector("#config-voice_default_user_picker");});

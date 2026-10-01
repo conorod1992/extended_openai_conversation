@@ -76,7 +76,7 @@ function functionsView() {
   );
   assert.ok(html.includes("Function Tools need repair"));
   assert.ok(html.includes("Validate and save repair"));
-  assert.ok(html.includes("collection-level corruption"));
+  assert.ok(html.includes("saved Function Tools cannot be repaired individually"));
   assert.ok(!html.includes('<script>alert("x")</script>'));
   assert.ok(html.includes("&lt;script&gt;"));
 }

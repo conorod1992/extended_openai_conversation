@@ -20,6 +20,10 @@ const defaultChecks = Object.fromEntries(defaultHealth.checks.map((check) => [ch
 assert.equal(defaultHealth.state, "ready");
 assert.equal(defaultHealth.summary, "Ready");
 assert.equal(defaultChecks.provider_runtime.state, "ready");
+assert.equal(defaultChecks.provider_runtime.title, "Provider connection");
+assert.match(defaultChecks.provider_runtime.detail, /does not make a live provider request/);
+const unavailable = buildSetupHealth({...defaultFacts, provider_runtime: {...defaultFacts.provider_runtime, client_loaded: false}}).checks.find(check => check.id === "provider_runtime");
+assert.match(unavailable.detail, /provider connection is not currently available for this assistant/);
 assert.equal(defaultChecks.instructions.value, "Starter instructions");
 assert.equal(defaultChecks.home_assistant_exposure.value, "1 entity exposed to Assist");
 assert.equal(defaultChecks.memory.state, "neutral");

@@ -241,7 +241,7 @@ function historyRangeLabel(history) {
   if (history.id === "all") {
     return history.availableStart
       ? `${history.label} · ${history.availableStart} to ${history.availableEnd}`
-      : `${history.label} · no recorded daily aggregates`;
+      : `${history.label} · no recorded daily usage history`;
   }
   return `${history.label} · ${history.startDate} to ${history.endDate}`;
 }
@@ -300,7 +300,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
           <div class="usage-fact"><span>Provider requests</span><strong>${formatUsageNumber(summary.api_request_count)}</strong></div>
           <div class="usage-fact"><span>Tool calls</span><strong>${formatUsageNumber(summary.tool_call_count)}</strong></div>
           <div class="usage-fact"><span>Web-search runs</span><strong>${formatUsageNumber(summary.web_search_run_count)}</strong></div>
-          <div class="usage-fact"><span>Retained zero-request runs</span><strong>${formatUsageNumber(recentLocalRuns)}</strong></div>
+          <div class="usage-fact"><span>Runs without provider requests</span><strong>${formatUsageNumber(recentLocalRuns)}</strong></div>
           <div class="usage-fact"><span>Failed provider requests</span><strong>${formatUsageNumber(summary.failed_request_count)}</strong></div>
         </div></section>
       </div>
@@ -309,11 +309,11 @@ export function renderUsageDiagnostics(panel, result = {}) {
         ${breakdownList(panel, "Providers", summary.provider_breakdown)}
         ${breakdownList(panel, "API modes", summary.api_mode_breakdown)}
       </div>
-      <section class="usage-diagnostic-panel"><h3>Recent failed runs (retained detail)</h3>${failedRuns.length ? `<div class="usage-failures">${failedRuns.map((run) => {
+      <section class="usage-diagnostic-panel"><h3>Recent failed runs</h3>${failedRuns.length ? `<div class="usage-failures">${failedRuns.map((run) => {
         const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
         return `<div class="usage-failure"><div><p><strong>${panel._e(run.error_type || "Failed")}</strong></p><small>${panel._e(completed.display)} · ${formatUsageNumber(run.request_count)} request${run.request_count === 1 ? "" : "s"} · ${panel._e(formatDuration(run.duration_ms))}</small></div><button type="button" class="usage-run-details" data-usage-run-id="${panel._e(run.run_id)}">View requests</button></div>`;
-      }).join("")}</div>` : `<p class="usage-diagnostic-empty">No failed runs are present in the retained recent-run details.</p>`}</section>
-      <p class="help">Token, request, run, model, provider, and API-mode diagnostics all use the selected daily-aggregate period shown above. Retained recent-run details are separate and can be shorter than that period. Figures show provider-reported usage only; they do not estimate API cost or expose prompt, response, tool-argument, or reasoning content.</p>
+      }).join("")}</div>` : `<p class="usage-diagnostic-empty">No failed runs were found in the saved recent runs.</p>`}</section>
+      <p class="help">The totals and breakdowns above use your selected history period. Recent individual runs are stored separately, so they may cover a shorter period. Figures show provider-reported usage only; they do not estimate API cost or expose prompt, response, tool-argument, or reasoning content.</p>
     </section>`;
 }
 
@@ -322,7 +322,7 @@ export function requestDetailsDialog() {
 }
 
 function renderRequestDetails(panel, requests) {
-  if (!requests.length) return `<div class="empty">No retained provider-request details are available for this run.</div>`;
+  if (!requests.length) return `<div class="empty">No saved provider-request details are available for this run.</div>`;
   return `<div class="usage-request-list">${requests.map((request, index) => {
     const tokens = tokenBreakdown(request.total_tokens, request.cached_input_tokens);
     const timestamp = formatUsageTimestamp(request.timestamp, undefined, panel._hass?.config?.time_zone);
@@ -351,7 +351,7 @@ function usageRecentRows(panel, result) {
     return `<tr><td><time datetime="${panel._e(completed.datetime)}" title="${panel._e(completed.datetime)}">${panel._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${panel._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${panel._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
   }).join("");
   return result.loading?.runs ? `<tr><td colspan="7">Loading recent runs…</td></tr>`
-    : rows || `<tr><td colspan="7">No retained recent runs.</td></tr>`;
+    : rows || `<tr><td colspan="7">No saved recent runs.</td></tr>`;
 }
 
 export function reconcileUsageSecondary(panel, key) {
