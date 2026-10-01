@@ -9,6 +9,15 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "assist_safe_overlap",
+    "assist_mixed_serial",
+    "remote_resource_recovery_cases",
+    "composite_rejected_trees",
+    "composite_cancelled_exchanges",
+    "concurrent_summary_cases",
+    "delayed_backlog_restarts",
+    "delayed_backlog_calls",
+    "delayed_backlog_executions",
     "audio_deliveries",
     "audio_playback_acknowledgements",
     "process_soak_windows",
@@ -201,6 +210,12 @@ def main() -> None:
             totals["browser_deletes"] += int(data.get("deletes", 0))
             lines += [
                 f"Browser transitions: {data['count']}; creates: {data.get('creates', 0)}; edits: {data.get('edits', 0)}; deletes: {data.get('deletes', 0)}; maximum observed panel DOM nodes: {data['maxNodes']}",
+                "",
+            ]
+        if data.get("retention"):
+            totals["browser_retention_windows"] += len(data["retention"])
+            lines += [
+                f"Chromium post-GC retention windows: {len(data['retention'])}; findings: {data.get('retentionFindings', [])}",
                 "",
             ]
         if "cycles" in data:

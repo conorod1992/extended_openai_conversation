@@ -159,12 +159,32 @@ export function createRequestRuleConditionSelector(panel, host) {
   return selector;
 }
 
+async function waitForConditionLabel(panelRef, registry) {
+  try {
+    await registry.whenDefined("ha-selector");
+    const panel = panelRef.deref();
+    if (!panel?.isConnected) return;
+    const selector = panel.shadowRoot?.querySelector("#rule-condition-host ha-selector");
+    if (selector) await labelConditionAddControl(panel, selector);
+  } finally {
+    const panel = panelRef.deref();
+    if (panel) panel._eocConditionLabelPending = false;
+  }
+}
+
 async function labelConditionAddControl(panel, selector) {
   // The native selector owns the plus button inside its nested shadow roots.
   // Label that control after Lit finishes rendering, without replacing its UI.
   const registry = selector.ownerDocument?.defaultView?.customElements || globalThis.customElements;
   if (!registry) return;
-  await registry.whenDefined("ha-selector");
+  if (!registry.get("ha-selector")) {
+    // One weak waiter per panel: repeated renders must not retain obsolete
+    // selectors while HA's lazy component definition is still unavailable.
+    if (panel._eocConditionLabelPending) return;
+    panel._eocConditionLabelPending = true;
+    return waitForConditionLabel(new WeakRef(panel), registry);
+  }
+
   let element = selector;
   for (const tag of ["ha-selector-condition", "ha-automation-condition"]) {
     await element.updateComplete;

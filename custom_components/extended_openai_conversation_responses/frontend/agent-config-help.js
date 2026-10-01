@@ -102,8 +102,19 @@ export function bindHelp(panel) {
   popover.querySelector(".help-close")?.addEventListener("click", () => closeHelp(panel));
   popover.addEventListener("click", (event) => { if (event.target === popover) closeHelp(panel); });
   popover.addEventListener("cancel", (event) => { event.preventDefault(); closeHelp(panel); });
-  root.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && popover.open) {
+  bindHelpKeyboard(panel);
+}
+
+
+function bindHelpKeyboard(panel) {
+  const root = panel.shadowRoot;
+  if (root.__eocHelpKeyboardBound) return;
+  root.__eocHelpKeyboardBound = true;
+  // Keep the root listener independent of bindHelp's per-render popover closure.
+  // Resolve the current dialog so discarded route DOM can be collected.
+  root.addEventListener("keydown", event => {
+    const popover = root.querySelector("#config-help-popover");
+    if (event.key === "Escape" && popover?.open) {
       event.preventDefault();
       closeHelp(panel);
     }

@@ -650,6 +650,7 @@
     "tests_stress/test_complete_user_journeys.py::test_complete_user_journey[model-api-migration]",
     "tests_stress/test_conversation_id_collision.py::test_same_conversation_id_cannot_cross_user_or_agent_boundaries",
     "tests_stress/test_cross_feature_chaos.py::test_seeded_cross_store_chaos_preserves_valid_agent_state",
+    "tests_stress/test_delayed_backlog.py::test_overdue_backlog_drains_once_across_two_restarts",
     "tests_stress/test_delayed_mutation_matrix.py::test_delayed_tool_uses_live_state_at_due_time[backup_restore_removed_tool]",
     "tests_stress/test_delayed_mutation_matrix.py::test_delayed_tool_uses_live_state_at_due_time[entity_removed]",
     "tests_stress/test_delayed_mutation_matrix.py::test_delayed_tool_uses_live_state_at_due_time[entity_unavailable]",
@@ -673,6 +674,10 @@
     "tests_stress/test_evidence_manifest.py::test_governance_cannot_cite_itself_as_semantic_evidence",
     "tests_stress/test_evidence_manifest.py::test_supported_features_have_reviewed_evidence_layer_entries",
     "tests_stress/test_execution_contract.py::test_browser_prerequisite_missing_rejects_successful_job",
+    "tests_stress/test_execution_contract.py::test_browser_retention_gate_rejects_sustained_growth_but_accepts_plateau[documents]",
+    "tests_stress/test_execution_contract.py::test_browser_retention_gate_rejects_sustained_growth_but_accepts_plateau[heap_used]",
+    "tests_stress/test_execution_contract.py::test_browser_retention_gate_rejects_sustained_growth_but_accepts_plateau[listeners]",
+    "tests_stress/test_execution_contract.py::test_browser_retention_gate_rejects_sustained_growth_but_accepts_plateau[nodes]",
     "tests_stress/test_execution_contract.py::test_compatibility_requires_each_reviewed_case[minimum-ha-features]",
     "tests_stress/test_execution_contract.py::test_compatibility_requires_each_reviewed_case[native-browser-firefox]",
     "tests_stress/test_execution_contract.py::test_compatibility_requires_each_reviewed_case[native-browser-webkit-mobile]",
@@ -688,10 +693,10 @@
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[critical]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[duplicate-scan]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[empty-scanner]",
-      "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[wrong-theme]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[expired-allowance]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[missing-scan]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[serious]",
+    "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[wrong-theme]",
     "tests_stress/test_execution_contract.py::test_overnight_latency_evidence_rejects_incomplete_or_wrong_candidate[missing-backend]",
     "tests_stress/test_execution_contract.py::test_overnight_latency_evidence_rejects_incomplete_or_wrong_candidate[missing-route]",
     "tests_stress/test_execution_contract.py::test_overnight_latency_evidence_rejects_incomplete_or_wrong_candidate[missing-sample]",
@@ -718,6 +723,8 @@
     "tests_stress/test_extreme_context_matrix.py::test_combined_context_boundary_tiers_use_real_assist_and_provider_wire[broad]",
     "tests_stress/test_extreme_context_matrix.py::test_combined_context_boundary_tiers_use_real_assist_and_provider_wire[edge]",
     "tests_stress/test_extreme_context_matrix.py::test_combined_context_boundary_tiers_use_real_assist_and_provider_wire[pressure]",
+    "tests_stress/test_extreme_context_matrix.py::test_concurrent_deferred_summaries_keep_owner_and_recent_turns[chat_completions]",
+    "tests_stress/test_extreme_context_matrix.py::test_concurrent_deferred_summaries_keep_owner_and_recent_turns[responses]",
     "tests_stress/test_frontend_interaction_inventory.py::test_active_plans_allow_low_risk_work_but_never_reopen_high_risk_coverage",
     "tests_stress/test_frontend_interaction_inventory.py::test_completed_frontend_roadmap_entries_are_not_left_planned",
     "tests_stress/test_frontend_interaction_inventory.py::test_coverage_plans_reject_unaccountable_or_unbounded_gaps[change0]",
@@ -745,6 +752,15 @@
     "tests_stress/test_function_provider_wire.py::test_stale_function_identity_is_not_rebound_after_provider_reply[tool_group_aba]",
     "tests_stress/test_function_provider_wire_remaining.py::test_composite_late_failure_preserves_one_completed_side_effect[chat_completions]",
     "tests_stress/test_function_provider_wire_remaining.py::test_composite_late_failure_preserves_one_completed_side_effect[responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_composite_resource_tree_rejected_before_effects[cyclic]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_composite_resource_tree_rejected_before_effects[deep-singleton]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_composite_resource_tree_rejected_before_effects[deep]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_composite_resource_tree_rejected_before_effects[wide]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_nested_composite_cancellation_stops_later_side_effect_and_recovers",
+    "tests_stress/test_function_provider_wire_remaining.py::test_public_assist_multicall_dispatch_concurrency[mixed-serial-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_public_assist_multicall_dispatch_concurrency[mixed-serial-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_public_assist_multicall_dispatch_concurrency[safe-overlap-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_public_assist_multicall_dispatch_concurrency[safe-overlap-responses]",
     "tests_stress/test_function_provider_wire_remaining.py::test_remaining_function_errors_are_serialized_on_provider_wire[bash_nonzero-chat_completions]",
     "tests_stress/test_function_provider_wire_remaining.py::test_remaining_function_errors_are_serialized_on_provider_wire[bash_nonzero-responses]",
     "tests_stress/test_function_provider_wire_remaining.py::test_remaining_function_errors_are_serialized_on_provider_wire[edit_file_no_match-chat_completions]",
@@ -775,6 +791,26 @@
     "tests_stress/test_function_provider_wire_remaining.py::test_remaining_function_type_executes_on_provider_wire[sqlite-responses]",
     "tests_stress/test_function_provider_wire_remaining.py::test_remaining_function_type_executes_on_provider_wire[write_file-chat_completions]",
     "tests_stress/test_function_provider_wire_remaining.py::test_remaining_function_type_executes_on_provider_wire[write_file-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[chunked-rest-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[chunked-rest-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[chunked-scrape-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[chunked-scrape-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[disconnect-rest-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[disconnect-rest-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[disconnect-scrape-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[disconnect-scrape-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[encoding-rest-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[encoding-rest-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[encoding-scrape-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[encoding-scrape-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[length-rest-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[length-rest-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[length-scrape-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[length-scrape-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[trickle-rest-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[trickle-rest-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[trickle-scrape-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[trickle-scrape-responses]",
     "tests_stress/test_generated_state_lifecycle.py::test_generated_valid_states_cross_real_ha_and_sdk_wire",
     "tests_stress/test_generated_valid_states.py::test_covering_generator_is_valid_complete_bounded_and_reproducible",
     "tests_stress/test_generated_valid_states.py::test_every_persistent_field_and_enum_is_classified",
@@ -1369,7 +1405,12 @@
       "process_soak_windows": 5
     },
     "functions": {
-      "actual_function_executions": 1
+      "actual_function_executions": 1,
+      "assist_safe_overlap": 2,
+      "assist_mixed_serial": 2,
+      "remote_resource_recovery_cases": 20,
+      "composite_rejected_trees": 4,
+      "composite_cancelled_exchanges": 1
     },
     "request-rules": {
       "ha_service_calls": 1,
@@ -1383,12 +1424,16 @@
       "public_turns": 1
     },
     "process-chaos": {
-      "process_terminations": 1
+      "process_terminations": 1,
+      "delayed_backlog_restarts": 2,
+      "delayed_backlog_calls": 50,
+      "delayed_backlog_executions": 30
     },
     "browser": {
       "browser_creates": 1,
       "browser_edits": 1,
-      "multi_tab_conflicts": 1
+      "multi_tab_conflicts": 1,
+      "browser_retention_windows": 8
     },
     "browser-firefox": {
       "multi_tab_conflicts": 1
@@ -1411,6 +1456,9 @@
     "provider-resilience": {
       "tls_verified_requests": 4,
       "transport_tool_recovery_cases": 2
+    },
+    "large-installation": {
+      "concurrent_summary_cases": 2
     }
   },
   "selections": {

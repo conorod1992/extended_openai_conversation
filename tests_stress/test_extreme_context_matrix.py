@@ -554,3 +554,213 @@ async def test_combined_context_boundary_tiers_use_real_assist_and_provider_wire
         recoveries=1,
         elapsed_seconds=round(perf_counter() - started, 3),
     )
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+async def test_concurrent_deferred_summaries_keep_owner_and_recent_turns(
+    hass, monkeypatch, stress_seed, stress_trace, mode
+):
+    """Public Assist + real SDK traffic isolates pending, failed and cancelled summaries."""
+    import asyncio
+    import re
+
+    import httpx
+
+    from custom_components.extended_openai_conversation_responses import context_summary
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONTEXT_TRUNCATE_SUMMARIZE,
+    )
+    from tests_real_ha.test_provider_wire_e2e import (
+        _raw_client,
+        _response_object,
+        _responses_sse_text,
+    )
+
+    assert context_summary.MAX_PENDING_CONTEXT_SUMMARIES == 128
+    # Exercise the production capacity branch with a reviewed small capacity.
+    monkeypatch.setattr(context_summary, "MAX_PENDING_CONTEXT_SUMMARIES", 4)
+    users = [
+        MockUser(
+            id=f"summary-owner-{n}", name=f"Summary owner {n}", is_owner=True
+        ).add_to_hass(hass)
+        for n in range(3)
+    ]
+    entry = _make_entry(
+        "Concurrent summaries",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: mode,
+            CONF_CHAT_MODEL: "gpt-5.6",
+            CONF_FUNCTION_TOOLS: [],
+            CONF_CONTEXT_THRESHOLD: 1000,
+            CONF_CONTEXT_TRUNCATE_STRATEGY: CONTEXT_TRUNCATE_SUMMARIZE,
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    started = {n: asyncio.Event() for n in range(4)}
+    release = {n: asyncio.Event() for n in range(4)}
+    requests, summary_order, traffic = [], [], {n: 0 for n in range(6)}
+    summary_requests = []
+
+    async def send(request, *args, **kwargs):
+        body = json.loads(request.content)
+        serialized = json.dumps(body)
+        owners = set(map(int, re.findall(r"PRIVATE-(\d+)", serialized)))
+        assert len(owners) == 1, f"Cross-conversation provider context: {owners}"
+        number = owners.pop()
+        requests.append((number, body))
+        if not body.get("stream", False):
+            summary_requests.append(number)
+            if number < 4:
+                started[number].set()
+                await release[number].wait()
+            if number == 1:
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": "fixture summary rejected",
+                            "type": "invalid_request_error",
+                        }
+                    },
+                    request=request,
+                )
+            summary_order.append(number)
+            text = f"SUMMARY-PRIVATE-{number}"
+            payload = {
+                "id": f"summary-{number}",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-5.6",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": text},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+            if mode == "responses":
+                payload = _response_object(
+                    f"summary-{number}",
+                    [
+                        {
+                            "id": f"message-{number}",
+                            "type": "message",
+                            "role": "assistant",
+                            "status": "completed",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": text,
+                                    "annotations": [],
+                                    "logprobs": [],
+                                }
+                            ],
+                        }
+                    ],
+                )
+            return httpx.Response(200, json=payload, request=request)
+        traffic[number] += 1
+        tokens = 10000 if traffic[number] == 3 else 50
+        text = f"Reply PRIVATE-{number}"
+        if mode == "chat_completions":
+            content = _text_with_usage(text, tokens)
+        else:
+            events = [
+                json.loads(line[6:])
+                for line in _responses_sse_text(text).decode().splitlines()
+                if line.startswith("data: ")
+            ]
+            events[-1]["response"]["usage"] = {
+                "input_tokens": tokens,
+                "output_tokens": 10,
+                "total_tokens": tokens + 10,
+            }
+            content = "".join(
+                f"data: {json.dumps(event)}\n\n" for event in events
+            ).encode()
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=content,
+            request=request,
+        )
+
+    monkeypatch.setattr(_raw_client(agent)._client, "send", send)
+    conversations = {}
+    followups = []
+
+    async def say(number, text):
+        result = await conversation.async_converse(
+            hass=hass,
+            text=f"{text} PRIVATE-{number} " + "private history " * 100,
+            conversation_id=conversations.get(number),
+            context=Context(user_id=users[number // 2].id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+        conversations[number] = result.conversation_id
+        assert _speech(result) == f"Reply PRIVATE-{number}"
+        return result
+
+    try:
+        for number in range(6):
+            await say(number, "oldest")
+            await say(number, "middle")
+        for number in range(6):
+            await say(number, "RECENT")
+            if number < 4:
+                await asyncio.wait_for(started[number].wait(), 10)
+        manager = agent._deferred_context_summary_manager
+        assert len(manager._pending) == 4
+        assert (
+            len(summary_requests) == 6
+        )  # overflow uses foreground fallback, not unbounded tasks
+        assert len(set(conversations.values())) == 6
+        pending_by_number = {
+            n: manager._pending[conversations[n]].task for n in range(4)
+        }
+        followups = [asyncio.create_task(say(n, "FOLLOWUP")) for n in range(4)]
+        await asyncio.sleep(0)
+        assert not any(task.done() for task in followups)
+        pending_by_number[2].cancel()
+        await asyncio.gather(pending_by_number[2], return_exceptions=True)
+        order = [3, 1, 0]
+        random.Random(stress_seed).shuffle(order)
+        for number in order:
+            release[number].set()
+            await asyncio.gather(pending_by_number[number], return_exceptions=True)
+        await asyncio.wait_for(asyncio.gather(*followups), 15)
+        for number in range(4):
+            body = [body for n, body in requests if n == number and body.get("stream")][
+                -1
+            ]
+            text = json.dumps(body)
+            assert "FOLLOWUP" in text and "RECENT" in text
+            assert (f"SUMMARY-PRIVATE-{number}" in text) == (number not in {1, 2})
+        assert manager._pending == {}
+        await say(5, "HEALTHY-AFTER-SUMMARIES")
+        assert manager._pending == {}
+        record(
+            stress_trace,
+            "concurrent_summary_isolation",
+            mode=mode,
+            conversations=6,
+            owners=3,
+            summary_requests=len(summary_requests),
+            concurrent_summary_cases=1,
+            bounded_pending=4,
+            failed_summaries=1,
+            cancelled_summaries=1,
+            completion_order=summary_order,
+            privacy_probes=len(requests),
+        )
+    finally:
+        for event in release.values():
+            event.set()
+        for task in followups:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*followups, return_exceptions=True)

@@ -12,6 +12,38 @@ from homeassistant.helpers import config_validation as cv, llm
 
 from .base import Function
 
+MAX_COMPOSITE_DEPTH = 32
+MAX_COMPOSITE_FUNCTIONS = 256
+
+
+def _validate_resources(config: dict[str, Any]) -> None:
+    """Bound the tree before recursive schema copying or any side effect."""
+    stack = [(config, 0, frozenset())]
+    count = 0
+    while stack:
+        node, depth, ancestors = stack.pop()
+        count += 1
+        if depth > MAX_COMPOSITE_DEPTH or count > MAX_COMPOSITE_FUNCTIONS:
+            raise HomeAssistantError(
+                "Composite function exceeds depth/node safety limits (32 levels, 256 functions)"
+            )
+        if id(node) in ancestors:
+            raise HomeAssistantError(
+                "Composite function contains a recursive configuration"
+            )
+        if not isinstance(node, dict) or node.get("type") != "composite":
+            continue
+        sequence = node.get("sequence", [])
+        sequence = sequence if isinstance(sequence, list) else [sequence]
+        if sequence:
+            if len(sequence) > MAX_COMPOSITE_FUNCTIONS:
+                raise HomeAssistantError(
+                    "Composite function exceeds depth/node safety limits (32 levels, 256 functions)"
+                )
+            stack.extend(
+                (child, depth + 1, ancestors | {id(node)}) for child in sequence
+            )
+
 
 class CompositeFunction(Function):
     def __init__(self) -> None:
@@ -27,6 +59,10 @@ class CompositeFunction(Function):
                 }
             )
         )
+
+    def validate_schema(self, function_config: dict[str, Any]) -> dict[str, Any]:
+        _validate_resources(function_config)
+        return super().validate_schema(function_config)
 
     def function_schema(self, function_config: Any) -> dict[str, Any]:
         """Validate a composite function schema."""
@@ -50,6 +86,7 @@ class CompositeFunction(Function):
     ) -> Any:
         from . import get_function
 
+        _validate_resources(function_config)
         sequence = function_config["sequence"]
         if not sequence:
             raise HomeAssistantError(

@@ -14,7 +14,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import pytest
 import yaml
 
 from tests_real_ha.process_harness import run_python_child
@@ -45,9 +44,7 @@ def _tool_config() -> dict[str, Any]:
                     "marker": {"type": "string"},
                     "delay": {
                         "type": "object",
-                        "properties": {
-                            "seconds": {"type": "number", "minimum": 0}
-                        },
+                        "properties": {"seconds": {"type": "number", "minimum": 0}},
                         "required": ["seconds"],
                         "additionalProperties": False,
                     },
@@ -100,11 +97,13 @@ def _stage_component(source: Path, destination: Path) -> None:
     )
 
 
-async def _create_entry_and_schedule(config_dir: Path) -> None:
+async def _create_entry_and_schedule(
+    config_dir: Path, *, delay_seconds: int = 30, after_schedule: Any = None
+) -> None:
     """First process: create the entry, persist a pending call, then stop HA."""
     from homeassistant import bootstrap, runner
     from homeassistant.components import conversation
-    from homeassistant.config_entries import ConfigEntryState, SOURCE_USER
+    from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
     from homeassistant.const import CONF_API_KEY, CONF_NAME
     from homeassistant.core import Context
     from homeassistant.data_entry_flow import FlowResultType
@@ -186,7 +185,7 @@ async def _create_entry_and_schedule(config_dir: Path) -> None:
         tool_input = llm.ToolInput(
             id="call-delayed-process-restart",
             tool_name=_TOOL_NAME,
-            tool_args={"marker": _MARKER, "delay": {"seconds": 30}},
+            tool_args={"marker": _MARKER, "delay": {"seconds": delay_seconds}},
             external=True,
         )
         llm_context = SimpleNamespace(
@@ -210,7 +209,10 @@ async def _create_entry_and_schedule(config_dir: Path) -> None:
         assert record.tool_name == _TOOL_NAME
         assert record.user_id == user.id
         assert record.device_id == _DEVICE_ID
-        assert record.arguments == {"marker": _MARKER, "delay": {"seconds": 30}}
+        assert record.arguments == {
+            "marker": _MARKER,
+            "delay": {"seconds": delay_seconds},
+        }
 
         (config_dir / _METADATA_FILE).write_text(
             json.dumps(
@@ -223,6 +225,8 @@ async def _create_entry_and_schedule(config_dir: Path) -> None:
             ),
             encoding="utf-8",
         )
+        if after_schedule is not None:
+            await after_schedule(hass, agent, user, function_tool)
     finally:
         await hass.async_stop()
 
@@ -277,9 +281,7 @@ async def _recover_and_execute(config_dir: Path) -> None:
 
         assert manager._records == {}
         executions = _read_executions(config_dir)
-        assert executions == [
-            {"marker": _MARKER, "user_id": metadata["user_id"]}
-        ]
+        assert executions == [{"marker": _MARKER, "user_id": metadata["user_id"]}]
     finally:
         await hass.async_stop()
 
@@ -370,7 +372,6 @@ def test_delayed_tool_survives_process_restart_and_never_replays_execution_bound
     assert len(_read_executions(config_dir)) == 1
     after_execution = _read_store(config_dir)
     assert after_execution["data"]["calls"] == []
-
 
 
 if __name__ == "__main__" and os.environ.get(_CHILD_PHASE):

@@ -55,7 +55,13 @@ export function updateDialogs(panel, markup, {preserveEditors = false} = {}) {
   template.innerHTML = markup;
   const desired = new Set([...template.content.children].map(child => child.id));
   for (const child of [...host.children]) {
-    if (!desired.has(child.id) || (!preserveEditors && !RETAINED_DIALOGS.has(child.id))) child.remove();
+    if (!desired.has(child.id) || (!preserveEditors && !RETAINED_DIALOGS.has(child.id))) {
+      // Release radio-group ownership before detaching the dialog subtree.
+      // Chromium can otherwise retain discarded import dialogs in its native
+      // shadow-root group registry even after JavaScript garbage collection.
+      child.querySelectorAll('input[type="radio"][name]').forEach(input => { input.name = ""; });
+      child.remove();
+    }
   }
   for (const child of [...template.content.children]) {
     if (!host.querySelector(`#${child.id}`)) host.append(child);

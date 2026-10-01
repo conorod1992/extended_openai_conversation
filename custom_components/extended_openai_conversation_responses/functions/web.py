@@ -80,7 +80,12 @@ class _BoundedResponse:
         """Decode the same bounded body that aiohttp would expose as text."""
         body = await self.read()
         selected_encoding = encoding or self._response.charset or "utf-8"
-        return body.decode(selected_encoding, errors=errors)
+        try:
+            return body.decode(selected_encoding, errors=errors)
+        except (UnicodeError, LookupError) as err:
+            raise HomeAssistantError(
+                "Remote response cannot be decoded with the configured encoding"
+            ) from err
 
 
 class _BoundedRequestContext:
@@ -238,6 +243,8 @@ class ScrapeFunction(Function):
             scrape.const.DEFAULT_SCAN_INTERVAL,
         )
         await coordinator.async_refresh()
+        if coordinator.data is None:
+            raise HomeAssistantError("Remote scrape response is unavailable")
 
         new_arguments = dict(arguments)
 
