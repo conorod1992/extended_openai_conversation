@@ -18,7 +18,7 @@ MAX_COMPOSITE_FUNCTIONS = 256
 
 def _validate_resources(config: dict[str, Any]) -> None:
     """Bound the tree before recursive schema copying or any side effect."""
-    stack = [(config, 0, frozenset())]
+    stack: list[tuple[Any, int, frozenset[int]]] = [(config, 0, frozenset())]
     count = 0
     while stack:
         node, depth, ancestors = stack.pop()
