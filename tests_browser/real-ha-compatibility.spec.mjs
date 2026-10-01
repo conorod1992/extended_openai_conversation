@@ -67,6 +67,7 @@ test("HA native components and actual Assist path remain compatible", async ({co
   await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
   await expect(panel.locator(".request-rule-card").filter({hasText:"Compatibility route"})).toBeVisible();
   await panel.locator("#eoc-rule-live-test summary").click();
+  await expect(panel.locator("#eoc-rule-live-test")).toHaveAttribute("data-eoc-bound", "");
   await panel.locator("#eoc-rule-live-text").fill("compatibility smoke");
   await panel.locator("#eoc-rule-live-run").click();
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
