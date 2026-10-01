@@ -1,10 +1,12 @@
 name: Frontend Latency Diagnostics
 
 on:
+  schedule:
+    - cron: "37 2 * * *"
   workflow_dispatch:
     inputs:
       baseline_ref:
-        description: "Baseline branch/tag/SHA (blank = current develop for a self-comparison)"
+        description: "Reviewed baseline branch/tag/SHA (blank = pinned overnight baseline)"
         required: false
         type: string
       runs:
@@ -26,7 +28,7 @@ concurrency:
 
 jobs:
   diagnose:
-    name: Compare baseline with current develop
+    name: Genuine latency and accessibility overnight
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -44,10 +46,10 @@ jobs:
         shell: bash
 
     steps:
-      - name: Checkout current develop
+      - name: Checkout immutable invocation candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: develop
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Trust mounted checkout for Git
@@ -57,13 +59,14 @@ jobs:
         env:
           BASELINE_REF: ${{ inputs.baseline_ref }}
         run: |
-          git fetch origin develop
-          CURRENT_SHA="$(git rev-parse origin/develop)"
+          CURRENT_SHA="$(git rev-parse HEAD)"
+          test "$CURRENT_SHA" = "${{ github.sha }}"
           if [ -n "$BASELINE_REF" ]; then
             git fetch origin "$BASELINE_REF"
             BASELINE_SHA="$(git rev-parse FETCH_HEAD)"
           else
-            BASELINE_SHA="$CURRENT_SHA"
+            BASELINE_SHA="$(python -c 'import json; print(json.load(open("ci/frontend_latency/overnight_policy.json"))["baseline_sha"])')"
+            git fetch origin "$BASELINE_SHA"
           fi
           echo "CURRENT_SHA=$CURRENT_SHA" >> "$GITHUB_ENV"
           echo "BASELINE_SHA=$BASELINE_SHA" >> "$GITHUB_ENV"
@@ -100,14 +103,14 @@ jobs:
         run: |
           pip check
           node --version
-          npx playwright --version
-          npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+          npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0 axe-core@4.11.0
 
       - name: Measure baseline
         env:
           RUN_EOAI_LATENCY_DIAGNOSTICS: "1"
           EOAI_LATENCY_LABEL: baseline
-          EOAI_LATENCY_RUNS: ${{ inputs.runs }}
+          EOAI_LATENCY_RUNS: ${{ inputs.runs || '3' }}
+          EOAI_LATENCY_HARNESS_SHA: ${{ env.CURRENT_SHA }}
           EOAI_LATENCY_OUTPUT: latency-results/baseline.json
         run: |
           git checkout --force "$BASELINE_SHA"
@@ -117,20 +120,31 @@ jobs:
           pytest ci/frontend_latency/test_latency_diagnostics.py::test_manual_frontend_latency_diagnostics \
             -q \
             --asyncio-mode=auto \
-            --timeout=360
+            --timeout=660
 
       - name: Measure current develop
         env:
           RUN_EOAI_LATENCY_DIAGNOSTICS: "1"
           EOAI_LATENCY_LABEL: current
-          EOAI_LATENCY_RUNS: ${{ inputs.runs }}
+          EOAI_LATENCY_RUNS: ${{ inputs.runs || '3' }}
+          EOAI_LATENCY_HARNESS_SHA: ${{ env.CURRENT_SHA }}
           EOAI_LATENCY_OUTPUT: latency-results/current.json
         run: |
           git checkout --force "$CURRENT_SHA"
           pytest ci/frontend_latency/test_latency_diagnostics.py::test_manual_frontend_latency_diagnostics \
             -q \
             --asyncio-mode=auto \
-            --timeout=360
+            --timeout=660
+
+      - name: Scan genuine HA accessibility semantics
+        env:
+          RUN_EOAI_ACCESSIBILITY: "1"
+          EOAI_ACCESSIBILITY_OUTPUT: latency-results/accessibility.json
+        run: pytest ci/frontend_latency/test_frontend_accessibility.py -q --asyncio-mode=auto --timeout=600 --tb=short
+
+      - name: Require complete exact-source frontend evidence
+        if: always()
+        run: python -m ci.frontend_latency.review latency-results
 
       - name: Compare results
         run: |
@@ -147,4 +161,4 @@ jobs:
           name: frontend-latency-diagnostics
           path: latency-results/
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30

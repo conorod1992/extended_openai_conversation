@@ -2,11 +2,11 @@ import {defineConfig, devices} from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
-  testMatch: "latency.spec.mjs",
+  testMatch: ["latency.spec.mjs", "accessibility.spec.mjs"],
   outputDir: "../../latency-results/playwright",
   fullyParallel: false,
   workers: 1,
-  timeout: 240_000,
+  timeout: 540_000,
   expect: {timeout: 30_000},
   reporter: "line",
   use: {

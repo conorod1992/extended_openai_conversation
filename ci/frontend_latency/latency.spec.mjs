@@ -1,8 +1,10 @@
 import {mkdir, writeFile} from "node:fs/promises";
 import {dirname} from "node:path";
+import {createRequire} from "node:module";
 import {expect, test} from "@playwright/test";
 import {LATENCY_ROUTES, managementRouteState, waitForLatencyRoute, waitForManagementRouteReady} from "./routes.mjs";
 
+const require = createRequire(import.meta.url);
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
 const output = process.env.EOAI_BROWSER_LATENCY_OUTPUT;
@@ -131,11 +133,14 @@ test("collect genuine HA cold-route latency diagnostics", async ({browser}) => {
   const samples = [];
   for (const route of LATENCY_ROUTES) {
     for (let iteration = 1; iteration <= runs; iteration += 1) {
+      console.log(`Latency ${label}: ${route.name} sample ${iteration}/${runs}`);
       const sample = await measureRoute(browser, authData, route, iteration);
       samples.push(sample);
+      await mkdir(dirname(output), {recursive:true});
+      await writeFile(output, JSON.stringify({label, runs, samples, environment:{chromium:browser.version(), playwright:require("@playwright/test/package.json").version, axe:require("axe-core/package.json").version}}, null, 2));
       if (sample.supported === false) break;
     }
   }
   await mkdir(dirname(output), {recursive: true});
-  await writeFile(output, JSON.stringify({label, runs, samples}, null, 2));
+  await writeFile(output, JSON.stringify({label, runs, samples, environment:{chromium:browser.version(), playwright:require("@playwright/test/package.json").version, axe:require("axe-core/package.json").version}}, null, 2));
 });
