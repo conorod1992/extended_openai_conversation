@@ -38,6 +38,20 @@ test("local command search explains no matches and clears without losing selecti
   await panel.evaluate(h=>{h._result.local_handling={supported:true,intents:[{intent:"HassTurnOn",label:"Turn on devices"}]};h._draft.local_intents_enabled=true;h._render();});
   const selected=panel.locator('[data-local-intent-exclusion]');
   await selected.check();
+  await panel.locator('#local-intent-search').fill('d');
+  await expect(panel.locator('[data-local-intent-choice]').first()).toBeVisible();
+  await panel.locator('#local-intent-search').fill('de');
+  await expect(panel.locator('[data-local-intent-choice]').first()).toBeVisible();
+  await expect(panel.locator('#local-intents-empty')).toBeHidden();
+  const delayedChoice=panel.locator('[data-local-intent-choice]').first();
+  const delayedCheckbox=delayedChoice.locator('input[type="checkbox"]');
+  await expect(delayedCheckbox).toHaveCSS('width','18px');
+  await expect(delayedCheckbox).toHaveCSS('height','18px');
+  const [titleBox,descriptionBox]=await Promise.all([
+    delayedChoice.locator('strong').boundingBox(),
+    delayedChoice.locator('small').boundingBox(),
+  ]);
+  expect(descriptionBox.y).toBeGreaterThan(titleBox.y);
   await panel.locator('#local-intent-search').fill('nonexistentcommandxyz');
   await expect(panel.locator('#local-intents-empty')).toBeVisible();
   await expect(panel.locator('[data-local-intent-choice]:visible')).toHaveCount(0);
