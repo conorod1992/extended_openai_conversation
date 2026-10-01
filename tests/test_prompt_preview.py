@@ -68,6 +68,8 @@ def test_new_agent_defaults_use_first_class_volatile_context() -> None:
     assert options[CONF_PROMPT] == DEFAULT_PROMPT
     assert "now()" not in DEFAULT_PROMPT
     assert "exposed_entities" not in DEFAULT_PROMPT
+    assert "{% if skills" not in DEFAULT_PROMPT
+    assert "load_skill" not in DEFAULT_PROMPT
 
 
 def _options() -> dict:
@@ -180,14 +182,28 @@ def test_default_prompt_segmentation_is_byte_identical(
         skills=skills,
     )
 
-    assert result.text == legacy_rendered
-    assert [section.key for section in result.sections] == [
-        "default_prompt_static",
-        "user_prompt",
-    ]
-    assert result.sections[0].volatility == "stable"
-    assert result.sections[0].text == _DEFAULT_PROMPT_STABLE_PREFIX
-    assert result.sections[1].volatility == "mixed"
+    expected_keys = ["default_prompt_static", "user_prompt"]
+    if skills:
+        expected_keys.insert(0, "skills_instructions")
+        assert result.text.startswith(
+            "## Skills\n"
+            "Use load_skill with a skill name when one of these skills is relevant:\n"
+            "- lighting: Lighting guidance\n"
+        )
+        assert result.text.endswith(legacy_rendered)
+    else:
+        assert result.text == legacy_rendered
+
+    assert [section.key for section in result.sections] == expected_keys
+    default_section = next(
+        section for section in result.sections if section.key == "default_prompt_static"
+    )
+    user_section = next(
+        section for section in result.sections if section.key == "user_prompt"
+    )
+    assert default_section.volatility == "stable"
+    assert default_section.text == _DEFAULT_PROMPT_STABLE_PREFIX
+    assert user_section.volatility == "mixed"
 
 
 def test_effective_prompt_keeps_user_block_whole_and_moves_volatile_context_last(
