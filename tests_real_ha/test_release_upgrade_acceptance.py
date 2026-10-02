@@ -15,7 +15,6 @@ import sys
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import pytest
 import yaml
 
 DOMAIN = "extended_openai_conversation_responses"
@@ -28,10 +27,14 @@ _CONFIG_DIR_ENV = "UPGRADE_ACCEPTANCE_CONFIG_DIR"
 _STATE_FILE = "upgrade-acceptance-state.json"
 _BACKUP_FILE = "upgrade-acceptance-current-backup.json"
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get(_FROM_COMPONENT_ENV) or not os.environ.get(_TO_COMPONENT_ENV),
-    reason="requires released and candidate component payloads",
-)
+if not os.environ.get(_CHILD_PHASE_ENV):
+    # Standalone HA child processes do not depend on the parent's test framework.
+    import pytest
+
+    pytestmark = pytest.mark.skipif(
+        not os.environ.get(_FROM_COMPONENT_ENV) or not os.environ.get(_TO_COMPONENT_ENV),
+        reason="requires released and candidate component payloads",
+    )
 
 
 def _manifest(component_dir: Path) -> dict[str, Any]:
