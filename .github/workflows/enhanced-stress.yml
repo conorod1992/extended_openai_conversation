@@ -667,16 +667,22 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.candidate_sha }}
       - name: Install test and selected HA environment
+        shell: bash
         run: |
           bash ci/reconcile_stable_environment.sh
           if [[ "$HA_POINT" == oldest ]]; then
             MINIMUM="$(python -c 'import json; print(json.load(open("hacs.json"))["homeassistant"])')"
+            # The slim stable runtime has no compiler; the older Core's pinned
+            # native dependencies may need wheels built for the current Python.
+            apt-get update
+            apt-get install -y --no-install-recommends build-essential
             # The newest fixture plugin calls Core APIs added after this floor.
             # 0.13.317 is the earliest published plugin for the 2026.3 series.
             python -m pip install 'pytest-homeassistant-custom-component==0.13.317'
             # The plugin was published for 2026.3.1; restore EOAI's exact beta
             # floor after its test-only dependencies have been resolved.
             python -m pip install --pre "homeassistant==$MINIMUM"
+            test "$(python -c 'from importlib.metadata import version; print(version("homeassistant"))')" = "$MINIMUM"
           elif [[ "$HA_POINT" == stable ]]; then
             test "$(python -c 'from importlib.metadata import version; print(version("homeassistant"))')" = "$EOAI_EXPECTED_HA_VERSION"
           fi
@@ -847,6 +853,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ENHANCED_CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+          ENHANCED_EXPECTED_STABLE_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
           ENHANCED_CAMPAIGNS: ${{ needs.prepare.outputs.campaigns }}
           ENHANCED_INTENSITIES: ${{ needs.prepare.outputs.intensities }}
           ENHANCED_SELECTED: ${{ inputs.campaign || 'all' }}

@@ -19,7 +19,9 @@ except ImportError:
     from execution_contract import CONTRACT, check_execution, expected_cases
 
 
-def check_stable_point(item, point, intended_version):
+def check_stable_point(
+    item, point, intended_version, *, require_reported_version=False
+):
     if point != "stable":
         return []
     tested = item.get("environment", {}).get("packages", {}).get("homeassistant")
@@ -27,6 +29,10 @@ def check_stable_point(item, point, intended_version):
         return ["Stable lane has no resolved final-release HA version"]
     if tested != intended_version:
         return [f"Stable HA intended {intended_version}, tested {tested}"]
+    if require_reported_version and item.get("ha_version") != intended_version:
+        return [
+            f"Stable HA intended {intended_version}, reported {item.get('ha_version')}"
+        ]
     return []
 
 
