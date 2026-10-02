@@ -143,13 +143,17 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
         "stable",
     ]
     assert jobs["ha-lifecycle-matrix"]["container"]["image"].endswith(":ha-stable")
-    lifecycle_install = next(
-        step["run"]
+    lifecycle_step = next(
+        step
         for step in jobs["ha-lifecycle-matrix"]["steps"]
         if step.get("name") == "Install test and selected HA environment"
     )
+    assert lifecycle_step["shell"] == "bash"
+    lifecycle_install = lifecycle_step["run"]
     assert "pytest-homeassistant-custom-component==0.13.317" in lifecycle_install
     assert "homeassistant==$MINIMUM" in lifecycle_install
+    assert 'test "$(python -c' in lifecycle_install
+    assert '= "$MINIMUM"' in lifecycle_install
     assert "$EOAI_EXPECTED_HA_VERSION" in lifecycle_install
     assert jobs["ha-lifecycle-dev"]["steps"]
     assert any(

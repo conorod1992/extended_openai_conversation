@@ -667,6 +667,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.candidate_sha }}
       - name: Install test and selected HA environment
+        shell: bash
         run: |
           bash ci/reconcile_stable_environment.sh
           if [[ "$HA_POINT" == oldest ]]; then
@@ -677,6 +678,7 @@ jobs:
             # The plugin was published for 2026.3.1; restore EOAI's exact beta
             # floor after its test-only dependencies have been resolved.
             python -m pip install --pre "homeassistant==$MINIMUM"
+            test "$(python -c 'from importlib.metadata import version; print(version("homeassistant"))')" = "$MINIMUM"
           elif [[ "$HA_POINT" == stable ]]; then
             test "$(python -c 'from importlib.metadata import version; print(version("homeassistant"))')" = "$EOAI_EXPECTED_HA_VERSION"
           fi
