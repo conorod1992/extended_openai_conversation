@@ -35,6 +35,7 @@ from .model_catalog import (
     validate_catalog_transition,
     validate_or_migrate_catalog,
 )
+from .model_lifecycle import sync_all_model_lifecycles
 from .operational_errors import log_handled_failure
 from .request_rules import SLOT_REFERENCE, async_get_request_rules
 from .strict_store import PropagatingWriteStore
@@ -401,6 +402,7 @@ class ModelCatalogManager:
                 log_handled_failure(_LOGGER, self.last_error + " operation=apply", err)
                 return self.status()
             activate_catalog(candidate)
+            sync_all_model_lifecycles(self.hass)
             self.catalog = candidate
             self.available_catalog = None
             self.last_error = None
@@ -500,6 +502,7 @@ class ModelCatalogManager:
                 )
                 return self.status()
             activate_catalog(None)
+            sync_all_model_lifecycles(self.hass)
             self.catalog = None
             self.available_catalog = available
             self.etag = etag

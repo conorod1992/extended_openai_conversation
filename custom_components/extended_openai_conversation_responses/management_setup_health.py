@@ -25,6 +25,7 @@ from .const import (
 from .management_configuration_guidance import configuration_guidance_snapshot
 from .management_function_repair import management_function_tool_health
 from .memory import get_memory_mode
+from .model_lifecycle import configured_lifecycle, confirmed_retirement_failure
 
 
 def _exposed_entity_count(hass: HomeAssistant) -> int:
@@ -70,7 +71,12 @@ def build_setup_health_facts(
             exposed_entity_count = _exposed_entity_count(hass)
 
     guidance = configuration_guidance_snapshot(entry.data, options)
+    lifecycle = configured_lifecycle(subentry)
+    lifecycle["confirmed_unavailable"] = confirmed_retirement_failure(
+        hass, entry.entry_id, subentry.subentry_id, lifecycle["model"]
+    )
     return {
+        "model_lifecycle": lifecycle,
         "provider_runtime": {
             "client_loaded": getattr(entry, "runtime_data", None) is not None,
             "provider": str(entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER)),

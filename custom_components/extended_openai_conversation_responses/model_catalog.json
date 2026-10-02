@@ -1,6 +1,6 @@
 {
-  "schema_version": 6,
-  "catalog_version": 11,
+  "schema_version": 7,
+  "catalog_version": 12,
   "compatibility": {"minimum_eoai_version": "6.8.3"},
   "defaults": {
     "status": "unknown",
@@ -324,6 +324,8 @@
       "display_name": "gpt-5.4-nano",
       "kind": "alias",
       "status": "deprecated",
+      "deprecated_at": "2026-10-01",
+      "shutdown_at": "2027-04-01",
       "lifecycle_note": "Deprecated on October 1, 2026; API shutdown on April 1, 2027. Migrate to gpt-6-luna before shutdown. Retained for existing configurations.",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
@@ -386,6 +388,8 @@
       "display_name": "gpt-5.1",
       "kind": "alias",
       "status": "deprecated",
+      "deprecated_at": "2026-10-01",
+      "shutdown_at": "2027-04-01",
       "lifecycle_note": "Deprecated on October 1, 2026; API shutdown on April 1, 2027. Migrate to gpt-6-sol before shutdown. Retained for existing configurations.",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},

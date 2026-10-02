@@ -15,6 +15,7 @@ from homeassistant.helpers import intent
 from .const import CONF_API_MODE, CONF_CHAT_MODEL, DEFAULT_API_MODE, DEFAULT_CHAT_MODEL
 from .debug import record_current_provider_failure
 from .exceptions import TokenLengthExceededError
+from .model_lifecycle import record_entity_retirement_failure
 from .operational_errors import log_handled_failure
 from .provider_errors import (
     ProviderTransportError,
@@ -59,10 +60,16 @@ def _conversation_error_result(
     if isinstance(err, OpenAIError):
         request_reauthentication(entity.hass, getattr(entity, "entry", None), err)
         record_current_provider_failure(err)
-        log_provider_failure(active_logger, f"{provider_log_message} {context}", err)
-        message = (
-            f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}"
+        retirement_message = record_entity_retirement_failure(
+            entity, err, logger=active_logger
         )
+        if retirement_message is not None:
+            message = f"Sorry, {retirement_message}"
+        else:
+            log_provider_failure(
+                active_logger, f"{provider_log_message} {context}", err
+            )
+            message = f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}"
     else:
         if isinstance(err, TokenLengthExceededError):
             active_logger.warning("Conversation failed %s: %s", context, err)

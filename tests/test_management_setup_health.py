@@ -23,18 +23,21 @@ from custom_components.extended_openai_conversation_responses.management_setup_h
 
 def _entry(*, runtime_loaded: bool = True):
     return SimpleNamespace(
+        entry_id="entry",
         data={},
         runtime_data=object() if runtime_loaded else None,
     )
 
 
 def _subentry(config=None):
-    return SimpleNamespace(data=config or agent_config_defaults())
+    return SimpleNamespace(
+        subentry_id="agent", title="Assistant", data=config or agent_config_defaults()
+    )
 
 
 def _facts(config=None, *, runtime_loaded=True, **kwargs):
     return build_setup_health_facts(
-        object(),
+        SimpleNamespace(data={}),
         _entry(runtime_loaded=runtime_loaded),
         _subentry(config),
         memory_available=kwargs.get("memory_available", True),
