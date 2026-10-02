@@ -9,6 +9,7 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "quiet_pending_manual_override_checks",
     "archive_first_intent_failure_cases",
     "archive_first_intent_disk_commits",
     "archive_intent_reload_checks",

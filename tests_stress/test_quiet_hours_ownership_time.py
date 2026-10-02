@@ -515,3 +515,100 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
         )
     finally:
         await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("kind", ["volume", "wake_sound"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_pending_quiet_control_preserves_manual_change_after_storage_failure(
+    hass,
+    monkeypatch,
+    freezer,
+    stress_trace,
+    kind,
+):
+    """A user change after a failed ownership write must not be claimed on retry."""
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    freezer.move_to(datetime(2026, 1, 10, 12, 0, tzinfo=DUBLIN))
+    _, media, wake = _install_satellite_entities(
+        hass,
+        slug="pending-manual-alpha",
+        name="Pending manual Alpha",
+        volume=0.77 if kind == "volume" else 0.08,
+        wake="on" if kind == "wake_sound" else "off",
+    )
+    calls = []
+    _install_control_services(hass, calls)
+    manager = await async_get_quiet_hours(hass)
+    manager._config = _config_from_data(
+        {
+            "enabled": True,
+            "start": "22:00",
+            "end": "07:00",
+            "max_volume": 0.20,
+            "wake_sound": "off",
+        }
+    )
+    await manager._async_save_locked()
+    target = media if kind == "volume" else wake
+    path = Path(manager._store.path)
+    native_write = Store._write_prepared_data
+    faults = []
+
+    def fail_ownership(store, mode, json_data):
+        if Path(store.path) == path and not faults:
+            active = json.loads(json_data)["data"].get("active") or {}
+            if target in active.get("controls", {}):
+                assert not calls
+                faults.append(True)
+                raise WriteError("Injected ownership write failure") from OSError(
+                    errno.EIO, "Ownership write failed before commit"
+                )
+        return native_write(store, mode, json_data)
+
+    try:
+        freezer.move_to(datetime(2026, 1, 10, 22, 5, tzinfo=DUBLIN))
+        with monkeypatch.context() as fault:
+            fault.setattr(Store, "_write_prepared_data", fail_ownership)
+            with pytest.raises(OSError):
+                await manager.async_reconcile()
+        assert len(faults) == 1 and not calls
+        pending = json.loads(path.read_text())["data"]["active"]["pending_controls"][
+            target
+        ]
+        assert pending["original_value"] == (0.77 if kind == "volume" else True)
+        # Use the actual HA control service to establish the user's changed value.
+        await hass.services.async_call(
+            "media_player" if kind == "volume" else "switch",
+            "volume_set" if kind == "volume" else "turn_off",
+            {
+                "entity_id": target,
+                **({"volume_level": 0.64} if kind == "volume" else {}),
+            },
+            blocking=True,
+        )
+        assert len(calls) == 1
+        await manager.async_shutdown()
+        manager = QuietHoursManager(hass)
+        await manager.async_setup()
+        assert target in manager.active["observed_controls"]
+        assert target not in manager.active["controls"]
+        assert target not in manager.active["pending_controls"]
+        assert len(calls) == 1
+        durable = json.loads(path.read_text())["data"]["active"]
+        assert (
+            target not in durable["controls"]
+            and target not in durable["pending_controls"]
+        )
+        freezer.move_to(datetime(2026, 1, 11, 7, 0, tzinfo=DUBLIN))
+        await manager.async_reconcile()
+        assert manager.active is None and len(calls) == 1
+        assert _volume(hass, media) == pytest.approx(0.64 if kind == "volume" else 0.08)
+        assert hass.states.get(wake).state == "off"
+        record(
+            stress_trace,
+            "summary",
+            layer="Real HA control and Store recovery",
+            quiet_pending_manual_override_checks=1,
+        )
+    finally:
+        await manager.async_shutdown()

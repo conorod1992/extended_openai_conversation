@@ -230,7 +230,8 @@ management mutations, entry into real public Assist reads, an actual target
 atomic failure, SDK tool-result inspection and committed retries for both stores.
 Readers may wait for settlement. `quiet-hours` requires observation/ownership
 write failures for both volume and wake sound with live/reloaded recovery and
-original-value restoration (eight cases). Semantic recovery counts come from
+original-value restoration (eight cases), plus two pending-intent manual-change
+checks. Semantic recovery counts come from
 manager/device assertions, rather than the generic Store fault matrix. All cases
 are mandatory at the candidate SHA; existing minima and reviewed allowances
 remain unchanged. No expensive acceptance case is added to ordinary PR CI.

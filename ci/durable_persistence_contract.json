@@ -65,9 +65,9 @@
   {
     "owner": "quiet_hours",
     "classification": "transactional_durable",
-    "guarantee": "Policy and control ownership are persisted before policy acknowledgement or device side effects.",
+    "guarantee": "Policy and control ownership are persisted before policy acknowledgement or device side effects. Failed-before-commit control writes reconcile observation and retain pending original values for live/reloaded retry without claiming manual changes.",
     "stores": [{"module": "quiet_hours_runtime.py", "constructor": "PropagatingWriteStore", "count": 1}],
-    "evidence": ["tests/test_quiet_hours_runtime.py::test_update_config_rolls_back_then_succeeds", "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable"]
+    "evidence": ["tests/test_quiet_hours_runtime.py::test_update_config_rolls_back_then_succeeds", "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable", "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value"]
   },
   {
     "owner": "broadcast_settings",

@@ -1061,6 +1061,8 @@
     "tests_stress/test_quiet_hours_ownership_time.py::test_active_policy_change_and_new_control_keep_pre_quiet_baselines",
     "tests_stress/test_quiet_hours_ownership_time.py::test_exact_boundaries_dst_and_jumps_reconcile_multiple_satellites",
     "tests_stress/test_quiet_hours_ownership_time.py::test_manual_control_changes_keep_newer_owner_state",
+    "tests_stress/test_quiet_hours_ownership_time.py::test_pending_quiet_control_preserves_manual_change_after_storage_failure[volume]",
+    "tests_stress/test_quiet_hours_ownership_time.py::test_pending_quiet_control_preserves_manual_change_after_storage_failure[wake_sound]",
     "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[live-observation-volume]",
     "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[live-observation-wake_sound]",
     "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[live-ownership-volume]",
@@ -1724,7 +1726,8 @@
     "quiet-hours": {
       "quiet_storage_failure_cases": 8,
       "quiet_storage_retry_checks": 8,
-      "quiet_storage_restoration_checks": 8
+      "quiet_storage_restoration_checks": 8,
+      "quiet_pending_manual_override_checks": 2
     }
   },
   "selections": {
