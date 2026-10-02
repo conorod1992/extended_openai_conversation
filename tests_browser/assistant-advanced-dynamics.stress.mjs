@@ -262,10 +262,10 @@ test("nightly voice mappings follow policy dependencies and persist", async ({pa
       voice_default_user_id: "",
       voice_device_mappings: {},
     });
-    host.__voiceEntityRegistry = [{
-      entity_id: "assist_satellite.kitchen",
-      device_id: "device-kitchen",
-    }];
+    const callWS = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = message => message.type === "config/entity_registry/list"
+      ? Promise.resolve([{entity_id:"assist_satellite.kitchen", device_id:"device-kitchen"}])
+      : callWS(message);
     host._render();
   });
 

@@ -146,7 +146,7 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         )
         return web.json_response({"office": old.id, "kitchen": replacement.id})
 
-    async def reload_state(_request):
+    async def reload_state_impl(_request):
         before = await _management_call(
             client, entry=entry, section="configuration", action="get"
         )
@@ -155,7 +155,7 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         )
         # Flush HA's scheduled config-entry write, then independently inspect the
         # actual disk envelope before discarding process-local managers.
-        await hass.config_entries._store._async_handle_delayed_save()
+        await hass.config_entries._store._async_callback_delayed_write()
         raw = json.loads(
             Path(hass.config.path(".storage", "core.config_entries")).read_text()
         )
@@ -191,6 +191,17 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         measured["native_ownership_reload_checks"] += 1
         record(stress_trace, "durable_reload", native_ownership_reload_checks=1)
         return web.json_response(after["config"])
+
+    async def reload_state(request):
+        try:
+            return await reload_state_impl(request)
+        except Exception as error:
+            import traceback
+
+            record(stress_trace, "durable_reload_failure", error=traceback.format_exc())
+            return web.json_response(
+                {"error": repr(error), "traceback": traceback.format_exc()}, status=500
+            )
 
     async def probe_voice(_request):
         agent = conversation.async_get_agent(hass, entry.entry_id)

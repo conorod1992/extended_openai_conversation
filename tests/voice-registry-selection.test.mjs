@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {bindVoiceMappings} from "../custom_components/extended_openai_conversation_responses/frontend/voice-identity-ui.js";
 import {deferred, TestEventTarget} from "./frontend-test-helpers.mjs";
 
-function harness(firstFails = false) {
+function harness(firstFails = false, hydration = null) {
   const ready = deferred();
   const picker = new TestEventTarget();
   const addListener = picker.addEventListener.bind(picker);
@@ -20,6 +20,7 @@ function harness(firstFails = false) {
     hass:{callWS(message) {
       assert.equal(message.type, "config/entity_registry/list");
       calls.push(message);
+      if (calls.length === 1 && hydration) return hydration.promise;
       if (calls.length === 1) return firstFails ? Promise.reject(new Error("Registry offline")) : Promise.resolve([
         {entity_id:"assist_satellite.kitchen", device_id:"device-office"},
       ]);
@@ -46,6 +47,22 @@ for (const fails of [false, true]) {
   await selected;
   assert.equal(h.hidden.value, "device-replacement");
   assert.deepEqual(JSON.parse(h.card.value), {"device-replacement":"user:office-owner"});
+}
+
+// A user can select before initial hydration settles. Its later snapshot must
+// neither lose that interaction nor overwrite the resulting association.
+{
+  const hydration = deferred();
+  const h = harness(false, hydration); await h.ready;
+  const selected = h.picker.select("assist_satellite.kitchen");
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(h.calls.length, 2);
+  h.responses[0].resolve([{entity_id:"assist_satellite.kitchen", device_id:"selected-device"}]);
+  await selected;
+  hydration.resolve([{entity_id:"assist_satellite.office", device_id:"device-office"}]);
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  assert.equal(h.picker.value, "assist_satellite.kitchen");
+  assert.equal(h.hidden.value, "selected-device");
 }
 
 // A later selection owns the row even when an older fetch completes last.

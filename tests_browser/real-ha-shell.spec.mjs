@@ -100,7 +100,9 @@ test.describe("nightly ownership", () => {
       // The committed Alpha revision is current; Beta saves through the normal UI.
       await panel.locator("#tool-save").click();
       await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
-      const reloaded = await (await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/reload`)).json();
+      const reloadResponse = await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/reload`);
+      expect(reloadResponse.ok(), await reloadResponse.text()).toBe(true);
+      const reloaded = await reloadResponse.json();
       expect(reloaded.functions.find(t => t.spec.name === beta).function.value_template).toBe("BETA_UNSAVED_DRAFT");
       expect(reloaded.function_groups.find(g => g.id === alpha).functions).toEqual([expectedAlpha]);
       await page.reload();
@@ -148,7 +150,9 @@ test.describe("nightly ownership", () => {
     const read = await panel.evaluate(host => host._call("configuration", "get"));
     expect(read.config.voice_device_mappings[process.env.REAL_HA_OLD_DEVICE]).toBe("user:ownership-office-user");
     expect(read.config.voice_device_mappings[process.env.REAL_HA_NEW_DEVICE]).toBe(`user:${process.env.REAL_HA_SMOKE_USER_ID}`);
-    const reloaded = await (await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/reload`)).json();
+    const reloadResponse = await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/reload`);
+      expect(reloadResponse.ok(), await reloadResponse.text()).toBe(true);
+      const reloaded = await reloadResponse.json();
     expect(reloaded.voice_device_mappings).toEqual(read.config.voice_device_mappings);
     const probes = await (await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/probe-voice`)).json();
     expect(probes).toEqual({owners:2, private_markers:2, authenticated_users:[null, null]});

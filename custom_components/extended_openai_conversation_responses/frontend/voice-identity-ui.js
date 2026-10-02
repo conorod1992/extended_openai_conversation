@@ -117,7 +117,7 @@ function setWarning(element,message="") {
 }
 
 async function entityRegistry(panel, selection = false) {
-  // Share concurrent hydration/selection requests, never a completed snapshot.
+  // Share concurrent hydration requests, never a completed snapshot.
   // Native HA pickers can stay mounted across entity/device registry changes.
   if (selection || !panel.__voiceEntityRegistryPromise) {
     const hass = panelHass(panel);
@@ -243,15 +243,6 @@ async function bindSatellitePicker(panel,row) {
   configureEntityPicker(panel,picker);
   const storedDeviceId = hidden.value.trim();
   const agentId = panel._agentId;
-  const entries = await entityRegistry(panel);
-  if (!row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
-  const entityId = satelliteForDeviceId(entries,storedDeviceId);
-  if (entityId) {
-    picker.value = entityId;
-    setWarning(warning);
-  } else if (storedDeviceId) {
-    setWarning(warning,`Saved device is unavailable in Home Assistant (${storedDeviceId}). It will remain saved until you replace or remove it.`);
-  }
   picker.addEventListener("value-changed",async (event) => {
     const selection = {};
     picker.__voiceSelection = selection;
@@ -282,6 +273,16 @@ async function bindSatellitePicker(panel,row) {
     setWarning(warning);
     syncMappings(panel);
   });
+  const entries = await entityRegistry(panel);
+  if (picker.__voiceSelection || !row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
+  const entityId = satelliteForDeviceId(entries,storedDeviceId);
+  if (entityId) {
+    picker.value = entityId;
+    setWarning(warning);
+  } else if (storedDeviceId) {
+    setWarning(warning,`Saved device is unavailable in Home Assistant (${storedDeviceId}). It will remain saved until you replace or remove it.`);
+  }
+
 }
 
 function bindRows(panel) {
