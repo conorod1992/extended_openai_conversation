@@ -868,6 +868,7 @@ export async function openTool(panel, index = null, initialTool = null) {
     && root.querySelector("#tool-dialog") === dialog;
   root.querySelector("#tool-dialog-title").textContent = index === null ? "Add Function Tool" : "Edit Function Tool";
   root.querySelector("#tool-dialog-meta").textContent = "Loading YAML...";
+  panel._setSaving(root.querySelector("#tool-save"), false);
   setToolEditorLoading(root, true);
   editor.setYaml("");
   status.className = "validation";
@@ -914,19 +915,40 @@ export async function openTool(panel, index = null, initialTool = null) {
 
 function toolErrorText(errors={}) { return Object.entries(errors).map(([key,value])=>`${key}: ${value}`).join(" "); }
 
-async function validateDialogTool(panel) {
+function toolEditorOperation(panel) {
+  const root = panel.shadowRoot;
+  const dialog = root.querySelector("#tool-dialog");
+  const generation = panel._toolEditorLoad;
+  const agentId = panel._agentId;
+  const agent = panel._selectedAgent?.();
+  return {
+    root, dialog,
+    yaml: getToolYamlEditor(panel).getYaml(),
+    originalName: panel._toolOriginalName,
+    revision: panel._configData?.revision,
+    destination: agent ? {entry_id: agent.entry_id, subentry_id: agent.subentry_id} : {},
+    isCurrent: () => panel._toolEditorLoad === generation && panel._agentId === agentId
+      && panel.shadowRoot === root && root.querySelector("#tool-dialog") === dialog && dialog.open,
+  };
+}
+
+async function validateDialogTool(panel, operation = toolEditorOperation(panel)) {
   const root=panel.shadowRoot;
   const status=root.querySelector("#tool-error");
+  const validation = {};
+  panel._toolValidation = validation;
+  const isCurrent = () => operation.isCurrent() && panel._toolValidation === validation;
   status.className="validation";
   status.textContent="Validating...";
   try {
-    const result=await panel._call("tools","validate_yaml",{yaml:getToolYamlEditor(panel).getYaml()});
+    const result=await panel._call("tools","validate_yaml",{yaml:operation.yaml, ...operation.destination});
+    if (!isCurrent()) return null;
     if(!result.valid){status.className="validation invalid";status.textContent=`Function configuration is invalid: ${toolErrorText(result.errors)}`;return null;}
     status.className="validation valid";
     status.textContent=`Valid function tool / Name: ${result.name} / Type: ${result.type}`;
     root.querySelector("#tool-dialog-meta").textContent=`${result.name} / ${result.type}`;
     return result.config;
-  } catch(err){status.className="validation invalid";status.textContent=err.message||String(err);return null;}
+  } catch(err){if(isCurrent()){status.className="validation invalid";status.textContent=err.message||String(err);}return null;}
 }
 
 function renderGroupFunctionChoices(panel, selected = []) {
@@ -1090,25 +1112,31 @@ export function bindTools(panel) {
     // Ignore queued close events after navigation, DOM replacement or reopening.
     if (event.target !== root.querySelector("#tool-dialog") || event.target.open) return;
     panel._toolEditorLoad = null;
+    panel._setSaving(root.querySelector("#tool-save"), false);
     setToolEditorLoading(root, false);
   });
   root.querySelector("#tool-validate")?.addEventListener("click",()=>validateDialogTool(panel));
   root.querySelector("#tool-save")?.addEventListener("click", async () => {
     const button = root.querySelector("#tool-save");
     if (button.disabled) return;
+    const operation = toolEditorOperation(panel);
     panel._setSaving(button, true);
     try {
-      const tool = await validateDialogTool(panel);
-      if (!tool) return;
-      const result = await panel._call("tools", "save", {tool, ...(panel._toolOriginalName ? {original_name: panel._toolOriginalName} : {})});
+      const tool = await validateDialogTool(panel, operation);
+      if (!tool || !operation.isCurrent()) return;
+      const result = await panel._call("tools", "save", {tool, ...operation.destination,
+        ...(operation.revision !== undefined ? {revision: operation.revision} : {}),
+        ...(operation.originalName ? {original_name: operation.originalName} : {})});
+      if (!operation.isCurrent()) return;
       synchronizePersistedFunctions(panel, result);
       root.querySelector("#tool-dialog").close();
       panel._toast("Changes saved");
       panel._render();
     } catch (err) {
+      if (!operation.isCurrent()) return;
       root.querySelector("#tool-error").className = "validation invalid";
       root.querySelector("#tool-error").textContent = err.message || String(err);
-    } finally { panel._setSaving(button, false); }
+    } finally { if (operation.isCurrent()) panel._setSaving(button, false); }
   });
   root.querySelector("#group-name")?.addEventListener("input",(event)=>{if(!panel._groupIdEdited)root.querySelector("#group-id").value=functionGroupIdFromName(event.target.value);refreshFunctionGroupValidation(root);});
   root.querySelector("#group-id")?.addEventListener("input",()=>{panel._groupIdEdited=true;refreshFunctionGroupValidation(root);});
