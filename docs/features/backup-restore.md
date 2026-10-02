@@ -33,6 +33,12 @@ Restore is designed to avoid leaving only half of the backup applied. If saving 
 
 Delayed Function Tools are paused behind the same restore operation, so a due action is not deliberately run while the agent's configuration or restrictions are only partly restored.
 
+## Interrupted transfer files
+
+Transfers are not resumable across Home Assistant process restarts. New upload and export payloads live in an EOAI-private staging directory under `.storage`. Native owner locks protect active processes; startup removes abandoned owners after their locks have been released. Recovery neither recreates transfer sessions nor applies an abandoned import. Normal cancellation, expiry and shutdown still remove payloads.
+
+Files created by older versions in the system temporary directory have no reliable owner metadata. They are left untouched rather than deleted by a global temporary-file scan. Inspect any known historical residue manually; a filename alone does not establish that another process has stopped using it.
+
 ## Security
 
 Full backup files can contain prompts, memories, Knowledge sources, conversation history and detailed usage information. Treat them as private data even though provider credentials are excluded.

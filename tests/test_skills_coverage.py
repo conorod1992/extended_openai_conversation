@@ -11,14 +11,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
-from custom_components.extended_openai_conversation_responses import skills as skills_module
+from custom_components.extended_openai_conversation_responses import (
+    skills as skills_module,
+)
 from custom_components.extended_openai_conversation_responses.skills import (
     Skill,
     SkillManager,
     SkillMdParser,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def _skill_text(description: str = "A useful skill", body: str = "Body") -> str:
@@ -419,7 +420,17 @@ async def test_skill_first_load_failure_clears_singleton_and_retry_succeeds(
     class FakeManager(skills_module.SkillManager):
         _instance = None
 
-    executor = AsyncMock(side_effect=[OSError("disk unavailable"), []])
+    discovery_results = iter([OSError("disk unavailable"), []])
+
+    async def executor_job(function, *_args):
+        if function is skills_module.recover_transactions:
+            return None
+        result = next(discovery_results)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    executor = AsyncMock(side_effect=executor_job)
     hass = SimpleNamespace(
         config=SimpleNamespace(config_dir="/config"),
         data={},

@@ -196,6 +196,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # Register narrow admin-only commands separately from the broad management
     # command before exposing the management panel.
     setup_provider_credentials_websocket(hass)
+    from .transfer_staging import async_get_transfer_staging
+
+    await async_get_transfer_staging(hass)
     setup_backup_transfer_websocket(hass)
     # Request Debug loads lazily from Management; register its asset routes
     # before exposing the panel itself.
