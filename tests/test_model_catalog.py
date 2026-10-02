@@ -130,9 +130,7 @@ def test_required_current_models_and_invalid_aliases():
         "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
-        "gpt-5.4-nano",
         "gpt-5.2",
-        "gpt-5.1",
         "gpt-5",
         "gpt-5-mini",
         "gpt-5-nano",
@@ -145,6 +143,27 @@ def test_required_current_models_and_invalid_aliases():
     current = {item["id"] for item in data.catalog_picker_models()}
     assert expected <= current
     assert not {"o2", "o4", "gpt-5.3"} & current
+
+
+@pytest.mark.parametrize(
+    ("model", "replacement"),
+    [("gpt-5.4-nano", "gpt-6-luna"), ("gpt-5.1", "gpt-6-sol")],
+)
+def test_october_deprecations_preserve_existing_model_choices(model, replacement):
+    assert data.BUNDLED_CATALOG["catalog_version"] >= 11
+    assert model not in {item["id"] for item in data.catalog_picker_models()}
+    existing = next(
+        item for item in data.catalog_picker_models(selected_model=model)
+        if item["id"] == model
+    )
+    metadata = data.model_metadata(model)
+    assert existing["status"] == metadata["status"] == "deprecated"
+    assert "October 1, 2026" in metadata["lifecycle_note"]
+    assert "April 1, 2027" in metadata["lifecycle_note"]
+    assert replacement in metadata["lifecycle_note"]
+    assert "gpt-5.3-codex" not in {
+        item["id"] for item in data.BUNDLED_CATALOG["models"]
+    }
 
 
 def test_picker_hides_deprecated_unless_already_selected():
