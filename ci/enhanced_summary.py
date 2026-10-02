@@ -9,6 +9,16 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "archive_first_intent_failure_cases",
+    "archive_first_intent_disk_commits",
+    "archive_intent_reload_checks",
+    "pending_publication_failure_cases",
+    "pending_publication_retry_checks",
+    "pending_publication_actual_tool_calls",
+    "quiet_storage_failure_cases",
+    "quiet_storage_retry_checks",
+    "quiet_storage_restoration_checks",
+
     "ai_task_image_continuations",
     "ai_task_image_isolation_checks",
     "catalog_ai_task_reset_rejections",

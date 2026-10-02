@@ -616,6 +616,8 @@
     "tests_stress/test_ai_task_continuity.py::test_image_and_owner_survive_caller_tool_continuation_then_isolate_next_task[chat_completions]",
     "tests_stress/test_ai_task_continuity.py::test_image_and_owner_survive_caller_tool_continuation_then_isolate_next_task[responses]",
     "tests_stress/test_ai_task_mixed_campaign.py::test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_reload",
+    "tests_stress/test_archive_living_campaign.py::test_archive_first_intent_failure_cannot_be_erased_by_session_publication[after_replace]",
+    "tests_stress/test_archive_living_campaign.py::test_archive_first_intent_failure_cannot_be_erased_by_session_publication[before_replace]",
     "tests_stress/test_archive_living_campaign.py::test_archive_scale_keeps_searches_within_their_retained_scope",
     "tests_stress/test_backup_fault_matrix.py::test_committed_restore_finishes_after_configuration_write_failure",
     "tests_stress/test_backup_fault_matrix.py::test_every_restore_phase_rolls_back_and_reloads[archive]",
@@ -973,6 +975,8 @@
     "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable[persistent_memory]",
     "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable[quiet_hours]",
     "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable[temporary_memory]",
+    "tests_stress/test_pending_retrieval_publication.py::test_pending_failed_management_write_never_reaches_assist_provider[knowledge]",
+    "tests_stress/test_pending_retrieval_publication.py::test_pending_failed_management_write_never_reaches_assist_provider[memory]",
     "tests_stress/test_persistence_forward_and_clock.py::test_future_backup_version_refuses_without_mutation",
     "tests_stress/test_persistence_forward_and_clock.py::test_opaque_future_agent_fields_survive_edit_backup_and_reload",
     "tests_stress/test_persistence_forward_and_clock.py::test_opaque_future_rule_store_field_survives_group_edit_and_restore",
@@ -1057,6 +1061,14 @@
     "tests_stress/test_quiet_hours_ownership_time.py::test_active_policy_change_and_new_control_keep_pre_quiet_baselines",
     "tests_stress/test_quiet_hours_ownership_time.py::test_exact_boundaries_dst_and_jumps_reconcile_multiple_satellites",
     "tests_stress/test_quiet_hours_ownership_time.py::test_manual_control_changes_keep_newer_owner_state",
+    "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[live-observation-volume]",
+    "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[live-observation-wake_sound]",
+    "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[live-ownership-volume]",
+    "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[live-ownership-wake_sound]",
+    "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[reload-observation-volume]",
+    "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[reload-observation-wake_sound]",
+    "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[reload-ownership-volume]",
+    "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_store_failure_retries_without_losing_original_value[reload-ownership-wake_sound]",
     "tests_stress/test_quiet_hours_ownership_time.py::test_runtime_timezone_switch_reconciles_the_same_instant",
     "tests_stress/test_quiet_hours_ownership_time.py::test_transient_control_service_failure_retries_without_losing_baseline",
     "tests_stress/test_reauth_active_traffic.py::test_reauth_replaces_provider_client_without_crossing_active_traffic",
@@ -1567,7 +1579,10 @@
       "embedding_malformed_responses": 9,
       "embedding_live_configuration_races": 1,
       "embedding_reload_races": 2,
-      "embedding_healthy_recoveries": 12
+      "embedding_healthy_recoveries": 12,
+      "pending_publication_failure_cases": 2,
+      "pending_publication_retry_checks": 2,
+      "pending_publication_actual_tool_calls": 4
     },
     "process-chaos": {
       "process_terminations": 1,
@@ -1677,7 +1692,13 @@
       "composite_ingestion_rejections": 6,
       "mixed_maintenance_contention_cases": 1,
       "cancelled_maintenance_waiters": 1,
-      "storage_failure_recoveries": 1
+      "storage_failure_recoveries": 1,
+      "archive_first_intent_failure_cases": 2,
+      "archive_first_intent_disk_commits": 1,
+      "archive_intent_reload_checks": 2,
+      "pending_publication_failure_cases": 2,
+      "pending_publication_retry_checks": 2,
+      "pending_publication_actual_tool_calls": 4
     },
     "diagnostics": {
       "artifact_privacy_probes": 4
@@ -1694,6 +1715,16 @@
     "ai-task": {
       "ai_task_image_continuations": 2,
       "ai_task_image_isolation_checks": 2
+    },
+    "archive": {
+      "archive_first_intent_failure_cases": 2,
+      "archive_first_intent_disk_commits": 1,
+      "archive_intent_reload_checks": 2
+    },
+    "quiet-hours": {
+      "quiet_storage_failure_cases": 8,
+      "quiet_storage_retry_checks": 8,
+      "quiet_storage_restoration_checks": 8
     }
   },
   "selections": {
