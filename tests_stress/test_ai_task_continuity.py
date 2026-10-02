@@ -177,6 +177,13 @@ async def test_image_and_owner_survive_caller_tool_continuation_then_isolate_nex
         assert calls[0]["tool_calls"][0]["id"] == outputs[0]["tool_call_id"] == call_id
         serialized = outputs[0]["content"]
     assert json.loads(serialized) == {"result": {"echo": tool_value}}
+    record(
+        stress_trace,
+        "caller_tool_continuation",
+        mode=mode,
+        dispatched_tools=1,
+        matched_tool_result=True,
+    )
     _assert_origin_image(continuation, mode, image)
     record(stress_trace, "image_continuation", mode=mode, dispatched_tools=1)
 

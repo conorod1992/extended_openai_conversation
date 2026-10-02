@@ -305,6 +305,12 @@ async def test_saved_ai_task_blocks_narrowing_catalogue_until_compatible_choice(
         )
         await task("AI_OWNER_ALPHA_BEFORE_RESET")
         assert wire.requests[0]["body"]["reasoning"]["effort"] == "minimal"
+        record(
+            stress_trace,
+            "saved_ai_task_wire",
+            reasoning_effort="minimal",
+            request_count=1,
+        )
         before_disk = Path(manager.store.path).read_bytes()
         before_config = Path(hass.config_entries._store.path).read_bytes()
         rejected = await _command(admin, "reset")
