@@ -5,8 +5,8 @@ from __future__ import annotations
 from functools import partial
 from inspect import isawaitable
 import logging
-import re
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from openai import AsyncAzureOpenAI, AsyncClient, AsyncOpenAI
 
@@ -29,7 +29,7 @@ from .provider_errors import provider_transport_error
 _LOGGER = logging.getLogger(__name__)
 
 
-AZURE_DOMAIN_PATTERN = r"\.(openai\.azure\.com|azure-api\.net|services\.ai\.azure\.com)"
+AZURE_DOMAINS = ("openai.azure.com", "azure-api.net", "services.ai.azure.com")
 
 
 def get_api_mode(configured_mode: str, model: str, tools_required: bool = False) -> str:
@@ -74,8 +74,20 @@ def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
 
 
 def is_azure_url(base_url: str | None) -> bool:
-    """Check if the base URL is an Azure OpenAI URL."""
-    return bool(base_url and re.search(AZURE_DOMAIN_PATTERN, base_url))
+    """Classify supported Azure hostnames without inspecting other URL fields."""
+    if not base_url:
+        return False
+    try:
+        hostname = urlsplit(base_url).hostname
+    except ValueError:
+        return False
+    if hostname is None:
+        return False
+    hostname = hostname.lower()
+    return any(
+        hostname == domain or hostname.endswith(f".{domain}")
+        for domain in AZURE_DOMAINS
+    )
 
 
 def supports_openai_hosted_tools(
