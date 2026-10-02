@@ -164,6 +164,9 @@ jobs:
         run: |
           # The published SDK pin is compatible with this reviewed prior stable
           # HA. Keep its requirements isolated from the current candidate runtime.
+          # Historical audio dependency pins lack wheels for the current Python.
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential
           RELEASED_ENV="$RUNNER_TEMP/eoai-released-ha"
           python -m venv "$RELEASED_ENV"
           "$RELEASED_ENV/bin/python" -m pip install "homeassistant==2026.9.4"
