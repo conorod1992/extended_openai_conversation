@@ -509,13 +509,14 @@ class ExtendedOpenAIAgentEntity(
         if self._archive is None:
             return
         try:
-            await self._archive.async_prune(
-                int(
-                    self.subentry.data.get(
-                        CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+            async with conversation_request_lease(self):
+                await self._archive.async_prune(
+                    int(
+                        self.subentry.data.get(
+                            CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
+                        )
                     )
                 )
-            )
         except Exception:
             _LOGGER.exception(
                 "Background conversation archive retention maintenance failed"

@@ -9,6 +9,9 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "native_edit_settlement_cases",
+    "retention_restore_ownership_cases",
+    "coherent_setup_restore_exports",
     "quiet_pending_manual_override_checks",
     "archive_first_intent_failure_cases",
     "archive_first_intent_disk_commits",
