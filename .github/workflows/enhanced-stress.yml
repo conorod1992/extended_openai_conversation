@@ -39,6 +39,7 @@ jobs:
       seed: ${{ steps.seed.outputs.seed }}
       intensities: ${{ steps.seed.outputs.intensities }}
       campaigns: ${{ steps.seed.outputs.campaigns }}
+      ha_version: ${{ steps.ha.outputs.version }}
     steps:
       - name: Checkout invocation commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -53,6 +54,13 @@ jobs:
           test "$CANDIDATE_SHA" = "$INVOCATION_SHA"
           echo "sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
           echo "Candidate SHA: $CANDIDATE_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Resolve current stable Home Assistant version
+        id: ha
+        run: |
+          VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Stable Home Assistant: $VERSION" >> "$GITHUB_STEP_SUMMARY"
       - name: Resolve reproducible run controls
         id: seed
         env:
@@ -116,6 +124,7 @@ jobs:
       STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: ${{ matrix.campaign }}
       EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
       STRESS_ARTIFACT_DIR: stress-artifacts
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
@@ -130,14 +139,7 @@ jobs:
         with:
           node-version: "24"
       - name: Reconcile current test requirements
-        run: |
-          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
-          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
-          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
-            pip install -r requirements_test.txt
-            pip install --upgrade homeassistant
-            python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
-          fi
+        run: bash ci/reconcile_stable_environment.sh
       - name: Stage published payload for downgrade boundary
         if: matrix.campaign == 'persistence'
         env:
@@ -273,6 +275,7 @@ jobs:
       STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: ${{ inputs.campaign == 'diagnostics' && 'browser-diagnostics' || 'browser' }}
       EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
+      EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
       STRESS_ARTIFACT_DIR: stress-artifacts
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
@@ -298,16 +301,13 @@ jobs:
           echo "Published frontend baseline: $TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Install local Playwright runner
         run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0 axe-core@4.11.0
+      - name: Verify prebuilt Chromium browser
+        run: |
+          EXPECTED_BROWSER_VERSION="$(python -c 'import json; print(json.load(open("/opt/eoai-ci/playwright-runtime.json"))["browser"])')"
+          NPM_GLOBAL_ROOT="$(npm root -g)" node /opt/eoai-ci/verify_playwright_engine.mjs chromium 1.63.0 "$EXPECTED_BROWSER_VERSION"
       - name: Reconcile current Home Assistant requirements
         if: inputs.campaign != 'diagnostics'
-        run: |
-          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
-          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
-          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
-            pip install -r requirements_test.txt
-            pip install --upgrade homeassistant
-            python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
-          fi
+        run: bash ci/reconcile_stable_environment.sh
       - name: Run long-lived browser campaign
         if: inputs.campaign != 'diagnostics'
         run: |
@@ -394,6 +394,12 @@ jobs:
     if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser' || inputs.campaign == 'browser-engines'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-${{ matrix.engine }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --ipc=host
     strategy:
       fail-fast: false
       matrix:
@@ -405,6 +411,8 @@ jobs:
     env:
       PYTHONPATH: ${{ github.workspace }}
       CROSS_BROWSER_ENGINE: ${{ matrix.engine }}
+      EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-${{ matrix.engine }}
+      EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
       CROSS_BROWSER_NIGHTLY: "1"
       REAL_HA_BROWSER_PROFILE: ${{ matrix.engine }}
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
@@ -418,25 +426,14 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.candidate_sha }}
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "24"
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.14"
-          allow-prereleases: true
-      - name: Install local runner and engine
+      - name: Verify prebuilt Playwright engine
         run: |
-          npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
-          npx playwright install --with-deps "$CROSS_BROWSER_ENGINE"
-      - name: Install Home Assistant acceptance requirements
-        run: |
-          pip install -r requirements_test.txt
-          pip install --upgrade homeassistant
-          python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
-          pip check
+          node --version
+          npx playwright --version
+          EXPECTED_BROWSER_VERSION="$(python -c 'import json; print(json.load(open("/opt/eoai-ci/playwright-runtime.json"))["browser"])')"
+          NPM_GLOBAL_ROOT="$(npm root -g)" node /opt/eoai-ci/verify_playwright_engine.mjs "$CROSS_BROWSER_ENGINE" 1.63.0 "$EXPECTED_BROWSER_VERSION"
+      - name: Reconcile Home Assistant acceptance environment
+        run: bash ci/reconcile_stable_environment.sh
       - name: Run curated engine and keyboard journeys
         run: >-
           python ci/run_sanitized.py stress-artifacts/browser-engine.log --
@@ -490,6 +487,11 @@ jobs:
     if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'lifecycle'
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     env:
       PYTHONPATH: ${{ github.workspace }}
       STRESS_CAMPAIGN: lifecycle-matrix
@@ -499,39 +501,19 @@ jobs:
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
       HA_POINT: ${{ matrix.ha-version }}
+      EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
     strategy:
       fail-fast: false
       matrix:
-        ha-version: [oldest, stable, dev]
+        ha-version: [oldest, stable]
     steps:
       - name: Checkout immutable run candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.candidate_sha }}
-      - name: Resolve Python version required by HA dev
-        id: python
-        run: |
-          if [[ '${{ matrix.ha-version }}' == dev ]]; then
-            SHA="$(git ls-remote https://github.com/home-assistant/core.git refs/heads/dev | awk '{print $1}')"
-            test -n "$SHA"
-            VERSION="$(curl -fsSL "https://raw.githubusercontent.com/home-assistant/core/$SHA/.python-version" | tr -d '\n')"
-            echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          else
-            VERSION=3.14
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: ${{ steps.python.outputs.version }}
-          allow-prereleases: true
       - name: Install test and selected HA environment
-        env:
-          HA_POINT: ${{ matrix.ha-version }}
-          HA_DEV_SHA: ${{ steps.python.outputs.sha }}
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements_test.txt
+          bash ci/reconcile_stable_environment.sh
           if [[ "$HA_POINT" == oldest ]]; then
             MINIMUM="$(python -c 'import json; print(json.load(open("hacs.json"))["homeassistant"])')"
             # The newest fixture plugin calls Core APIs added after this floor.
@@ -541,28 +523,31 @@ jobs:
             # floor after its test-only dependencies have been resolved.
             python -m pip install --pre "homeassistant==$MINIMUM"
           elif [[ "$HA_POINT" == stable ]]; then
-            python -m pip install --upgrade homeassistant
-          else
-            python -m pip install "git+https://github.com/home-assistant/core.git@$HA_DEV_SHA"
+            test "$(python -c 'from importlib.metadata import version; print(version("homeassistant"))')" = "$EOAI_EXPECTED_HA_VERSION"
           fi
           python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          if [[ "$HA_POINT" == stable ]]; then python -m pip check; fi
+          python ci/environment_fingerprint.py \
+            --requirements requirements_test.txt \
+            --manifest custom_components/extended_openai_conversation_responses/manifest.json \
+            --recipe ci/Dockerfile.stable \
+            --recipe ci/install_ha_dependencies.py \
+            --recipe ci/install_ha_media_dependencies.py \
+            --recipe ci/environment_fingerprint.py \
+            --recipe ci/reconcile_stable_environment.sh \
+            --python-version "$(python -c 'import platform; print(platform.python_version())')" \
+            --base-image python:3.14-slim-bookworm \
+            --write /opt/eoai-ci/environment.identity.json \
+            > /dev/null
+          cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json \
+            | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
           python -c 'from importlib.metadata import version; print("homeassistant=" + version("homeassistant"))'
       - name: Run the same genuine HA lifecycle contract
         env:
           PYTHONPATH: ${{ github.workspace }}
           STRESS_SEED: ${{ needs.prepare.outputs.seed }}
           STRESS_ARTIFACT_DIR: stress-artifacts
-        run: |
-          set +e
-          pytest tests_stress/test_lifecycle_matrix.py tests_real_ha/test_public_version_journeys.py \
-            -v -s --asyncio-mode=auto --timeout=600 \
-            --stress-seed="$STRESS_SEED" --stress-intensity=normal \
-            --show-capture=no --tb=short > enhanced-raw.log 2>&1
-          RESULT=$?
-          python ci/enhanced_evidence.py sanitize-log enhanced-raw.log stress-artifacts/pytest.log
-          rm enhanced-raw.log
-          cat stress-artifacts/pytest.log
-          exit "$RESULT"
+        run: bash ci/run_ha_lifecycle_contract.sh
       - name: Summarize lifecycle contract
         if: always()
         env:
@@ -579,9 +564,100 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  ha-lifecycle-dev:
+    name: HA dev / shared lifecycle contract
+    needs: prepare
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'lifecycle'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      STRESS_CAMPAIGN: lifecycle-matrix
+      STRESS_INTENSITY: normal
+      STRESS_SEED: ${{ needs.prepare.outputs.seed }}
+      STRESS_ARTIFACT_DIR: stress-artifacts
+      ENHANCED_EXECUTION_EVIDENCE: "1"
+      PYTEST_PLUGINS: ci.pytest_execution
+      HA_POINT: dev
+    steps:
+      - name: Checkout immutable run candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+      - name: Resolve exact HA dev commit and Python version
+        id: python
+        run: |
+          SHA="$(git ls-remote https://github.com/home-assistant/core.git refs/heads/dev | awk '{print $1}')"
+          test -n "$SHA"
+          VERSION="$(curl -fsSL "https://raw.githubusercontent.com/home-assistant/core/$SHA/.python-version" | tr -d '\n')"
+          test -n "$VERSION"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Set up the resolved Python version
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ steps.python.outputs.version }}
+          allow-prereleases: true
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Select only an exact immutable HA dev image
+        id: dev-image
+        env:
+          EXPECTED_HA_CORE_SHA: ${{ steps.python.outputs.sha }}
+          EXPECTED_PYTHON_VERSION: ${{ steps.python.outputs.version }}
+        run: bash ci/select_ha_dev_image.sh "ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:ha-dev-${{ steps.python.outputs.sha }}"
+      - name: Construct the exact HA dev runtime when no matching image exists
+        if: steps.dev-image.outputs.match != 'true'
+        env:
+          HA_DEV_SHA: ${{ steps.python.outputs.sha }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements_test.txt
+          python -m pip install "git+https://github.com/home-assistant/core.git@$HA_DEV_SHA"
+          python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          python ci/check_ha_dev_environment.py
+          python -c 'from importlib.metadata import version; print("homeassistant=" + version("homeassistant"))'
+      - name: Run lifecycle contract in the matching prebuilt runtime
+        if: steps.dev-image.outputs.match == 'true'
+        env:
+          EXPECTED_HA_CORE_SHA: ${{ steps.python.outputs.sha }}
+          EXPECTED_PYTHON_VERSION: ${{ steps.python.outputs.version }}
+        run: |
+          mkdir -p stress-artifacts
+          docker run --rm --network host --ipc=host \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            -e EXPECTED_HA_CORE_SHA -e EXPECTED_PYTHON_VERSION \
+            -e PYTHONPATH -e STRESS_SEED -e STRESS_INTENSITY -e STRESS_CAMPAIGN \
+            -e STRESS_ARTIFACT_DIR -e ENHANCED_EXECUTION_EVIDENCE -e PYTEST_PLUGINS -e HA_POINT \
+            -e EOAI_CONTAINER_IMAGE="ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:ha-dev-${{ steps.python.outputs.sha }}" \
+            "ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:ha-dev-${{ steps.python.outputs.sha }}" \
+            bash ci/run_ha_lifecycle_contract.sh
+      - name: Run lifecycle contract in the constructed exact runtime
+        if: steps.dev-image.outputs.match != 'true'
+        run: bash ci/run_ha_lifecycle_contract.sh
+      - name: Summarize lifecycle contract
+        if: always()
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+        run: |
+          python ci/enhanced_evidence.py sanitize-dir stress-artifacts
+          python ci/enhanced_summary.py stress-artifacts
+      - name: Upload lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: evidence-lifecycle-dev-seed-${{ needs.prepare.outputs.seed }}
+          path: stress-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
   certify:
     name: Consolidated nightly certification
-    needs: [prepare, python-campaigns, browser, browser-engines, ha-lifecycle-matrix]
+    needs: [prepare, python-campaigns, browser, browser-engines, ha-lifecycle-matrix, ha-lifecycle-dev]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     steps:
