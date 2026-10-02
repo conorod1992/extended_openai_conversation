@@ -146,7 +146,7 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         )
         return web.json_response({"office": old.id, "kitchen": replacement.id})
 
-    async def reload_state_impl(_request):
+    async def reload_state(_request):
         before = await _management_call(
             client, entry=entry, section="configuration", action="get"
         )
@@ -191,17 +191,6 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         measured["native_ownership_reload_checks"] += 1
         record(stress_trace, "durable_reload", native_ownership_reload_checks=1)
         return web.json_response(after["config"])
-
-    async def reload_state(request):
-        try:
-            return await reload_state_impl(request)
-        except Exception as error:
-            import traceback
-
-            record(stress_trace, "durable_reload_failure", error=traceback.format_exc())
-            return web.json_response(
-                {"error": repr(error), "traceback": traceback.format_exc()}, status=500
-            )
 
     async def probe_voice(_request):
         agent = conversation.async_get_agent(hass, entry.entry_id)
@@ -253,7 +242,24 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
             {"owners": 2, "private_markers": 2, "authenticated_users": users}
         )
 
-    app = web.Application()
+    @web.middleware
+    async def control_errors(request, handler):
+        try:
+            return await handler(request)
+        except Exception as error:
+            import traceback
+
+            record(
+                stress_trace,
+                "control_endpoint_failure",
+                path=request.path,
+                error=traceback.format_exc(),
+            )
+            return web.json_response(
+                {"error": repr(error), "traceback": traceback.format_exc()}, status=500
+            )
+
+    app = web.Application(middlewares=[control_errors])
     app.router.add_post("/replace-registry", replace_registry)
     app.router.add_post("/reload", reload_state)
     app.router.add_post("/probe-voice", probe_voice)

@@ -130,7 +130,9 @@ test.describe("nightly ownership", () => {
     await panel.locator("#add-voice-mapping").click();
     const warm = await panel.evaluate(host => host.hass.callWS({type:"config/entity_registry/list"}));
     expect(warm.find(e => e.entity_id === "assist_satellite.ownership_kitchen").device_id).toBe(process.env.REAL_HA_OLD_DEVICE);
-    const registry = await (await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/replace-registry`)).json();
+    const registryResponse = await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/replace-registry`);
+    expect(registryResponse.ok(), await registryResponse.text()).toBe(true);
+    const registry = await registryResponse.json();
     expect(registry.kitchen).toBe(process.env.REAL_HA_NEW_DEVICE);
     expect(registry.office).toBe(process.env.REAL_HA_OLD_DEVICE);
     const row = panel.locator("[data-voice-mapping-row]").last();
@@ -154,7 +156,9 @@ test.describe("nightly ownership", () => {
       expect(reloadResponse.ok(), await reloadResponse.text()).toBe(true);
       const reloaded = await reloadResponse.json();
     expect(reloaded.voice_device_mappings).toEqual(read.config.voice_device_mappings);
-    const probes = await (await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/probe-voice`)).json();
+    const probeResponse = await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/probe-voice`);
+    expect(probeResponse.ok(), await probeResponse.text()).toBe(true);
+    const probes = await probeResponse.json();
     expect(probes).toEqual({owners:2, private_markers:2, authenticated_users:[null, null]});
     await page.reload();
     await expect(panel.locator("#agent")).toBeEnabled();
