@@ -796,6 +796,9 @@ jobs:
       - name: Run lifecycle contract in the constructed exact runtime
         if: steps.dev-image.outputs.match != 'true'
         run: bash ci/run_ha_lifecycle_contract.sh
+      - name: Return dev container evidence ownership to the runner
+        if: always() && steps.dev-image.outputs.match == 'true'
+        run: sudo chown -R "$(id -u):$(id -g)" stress-artifacts
       - name: Summarize lifecycle contract
         if: always()
         env:

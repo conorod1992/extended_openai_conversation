@@ -15,7 +15,18 @@ EXCLUSIONS = ROOT / "tests_stress" / "nightly_real_ha_exclusions.json"
 
 def _workflow_test_paths(prefix: str) -> set[str]:
     text = WORKFLOW.read_text(encoding="utf-8")
-    return set(re.findall(rf"{re.escape(prefix)}/[A-Za-z0-9_./-]+\.py", text))
+    paths = set(re.findall(rf"{re.escape(prefix)}/[A-Za-z0-9_./-]+\.py", text))
+    # The shared HA lifecycle runner is selected by the workflow as a script,
+    # so account for the test paths it invokes when checking the inventory.
+    if prefix == "tests_real_ha" and "ci/run_ha_lifecycle_contract.sh" in text:
+        lifecycle_runner = ROOT / "ci" / "run_ha_lifecycle_contract.sh"
+        paths.update(
+            re.findall(
+                rf"{re.escape(prefix)}/[A-Za-z0-9_./-]+\.py",
+                lifecycle_runner.read_text(encoding="utf-8"),
+            )
+        )
+    return paths
 
 
 def _test_files(directory: str) -> set[str]:
