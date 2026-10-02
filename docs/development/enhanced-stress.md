@@ -206,3 +206,16 @@ retry in the same mounted panel. These cases remain Enhanced-only; the small
 editor-operation and registry-selection regressions extend the existing ordinary
 Node suite because they deterministically protect ownership, lookup settlement
 and retry without HA, browser or network costs.
+
+
+AI Task attachment continuity is mandatory in `ai-task`: both SDK API modes
+must dispatch the caller tool, retain the originating image/instructions and
+associated result on the continuation, and exclude that history from a later
+independent task. The existing `feature-crossroads` catalogue journey saves a
+real `ai_task_data` consumer, rejects a narrowing registered reset without
+changing disk state, then resets/reloads with a compatible choice. Evidence
+requires two image continuations/isolation checks, one rejected/successful AI
+Task reset and three actual SDK requests. These expensive cases stay in the
+existing Enhanced selections. The direct AI Task guard invariant joins the
+already-running catalogue unit suite because it is small and deterministic;
+it also proves that AI Tasks do not load conversation Request Rules.

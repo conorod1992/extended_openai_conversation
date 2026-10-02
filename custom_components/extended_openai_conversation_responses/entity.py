@@ -294,6 +294,7 @@ def _format_structured_output(
 def _convert_content_to_param(
     chat_content: list[conversation.Content],
     shorten_tool_call_id: bool = False,
+    prepared_user_content: Mapping[int, Any] | None = None,
 ) -> list[ChatCompletionMessageParam]:
     """Convert chat log content to OpenAI message format."""
     messages: list[ChatCompletionMessageParam] = []
@@ -302,7 +303,14 @@ def _convert_content_to_param(
         if content.role == "system":
             messages.append({"role": "system", "content": content.content})
         elif content.role == "user":
-            messages.append({"role": "user", "content": content.content})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (prepared_user_content or {}).get(
+                        id(content), content.content
+                    ),
+                }
+            )
         elif content.role == "assistant":
             msg: ChatCompletionAssistantMessageParam = {"role": "assistant"}
             if content.content:
@@ -539,7 +547,29 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     chat_log.content, shorten_tool_call_id
                 )
 
+            # Attachment bytes belong to this request's originating user turn.
+            # Tool continuation rebuilds the chat messages; reuse the prepared
+            # content by turn identity rather than rereading or moving attachments.
+            attachment_owner = chat_log.content[-1] if chat_log.content else None
             await self._async_add_attachments(chat_log, messages, api_mode)
+            prepared_user_content: dict[int, Any] = {}
+            if (
+                api_mode != API_MODE_RESPONSES
+                and isinstance(attachment_owner, conversation.UserContent)
+                and attachment_owner.attachments
+            ):
+                originating_message = next(
+                    (
+                        message
+                        for message in reversed(messages)
+                        if message.get("role") == "user"
+                    ),
+                    None,
+                )
+                if originating_message is not None:
+                    prepared_user_content[id(attachment_owner)] = originating_message[
+                        "content"
+                    ]
 
             web_search_tool = (
                 provider_snapshot.provider_tools[0]
@@ -924,7 +954,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                 else:
                     messages = _convert_content_to_param(
-                        chat_log.content, shorten_tool_call_id
+                        chat_log.content, shorten_tool_call_id, prepared_user_content
                     )
 
                 if (

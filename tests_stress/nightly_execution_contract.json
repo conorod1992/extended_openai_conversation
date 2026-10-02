@@ -284,6 +284,8 @@
     "tests/test_model_catalog_transitions.py::test_restart_rejects_stored_override_that_narrows_bundled_choices",
     "tests/test_model_catalog_transitions.py::test_restoring_bundled_data_is_persistent_across_restart",
     "tests/test_model_catalog_transitions.py::test_sampling_rank_orders_supported_states",
+    "tests/test_model_catalog_transitions.py::test_saved_ai_task_catalogue_guards_do_not_load_request_rules[low-False]",
+    "tests/test_model_catalog_transitions.py::test_saved_ai_task_catalogue_guards_do_not_load_request_rules[minimal-True]",
     "tests/test_model_catalog_transitions.py::test_transition_rejects_lower_max_output_limit",
     "tests/test_model_catalog_transitions.py::test_transition_rejects_narrower_conditional_sampling_efforts",
     "tests/test_model_catalog_transitions.py::test_transition_rejects_removed_api_path",
@@ -611,6 +613,8 @@
     "tests_stress/test_active_removal_races.py::test_conversation_subentry_removal_retires_old_turn_and_replacement_is_fresh[False]",
     "tests_stress/test_active_removal_races.py::test_conversation_subentry_removal_retires_old_turn_and_replacement_is_fresh[True]",
     "tests_stress/test_active_unload_races.py::test_unload_cancels_blocked_provider_turn_and_new_runtime_recovers",
+    "tests_stress/test_ai_task_continuity.py::test_image_and_owner_survive_caller_tool_continuation_then_isolate_next_task[chat_completions]",
+    "tests_stress/test_ai_task_continuity.py::test_image_and_owner_survive_caller_tool_continuation_then_isolate_next_task[responses]",
     "tests_stress/test_ai_task_mixed_campaign.py::test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_reload",
     "tests_stress/test_archive_living_campaign.py::test_archive_scale_keeps_searches_within_their_retained_scope",
     "tests_stress/test_backup_fault_matrix.py::test_committed_restore_finishes_after_configuration_write_failure",
@@ -942,6 +946,7 @@
     "tests_stress/test_memory_knowledge_scale.py::test_scaled_private_records_survive_reload_without_cross_user_reads",
     "tests_stress/test_memory_knowledge_scale.py::test_shuffled_embedding_indices_preserve_semantic_ranking_and_cache[base64]",
     "tests_stress/test_memory_knowledge_scale.py::test_shuffled_embedding_indices_preserve_semantic_ranking_and_cache[float]",
+    "tests_stress/test_model_catalog_refresh_endurance.py::test_saved_ai_task_blocks_narrowing_catalogue_until_compatible_choice",
     "tests_stress/test_model_catalog_refresh_endurance.py::test_slow_invalid_and_failed_refresh_preserve_active_operations",
     "tests_stress/test_native_audio_delivery.py::test_recorded_audio_native_assist_delivery_recovers[cancel_stt]",
     "tests_stress/test_native_audio_delivery.py::test_recorded_audio_native_assist_delivery_recovers[disconnect_output]",
@@ -1662,7 +1667,10 @@
       "permission_cache_churn_cases": 1,
       "restricted_context_probes": 11,
       "permission_group_updates": 3,
-      "debug_export_privacy_cases": 1
+      "debug_export_privacy_cases": 1,
+      "catalog_ai_task_reset_rejections": 1,
+      "catalog_ai_task_resets": 1,
+      "catalog_ai_task_wire_checks": 3
     },
     "persistence": {
       "composite_ingestion_cases": 8,
@@ -1682,6 +1690,10 @@
       "lifetime_expired_transfer_reclaims": 1,
       "lifetime_reloads": 4,
       "lifetime_final_healthy_requests": 1
+    },
+    "ai-task": {
+      "ai_task_image_continuations": 2,
+      "ai_task_image_isolation_checks": 2
     }
   },
   "selections": {

@@ -40,6 +40,7 @@ BASE_FEATURES = {
 }
 LAYERS = {"model", "real_ha", "provider_wire", "browser", "browser_real_ha", "process"}
 GENUINE_HA_BROWSER_SPECS = {
+    "tests_browser/real-ha-shell.spec.mjs",
     "tests_browser/real-ha-backend.spec.mjs",
     "tests_browser/real-ha-multi-tab.stress.mjs",
 }
