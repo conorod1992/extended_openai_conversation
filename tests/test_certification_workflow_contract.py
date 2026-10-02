@@ -190,6 +190,9 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     persistence_job = jobs["persistence_runtime"]
     assert persistence_job["needs"] == "prepare"
     assert "HISTORICAL_RELEASE_SHA" in persistence_job["env"]
+    assert all(
+        "${{ runner." not in str(value) for value in persistence_job["env"].values()
+    )
     assert any(
         step.get("uses", "").startswith("actions/cache@")
         for step in persistence_job["steps"]
