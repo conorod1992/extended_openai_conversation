@@ -50,6 +50,22 @@ def test_every_enhanced_job_checks_out_the_one_prepare_candidate():
     )
 
 
+def test_enhanced_dispatch_can_run_the_scheduled_intensity_matrix():
+    data = workflow("enhanced-stress.yml")
+    triggers = data.get("on", data.get(True))
+    intensity = triggers["workflow_dispatch"]["inputs"]["intensity"]
+    assert intensity["options"] == ["normal", "heavy", "all"]
+
+    jobs = data["jobs"]
+    controls = next(
+        step
+        for step in jobs["prepare"]["steps"]
+        if step.get("name") == "Resolve reproducible run controls"
+    )
+    assert 'INTENSITY" == all' in controls["run"]
+    assert 'intensities=["normal","heavy"]' in controls["run"]
+
+
 def test_existing_historical_matrix_supports_complete_dispatch_and_exact_checkout():
     upgrade = workflow("upgrade-acceptance.yml")["jobs"]["upgrade"]
     matrix = upgrade["strategy"]["matrix"]["from_version"]
