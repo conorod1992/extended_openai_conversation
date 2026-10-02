@@ -410,11 +410,13 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
     path = Path(manager._store.path)
     replace = atomicwrites._replace_atomic
     faults = []
+    attempted_writes = []
 
     def fail_target_write(source, destination):
         if Path(destination) == path and not faults:
             payload = json.loads(Path(source).read_text())["data"]
             active = payload.get("active") or {}
+            attempted_writes.append({"destination": str(destination), "active": active})
             observed = target in active.get("observed_controls", [])
             owned = target in active.get("controls", {})
             if observed and owned == (stage == "ownership"):
@@ -435,8 +437,11 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
         )
         with monkeypatch.context() as fault:
             fault.setattr(atomicwrites, "_replace_atomic", fail_target_write)
-            with pytest.raises(OSError):
-                await manager.async_reconcile()
+            with pytest.raises(OSError, match="Private storage write failed"):
+                await manager.async_reconcile(now=now[0])
+                pytest.fail(
+                    f"Target fault not reached: {attempted_writes=}, {manager.active=}, {calls=}"
+                )
         assert len(faults) == 1
         assert all(entity_id != target for _, entity_id in calls)
         assert _volume(hass, media) == pytest.approx(0.77 if kind == "volume" else 0.08)
