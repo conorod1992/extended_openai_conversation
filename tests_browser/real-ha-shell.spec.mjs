@@ -149,7 +149,7 @@ test.describe("nightly ownership", () => {
     await user.locator("ha-picker-field").click();
     await user.locator("ha-combo-box-item").filter({hasText:process.env.REAL_HA_PICKER_USER_NAME}).locator("button").click();
     await panel.locator("#save-config").click();
-    await expect(panel.locator("#save-config")).toBeEnabled();
+    await expect(panel.locator(".save-bar")).toHaveCount(0);
     const payloads = await page.evaluate(() => window.__voicePayloads);
     expect(payloads.length).toBeGreaterThan(0);
     expect(payloads.at(-1).config.voice_device_mappings[process.env.REAL_HA_NEW_DEVICE]).toBe(`user:${process.env.REAL_HA_SMOKE_USER_ID}`);
