@@ -48,6 +48,9 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 from custom_components.extended_openai_conversation_responses.memory import (
     PersistentMemory,
 )
+from custom_components.extended_openai_conversation_responses.model_catalog import (
+    CURRENT_SCHEMA_VERSION,
+)
 from custom_components.extended_openai_conversation_responses.model_catalog_manager import (
     ModelCatalogManager,
 )
@@ -653,7 +656,7 @@ async def test_downloadable_diagnostics_allowlist(hass) -> None:
     )
     result = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
     assert result["provider_category"] == "compatible"
-    assert result["model_catalogue"]["schema_version"] == 6
+    assert result["model_catalogue"]["schema_version"] == CURRENT_SCHEMA_VERSION
     assert result["openai_sdk_version"]
     agent = result["conversation_agents"][0]
     assert agent["selected_model"] == "gpt-6-astra"

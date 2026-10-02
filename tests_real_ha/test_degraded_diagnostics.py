@@ -18,6 +18,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.diagnostics import (
     async_get_config_entry_diagnostics,
 )
+from custom_components.extended_openai_conversation_responses.model_catalog import (
+    CURRENT_SCHEMA_VERSION,
+)
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
@@ -108,7 +111,7 @@ async def test_diagnostics_remain_safe_and_useful_when_optional_subsystem_failed
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
     assert diagnostics["provider_category"] == "openai"
-    assert diagnostics["model_catalogue"]["schema_version"] == 6
+    assert diagnostics["model_catalogue"]["schema_version"] == CURRENT_SCHEMA_VERSION
     assert diagnostics["openai_sdk_version"]
     assert len(diagnostics["conversation_agents"]) == 1
     agent_diagnostics = diagnostics["conversation_agents"][0]
