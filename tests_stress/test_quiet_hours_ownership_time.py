@@ -362,6 +362,7 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
     hass,
     monkeypatch,
     stress_trace,
+    freezer,
     kind,
     stage,
     recovery,
@@ -373,7 +374,7 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
         quiet_hours as module,
     )
 
-    monkeypatch.setattr(module.dt_util, "now", lambda: now[0])
+    freezer.move_to(now[0])
     satellite, media, wake = _install_satellite_entities(
         hass,
         slug="failure-alpha",
@@ -397,6 +398,14 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
         }
     )
     await manager._async_save_locked()
+    assert manager._initialized
+    discovered = next(
+        item
+        for item in manager.discovery_snapshot()
+        if item["satellite_entity_id"] == satellite
+    )
+    assert discovered["media_player_entity_id"] == media
+    assert discovered["wake_sound_entity_id"] == wake
     target = media if kind == "volume" else wake
     path = Path(manager._store.path)
     replace = atomicwrites._replace_atomic
@@ -418,7 +427,12 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
         return replace(source, destination)
 
     try:
-        now[0] = datetime(2026, 1, 10, 22, 0, tzinfo=DUBLIN)
+        now[0] = datetime(2026, 1, 10, 22, 5, tzinfo=DUBLIN)
+        freezer.move_to(now[0])
+        assert (
+            module.quiet_period_for(now[0], manager.config.start, manager.config.end)
+            is not None
+        )
         with monkeypatch.context() as fault:
             fault.setattr(atomicwrites, "_replace_atomic", fail_target_write)
             with pytest.raises(OSError):
@@ -436,6 +450,9 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
             kind=kind,
             recovery=recovery,
             failed_before_service=True,
+            live_observation=target
+            in (manager.active or {}).get("observed_controls", []),
+            live_ownership=target in (manager.active or {}).get("controls", {}),
             durable_observation=target
             in (durable_before or {}).get("observed_controls", []),
         )
@@ -470,6 +487,7 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
         )
         assert sum(entity_id == target for _, entity_id in calls) == 1
         now[0] = datetime(2026, 1, 11, 7, 0, tzinfo=DUBLIN)
+        freezer.move_to(now[0])
         await manager.async_reconcile()
         assert manager.active is None
         assert json.loads(path.read_text())["data"]["active"] is None

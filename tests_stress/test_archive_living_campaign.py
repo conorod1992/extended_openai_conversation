@@ -246,6 +246,9 @@ async def test_archive_first_intent_failure_cannot_be_erased_by_session_publicat
     assert disk_alpha["retention_state"] == ("private" if committed else "retained"), (
         "Unrelated session publication erased authoritative archive intent"
     )
+    if committed:
+        assert archive._pending_partitions == set(intent["pending_partitions"])
+        assert archive._sessions[alpha.session_id].retention_state == "private"
     fresh = ConversationArchive(
         HomeAssistantArchiveStorage(
             hass, "archive-intent-provider", "archive-intent-agent"

@@ -36,7 +36,12 @@ from tests_real_ha.test_management_backend_acceptance import (
     _management_response,
 )
 from tests_real_ha.test_memory_provider_wire_e2e import _memory_agent
-from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
+from tests_real_ha.test_provider_wire_e2e import (
+    _chat_sse_text,
+    _install_wire,
+    _raw_client,
+    _speech,
+)
 from tests_stress.conftest import record
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 from tests_stress.test_provider_wire_privacy import _say
@@ -145,6 +150,10 @@ async def test_pending_failed_management_write_never_reaches_assist_provider(
         return replace(source, target)
 
     async def held_read(*args, **kwargs):
+        if kind == "memory":
+            scopes = [args[0]] if isinstance(args[0], str) else args[0]
+            if manager._memories[target_id].user_id not in scopes:
+                return await search(*args, **kwargs)
         entered_read.set()
         result = await search(*args, **kwargs)
         read_results.append(result)
@@ -162,11 +171,31 @@ async def test_pending_failed_management_write_never_reaches_assist_provider(
             _chat_sse_text("Committed retrieval complete"),
         ],
     )
+    provider_entered = asyncio.Event()
+    release_provider = asyncio.Event()
+    send = wire.send
+
+    async def held_provider(request, *args, **kwargs):
+        if kind == "memory" and not provider_entered.is_set():
+            body = json.loads(request.content)
+            assert marker not in json.dumps(body)
+            provider_entered.set()
+            await release_provider.wait()
+        return await send(request, *args, **kwargs)
+
+    monkeypatch.setattr(_raw_client(agent)._client, "send", held_provider)
     writer = reader = None
     try:
         with monkeypatch.context() as fault:
             fault.setattr(Store, "_async_write_data", held_write)
             fault.setattr(atomicwrites, "_replace_atomic", fail_before_replace)
+            if kind == "memory":
+                # Prepare a genuine in-flight Assist request before the mutation,
+                # then deliver its actual caller response while the write is held.
+                reader = asyncio.create_task(
+                    _say(hass, entry.entry_id, ADMIN_ID, f"Find my {query} reference")
+                )
+                await asyncio.wait_for(provider_entered.wait(), 10)
             fault.setattr(manager, "async_search", held_read)
             writer = asyncio.create_task(
                 _management_response(
@@ -175,9 +204,14 @@ async def test_pending_failed_management_write_never_reaches_assist_provider(
             )
             await asyncio.wait_for(entered.wait(), 10)
             assert path.read_bytes() == before
-            reader = asyncio.create_task(
-                _say(hass, entry.entry_id, ADMIN_ID, f"Find my {query} reference")
-            )
+            if kind == "memory":
+                assert marker in manager._memories[target_id].content
+                release_provider.set()
+            else:
+                assert marker in manager._sources[target_id].content
+                reader = asyncio.create_task(
+                    _say(hass, entry.entry_id, ADMIN_ID, f"Find my {query} reference")
+                )
             await asyncio.wait_for(entered_read.wait(), 10)
             record(
                 stress_trace,
@@ -237,9 +271,12 @@ async def test_pending_failed_management_write_never_reaches_assist_provider(
                     item for item in live["memories"] if item["content"] == unrelated
                 )["user_id"]
             )
-            assert target_id in json.dumps(tool_result) and old in json.dumps(
-                tool_result
+            returned = next(
+                item
+                for item in tool_result["memories"]
+                if item["memory_id"] == target_id
             )
+            assert old in returned["content"] and marker not in returned["content"]
             assert unrelated not in serialized
         # Commit the exact formerly rejected mutation and retrieve it normally.
         saved = await _management_call(
@@ -261,10 +298,40 @@ async def test_pending_failed_management_write_never_reaches_assist_provider(
         assert _speech(healthy) == "Healthy committed retrieval"
         assert len(healthy_wire.requests) == 2
         healthy_tool = _chat_tool_result(healthy_wire.requests[1]["body"], healthy_id)
-        assert marker in json.dumps(healthy_tool) and target_id in json.dumps(
-            healthy_tool
-        )
+        collection = healthy_tool["results" if kind == "knowledge" else "memories"]
+        id_field = "source_id" if kind == "knowledge" else "memory_id"
+        content_field = "excerpt" if kind == "knowledge" else "content"
+        returned = next(item for item in collection if item[id_field] == target_id)
+        assert marker in returned[content_field]
         assert marker in path.read_text()
+        reloaded = (
+            KnowledgeLibrary(
+                HomeAssistantKnowledgeStorage(
+                    hass, entry.entry_id, subentry.subentry_id
+                )
+            )
+            if kind == "knowledge"
+            else PersistentMemory(
+                HomeAssistantMemoryStorage(hass, entry.entry_id, subentry.subentry_id)
+            )
+        )
+        await reloaded.async_initialize()
+        assert await reloaded.async_backup_data() == await manager.async_backup_data()
+        if kind == "knowledge":
+            assert await reloaded.async_search(query) == await manager.async_search(
+                query
+            )
+            assert (await reloaded.async_get(target_id)).content == marker
+        else:
+            assert await reloaded.async_search(
+                target["user_id"], query
+            ) == await manager.async_search(target["user_id"], query)
+            reloaded_target = next(
+                item
+                for item in (await reloaded.async_backup_data())["memories"]
+                if item["memory_id"] == target_id
+            )
+            assert reloaded_target["user_id"] == target["user_id"]
         record(
             stress_trace,
             "summary",
@@ -276,6 +343,7 @@ async def test_pending_failed_management_write_never_reaches_assist_provider(
     finally:
         release_write.set()
         release_read.set()
+        release_provider.set()
         for task in (writer, reader):
             if task is not None and not task.done():
                 task.cancel()
