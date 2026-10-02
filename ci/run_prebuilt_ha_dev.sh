@@ -4,7 +4,10 @@ set -euo pipefail
 MODE="${1:?usage: run_prebuilt_ha_dev.sh <compat|upcoming>}"
 
 IMAGE_HA_CORE_SHA="$(cat /opt/eoai-ci/ha-core-sha)"
-BASE_IMAGE="$(cat /opt/eoai-ci/base-image.txt)"
+BASE_IMAGE=""
+if [[ -s /opt/eoai-ci/base-image.txt ]]; then
+  BASE_IMAGE="$(cat /opt/eoai-ci/base-image.txt)"
+fi
 IDENTITY_ARGS=(
   --requirements requirements_test.txt
   --manifest custom_components/extended_openai_conversation_responses/manifest.json
@@ -21,13 +24,18 @@ IDENTITY_ARGS=(
   --extra "ha_core_sha=$IMAGE_HA_CORE_SHA"
 )
 
-if [[ ! -s /opt/eoai-ci/environment.identity.json ]] \
+if [[ -z "$BASE_IMAGE" ]] \
+    || [[ ! -s /opt/eoai-ci/environment.identity.json ]] \
     || ! python ci/environment_fingerprint.py "${IDENTITY_ARGS[@]}" \
       --check /opt/eoai-ci/environment.identity.json; then
-  echo "Dependency declarations changed since image build; reconciling without replacing HA dev."
+  echo "Environment identity is missing or changed; reconciling without replacing HA dev."
   bash ci/reconcile_ha_dev_environment.sh
-  python ci/environment_fingerprint.py "${IDENTITY_ARGS[@]}" \
-    --write /opt/eoai-ci/environment.identity.json > /dev/null
+  if [[ -n "$BASE_IMAGE" ]]; then
+    python ci/environment_fingerprint.py "${IDENTITY_ARGS[@]}" \
+      --write /opt/eoai-ci/environment.identity.json > /dev/null
+  else
+    echo "Base-image identity is unavailable; this legacy image will be reconciled on each run."
+  fi
   cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json \
     | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
 fi

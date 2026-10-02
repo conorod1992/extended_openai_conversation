@@ -127,7 +127,7 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
         if step.get("name") == "Install test and selected HA environment"
     )
     assert "pytest-homeassistant-custom-component==0.13.317" in lifecycle_install
-    assert 'homeassistant==$MINIMUM' in lifecycle_install
+    assert "homeassistant==$MINIMUM" in lifecycle_install
     assert "$EOAI_EXPECTED_HA_VERSION" in lifecycle_install
     assert jobs["ha-lifecycle-dev"]["steps"]
     assert any(
@@ -160,6 +160,9 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     stable_reconciler = Path("ci/reconcile_stable_environment.sh").read_text()
     assert "environment.identity.json" in stable_reconciler
     assert "sha256sum" in stable_reconciler
+    dev_runner = Path("ci/run_prebuilt_ha_dev.sh").read_text()
+    assert '[[ -z "$BASE_IMAGE" ]]' in dev_runner
+    assert "this legacy image will be reconciled on each run" in dev_runner
 
     assert jobs["prepare"]["steps"]
     schedule_campaigns = next(

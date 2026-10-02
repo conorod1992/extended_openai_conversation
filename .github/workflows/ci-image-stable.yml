@@ -24,7 +24,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: stable-ci-images
+  group: stable-ci-images-${{ github.ref }}
   cancel-in-progress: true
 
 env:
