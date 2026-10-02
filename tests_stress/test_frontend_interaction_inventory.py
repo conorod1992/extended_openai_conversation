@@ -185,10 +185,14 @@ def test_covered_browser_and_nightly_evidence_uses_appropriate_test_surfaces() -
                     )
                     if tier == "nightly":
                         workflow = STRESS_WORKFLOW.read_text(encoding="utf-8")
+                        browser_backend_tests = (
+                            ROOT / "tests_stress" / "test_browser_backend_resilience.py"
+                        ).read_text(encoding="utf-8")
                         native_real_ha_campaign = (
                             path == "tests_browser/real-ha-shell.spec.mjs"
-                            and "playwright.real-ha-shell.config.mjs" in workflow
                             and "tests_stress/test_browser_backend_resilience.py" in workflow
+                            and f'spec="{path}"' in browser_backend_tests
+                            and 'config="playwright.real-ha-shell.config.mjs"' in browser_backend_tests
                         )
                         assert path.endswith(".stress.mjs") or path in _nightly_interaction_specs() or path == "tests_browser/nightly-diagnostics-probe.mjs" or native_real_ha_campaign, (
                             f"{key}:nightly evidence is not in the nightly stress collection: {path}"
