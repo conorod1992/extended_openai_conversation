@@ -293,12 +293,12 @@
     "tests/test_model_catalog_transitions.py::test_transition_rejects_removed_reasoning_effort",
     "tests/test_model_catalog_transitions.py::test_transition_rejects_sampling_support_downgrade",
     "tests/test_model_catalog_transitions.py::test_valid_model_routing_rule_continues_scanning",
+    "tests/test_openai_sdk_catalog_matrix.py::test_every_configured_model_emits_only_catalogue_allowed_sdk_fields[gpt-4-turbo]",
     "tests/test_openai_sdk_catalog_matrix.py::test_every_configured_model_emits_only_catalogue_allowed_sdk_fields[gpt-4.1-mini]",
     "tests/test_openai_sdk_catalog_matrix.py::test_every_configured_model_emits_only_catalogue_allowed_sdk_fields[gpt-4.1]",
     "tests/test_openai_sdk_catalog_matrix.py::test_every_configured_model_emits_only_catalogue_allowed_sdk_fields[gpt-4o-2024-08-06]",
     "tests/test_openai_sdk_catalog_matrix.py::test_every_configured_model_emits_only_catalogue_allowed_sdk_fields[gpt-4o-mini]",
     "tests/test_openai_sdk_catalog_matrix.py::test_every_configured_model_emits_only_catalogue_allowed_sdk_fields[gpt-4o]",
-    "tests/test_openai_sdk_catalog_matrix.py::test_every_configured_model_emits_only_catalogue_allowed_sdk_fields[gpt-4-turbo]",
     "tests/test_openai_sdk_catalog_matrix.py::test_every_configured_model_emits_only_catalogue_allowed_sdk_fields[gpt-5-mini]",
     "tests/test_openai_sdk_catalog_matrix.py::test_every_configured_model_emits_only_catalogue_allowed_sdk_fields[gpt-5-nano]",
     "tests/test_openai_sdk_catalog_matrix.py::test_every_configured_model_emits_only_catalogue_allowed_sdk_fields[gpt-5-pro]",
@@ -752,6 +752,7 @@
     "tests_stress/test_extreme_context_matrix.py::test_pending_summary_lifecycle_cannot_mutate_replacement_history[reload]",
     "tests_stress/test_extreme_context_matrix.py::test_pending_summary_lifecycle_cannot_mutate_replacement_history[remove-recreate]",
     "tests_stress/test_extreme_context_matrix.py::test_pending_summary_lifecycle_cannot_mutate_replacement_history[reset]",
+    "tests_stress/test_file_edit_native_cancellation.py::test_cancelled_native_edit_retains_path_until_worker_settles",
     "tests_stress/test_frontend_interaction_inventory.py::test_active_plans_allow_low_risk_work_but_never_reopen_high_risk_coverage",
     "tests_stress/test_frontend_interaction_inventory.py::test_completed_frontend_roadmap_entries_are_not_left_planned",
     "tests_stress/test_frontend_interaction_inventory.py::test_coverage_plans_reject_unaccountable_or_unbounded_gaps[change0]",
@@ -1121,6 +1122,8 @@
     "tests_stress/test_request_rules_provider_wire.py::test_matcher_route_scope_reaches_wire_and_next_turn[responses-request-sentence_pattern]",
     "tests_stress/test_request_rules_provider_wire.py::test_matcher_route_scope_reaches_wire_and_next_turn[responses-request-starts_with]",
     "tests_stress/test_request_rules_provider_wire.py::test_referenced_function_recreation_cannot_rebind_inflight_rule",
+    "tests_stress/test_restore_background_ownership.py::test_installed_retention_waits_for_restored_policy",
+    "tests_stress/test_restore_background_ownership.py::test_websocket_setup_export_is_coherent_across_restore",
     "tests_stress/test_runtime_soak.py::test_seeded_multi_entry_runtime_soak",
     "tests_stress/test_skill_lifecycle_campaign.py::test_installed_skills_remain_atomic_during_repeated_lifecycle_changes",
     "tests_stress/test_store_structure_recovery.py::test_invalid_store_structure_stays_durable_until_repaired",
@@ -1565,7 +1568,8 @@
       "budget_atomic_cases": 1,
       "budget_serial_prefix_cases": 1,
       "completed_replay_rejections": 2,
-      "populated_api_transition_cases": 2
+      "populated_api_transition_cases": 2,
+      "native_edit_settlement_cases": 1
     },
     "request-rules": {
       "ha_service_calls": 1,
@@ -1663,11 +1667,13 @@
       "intercom_timing_recoveries": 1
     },
     "backup": {
-      "rollback_phases": 1
+      "rollback_phases": 1,
+      "retention_restore_ownership_cases": 1
     },
     "backup-transfer": {
       "backup_chunks_transferred": 1,
-      "transfer_previews": 1
+      "transfer_previews": 1,
+      "coherent_setup_restore_exports": 1
     },
     "provider-resilience": {
       "tls_verified_requests": 4,
