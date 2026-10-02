@@ -16,12 +16,12 @@ from custom_components.extended_openai_conversation_responses import (
     model_catalog_manager as runtime,
 )
 from custom_components.extended_openai_conversation_responses.const import (
-    CONF_API_KEY,
     CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
     DEFAULT_AI_TASK_OPTIONS,
     DOMAIN,
 )
+from homeassistant.const import CONF_API_KEY
 
 
 @pytest.fixture(autouse=True)
