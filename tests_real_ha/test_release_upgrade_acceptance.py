@@ -32,7 +32,8 @@ if not os.environ.get(_CHILD_PHASE_ENV):
     import pytest
 
     pytestmark = pytest.mark.skipif(
-        not os.environ.get(_FROM_COMPONENT_ENV) or not os.environ.get(_TO_COMPONENT_ENV),
+        not os.environ.get(_FROM_COMPONENT_ENV)
+        or not os.environ.get(_TO_COMPONENT_ENV),
         reason="requires released and candidate component payloads",
     )
 
