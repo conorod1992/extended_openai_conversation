@@ -98,8 +98,8 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         action="update",
         config={
             "api_mode": "chat_completions",
-            "chat_model": "gpt-4.1",
-            "reasoning_effort": "",
+            "chat_model": "gpt-5.2",
+            "reasoning_effort": "low",
             "memory_auto_retrieve_limit": 3,
             "voice_scope_policy": "device_mapping",
             "voice_device_mappings": {old.id: "user:ownership-office-user"},
