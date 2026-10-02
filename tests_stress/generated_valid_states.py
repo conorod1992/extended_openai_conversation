@@ -11,6 +11,7 @@ from hashlib import sha256
 from itertools import combinations, product
 import json
 import os
+from pathlib import Path
 import random
 from time import perf_counter
 from typing import Any
@@ -413,19 +414,22 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
         import sys
 
         timings["total_seconds"] = perf_counter() - generation_started
-        print(
-            json.dumps(
-                {
-                    "event": "generated_valid_states_profile",
-                    "seed": seed,
-                    "heavy": heavy,
-                    "candidate_count": len(candidates),
-                    "selected_count": len(selected),
-                    "obligation_count": len(required),
-                    "timings": timings,
-                },
-                sort_keys=True,
-            ),
-            file=sys.stderr,
+        record = json.dumps(
+            {
+                "event": "generated_valid_states_profile",
+                "seed": seed,
+                "heavy": heavy,
+                "candidate_count": len(candidates),
+                "selected_count": len(selected),
+                "obligation_count": len(required),
+                "timings": timings,
+            },
+            sort_keys=True,
         )
+        print(record, file=sys.stderr)
+        if profile_path := os.environ.get("EOAI_GENERATOR_PROFILE_PATH"):
+            profile_file = Path(profile_path)
+            profile_file.parent.mkdir(parents=True, exist_ok=True)
+            with profile_file.open("a", encoding="utf-8") as stream:
+                stream.write(record + "\n")
     return suite
