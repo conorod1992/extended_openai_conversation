@@ -404,6 +404,8 @@ def test_overnight_latency_evidence_rejects_incomplete_or_wrong_candidate(failur
         "wrong-theme",
         "serious",
         "critical",
+        "error-state-serious",
+        "error-state-critical",
         "expired-allowance",
     ],
 )
@@ -449,9 +451,23 @@ def test_overnight_accessibility_semantics_fail_closed(failure):
         altered["scans"][0]["theme_colour"]["brightness"] = (
             250 if altered["scans"][0]["theme"] == "dark" else 17
         )
-    elif failure in {"serious", "critical"}:
-        altered["scans"][0]["violations"] = [
-            {"id": "label", "impact": failure, "nodes": [{"target": ["#new-control"]}]}
+    elif failure in {
+        "serious",
+        "critical",
+        "error-state-serious",
+        "error-state-critical",
+    }:
+        target = altered["scans"][0]
+        if failure.startswith("error-state-"):
+            target = next(
+                scan for scan in altered["scans"] if scan["state"] == "tool-save-error"
+            )
+        target["violations"] = [
+            {
+                "id": "label",
+                "impact": failure.rsplit("-", 1)[-1],
+                "nodes": [{"target": ["#new-control"]}],
+            }
         ]
     else:
         policy["accessibility_allowances"] = [
@@ -506,7 +522,8 @@ def test_frontend_quality_workflow_has_no_pr_or_push_execution():
     )
 
 
-def test_reviewed_accessibility_allowance_cannot_hide_node_growth():
+@pytest.mark.parametrize("state", ["route", "tool-save-error", "destructive-error"])
+def test_reviewed_accessibility_allowance_cannot_hide_node_growth(state):
     from ci.enhanced_evidence import environment_fingerprint
     from ci.frontend_latency.review import check_accessibility, expected_scans
 
@@ -528,11 +545,29 @@ def test_reviewed_accessibility_allowance_cannot_hide_node_growth():
         }
         for r, s, t, w in sorted(expected_scans())
     ]
-    first = scans[0]
+    from ci.frontend_latency.review import reviewed_state_key
+
+    first = next(
+        scan
+        for scan in scans
+        if scan["route"] == "capabilities-functions" and scan["state"] == state
+    )
+    key = reviewed_state_key(
+        (first["route"], first["state"], first["theme"], first["width"])
+    )
+    original = next(
+        scan
+        for scan in scans
+        if (scan["route"], scan["state"], scan["theme"], scan["width"]) == key
+    )
     node = {"target": ["#existing"]}
     first["violations"] = [
         {"id": "color-contrast", "impact": "serious", "nodes": [node]}
     ]
+    if original is not first:
+        from copy import deepcopy
+
+        original["violations"] = deepcopy(first["violations"])
     item = {
         "eoai_sha": sha,
         "environment": environment,
@@ -543,10 +578,7 @@ def test_reviewed_accessibility_allowance_cannot_hide_node_growth():
         "accessibility_allowances": [
             {
                 "case": [
-                    first["route"],
-                    first["state"],
-                    first["theme"],
-                    first["width"],
+                    *key,
                 ],
                 "rule": "color-contrast",
                 "impact": "serious",
@@ -564,6 +596,7 @@ def test_reviewed_accessibility_allowance_cannot_hide_node_growth():
         "count grew" in error for error in check_accessibility(item, sha, policy)
     )
     first["violations"] = []
+    original["violations"] = []
     assert any("obsolete" in error for error in check_accessibility(item, sha, policy))
 
 

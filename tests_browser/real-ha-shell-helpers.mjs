@@ -20,8 +20,16 @@ export async function openColdHaRoute(context, page, route) {
 
 export async function replaceNativeYaml(page, editor, yaml) {
   await expect(editor).toBeVisible({timeout: 30000});
+  // Native activation validates and installs the initial document asynchronously.
+  // Editing its empty CodeMirror placeholder can race the real initial setValue.
+  await expect.poll(() => editor.evaluate(element => element.yaml?.trim().length || 0)).toBeGreaterThan(0);
+  await editor.evaluate(async element => {
+    await element.updateComplete;
+    await element.shadowRoot.querySelector("ha-code-editor")?.updateComplete;
+  });
   const surface = editor.locator('[contenteditable="true"], textarea').first();
   await surface.click();
+  await expect.poll(() => editor.evaluate(element => Boolean(element.shadowRoot.querySelector("ha-code-editor")?.codemirror?.hasFocus))).toBe(true);
   const selectedAll = () => editor.evaluate(element => {
     const view = element.shadowRoot.querySelector("ha-code-editor")?.codemirror;
     return Boolean(view?.hasFocus && view.state.selection.main.from === 0

@@ -141,6 +141,15 @@ async def _booted_soak(config_dir, seed, scale):
     )
     assert hass is not None
     await hass.async_start()
+    from homeassistant.components.http.config import async_get_and_load_store
+
+    # A fresh nondefault loopback port is HA's pending HTTP configuration. Promote
+    # it exactly as HA's confirmation command does; otherwise its real five-minute
+    # rollback watchdog restarts the harness before a long lifetime can be tested.
+    http_store = await async_get_and_load_store(hass)
+    if http_store.pending is not None:
+        await http_store.async_promote_pending()
+    assert http_store.pending is None and http_store.revert_deadline is None
     _assert_packaged_module(config_dir)
     from tests_real_ha.test_provider_wire_e2e import (
         _chat_sse_text,
@@ -150,6 +159,31 @@ async def _booted_soak(config_dir, seed, scale):
 
     const = importlib.import_module(f"custom_components.{DOMAIN}.const")
     helpers = importlib.import_module(f"custom_components.{DOMAIN}.helpers")
+    agent_module = importlib.import_module(f"custom_components.{DOMAIN}.conversation")
+    transfers = importlib.import_module(f"custom_components.{DOMAIN}.backup_transfer")
+    long_lifetime = os.environ.get("STRESS_CAMPAIGN") == "long-lifetime"
+    lifetime_started = monotonic()
+    retention_callbacks = 0
+    idle_seconds = 0.0
+    expired_transfer_reclaims = 0
+    original_interval = agent_module.async_track_time_interval
+
+    def timed_retention(hass, callback, interval):
+        if not long_lifetime or callback.__name__ != "_async_prune_archive_retention":
+            return original_interval(hass, callback, interval)
+        from datetime import timedelta
+
+        assert interval == timedelta(days=1)
+
+        async def observed(now):
+            nonlocal retention_callbacks
+            await callback(now)
+            retention_callbacks += 1
+
+        # Exercise the real scheduled callback and entity-owned cancellation.
+        # Only the harness interval is accelerated; no claim of 24h elapsed time.
+        return original_interval(hass, observed, timedelta(seconds=60))
+
     held_started, release_held = asyncio.Event(), asyncio.Event()
     provider_requests = 0
     config_entry_reloads = 0
@@ -264,6 +298,7 @@ async def _booted_soak(config_dir, seed, scale):
     try:
         with (
             patch.object(helpers, "get_async_client", return_value=client),
+            patch.object(agent_module, "async_track_time_interval", timed_retention),
             patch.object(
                 config_flow,
                 "get_authenticated_client",
@@ -300,6 +335,7 @@ async def _booted_soak(config_dir, seed, scale):
                     const.CONF_CHAT_MODEL: "gpt-5.6",
                     const.CONF_REASONING_EFFORT: "none",
                     const.CONF_MEMORY_MODE: const.MEMORY_MODE_MANUAL,
+                    const.CONF_ARCHIVE_ENABLED: long_lifetime,
                 },
             )
             await hass.async_block_till_done()
@@ -307,9 +343,21 @@ async def _booted_soak(config_dir, seed, scale):
                 conversation.async_get_agent(hass, entry.entry_id)
             ).max_retries = 0
             number = 0
-            for window in range(5):
+            abandoned = None
+            if long_lifetime:
+                assert transfers.TRANSFER_TTL_SECONDS == 900
+                abandoned = await transfers._start_import(
+                    hass,
+                    entry.entry_id,
+                    subentry.subentry_id,
+                    {"filename": "idle-lifetime.zip", "size": 4096},
+                )
+                abandoned_id = abandoned["session_id"]
+                abandoned_path = Path(transfers._imports(hass)[abandoned_id].path)
+                assert abandoned_path.exists()
+            for window in range(9 if long_lifetime else 5):
                 assist, management = [], []
-                duration = 10 if window == 0 else 15 * scale
+                duration = 10 if window == 0 else 225 if long_lifetime else 15 * scale
                 began = monotonic()
                 while monotonic() - began < duration:
                     results = await asyncio.gather(
@@ -323,10 +371,18 @@ async def _booted_soak(config_dir, seed, scale):
                         assist.append(latency)
                     management.append(await management_step(number))
                     number += 1
-                    await asyncio.sleep(0.15)
+                    pause = (
+                        min(45, max(0, duration - (monotonic() - began)))
+                        if long_lifetime
+                        else 0.15
+                    )
+                    idle_began = monotonic()
+                    await asyncio.sleep(pause)
+                    if long_lifetime:
+                        idle_seconds += monotonic() - idle_began
                 # Reload/failed transport/cancellation recovery exercise real client
                 # and background lifetimes, rather than counting logical managers.
-                if window in (1, 3):
+                if window in ((1, 3, 5, 7) if long_lifetime else (1, 3)):
                     assert await hass.config_entries.async_reload(entry.entry_id)
                     config_entry_reloads += 1
                     await hass.async_block_till_done()
@@ -344,6 +400,22 @@ async def _booted_soak(config_dir, seed, scale):
                     release_held.set()
                     recovered, _ = await turn("Recover after cancellation")
                     assert _speech(recovered) == "Process remains responsive."
+                if long_lifetime and window == 5:
+                    # Production TTL elapses naturally during idle. Cleanup is
+                    # intentionally lazy: the next supported start reclaims it.
+                    assert monotonic() - lifetime_started >= 900
+                    assert abandoned_id in transfers._imports(hass)
+                    fresh = await transfers._start_import(
+                        hass,
+                        entry.entry_id,
+                        subentry.subentry_id,
+                        {"filename": "healthy-lifetime.zip", "size": 4096},
+                    )
+                    assert abandoned_id not in transfers._imports(hass)
+                    assert not abandoned_path.exists()
+                    assert fresh["session_id"] in transfers._imports(hass)
+                    await transfers._discard_import(hass, fresh["session_id"])
+                    expired_transfer_reclaims += 1
                 gc.collect()
                 await asyncio.sleep(0.1)
                 windows.append(
@@ -356,12 +428,32 @@ async def _booted_soak(config_dir, seed, scale):
                             "windows": windows,
                             "provider_requests": provider_requests,
                             "config_entry_reloads": config_entry_reloads,
+                            "elapsed_seconds": monotonic() - lifetime_started,
+                            "idle_seconds": idle_seconds,
+                            "retention_callbacks": retention_callbacks,
+                            "retention_harness_interval_seconds": 60
+                            if long_lifetime
+                            else 86400,
+                            "expired_transfer_reclaims": expired_transfer_reclaims,
                         },
                         indent=2,
                     ),
                     encoding="utf-8",
                 )
             _assert_resource_windows(windows)
+            final, _ = await turn("Final lifetime health request")
+            assert _speech(final) == "Process remains responsive."
+            if long_lifetime:
+                assert monotonic() - lifetime_started >= 1800
+                assert idle_seconds >= 1500
+                assert retention_callbacks >= 20
+                assert config_entry_reloads == 4
+                assert expired_transfer_reclaims == 1
+            report = json.loads((config_dir / _REPORT).read_text(encoding="utf-8"))
+            report["final_healthy_requests"] = 1
+            (config_dir / _REPORT).write_text(
+                json.dumps(report, indent=2), encoding="utf-8"
+            )
     finally:
         lag_active = False
         await probe
@@ -398,7 +490,9 @@ def test_booted_process_resources_and_latency_survive_mixed_traffic(
             "EOAI_SOAK_SEED": str(stress_seed),
             "EOAI_SOAK_SCALE": str(stress_scale),
         },
-        timeout=180 + 90 * stress_scale,
+        timeout=2400
+        if os.environ.get("STRESS_CAMPAIGN") == "long-lifetime"
+        else 180 + 90 * stress_scale,
     )
     report_path = config_dir / _REPORT
     report = json.loads(report_path.read_text()) if report_path.exists() else {}
@@ -408,6 +502,12 @@ def test_booted_process_resources_and_latency_survive_mixed_traffic(
         journey="booted_process_resource_soak",
         returncode=result.returncode,
         process_soak_windows=len(report.get("windows", [])),
+        lifetime_elapsed_seconds=int(report.get("elapsed_seconds", 0)),
+        lifetime_idle_seconds=int(report.get("idle_seconds", 0)),
+        lifetime_retention_callbacks=report.get("retention_callbacks", 0),
+        lifetime_expired_transfer_reclaims=report.get("expired_transfer_reclaims", 0),
+        lifetime_reloads=report.get("config_entry_reloads", 0),
+        lifetime_final_healthy_requests=report.get("final_healthy_requests", 0),
         metrics=report,
         stdout=result.stdout[-2000:],
         stderr=result.stderr[-4000:],

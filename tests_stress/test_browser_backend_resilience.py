@@ -20,6 +20,7 @@ from homeassistant.setup import async_setup_component
 from tests_real_ha.test_browser_backend_acceptance import (
     _run_playwright,
     _start_ws_bridge,
+    real_ha_shell as real_ha_shell,
 )
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
@@ -32,6 +33,142 @@ pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_REAL_HA_BROWSER") != "1",
     reason="scheduled/manual browser acceptance only",
 )
+
+
+async def _close_native_shell(hass, shell):
+    await shell["http_client"].close()
+    await hass.async_stop()
+    async with asyncio.timeout(5):
+        while hass.data.get(DATA_CONNECTIONS, 0):
+            await asyncio.sleep(0.05)
+    await asyncio.sleep(0.2)
+    loop = asyncio.get_running_loop()
+    for handle in tuple(loop._scheduled):
+        socket = getattr(getattr(handle, "_callback", None), "__self__", None)
+        if not handle.cancelled() and isinstance(socket, web.WebSocketResponse):
+            await socket.close()
+            socket._cancel_heartbeat()
+            handle.cancel()
+
+
+async def test_native_shell_accessibility_error_recovery(
+    hass, real_ha_shell, monkeypatch, stress_trace
+):
+    from ci.enhanced_evidence import checkout_sha
+    from ci.frontend_latency.review import POLICY, check_accessibility
+    from ci.frontend_latency.test_frontend_accessibility import (
+        test_genuine_shell_accessibility_semantics,
+    )
+
+    path = (
+        Path(os.environ.get("STRESS_ARTIFACT_DIR", "stress-artifacts"))
+        / "native-accessibility.json"
+    )
+    monkeypatch.setenv("EOAI_ACCESSIBILITY_OUTPUT", str(path.resolve()))
+    try:
+        await test_genuine_shell_accessibility_semantics(real_ha_shell)
+        path = Path(
+            os.environ.get(
+                "EOAI_ACCESSIBILITY_OUTPUT", "latency-results/accessibility.json"
+            )
+        )
+        result = json.loads(path.read_text(encoding="utf-8"))
+        errors = check_accessibility(
+            result, checkout_sha(), json.loads(POLICY.read_text(encoding="utf-8"))
+        )
+        assert not errors, "\n".join(errors)
+        record(
+            stress_trace,
+            "summary",
+            native_semantic_scans=len(result["scans"]),
+            native_error_semantic_scans=sum(
+                scan["state"] not in {"route", "tool-editor", "rule-editor"}
+                for scan in result["scans"]
+            ),
+        )
+    finally:
+        await _close_native_shell(hass, real_ha_shell)
+
+
+async def test_native_shell_lifetime_and_assistant_isolation(
+    hass, real_ha_shell, monkeypatch, stress_seed, stress_trace
+):
+    """One real HA document warms native widgets and two distinct assistants."""
+    from custom_components.extended_openai_conversation_responses import backup_transfer
+
+    secondary = _entry("Nightly second assistant")
+    await _setup_entry(hass, secondary)
+    # The abandonment journey waits for a genuinely elapsed TTL, then invokes
+    # supported lazy cleanup. It does not pretend disconnect immediately cancels.
+    monkeypatch.setattr(backup_transfer, "TRANSFER_TTL_SECONDS", 10)
+    monkeypatch.setattr(backup_transfer, "MAX_TRANSFER_SESSIONS", 1)
+    owned_paths = []
+    original_create = backup_transfer._async_create_upload_file
+
+    async def track_file(hass):
+        path = await original_create(hass)
+        owned_paths.append(Path(path))
+        return path
+
+    monkeypatch.setattr(backup_transfer, "_async_create_upload_file", track_file)
+
+    async def transfer_state(_request):
+        sessions = list(backup_transfer._imports(hass).values())
+        return web.json_response(
+            {
+                "imports": len(sessions),
+                "received": sum(item.received for item in sessions),
+                "reserved": sum(item.expected_size for item in sessions),
+                "files_present": await hass.async_add_executor_job(
+                    lambda: all(Path(item.path).exists() for item in sessions)
+                ),
+                "owned_files_on_disk": await hass.async_add_executor_job(
+                    lambda: sum(path.exists() for path in owned_paths)
+                ),
+            }
+        )
+
+    control = web.Application()
+    control.router.add_get("/transfer-state", transfer_state)
+    runner = web.AppRunner(control)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    control_url = (
+        f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/transfer-state"
+    )
+    profile = os.environ.get("REAL_HA_BROWSER_PROFILE", "chromium")
+    evidence_path = (
+        Path(os.environ.get("STRESS_ARTIFACT_DIR", "stress-artifacts"))
+        / f"native-journeys-{profile}.json"
+    )
+    evidence_path.unlink(missing_ok=True)
+    try:
+        await _run_playwright(
+            repo_root=Path(__file__).resolve().parent.parent,
+            spec="tests_browser/real-ha-shell.spec.mjs",
+            config="playwright.real-ha-shell.config.mjs",
+            env={
+                **real_ha_shell["env"],
+                "EOAI_NATIVE_ENDURANCE": "1",
+                "STRESS_SEED": str(stress_seed),
+                "REAL_HA_TRANSFER_STATE": control_url,
+                "EOAI_NATIVE_EVIDENCE": str(evidence_path.resolve()),
+            },
+            failure_label="Native lifetime and assistant isolation failed",
+        )
+        reports = json.loads(evidence_path.read_text(encoding="utf-8"))
+        expected = {"composite", "assistants"}
+        if profile == "chromium":
+            expected.update({"transfer", "retention"})
+        assert set(reports) == expected
+        measured = {
+            key: value for report in reports.values() for key, value in report.items()
+        }
+        record(stress_trace, "summary", native_lifetime_journeys=1, **measured)
+    finally:
+        await runner.cleanup()
+        await _close_native_shell(hass, real_ha_shell)
 
 
 async def test_browser_reconnect_and_permission_changes_against_real_ha_ws(

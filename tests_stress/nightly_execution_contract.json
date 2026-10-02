@@ -631,6 +631,8 @@
     "tests_stress/test_backup_transfer.py::test_large_multichunk_transfer_retry_and_restore",
     "tests_stress/test_backup_transfer_preview_races.py::test_two_imports_reject_stale_preview_and_changed_target",
     "tests_stress/test_browser_backend_resilience.py::test_browser_reconnect_and_permission_changes_against_real_ha_ws",
+    "tests_stress/test_browser_backend_resilience.py::test_native_shell_accessibility_error_recovery",
+    "tests_stress/test_browser_backend_resilience.py::test_native_shell_lifetime_and_assistant_isolation",
     "tests_stress/test_browser_backend_resilience.py::test_published_frontend_assets_against_new_real_ha_backend",
     "tests_stress/test_browser_backend_resilience.py::test_real_ha_shell_auth_expiry_and_websocket_loss",
     "tests_stress/test_browser_management_contract.py::test_function_repair_mutations_cross_real_websocket",
@@ -702,6 +704,8 @@
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[critical]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[duplicate-scan]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[empty-scanner]",
+    "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[error-state-critical]",
+    "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[error-state-serious]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[expired-allowance]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[missing-scan]",
     "tests_stress/test_execution_contract.py::test_overnight_accessibility_semantics_fail_closed[serious]",
@@ -714,7 +718,9 @@
     "tests_stress/test_execution_contract.py::test_overnight_latency_evidence_rejects_incomplete_or_wrong_candidate[wrong-sha]",
     "tests_stress/test_execution_contract.py::test_overnight_performance_alerts_require_absolute_and_relative_growth",
     "tests_stress/test_execution_contract.py::test_real_pytest_ledger_records_collection_skips_xfail_and_teardown",
-    "tests_stress/test_execution_contract.py::test_reviewed_accessibility_allowance_cannot_hide_node_growth",
+    "tests_stress/test_execution_contract.py::test_reviewed_accessibility_allowance_cannot_hide_node_growth[destructive-error]",
+    "tests_stress/test_execution_contract.py::test_reviewed_accessibility_allowance_cannot_hide_node_growth[route]",
+    "tests_stress/test_execution_contract.py::test_reviewed_accessibility_allowance_cannot_hide_node_growth[tool-save-error]",
     "tests_stress/test_execution_contract.py::test_reviewed_skip_exception_is_explicit_and_scoped",
     "tests_stress/test_execution_contract.py::test_selected_cases_and_new_test_functions_require_review",
     "tests_stress/test_execution_contract.py::test_stable_compatibility_point_cannot_follow_fixture_prerelease[beta]",
@@ -891,6 +897,7 @@
     "tests_stress/test_identity_generation_races.py::test_catalogue_discovery_rejects_changed_config_generation[tool_delete_recreate]",
     "tests_stress/test_installed_lifecycle.py::test_clean_installed_payload_repeated_removal_and_reinstall",
     "tests_stress/test_intercom_endurance_campaign.py::test_intercom_mixed_queue_survives_reload_failure_and_expiry",
+    "tests_stress/test_intercom_endurance_campaign.py::test_native_intercom_real_stability_expiry_and_playback_acknowledgement",
     "tests_stress/test_large_installation.py::test_large_installation_survives_setup_management_backup_and_assist",
     "tests_stress/test_lifecycle_matrix.py::test_seeded_multi_entry_lifecycle_contract",
     "tests_stress/test_local_intent_mixed_campaign.py::test_local_intent_fallback_remains_exact_after_repeated_policy_reloads",
@@ -937,6 +944,7 @@
     "tests_stress/test_model_catalog_refresh_endurance.py::test_slow_invalid_and_failed_refresh_preserve_active_operations",
     "tests_stress/test_native_audio_delivery.py::test_recorded_audio_native_assist_delivery_recovers[cancel_stt]",
     "tests_stress/test_native_audio_delivery.py::test_recorded_audio_native_assist_delivery_recovers[disconnect_output]",
+    "tests_stress/test_native_audio_delivery.py::test_two_native_audio_journeys_interleave_without_cross_owned_output",
     "tests_stress/test_native_broadcast_authorization.py::test_native_broadcast_obeys_ha_control_and_guest_policy[guest-mode-denied]",
     "tests_stress/test_native_broadcast_authorization.py::test_native_broadcast_obeys_ha_control_and_guest_policy[ha-control-allowed]",
     "tests_stress/test_native_broadcast_authorization.py::test_native_broadcast_obeys_ha_control_and_guest_policy[ha-control-denied]",
@@ -1110,6 +1118,7 @@
   ],
   "browser": {
     "browser": [
+      "ci/frontend_latency/accessibility.spec.mjs::chromium::accessibility.spec.mjs::scan genuine HA route and editor accessibility semantics",
       "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::390px save bars and validation dialogs complete critical writes without page overflow",
       "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::Request Rule dialog supports keyboard cancellation and returns usable focus",
       "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
@@ -1219,6 +1228,10 @@
       "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::genuine HA WebSocket drop during a save leaves the backend authoritative",
       "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::revoked HA session while editing cannot commit a save",
       "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::slow genuine HA WebSocket save never reports success before the backend replies",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::abandoned real upload consumes quota until elapsed expiry then reconnect recovers",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::warmed widgets plateau in one document and Ctrl+S commits once",
       "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::lazy chunk 404 reports a section error and refresh loads current assets",
       "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::malformed browser-local cache clears through normal reload",
       "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::new frontend with a stale published lazy chunk recovers on a fresh document",
@@ -1282,6 +1295,8 @@
       "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions",
       "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy",
       "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
       "tests_browser/stale-response-ordering.spec.mjs::firefox::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
     ],
     "browser-webkit": [
@@ -1303,6 +1318,8 @@
       "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions",
       "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy",
       "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
       "tests_browser/stale-response-ordering.spec.mjs::webkit::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
     ],
     "native-browser-chromium": [
@@ -1541,18 +1558,52 @@
       "browser_creates": 1,
       "browser_edits": 1,
       "multi_tab_conflicts": 1,
-      "browser_retention_windows": 8
+      "browser_retention_windows": 8,
+      "native_lifetime_journeys": 1,
+      "native_composite_rejections": 1,
+      "native_composite_recoveries": 1,
+      "native_assistant_states": 2,
+      "native_held_completions": 2,
+      "native_revision_conflicts": 1,
+      "native_abandoned_uploads": 1,
+      "native_upload_bytes": 1,
+      "native_transfer_reclaims": 1,
+      "native_retention_windows": 8,
+      "native_keyboard_commits": 1,
+      "native_semantic_scans": 82,
+      "native_error_semantic_scans": 20
     },
     "browser-firefox": {
-      "multi_tab_conflicts": 1
+      "multi_tab_conflicts": 1,
+      "native_lifetime_journeys": 1,
+      "native_composite_rejections": 1,
+      "native_composite_recoveries": 1,
+      "native_assistant_states": 2,
+      "native_held_completions": 2,
+      "native_revision_conflicts": 1
     },
     "browser-webkit": {
-      "multi_tab_conflicts": 1
+      "multi_tab_conflicts": 1,
+      "native_lifetime_journeys": 1,
+      "native_composite_rejections": 1,
+      "native_composite_recoveries": 1,
+      "native_assistant_states": 2,
+      "native_held_completions": 2,
+      "native_revision_conflicts": 1
     },
     "voice-intercom": {
       "voice_private_context_probes": 1,
       "intercom_deliveries": 1,
-      "audio_deliveries": 2
+      "audio_deliveries": 2,
+      "concurrent_audio_journeys": 2,
+      "audio_interleavings": 1,
+      "targeted_tts_failures": 1,
+      "native_audio_recoveries": 1,
+      "intercom_timing_cases": 1,
+      "intercom_idle_flaps": 1,
+      "actual_expiry_callbacks": 4,
+      "delayed_playback_acknowledgements": 1,
+      "intercom_timing_recoveries": 1
     },
     "backup": {
       "rollback_phases": 1
@@ -1588,6 +1639,15 @@
     },
     "diagnostics": {
       "artifact_privacy_probes": 4
+    },
+    "long-lifetime": {
+      "process_soak_windows": 9,
+      "lifetime_elapsed_seconds": 1800,
+      "lifetime_idle_seconds": 1500,
+      "lifetime_retention_callbacks": 20,
+      "lifetime_expired_transfer_reclaims": 1,
+      "lifetime_reloads": 4,
+      "lifetime_final_healthy_requests": 1
     }
   },
   "selections": {

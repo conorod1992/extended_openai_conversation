@@ -102,15 +102,22 @@ def scan_key(scan):
     return (scan["route"], scan["state"], scan["theme"], scan["width"])
 
 
-def expected_scans():
+def expected_scans(*, diagnostic_picker=False):
     source = (ROOT / "accessibility.spec.mjs").read_text(encoding="utf-8")
     narrow = json.loads(re.search(r"NARROW_ROUTES = (\[.*?\]);", source).group(1))
+    interactive = json.loads(
+        re.search(r"INTERACTIVE_STATES = (\{.*?\});", source).group(1)
+    )
+    if diagnostic_picker:
+        interactive["assistant-voice"] = ["picker-populated"]
     assert set(narrow) <= set(routes())
     keys = set()
     for theme in ("light", "dark"):
         for width, names in ((1280, routes()), (390, narrow)):
             for route in names:
                 keys.add((route, "route", theme, width))
+                for state in interactive.get(route, []):
+                    keys.add((route, state, theme, width))
                 if route in {"capabilities-functions", "capabilities-request-rules"}:
                     keys.add(
                         (
@@ -125,11 +132,29 @@ def expected_scans():
     return keys
 
 
+def reviewed_state_key(key):
+    """Reuse only unchanged exact findings from the corresponding reviewed state."""
+    route, state, theme, width = key
+    original = {
+        ("capabilities-functions", "tool-invalid"): "tool-editor",
+        ("capabilities-functions", "tool-save-error"): "tool-editor",
+        ("capabilities-functions", "destructive-confirmation"): "route",
+        ("capabilities-functions", "destructive-error"): "route",
+        ("assistant-voice", "picker-populated"): "route",
+        ("usage-maintenance-backup-restore", "restore-confirmation"): "route",
+    }.get((route, state), state)
+    return route, original, theme, width
+
+
 def check_accessibility(item, sha, policy):
     errors = check_identity(item, sha)
     scans = item.get("scans", [])
     keys = [scan_key(scan) for scan in scans]
-    if len(keys) != len(set(keys)) or set(keys) != expected_scans():
+    if not isinstance(item.get("diagnostic_picker", False), bool):
+        errors.append("Invalid accessibility diagnostic profile")
+    if len(keys) != len(set(keys)) or set(keys) != expected_scans(
+        diagnostic_picker=item.get("diagnostic_picker", False)
+    ):
         errors.append(
             "Mandatory accessibility route/theme/viewport/editor scan missing or duplicated"
         )
@@ -201,7 +226,7 @@ def check_accessibility(item, sha, policy):
                 )
                 observed[signature] += 1
                 if not any(
-                    tuple(allowance["case"]) == signature[0]
+                    tuple(allowance["case"]) == reviewed_state_key(signature[0])
                     and allowance["rule"] == signature[1]
                     and json.dumps(allowance["target"], sort_keys=True) == signature[2]
                     and allowance["impact"] == violation["impact"]
@@ -219,7 +244,7 @@ def check_accessibility(item, sha, policy):
             a
             for a in allowances
             if (tuple(a["case"]), a["rule"], json.dumps(a["target"], sort_keys=True))
-            == signature
+            == (reviewed_state_key(signature[0]), signature[1], signature[2])
         ]
         if matching and count > max(a.get("max_nodes", 1) for a in matching):
             errors.append(f"Accessibility violation count grew: {signature}: {count}")

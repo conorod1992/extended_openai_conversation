@@ -100,6 +100,53 @@ four trusted proxy requests and two socket/tool recovery cases. Existing Voice
 Identity/Quiet Hours/intercom semantics, logical leak counters and synthetic fault
 matrices remain complementary coverage.
 
+The `voice-intercom` campaign additionally interleaves two native software
+satellites with distinct users, recordings, transcripts and provider replies.
+One TTS output fails while the other remains usable; fetched WAV data and native
+playback acknowledgements prove recipient association and subsequent recovery.
+Intercom separately retains the real idle-stability timer, flaps idle before that
+timer completes, observes actual TTL callbacks, holds a native playback
+acknowledgement past expiry, then verifies a subsequent successful delivery.
+
+The Chromium `browser` campaign warms native YAML and populated condition editors,
+user/entity pickers, Function discovery and import dialogs in one HA document.
+Eight equivalent post-GC windows use the existing heap/node/document/listener
+plateau checks; a final Ctrl+S must commit exactly once. Two genuine assistants
+also receive distinct committed writes, a held save completion with the selector
+locked, a second-tab revision conflict, fresh authoritative readbacks and a held
+Function-discovery response after close/switch. Firefox and WebKit run only the
+relevant Composite recovery and two-assistant journeys. Chromium alone also
+abandons an admitted real upload, verifies quota remains occupied until elapsed
+TTL and supported lazy cleanup, and reconnects for a successful preview/cancel.
+
+The same Chromium campaign runs the existing axe sweep: its original 62 whole
+route/editor scans plus 20 scoped invalid-YAML, save-error, restore-confirmation
+and destructive confirmation/error scans across light/dark and desktop/mobile.
+Only unchanged exact findings can reuse the reviewed baseline; new targets,
+serious/critical findings or increased counts fail. Removed findings must also
+be removed from the baseline. Native populated-picker interaction is exercised
+functionally, but semantic acceptance for that state is deliberately deferred:
+the current HA picker exposes `aria-required-parent` on its combo-box item and
+an unnamed clear button (`button-name`). Resolving these critical findings would
+require changes to HA's native picker internals. They have not been baselined.
+The existing frontend diagnostics workflow's optional `diagnostic_picker` input
+includes all four populated-picker theme/viewport scans and retains fail-closed
+review, so it reports these findings instead of certifying them.
+
+The manual-only `long-lifetime` campaign extends the existing booted resource
+soak to at least 30 elapsed minutes, with at least 25 minutes of measured idle,
+periodic Assist/Memory traffic, nine resource windows, four actual entry reloads,
+an expired default-900-second upload reclaimed by the next transfer operation,
+and a final healthy Assist request. The actual archive retention callback runs
+on a documented 60-second harness interval rather than its production daily
+interval; this proves callback lifetime/cleanup, not a full day's elapsed
+retention. At least 20 callbacks must actually fire. Resource growth and latency
+use the existing warmed plateau/trend bounds. Select `long-lifetime` with normal
+intensity in Enhanced's manual dispatch. It is excluded from `all`, the nightly
+schedule, PR and release gating; a separate weekly scheduler would add workflow
+complexity without improving the elapsed-time assertion. It uses the same exact
+candidate, operation minimums and execution certificate as other campaigns.
+
 
 Native HA compatibility also uses the same mandatory-case catalog and structural
 execution ledgers. Real-HA public journeys retain their four-case contract on stable

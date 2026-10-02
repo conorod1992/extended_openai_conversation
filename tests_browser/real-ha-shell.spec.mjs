@@ -1,8 +1,315 @@
 import {expect, test} from "@playwright/test";
 import {managementRouteState, waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
+import {openColdHaRoute, replaceNativeYaml} from "./real-ha-shell-helpers.mjs";
+import {retentionGrowth, sampleRetainedRuntime} from "./browser-retention-metrics.mjs";
+import {mkdir, readFile, writeFile} from "node:fs/promises";
+import {dirname} from "node:path";
+
+async function nativeEvidence(label, data) {
+  const path = process.env.EOAI_NATIVE_EVIDENCE;
+  expect(path).toBeTruthy();
+  let reports = {};
+  try { reports = JSON.parse(await readFile(path, "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  reports[label] = data;
+  await mkdir(dirname(path), {recursive:true});
+  await writeFile(path, JSON.stringify(reports));
+}
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
+
+const lifetimeYaml = description => `spec:\n  name: native_lifetime_tool\n  description: ${description}\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: template\n  value_template: lifetime-healthy\n`;
+
+async function nativeRoute(panel, path) {
+  const [section, subsection] = path.split("/");
+  await panel.evaluate((host, [section, subsection]) => host._navigate(section, subsection), [section, subsection]);
+  await waitForManagementRouteReady(panel.page(), {name:path, path}, 30000);
+}
+
+test.describe("nightly native", () => {
+  test.skip(process.env.EOAI_NATIVE_ENDURANCE !== "1", "Enhanced native lifetime profile only");
+
+  test("native Composite rejection preserves the saved tool and editable recovery", async ({context, page}) => {
+    const panel = await openColdHaRoute(context, page, "capabilities/functions");
+    await panel.locator("#function-add").click();
+    await panel.locator("#add-tool").click();
+    const valid = lifetimeYaml("Authoritative Composite boundary").replace("native_lifetime_tool", "native_composite_probe");
+    await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), valid);
+    await panel.locator("#tool-save").click();
+    const card = panel.locator('[data-tool-key="native_composite_probe"]');
+    await expect(card).toContainText("Authoritative Composite boundary");
+    await card.locator(".edit-tool").click();
+    let functionBody = {type:"template", value_template:"Rejected execution"};
+    for (let depth = 0; depth < 33; depth++) functionBody = {type:"composite", sequence:[functionBody]};
+    const tool = {spec:{name:"native_composite_probe", description:"Rejected depth draft", parameters:{type:"object", properties:{}}}, function:functionBody};
+    await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), JSON.stringify(tool));
+    await panel.locator("#tool-validate").click();
+    await expect(panel.locator("#tool-error")).toContainText(/depth|nested/i);
+    await panel.locator("#tool-save").click();
+    await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
+    await expect(panel.locator("#tool-save")).toBeEnabled();
+    await panel.locator("#tool-cancel").click();
+    await card.locator(".edit-tool").click();
+    await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(element => element.yaml)).toContain("Authoritative Composite boundary");
+    await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), valid.replace("Authoritative Composite boundary", "Recovered native validation"));
+    await page.keyboard.press("Control+s");
+    await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+    await expect(card).toContainText("Recovered native validation");
+    await nativeEvidence("composite", {native_composite_rejections:1, native_composite_recoveries:1});
+  });
+
+  test("abandoned real upload consumes quota until elapsed expiry then reconnect recovers", async ({context, page, request}, testInfo) => {
+    test.setTimeout(120000);
+    const panel = await openColdHaRoute(context, page, "usage-maintenance/backup-restore");
+    await panel.locator("#transfer-export-mode").selectOption("full");
+    const downloaded = page.waitForEvent("download");
+    await panel.locator("#create-backup-transfer").click();
+    const download = await downloaded;
+    expect(await download.failure()).toBeNull();
+    const archive = await download.path();
+    await panel.evaluate(host => {
+      const original = host.hass.callWS.bind(host.hass);
+      host.hass.callWS = async message => {
+        const result = await original(message);
+        if (message.action === "import_chunk" && !window.__uploadHeld) {
+          window.__uploadHeld = {session:message.data.session_id, received:result.received};
+          await new Promise(() => {});
+        }
+        return result;
+      };
+    });
+    await panel.locator("#backup-file-transfer").setInputFiles(archive);
+    await expect.poll(() => page.evaluate(() => Boolean(window.__uploadHeld))).toBe(true);
+    const admitted = await page.evaluate(() => window.__uploadHeld);
+    expect(admitted.received).toBeGreaterThan(0);
+    await page.close();
+    const state = async () => (await request.get(process.env.REAL_HA_TRANSFER_STATE)).json();
+    expect(await state()).toMatchObject({imports:1, files_present:true});
+    const replacement = await context.newPage();
+    try {
+      const fresh = await openColdHaRoute(context, replacement, "usage-maintenance/backup-restore");
+      const blocked = await fresh.evaluate(async host => {
+        const agent = host._selectedAgent();
+        try {
+          await host.hass.callWS({type:"extended_openai_conversation_responses/management/backup_transfer", action:"import_start", ...agent, data:{filename:"quota-probe.zip",size:4096}});
+          return "unexpected admission";
+        } catch (error) { return error.message; }
+      });
+      expect(blocked).toMatch(/active|transfer|limit|session/i);
+      expect(blocked).not.toBe("unexpected admission");
+      // No test clock jump or explicit cancellation: backend expiry is lazy.
+      await replacement.waitForTimeout(11000);
+      expect(await state()).toMatchObject({imports:1, files_present:true});
+      await fresh.locator("#backup-file-transfer").setInputFiles(archive);
+      await expect(fresh.locator("#restore-dialog")).toHaveJSProperty("open", true);
+      await expect(fresh.locator("#restore-transfer-apply")).toBeEnabled();
+      await fresh.locator("#restore-transfer-cancel").click();
+      await expect.poll(async () => (await state()).imports).toBe(0);
+      expect((await state()).owned_files_on_disk).toBe(0);
+      await nativeEvidence("transfer", {native_abandoned_uploads:1, native_upload_bytes:admitted.received, native_transfer_reclaims:1});
+      await testInfo.attach("native-transfer-abandonment", {body:JSON.stringify({admitted_bytes:admitted.received, quota_rejections:1, elapsed_expiry_seconds:10, successful_reconnects:1}), contentType:"application/json"});
+    } finally { await replacement.close(); }
+  });
+
+  test("warmed widgets plateau in one document and Ctrl+S commits once", async ({context, page}, testInfo) => {
+    test.setTimeout(300000);
+    test.skip(testInfo.project.name !== "chromium", "CDP retained heap requires Chromium");
+    const panel = await openColdHaRoute(context, page, "capabilities/functions");
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await nativeRoute(panel, "capabilities/request-rules");
+    const ruleName = "Native retained condition";
+    await panel.evaluate(async (host, name) => {
+      await host._call("request_rules", "create", {revision:host._result.revision, rule:{name, phrases:["retained native condition"], match_type:"equals", action_type:"model_routing", action:{model:"gpt-5-mini", scope:"request", continue_to_ai:true, success_response:"Updated"}, conditions:[{condition:"template", value_template:"{{ false }}"}]}});
+      await host._loadSection(true);
+    }, ruleName);
+    await panel.evaluate(host => {
+      const original = host.hass.callWS.bind(host.hass);
+      window.__nativeMutations = [];
+      host.hass.callWS = async message => {
+        const result = await original(message);
+        if (message.section === "tools" && message.action === "save") window.__nativeMutations.push(message);
+        return result;
+      };
+    });
+    const cycle = async index => {
+      await nativeRoute(panel, "capabilities/functions");
+      await panel.locator("#function-add").click();
+      await panel.locator("#add-tool").click();
+      await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), lifetimeYaml(`Cancelled ${index}`));
+      await panel.locator("#tool-cancel").click();
+      await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+      await panel.locator("#function-add").click();
+      await panel.locator("#add-ha-tools").click();
+      const discovery = panel.locator("dialog[data-ha-llm-tools-dialog]");
+      await expect(discovery).toBeVisible();
+      await expect(discovery.locator("[data-status]")).not.toContainText("Loading");
+      await discovery.locator("[data-search]").fill(`cancel-${index}`);
+      await discovery.locator("[data-cancel]").click();
+      await expect(discovery).toHaveCount(0);
+      await nativeRoute(panel, "capabilities/request-rules");
+      await panel.locator(".request-rule-card").filter({hasText:ruleName}).locator(".rule-edit").click();
+      const selector = panel.locator("#rule-condition-host > ha-selector");
+      await expect(selector).toBeVisible();
+      await expect.poll(() => selector.evaluate(element => Boolean(element.hass?.localize))).toBe(true);
+      const row = selector.locator("ha-automation-condition-row").first();
+      await expect(row).toBeVisible();
+      await row.evaluate(element => {element._yamlMode = true; element.requestUpdate();});
+      await row.locator("ha-expansion-panel").evaluate(element => {element.expanded = true;});
+      const yaml = selector.locator("ha-yaml-editor");
+      await expect.poll(() => yaml.evaluate(element => element.yaml)).toContain("false");
+      await yaml.locator(".cm-content").fill("condition: template\nvalue_template: '{{ true }}'");
+      await expect.poll(() => selector.evaluate(element => element.value[0]?.value_template)).toBe("{{ true }}");
+      await panel.locator("#rule-dialog .rule-close").filter({hasText:"Cancel"}).click();
+      await nativeRoute(panel, "assistant/voice");
+      await panel.locator('[data-config="voice_scope_policy"]').selectOption("device_mapping");
+      await panel.locator('[data-config="voice_unmapped_policy"]').selectOption("default_user");
+      const picker = panel.locator("#config-voice_default_user_picker");
+      await expect.poll(() => picker.evaluate((element, id) => element.users?.some(user => user.id === id), process.env.REAL_HA_SMOKE_USER_ID)).toBe(true);
+      await picker.locator("ha-picker-field").click();
+      await picker.locator("ha-combo-box-item").filter({hasText:process.env.REAL_HA_PICKER_USER_NAME}).locator("button").click();
+      await expect(picker).toHaveJSProperty("value", process.env.REAL_HA_SMOKE_USER_ID);
+      await panel.locator("#revert-config").click();
+      await nativeRoute(panel, "assistant/prompt-context");
+      await panel.locator('[data-config="exposed_entities_enabled"]').check();
+      const entity = panel.locator("#exposed-entity-picker");
+      await entity.locator("ha-picker-field").click();
+      await entity.locator("ha-combo-box-item").filter({hasText:"sensor.cold_attribute_kitchen"}).locator("button").click();
+      await expect(panel.locator("[data-exposed-editor]")).toContainText("sensor.cold_attribute_kitchen");
+      await panel.locator('[data-exposed-attribute][data-attribute="battery_level"]').check();
+      await panel.locator("[data-close-exposed-editor]").click();
+      await panel.locator("#revert-config").click();
+      await nativeRoute(panel, "assistant/basics");
+      await panel.locator(".agent-actions-menu summary").click();
+      await panel.locator("#import-agent").click();
+      await panel.locator("#import-document").fill(`invalid cancelled import ${index}`);
+      await panel.locator("#import-preview").click();
+      await expect(panel.locator("#import-apply")).toBeDisabled();
+      await panel.locator("#import-cancel").click();
+      await nativeRoute(panel, "capabilities/functions");
+      await expect(panel.locator("dialog[open]")).toHaveCount(0);
+      await expect.poll(() => panel.evaluate(host => host._configDirty)).toBe(false);
+    };
+    await cycle("warm");
+    const documentIdentity = await page.evaluate(() => performance.timeOrigin);
+    const session = await context.newCDPSession(page);
+    const samples = [];
+    try {
+      for (let window = 0; window < 8; window++) {
+        for (let iteration = 0; iteration < 3; iteration++) await cycle(`${window}-${iteration}`);
+        samples.push(await sampleRetainedRuntime(session));
+      }
+      expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentIdentity);
+      expect(retentionGrowth(samples)).toEqual([]);
+      expect(await page.evaluate(() => window.__nativeMutations)).toHaveLength(0);
+      await panel.locator("#function-add").click();
+      await panel.locator("#add-tool").click();
+      await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), lifetimeYaml("One keyboard commit"));
+      await page.keyboard.press("Control+s");
+      await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+      await expect(panel.locator('[data-tool-key="native_lifetime_tool"]')).toContainText("One keyboard commit");
+      expect(await page.evaluate(() => window.__nativeMutations)).toHaveLength(1);
+      expect(errors).toEqual([]);
+      await nativeEvidence("retention", {native_retention_windows:samples.length, native_keyboard_commits:(await page.evaluate(() => window.__nativeMutations)).length});
+    } finally {
+      await testInfo.attach("native-retention-windows", {body:JSON.stringify({documentIdentity, samples, widget_cycles:25}), contentType:"application/json"});
+      await session.detach();
+    }
+  });
+
+  test("two assistants retain their own saved state through held completion and stale tab", async ({context, page}, testInfo) => {
+    test.setTimeout(120000);
+    const panel = await openColdHaRoute(context, page, "assistant/basics");
+    const choices = await panel.locator("#agent option").evaluateAll(nodes => nodes.map(node => node.value));
+    expect(choices).toHaveLength(2);
+    const expected = new Map();
+    const seed = Number(process.env.STRESS_SEED || 97000);
+    for (let step = 0; step < 6; step++) {
+      const identity = choices[(step + seed) % 2];
+      await panel.locator("#agent").selectOption(identity);
+      await expect(panel.locator("#agent")).toBeEnabled();
+      const title = `Native owner ${identity.slice(-5)} step ${step}`;
+      await panel.locator('[data-config="__title"]').fill(title);
+      if (step === 2) {
+        await panel.evaluate(host => {
+          const original = host.hass.callWS.bind(host.hass);
+          host.hass.callWS = async message => {
+            const result = await original(message);
+            if (message.section === "configuration" && message.action === "save" && !window.__commitHeld) {
+              window.__commitHeld = true;
+              await new Promise(resolve => { window.__releaseCommit = resolve; });
+            }
+            return result;
+          };
+        });
+      }
+      await panel.locator("#save-config").click();
+      if (step === 2) {
+        await expect.poll(() => page.evaluate(() => Boolean(window.__commitHeld))).toBe(true);
+        await expect(panel.locator("#agent")).toBeDisabled();
+        await page.evaluate(() => window.__releaseCommit());
+      }
+      await expect.poll(() => panel.evaluate(host => host._configDirty)).toBe(false);
+      expected.set(identity, title);
+      await nativeRoute(panel, "assistant/voice");
+      await expect(panel.locator("#config-voice_default_user_picker")).toBeAttached();
+      await nativeRoute(panel, "assistant/basics");
+      await expect(panel.locator('[data-config="__title"]')).toHaveValue(title);
+    }
+    const other = await context.newPage();
+    try {
+      const stale = await openColdHaRoute(context, other, "assistant/basics");
+      const identity = await panel.locator("#agent").inputValue();
+      await stale.locator("#agent").selectOption(identity);
+      await expect(stale.locator('[data-config="__title"]')).toHaveValue(expected.get(identity));
+      await stale.locator('[data-config="__title"]').fill("Stale native owner draft");
+      const finalTitle = "Authoritative native owner after conflict";
+      await panel.locator('[data-config="__title"]').fill(finalTitle);
+      await panel.locator("#save-config").click();
+      await expect.poll(() => panel.evaluate(host => host._configDirty)).toBe(false);
+      expected.set(identity, finalTitle);
+      await stale.locator("#save-config").click();
+      await expect(stale.locator("#toast")).toContainText("changed in another tab");
+      await expect(stale.locator('[data-config="__title"]')).toHaveValue("Stale native owner draft");
+      await expect(stale.locator("#save-config")).toBeEnabled();
+      for (const [identity, title] of expected) {
+        await panel.locator("#agent").selectOption(identity);
+        await expect(panel.locator('[data-config="__title"]')).toHaveValue(title);
+        const authoritative = await panel.evaluate(host => host._call("configuration", "get"));
+        expect(authoritative.title).toBe(title);
+      }
+      const oldIdentity = await panel.locator("#agent").inputValue();
+      await nativeRoute(panel, "capabilities/functions");
+      await panel.evaluate(host => {
+        const original = host.hass.callWS.bind(host.hass);
+        host.hass.callWS = async message => {
+          const result = await original(message);
+          if (message.section === "tools" && message.action === "ha_catalog" && !window.__catalogHeld) {
+            window.__catalogHeld = {entry:message.entry_id, subentry:message.subentry_id};
+            await new Promise(resolve => { window.__releaseCatalog = resolve; });
+          }
+          return result;
+        };
+      });
+      await panel.locator("#function-add").click();
+      await panel.locator("#add-ha-tools").click();
+      await expect.poll(() => page.evaluate(() => Boolean(window.__catalogHeld))).toBe(true);
+      await panel.locator("dialog[data-ha-llm-tools-dialog] [data-cancel]").click();
+      await panel.locator("#agent").selectOption(choices.find(value => value !== oldIdentity));
+      await expect(panel.locator("#agent")).toBeEnabled();
+      await page.evaluate(() => window.__releaseCatalog());
+      await expect.poll(() => panel.evaluate(host => host._haCatalogLoad == null)).toBe(true);
+      expect(await panel.evaluate((host, old) => host._haCatalogAgent === old, oldIdentity)).toBe(false);
+      await panel.locator("#function-add").click();
+      await panel.locator("#add-ha-tools").click();
+      await expect(panel.locator("dialog[data-ha-llm-tools-dialog] [data-status]")).not.toContainText("Loading");
+      await panel.locator("dialog[data-ha-llm-tools-dialog] [data-cancel]").click();
+      await nativeEvidence("assistants", {native_assistant_states:expected.size, native_held_completions:2, native_revision_conflicts:1});
+      await testInfo.attach("native-assistant-commits", {body:JSON.stringify({seed, expected:[...expected], held_completions:2, stale_conflicts:1}), contentType:"application/json"});
+    } finally { await other.close(); }
+  });
+});
 
 test.skip(!baseUrl || !authDataRaw, "requires the dedicated genuine Home Assistant frontend-shell harness");
 
