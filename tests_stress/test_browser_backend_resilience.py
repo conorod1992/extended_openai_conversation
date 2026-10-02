@@ -41,10 +41,10 @@ async def ownership_shell(hass, real_ha_shell, real_store_io):
 async def test_native_editor_ownership_and_satellite_registry_recovery(
     hass, ownership_shell, hass_ws_client, monkeypatch, stress_trace
 ):
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
     from homeassistant.components import conversation
     from homeassistant.core import Context
     from homeassistant.helpers import device_registry as dr, entity_registry as er
-    from custom_components.extended_openai_conversation_responses.const import DOMAIN
     from tests_real_ha.test_management_backend_acceptance import (
         _conversation_subentry,
         _fresh_reload,
@@ -94,7 +94,8 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         action="update",
         config={
             "api_mode": "chat_completions",
-            "chat_model": "gpt-5.6",
+            "chat_model": "gpt-4.1",
+            "reasoning_effort": "",
             "memory_auto_retrieve_limit": 3,
             "voice_scope_policy": "device_mapping",
             "voice_device_mappings": {old.id: "user:ownership-office-user"},
