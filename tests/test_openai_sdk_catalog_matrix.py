@@ -165,13 +165,13 @@ def _cases(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     [
         item["id"]
         for item in BUNDLED_CATALOG.resolved.values()
-        if item["status"] == "current"
+        if item["status"] in {"current", "deprecated"}
     ],
 )
-async def test_every_current_model_emits_only_catalogue_allowed_sdk_fields(
+async def test_every_configured_model_emits_only_catalogue_allowed_sdk_fields(
     hass, model: str
 ) -> None:
-    """A bounded complete model set covers explicit, Auto, tools, and sampling."""
+    """Every still-supported model covers explicit, Auto, tools, and sampling."""
     metadata = BUNDLED_CATALOG.resolved[model]
     projection = frontend_capabilities(model)
     assert projection["reasoning_effort_options"] == metadata["reasoning"]["efforts"]
