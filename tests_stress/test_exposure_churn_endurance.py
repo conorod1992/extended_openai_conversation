@@ -196,3 +196,194 @@ async def test_seeded_exposure_registry_churn_never_leaks_removed_targets(
         agents=2,
         users=len(users),
     )
+
+
+async def test_privileged_warm_cache_respects_later_restricted_registry_and_group_changes(
+    hass, monkeypatch, stress_trace
+):
+    """Natural later requests filter current HA read policy and independently gate control."""
+    from homeassistant.auth.models import Group
+    from homeassistant.auth.permissions.const import (
+        CAT_ENTITIES,
+        POLICY_READ,
+        POLICY_CONTROL,
+    )
+    from homeassistant.auth.permissions.entities import ENTITY_ENTITY_IDS
+    from homeassistant.auth.const import GROUP_ID_READ_ONLY, GROUP_ID_USER
+    from tests_real_ha.test_provider_wire_e2e import _agent as wire_agent
+    from tests_real_ha.test_user_permission_acceptance import (
+        _chat_sse_tool_call,
+        _tool_result_from_chat_request,
+    )
+
+    owner = MockUser(id="cache-owner", is_owner=True).add_to_hass(hass)
+    registry = er.async_get(hass)
+    allowed = registry.async_get_or_create(
+        domain="light",
+        platform="permission_churn",
+        unique_id="allowed",
+        suggested_object_id="cache_allowed",
+    )
+    denied = registry.async_get_or_create(
+        domain="light",
+        platform="permission_churn",
+        unique_id="denied",
+        suggested_object_id="cache_denied",
+    )
+    current_id = denied.entity_id
+    group = Group(
+        id="cache-restricted-policy",
+        name="Cache policy",
+        policy={
+            CAT_ENTITIES: {
+                ENTITY_ENTITY_IDS: {
+                    allowed.entity_id: {POLICY_READ: True, POLICY_CONTROL: True},
+                    denied.entity_id: {POLICY_READ: True},
+                }
+            }
+        },
+    )
+    user = MockUser(
+        id="cache-restricted-user", groups=[group], is_owner=False
+    ).add_to_hass(hass)
+    from custom_components.extended_openai_conversation_responses.live_subentry_updates import (
+        update_live_subentry,
+    )
+
+    agent = await wire_agent(hass, "chat_completions")
+    update_live_subentry(
+        hass,
+        agent.entry,
+        agent.subentry,
+        data={**agent.subentry.data, CONF_EXPOSED_ENTITIES_ENABLED: True},
+    )
+    for item in (allowed, denied):
+        hass.states.async_set(item.entity_id, "on")
+        async_expose_entity(hass, conversation.DOMAIN, item.entity_id, True)
+    effects = []
+
+    async def off(call):
+        effects.append(call)
+
+    hass.services.async_register("light", "turn_off", off)
+
+    async def read_as(actor, label):
+        wire = _install_wire(
+            monkeypatch, agent, [_chat_sse_text("Current permission context")]
+        )
+        assert (
+            _speech(await _say(hass, agent, actor.id, label))
+            == "Current permission context"
+        )
+        return json.dumps(wire.requests[0]["body"])
+
+    mutations = (
+        "warm",
+        "rename",
+        "disable",
+        "enable",
+        "delete",
+        "recreate",
+        "unexpose",
+        "expose",
+        "no-groups",
+        "read-only",
+        "user-group",
+    )
+    stale_ids = set()
+    for index, mutation in enumerate(mutations):
+        if mutation == "rename":
+            stale_ids.add(current_id)
+            registry.async_update_entity(
+                current_id, new_entity_id="light.cache_renamed"
+            )
+            hass.states.async_remove(current_id)
+            async_expose_entity(hass, conversation.DOMAIN, current_id, False)
+            current_id = "light.cache_renamed"
+            hass.states.async_set(current_id, "on")
+            async_expose_entity(hass, conversation.DOMAIN, current_id, True)
+        elif mutation in {"disable", "enable"}:
+            registry.async_update_entity(
+                current_id,
+                disabled_by=RegistryEntryDisabler.USER
+                if mutation == "disable"
+                else None,
+            )
+            if mutation == "disable":
+                hass.states.async_remove(current_id)
+            else:
+                hass.states.async_set(current_id, "on")
+        elif mutation == "delete":
+            registry.async_remove(current_id)
+            hass.states.async_remove(current_id)
+            async_expose_entity(hass, conversation.DOMAIN, current_id, False)
+            stale_ids.add(current_id)
+        elif mutation == "recreate":
+            recreated = registry.async_get_or_create(
+                domain="light",
+                platform="permission_churn",
+                unique_id="denied",
+                suggested_object_id="cache_recreated",
+            )
+            current_id = recreated.entity_id
+            stale_ids.discard(current_id)
+            hass.states.async_set(current_id, "on")
+            async_expose_entity(hass, conversation.DOMAIN, current_id, True)
+        elif mutation in {"expose", "unexpose"}:
+            async_expose_entity(
+                hass, conversation.DOMAIN, current_id, mutation == "expose"
+            )
+        elif mutation in {"no-groups", "read-only", "user-group"}:
+            await hass.auth.async_update_user(
+                user,
+                group_ids=[]
+                if mutation == "no-groups"
+                else [GROUP_ID_READ_ONLY if mutation == "read-only" else GROUP_ID_USER],
+            )
+        await hass.async_block_till_done()
+        privileged = await read_as(owner, index * 2)
+        restricted = await read_as(user, index * 2 + 1)
+        assert all(not _contains_id(restricted, old) for old in stale_ids)
+        assert _contains_id(restricted, allowed.entity_id) is (mutation != "no-groups")
+        permitted_denied = mutation in {"warm", "read-only", "user-group"}
+        assert _contains_id(restricted, current_id) is permitted_denied
+        if mutation in {"warm", "read-only"}:
+            denied_wire = _install_wire(
+                monkeypatch,
+                agent,
+                [
+                    _chat_sse_tool_call(current_id, f"denied-{index}"),
+                    _chat_sse_text("Control refused"),
+                ],
+            )
+            assert _speech(await _say(hass, agent, user.id, index)) == "Control refused"
+            assert "does not have permission to control" in json.dumps(
+                _tool_result_from_chat_request(
+                    denied_wire.requests[1]["body"], f"denied-{index}"
+                )
+            )
+            assert effects == []
+        if mutation not in {"disable", "delete", "unexpose"}:
+            assert _contains_id(privileged, current_id)
+    allowed_wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call(allowed.entity_id, "allowed-after-churn"),
+            _chat_sse_text("Control recovered"),
+        ],
+    )
+    assert _speech(await _say(hass, agent, user.id, 99)) == "Control recovered"
+    assert len(effects) == 1 and effects[0].context.user_id == user.id
+    assert _tool_result_from_chat_request(
+        allowed_wire.requests[1]["body"], "allowed-after-churn"
+    )["result"][0]["success"]
+    record(
+        stress_trace,
+        "summary",
+        layer="Real HA provider",
+        permission_cache_churn_cases=1,
+        restricted_context_probes=len(mutations),
+        permission_group_updates=3,
+        recovery_conversations=1,
+    )

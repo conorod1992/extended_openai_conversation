@@ -766,3 +766,242 @@ async def test_concurrent_deferred_summaries_keep_owner_and_recent_turns(
             if not task.done():
                 task.cancel()
         await asyncio.gather(*followups, return_exceptions=True)
+
+
+async def _pending_summary_journey(hass, monkeypatch, *, title="Summary replacement"):
+    """Warm real public history until a detached SDK summary has entered transport."""
+    import asyncio
+    import httpx
+    from tests_real_ha.test_provider_wire_e2e import _raw_client
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONTEXT_TRUNCATE_SUMMARIZE,
+    )
+
+    owner = MockUser(
+        id="pending-summary-owner", name="Summary owner", is_owner=True
+    ).add_to_hass(hass)
+    entry = _make_entry(
+        title,
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_FUNCTION_TOOLS: [],
+            CONF_ARCHIVE_ENABLED: True,
+            CONF_CONTEXT_THRESHOLD: 1000,
+            CONF_CONTEXT_TRUNCATE_STRATEGY: CONTEXT_TRUNCATE_SUMMARIZE,
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    started, release = asyncio.Event(), asyncio.Event()
+    requests = []
+    foreground = 0
+
+    async def send(request, *args, **kwargs):
+        nonlocal foreground
+        body = json.loads(request.content)
+        requests.append(body)
+        if not body.get("stream"):
+            assert "OLD-OWNER-HISTORY" in json.dumps(body)
+            started.set()
+            await release.wait()
+            return httpx.Response(
+                200,
+                json={
+                    "id": "detached-old-summary",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "gpt-5.6",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": "OLD-OWNER-SUMMARY",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 7,
+                        "completion_tokens": 3,
+                        "total_tokens": 10,
+                    },
+                },
+                request=request,
+            )
+        foreground += 1
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_text_with_usage(
+                "Owned summary warmup", 10000 if foreground == 3 else 50
+            ),
+            request=request,
+        )
+
+    monkeypatch.setattr(_raw_client(agent)._client, "send", send)
+    conversation_id = None
+    for index in range(3):
+        result = await _say(
+            hass,
+            entry.entry_id,
+            owner.id,
+            f"OLD-OWNER-HISTORY {index} " + "private warm history " * 60,
+            conversation_id,
+        )
+        assert _speech(result) == "Owned summary warmup"
+        conversation_id = result.conversation_id
+    await asyncio.wait_for(started.wait(), 10)
+    manager = agent._deferred_context_summary_manager
+    assert len(manager._pending) == 1
+    task = manager._pending[conversation_id].task
+    assert not task.done()
+    return {
+        "entry": entry,
+        "agent": agent,
+        "owner": owner,
+        "conversation_id": conversation_id,
+        "manager": manager,
+        "task": task,
+        "release": release,
+        "requests": requests,
+    }
+
+
+@pytest.mark.timeout(90)
+@pytest.mark.parametrize("lifecycle", ["reload", "remove-recreate", "reset"])
+async def test_pending_summary_lifecycle_cannot_mutate_replacement_history(
+    hass, monkeypatch, stress_trace, lifecycle
+):
+    """Pending real SDK work settles without crossing a replacement history/owner."""
+    import asyncio
+    import gc
+    from types import MappingProxyType
+    import weakref
+    from homeassistant.config_entries import ConfigSubentry
+    from custom_components.extended_openai_conversation_responses.conversation_lifecycle import (
+        async_reset_conversation_context,
+    )
+    from custom_components.extended_openai_conversation_responses.management_ui import (
+        async_management_command,
+    )
+
+    state = await _pending_summary_journey(hass, monkeypatch)
+    entry, old_agent = state["entry"], state["agent"]
+    old_manager = state["manager"]
+    old_ref, manager_ref = weakref.ref(old_agent), weakref.ref(old_manager)
+    old_subentry = old_agent.subentry
+    other = MockUser(
+        id="replacement-summary-other", name="Other owner", is_owner=True
+    ).add_to_hass(hass)
+    try:
+        if lifecycle == "reload":
+            assert await hass.config_entries.async_reload(entry.entry_id)
+        elif lifecycle == "remove-recreate":
+            replacement = ConfigSubentry(
+                data=MappingProxyType(dict(old_subentry.data)),
+                subentry_type="conversation",
+                title=old_subentry.title,
+                unique_id=None,
+            )
+            from custom_components.extended_openai_conversation_responses.live_subentry_updates import (
+                live_subentry_update,
+            )
+
+            # Retire the loaded entry before replacing its subentry. This is
+            # the supported unload/recreate/setup lifecycle, without overlapping
+            # HA registry entity removal with platform reset.
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            with live_subentry_update():
+                assert hass.config_entries.async_remove_subentry(
+                    entry, old_subentry.subentry_id
+                )
+                assert hass.config_entries.async_add_subentry(entry, replacement)
+            assert old_subentry.subentry_id not in entry.subentries
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            assert replacement.subentry_id != old_subentry.subentry_id
+        else:
+            key = f"conversation:{state['conversation_id']}"
+            await async_reset_conversation_context(
+                hass,
+                old_agent._continuity,
+                entry.entry_id,
+                old_subentry.subentry_id,
+                continuity_key=None,
+                state_session_id=key,
+                memory_session_id=key,
+            )
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        assert agent is not None
+        if lifecycle != "reset":
+            assert agent is not old_agent
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            [
+                _chat_sse_text("Replacement history healthy"),
+                _chat_sse_text("Owner recovered"),
+            ],
+        )
+        other_result = await _say(
+            hass, entry.entry_id, other.id, "OTHER-OWNER-REPLACEMENT"
+        )
+        assert _speech(other_result) == "Replacement history healthy"
+        assert "OLD-OWNER" not in json.dumps(wire.requests[0]["body"])
+        # Old work is released only after replacement history already exists.
+        state["release"].set()
+        await asyncio.wait_for(
+            asyncio.gather(state["task"], return_exceptions=True), 10
+        )
+        assert state["task"].done()
+        recovered = await _say(
+            hass,
+            entry.entry_id,
+            state["owner"].id,
+            "OWNER-RECOVERY",
+            None if lifecycle != "reset" else state["conversation_id"],
+        )
+        assert _speech(recovered) == "Owner recovered"
+        assert "OLD-OWNER-SUMMARY" not in json.dumps(wire.requests[-1]["body"])
+        assert "OTHER-OWNER-REPLACEMENT" not in json.dumps(wire.requests[-1]["body"])
+        if lifecycle == "reset":
+            assert recovered.conversation_id != state["conversation_id"]
+            assert "OLD-OWNER-HISTORY" not in json.dumps(wire.requests[-1]["body"])
+        archive = await async_management_command(
+            hass,
+            state["owner"].id,
+            False,
+            {
+                "section": "conversations",
+                "action": "list",
+                "entry_id": entry.entry_id,
+                "subentry_id": agent.subentry.subentry_id,
+            },
+        )
+        assert "OTHER-OWNER-REPLACEMENT" not in json.dumps(archive)
+        if lifecycle != "reset":
+            state.pop("agent")
+            state.pop("manager")
+            del old_agent, old_manager
+            await asyncio.sleep(0)
+            # The test's completed task handle can retain cancellation traceback
+            # frames. Release it before measuring retired runtime reachability.
+            state.pop("task")
+            await hass.async_block_till_done()
+            gc.collect()
+            assert old_ref() is None and manager_ref() is None
+        record(
+            stress_trace,
+            "summary",
+            layer="provider-wire",
+            summary_lifecycle_cases=1,
+            summary_replacement_recoveries=1,
+            lifecycle=lifecycle,
+        )
+    finally:
+        state["release"].set()
+        if "task" in state:
+            await asyncio.gather(state["task"], return_exceptions=True)
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()

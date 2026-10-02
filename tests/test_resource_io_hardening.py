@@ -306,3 +306,52 @@ async def test_concurrent_add_automation_calls_do_not_lose_updates(
     saved = yaml.safe_load(automation_path.read_text(encoding="utf-8"))
     assert {item["alias"] for item in saved} == {"Existing", "First", "Second"}
     assert len({item["id"] for item in saved}) == 3
+
+
+@pytest.mark.parametrize(
+    "representation",
+    [
+        "empty-gzip",
+        "raw-deflate",
+        "gzip-members",
+        "gzip-truncated",
+        "deflate-truncated",
+        "expansion",
+    ],
+)
+def test_compressed_response_integrity_and_accepted_body_boundary(representation):
+    """Strict completion must retain empty, raw deflate and multi-member compatibility."""
+    import gzip
+    import zlib
+    import aiohttp
+    from custom_components.extended_openai_conversation_responses.functions.web import (
+        _decode_compressed_body,
+    )
+
+    body, encoding, expected = gzip.compress(b""), "gzip", b""
+    if representation == "raw-deflate":
+        compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+        body, encoding, expected = (
+            compressor.compress(b"healthy") + compressor.flush(),
+            "deflate",
+            b"healthy",
+        )
+    elif representation == "gzip-members":
+        body, expected = (
+            gzip.compress(b"healthy") + gzip.compress(b"-second"),
+            b"healthy-second",
+        )
+    elif representation == "gzip-truncated":
+        body = gzip.compress(b"complete decoded text")[:-8]
+    elif representation == "deflate-truncated":
+        body, encoding = zlib.compress(b"complete decoded text")[:-4], "deflate"
+    elif representation == "expansion":
+        body = gzip.compress(b"x" * 65)
+    if representation.endswith("truncated"):
+        with pytest.raises(aiohttp.ClientPayloadError, match="Incomplete"):
+            _decode_compressed_body(body, encoding, 64)
+    elif representation == "expansion":
+        with pytest.raises(HomeAssistantError, match="safety limit"):
+            _decode_compressed_body(body, encoding, 64)
+    else:
+        assert _decode_compressed_body(body, encoding, 64) == expected
