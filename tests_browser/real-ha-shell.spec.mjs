@@ -173,11 +173,15 @@ test.describe("nightly ownership", () => {
       host._navigate("assistant", "voice");
     });
     await expect.poll(() => page.evaluate(() => window.__registryFailures)).toBe(1);
-    const row = panel.locator("[data-voice-mapping-row]").last();
+    // Use the Office row: its stored device differs from Kitchen, so readback
+    // cannot pass merely because the hidden control already held the target ID.
+    const row = panel.locator("[data-voice-mapping-row]").first();
+    await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_OLD_DEVICE);
     const picker = row.locator("ha-entity-picker");
     await picker.locator("ha-picker-field").click();
     await picker.locator("ha-combo-box-item").filter({hasText:"assist_satellite.ownership_kitchen"}).locator("button").click();
     await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_NEW_DEVICE);
+    await expect(row.locator(".voice-satellite-warning")).toBeHidden();
     expect(await page.evaluate(() => window.__registryLists)).toBeGreaterThan(1);
     await nativeEvidence("retry", {native_registry_fetch_recoveries:1});
   });
