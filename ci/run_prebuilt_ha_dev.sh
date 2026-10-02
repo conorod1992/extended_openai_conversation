@@ -3,12 +3,33 @@ set -euo pipefail
 
 MODE="${1:?usage: run_prebuilt_ha_dev.sh <compat|upcoming>}"
 
-CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
-BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+IMAGE_HA_CORE_SHA="$(cat /opt/eoai-ci/ha-core-sha)"
+BASE_IMAGE="$(cat /opt/eoai-ci/base-image.txt)"
+IDENTITY_ARGS=(
+  --requirements requirements_test.txt
+  --manifest custom_components/extended_openai_conversation_responses/manifest.json
+  --recipe ci/Dockerfile.dev
+  --recipe ci/environment_fingerprint.py
+  --recipe ci/check_ha_dev_environment.py
+  --recipe ci/install_ha_dependencies.py
+  --recipe ci/install_ha_media_dependencies.py
+  --recipe ci/reconcile_ha_dev_environment.sh
+  --recipe ci/run_prebuilt_ha_dev.sh
+  --recipe ci/check_ha_dev_runtime.sh
+  --python-version "$(python -c 'import platform; print(platform.python_version())')"
+  --base-image "$BASE_IMAGE"
+  --extra "ha_core_sha=$IMAGE_HA_CORE_SHA"
+)
 
-if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+if [[ ! -s /opt/eoai-ci/environment.identity.json ]] \
+    || ! python ci/environment_fingerprint.py "${IDENTITY_ARGS[@]}" \
+      --check /opt/eoai-ci/environment.identity.json; then
   echo "Dependency declarations changed since image build; reconciling without replacing HA dev."
   bash ci/reconcile_ha_dev_environment.sh
+  python ci/environment_fingerprint.py "${IDENTITY_ARGS[@]}" \
+    --write /opt/eoai-ci/environment.identity.json > /dev/null
+  cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json \
+    | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
 fi
 
 python ci/check_ha_dev_environment.py

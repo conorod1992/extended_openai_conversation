@@ -100,8 +100,71 @@ def test_standalone_certification_imports_support_the_lightweight_runner_python(
     # The final gate uses ubuntu-latest's Python, independently of HA's Python.
     # Parse its complete dependency chain using that runner's older grammar.
     for filename in (
-        "enhanced_certification.py", "candidate_evidence.py", "enhanced_evidence.py",
-        "execution_contract.py", "release_certification.py",
+        "enhanced_certification.py",
+        "candidate_evidence.py",
+        "enhanced_evidence.py",
+        "execution_contract.py",
+        "release_certification.py",
     ):
         path = ROOT / "ci" / filename
-        ast.parse(path.read_text(encoding="utf-8"), filename=str(path), feature_version=(3, 12))
+        ast.parse(
+            path.read_text(encoding="utf-8"),
+            filename=str(path),
+            feature_version=(3, 12),
+        )
+
+
+def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverage():
+    jobs = workflow("enhanced-stress.yml")["jobs"]
+    assert jobs["ha-lifecycle-matrix"]["strategy"]["matrix"]["ha-version"] == [
+        "oldest",
+        "stable",
+    ]
+    assert jobs["ha-lifecycle-matrix"]["container"]["image"].endswith(":ha-stable")
+    lifecycle_install = next(
+        step["run"]
+        for step in jobs["ha-lifecycle-matrix"]["steps"]
+        if step.get("name") == "Install test and selected HA environment"
+    )
+    assert "pytest-homeassistant-custom-component==0.13.317" in lifecycle_install
+    assert 'homeassistant==$MINIMUM' in lifecycle_install
+    assert "$EOAI_EXPECTED_HA_VERSION" in lifecycle_install
+    assert jobs["ha-lifecycle-dev"]["steps"]
+    assert any(
+        step.get("name") == "Resolve exact HA dev commit and Python version"
+        for step in jobs["ha-lifecycle-dev"]["steps"]
+    )
+    assert any(
+        step.get("name")
+        == "Construct the exact HA dev runtime when no matching image exists"
+        for step in jobs["ha-lifecycle-dev"]["steps"]
+    )
+    assert "ha-lifecycle-dev" in jobs["certify"]["needs"]
+
+    engines = jobs["browser-engines"]
+    assert engines["strategy"]["matrix"]["engine"] == ["firefox", "webkit"]
+    assert "browser-${{ matrix.engine }}" in engines["container"]["image"]
+    assert any(
+        step.get("name") == "Verify prebuilt Playwright engine"
+        for step in engines["steps"]
+    )
+    stable_images = workflow("ci-image-stable.yml")["jobs"]["build"]["steps"]
+    assert any(
+        step.get("name") == "Build and publish Firefox nightly image"
+        for step in stable_images
+    )
+    assert any(
+        step.get("name") == "Build and publish WebKit nightly image"
+        for step in stable_images
+    )
+    stable_reconciler = Path("ci/reconcile_stable_environment.sh").read_text()
+    assert "environment.identity.json" in stable_reconciler
+    assert "sha256sum" in stable_reconciler
+
+    assert jobs["prepare"]["steps"]
+    schedule_campaigns = next(
+        step
+        for step in jobs["prepare"]["steps"]
+        if step.get("name") == "Resolve reproducible run controls"
+    )
+    assert 'intensities=["normal","heavy"]' in schedule_campaigns["run"]
