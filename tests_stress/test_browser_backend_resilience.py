@@ -54,6 +54,10 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
 
     shell = ownership_shell
     entry = shell["entry"]
+    measured = {
+        "native_ownership_reload_checks": 0,
+        "native_registry_private_probes": 0,
+    }
     client = await _admin_client(hass, hass_ws_client)
     office_user = MockUser(id="ownership-office-user", name="Office retained owner")
     office_user.add_to_hass(hass)
@@ -184,6 +188,7 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         )
         assert after["config"] == before["config"]
         assert rules_after["rules"] == rules_before["rules"]
+        measured["native_ownership_reload_checks"] += 1
         record(stress_trace, "durable_reload", native_ownership_reload_checks=1)
         return web.json_response(after["config"])
 
@@ -231,6 +236,7 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
                 body = json.dumps(wire.requests[-1]["body"])
                 assert own in body and other not in body
         assert users == [None, None]
+        measured["native_registry_private_probes"] += len(users)
         record(stress_trace, "voice_wire", native_registry_private_probes=2)
         return web.json_response(
             {"owners": 2, "private_markers": 2, "authenticated_users": users}
@@ -245,6 +251,11 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+    evidence = (
+        Path(os.environ.get("STRESS_ARTIFACT_DIR", "stress-artifacts"))
+        / "native-ownership.json"
+    )
+    evidence.unlink(missing_ok=True)
     try:
         await _run_playwright(
             repo_root=Path(__file__).resolve().parent.parent,
@@ -256,15 +267,23 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
                 "REAL_HA_OWNERSHIP_CONTROL": url,
                 "REAL_HA_OLD_DEVICE": old.id,
                 "REAL_HA_NEW_DEVICE": replacement.id,
+                "EOAI_NATIVE_EVIDENCE": str(evidence.resolve()),
             },
             failure_label="Native editor ownership and registry recovery failed",
         )
-        record(
-            stress_trace,
-            "summary",
-            native_editor_ownership_cases=4,
-            native_registry_recovery_cases=1,
-        )
+        reports = json.loads(evidence.read_text(encoding="utf-8"))
+        assert set(reports) == {
+            "validation-success",
+            "validation-failure",
+            "commit-success",
+            "commit-failure",
+            "registry",
+            "retry",
+        }
+        for report in reports.values():
+            for key, value in report.items():
+                measured[key] = measured.get(key, 0) + value
+        record(stress_trace, "summary", **measured)
     finally:
         await runner.cleanup()
         await client.close()

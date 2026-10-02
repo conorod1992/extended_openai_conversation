@@ -183,7 +183,10 @@ for (const phase of ["validate_yaml", "save"]) for (const fails of [false, true]
   const saving = c["tool-save"].emit("click");
   const submitted = await entered.promise;
   if (phase === "validate_yaml") assert.equal(submitted.yaml, "Alpha renamed implementation");
-  else assert.equal(submitted.original_name, "example");
+  else {
+    assert.equal(submitted.original_name, "example");
+    assert.equal(submitted.revision, "rev-a");
+  }
   await c["tool-cancel"].emit("click");
   panel._draft.functions.push({spec:{name:"beta", description:"Beta original"}, function:{type:"template"}});
   const betaHydrate = nextLoad("serialize");
@@ -202,5 +205,32 @@ for (const phase of ["validate_yaml", "save"]) for (const fails of [false, true]
   assert.equal(c["tool-save"].disabled, true);
   assert.equal(calls.filter(call => call.action === "save").length, phase === "save" ? 1 : 0);
   assert.ok(!calls.some(call => call.action === "save" && call.params.original_name === "beta"));
+  assert.equal(panel._draft.functions[1].spec.name, "beta", "stale result cannot publish a different collection");
+}
+
+// A selected assistant cannot be replaced while validation is outstanding.
+{
+  const {panel, controls: c, edit, calls, nextLoad} = harness();
+  panel._selectedAgent = () => ({entry_id:"entry-alpha", subentry_id:panel._agentId});
+  const hydrate = nextLoad("serialize");
+  const opened = edit.emit("click");
+  (await hydrate).resolve({yaml:"Alpha submitted"});
+  await opened;
+  const entered = deferred(), release = deferred(), originalCall = panel._call.bind(panel);
+  panel._call = async (section, action, params) => {
+    const result = await originalCall(section, action, params);
+    if (action === "validate_yaml") {entered.resolve(params); await release.promise;}
+    return result;
+  };
+  const saving = c["tool-save"].emit("click");
+  const params = await entered.promise;
+  assert.equal(params.entry_id, "entry-alpha");
+  assert.equal(params.subentry_id, "agent-a");
+  panel._agentId = "agent-beta";
+  c["tool-error"].textContent = "Beta status";
+  release.resolve();
+  await saving;
+  assert.equal(calls.filter(call => call.action === "save").length, 0);
+  assert.equal(c["tool-error"].textContent, "Beta status");
 }
 console.log("Function Tool editor hydration, stale sessions, failure and save tests passed");

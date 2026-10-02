@@ -1594,7 +1594,8 @@
       "native_editor_ownership_cases": 4,
       "native_registry_recovery_cases": 1,
       "native_registry_private_probes": 2,
-      "native_ownership_reload_checks": 5
+      "native_ownership_reload_checks": 5,
+      "native_registry_fetch_recoveries": 1
     },
     "browser-firefox": {
       "multi_tab_conflicts": 1,
@@ -1607,7 +1608,8 @@
       "native_editor_ownership_cases": 4,
       "native_registry_recovery_cases": 1,
       "native_registry_private_probes": 2,
-      "native_ownership_reload_checks": 5
+      "native_ownership_reload_checks": 5,
+      "native_registry_fetch_recoveries": 1
     },
     "browser-webkit": {
       "multi_tab_conflicts": 1,
@@ -1620,7 +1622,8 @@
       "native_editor_ownership_cases": 4,
       "native_registry_recovery_cases": 1,
       "native_registry_private_probes": 2,
-      "native_ownership_reload_checks": 5
+      "native_ownership_reload_checks": 5,
+      "native_registry_fetch_recoveries": 1
     },
     "voice-intercom": {
       "voice_private_context_probes": 1,

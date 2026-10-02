@@ -36,6 +36,7 @@ test.describe("nightly ownership", () => {
         await host._call("request_rules", "create", {revision:rules.revision, rule:{name:alpha, phrases:[alpha], match_type:"equals", enabled:true, action_type:"local_action", action:{actions:[{type:"function", function:alpha, arguments:{}}], success_response:"Alpha action"}}});
         await host._loadSection(true);
       }, {alpha, beta, tools:[tool(alpha, "ALPHA_ORIGINAL"), tool(beta, "BETA_ORIGINAL")]});
+      await panel.locator(`.function-group-card[data-group-id="${alpha}"] summary`).click();
       await panel.locator(`[data-tool-key="${alpha}"] .edit-tool`).click();
       const yaml = JSON.stringify(tool(renamed, "ALPHA_SUBMITTED_IMPLEMENTATION"));
       await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), yaml);
@@ -107,6 +108,7 @@ test.describe("nightly ownership", () => {
       await panel.locator(`[data-tool-key="${beta}"] .edit-tool`).click();
       await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(e => e.yaml)).toContain("BETA_UNSAVED_DRAFT");
       await panel.locator("#tool-cancel").click();
+      await nativeEvidence(`${phase}-${completion}`, {native_editor_ownership_cases:1});
     });
   }
 
@@ -153,6 +155,7 @@ test.describe("nightly ownership", () => {
     await page.reload();
     await expect(panel.locator("#agent")).toBeEnabled();
     expect((await panel.evaluate(host => host._call("configuration", "get"))).config.voice_device_mappings).toEqual(read.config.voice_device_mappings);
+    await nativeEvidence("registry", {native_registry_recovery_cases:1});
   });
 
   test("failed initial satellite registry request retries in the same panel", async ({context, page}) => {
@@ -176,6 +179,7 @@ test.describe("nightly ownership", () => {
     await picker.locator("ha-combo-box-item").filter({hasText:"assist_satellite.ownership_kitchen"}).locator("button").click();
     await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_NEW_DEVICE);
     expect(await page.evaluate(() => window.__registryLists)).toBeGreaterThan(1);
+    await nativeEvidence("retry", {native_registry_fetch_recoveries:1});
   });
 });
 

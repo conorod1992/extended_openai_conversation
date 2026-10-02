@@ -203,5 +203,6 @@ journey replaces Kitchen's entity/device association in the mounted document,
 saves through native entity/user pickers, and checks private markers in genuine
 public Assist provider requests from both devices. A first-fetch outage must
 retry in the same mounted panel. These cases remain Enhanced-only; the small
-editor-operation regression extends the existing ordinary Node suite because
-it deterministically protects ownership without HA, browser or network costs.
+editor-operation and registry-selection regressions extend the existing ordinary
+Node suite because they deterministically protect ownership, lookup settlement
+and retry without HA, browser or network costs.
