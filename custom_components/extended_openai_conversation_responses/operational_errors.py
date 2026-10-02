@@ -32,6 +32,8 @@ def current_function_tool_name() -> str:
 
 def storage_failure_reason(number: int | None) -> str:
     """Describe an OS failure without a private filename or stored value."""
+    if number is None:
+        return "storage operation failed"
     return {
         errno.ENOSPC: "storage is full; free disk space",
         errno.EACCES: "permission denied; check Home Assistant storage permissions",
