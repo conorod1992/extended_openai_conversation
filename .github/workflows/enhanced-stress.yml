@@ -40,6 +40,9 @@ jobs:
       intensities: ${{ steps.seed.outputs.intensities }}
       campaigns: ${{ steps.seed.outputs.campaigns }}
       ha_version: ${{ steps.ha.outputs.version }}
+      ha_test_plugin_version: ${{ steps.ha.outputs.plugin_version }}
+      published_release_tag: ${{ steps.release.outputs.tag }}
+      published_release_sha: ${{ steps.release.outputs.sha }}
     steps:
       - name: Checkout invocation commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -59,8 +62,25 @@ jobs:
         run: |
           VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
           test -n "$VERSION"
+          PLUGIN_VERSION="$(python3 ci/resolve_ha_test_plugin.py "$VERSION")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Stable Home Assistant: $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "plugin_version=$PLUGIN_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Stable Home Assistant: $VERSION; compatible test plugin: $PLUGIN_VERSION" >> "$GITHUB_STEP_SUMMARY"
+      - name: Resolve one published EOAI release for persistence checks
+        id: release
+        if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'persistence'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${{ github.repository }}/releases/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          test -n "$TAG"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          SHA="$(git rev-parse "${TAG}^{commit}")"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Published persistence baseline: $TAG ($SHA)" >> "$GITHUB_STEP_SUMMARY"
       - name: Resolve reproducible run controls
         id: seed
         env:
@@ -99,10 +119,90 @@ jobs:
             echo 'Reproduce with workflow_dispatch and the same campaign, intensity, and seed.'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  persistence_runtime:
+    name: Prepare isolated published-release runtime
+    needs: prepare
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'persistence'
+    runs-on: ubuntu-latest
+    outputs:
+      cache_key: ${{ steps.identity.outputs.cache_key }}
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      HISTORICAL_RELEASE_TAG: ${{ needs.prepare.outputs.published_release_tag }}
+      HISTORICAL_RELEASE_SHA: ${{ needs.prepare.outputs.published_release_sha }}
+      HISTORICAL_HA_VERSION: "2026.9.4"
+      HISTORICAL_BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      HISTORICAL_RUNTIME_DIR: ${{ runner.temp }}/eoai-released-ha
+      HISTORICAL_INPUT_DIR: ${{ runner.temp }}/eoai-released-input
+    steps:
+      - name: Checkout immutable run candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+      - name: Stage published manifest and build identity inputs
+        id: identity
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --force origin "refs/tags/${HISTORICAL_RELEASE_TAG}:refs/tags/${HISTORICAL_RELEASE_TAG}"
+          test "$(git rev-parse "${HISTORICAL_RELEASE_TAG}^{commit}")" = "$HISTORICAL_RELEASE_SHA"
+          mkdir -p "$HISTORICAL_INPUT_DIR"
+          git show "${HISTORICAL_RELEASE_SHA}:custom_components/extended_openai_conversation_responses/manifest.json" \
+            > "$HISTORICAL_INPUT_DIR/manifest.json"
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential
+          CACHE_KEY="$(python ci/historical_runtime_identity.py \
+            --manifest "$HISTORICAL_INPUT_DIR/manifest.json" \
+            --release-tag "$HISTORICAL_RELEASE_TAG" \
+            --release-sha "$HISTORICAL_RELEASE_SHA" \
+            --homeassistant-version "$HISTORICAL_HA_VERSION" \
+            --base-image "$HISTORICAL_BASE_IMAGE" \
+            --recipe ci/install_ha_dependencies.py \
+            --recipe ci/prepare_historical_runtime.sh \
+            --recipe ci/historical_runtime_identity.py \
+            --print-key)"
+          echo "cache_key=$CACHE_KEY" >> "$GITHUB_OUTPUT"
+          echo "Historical runtime cache identity: $CACHE_KEY" >> "$GITHUB_STEP_SUMMARY"
+      - name: Restore or save isolated historical runtime
+        id: historical-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/eoai-released-ha
+          key: ${{ steps.identity.outputs.cache_key }}
+      - name: Construct isolated runtime on cache miss
+        if: steps.historical-cache.outputs.cache-hit != 'true'
+        env:
+          HISTORICAL_MANIFEST: ${{ runner.temp }}/eoai-released-input/manifest.json
+        run: bash ci/prepare_historical_runtime.sh
+      - name: Verify immutable historical runtime
+        run: |
+          set -euo pipefail
+          HISTORICAL_PYTHON="$HISTORICAL_RUNTIME_DIR/bin/python"
+          "$HISTORICAL_PYTHON" ci/historical_runtime_identity.py \
+            --manifest "$HISTORICAL_INPUT_DIR/manifest.json" \
+            --release-tag "$HISTORICAL_RELEASE_TAG" \
+            --release-sha "$HISTORICAL_RELEASE_SHA" \
+            --homeassistant-version "$HISTORICAL_HA_VERSION" \
+            --base-image "$HISTORICAL_BASE_IMAGE" \
+            --recipe ci/install_ha_dependencies.py \
+            --recipe ci/prepare_historical_runtime.sh \
+            --recipe ci/historical_runtime_identity.py \
+            --check "$HISTORICAL_RUNTIME_DIR/.eoai-runtime-identity.json"
+          test "$("$HISTORICAL_PYTHON" -c 'from importlib.metadata import version; print(version("homeassistant"))')" = "$HISTORICAL_HA_VERSION"
+          echo "Historical runtime ready; current candidate runtime remains separate." >> "$GITHUB_STEP_SUMMARY"
+
   python-campaigns:
     name: ${{ matrix.campaign }} / ${{ matrix.intensity }}
-    needs: prepare
-    if: github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines')
+    needs: [prepare, persistence_runtime]
+    if: always() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines'))
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
@@ -125,6 +225,9 @@ jobs:
       STRESS_CAMPAIGN: ${{ matrix.campaign }}
       EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
+      EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION: ${{ needs.prepare.outputs.ha_test_plugin_version }}
+      EOAI_RELEASE_TAG: ${{ needs.prepare.outputs.published_release_tag }}
+      EOAI_RELEASE_SHA: ${{ needs.prepare.outputs.published_release_sha }}
       STRESS_ARTIFACT_DIR: stress-artifacts
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
@@ -142,42 +245,74 @@ jobs:
         run: bash ci/reconcile_stable_environment.sh
       - name: Stage published payload for downgrade boundary
         if: matrix.campaign == 'persistence'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          TAG="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${{ github.repository }}/releases/latest" | python -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
-          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          git fetch --force origin "refs/tags/${EOAI_RELEASE_TAG}:refs/tags/${EOAI_RELEASE_TAG}"
+          test "$(git rev-parse "${EOAI_RELEASE_TAG}^{commit}")" = "$EOAI_RELEASE_SHA"
           OLD_ROOT="${RUNNER_TEMP}/eoai-downgrade-release"
           mkdir -p "$OLD_ROOT"
-          git archive "$TAG" custom_components/extended_openai_conversation_responses | tar -x -C "$OLD_ROOT"
+          git archive "$EOAI_RELEASE_SHA" custom_components/extended_openai_conversation_responses | tar -x -C "$OLD_ROOT"
           echo "DOWNGRADE_COMPONENT_DIR=$OLD_ROOT/custom_components/extended_openai_conversation_responses" >> "$GITHUB_ENV"
           CANDIDATE_COMPONENT="$GITHUB_WORKSPACE/custom_components/extended_openai_conversation_responses"
           CANDIDATE_VERSION="$(python -c 'import json; print(json.load(open("custom_components/extended_openai_conversation_responses/manifest.json"))["version"])')"
-          echo "EOAI_SOURCE_VERSION=$TAG" >> "$GITHUB_ENV"
+          echo "EOAI_SOURCE_VERSION=$EOAI_RELEASE_TAG" >> "$GITHUB_ENV"
           echo "UPGRADE_FROM_COMPONENT_DIR=$OLD_ROOT/custom_components/extended_openai_conversation_responses" >> "$GITHUB_ENV"
           echo "UPGRADE_TO_COMPONENT_DIR=$CANDIDATE_COMPONENT" >> "$GITHUB_ENV"
-          echo "UPGRADE_FROM_VERSION=$TAG" >> "$GITHUB_ENV"
+          echo "UPGRADE_FROM_VERSION=$EOAI_RELEASE_TAG" >> "$GITHUB_ENV"
           echo "UPGRADE_TO_VERSION=$CANDIDATE_VERSION" >> "$GITHUB_ENV"
-          echo "Downgrade/upgrade source payload: $TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "Downgrade/upgrade source payload: $EOAI_RELEASE_TAG ($EOAI_RELEASE_SHA)" >> "$GITHUB_STEP_SUMMARY"
           echo "Upgrade candidate payload: $CANDIDATE_VERSION" >> "$GITHUB_STEP_SUMMARY"
-      - name: Prepare compatible published-release runtime
+      - name: Match historical runtime build tools
         if: matrix.campaign == 'persistence'
         run: |
-          # The published SDK pin is compatible with this reviewed prior stable
-          # HA. Keep its requirements isolated from the current candidate runtime.
-          # Historical audio dependency pins lack wheels for the current Python.
           apt-get update
           apt-get install -y --no-install-recommends build-essential
-          RELEASED_ENV="$RUNNER_TEMP/eoai-released-ha"
-          python -m venv "$RELEASED_ENV"
-          "$RELEASED_ENV/bin/python" -m pip install "homeassistant==2026.9.4"
-          "$RELEASED_ENV/bin/python" ci/install_ha_dependencies.py --manifest "$DOWNGRADE_COMPONENT_DIR/manifest.json"
-          "$RELEASED_ENV/bin/python" -m pip check
-          echo "UPGRADE_RELEASED_PYTHON=$RELEASED_ENV/bin/python" >> "$GITHUB_ENV"
-          echo "UPGRADE_RELEASED_HA_VERSION=2026.9.4" >> "$GITHUB_ENV"
-          echo "Published upgrade runtime: HA 2026.9.4; candidate uses current installed HA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Restore isolated historical runtime cache
+        if: matrix.campaign == 'persistence' && needs.persistence_runtime.result == 'success'
+        id: historical-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/eoai-released-ha
+          key: ${{ needs.persistence_runtime.outputs.cache_key }}
+      - name: Verify or safely build the historical runtime
+        if: matrix.campaign == 'persistence'
+        env:
+          HISTORICAL_RUNTIME_DIR: ${{ runner.temp }}/eoai-released-ha
+          HISTORICAL_MANIFEST: ${{ runner.temp }}/eoai-downgrade-release/custom_components/extended_openai_conversation_responses/manifest.json
+          HISTORICAL_RELEASE_TAG: ${{ needs.prepare.outputs.published_release_tag }}
+          HISTORICAL_RELEASE_SHA: ${{ needs.prepare.outputs.published_release_sha }}
+          HISTORICAL_HA_VERSION: "2026.9.4"
+          HISTORICAL_BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+        run: |
+          set -euo pipefail
+          HISTORICAL_PYTHON="$HISTORICAL_RUNTIME_DIR/bin/python"
+          identity_args=(
+            --manifest "$HISTORICAL_MANIFEST"
+            --release-tag "$HISTORICAL_RELEASE_TAG"
+            --release-sha "$HISTORICAL_RELEASE_SHA"
+            --homeassistant-version "$HISTORICAL_HA_VERSION"
+            --base-image "$HISTORICAL_BASE_IMAGE"
+            --recipe ci/install_ha_dependencies.py
+            --recipe ci/prepare_historical_runtime.sh
+            --recipe ci/historical_runtime_identity.py
+          )
+          CACHE_VALID=false
+          if [[ '${{ needs.persistence_runtime.result }}' == success ]] \
+              && [[ '${{ steps.historical-cache.outputs.cache-hit }}' == true ]] \
+              && "$HISTORICAL_PYTHON" ci/historical_runtime_identity.py "${identity_args[@]}" \
+                --check "$HISTORICAL_RUNTIME_DIR/.eoai-runtime-identity.json"; then
+            CACHE_VALID=true
+          fi
+          if [[ "$CACHE_VALID" != true ]]; then
+            bash ci/prepare_historical_runtime.sh
+          fi
+          "$HISTORICAL_PYTHON" ci/historical_runtime_identity.py "${identity_args[@]}" \
+            --check "$HISTORICAL_RUNTIME_DIR/.eoai-runtime-identity.json"
+          echo "UPGRADE_RELEASED_PYTHON=$HISTORICAL_PYTHON" >> "$GITHUB_ENV"
+          echo "UPGRADE_RELEASED_HA_VERSION=$HISTORICAL_HA_VERSION" >> "$GITHUB_ENV"
+          echo "Published upgrade source: $HISTORICAL_RELEASE_TAG ($HISTORICAL_RELEASE_SHA)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Historical HA: $HISTORICAL_HA_VERSION; candidate environment remains separate." >> "$GITHUB_STEP_SUMMARY"
       - name: Stage candidate payload for clean-install acceptance
         if: matrix.campaign == 'setup'
         run: |
@@ -276,6 +411,7 @@ jobs:
       STRESS_CAMPAIGN: ${{ inputs.campaign == 'diagnostics' && 'browser-diagnostics' || 'browser' }}
       EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
       EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
+      EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION: ${{ needs.prepare.outputs.ha_test_plugin_version }}
       STRESS_ARTIFACT_DIR: stress-artifacts
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
@@ -413,6 +549,8 @@ jobs:
       CROSS_BROWSER_ENGINE: ${{ matrix.engine }}
       EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-${{ matrix.engine }}
       EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
+      EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION: ${{ needs.prepare.outputs.ha_test_plugin_version }}
+      HOME: /root
       CROSS_BROWSER_NIGHTLY: "1"
       REAL_HA_BROWSER_PROFILE: ${{ matrix.engine }}
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
@@ -502,6 +640,7 @@ jobs:
       PYTEST_PLUGINS: ci.pytest_execution
       HA_POINT: ${{ matrix.ha-version }}
       EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
+      EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION: ${{ needs.prepare.outputs.ha_test_plugin_version }}
     strategy:
       fail-fast: false
       matrix:
@@ -537,6 +676,8 @@ jobs:
             --recipe ci/reconcile_stable_environment.sh \
             --python-version "$(python -c 'import platform; print(platform.python_version())')" \
             --base-image python:3.14-slim-bookworm \
+            --extra "ha_version=$(python -c 'from importlib.metadata import version; print(version("homeassistant"))')" \
+            --extra "ha_test_plugin_version=$(python -c 'from importlib.metadata import version; print(version("pytest-homeassistant-custom-component"))')" \
             --write /opt/eoai-ci/environment.identity.json \
             > /dev/null
           cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json \
@@ -631,7 +772,7 @@ jobs:
           docker run --rm --network host --ipc=host \
             -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
             -e EXPECTED_HA_CORE_SHA -e EXPECTED_PYTHON_VERSION \
-            -e PYTHONPATH -e STRESS_SEED -e STRESS_INTENSITY -e STRESS_CAMPAIGN \
+            -e PYTHONPATH=/workspace -e STRESS_SEED -e STRESS_INTENSITY -e STRESS_CAMPAIGN \
             -e STRESS_ARTIFACT_DIR -e ENHANCED_EXECUTION_EVIDENCE -e PYTEST_PLUGINS -e HA_POINT \
             -e EOAI_CONTAINER_IMAGE="ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:ha-dev-${{ steps.python.outputs.sha }}" \
             "ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:ha-dev-${{ steps.python.outputs.sha }}" \

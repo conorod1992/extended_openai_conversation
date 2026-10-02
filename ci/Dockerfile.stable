@@ -1,5 +1,8 @@
 FROM python:3.14-slim-bookworm AS ha-stable-builder
 
+ARG HOMEASSISTANT_VERSION
+ARG HA_TEST_PLUGIN_VERSION
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -18,11 +21,13 @@ WORKDIR /opt/eoai-ci
 COPY requirements_test.txt /opt/eoai-ci/requirements_test.txt
 RUN python -m pip install --upgrade pip \
     && pip install --no-cache-dir -r /opt/eoai-ci/requirements_test.txt \
-    && pip install --no-cache-dir homeassistant
+    && pip install --no-cache-dir "pytest-homeassistant-custom-component==${HA_TEST_PLUGIN_VERSION}" \
+    && pip install --no-cache-dir --no-deps --force-reinstall "homeassistant==${HOMEASSISTANT_VERSION}"
 
 COPY ci/install_ha_dependencies.py /opt/eoai-ci/install_ha_dependencies.py
 COPY ci/install_ha_media_dependencies.py /opt/eoai-ci/install_ha_media_dependencies.py
 COPY ci/environment_fingerprint.py /opt/eoai-ci/environment_fingerprint.py
+COPY ci/resolve_ha_test_plugin.py /opt/eoai-ci/resolve_ha_test_plugin.py
 COPY ci/reconcile_stable_environment.sh /opt/eoai-ci/reconcile_stable_environment.sh
 COPY ci/write_playwright_environment_identity.sh /opt/eoai-ci/write_playwright_environment_identity.sh
 COPY ci/verify_playwright_engine.mjs /opt/eoai-ci/verify_playwright_engine.mjs
@@ -75,11 +80,14 @@ RUN python /opt/eoai-ci/environment_fingerprint.py \
         --recipe /opt/eoai-ci/install_ha_dependencies.py \
         --recipe /opt/eoai-ci/install_ha_media_dependencies.py \
         --recipe /opt/eoai-ci/environment_fingerprint.py \
+        --recipe /opt/eoai-ci/resolve_ha_test_plugin.py \
         --recipe /opt/eoai-ci/reconcile_stable_environment.sh \
         --recipe /opt/eoai-ci/write_playwright_environment_identity.sh \
         --recipe /opt/eoai-ci/verify_playwright_engine.mjs \
         --python-version "$(python -c 'import platform; print(platform.python_version())')" \
         --base-image "$(cat /opt/eoai-ci/base-image.txt)" \
+        --extra "ha_version=$(python -c 'from importlib.metadata import version; print(version("homeassistant"))')" \
+        --extra "ha_test_plugin_version=$(python -c 'from importlib.metadata import version; print(version("pytest-homeassistant-custom-component"))')" \
         --write /opt/eoai-ci/environment.identity.json \
         > /dev/null \
     && cat /opt/eoai-ci/requirements_test.txt /opt/eoai-ci/manifest.json \

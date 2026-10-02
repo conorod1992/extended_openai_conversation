@@ -133,6 +133,7 @@ jobs:
           file: ci/Dockerfile.dev
           target: ha-dev
           push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
           build-args: |
             HA_CORE_SHA=${{ steps.ha.outputs.sha }}
             IMAGE_BUILT_AT=${{ steps.image-time.outputs.created }}
@@ -165,22 +166,25 @@ jobs:
           cache-to: type=gha,mode=max,scope=typecheck-ci-image
 
       - name: Verify published image
-        if: github.event_name != 'pull_request'
         run: |
-          docker pull "${IMAGE_NAME}:ha-dev"
-          docker run --rm "${IMAGE_NAME}:ha-dev" bash -lc '
-            python /opt/eoai-ci/check_ha_dev_environment.py
-            test "$(cat /opt/eoai-ci/ha-core-sha)" = "${{ steps.ha.outputs.sha }}"
-            python -c "from importlib.metadata import version; print(\"homeassistant=\" + version(\"homeassistant\")); print(\"pytest-homeassistant-custom-component=\" + version(\"pytest-homeassistant-custom-component\"))"
-          '
+          if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then docker pull "${IMAGE_NAME}:ha-dev"; fi
+          docker run --rm "${IMAGE_NAME}:ha-dev" /opt/venv/bin/python \
+            -c 'from importlib.metadata import version; print("homeassistant=" + version("homeassistant")); print("pytest-homeassistant-custom-component=" + version("pytest-homeassistant-custom-component"))'
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            -e EXPECTED_HA_CORE_SHA="${{ steps.ha.outputs.sha }}" \
+            -e EXPECTED_PYTHON_VERSION="${{ steps.ha.outputs.python-version }}" \
+            "${IMAGE_NAME}:ha-dev" bash ci/check_ha_dev_runtime.sh
           python ci/check_ha_dev_image.py "${IMAGE_NAME}:ha-dev" "${{ steps.ha.outputs.sha }}"
-          docker pull "${IMAGE_NAME}:typecheck-${{ steps.typecheck-key.outputs.key }}"
-          docker run --rm "${IMAGE_NAME}:typecheck-${{ steps.typecheck-key.outputs.key }}" bash -lc '
-            test "$(cat /opt/eoai-ci/typecheck-image-key)" = "${{ steps.typecheck-key.outputs.key }}"
-            test -s /opt/eoai-ci/typecheck-environment.txt
-            mypy --version
-            pip check
-          '
+          if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then
+            docker pull "${IMAGE_NAME}:typecheck-${{ steps.typecheck-key.outputs.key }}"
+            docker run --rm "${IMAGE_NAME}:typecheck-${{ steps.typecheck-key.outputs.key }}" bash -lc '
+              test "$(cat /opt/eoai-ci/typecheck-image-key)" = "${{ steps.typecheck-key.outputs.key }}"
+              test -s /opt/eoai-ci/typecheck-environment.txt
+              mypy --version
+              pip check
+            '
+          fi
 
       - name: Publish image summary
         if: github.event_name != 'pull_request'
