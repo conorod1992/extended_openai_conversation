@@ -16,8 +16,10 @@ from custom_components.extended_openai_conversation_responses import (
     model_catalog_manager as runtime,
 )
 from custom_components.extended_openai_conversation_responses.const import (
+    CONF_API_KEY,
     CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
+    DEFAULT_AI_TASK_OPTIONS,
     DOMAIN,
 )
 
@@ -362,7 +364,9 @@ def test_transition_rejects_removed_reasoning_effort() -> None:
     candidate = _catalog()
     _model(candidate)["reasoning"]["efforts"].remove("max")
     _model(candidate)["reasoning"]["by_api"]["responses"]["efforts"].remove("max")
-    _model(candidate)["reasoning"]["by_api"]["chat_completions"]["efforts"].remove("max")
+    _model(candidate)["reasoning"]["by_api"]["chat_completions"]["efforts"].remove(
+        "max"
+    )
 
     with pytest.raises(ValueError, match="cannot remove reasoning effort choices"):
         data.validate_catalog_transition(None, candidate)
@@ -816,3 +820,39 @@ async def test_reset_is_blocked_when_saved_agent_uses_download_only_choice(
     assert manager.catalog == current
     assert manager.store.saved["catalog"] == current
     assert data.model_metadata("gpt-5.6")["reasoning"]["efforts"][-1] == "minimal"
+
+
+@pytest.mark.parametrize("effort, blocked", [("minimal", True), ("low", False)])
+async def test_saved_ai_task_catalogue_guards_do_not_load_request_rules(
+    hass,
+    monkeypatch,
+    effort,
+    blocked,
+) -> None:
+    """AI Task options are consumers without conversation Request Rules."""
+    subentry = SimpleNamespace(
+        data={
+            **DEFAULT_AI_TASK_OPTIONS,
+            CONF_CHAT_MODEL: "gpt-5.6",
+            CONF_REASONING_EFFORT: effort,
+        },
+        subentry_id="ai-task-alpha",
+        subentry_type="ai_task_data",
+    )
+    entry = SimpleNamespace(
+        entry_id="provider-alpha",
+        data={CONF_API_KEY: "sk-guard-test"},
+        subentries={subentry.subentry_id: subentry},
+    )
+    hass.config_entries.async_entries.return_value = [entry]
+    rules = AsyncMock(side_effect=AssertionError("AI Tasks have no Request Rules"))
+    monkeypatch.setattr(runtime, "async_get_request_rules", rules)
+    manager = runtime.ModelCatalogManager(hass)
+    manager.catalog = _expanded_candidate()
+    data.activate_catalog(manager.catalog)
+    assert await manager._bundled_reset_would_invalidate_saved_reasoning() is blocked
+    assert await manager._candidate_preserves_saved_requests(manager.catalog) is True
+    assert await manager._candidate_preserves_saved_requests(data.BUNDLED_CATALOG) is (
+        not blocked
+    )
+    rules.assert_not_awaited()

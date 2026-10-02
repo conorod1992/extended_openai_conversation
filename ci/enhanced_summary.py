@@ -9,6 +9,11 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "ai_task_image_continuations",
+    "ai_task_image_isolation_checks",
+    "catalog_ai_task_reset_rejections",
+    "catalog_ai_task_resets",
+    "catalog_ai_task_wire_checks",
     "native_editor_ownership_cases",
     "native_registry_recovery_cases",
     "native_registry_fetch_recoveries",

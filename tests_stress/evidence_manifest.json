@@ -3,7 +3,7 @@
   "layers": ["model", "real_ha", "provider_wire", "browser", "browser_real_ha", "process"],
   "features": {
     "initial_setup": {"real_ha": ["tests_real_ha/test_config_flow.py"]},
-    "ai_task": {"real_ha": ["tests_stress/test_ai_task_mixed_campaign.py", "tests_real_ha/test_ai_task_runtime.py", "tests_real_ha/test_ai_task_lifecycle.py", "tests_real_ha/test_ai_task_provider_wire.py"], "provider_wire": ["tests_real_ha/test_ai_task_provider_wire.py"]},
+    "ai_task": {"real_ha": ["tests_stress/test_ai_task_continuity.py", "tests_stress/test_ai_task_mixed_campaign.py", "tests_real_ha/test_ai_task_runtime.py", "tests_real_ha/test_ai_task_lifecycle.py", "tests_real_ha/test_ai_task_provider_wire.py"], "provider_wire": ["tests_stress/test_ai_task_continuity.py", "tests_real_ha/test_ai_task_provider_wire.py"]},
     "voice_identity": {"real_ha": ["tests_stress/test_voice_household_campaign.py", "tests_real_ha/test_assist_voice_identity_precedence.py"], "provider_wire": ["tests_stress/test_voice_household_campaign.py", "tests_stress/test_browser_backend_resilience.py"], "browser_real_ha": ["tests_browser/real-ha-shell.spec.mjs"]},
     "intercom": {"real_ha": ["tests_stress/test_intercom_endurance_campaign.py", "tests_real_ha/test_intercom_voice_acceptance.py"]},
     "conversation_archive": {"real_ha": ["tests_stress/test_archive_living_campaign.py", "tests_stress/test_voice_household_campaign.py"]},
@@ -11,7 +11,7 @@
     "local_intents": {"real_ha": ["tests_stress/test_local_intent_mixed_campaign.py", "tests_real_ha/test_local_intent_exclusions.py"]},
     "streamed_speech": {"real_ha": ["tests_real_ha/test_assist_streaming_speech_processing.py"]},
     "usage_retention": {"model": ["tests/test_usage_accounting_recovery.py"], "real_ha": ["tests_real_ha/test_usage_accounting_failure_recovery.py"]},
-    "model_catalog": {"model": ["tests/test_model_catalog_transitions.py"], "real_ha": ["tests_real_ha/test_model_catalog_live_refresh.py"]},
+    "model_catalog": {"model": ["tests/test_model_catalog_transitions.py"], "real_ha": ["tests_stress/test_model_catalog_refresh_endurance.py", "tests_real_ha/test_model_catalog_live_refresh.py"], "provider_wire": ["tests_stress/test_model_catalog_refresh_endurance.py"]},
     "entity_exposure": {"real_ha": ["tests_real_ha/test_entity_attribute_runtime_integrity.py", "tests_real_ha/test_entity_registry_customization.py"]},
     "reauth": {"real_ha": ["tests_real_ha/test_config_flow_lifecycle_contracts.py"]},
     "request_rule_action:local_action": {"model": ["tests_stress/test_request_rules_matrix.py"], "real_ha": ["tests_stress/test_request_rules_provider_wire.py", "tests_real_ha/test_request_rules_script_semantics.py"], "browser": ["tests_browser/real-ha-multi-tab.stress.mjs"]},
