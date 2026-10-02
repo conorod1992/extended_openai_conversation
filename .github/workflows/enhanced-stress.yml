@@ -574,6 +574,18 @@ jobs:
           npx playwright --version
           EXPECTED_BROWSER_VERSION="$(python -c 'import json; print(json.load(open("/opt/eoai-ci/playwright-runtime.json"))["browser"])')"
           NPM_GLOBAL_ROOT="$(npm root -g)" node /opt/eoai-ci/verify_playwright_engine.mjs "$CROSS_BROWSER_ENGINE" 1.63.0 "$EXPECTED_BROWSER_VERSION"
+      - name: Expose prebuilt Playwright packages to the checkout
+        run: |
+          set -euo pipefail
+          GLOBAL_NODE_MODULES="$(realpath "$(npm root -g)")"
+          test -f "$GLOBAL_NODE_MODULES/@playwright/test/package.json"
+          if [[ -e node_modules || -L node_modules ]]; then
+            test -L node_modules
+            test "$(realpath node_modules)" = "$GLOBAL_NODE_MODULES"
+          else
+            ln -s "$GLOBAL_NODE_MODULES" node_modules
+          fi
+          node --input-type=module -e 'import("@playwright/test").then(() => console.log("Prebuilt @playwright/test is resolvable from the checkout."))'
       - name: Reconcile Home Assistant acceptance environment
         run: bash ci/reconcile_stable_environment.sh
       - name: Run curated engine and keyboard journeys

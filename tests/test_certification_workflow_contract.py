@@ -148,6 +148,17 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
         step.get("name") == "Verify prebuilt Playwright engine"
         for step in engines["steps"]
     )
+    expose_playwright = next(
+        step["run"]
+        for step in engines["steps"]
+        if step.get("name") == "Expose prebuilt Playwright packages to the checkout"
+    )
+    assert "ln -s" in expose_playwright
+    assert 'import("@playwright/test")' in expose_playwright
+    assert (
+        'npm install --global "@playwright/test@${PLAYWRIGHT_VERSION}"'
+        in Path("ci/Dockerfile.stable").read_text()
+    )
     stable_images = workflow("ci-image-stable.yml")["jobs"]["build"]["steps"]
     assert any(
         step.get("name") == "Build and publish Firefox nightly image"
