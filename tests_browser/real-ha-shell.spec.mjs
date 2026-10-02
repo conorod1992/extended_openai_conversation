@@ -32,7 +32,8 @@ test.describe("nightly ownership", () => {
         await host._call("tools", "save_group", {group:{id:alpha, name:alpha, description:"Alpha association", loading_mode:"on_demand", enabled:true, functions:[alpha]}});
         const policy = await host._call("guest_mode", "get");
         await host._call("guest_mode", "save_policy", {revision:policy.revision, config:{...policy.config, guest_allowed_function_names:[alpha, beta]}});
-        await host._call("request_rules", "create", {rule:{name:alpha, phrases:[alpha], match_type:"equals", enabled:true, action_type:"local_action", action:{actions:[{type:"function", function:alpha, arguments:{}}], success_response:"Alpha action"}}});
+        const rules = await host._call("request_rules", "list");
+        await host._call("request_rules", "create", {revision:rules.revision, rule:{name:alpha, phrases:[alpha], match_type:"equals", enabled:true, action_type:"local_action", action:{actions:[{type:"function", function:alpha, arguments:{}}], success_response:"Alpha action"}}});
         await host._loadSection(true);
       }, {alpha, beta, tools:[tool(alpha, "ALPHA_ORIGINAL"), tool(beta, "BETA_ORIGINAL")]});
       await panel.locator(`[data-tool-key="${alpha}"] .edit-tool`).click();
@@ -85,6 +86,7 @@ test.describe("nightly ownership", () => {
       await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(e => e.yaml)).toBe(betaYaml);
       await expect(panel.locator("#tool-error")).toHaveText(status);
       await expect(panel.locator("#tool-save")).toBeEnabled();
+      await expect(panel.locator("#tool-save")).toHaveText("Save");
       const saves = await page.evaluate(() => window.__ownedRequests.filter(m => m.action === "save"));
       expect(saves).toHaveLength(phase === "commit" ? 1 : 0);
       expect(saves.some(m => m.original_name === beta)).toBe(false);

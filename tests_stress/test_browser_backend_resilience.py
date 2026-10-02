@@ -267,6 +267,7 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         )
     finally:
         await runner.cleanup()
+        await client.close()
         await _close_native_shell(hass, shell)
 
 
