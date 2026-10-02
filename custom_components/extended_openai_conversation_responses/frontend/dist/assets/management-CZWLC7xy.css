@@ -343,6 +343,14 @@
 .voice-inactive-settings [data-voice-inactive-host]{display:grid;gap:12px}
 .voice-identity-help{margin-top:0;padding-top:0;border-top:0}
 
+/* Native editor and confirmation actions need readable text in both HA themes. */
+.dialog-actions button,#function-add{
+  color:var(--primary-text-color);background:var(--card-background-color);
+  border:1px solid var(--primary-color);
+}
+.dialog-actions button.danger{border-color:var(--error-color,#db4437)}
+#tool-error.invalid,#toast.toast-error{color:var(--primary-text-color)}
+#toast.toast-error{background:var(--card-background-color);border:1px solid var(--error-color,#db4437)}
 /* Keep wide data tables inside their grid cell rather than widening the page. */
 main,main>*{min-width:0;max-width:100%}
 .table{min-width:0;max-width:100%;overflow-x:auto}

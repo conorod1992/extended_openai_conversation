@@ -198,6 +198,7 @@ async def real_ha_shell(
         is_owner=True,
     )
     admin.add_to_hass(hass)
+    picker_user = await hass.auth.async_create_user("Native picker acceptance user")
     refresh_token = await hass.auth.async_create_refresh_token(admin, CLIENT_ID)
     access_token = hass.auth.async_create_access_token(refresh_token)
 
@@ -216,9 +217,11 @@ async def real_ha_shell(
         "expires_in": expires_in,
     }
 
-    return {"entry": entry, "admin": admin, "env": {
+    return {"entry": entry, "admin": admin, "http_client": client, "env": {
         "REAL_HA_FRONTEND_URL": base_url,
         "REAL_HA_FRONTEND_AUTH": json.dumps(auth_data),
+        "REAL_HA_PICKER_USER_NAME": picker_user.name,
+        "REAL_HA_SMOKE_USER_ID": picker_user.id,
     }}
 
 

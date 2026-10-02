@@ -121,3 +121,138 @@ async def test_intercom_mixed_queue_survives_reload_failure_and_expiry(
         intercom_expired=count,
         ha_service_calls=len(calls) + 1,
     )
+
+
+async def test_native_intercom_real_stability_expiry_and_playback_acknowledgement(
+    hass,
+    monkeypatch,
+    stress_trace,
+):
+    """Actual HA timers and software playback enforce existing queue semantics."""
+    import asyncio
+    from time import monotonic
+
+    from homeassistant.components.assist_pipeline.pipeline import KEY_ASSIST_PIPELINE
+    from homeassistant.components.assist_satellite.entity import AssistSatelliteState
+    from tests_real_ha.test_assist_streaming_speech_processing import _speech_agent
+    from tests_stress.test_native_audio_delivery import (
+        _install_audio_entities,
+        _SoftwareSatellite,
+        _test_wav,
+    )
+
+    agent = await _speech_agent(hass)
+    satellite = _SoftwareSatellite("intercom-timing", announce=True)
+    entities, _ = await _install_audio_entities(
+        hass, _test_wav(), satellites=[satellite]
+    )
+    store = hass.data[KEY_ASSIST_PIPELINE].pipeline_store
+    pipeline = await store.async_create_item(
+        {
+            "name": "Native timed Intercom",
+            "language": "en",
+            "conversation_language": "en",
+            "conversation_engine": agent.entity_id,
+            "stt_engine": entities["stt"].entity_id,
+            "stt_language": "en",
+            "tts_engine": entities["tts"].entity_id,
+            "tts_language": "en",
+            "tts_voice": None,
+            "wake_word_entity": None,
+            "wake_word_id": None,
+            "prefer_local_intents": False,
+        }
+    )
+    store.async_set_preferred_item(pipeline.id)
+    manager = await async_get_intercom(hass)
+    await manager.async_set_enabled(True)
+    assert intercom.IDLE_STABILITY_SECONDS == 0.5
+    expiries = {}
+    original_expire = manager._expire
+
+    def observed_expire(message_id):
+        expiries[message_id] = monotonic()
+        original_expire(message_id)
+
+    monkeypatch.setattr(manager, "_expire", observed_expire)
+
+    def status(message_id):
+        row = next(item for item in manager.history() if item["id"] == message_id)
+        return row["deliveries"][satellite.entity_id]["status"]
+
+    async def until(predicate, timeout=12):
+        async with asyncio.timeout(timeout):
+            while not predicate():
+                await asyncio.sleep(0.02)
+
+    async def send(message):
+        return await manager.async_send(
+            message,
+            entity_ids=[satellite.entity_id],
+            ttl_seconds=5,
+            source="native-timing",
+        )
+
+    satellite._set_state(AssistSatelliteState.RESPONDING)
+    began = monotonic()
+    expired = await send("Expire while this native satellite is busy")
+    await until(lambda: status(expired["id"]) == "expired")
+    assert expiries[expired["id"]] - began >= 5
+    assert satellite.announcements == [] and manager._queues == {}
+
+    held = await send("Playback waits for a real software acknowledgement")
+    satellite.announce_release = asyncio.Event()
+    satellite._set_state(AssistSatelliteState.IDLE)
+    await until(lambda: status(held["id"]) == "waiting_idle", timeout=5)
+    unstable_at = monotonic()
+    await asyncio.sleep(0.1)
+    satellite._set_state(AssistSatelliteState.RESPONDING)
+    assert monotonic() - unstable_at < intercom.IDLE_STABILITY_SECONDS
+    await asyncio.sleep(intercom.IDLE_STABILITY_SECONDS + 0.1)
+    assert satellite.announcements == []
+    assert status(held["id"]) == "queued_busy"
+    stable_at = monotonic()
+    satellite._set_state(AssistSatelliteState.IDLE)
+    await asyncio.wait_for(satellite.announce_started.wait(), 10)
+    assert monotonic() - stable_at >= intercom.IDLE_STABILITY_SECONDS
+    assert status(held["id"]) == "delivering"
+    assert satellite.state == AssistSatelliteState.RESPONDING
+    assert len(satellite.announcements) == 1
+
+    queued = await send("This queued message expires behind acknowledged playback")
+    await until(lambda: queued["id"] in expiries and held["id"] in expiries)
+    # Production intentionally keeps already delivering work over its TTL.
+    assert status(held["id"]) == "delivering"
+    assert status(queued["id"]) == "expired"
+    assert len(satellite.announcements) == 1
+    satellite.announce_release.set()
+    await until(lambda: status(held["id"]) == "delivered")
+    assert satellite.state == AssistSatelliteState.IDLE
+    assert manager._queues == {}
+
+    healthy = await send(
+        "Healthy native delivery after expiry and delayed acknowledgement"
+    )
+    await until(lambda: status(healthy["id"]) == "delivered")
+    await until(lambda: healthy["id"] in expiries)
+    assert [item.message for item in satellite.announcements] == [
+        held["message"],
+        healthy["message"],
+    ]
+    assert status(expired["id"]) == status(queued["id"]) == "expired"
+    assert status(held["id"]) == status(healthy["id"]) == "delivered"
+    assert satellite.state == AssistSatelliteState.IDLE
+    assert manager._queues == {} and not manager._draining
+    await manager.async_set_enabled(False)
+    record(
+        stress_trace,
+        "summary",
+        layer="native-ha-timers",
+        intercom_timing_cases=1,
+        intercom_idle_flaps=1,
+        actual_expiry_callbacks=len(expiries),
+        delayed_playback_acknowledgements=1,
+        intercom_deliveries=2,
+        intercom_expired=2,
+        intercom_timing_recoveries=1,
+    )

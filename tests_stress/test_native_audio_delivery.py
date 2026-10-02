@@ -27,6 +27,7 @@ from homeassistant.components.assist_pipeline.pipeline import KEY_ASSIST_PIPELIN
 from homeassistant.components.assist_satellite.entity import (
     AssistSatelliteConfiguration,
     AssistSatelliteEntity,
+    AssistSatelliteEntityFeature,
     AssistSatelliteState,
 )
 from homeassistant.components.tts.entity import TextToSpeechEntity
@@ -41,10 +42,10 @@ _AUDIO_DOMAIN = "eoai_audio_fixture"
 _TRANSCRIPT = "Deliver the recorded audio acceptance reply"
 
 
-def _test_wav() -> bytes:
+def _test_wav(period=16) -> bytes:
     """Deterministic PCM test recording, without microphone/vendor dependencies."""
     samples = b"".join(
-        struct.pack("<h", int(5000 * math.sin(index * math.tau / 16)))
+        struct.pack("<h", int(5000 * math.sin(index * math.tau / period)))
         for index in range(1600)
     )
     output = io.BytesIO()
@@ -108,8 +109,26 @@ class _SoftwareSatellite(AssistSatelliteEntity):
         identifiers={(_AUDIO_DOMAIN, "satellite")}, name="Software audio output"
     )
 
-    def __init__(self):
+    def __init__(self, suffix=None, *, announce=False):
         self.events = []
+        self.announcements = []
+        self.announce_started = asyncio.Event()
+        self.announce_release = None
+        if suffix:
+            self._attr_name = f"Audio acceptance satellite {suffix}"
+            self._attr_unique_id = f"eoai-audio-satellite-{suffix}"
+            self._attr_device_info = DeviceInfo(
+                identifiers={(_AUDIO_DOMAIN, suffix)}, name=f"Software output {suffix}"
+            )
+        if announce:
+            self._attr_supported_features = AssistSatelliteEntityFeature.ANNOUNCE
+
+    async def async_announce(self, announcement):
+        # HA's native service blocks until the software recipient finishes playback.
+        self.announcements.append(announcement)
+        self.announce_started.set()
+        if self.announce_release is not None:
+            await self.announce_release.wait()
 
     def async_get_configuration(self):
         return AssistSatelliteConfiguration([], [], 0)
@@ -121,13 +140,15 @@ class _SoftwareSatellite(AssistSatelliteEntity):
         self.events.append(event)
 
 
-async def _install_audio_entities(hass, recording):
+async def _install_audio_entities(
+    hass, recording, *, speech=None, tts=None, satellites=None
+):
     with wave.open(io.BytesIO(recording), "rb") as wav:
         pcm = wav.readframes(wav.getnframes())
     entities = {
-        "stt": _SoftwareSTT(pcm),
-        "tts": _SoftwareTTS(recording),
-        "assist_satellite": _SoftwareSatellite(),
+        "stt": speech or _SoftwareSTT(pcm),
+        "tts": tts or _SoftwareTTS(recording),
+        "assist_satellite": satellites[0] if satellites else _SoftwareSatellite(),
     }
 
     async def setup_entry(hass, entry):
@@ -151,9 +172,12 @@ async def _install_audio_entities(hass, recording):
     )
     mock_platform(hass, f"{_AUDIO_DOMAIN}.config_flow")
     for platform, entity in entities.items():
+        members = (
+            satellites if platform == "assist_satellite" and satellites else [entity]
+        )
 
-        async def setup_platform(hass, entry, add_entities, entity=entity):
-            add_entities([entity])
+        async def setup_platform(hass, entry, add_entities, members=members):
+            add_entities(members)
 
         mock_platform(
             hass,
@@ -318,3 +342,247 @@ async def test_recorded_audio_native_assist_delivery_recovers(
         stt_recordings=len(speech.recordings),
         audio_frames=1600,
     )
+
+
+async def test_two_native_audio_journeys_interleave_without_cross_owned_output(
+    hass,
+    hass_client,
+    monkeypatch,
+    stress_trace,
+):
+    """Distinct real STT/SDK/TTS/satellite runs survive one targeted TTS failure."""
+    from collections import Counter
+
+    users = {
+        key: MockUser(
+            id=f"audio-concurrent-{key}", name=f"Audio user {key}", is_owner=key == "a"
+        ).add_to_hass(hass)
+        for key in ("a", "b")
+    }
+    agent = await _speech_agent(hass)
+    recordings = {"a": _test_wav(16), "b": _test_wav(19)}
+    pcm = {}
+    for key, recording in recordings.items():
+        with wave.open(io.BytesIO(recording), "rb") as wav:
+            pcm[key] = wav.readframes(wav.getnframes())
+    assert pcm["a"] != pcm["b"]
+    transcripts = {key: f"Distinct native recording for satellite {key}" for key in pcm}
+    started = {key: asyncio.Event() for key in pcm}
+    release_stt = {key: asyncio.Event() for key in pcm}
+    b_tts_started, release_b_tts = asyncio.Event(), asyncio.Event()
+    a_tts_failed = asyncio.Event()
+    stages = []
+
+    class InterleavedSTT(_SoftwareSTT):
+        async def async_process_audio_stream(self, metadata, stream):
+            assert self.check_metadata(metadata)
+            captured = b"".join([chunk async for chunk in stream])
+            key = next(key for key, value in pcm.items() if value == captured)
+            self.recordings.append(key)
+            stages.append(f"stt-{key}-started")
+            started[key].set()
+            await release_stt[key].wait()
+            return stt.SpeechResult(transcripts[key], stt.SpeechResultState.SUCCESS)
+
+    class InterleavedTTS(_SoftwareTTS):
+        async def async_get_tts_audio(self, message, language, options=None):
+            assert language == "en"
+            self.messages.append(message)
+            stages.append(message)
+            if message == "Reply for satellite A.":
+                await b_tts_started.wait()
+                assert not release_b_tts.is_set()
+                stages.append("a-tts-failed-while-b-held")
+                a_tts_failed.set()
+                return "wav", None
+            if message == "Reply for satellite B.":
+                b_tts_started.set()
+                await release_b_tts.wait()
+                return "wav", recordings["b"]
+            assert message == "Recovered reply for satellite A."
+            return "wav", recordings["a"]
+
+    satellites = {key: _SoftwareSatellite(key) for key in pcm}
+    speech, tts = InterleavedSTT(pcm["a"]), InterleavedTTS(recordings["a"])
+    await _install_audio_entities(
+        hass,
+        recordings["a"],
+        speech=speech,
+        tts=tts,
+        satellites=list(satellites.values()),
+    )
+    assert len({sat.registry_entry.device_id for sat in satellites.values()}) == 2
+    store = hass.data[KEY_ASSIST_PIPELINE].pipeline_store
+    pipeline = await store.async_create_item(
+        {
+            "name": "Concurrent EOAI native audio",
+            "language": "en",
+            "conversation_language": "en",
+            "conversation_engine": agent.entity_id,
+            "stt_engine": speech.entity_id,
+            "stt_language": "en",
+            "tts_engine": tts.entity_id,
+            "tts_language": "en",
+            "tts_voice": None,
+            "wake_word_entity": None,
+            "wake_word_id": None,
+            "prefer_local_intents": False,
+        }
+    )
+    store.async_set_preferred_item(pipeline.id)
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_text(text)
+            for text in (
+                "Reply for satellite A.",
+                "Reply for satellite B.",
+                "Recovered reply for satellite A.",
+            )
+        ],
+    )
+    original_send = wire.send
+    a_provider_started, b_provider_started, a_forwarded = (
+        asyncio.Event() for _ in range(3)
+    )
+    first_a = True
+
+    async def interleaved_send(request, *args, **kwargs):
+        nonlocal first_a
+        content = json.loads(request.content)["messages"][-1]["content"]
+        if content == transcripts["a"] and first_a:
+            first_a = False
+            a_provider_started.set()
+            await b_provider_started.wait()
+            response = await original_send(request, *args, **kwargs)
+            a_forwarded.set()
+            return response
+        if content == transcripts["b"]:
+            assert a_provider_started.is_set()
+            stages.append("both-provider-requests-admitted")
+            b_provider_started.set()
+            await a_forwarded.wait()
+        return await original_send(request, *args, **kwargs)
+
+    from tests_real_ha.test_provider_wire_e2e import _raw_client
+
+    monkeypatch.setattr(_raw_client(agent)._client, "send", interleaved_send)
+    origins = []
+    original_process = agent.async_process
+
+    async def observe(user_input):
+        origins.append(user_input)
+        return await original_process(user_input)
+
+    monkeypatch.setattr(agent, "async_process", observe)
+    http = await hass_client(hass)
+
+    async def run(key):
+        async def audio():
+            for offset in range(0, len(pcm[key]), 640):
+                yield pcm[key][offset : offset + 640]
+                await asyncio.sleep(0)
+
+        await satellites[key].async_accept_pipeline_from_satellite(
+            audio(), context=Context(user_id=users[key].id)
+        )
+
+    async def output(key):
+        events = [
+            event for event in satellites[key].events if event.type.value == "tts-end"
+        ]
+        assert len(events) == 1
+        response = await http.get(urlsplit(events[0].data["tts_output"]["url"]).path)
+        assert response.status == 200
+        with wave.open(io.BytesIO(await response.read()), "rb") as wav:
+            assert wav.readframes(wav.getnframes()) == pcm[key]
+        assert satellites[key].state == AssistSatelliteState.RESPONDING
+        satellites[key].tts_response_finished()
+        assert satellites[key].state == AssistSatelliteState.IDLE
+
+    tasks = []
+    try:
+        tasks.append(asyncio.create_task(run("a")))
+        await asyncio.wait_for(started["a"].wait(), 5)
+        tasks.append(asyncio.create_task(run("b")))
+        await asyncio.wait_for(started["b"].wait(), 5)
+        assert not tasks[0].done() and not tasks[1].done()
+        release_stt["a"].set()
+        await asyncio.wait_for(a_provider_started.wait(), 5)
+        release_stt["b"].set()
+        await asyncio.wait_for(b_tts_started.wait(), 10)
+        await asyncio.wait_for(tasks[0], 10)
+        await asyncio.wait_for(a_tts_failed.wait(), 5)
+        assert "a-tts-failed-while-b-held" in stages
+        # HA publishes a TTS URL while synthesis continues in the background.
+        # The failure is observed by the actual output consumer, not an invented
+        # pipeline error event. B's independent synthesis is still blocked.
+        assert not release_b_tts.is_set()
+        outputs_a = [
+            event for event in satellites["a"].events if event.type.value == "tts-end"
+        ]
+        assert len(outputs_a) == 1
+        failed_output = await http.get(
+            urlsplit(outputs_a[0].data["tts_output"]["url"]).path
+        )
+        assert failed_output.status >= 400
+        await failed_output.read()
+        assert not [
+            event for event in satellites["b"].events if event.type.value == "error"
+        ]
+        release_b_tts.set()
+        await asyncio.wait_for(tasks[1], 10)
+        await output("b")
+        # The software A recipient reconnects after its failed native output,
+        # clearing that response exactly as the existing disconnect journey does.
+        satellites["a"]._attr_available = False
+        satellites["a"].async_write_ha_state()
+        satellites["a"]._attr_available = True
+        satellites["a"].tts_response_finished()
+        satellites["a"].events.clear()
+        await asyncio.wait_for(run("a"), 15)
+        await output("a")
+        assert Counter(
+            (item.text, item.context.user_id, item.satellite_id, item.device_id)
+            for item in origins
+        ) == Counter(
+            {
+                (
+                    transcripts[key],
+                    users[key].id,
+                    satellites[key].entity_id,
+                    satellites[key].registry_entry.device_id,
+                ): 2 if key == "a" else 1
+                for key in pcm
+            }
+        )
+        assert len(wire.requests) == 3
+        assert speech.recordings == ["a", "b", "a"]
+        assert tts.messages == [
+            "Reply for satellite A.",
+            "Reply for satellite B.",
+            "Recovered reply for satellite A.",
+        ]
+        assert "both-provider-requests-admitted" in stages
+        record(
+            stress_trace,
+            "summary",
+            layer="native-ha-audio",
+            concurrent_audio_journeys=2,
+            audio_interleavings=1,
+            targeted_tts_failures=1,
+            audio_deliveries=2,
+            audio_playback_acknowledgements=2,
+            stt_recordings=3,
+            public_turns=3,
+            provider_requests=3,
+            native_audio_recoveries=1,
+        )
+    finally:
+        for event in (*release_stt.values(), release_b_tts):
+            event.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

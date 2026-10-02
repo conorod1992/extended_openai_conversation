@@ -9,6 +9,11 @@ on:
         description: "Reviewed baseline branch/tag/SHA (blank = pinned overnight baseline)"
         required: false
         type: string
+      diagnostic_picker:
+        description: "Include deferred native HA picker ARIA probe (known unreviewed findings fail policy)"
+        required: false
+        default: false
+        type: boolean
       runs:
         description: "Cold samples per route and backend operation"
         required: true
@@ -33,6 +38,7 @@ jobs:
     timeout-minutes: 45
     env:
       PYTHONPATH: ${{ github.workspace }}
+      EOAI_ACCESSIBILITY_DIAGNOSTIC_PICKER: ${{ inputs.diagnostic_picker && '1' || '0' }}
 
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable

@@ -10,7 +10,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, persistence, request-rules, guest-security, quiet-hours, functions, provider-resilience, memory-knowledge, large-installation, browser, browser-engines, chaos, process-chaos, diagnostics]
+        options: [all, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, persistence, request-rules, guest-security, quiet-hours, functions, provider-resilience, memory-knowledge, large-installation, browser, browser-engines, chaos, process-chaos, long-lifetime, diagnostics]
       intensity:
         description: Workload multiplier
         type: choice
@@ -77,6 +77,7 @@ jobs:
             '') CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
             all|browser) CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
             browser-engines) CAMPAIGNS='[]' ;;
+            long-lifetime) CAMPAIGNS='["long-lifetime"]' ;;
             runtime|lifecycle|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|persistence|request-rules|guest-security|quiet-hours|functions|provider-resilience|memory-knowledge|large-installation|chaos|process-chaos|diagnostics) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
             *) echo 'Unknown campaign' >&2; exit 1 ;;
           esac
@@ -208,11 +209,14 @@ jobs:
             chaos) TEST_PATHS=(tests_stress/test_cross_feature_chaos.py) ;;
             process-chaos) TEST_PATHS=(tests_stress/test_delayed_backlog.py tests_stress/test_backup_inventory.py tests_real_ha/test_immediate_tool_process_crash.py tests_real_ha/test_store_write_process_crash.py tests_real_ha/test_restore_transaction_process_crash.py tests_real_ha/test_delayed_tool_process_restart.py tests_real_ha/test_active_request_shutdown_recovery.py) ;;
             diagnostics) TEST_PATHS=(tests_stress/test_diagnostics_failure_probe.py) ;;
+            long-lifetime) TEST_PATHS=(tests_stress/test_process_resource_soak.py) ;;
             *) exit 2 ;;
           esac
           set +e
+          TEST_TIMEOUT=600
+          if [ "$STRESS_CAMPAIGN" = long-lifetime ]; then TEST_TIMEOUT=2400; fi
           pytest "${TEST_PATHS[@]}" -v -s --asyncio-mode=auto --log-cli-level=WARNING \
-            --timeout=600 --durations=20 \
+            --timeout="$TEST_TIMEOUT" --durations=20 \
             --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY" \
             --show-capture=no --tb=short > enhanced-raw.log 2>&1
           RESULT=$?
@@ -290,7 +294,7 @@ jobs:
           echo "EOAI_SOURCE_VERSION=$TAG" >> "$GITHUB_ENV"
           echo "Published frontend baseline: $TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Install local Playwright runner
-        run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+        run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0 axe-core@4.11.0
       - name: Reconcile current Home Assistant requirements
         if: inputs.campaign != 'diagnostics'
         run: |
@@ -399,6 +403,7 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}
       CROSS_BROWSER_ENGINE: ${{ matrix.engine }}
       CROSS_BROWSER_NIGHTLY: "1"
+      REAL_HA_BROWSER_PROFILE: ${{ matrix.engine }}
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
       STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: browser-${{ matrix.engine }}
@@ -438,6 +443,14 @@ jobs:
           python ci/run_sanitized.py stress-artifacts/browser-real-ha-tabs.log --
           pytest tests_stress/test_browser_multi_tab.py -v -s
           --asyncio-mode=auto --timeout=600
+          --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
+      - name: Run curated native keyboard and assistant lifetime journeys
+        env:
+          RUN_REAL_HA_BROWSER: "1"
+        run: >-
+          python ci/run_sanitized.py stress-artifacts/browser-native-lifetime.log --
+          pytest tests_stress/test_browser_backend_resilience.py::test_native_shell_lifetime_and_assistant_isolation
+          -v -s --asyncio-mode=auto --timeout=600
           --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
       - name: Summarize engine evidence
         if: always()
