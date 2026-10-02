@@ -47,6 +47,7 @@ from .guest_mode import (
 )
 from .helpers import get_model_config, get_reasoning_effort_options
 from .model_catalog import all_reasoning_efforts
+from .operational_errors import log_handled_failure
 from .persistence_hardening import (
     _async_repair_private_store_mode,
     _async_settle_transactional_save,
@@ -2233,6 +2234,10 @@ def _bounded_function_result(
     return result
 
 
+class RuleResponseValueError(ValueError):
+    """An unavailable, validated variable/path in a rule's final response."""
+
+
 def resolve_result_values(
     value: Any, slots: Mapping[str, str], results: Mapping[str, Any]
 ) -> Any:
@@ -2241,7 +2246,7 @@ def resolve_result_values(
     def lookup(token: str) -> Any:
         alias, *path = token.split(".")
         if alias not in results:
-            raise ValueError(f"Function result {alias} is unavailable")
+            raise RuleResponseValueError(f"Function result {alias} is unavailable")
         current = results[alias]
         for part in path:
             if isinstance(current, Mapping) and part in current:
@@ -2253,7 +2258,9 @@ def resolve_result_values(
             ):
                 current = current[int(part)]
             else:
-                raise ValueError(f"Function result path {token} is unavailable")
+                raise RuleResponseValueError(
+                    f"Function result path {token} is unavailable"
+                )
         return current
 
     if isinstance(value, str):
@@ -2764,14 +2771,40 @@ async def _async_evaluate_matched_rule(
             response = resolve_result_values(
                 action["success_response"], match.slots, result_values
             )
-        except ValueError, KeyError:
+            response = str(response)
+        except (ValueError, KeyError, TypeError) as err:
+            # These actions have already occurred. Never rerun the script or
+            # misrepresent this as an action failure to the user.
+            if isinstance(err, RuleResponseValueError):
+                issue = str(err)
+            elif (
+                isinstance(err, KeyError)
+                and err.args
+                and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", str(err.args[0]))
+            ):
+                issue = f"missing variable {err.args[0]}"
+            else:
+                issue = f"invalid response formatting ({type(err).__name__})"
+                log_handled_failure(
+                    _LOGGER,
+                    f"Request Rule response construction failed rule_id={rule['id']} actions=completed",
+                    err,
+                    level=logging.DEBUG,
+                )
+            message = (
+                f"Request Rule '{rule.get('name') or rule['id']}': action execution "
+                f"succeeded, but response construction failed ({issue}). "
+                "Review the rule's Success response/template in Extended OpenAI > Request Rules. "
+                "Actions were not retried."
+            )
+            _LOGGER.warning("%s", message)
             return RuleEvaluation(
                 match,
                 True,
-                resolve_slot_values(action["failure_response"], match.slots),
+                message,
                 successful=False,
             )
-        return RuleEvaluation(match, True, str(response), terminal=stopped)
+        return RuleEvaluation(match, True, response, terminal=stopped)
 
     if action["reset"]:
         if action["scope"] == "conversation":

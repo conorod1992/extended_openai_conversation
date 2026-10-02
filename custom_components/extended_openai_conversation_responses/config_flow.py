@@ -81,7 +81,8 @@ from .model_capabilities import (
     parameter_is_allowed,
     recommended_reasoning_effort,
 )
-from .provider_errors import classify_config_provider_error, log_provider_failure
+from .operational_errors import log_handled_failure
+from .provider_errors import classify_config_provider_error, provider_log_remediation
 from .skills import SkillManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -426,10 +427,16 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         try:
             await validate_input(self.hass, data)
         except OpenAIError as err:
-            log_provider_failure(_LOGGER, "Provider validation failed", err)
+            log_handled_failure(
+                _LOGGER,
+                "Provider validation failed. " + provider_log_remediation(err),
+                err,
+            )
             errors["base"] = classify_config_provider_error(err)
-        except Exception:  # pylint: disable=broad-except
-            _LOGGER.exception("Unexpected exception")
+        except Exception as err:  # pylint: disable=broad-except
+            log_handled_failure(
+                _LOGGER, "Unexpected provider validation failure stage=setup", err
+            )
             errors["base"] = "unknown"
         else:
             return self.async_create_entry(
@@ -477,10 +484,19 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 await validate_input(self.hass, updated)
             except OpenAIError as err:
-                log_provider_failure(_LOGGER, "Provider reauthentication failed", err)
+                log_handled_failure(
+                    _LOGGER,
+                    "Provider reauthentication failed. "
+                    + provider_log_remediation(err),
+                    err,
+                )
                 errors["base"] = classify_config_provider_error(err)
-            except Exception:
-                _LOGGER.exception("Unexpected exception during reauthentication")
+            except Exception as err:
+                log_handled_failure(
+                    _LOGGER,
+                    "Unexpected provider validation failure stage=reauthentication",
+                    err,
+                )
                 errors["base"] = "unknown"
             else:
                 if dict(self._reauth_entry.data) != original_data:

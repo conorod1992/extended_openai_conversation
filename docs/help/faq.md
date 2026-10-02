@@ -30,7 +30,7 @@ Usage depends on metadata returned by the provider. Some compatible providers om
 
 ## Where can I find errors?
 
-Use **Extended OpenAI → Request debugging** to inspect recent request stages and diagnostics. For Home Assistant logs, enable debug logging for `custom_components.extended_openai_conversation_responses`; see [Logging](../reference/logging.md). Redact credentials, private URLs, entity data, and conversation text before sharing logs.
+For operational logs, use **Settings → Devices & services → Extended OpenAI Conversation → Enable debug logging**. Reproduce the issue, then disable debug logging to download the log. Review it before sharing; automatic redaction is not guaranteed. **Extended OpenAI → Request debugging** separately enables deeper per-request capture; neither enables the other. See [Logging](../reference/logging.md).
 
 ## Still stuck?
 

@@ -296,7 +296,7 @@ class SqliteFunction(Function):
         template_arguments.update(arguments)
 
         q = Template(query, hass).async_render(template_arguments)
-        _LOGGER.debug("Rendered SQLite query: %s", q)
+        _LOGGER.debug("SQLite query rendered characters=%d", len(q))
 
         try:
             return await hass.async_add_executor_job(

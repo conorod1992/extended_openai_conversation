@@ -19,14 +19,28 @@ class EntityNotFound(HomeAssistantError):
 class EntityNotExposed(HomeAssistantError):
     """When referenced entity not exposed."""
 
-    def __init__(self, entity_id: str) -> None:
+    def __init__(self, entity_id: str, reason: str = "exposure") -> None:
         """Initialize error."""
         super().__init__(self, f"entity {entity_id} not exposed")
         self.entity_id = entity_id
+        self.reason = reason
 
     def __str__(self) -> str:
         """Return string representation."""
-        return f"entity {self.entity_id} is not exposed"
+        if self.reason == "permission":
+            return (
+                "The Home Assistant user does not have permission to access this "
+                "entity. Ask a Home Assistant administrator to review user permissions."
+            )
+        if self.reason == "policy":
+            return (
+                "Entity access is denied by the current Function Tool access policy. "
+                "Review this assistant's Guest Mode and tool access settings."
+            )
+        return (
+            f"Entity {self.entity_id} is not exposed to Assist. Review Settings > "
+            "Voice assistants > Expose in Home Assistant."
+        )
 
 
 class CallServiceError(HomeAssistantError):
@@ -80,12 +94,16 @@ class FunctionLoadFailed(HomeAssistantError):
         """Initialize error."""
         super().__init__(
             self,
-            "failed to load functions. Verify functions are valid in a yaml format",
+            "Unable to assemble Function Tools. Enable Home Assistant debug logging "
+            "for Extended OpenAI to investigate the internal failure.",
         )
 
     def __str__(self) -> str:
         """Return string representation."""
-        return "failed to load functions. Verify functions are valid in a yaml format"
+        return (
+            "Unable to assemble Function Tools. Enable Home Assistant debug logging "
+            "for Extended OpenAI to investigate the internal failure."
+        )
 
 
 class ParseArgumentsFailed(HomeAssistantError):
@@ -115,13 +133,19 @@ class TokenLengthExceededError(HomeAssistantError):
         """Initialize error."""
         super().__init__(
             self,
-            f"token length(`{token}`) exceeded. Increase maximum token to avoid the issue.",
+            f"Maximum response length ({token} tokens) reached. Increase Maximum "
+            "response length in this assistant's Extended OpenAI configuration, "
+            "or ask for a shorter response.",
         )
         self.token = token
 
     def __str__(self) -> str:
         """Return string representation."""
-        return f"token length(`{self.token}`) exceeded. Increase maximum token to avoid the issue."
+        return (
+            f"Maximum response length ({self.token} tokens) reached. Increase Maximum "
+            "response length in this assistant's Extended OpenAI configuration, "
+            "or ask for a shorter response."
+        )
 
 
 class InvalidFunction(HomeAssistantError):

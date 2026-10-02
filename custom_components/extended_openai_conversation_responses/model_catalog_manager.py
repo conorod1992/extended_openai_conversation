@@ -35,6 +35,7 @@ from .model_catalog import (
     validate_catalog_transition,
     validate_or_migrate_catalog,
 )
+from .operational_errors import log_handled_failure
 from .request_rules import SLOT_REFERENCE, async_get_request_rules
 from .strict_store import PropagatingWriteStore
 
@@ -48,7 +49,15 @@ WS_CATALOG = f"{DOMAIN}/model_catalog"
 _LOGGER = logging.getLogger(__name__)
 
 
-class _TransientCatalogUpdateError(Exception):
+class _CatalogHTTPError(ValueError):
+    """Safe HTTP status from the fixed public catalogue endpoint."""
+
+    def __init__(self, status: int) -> None:
+        self.status_code = status
+        super().__init__("Catalogue HTTP check failed")
+
+
+class _TransientCatalogUpdateError(_CatalogHTTPError):
     """Remote catalogue refresh failed for an ordinary transient reason."""
 
 
@@ -139,9 +148,11 @@ class ModelCatalogManager:
                         await self._save(
                             candidate, available, etag, checked, incompatible
                         )
-                    except Exception:
-                        _LOGGER.warning("Unable to persist migrated model catalogue")
-        except Exception:
+                    except Exception as err:
+                        log_handled_failure(
+                            _LOGGER, "Unable to persist migrated model catalogue", err
+                        )
+        except Exception as err:
             self.catalog = None
             self.available_catalog = None
             self.etag = None
@@ -150,7 +161,7 @@ class ModelCatalogManager:
             self.last_error = (
                 "Stored model data could not be loaded; using bundled data."
             )
-            _LOGGER.warning(self.last_error)
+            log_handled_failure(_LOGGER, self.last_error + " operation=load", err)
         activate_catalog(self.catalog)
 
     def status(self) -> dict[str, Any]:
@@ -189,14 +200,23 @@ class ModelCatalogManager:
             }
         )
 
-    async def _record_failed_check(self, checked: float, *, transient: bool) -> None:
+    async def _record_failed_check(
+        self, checked: float, *, transient: bool, error: Exception
+    ) -> None:
         """Retain active/pending data while remembering when a check failed."""
         self.last_checked = checked
         self.last_error = "Model data check failed; the current catalogue was kept."
-        if transient:
-            _LOGGER.debug(self.last_error)
-        else:
-            _LOGGER.warning(self.last_error)
+        log_handled_failure(
+            _LOGGER,
+            f"{self.last_error} operation=refresh category={'transient' if transient else 'validation_or_internal'}"
+            + (
+                f" http_status={error.status_code}"
+                if isinstance(error, _CatalogHTTPError)
+                else ""
+            ),
+            error,
+            level=logging.DEBUG if transient else logging.WARNING,
+        )
         try:
             await self._save(
                 self.catalog,
@@ -205,8 +225,10 @@ class ModelCatalogManager:
                 checked,
                 self.incompatible_catalog,
             )
-        except Exception:
-            _LOGGER.warning("Unable to persist model catalogue check time")
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER, "Unable to persist model catalogue check time", err
+            )
 
     async def _candidate_preserves_saved_requests(
         self, candidate: dict[str, Any]
@@ -293,11 +315,9 @@ class ModelCatalogManager:
                             self.last_error = None
                             return self.status()
                         if response.status == 429 or response.status >= 500:
-                            raise _TransientCatalogUpdateError(
-                                "Catalogue service temporarily unavailable"
-                            )
+                            raise _TransientCatalogUpdateError(response.status)
                         if response.status != 200:
-                            raise ValueError("Catalogue HTTP check failed")
+                            raise _CatalogHTTPError(response.status)
                         raw = bytearray()
                         async for chunk in response.content.iter_chunked(16384):
                             raw.extend(chunk)
@@ -340,16 +360,18 @@ class ModelCatalogManager:
                     await self._save(
                         self.catalog, self.available_catalog, None, now, incompatible
                     )
-                except Exception:
-                    _LOGGER.warning("Unable to persist incompatible catalogue status")
+                except Exception as err:
+                    log_handled_failure(
+                        _LOGGER, "Unable to persist incompatible catalogue status", err
+                    )
                 self.etag = None
                 self.last_checked = now
                 self.last_error = None
                 self.incompatible_catalog = incompatible
-            except ClientError, TimeoutError, _TransientCatalogUpdateError:
-                await self._record_failed_check(now, transient=True)
-            except Exception:
-                await self._record_failed_check(now, transient=False)
+            except (ClientError, TimeoutError, _TransientCatalogUpdateError) as err:
+                await self._record_failed_check(now, transient=True, error=err)
+            except Exception as err:
+                await self._record_failed_check(now, transient=False, error=err)
             return self.status()
 
     async def async_update(self, *, force: bool = False) -> dict[str, Any]:
@@ -374,9 +396,9 @@ class ModelCatalogManager:
                     self.last_checked,
                     self.incompatible_catalog,
                 )
-            except Exception:
+            except Exception as err:
                 self.last_error = "Model data update could not be applied; the current catalogue was kept."
-                _LOGGER.warning(self.last_error)
+                log_handled_failure(_LOGGER, self.last_error + " operation=apply", err)
                 return self.status()
             activate_catalog(candidate)
             self.catalog = candidate

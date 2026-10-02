@@ -14,6 +14,11 @@ from .management_result_limits import (
     MANAGEMENT_DEBUG_VALUE_CHARACTERS,
     page_metadata,
 )
+from .request_diagnostics import (
+    provider_diagnostics,
+    summary_diagnostics,
+    trace_diagnostics,
+)
 
 _TRUNCATED_TEXT = "<management debug value truncated>"
 _MAX_CONTAINER_ITEMS = 256
@@ -139,26 +144,31 @@ def _summary(trace: Any) -> dict[str, Any]:
         trace.error, MANAGEMENT_DEBUG_SUMMARY_VALUE_CHARACTERS
     )
     first_request = trace.provider_requests[0] if trace.provider_requests else None
-    return {
-        "debug_id": trace.debug_id,
-        "started_at": trace.started_at,
-        "completed_at": trace.completed_at,
-        "duration_ms": trace.duration_ms,
-        "successful": trace.successful,
-        "error_type": trace.error_type,
-        "error": error,
-        "error_meta": error_meta,
-        "usage_run_id": trace.usage_run_id,
-        "incoming_conversation_id": trace.incoming_conversation_id,
-        "resolved_conversation_id": trace.continuity.get("resolved_conversation_id"),
-        "continuity_resumed": trace.continuity.get("resumed"),
-        "continuity_mode": trace.continuity.get("mode"),
-        "provider_request_count": len(trace.provider_requests),
-        "first_text_ms": (
-            first_request.first_text_ms if first_request is not None else None
-        ),
-        **usage,
-    }
+    return summary_diagnostics(
+        trace,
+        {
+            "debug_id": trace.debug_id,
+            "started_at": trace.started_at,
+            "completed_at": trace.completed_at,
+            "duration_ms": trace.duration_ms,
+            "successful": trace.successful,
+            "error_type": trace.error_type,
+            "error": error,
+            "error_meta": error_meta,
+            "usage_run_id": trace.usage_run_id,
+            "incoming_conversation_id": trace.incoming_conversation_id,
+            "resolved_conversation_id": trace.continuity.get(
+                "resolved_conversation_id"
+            ),
+            "continuity_resumed": trace.continuity.get("resumed"),
+            "continuity_mode": trace.continuity.get("mode"),
+            "provider_request_count": len(trace.provider_requests),
+            "first_text_ms": (
+                first_request.first_text_ms if first_request is not None else None
+            ),
+            **usage,
+        },
+    )
 
 
 def debug_run_summaries(manager: Any) -> list[dict[str, Any]]:
@@ -176,33 +186,93 @@ def _provider_request(request: Any, page_budget: _ProjectionBudget) -> dict[str,
     error_value, error_meta = _bounded_value(
         request.error, MANAGEMENT_DEBUG_VALUE_CHARACTERS, page_budget
     )
+    return provider_diagnostics(
+        request,
+        {
+            "request_id": request.request_id,
+            "api_surface": request.api_surface,
+            "started_at": request.started_at,
+            "started_offset_ms": request.started_offset_ms,
+            "request": request_value,
+            "request_meta": {
+                **request_meta,
+                "captured_characters": request.metrics.get("request_characters"),
+            },
+            "metrics": dict(request.metrics),
+            "stream_open_ms": request.stream_open_ms,
+            "first_event_ms": request.first_event_ms,
+            "first_text_ms": request.first_text_ms,
+            "first_action_ms": request.first_action_ms,
+            "duration_ms": request.duration_ms,
+            "successful": request.successful,
+            "error_type": request.error_type,
+            "error": error_value,
+            "error_meta": error_meta,
+            "usage": dict(request.usage),
+            "response_events": response_value,
+            "response_events_meta": {
+                **response_meta,
+                "capture_truncated": bool(request.response_events_truncated),
+                "captured_characters": max(0, int(request._event_bytes)),
+            },
+        },
+    )
+
+
+def _derived_diagnostics(trace: Any) -> dict[str, Any]:
+    """Reuse derived calculations on bounded metadata, never complete captures."""
+    first_model = next(
+        (
+            request
+            for request in trace.provider_requests
+            if request.api_surface in {"responses", "chat.completions"}
+        ),
+        None,
+    )
+    source: dict[str, Any] = {"memory": {}, "provider_requests": []}
+    source_truncated = False
+
+    def metadata(value: Any) -> Any:
+        nonlocal source_truncated
+        projected, meta = _bounded_value(
+            value, MANAGEMENT_DEBUG_SUMMARY_VALUE_CHARACTERS
+        )
+        source_truncated |= meta["truncated"]
+        return projected
+
+    for key in (
+        "_payload_preparation",
+        "_payload_tool_calls",
+        "_payload_prompt_metrics",
+    ):
+        if key in trace.memory:
+            source["memory"][key] = metadata(trace.memory[key])
+    source["phases_ms"] = metadata(trace.phases_ms)
+    source["prompt_metrics"] = metadata(trace.prompt_metrics)
+    if first_model is not None:
+        source["provider_requests"] = [
+            {
+                "api_surface": first_model.api_surface,
+                "metrics": metadata(first_model.metrics),
+            }
+        ]
+    data = trace_diagnostics(trace, source)
+    derived = data.get("payload_latency_diagnostics", {})
+    derived["metadata_truncated"] = source_truncated
+    # Counts describe the whole run even on subsequent provider pages.
+    derived["model_request_count"] = sum(
+        request.api_surface in {"responses", "chat.completions"}
+        for request in trace.provider_requests
+    )
+    derived["embedding_request_count"] = sum(
+        request.api_surface == "embeddings" for request in trace.provider_requests
+    )
+    derived["provider_reported_model_cache_ratio"] = summary_diagnostics(trace, {}).get(
+        "provider_reported_model_cache_ratio"
+    )
     return {
-        "request_id": request.request_id,
-        "api_surface": request.api_surface,
-        "started_at": request.started_at,
-        "started_offset_ms": request.started_offset_ms,
-        "request": request_value,
-        "request_meta": {
-            **request_meta,
-            "captured_characters": request.metrics.get("request_characters"),
-        },
-        "metrics": dict(request.metrics),
-        "stream_open_ms": request.stream_open_ms,
-        "first_event_ms": request.first_event_ms,
-        "first_text_ms": request.first_text_ms,
-        "first_action_ms": request.first_action_ms,
-        "duration_ms": request.duration_ms,
-        "successful": request.successful,
-        "error_type": request.error_type,
-        "error": error_value,
-        "error_meta": error_meta,
-        "usage": dict(request.usage),
-        "response_events": response_value,
-        "response_events_meta": {
-            **response_meta,
-            "capture_truncated": bool(request.response_events_truncated),
-            "captured_characters": max(0, int(request._event_bytes)),
-        },
+        "payload_latency_diagnostics": derived,
+        "prompt_metrics": data.get("prompt_metrics", {}),
     }
 
 
@@ -222,11 +292,22 @@ def debug_trace_page(
     provider_page = trace.provider_requests[safe_offset : safe_offset + safe_limit]
     page_budget = _ProjectionBudget(MANAGEMENT_DEBUG_PAGE_CHARACTERS)
 
+    derived = _derived_diagnostics(trace)
+    # Reserve a bounded slice for summaries before large opt-in payloads.
+    diagnostic_values: dict[str, Any] = {}
+    diagnostic_meta: dict[str, Any] = {}
+    for name, value in derived.items():
+        diagnostic_values[name], diagnostic_meta[name] = _bounded_value(
+            value, MANAGEMENT_DEBUG_VALUE_CHARACTERS, page_budget
+        )
+    if derived["payload_latency_diagnostics"].get("metadata_truncated"):
+        diagnostic_meta["payload_latency_diagnostics"]["truncated"] = True
+
     system_prompt, system_prompt_meta = _bounded_text(
         trace.system_prompt, MANAGEMENT_DEBUG_TEXT_CHARACTERS, page_budget
     )
-    field_values: dict[str, Any] = {}
-    field_meta: dict[str, Any] = {}
+    field_values: dict[str, Any] = diagnostic_values
+    field_meta: dict[str, Any] = diagnostic_meta
 
     # Project the small request-context fields before provider data so a large
     # memory/result object cannot consume the page before the provider trace.
@@ -235,7 +316,6 @@ def debug_trace_page(
         ("user_input", trace.user_input),
         ("continuity", trace.continuity),
         ("phases_ms", trace.phases_ms),
-        ("prompt_metrics", trace.prompt_metrics),
     ):
         field_values[name], field_meta[name] = _bounded_value(
             value, MANAGEMENT_DEBUG_VALUE_CHARACTERS, page_budget
@@ -244,7 +324,14 @@ def debug_trace_page(
     providers = [_provider_request(request, page_budget) for request in provider_page]
 
     for name, value in (
-        ("memory", trace.memory),
+        (
+            "memory",
+            {
+                key: value
+                for key, value in trace.memory.items()
+                if not key.startswith("_payload_")
+            },
+        ),
         ("result", trace.result),
         ("notes", trace.notes),
     ):

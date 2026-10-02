@@ -4,7 +4,17 @@ Home Assistant logging can help diagnose provider errors, function failures, une
 
 ## Enable debug logging
 
-Add the following to `configuration.yaml`:
+For ordinary troubleshooting, use Home Assistant's UI:
+
+1. Open **Settings → Devices & services → Extended OpenAI Conversation → Enable debug logging** (in the integration's menu).
+2. Reproduce the problem.
+3. **Disable debug logging** in the same menu. Home Assistant then offers the log download.
+
+HA debug logging captures integration operational logs: stages, counts, timings, failure categories, tool names and safe stack locations. It does not automatically enable EOAI's **Request debugging** feature.
+
+For deeper per-request inspection of prompts, tool arguments and provider responses, explicitly enable [Request debugging](../features/request-debugging.md) in EOAI. Enabling Request debugging does not automatically enable HA debug logging either. Treat its captures as private conversation data.
+
+Advanced users can alternatively configure the integration logger in `configuration.yaml`:
 
 ```yaml
 logger:
@@ -26,7 +36,7 @@ Debug logging is particularly useful when:
 
 ## Privacy
 
-Debug logs can be verbose and may contain request/response details or Home Assistant context that you would not normally share publicly.
+Review downloaded logs before sharing them publicly. Home Assistant debug logging is **not a guarantee of automatic redaction**: other integrations and Home Assistant itself may include private data. EOAI operational logging avoids full provider events, response text, tool arguments, rendered SQL and scraped content, but safe identifiers can still reveal information about your installation.
 
 Before posting logs in an issue:
 

@@ -49,7 +49,9 @@ def _runtime_configured_function_tools(data: Any) -> list[dict[str, Any]]:
             valid, sort_keys=False, allow_unicode=True
         )
         tools = configured_function_tools_from_data(safe)
-        detail = issue or str(err) or type(err).__name__
+        # Parser/validation messages may echo private YAML values or templates.
+        # The management repair view already exposes details explicitly.
+        detail = f"field={getattr(err, 'field', CONF_FUNCTION_TOOLS)} error_type={type(err).__name__}"
         if quarantine_all:
             _LOGGER.warning(
                 "All configured Function Tools are invalid and were disabled for this "

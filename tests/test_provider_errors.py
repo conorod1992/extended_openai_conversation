@@ -329,5 +329,6 @@ def test_log_provider_failure_serializes_only_safe_metadata() -> None:
     assert "provider is currently unavailable" in arguments[2]
     payload = json.loads(arguments[3])
     assert payload["status_code"] == 500
-    assert "super-secret" not in payload["message"]
-    assert "[redacted]" in payload["message"]
+    assert "message" not in payload
+    assert "super-secret" not in str(payload)
+    assert payload["classification"] == "provider_unavailable"

@@ -29,11 +29,12 @@ from homeassistant.helpers import llm, target as target_helpers
 import homeassistant.util.dt as dt_util
 
 from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
-from ..exceptions import CallServiceError, EntityNotExposed, NativeNotFound
+from ..exceptions import CallServiceError, NativeNotFound
 from ..ha_actions import async_call_ha_action
-from ..ha_permissions import get_active_ha_context
+from ..ha_permissions import entity_access_error, get_active_ha_context
 from ..intercom import async_get_intercom
 from ..intercom_permissions import async_authorized_broadcast_targets
+from ..operational_errors import log_handled_failure
 from ..safety_hardening import (
     _async_require_admin,
     _normalized_statistics_arguments,
@@ -382,7 +383,9 @@ class NativeFunction(Function):
                 result["previous_state"] = previous_state
             return result
         except HomeAssistantError as e:
-            _LOGGER.error(e)
+            log_handled_failure(
+                _LOGGER, f"Native Function Tool action={domain}.{service} failed", e
+            )
             return {"error": str(e)}
 
     async def execute_service(
@@ -521,10 +524,10 @@ class NativeFunction(Function):
         if hidden_entity_ids:
             # Do not include the identifiers in the error: the entire purpose of
             # this boundary is to avoid disclosing hidden entities to the model.
-            raise HomeAssistantError(
-                "Energy configuration references Home Assistant entities that are "
-                "not exposed to Assist"
-            )
+            error = entity_access_error(hass, hidden_entity_ids)
+            from ..exceptions import EntityNotExposed
+
+            raise EntityNotExposed("one or more Energy entities", reason=error.reason)
         return data
 
     async def get_user_from_user_id(
@@ -583,7 +586,7 @@ class NativeFunction(Function):
             }
         )
         if unexposed:
-            raise EntityNotExposed(", ".join(unexposed))
+            raise entity_access_error(hass, unexposed)
 
         statistic_ids = set(raw_statistic_ids)
         start_time_parsed = dt_util.parse_datetime(arguments["start_time"])

@@ -18,6 +18,7 @@ from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
+from .exceptions import EntityNotExposed
 
 _ACTIVE_HA_CONTEXT: ContextVar[Context | None] = ContextVar(
     "extended_openai_active_ha_context", default=None
@@ -125,6 +126,40 @@ def filter_entities_for_active_user(
     return [entity for entity in entities if entity.get("entity_id") in allowed]
 
 
+def entity_access_error(
+    hass: HomeAssistant, entity_ids: Iterable[str]
+) -> EntityNotExposed:
+    """Explain a denied scope without assuming filtered entities are unexposed."""
+    from homeassistant.components.homeassistant.exposed_entities import (
+        DATA_EXPOSED_ENTITIES,
+        async_should_expose,
+    )
+
+    ids = list(entity_ids)
+    context = get_active_ha_context()
+    if context is not None and context.user_id:
+        user = hass.data.get(_USER_CACHE_KEY, {}).get(context.user_id)
+        if (
+            user is None
+            or not getattr(user, "is_active", True)
+            or any(
+                not user.permissions.check_entity(entity_id, POLICY_READ)
+                for entity_id in ids
+            )
+        ):
+            return EntityNotExposed("", reason="permission")
+    if DATA_EXPOSED_ENTITIES not in hass.data:
+        return EntityNotExposed("", reason="policy")
+    hidden = [
+        entity_id
+        for entity_id in ids
+        if not async_should_expose(hass, "conversation", entity_id)
+    ]
+    if hidden:
+        return EntityNotExposed(", ".join(hidden))
+    return EntityNotExposed("", reason="policy")
+
+
 async def async_require_control_permission(
     hass: HomeAssistant,
     entity_ids: Iterable[str],
@@ -161,5 +196,6 @@ async def async_require_control_permission(
         raise HomeAssistantError(
             "Home Assistant user does not have permission to control: "
             + ", ".join(denied)
+            + ". Ask a Home Assistant administrator to review user permissions."
         )
     return context

@@ -227,7 +227,14 @@ async def async_setup_entry(
     except AuthenticationError as err:
         raise ConfigEntryAuthFailed("API credentials are invalid or expired") from err
     except OpenAIError as err:
-        raise ConfigEntryNotReady(err) from err
+        from .provider_errors import log_provider_failure, provider_log_remediation
+
+        log_provider_failure(
+            _LOGGER,
+            f"Provider setup failed entry={getattr(entry, 'entry_id', 'unknown')}",
+            err,
+        )
+        raise ConfigEntryNotReady(provider_log_remediation(err)) from err
 
     debug_client = DebugOpenAIClientProxy(client)
     entry.runtime_data = PerformanceOpenAIClientProxy(  # type: ignore[assignment]

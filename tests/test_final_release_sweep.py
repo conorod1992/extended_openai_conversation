@@ -67,9 +67,13 @@ async def test_statistics_require_an_explicit_non_empty_selection(
 
 
 async def test_statistics_reject_unexposed_entity_backed_ids(
-    hass, exposed_entities
+    hass, exposed_entities, monkeypatch
 ) -> None:
     """Long-term statistics for entity IDs inherit the Assist exposure boundary."""
+    from homeassistant.components.homeassistant import exposed_entities as exposure
+
+    hass.data[exposure.DATA_EXPOSED_ENTITIES] = object()
+    monkeypatch.setattr(exposure, "async_should_expose", lambda *_: False)
     function = NativeFunction()
     with pytest.raises(EntityNotExposed, match="sensor.secret"):
         await function.get_statistics(
@@ -141,6 +145,10 @@ async def test_energy_configuration_rejects_hidden_entity_ids(
     hass, exposed_entities, monkeypatch
 ) -> None:
     """Energy preferences cannot disclose entity IDs hidden from Assist."""
+    from homeassistant.components.homeassistant import exposed_entities as exposure
+
+    hass.data[exposure.DATA_EXPOSED_ENTITIES] = object()
+    monkeypatch.setattr(exposure, "async_should_expose", lambda *_: False)
     function = NativeFunction()
     manager = SimpleNamespace(
         data={

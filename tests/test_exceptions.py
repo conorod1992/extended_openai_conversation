@@ -22,7 +22,8 @@ def test_entity_exceptions_preserve_entity_id_and_messages() -> None:
 
     hidden = EntityNotExposed("lock.front_door")
     assert hidden.entity_id == "lock.front_door"
-    assert str(hidden) == "entity lock.front_door is not exposed"
+    assert "Entity lock.front_door is not exposed to Assist" in str(hidden)
+    assert "Voice assistants > Expose" in str(hidden)
 
 
 def test_call_service_error_preserves_call_details() -> None:
@@ -50,9 +51,9 @@ def test_function_lookup_exceptions_preserve_names() -> None:
 
 def test_function_load_failed_has_stable_user_message() -> None:
     error = FunctionLoadFailed()
-    assert str(error) == (
-        "failed to load functions. Verify functions are valid in a yaml format"
-    )
+    assert "Unable to assemble Function Tools" in str(error)
+    assert "debug logging" in str(error)
+    assert "yaml" not in str(error).lower()
 
 
 def test_parse_arguments_failed_does_not_echo_provider_payload() -> None:
@@ -70,9 +71,8 @@ def test_token_length_exceeded_preserves_limit() -> None:
     error = TokenLengthExceededError(4096)
 
     assert error.token == 4096
-    assert str(error) == (
-        "token length(`4096`) exceeded. Increase maximum token to avoid the issue."
-    )
+    assert "Maximum response length (4096 tokens)" in str(error)
+    assert "shorter response" in str(error)
 
 
 def test_invalid_function_message_includes_chained_cause() -> None:

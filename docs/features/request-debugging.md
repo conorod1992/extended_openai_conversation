@@ -4,6 +4,8 @@ Open **Extended OpenAI → Usage & Maintenance → Request debugging** when you 
 
 This is mainly a troubleshooting tool. Captured requests can contain private Home Assistant context or conversation content, so treat them as sensitive diagnostic data.
 
+This is separate from Home Assistant's **Enable debug logging**, which records integration operational logs. Neither switch enables the other. For ordinary troubleshooting, start with [HA debug logging](../reference/logging.md).
+
 ## Preview effective request vs request debugging
 
 **Preview effective request** shows a safe local preview for a brand-new message. It can show the main prompts/context, available tools and non-secret request settings without calling the provider or changing agent state.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from copy import deepcopy
+import json
 import time
 from typing import Any
 
@@ -84,6 +85,22 @@ def record_tool_execution(
         implementation = (
             function_tool.get("function", {}) if isinstance(function_tool, dict) else {}
         )
+        payload = tool_result_data(result)
+        value = payload.get("result") if isinstance(payload, dict) else None
+        if isinstance(value, str):
+            with suppress(ValueError):
+                value = json.loads(value)
+        outcome = "returned" if successful else "failed"
+        if successful and isinstance(value, dict):
+            if value.get("status") == "denied":
+                outcome = "denied"
+            elif (
+                value.get("error")
+                or value.get("status") in {"error", "failed", "failure"}
+                or value.get("success") is False
+                or (isinstance(value.get("exit_code"), int) and value["exit_code"] != 0)
+            ):
+                outcome = "failed"
         trace.memory.setdefault(_INTERNAL_TOOL_CALLS, []).append(
             {
                 "name": str(
@@ -91,7 +108,9 @@ def record_tool_execution(
                 ),
                 "implementation_type": str(implementation.get("type") or "unknown"),
                 "duration_ms": int((time.monotonic() - started) * 1000),
-                "successful": successful,
+                "handler_returned": successful,
+                "outcome": outcome,
+                "successful": successful and outcome not in {"failed", "denied"},
                 "result_characters": (_result_characters(result) if successful else 0),
             }
         )
@@ -174,7 +193,7 @@ def trace_diagnostics(trace: Any, data: dict[str, Any]) -> dict[str, Any]:
         non_prompt_input_kinds = {
             key: value
             for key, value in input_kinds.items()
-            if key not in {"system", "developer"}
+            if key not in {"system", "developer"} and isinstance(value, dict)
         }
         data["payload_latency_diagnostics"] = {
             "approximation_notice": (
@@ -191,8 +210,16 @@ def trace_diagnostics(trace: Any, data: dict[str, Any]) -> dict[str, Any]:
             "function_tool_calls": deepcopy(tool_calls),
             "slowest_phases": _slowest_phases(data.get("phases_ms", {})),
             "largest_first_model_request_contributors": largest_contributors(
-                prompt_sections=(data.get("prompt_metrics", {}).get("sections") or []),
-                tools=(first_metrics.get("tool_breakdown") or []),
+                prompt_sections=[
+                    item
+                    for item in (data.get("prompt_metrics", {}).get("sections") or [])
+                    if isinstance(item, dict)
+                ],
+                tools=[
+                    item
+                    for item in (first_metrics.get("tool_breakdown") or [])
+                    if isinstance(item, dict)
+                ],
                 input_kinds=non_prompt_input_kinds,
             ),
         }

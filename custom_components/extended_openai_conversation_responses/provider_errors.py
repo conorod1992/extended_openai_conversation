@@ -196,7 +196,46 @@ def provider_user_message(error: BaseException) -> str:
         details.append(f"code {code}")
     if request_id := metadata.get("provider_request_id"):
         details.append(f"request {request_id}")
-    return f"{message} ({', '.join(details)})" if details else message
+    result = f"{message} ({', '.join(details)})" if details else message
+    if provider_failure_category(error) in {
+        "model_unavailable",
+        "insufficient_quota",
+        "context_length",
+        "unsupported_parameter",
+    }:
+        result += ". " + provider_log_remediation(error)
+    return result
+
+
+def provider_failure_category(error: BaseException) -> str:
+    """Use explicit provider evidence, never a generic status, for specific causes."""
+    code = str(getattr(error, "code", "") or "").casefold()
+    error_type = str(getattr(error, "type", "") or "").casefold()
+    # SDKs may retain the structured error inside body rather than attributes.
+    body = getattr(error, "body", None)
+    if isinstance(body, Mapping):
+        source = body.get("error", body)
+        if isinstance(source, Mapping):
+            code = code or str(source.get("code", "") or "").casefold()
+            error_type = error_type or str(source.get("type", "") or "").casefold()
+    if code in {
+        "model_not_found",
+        "deploymentnotfound",
+        "deployment_not_found",
+        "model_not_available",
+    }:
+        return "model_unavailable"
+    if (
+        code
+        in {"insufficient_quota", "billing_hard_limit_reached", "billing_limit_reached"}
+        or error_type == "insufficient_quota"
+    ):
+        return "insufficient_quota"
+    if code in {"context_length_exceeded", "max_context_length_exceeded"}:
+        return "context_length"
+    if code in {"unsupported_parameter", "unsupported_value"}:
+        return "unsupported_parameter"
+    return classify_config_provider_error(error)
 
 
 def classify_config_provider_error(error: BaseException) -> str:
@@ -232,7 +271,24 @@ def request_reauthentication(hass: Any, entry: Any, error: BaseException) -> boo
 
 def provider_log_remediation(error: BaseException) -> str:
     """Return concise user-actionable guidance for common provider failures."""
-    category = classify_config_provider_error(error)
+    category = provider_failure_category(error)
+    if category == "model_unavailable":
+        return (
+            "Check the selected model or Azure deployment name and this provider "
+            "account's access to it in the assistant configuration"
+        )
+    if category == "insufficient_quota":
+        return "Check the provider account's billing balance, project quota and spending limit"
+    if category == "context_length":
+        return (
+            "The provider's context limit was exceeded; shorten the conversation "
+            "or reduce prompt/tool content, or select a model with a larger context window"
+        )
+    if category == "unsupported_parameter":
+        return (
+            "The provider rejected a parameter or value; review the selected model's "
+            "API mode and advanced settings in the assistant configuration"
+        )
     if category == "invalid_auth":
         return (
             "Check the API key or reauthenticate this Extended OpenAI provider "
@@ -262,9 +318,15 @@ def log_provider_failure(
     logger: logging.Logger, context: str, error: BaseException
 ) -> None:
     """Log safe diagnostics with remediation for user-fixable provider failures."""
+    metadata = provider_error_metadata(error)
+    # A provider may echo prompts, request bodies or arbitrary credentials in its
+    # message. Deep provider text belongs in opt-in Request debugging, not HA logs.
+    metadata.pop("message", None)
+    metadata["error_type"] = type(error).__name__
+    metadata["classification"] = provider_failure_category(error)
     logger.error(
         "%s. %s. Technical details: %s",
         context,
         provider_log_remediation(error),
-        json.dumps(provider_error_metadata(error), sort_keys=True),
+        json.dumps(metadata, sort_keys=True),
     )

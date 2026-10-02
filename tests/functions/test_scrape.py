@@ -98,7 +98,7 @@ class TestScrapeFunctionYaml:
         )
 
         assert result == "rendered"
-        executor.assert_awaited_once_with(function._extract_value, data, sensor_config)
+        executor.assert_awaited_once_with(function._extract_value, data, sensor_config, 0)
         value_template.async_render.assert_called_once_with(
             {**arguments, "value": "raw value"}, parse_result=False
         )

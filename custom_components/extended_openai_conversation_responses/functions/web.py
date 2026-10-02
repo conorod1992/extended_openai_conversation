@@ -300,10 +300,10 @@ class ScrapeFunction(Function):
 
         new_arguments = dict(arguments)
 
-        for sensor_config in function_config["sensor"]:
+        for extraction_index, sensor_config in enumerate(function_config["sensor"]):
             name: Template = sensor_config.get(CONF_NAME)
             value = await self._async_update_from_rest_data(
-                hass, coordinator.data, sensor_config, arguments
+                hass, coordinator.data, sensor_config, arguments, extraction_index
             )
             new_arguments["value"] = value
             if name:
@@ -323,10 +323,11 @@ class ScrapeFunction(Function):
         data: BeautifulSoup,
         sensor_config: dict[str, Any],
         arguments: dict[str, Any],
+        extraction_index: int = 0,
     ) -> Any:
         """Extract one sensor value without blocking Home Assistant's event loop."""
         value = await hass.async_add_executor_job(
-            self._extract_value, data, sensor_config
+            self._extract_value, data, sensor_config, extraction_index
         )
         value_template = sensor_config.get(CONF_VALUE_TEMPLATE)
 
@@ -347,26 +348,55 @@ class ScrapeFunction(Function):
         # on Jinja errors. Tools must surface them through the normal executor.
         return value_template.async_render(variables, parse_result=False)
 
-    def _extract_value(self, data: BeautifulSoup, sensor_config: dict[str, Any]) -> Any:
+    def _extract_value(
+        self,
+        data: BeautifulSoup,
+        sensor_config: dict[str, Any],
+        extraction_index: int = 0,
+    ) -> Any:
         """Parse HTML and extract one configured value."""
         value: str | list[str] | None
         select = sensor_config[scrape.const.CONF_SELECT]
         index = sensor_config.get(scrape.const.CONF_INDEX, 0)
         attr = sensor_config.get(CONF_ATTRIBUTE)
+        from ..operational_errors import current_function_tool_name
+
+        matches = data.select(select)
         try:
             if attr is not None:
-                value = data.select(select)[index][attr]
+                value = matches[index][attr]
             else:
-                tag = data.select(select)[index]
+                tag = matches[index]
                 if tag.name in ("style", "script", "template"):
                     value = tag.string
                 else:
                     value = tag.text
         except IndexError:
-            _LOGGER.warning("Index '%s' not found", index)
+            _LOGGER.warning(
+                "Scraper Function Tool %s extraction=%d: index=%s unavailable; matches=%d. "
+                "Review this extraction's selector and index in Functions",
+                current_function_tool_name(),
+                extraction_index,
+                index,
+                len(matches),
+            )
             value = None
         except KeyError:
-            _LOGGER.warning("Attribute '%s' not found", attr)
+            _LOGGER.warning(
+                "Scraper Function Tool %s extraction=%d: attribute=%s missing at index=%s; matches=%d. "
+                "Review this extraction's attribute and selector in Functions",
+                current_function_tool_name(),
+                extraction_index,
+                attr,
+                index,
+                len(matches),
+            )
             value = None
-        _LOGGER.debug("Parsed value: %s", value)
+        _LOGGER.debug(
+            "Scraper Function Tool %s extraction=%d matches=%d value_available=%s",
+            current_function_tool_name(),
+            extraction_index,
+            len(matches),
+            value is not None,
+        )
         return value

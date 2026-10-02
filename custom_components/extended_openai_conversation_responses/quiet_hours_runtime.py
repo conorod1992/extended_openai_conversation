@@ -12,6 +12,7 @@ import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
+import logging
 import math
 from typing import Any
 
@@ -25,6 +26,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .operational_errors import log_handled_failure
 from .strict_store import PropagatingWriteStore
 
 _STORAGE_VERSION = 2
@@ -553,6 +555,15 @@ class QuietHoursManager:
                         controls,
                     )
 
+    def _log_control_failure(
+        self, operation: str, entity_id: str, kind: str, error: Exception
+    ) -> None:
+        log_handled_failure(
+            logging.getLogger(__name__),
+            f"Quiet Hours operation={operation} control={kind} entity={entity_id}; outcome=failed ownership=released",
+            error,
+        )
+
     async def _async_apply_volume_locked(
         self,
         satellite_entity_id: str,
@@ -575,7 +586,10 @@ class QuietHoursManager:
         await self._async_save_locked()
         try:
             await self._async_set_volume(entity_id, self._config.max_volume)
-        except Exception:
+        except Exception as err:
+            self._log_control_failure(
+                "apply", entity_id, controls[entity_id]["kind"], err
+            )
             controls.pop(entity_id, None)
             await self._async_save_locked()
 
@@ -600,7 +614,10 @@ class QuietHoursManager:
         await self._async_save_locked()
         try:
             await self._async_set_switch(entity_id, desired)
-        except Exception:
+        except Exception as err:
+            self._log_control_failure(
+                "apply", entity_id, controls[entity_id]["kind"], err
+            )
             controls.pop(entity_id, None)
             await self._async_save_locked()
 
@@ -636,9 +653,9 @@ class QuietHoursManager:
                         current_switch = _current_switch(self.hass, entity_id)
                         if current_switch is quiet:
                             await self._async_set_switch(entity_id, original)
-                except Exception:
+                except Exception as err:
                     # Do not keep claiming ownership after a failed restoration.
-                    pass
+                    self._log_control_failure("restore", entity_id, str(kind), err)
         self._active = None
         await self._async_save_locked()
 

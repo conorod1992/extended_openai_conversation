@@ -31,7 +31,9 @@ from .const import (
     MEMORY_MODE_OFF,
     MEMORY_MODES,
 )
+from .operational_errors import log_handled_failure
 from .persistence_hardening import _async_settle_transactional_save
+from .provider_errors import provider_failure_category, provider_log_remediation
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 from .strict_store import PropagatingWriteStore
 
@@ -275,6 +277,7 @@ class PersistentMemory:
         self._embedding_cache_storage = embedding_cache_storage
         self._embedding_cache: dict[str, EmbeddingCacheEntry] = {}
         self._embedding_cache_dirty = False
+        self._embedding_cache_write_failed = False
         self._hybrid_status: dict[str, Any] = {
             "configured": False,
             "status": "lexical_fallback",
@@ -650,13 +653,24 @@ class PersistentMemory:
             self._set_hybrid_status("active")
             return vector
         except Exception as err:
+            reason = provider_failure_category(err)
+            changed = (
+                self._hybrid_status.get("status") != "lexical_fallback"
+                or self._hybrid_status.get("reason") != reason
+                or self._hybrid_status.get("error_type") != type(err).__name__
+            )
             self._set_hybrid_status(
-                "lexical_fallback", "provider_error", error_type=type(err).__name__
+                "lexical_fallback", reason, error_type=type(err).__name__
             )
-            _LOGGER.warning(
-                "Hybrid memory embeddings unavailable; using lexical retrieval",
-                exc_info=True,
-            )
+            if changed:
+                log_handled_failure(
+                    _LOGGER,
+                    f"Hybrid memory embeddings unavailable model={self._embedding_model} "
+                    f"reason={reason}; using lexical retrieval. Memories remain available "
+                    "through word matching, but semantic matches may be missed. "
+                    + provider_log_remediation(err),
+                    err,
+                )
             return None
 
     async def async_get_many(
@@ -1253,11 +1267,12 @@ class PersistentMemory:
                     fingerprint=fingerprint,
                     vector=_clean_embedding(raw.get("vector")),
                 )
-        except Exception:
+        except Exception as err:
             self._embedding_cache.clear()
-            _LOGGER.warning(
+            log_handled_failure(
+                _LOGGER,
                 "Persistent memory embedding cache is unavailable; it will regenerate",
-                exc_info=True,
+                err,
             )
 
     async def _async_save_embedding_cache_locked(self) -> bool:
@@ -1279,14 +1294,21 @@ class PersistentMemory:
                 }
             )
             self._embedding_cache_dirty = False
+            if self._embedding_cache_write_failed:
+                _LOGGER.info("Persistent memory embedding cache persistence recovered")
+            self._embedding_cache_write_failed = False
             if self._initialized:
                 self._committed_state = self._snapshot_mutation_state()
             return True
-        except Exception:
-            _LOGGER.warning(
-                "Persistent memory embedding cache could not be saved",
-                exc_info=True,
-            )
+        except Exception as err:
+            if not self._embedding_cache_write_failed:
+                log_handled_failure(
+                    _LOGGER,
+                    "Persistent memory embedding cache could not be saved; using lexical retrieval. "
+                    "Memories remain available through word matching, but semantic matches may be missed",
+                    err,
+                )
+            self._embedding_cache_write_failed = True
             return False
 
     def _set_hybrid_status(
@@ -1296,6 +1318,14 @@ class PersistentMemory:
         *,
         error_type: str | None = None,
     ) -> None:
+        if (
+            status == "active"
+            and self._hybrid_status.get("status") == "lexical_fallback"
+        ):
+            _LOGGER.info(
+                "Hybrid memory semantic retrieval recovered model=%s",
+                self._embedding_model,
+            )
         self._hybrid_status = {
             "configured": self._embedding_provider is not None,
             "status": status,
