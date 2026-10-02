@@ -1,5 +1,8 @@
 FROM python:3.14-slim-bookworm AS ha-stable-builder
 
+ARG HOMEASSISTANT_VERSION
+ARG HA_TEST_PLUGIN_VERSION
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -18,10 +21,18 @@ WORKDIR /opt/eoai-ci
 COPY requirements_test.txt /opt/eoai-ci/requirements_test.txt
 RUN python -m pip install --upgrade pip \
     && pip install --no-cache-dir -r /opt/eoai-ci/requirements_test.txt \
-    && pip install --no-cache-dir homeassistant
+    && pip install --no-cache-dir "pytest-homeassistant-custom-component==${HA_TEST_PLUGIN_VERSION}" \
+    && pip install --no-cache-dir --no-deps --force-reinstall "homeassistant==${HOMEASSISTANT_VERSION}"
 
 COPY ci/install_ha_dependencies.py /opt/eoai-ci/install_ha_dependencies.py
 COPY ci/install_ha_media_dependencies.py /opt/eoai-ci/install_ha_media_dependencies.py
+COPY ci/environment_fingerprint.py /opt/eoai-ci/environment_fingerprint.py
+COPY ci/resolve_ha_test_plugin.py /opt/eoai-ci/resolve_ha_test_plugin.py
+COPY ci/reconcile_stable_environment.sh /opt/eoai-ci/reconcile_stable_environment.sh
+COPY ci/write_playwright_environment_identity.sh /opt/eoai-ci/write_playwright_environment_identity.sh
+COPY ci/verify_playwright_engine.mjs /opt/eoai-ci/verify_playwright_engine.mjs
+COPY ci/Dockerfile.stable /opt/eoai-ci/Dockerfile.stable
+RUN echo python:3.14-slim-bookworm > /opt/eoai-ci/base-image.txt
 COPY custom_components/extended_openai_conversation_responses/manifest.json /opt/eoai-ci/manifest.json
 RUN python /opt/eoai-ci/install_ha_dependencies.py \
         --manifest /opt/eoai-ci/manifest.json \
@@ -29,9 +40,7 @@ RUN python /opt/eoai-ci/install_ha_dependencies.py \
         --marker /opt/eoai-ci/media-dependencies.ready \
     && pip check \
     && find /usr/local/lib/python3.14/site-packages -type d -name __pycache__ \
-        -prune -exec rm -rf {} + \
-    && cat /opt/eoai-ci/requirements_test.txt /opt/eoai-ci/manifest.json \
-        | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
+        -prune -exec rm -rf {} +
 
 
 FROM python:3.14-slim-bookworm AS ha-stable
@@ -64,6 +73,25 @@ from importlib.metadata import version
 print("homeassistant=" + version("homeassistant"))
 print("pytest-homeassistant-custom-component=" + version("pytest-homeassistant-custom-component"))
 PY
+RUN python /opt/eoai-ci/environment_fingerprint.py \
+        --requirements /opt/eoai-ci/requirements_test.txt \
+        --manifest /opt/eoai-ci/manifest.json \
+        --recipe /opt/eoai-ci/Dockerfile.stable \
+        --recipe /opt/eoai-ci/install_ha_dependencies.py \
+        --recipe /opt/eoai-ci/install_ha_media_dependencies.py \
+        --recipe /opt/eoai-ci/environment_fingerprint.py \
+        --recipe /opt/eoai-ci/resolve_ha_test_plugin.py \
+        --recipe /opt/eoai-ci/reconcile_stable_environment.sh \
+        --recipe /opt/eoai-ci/write_playwright_environment_identity.sh \
+        --recipe /opt/eoai-ci/verify_playwright_engine.mjs \
+        --python-version "$(python -c 'import platform; print(platform.python_version())')" \
+        --base-image "$(cat /opt/eoai-ci/base-image.txt)" \
+        --extra "ha_version=$(python -c 'from importlib.metadata import version; print(version("homeassistant"))')" \
+        --extra "ha_test_plugin_version=$(python -c 'from importlib.metadata import version; print(version("pytest-homeassistant-custom-component"))')" \
+        --write /opt/eoai-ci/environment.identity.json \
+        > /dev/null \
+    && cat /opt/eoai-ci/requirements_test.txt /opt/eoai-ci/manifest.json \
+        | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
 
 LABEL org.opencontainers.image.source="https://github.com/conorod1992/extended_openai_conversation" \
       org.opencontainers.image.description="Stable Home Assistant CI environment for EOAI"
@@ -74,7 +102,9 @@ FROM ha-stable AS browser-stable
 ARG NODE_VERSION=24.20.0
 ARG PLAYWRIGHT_VERSION=1.63.0
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    EOAI_PLAYWRIGHT_ENGINE=chromium \
+    EOAI_PLAYWRIGHT_VERSION=${PLAYWRIGHT_VERSION}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends xz-utils \
@@ -85,7 +115,35 @@ RUN apt-get update \
     && npm --version \
     && npm install --global "@playwright/test@${PLAYWRIGHT_VERSION}" \
     && npx playwright install --with-deps --only-shell chromium \
+    && bash /opt/eoai-ci/write_playwright_environment_identity.sh \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
 
 LABEL org.opencontainers.image.description="Stable Home Assistant + Playwright browser CI environment for EOAI"
+
+
+FROM ha-stable AS browser-engine
+
+ARG NODE_VERSION=24.20.0
+ARG PLAYWRIGHT_VERSION=1.63.0
+ARG PLAYWRIGHT_ENGINE
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    EOAI_PLAYWRIGHT_ENGINE=${PLAYWRIGHT_ENGINE} \
+    EOAI_PLAYWRIGHT_VERSION=${PLAYWRIGHT_VERSION}
+
+RUN test "$PLAYWRIGHT_ENGINE" = firefox -o "$PLAYWRIGHT_ENGINE" = webkit \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends xz-utils \
+    && curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+    && tar -xJf "node-v${NODE_VERSION}-linux-x64.tar.xz" -C /usr/local --strip-components=1 \
+    && rm "node-v${NODE_VERSION}-linux-x64.tar.xz" \
+    && node --version \
+    && npm --version \
+    && npm install --global "@playwright/test@${PLAYWRIGHT_VERSION}" \
+    && npx playwright install --with-deps "$PLAYWRIGHT_ENGINE" \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN bash /opt/eoai-ci/write_playwright_environment_identity.sh
+
+LABEL org.opencontainers.image.description="Stable Home Assistant + Playwright ${PLAYWRIGHT_ENGINE} CI environment for EOAI"

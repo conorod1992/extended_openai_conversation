@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import errno
+import json
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
+    QuietHoursManager,
     _config_from_data,
     async_get_quiet_hours,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
+from homeassistant.util.file import WriteError
 from tests_real_ha.test_quiet_hours_scheduling import (
     _install_control_services,
     _install_satellite_entities,
 )
 from tests_stress.conftest import record
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 DUBLIN = ZoneInfo("Europe/Dublin")
 
@@ -40,8 +47,13 @@ async def test_runtime_timezone_switch_reconciles_the_same_instant(
     _install_control_services(hass)
     manager = await async_get_quiet_hours(hass)
     manager._config = _config_from_data(
-        {"enabled": True, "start": "22:00", "end": "07:00",
-         "max_volume": 0.20, "wake_sound": "off"}
+        {
+            "enabled": True,
+            "start": "22:00",
+            "end": "07:00",
+            "max_volume": 0.20,
+            "wake_sound": "off",
+        }
     )
     try:
         instant = datetime(2026, 1, 10, 23, 0, tzinfo=UTC)
@@ -56,22 +68,21 @@ async def test_runtime_timezone_switch_reconciles_the_same_instant(
         assert _volume(hass, media) == pytest.approx(0.65)
         assert hass.states.get(wake).state == "on"
 
-        await manager.async_reconcile(
-            now=datetime(2026, 1, 11, 3, 0, tzinfo=UTC)
-        )
+        await manager.async_reconcile(now=datetime(2026, 1, 11, 3, 0, tzinfo=UTC))
         assert manager.active is not None
         assert _volume(hass, media) == pytest.approx(0.20)
         assert hass.states.get(wake).state == "off"
 
-        await manager.async_reconcile(
-            now=datetime(2026, 1, 11, 12, 0, tzinfo=UTC)
-        )
+        await manager.async_reconcile(now=datetime(2026, 1, 11, 12, 0, tzinfo=UTC))
         assert manager.active is None
         assert _volume(hass, media) == pytest.approx(0.65)
         assert hass.states.get(wake).state == "on"
         record(
-            stress_trace, "summary", layer="Real HA",
-            runtime_timezone_switches=1, quiet_time_boundary_cases=4,
+            stress_trace,
+            "summary",
+            layer="Real HA",
+            runtime_timezone_switches=1,
+            quiet_time_boundary_cases=4,
         )
     finally:
         await manager.async_shutdown()
@@ -339,6 +350,265 @@ async def test_transient_control_service_failure_retries_without_losing_baseline
             "summary",
             layer="Real HA",
             quiet_transient_service_failures=1,
+        )
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("kind", ["volume", "wake_sound"])
+@pytest.mark.parametrize("stage", ["observation", "ownership"])
+@pytest.mark.parametrize("recovery", ["live", "reload"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_quiet_control_store_failure_retries_without_losing_original_value(
+    hass,
+    monkeypatch,
+    stress_trace,
+    freezer,
+    kind,
+    stage,
+    recovery,
+):
+    """Fault the real Store writer before commit and the corresponding HA action.
+
+    Quiet Hours uses HA's ordinary non-atomic writer. Gate its prepared-data
+    boundary, delegating every unaffected write to the actual native writer.
+    """
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    now = [datetime(2026, 1, 10, 12, 0, tzinfo=DUBLIN)]
+    from custom_components.extended_openai_conversation_responses import (
+        quiet_hours as module,
+    )
+
+    freezer.move_to(now[0])
+    satellite, media, wake = _install_satellite_entities(
+        hass,
+        slug="failure-alpha",
+        name="Storage failure Alpha",
+        volume=0.77 if kind == "volume" else 0.08,
+        wake="on" if kind == "wake_sound" else "off",
+    )
+    _, beta_media, beta_wake = _install_satellite_entities(
+        hass, slug="unchanged-beta", name="Unaffected Beta", volume=0.09, wake="off"
+    )
+    calls = []
+    _install_control_services(hass, calls)
+    manager = await async_get_quiet_hours(hass)
+    manager._config = _config_from_data(
+        {
+            "enabled": True,
+            "start": "22:00",
+            "end": "07:00",
+            "max_volume": 0.20,
+            "wake_sound": "off",
+        }
+    )
+    await manager._async_save_locked()
+    assert manager._initialized
+    discovered = next(
+        item
+        for item in manager.discovery_snapshot()
+        if item["satellite_entity_id"] == satellite
+    )
+    assert discovered["media_player_entity_id"] == media
+    assert discovered["wake_sound_entity_id"] == wake
+    target = media if kind == "volume" else wake
+    path = Path(manager._store.path)
+    write_prepared = Store._write_prepared_data
+    faults = []
+    attempted_writes = []
+
+    def fail_target_write(store, mode, json_data):
+        if Path(store.path) == path and not faults:
+            payload = json.loads(json_data)["data"]
+            active = payload.get("active") or {}
+            attempted_writes.append({"destination": str(store.path), "active": active})
+            observed = target in active.get("observed_controls", [])
+            owned = target in active.get("controls", {})
+            if observed and owned == (stage == "ownership"):
+                faults.append({"observed": observed, "owned": owned})
+                assert all(entity_id != target for _, entity_id in calls)
+                raise WriteError("Injected target control writer failure") from OSError(
+                    errno.EIO, "Target control write failed before commit"
+                )
+        return write_prepared(store, mode, json_data)
+
+    try:
+        now[0] = datetime(2026, 1, 10, 22, 5, tzinfo=DUBLIN)
+        freezer.move_to(now[0])
+        assert (
+            module.quiet_period_for(now[0], manager.config.start, manager.config.end)
+            is not None
+        )
+        with monkeypatch.context() as fault:
+            fault.setattr(Store, "_write_prepared_data", fail_target_write)
+            with pytest.raises(OSError, match="Private storage write failed"):
+                await manager.async_reconcile(now=now[0])
+                pytest.fail(
+                    f"Target fault not reached: {attempted_writes=}, {manager.active=}, {calls=}"
+                )
+        assert len(faults) == 1
+        assert all(entity_id != target for _, entity_id in calls)
+        assert _volume(hass, media) == pytest.approx(0.77 if kind == "volume" else 0.08)
+        assert hass.states.get(wake).state == ("on" if kind == "wake_sound" else "off")
+        durable_before = json.loads(path.read_text())["data"]["active"]
+        assert target not in (durable_before or {}).get("controls", {})
+        record(
+            stress_trace,
+            "quiet_control_storage_fault",
+            stage=stage,
+            kind=kind,
+            recovery=recovery,
+            failed_before_service=True,
+            live_observation=target
+            in (manager.active or {}).get("observed_controls", []),
+            live_ownership=target in (manager.active or {}).get("controls", {}),
+            durable_observation=target
+            in (durable_before or {}).get("observed_controls", []),
+        )
+        if recovery == "reload":
+            await manager.async_shutdown()
+            manager = QuietHoursManager(hass)
+            await manager.async_setup()
+        else:
+            await manager.async_reconcile()
+        assert _volume(hass, media) == pytest.approx(
+            0.20 if kind == "volume" else 0.08
+        ), "Failed Store write permanently suppressed the intended volume action"
+        assert hass.states.get(wake).state == "off", (
+            "Failed Store write permanently suppressed the intended wake-sound action"
+        )
+        assert sum(entity_id == target for _, entity_id in calls) == 1
+        control = manager.active["controls"][target]
+        assert control["satellite_entity_id"] == satellite
+        assert control["original_value"] == (0.77 if kind == "volume" else True)
+        durable_after = json.loads(path.read_text())["data"]["active"]
+        assert durable_after["controls"][target] == control
+        assert target not in durable_after.get("pending_controls", {})
+        assert _volume(hass, beta_media) == pytest.approx(0.09)
+        assert hass.states.get(beta_wake).state == "off"
+        # A second reload preserves the original baseline and does not duplicate action.
+        await manager.async_shutdown()
+        manager = QuietHoursManager(hass)
+        await manager.async_setup()
+        assert (
+            manager.active["controls"][target]["original_value"]
+            == control["original_value"]
+        )
+        assert sum(entity_id == target for _, entity_id in calls) == 1
+        now[0] = datetime(2026, 1, 11, 7, 0, tzinfo=DUBLIN)
+        freezer.move_to(now[0])
+        await manager.async_reconcile()
+        assert manager.active is None
+        assert json.loads(path.read_text())["data"]["active"] is None
+        assert _volume(hass, media) == pytest.approx(0.77 if kind == "volume" else 0.08)
+        assert hass.states.get(wake).state == ("on" if kind == "wake_sound" else "off")
+        assert sum(entity_id == target for _, entity_id in calls) == 2
+        assert _volume(hass, beta_media) == pytest.approx(0.09)
+        assert hass.states.get(beta_wake).state == "off"
+        record(
+            stress_trace,
+            "summary",
+            layer="Real HA controls and native Store writer",
+            quiet_storage_failure_cases=1,
+            quiet_storage_retry_checks=1,
+            quiet_storage_restoration_checks=1,
+        )
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("kind", ["volume", "wake_sound"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_pending_quiet_control_preserves_manual_change_after_storage_failure(
+    hass,
+    monkeypatch,
+    freezer,
+    stress_trace,
+    kind,
+):
+    """A user change after a failed ownership write must not be claimed on retry."""
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    freezer.move_to(datetime(2026, 1, 10, 12, 0, tzinfo=DUBLIN))
+    _, media, wake = _install_satellite_entities(
+        hass,
+        slug="pending-manual-alpha",
+        name="Pending manual Alpha",
+        volume=0.77 if kind == "volume" else 0.08,
+        wake="on" if kind == "wake_sound" else "off",
+    )
+    calls = []
+    _install_control_services(hass, calls)
+    manager = await async_get_quiet_hours(hass)
+    manager._config = _config_from_data(
+        {
+            "enabled": True,
+            "start": "22:00",
+            "end": "07:00",
+            "max_volume": 0.20,
+            "wake_sound": "off",
+        }
+    )
+    await manager._async_save_locked()
+    target = media if kind == "volume" else wake
+    path = Path(manager._store.path)
+    native_write = Store._write_prepared_data
+    faults = []
+
+    def fail_ownership(store, mode, json_data):
+        if Path(store.path) == path and not faults:
+            active = json.loads(json_data)["data"].get("active") or {}
+            if target in active.get("controls", {}):
+                assert not calls
+                faults.append(True)
+                raise WriteError("Injected ownership write failure") from OSError(
+                    errno.EIO, "Ownership write failed before commit"
+                )
+        return native_write(store, mode, json_data)
+
+    try:
+        freezer.move_to(datetime(2026, 1, 10, 22, 5, tzinfo=DUBLIN))
+        with monkeypatch.context() as fault:
+            fault.setattr(Store, "_write_prepared_data", fail_ownership)
+            with pytest.raises(OSError):
+                await manager.async_reconcile()
+        assert len(faults) == 1 and not calls
+        pending = json.loads(path.read_text())["data"]["active"]["pending_controls"][
+            target
+        ]
+        assert pending["original_value"] == (0.77 if kind == "volume" else True)
+        # Use the actual HA control service to establish the user's changed value.
+        await hass.services.async_call(
+            "media_player" if kind == "volume" else "switch",
+            "volume_set" if kind == "volume" else "turn_off",
+            {
+                "entity_id": target,
+                **({"volume_level": 0.64} if kind == "volume" else {}),
+            },
+            blocking=True,
+        )
+        assert len(calls) == 1
+        await manager.async_shutdown()
+        manager = QuietHoursManager(hass)
+        await manager.async_setup()
+        assert target in manager.active["observed_controls"]
+        assert target not in manager.active["controls"]
+        assert target not in manager.active["pending_controls"]
+        assert len(calls) == 1
+        durable = json.loads(path.read_text())["data"]["active"]
+        assert (
+            target not in durable["controls"]
+            and target not in durable["pending_controls"]
+        )
+        freezer.move_to(datetime(2026, 1, 11, 7, 0, tzinfo=DUBLIN))
+        await manager.async_reconcile()
+        assert manager.active is None and len(calls) == 1
+        assert _volume(hass, media) == pytest.approx(0.64 if kind == "volume" else 0.08)
+        assert hass.states.get(wake).state == "off"
+        record(
+            stress_trace,
+            "summary",
+            layer="Real HA control and Store recovery",
+            quiet_pending_manual_override_checks=1,
         )
     finally:
         await manager.async_shutdown()

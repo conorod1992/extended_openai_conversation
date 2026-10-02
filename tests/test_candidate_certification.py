@@ -9,9 +9,114 @@ import pytest
 
 from ci import enhanced_certification as gate, enhanced_evidence as evidence
 from ci.candidate_evidence import check_candidate
+from ci.execution_contract import CONTRACT, expected_cases
 
 SOURCE = "b" * 40
 WRONG = "a" * 40
+
+
+def lifecycle_item(point, version):
+    """Otherwise-valid, source-bound evidence with the real mandatory inventory."""
+    row = item()
+    identity = {
+        "python": "3.14.8",
+        "packages": {"homeassistant": version, "openai": "2.45.0"},
+        "homeassistant_source_commit": "d" * 40 if point == "dev" else None,
+    }
+    envelope = {
+        "eoai_sha": SOURCE,
+        "environment": identity,
+        "environment_fingerprint": evidence.environment_fingerprint(identity),
+    }
+    contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    row.update(
+        **envelope,
+        campaign="lifecycle-matrix",
+        ha_point=point,
+        ha_version=version,
+        execution_runs=[{**envelope, "execution_id": "probe", "runner": "pytest"}],
+        execution_cases=[
+            {
+                "nodeid": node,
+                "execution_id": "probe",
+                "collected": True,
+                "executed": True,
+                "outcome": "passed",
+            }
+            for node in sorted(expected_cases(contract, "lifecycle-matrix"))
+        ],
+        measured_totals=contract.get("minimums", {}).get("lifecycle-matrix", {}),
+    )
+    return row
+
+
+@pytest.mark.parametrize(
+    "resolved,reported,installed,expected",
+    [
+        ("2026.9.4", "2026.9.4", "2026.9.4", 0),
+        ("2026.9.4", "2026.9.3", "2026.9.3", 1),
+        ("2026.9.4", "2026.10.0b1", "2026.10.0b1", 1),
+        (None, "2026.9.4", "2026.9.4", 1),
+        ("", "2026.9.4", "2026.9.4", 1),
+        ("2026.10.0b1", "2026.10.0b1", "2026.10.0b1", 1),
+        ("2026.9.4", None, "2026.9.4", 1),
+        ("2026.9.4", "2026.9.4", None, 1),
+        ("2026.9.4", "2026.9.3", "2026.9.4", 1),
+    ],
+)
+def test_final_lifecycle_gate_requires_independently_resolved_stable_version(
+    tmp_path, monkeypatch, resolved, reported, installed, expected
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.delenv("ENHANCED_EXPECTED_STABLE_HA_VERSION", raising=False)
+    for key, value in {
+        "ENHANCED_CANDIDATE_SHA": SOURCE,
+        "ENHANCED_CAMPAIGNS": "[]",
+        "ENHANCED_INTENSITIES": '["normal"]',
+        "ENHANCED_SELECTED": "lifecycle",
+        "STRESS_SEED": "123",
+        "ENHANCED_NEEDS": "{}",
+    }.items():
+        monkeypatch.setenv(key, value)
+    if resolved is not None:
+        monkeypatch.setenv("ENHANCED_EXPECTED_STABLE_HA_VERSION", resolved)
+    monkeypatch.setattr(
+        gate,
+        "actual_jobs",
+        lambda: {
+            f"HA {point} / shared lifecycle contract": "success"
+            for point in ("oldest", "stable", "dev")
+        },
+    )
+    rows = {
+        "oldest": lifecycle_item("oldest", "2026.3.0b0"),
+        "stable": lifecycle_item("stable", installed),
+        "dev": lifecycle_item("dev", "2026.10.0.dev0"),
+    }
+    if reported is None:
+        rows["stable"].pop("ha_version")
+    else:
+        rows["stable"]["ha_version"] = reported
+    for point, row in rows.items():
+        directory = tmp_path / point
+        directory.mkdir()
+        (directory / "certification.json").write_text(json.dumps(row), encoding="utf-8")
+    assert gate.main(tmp_path) == expected
+    index = json.loads((tmp_path / "certification-final.json").read_text())
+    assert index["passed"] is (expected == 0)
+    assert not index["execution_errors"]
+    assert all("Stable" in error for error in index["identity_errors"])
+    if expected:
+        assert index["identity_errors"]
+    else:
+        assert index["expected_stable_ha_version"] == resolved
+        recorded = {row["ha_point"]: row for row in index["jobs"]}
+        # The floor may intentionally be a beta, while dev retains its own Core
+        # identity and runtime fingerprint instead of taking the stable version.
+        assert recorded["oldest"]["ha_version"] == "2026.3.0b0"
+        assert recorded["dev"]["ha_version"] == "2026.10.0.dev0"
+        assert recorded["dev"]["environment"]["homeassistant_source_commit"] == "d" * 40
 
 
 def item(sha=SOURCE):
@@ -48,6 +153,7 @@ def test_real_final_gate_requires_intended_candidate_even_when_jobs_agree(
 ):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.delenv("ENHANCED_EXPECTED_STABLE_HA_VERSION", raising=False)
     for key, value in {
         "ENHANCED_CANDIDATE_SHA": SOURCE,
         "ENHANCED_CAMPAIGNS": '["runtime","functions"]',

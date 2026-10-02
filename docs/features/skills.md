@@ -61,6 +61,10 @@ Downloads are completed in a staging area outside the installed-Skills directory
 
 After installation, select the Skill for the relevant agent in **Extended OpenAI → Configuration → Skills**.
 
+Publication and removal now record a durable transaction before moving an installed Skill. After abrupt process termination, discovery restores the previous known-good version for an uncommitted operation and cleans up a committed operation without resurrecting its old version. Recovery checks the recorded path identities; an externally changed or ambiguous target requires manual recovery instead of an automatic overwrite. The canonical Skill loader reads the recovered installed body.
+
+Older backup/removal directories without a transaction record remain preserved and produce an actionable warning. They are not automatically republished, because an old directory alone cannot establish which operation should be recovered.
+
 ## Skills versus custom functions
 
 A **skill** gives the model reusable instructions.

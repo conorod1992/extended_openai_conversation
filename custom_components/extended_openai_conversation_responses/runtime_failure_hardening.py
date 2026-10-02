@@ -55,9 +55,7 @@ def _conversation_error_result(
             message = f"Sorry, {retirement_message}"
         else:
             log_provider_failure(active_logger, provider_log_message, err)
-            message = (
-                f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}"
-            )
+            message = f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}"
     else:
         active_logger.error("Error during conversation: %s", err, exc_info=True)
         message = f"Something went wrong: {err}"

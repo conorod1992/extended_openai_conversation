@@ -193,7 +193,7 @@ def test_nonstream_responses_result_rejects_failed_and_incomplete_states() -> No
 
 def test_runtime_authentication_failure_starts_reauth() -> None:
     hass = MagicMock()
-    entry = SimpleNamespace(async_start_reauth=MagicMock())
+    entry = SimpleNamespace(entry_id="entry", async_start_reauth=MagicMock())
     assert request_reauthentication(
         hass, entry, _status_error(AuthenticationError, 401)
     ) is True
@@ -209,11 +209,11 @@ class _Usage:
 
 async def test_conversation_runtime_401_starts_reauth_and_returns_error() -> None:
     auth_error = _status_error(AuthenticationError, 401)
-    entry = SimpleNamespace(async_start_reauth=MagicMock())
+    entry = SimpleNamespace(entry_id="entry", async_start_reauth=MagicMock())
     entity = SimpleNamespace(
         hass=MagicMock(),
         entry=entry,
-        subentry=SimpleNamespace(data={}),
+        subentry=SimpleNamespace(subentry_id="agent", data={}),
         _usage=_Usage(),
         _get_exposed_entities=lambda: [],
         _get_function_tools=lambda: [],

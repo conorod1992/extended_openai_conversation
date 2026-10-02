@@ -47,6 +47,7 @@ async def lifecycle(hass, monkeypatch):
 def entry(entry_id):
     return SimpleNamespace(
         entry_id=entry_id,
+        subentries={},
         data={"api_key": "test"},
         async_on_unload=MagicMock(),
         add_update_listener=MagicMock(),

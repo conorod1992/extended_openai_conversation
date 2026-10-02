@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,18 +15,29 @@ from pytest_homeassistant_custom_component.common import MockUser
 from custom_components.extended_openai_conversation_responses import (
     model_catalog_manager as runtime,
 )
+from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_RESPONSES,
+    CONF_CHAT_MODEL,
+    CONF_REASONING_EFFORT,
+)
 from custom_components.extended_openai_conversation_responses.helpers import (
     get_reasoning_effort_options,
 )
 from custom_components.extended_openai_conversation_responses.model_catalog import (
     BUNDLED_CATALOG,
 )
-from homeassistant.components import conversation
+from homeassistant.components import ai_task, conversation
 from homeassistant.core import Context, HomeAssistant
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
+from tests_real_ha.test_ai_task_provider_wire import _task_entity, _text_reply, _wire
 from tests_real_ha.test_backup_transfer_protocol import _user_token
+from tests_real_ha.test_management_backend_acceptance import (
+    _admin_client,
+    _fresh_reload,
+)
 from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
 from tests_stress.conftest import record
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
 async def _say(hass: HomeAssistant, entry_id: str, index: int) -> Any:
@@ -204,3 +216,148 @@ async def test_slow_invalid_and_failed_refresh_preserve_active_operations(
         )
     finally:
         await manager.async_reset()
+
+
+@pytest.mark.usefixtures("real_store_io")
+async def test_saved_ai_task_blocks_narrowing_catalogue_until_compatible_choice(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    stress_trace: list[dict],
+) -> None:
+    """Registered reset protects a durable AI Task and its actual SDK requests."""
+    entry, entity_id = await _task_entity(hass, API_MODE_RESPONSES)
+    manager: runtime.ModelCatalogManager = hass.data[runtime.DATA_MANAGER]
+    admin = await _admin_client(hass, hass_ws_client)
+    candidate = deepcopy(BUNDLED_CATALOG)
+    candidate["catalog_version"] += 1
+    model = next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
+    model["reasoning"]["efforts"].append("minimal")
+    model["reasoning"]["by_api"]["responses"]["efforts"].append("minimal")
+    session = _CatalogSession([_CatalogResponse(json.dumps(candidate).encode())])
+    monkeypatch.setattr(runtime, "async_get_clientsession", lambda _: session)
+    subentry = next(
+        s for s in entry.subentries.values() if s.subentry_type == "ai_task_data"
+    )
+
+    async def save_effort(effort: str) -> None:
+        current = entry.subentries[subentry.subentry_id]
+        assert hass.config_entries.async_update_subentry(
+            entry,
+            current,
+            data={
+                **current.data,
+                CONF_CHAT_MODEL: "gpt-5.6",
+                CONF_REASONING_EFFORT: effort,
+            },
+        )
+        await hass.async_block_till_done()
+        await hass.config_entries._store._async_callback_delayed_write()
+        durable_config = Path(hass.config_entries._store.path).read_text()
+        assert '"ai_task_data"' in durable_config
+        assert subentry.subentry_id in durable_config
+
+        def find_saved(value):
+            if isinstance(value, dict):
+                if value.get("subentry_id") == subentry.subentry_id and "data" in value:
+                    return value
+                for child in value.values():
+                    found = find_saved(child)
+                    if found is not None:
+                        return found
+            elif isinstance(value, list):
+                for child in value:
+                    found = find_saved(child)
+                    if found is not None:
+                        return found
+            return None
+
+        saved_task = find_saved(json.loads(durable_config))
+        assert saved_task is not None
+        assert saved_task["subentry_type"] == "ai_task_data"
+        assert saved_task["data"][CONF_REASONING_EFFORT] == effort
+        assert saved_task["data"][CONF_CHAT_MODEL] == "gpt-5.6"
+        assert entry.data
+
+    async def task(marker: str) -> Any:
+        result = await ai_task.async_generate_data(
+            hass,
+            task_name=marker,
+            entity_id=entity_id,
+            instructions=marker,
+        )
+        assert result.data == marker
+        return result
+
+    try:
+        assert (await _command(admin, "check"))["success"] is True
+        assert (await _command(admin, "apply"))["success"] is True
+        assert manager.catalog == candidate
+        assert len(session.calls) == 1
+        await save_effort("minimal")
+        wire = _wire(
+            monkeypatch,
+            entry,
+            [
+                _text_reply(API_MODE_RESPONSES, "AI_OWNER_ALPHA_BEFORE_RESET"),
+                _text_reply(API_MODE_RESPONSES, "AI_OWNER_ALPHA_AFTER_REJECTION"),
+            ],
+        )
+        await task("AI_OWNER_ALPHA_BEFORE_RESET")
+        assert wire.requests[0]["body"]["reasoning"]["effort"] == "minimal"
+        record(
+            stress_trace,
+            "saved_ai_task_wire",
+            reasoning_effort="minimal",
+            request_count=1,
+        )
+        before_disk = Path(manager.store.path).read_bytes()
+        before_config = Path(hass.config_entries._store.path).read_bytes()
+        rejected = await _command(admin, "reset")
+        assert rejected["success"] is False, "Reset invalidated a saved genuine AI Task"
+        assert rejected["error"]["code"] == "model_catalog_reset_failed"
+        assert "blocked" in rejected["error"]["message"]
+        assert manager.catalog == candidate
+        assert Path(manager.store.path).read_bytes() == before_disk
+        assert Path(hass.config_entries._store.path).read_bytes() == before_config
+        persisted = runtime.ModelCatalogManager(hass)
+        await persisted.async_load()
+        assert persisted.catalog == candidate
+        assert "minimal" in get_reasoning_effort_options("gpt-5.6")
+        await task("AI_OWNER_ALPHA_AFTER_REJECTION")
+        assert len(wire.requests) == 2
+        assert wire.requests[1]["body"]["reasoning"]["effort"] == "minimal"
+        await save_effort("low")
+        reset = await _command(admin, "reset")
+        assert reset["success"] is True, reset
+        assert reset["result"]["source"] == "bundled"
+        assert manager.catalog is None
+        fresh = runtime.ModelCatalogManager(hass)
+        await fresh.async_load()
+        assert fresh.catalog is None
+        assert (
+            json.loads(Path(manager.store.path).read_text())["data"]["catalog"] is None
+        )
+        await _fresh_reload(hass, entry)
+        final_wire = _wire(
+            monkeypatch,
+            entry,
+            [
+                _text_reply(API_MODE_RESPONSES, "AI_OWNER_ALPHA_BUNDLED_RELOAD"),
+            ],
+        )
+        await task("AI_OWNER_ALPHA_BUNDLED_RELOAD")
+        assert len(final_wire.requests) == 1
+        assert final_wire.requests[0]["path"] == "/v1/responses"
+        assert final_wire.requests[0]["body"]["model"] == "gpt-5.6"
+        assert final_wire.requests[0]["body"]["reasoning"]["effort"] == "low"
+        record(
+            stress_trace,
+            "summary",
+            layer="Real HA reset, atomic Store and SDK wire",
+            catalog_ai_task_reset_rejections=1,
+            catalog_ai_task_resets=1,
+            catalog_ai_task_wire_checks=3,
+        )
+    finally:
+        await admin.close()

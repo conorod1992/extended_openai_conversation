@@ -64,7 +64,13 @@ _METADATA_REQUIRED = {
     "tools",
 }
 _MODEL_WRAPPER_KEYS = {"id", "display_name", "kind"}
-_METADATA_OPTIONAL = {"alias_of", "lifecycle_note", "auto_api", "deprecated_at", "shutdown_at"}
+_METADATA_OPTIONAL = {
+    "alias_of",
+    "lifecycle_note",
+    "auto_api",
+    "deprecated_at",
+    "shutdown_at",
+}
 
 
 class _PreparedCatalog(dict[str, Any]):

@@ -62,9 +62,7 @@ def confirmed_retirement_failure(
     hass: Any, entry_id: str, subentry_id: str, model: str
 ) -> bool:
     """Return whether this exact configured model has a confirmed retirement failure."""
-    failure = hass.data.get(_DATA_FAILURES, {}).get(
-        _failure_key(entry_id, subentry_id)
-    )
+    failure = hass.data.get(_DATA_FAILURES, {}).get(_failure_key(entry_id, subentry_id))
     return isinstance(failure, dict) and failure.get("model") == model
 
 
@@ -172,7 +170,11 @@ def clear_retirement_failure(
     failure = failures.get(key)
     if failure is None:
         return
-    if model is not None and isinstance(failure, dict) and failure.get("model") != model:
+    if (
+        model is not None
+        and isinstance(failure, dict)
+        and failure.get("model") != model
+    ):
         return
     failures.pop(key, None)
     ir.async_delete_issue(hass, DOMAIN, _issue_id(entry_id, subentry_id))
@@ -238,7 +240,10 @@ def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
 
     failures = hass.data.setdefault(_DATA_FAILURES, {})
     for stored_entry_id, stored_subentry_id in list(failures):
-        if stored_entry_id == entry.entry_id and stored_subentry_id not in active_subentries:
+        if (
+            stored_entry_id == entry.entry_id
+            and stored_subentry_id not in active_subentries
+        ):
             clear_retirement_failure(
                 hass, entry_id=stored_entry_id, subentry_id=stored_subentry_id
             )

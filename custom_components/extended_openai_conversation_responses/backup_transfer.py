@@ -258,10 +258,14 @@ def _hash_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _build_archive_file(snapshot: dict[str, Any]) -> dict[str, Any]:
+def _build_archive_file(
+    snapshot: dict[str, Any], staging_dir: str | None = None
+) -> dict[str, Any]:
     """Serialize and compress one detached snapshot with explicit byte ceilings."""
     document = _redacted_document(snapshot)
-    fd, path = tempfile.mkstemp(prefix="extended-openai-backup-", suffix=".zip")
+    fd, path = tempfile.mkstemp(
+        prefix="extended-openai-backup-", suffix=".zip", dir=staging_dir
+    )
     os.close(fd)
     try:
         payload_hash = hashlib.sha256()
@@ -319,8 +323,11 @@ async def _async_build_archive_file(
     hass: HomeAssistant, snapshot: dict[str, Any]
 ) -> dict[str, Any]:
     """Finish executor work before propagating cancellation so no file is orphaned."""
+    from .transfer_staging import async_get_transfer_staging
+
+    directory = await async_get_transfer_staging(hass)
     task = asyncio.ensure_future(
-        hass.async_add_executor_job(_build_archive_file, snapshot)
+        hass.async_add_executor_job(_build_archive_file, snapshot, str(directory))
     )
     try:
         return await asyncio.shield(task)
@@ -343,15 +350,22 @@ def _read_file_chunk_base64(path: str, offset: int, length: int) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
-def _create_upload_file() -> str:
-    fd, path = tempfile.mkstemp(prefix="extended-openai-backup-upload-")
+def _create_upload_file(staging_dir: str | None = None) -> str:
+    fd, path = tempfile.mkstemp(
+        prefix="extended-openai-backup-upload-", dir=staging_dir
+    )
     os.close(fd)
     return path
 
 
 async def _async_create_upload_file(hass: HomeAssistant) -> str:
     """Never orphan a newly-created upload file when the request is cancelled."""
-    task = asyncio.ensure_future(hass.async_add_executor_job(_create_upload_file))
+    from .transfer_staging import async_get_transfer_staging
+
+    directory = await async_get_transfer_staging(hass)
+    task = asyncio.ensure_future(
+        hass.async_add_executor_job(_create_upload_file, str(directory))
+    )
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -1082,6 +1096,10 @@ async def _async_cleanup_all(hass: HomeAssistant) -> None:
         _exports(hass).clear()
         _imports(hass).clear()
     await _async_delete_sessions(hass, sessions)
+
+    from .transfer_staging import async_close_transfer_staging
+
+    await async_close_transfer_staging(hass)
 
 
 def setup_backup_transfer_websocket(hass: HomeAssistant) -> bool:

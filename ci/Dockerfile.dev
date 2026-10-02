@@ -17,6 +17,14 @@ RUN test -n "$HA_CORE_SHA" \
 WORKDIR /workspace
 COPY requirements_test.txt requirements_test.txt
 COPY custom_components/extended_openai_conversation_responses/manifest.json custom_components/extended_openai_conversation_responses/manifest.json
+COPY ci/Dockerfile.dev /opt/eoai-ci/Dockerfile.dev
+COPY ci/environment_fingerprint.py /opt/eoai-ci/environment_fingerprint.py
+COPY ci/check_ha_dev_environment.py /opt/eoai-ci/check_ha_dev_environment.py
+COPY ci/run_prebuilt_ha_dev.sh /opt/eoai-ci/run_prebuilt_ha_dev.sh
+COPY ci/check_ha_dev_runtime.sh /opt/eoai-ci/check_ha_dev_runtime.sh
+COPY ci/install_ha_dependencies.py /opt/eoai-ci/install_ha_dependencies.py
+COPY ci/install_ha_media_dependencies.py /opt/eoai-ci/install_ha_media_dependencies.py
+COPY ci/reconcile_ha_dev_environment.sh /opt/eoai-ci/reconcile_ha_dev_environment.sh
 COPY ci/install_ha_dependencies.py ci/install_ha_dependencies.py
 COPY ci/install_ha_media_dependencies.py ci/install_ha_media_dependencies.py
 COPY ci/reconcile_ha_dev_environment.sh ci/reconcile_ha_dev_environment.sh
@@ -31,10 +39,8 @@ RUN /usr/local/bin/python -m venv "$VIRTUAL_ENV" \
         requirements_test.txt \
         custom_components/extended_openai_conversation_responses/manifest.json \
         /opt/eoai-ci/media-dependencies.ready \
-    && cp ci/check_ha_dev_environment.py /opt/eoai-ci/check_ha_dev_environment.py \
     && printf '%s\n' "$HA_CORE_SHA" > /opt/eoai-ci/ha-core-sha \
-    && cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json \
-        | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
+    && printf '%s\n' "python:${PYTHON_VERSION}-slim-bookworm" > /opt/eoai-ci/base-image.txt
 
 RUN find "$VIRTUAL_ENV/lib" -type d -name __pycache__ -prune -exec rm -rf {} +
 
@@ -58,11 +64,30 @@ RUN apt-get update \
 
 COPY --from=ha-dev-builder /opt/venv /opt/venv
 COPY --from=ha-dev-builder /opt/eoai-ci /opt/eoai-ci
+COPY --from=ha-dev-builder /workspace/requirements_test.txt /opt/eoai-ci/requirements_test.txt
+COPY --from=ha-dev-builder /workspace/custom_components/extended_openai_conversation_responses/manifest.json /opt/eoai-ci/manifest.json
 
 WORKDIR /workspace
 RUN python /opt/eoai-ci/check_ha_dev_environment.py \
     && test -s /opt/eoai-ci/ha-core-sha \
-    && test -s /opt/eoai-ci/environment.sha256
+    && /opt/venv/bin/python /opt/eoai-ci/environment_fingerprint.py \
+        --requirements /opt/eoai-ci/requirements_test.txt \
+        --manifest /opt/eoai-ci/manifest.json \
+        --recipe /opt/eoai-ci/Dockerfile.dev \
+        --recipe /opt/eoai-ci/environment_fingerprint.py \
+        --recipe /opt/eoai-ci/check_ha_dev_environment.py \
+        --recipe /opt/eoai-ci/run_prebuilt_ha_dev.sh \
+        --recipe /opt/eoai-ci/check_ha_dev_runtime.sh \
+        --recipe /opt/eoai-ci/install_ha_dependencies.py \
+        --recipe /opt/eoai-ci/install_ha_media_dependencies.py \
+        --recipe /opt/eoai-ci/reconcile_ha_dev_environment.sh \
+        --python-version "$(/opt/venv/bin/python -c 'import platform; print(platform.python_version())')" \
+        --base-image "$(cat /opt/eoai-ci/base-image.txt)" \
+        --extra "ha_core_sha=$(cat /opt/eoai-ci/ha-core-sha)" \
+        --write /opt/eoai-ci/environment.identity.json \
+        > /dev/null \
+    && cat /opt/eoai-ci/requirements_test.txt /opt/eoai-ci/manifest.json \
+        | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256
 
 LABEL org.opencontainers.image.source="https://github.com/conorod1992/extended_openai_conversation" \
       org.opencontainers.image.revision="${HA_CORE_SHA}" \

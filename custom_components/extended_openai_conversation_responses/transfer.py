@@ -344,9 +344,13 @@ async def async_create_setup_export(
     hass: HomeAssistant, entry: Any, subentry: Any
 ) -> dict[str, Any]:
     """Build a lightweight, redacted setup-sharing document."""
-    document = await async_collect_transfer_snapshot(
-        hass, entry, subentry, mode="setup"
-    )
+    from .agent_maintenance import get_agent_maintenance_gate
+
+    gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
+    async with gate.exclusive():
+        document = await async_collect_transfer_snapshot(
+            hass, entry, subentry, mode="setup"
+        )
     return finalize_setup_export(document)
 
 

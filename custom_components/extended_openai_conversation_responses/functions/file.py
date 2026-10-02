@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from contextlib import suppress
 import logging
 import os
@@ -132,6 +133,27 @@ def _get_edit_lock(hass: HomeAssistant, path: Path) -> asyncio.Lock:
         lock = asyncio.Lock()
         locks[key] = lock
     return lock
+
+
+async def _async_settle_native_edit(operation: Awaitable[int]) -> int:
+    """Retain path ownership until the executor writer loses its authority."""
+    writer = asyncio.ensure_future(operation)
+    cancellation: asyncio.CancelledError | None = None
+    while not writer.done():
+        try:
+            await asyncio.shield(writer)
+        except asyncio.CancelledError as err:
+            if writer.cancelled():
+                raise
+            if cancellation is None:
+                cancellation = err
+        except Exception:
+            break
+    # Inspect native failure before propagating deferred caller cancellation.
+    result = writer.result()
+    if cancellation is not None:
+        raise cancellation
+    return result
 
 
 class FileFunction(Function):
@@ -390,11 +412,13 @@ class EditFileFunction(FileFunction):
                     }
 
                 new_content = content.replace(old_text, new_text, 1)
-                await hass.async_add_executor_job(
-                    _atomic_replace_text_if_unchanged,
-                    target_path,
-                    new_content,
-                    fingerprint,
+                await _async_settle_native_edit(
+                    hass.async_add_executor_job(
+                        _atomic_replace_text_if_unchanged,
+                        target_path,
+                        new_content,
+                        fingerprint,
+                    )
                 )
 
         except Exception as err:

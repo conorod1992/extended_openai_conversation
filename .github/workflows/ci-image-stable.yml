@@ -1,6 +1,12 @@
 name: Stable CI Images
 
 on:
+  pull_request:
+    paths:
+      - "ci/**"
+      - "requirements_test.txt"
+      - "custom_components/extended_openai_conversation_responses/manifest.json"
+      - ".github/workflows/ci-image-stable.yml"
   push:
     branches:
       - develop
@@ -18,7 +24,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: stable-ci-images
+  group: stable-ci-images-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -28,11 +34,24 @@ jobs:
   build:
     name: Build stable HA CI images
     runs-on: ubuntu-latest
+    outputs:
+      homeassistant_version: ${{ steps.environment.outputs.homeassistant_version }}
+      ha_test_plugin_version: ${{ steps.environment.outputs.ha_test_plugin_version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Resolve stable Home Assistant and compatible test plugin
+        id: environment
+        run: |
+          HA_VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
+          PLUGIN_VERSION="$(python3 ci/resolve_ha_test_plugin.py "$HA_VERSION")"
+          echo "homeassistant_version=$HA_VERSION" >> "$GITHUB_OUTPUT"
+          echo "ha_test_plugin_version=$PLUGIN_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Home Assistant: $HA_VERSION; compatible pytest plugin: $PLUGIN_VERSION" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -48,7 +67,11 @@ jobs:
           context: .
           file: ci/Dockerfile.stable
           target: ha-stable
-          push: true
+          build-args: |
+            HOMEASSISTANT_VERSION=${{ steps.environment.outputs.homeassistant_version }}
+            HA_TEST_PLUGIN_VERSION=${{ steps.environment.outputs.ha_test_plugin_version }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
           tags: |
             ${{ env.IMAGE_NAME }}:ha-stable
             ${{ env.IMAGE_NAME }}:ha-${{ github.sha }}
@@ -61,23 +84,76 @@ jobs:
           context: .
           file: ci/Dockerfile.stable
           target: browser-stable
-          push: true
+          build-args: |
+            HOMEASSISTANT_VERSION=${{ steps.environment.outputs.homeassistant_version }}
+            HA_TEST_PLUGIN_VERSION=${{ steps.environment.outputs.ha_test_plugin_version }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
           tags: |
             ${{ env.IMAGE_NAME }}:browser-stable
             ${{ env.IMAGE_NAME }}:browser-${{ github.sha }}
           cache-from: type=gha,scope=stable-ci-image
           cache-to: type=gha,mode=max,scope=stable-ci-image
 
+      - name: Build and publish Firefox nightly image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ci/Dockerfile.stable
+          target: browser-engine
+          build-args: |
+            PLAYWRIGHT_ENGINE=firefox
+            HOMEASSISTANT_VERSION=${{ steps.environment.outputs.homeassistant_version }}
+            HA_TEST_PLUGIN_VERSION=${{ steps.environment.outputs.ha_test_plugin_version }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:browser-firefox
+            ${{ env.IMAGE_NAME }}:browser-firefox-${{ github.sha }}
+          cache-from: |
+            type=gha,scope=stable-ci-image
+            type=gha,scope=stable-ci-browser-firefox
+          cache-to: type=gha,mode=max,scope=stable-ci-browser-firefox
+
+      - name: Build and publish WebKit nightly image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ci/Dockerfile.stable
+          target: browser-engine
+          build-args: |
+            PLAYWRIGHT_ENGINE=webkit
+            HOMEASSISTANT_VERSION=${{ steps.environment.outputs.homeassistant_version }}
+            HA_TEST_PLUGIN_VERSION=${{ steps.environment.outputs.ha_test_plugin_version }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:browser-webkit
+            ${{ env.IMAGE_NAME }}:browser-webkit-${{ github.sha }}
+          cache-from: |
+            type=gha,scope=stable-ci-image
+            type=gha,scope=stable-ci-browser-webkit
+          cache-to: type=gha,mode=max,scope=stable-ci-browser-webkit
+
       - name: Verify published images
         run: |
-          docker pull "${IMAGE_NAME}:ha-stable"
-          docker run --rm "${IMAGE_NAME}:ha-stable" python -c \
-            'from importlib.metadata import version; print("homeassistant=" + version("homeassistant")); print("pytest-homeassistant-custom-component=" + version("pytest-homeassistant-custom-component"))'
+          if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then docker pull "${IMAGE_NAME}:ha-stable"; fi
+          docker run --rm \
+            -e EXPECTED_HOMEASSISTANT_VERSION="${{ steps.environment.outputs.homeassistant_version }}" \
+            -e EXPECTED_HA_TEST_PLUGIN_VERSION="${{ steps.environment.outputs.ha_test_plugin_version }}" \
+            "${IMAGE_NAME}:ha-stable" python -c 'import os; from importlib.metadata import version; assert version("homeassistant") == os.environ["EXPECTED_HOMEASSISTANT_VERSION"]; assert version("pytest-homeassistant-custom-component") == os.environ["EXPECTED_HA_TEST_PLUGIN_VERSION"]'
+          docker run --rm "${IMAGE_NAME}:ha-stable" python -m pip check
           docker run --rm "${IMAGE_NAME}:ha-stable" test -s /opt/eoai-ci/media-dependencies.ready
 
-          docker pull "${IMAGE_NAME}:browser-stable"
+          if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then docker pull "${IMAGE_NAME}:browser-stable"; fi
           docker run --rm "${IMAGE_NAME}:browser-stable" node --version
           docker run --rm "${IMAGE_NAME}:browser-stable" npx playwright --version
+
+          for engine in firefox webkit; do
+            if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then docker pull "${IMAGE_NAME}:browser-${engine}"; fi
+            docker run --rm "${IMAGE_NAME}:browser-${engine}" \
+              bash -lc 'NPM_GLOBAL_ROOT="$(npm root -g)" node /opt/eoai-ci/verify_playwright_engine.mjs "$EOAI_PLAYWRIGHT_ENGINE" "$EOAI_PLAYWRIGHT_VERSION"'
+          done
 
       - name: Publish image summary
         run: |
@@ -86,6 +162,8 @@ jobs:
             echo
             echo "HA: \`${IMAGE_NAME}:ha-stable\`"
             echo "Browser: \`${IMAGE_NAME}:browser-stable\`"
+            echo "Firefox: \`${IMAGE_NAME}:browser-firefox\`"
+            echo "WebKit: \`${IMAGE_NAME}:browser-webkit\`"
             echo
             echo "Commit: \`${GITHUB_SHA}\`"
           } >> "$GITHUB_STEP_SUMMARY"

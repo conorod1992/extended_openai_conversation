@@ -28,7 +28,7 @@ const reportFolder = artifactKey ? `playwright-report/${artifactKey}` : "playwri
 export default defineConfig({
   testDir: "./tests_browser",
   testMatch: ["real-ha-shell.spec.mjs", "real-ha-golden.spec.mjs", "real-ha-compatibility.spec.mjs"],
-  grep: process.env.EOAI_NATIVE_ENDURANCE === "1"
+  grep: process.env.EOAI_NATIVE_OWNERSHIP === "1" ? /nightly ownership/ : process.env.EOAI_NATIVE_ENDURANCE === "1"
     ? profile === "chromium" ? /nightly native/ : /nightly native.*(?:Composite rejection|two assistants)/
     : undefined,
   outputDir,

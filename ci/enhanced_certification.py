@@ -10,10 +10,12 @@ from urllib.request import Request, urlopen
 
 try:
     from .candidate_evidence import check_candidate, valid_sha
+    from .compatibility_evidence import check_stable_point
     from .enhanced_evidence import SCHEMA, write_json
     from .execution_contract import CONTRACT, check_execution, expected_cases
 except ImportError:
     from candidate_evidence import check_candidate, valid_sha
+    from compatibility_evidence import check_stable_point
     from enhanced_evidence import SCHEMA, write_json
     from execution_contract import CONTRACT, check_execution, expected_cases
 
@@ -44,6 +46,7 @@ def actual_jobs() -> dict[str, str]:
 
 def main(root: Path) -> int:
     candidate_sha = os.environ.get("ENHANCED_CANDIDATE_SHA", "unknown")
+    expected_stable = os.environ.get("ENHANCED_EXPECTED_STABLE_HA_VERSION")
     campaigns = json.loads(os.environ["ENHANCED_CAMPAIGNS"])
     intensities = json.loads(os.environ["ENHANCED_INTENSITIES"])
     selected = os.environ.get("ENHANCED_SELECTED", "all")
@@ -121,6 +124,11 @@ def main(root: Path) -> int:
         if item:
             shas.add(item["eoai_sha"])
             identity_errors.extend(check_candidate(item, candidate_sha))
+            identity_errors.extend(
+                check_stable_point(
+                    item, point, expected_stable, require_reported_version=True
+                )
+            )
             if selected != "diagnostics":
                 execution_errors.extend(check_execution(item))
         lines.append(
@@ -180,6 +188,7 @@ def main(root: Path) -> int:
         {
             "schema": SCHEMA,
             "candidate_sha": candidate_sha,
+            "expected_stable_ha_version": expected_stable,
             "identity_errors": identity_errors,
             "seed": seed,
             "selected": selected,

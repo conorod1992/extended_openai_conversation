@@ -48,6 +48,27 @@ def test_every_enhanced_job_checks_out_the_one_prepare_candidate():
         step["env"]["ENHANCED_CANDIDATE_SHA"]
         == "${{ needs.prepare.outputs.candidate_sha }}"
     )
+    assert jobs["prepare"]["outputs"]["ha_version"] == "${{ steps.ha.outputs.version }}"
+    assert (
+        step["env"]["ENHANCED_EXPECTED_STABLE_HA_VERSION"]
+        == "${{ needs.prepare.outputs.ha_version }}"
+    )
+
+
+def test_enhanced_dispatch_can_run_the_scheduled_intensity_matrix():
+    data = workflow("enhanced-stress.yml")
+    triggers = data.get("on", data.get(True))
+    intensity = triggers["workflow_dispatch"]["inputs"]["intensity"]
+    assert intensity["options"] == ["normal", "heavy", "all"]
+
+    jobs = data["jobs"]
+    controls = next(
+        step
+        for step in jobs["prepare"]["steps"]
+        if step.get("name") == "Resolve reproducible run controls"
+    )
+    assert 'INTENSITY" == all' in controls["run"]
+    assert 'intensities=["normal","heavy"]' in controls["run"]
 
 
 def test_existing_historical_matrix_supports_complete_dispatch_and_exact_checkout():
@@ -100,8 +121,158 @@ def test_standalone_certification_imports_support_the_lightweight_runner_python(
     # The final gate uses ubuntu-latest's Python, independently of HA's Python.
     # Parse its complete dependency chain using that runner's older grammar.
     for filename in (
-        "enhanced_certification.py", "candidate_evidence.py", "enhanced_evidence.py",
-        "execution_contract.py", "release_certification.py",
+        "enhanced_certification.py",
+        "candidate_evidence.py",
+        "compatibility_evidence.py",
+        "enhanced_evidence.py",
+        "execution_contract.py",
+        "release_certification.py",
     ):
         path = ROOT / "ci" / filename
-        ast.parse(path.read_text(encoding="utf-8"), filename=str(path), feature_version=(3, 12))
+        ast.parse(
+            path.read_text(encoding="utf-8"),
+            filename=str(path),
+            feature_version=(3, 12),
+        )
+
+
+def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverage():
+    jobs = workflow("enhanced-stress.yml")["jobs"]
+    assert jobs["ha-lifecycle-matrix"]["strategy"]["matrix"]["ha-version"] == [
+        "oldest",
+        "stable",
+    ]
+    assert jobs["ha-lifecycle-matrix"]["container"]["image"].endswith(":ha-stable")
+    lifecycle_step = next(
+        step
+        for step in jobs["ha-lifecycle-matrix"]["steps"]
+        if step.get("name") == "Install test and selected HA environment"
+    )
+    assert lifecycle_step["shell"] == "bash"
+    lifecycle_install = lifecycle_step["run"]
+    assert "pytest-homeassistant-custom-component==0.13.317" in lifecycle_install
+    assert "homeassistant==$MINIMUM" in lifecycle_install
+    assert (
+        "apt-get install -y --no-install-recommends build-essential"
+        in lifecycle_install
+    )
+    assert 'test "$(python -c' in lifecycle_install
+    assert '= "$MINIMUM"' in lifecycle_install
+    assert "$EOAI_EXPECTED_HA_VERSION" in lifecycle_install
+    assert jobs["ha-lifecycle-dev"]["steps"]
+    assert any(
+        step.get("name") == "Resolve exact HA dev commit and Python version"
+        for step in jobs["ha-lifecycle-dev"]["steps"]
+    )
+    assert any(
+        step.get("name")
+        == "Construct the exact HA dev runtime when no matching image exists"
+        for step in jobs["ha-lifecycle-dev"]["steps"]
+    )
+    assert "ha-lifecycle-dev" in jobs["certify"]["needs"]
+    dev_steps = jobs["ha-lifecycle-dev"]["steps"]
+    for name in (
+        "Select only an exact immutable HA dev image",
+        "Run lifecycle contract in the matching prebuilt runtime",
+    ):
+        environment = next(
+            step["env"] for step in dev_steps if step.get("name") == name
+        )
+        assert environment["EXPECTED_HA_CORE_SHA"] == "${{ steps.python.outputs.sha }}"
+        assert (
+            environment["EXPECTED_PYTHON_VERSION"]
+            == "${{ steps.python.outputs.version }}"
+        )
+    runtime = (ROOT / "ci/check_ha_dev_runtime.sh").read_text()
+    assert 'test "$IMAGE_SHA" = "$EXPECTED_HA_CORE_SHA"' in runtime
+    assert 'test "$IMAGE_PYTHON" = "$EXPECTED_PYTHON_VERSION"' in runtime
+    assert "--check /opt/eoai-ci/environment.identity.json" in runtime
+
+    engines = jobs["browser-engines"]
+    assert engines["strategy"]["matrix"]["engine"] == ["firefox", "webkit"]
+    assert "browser-${{ matrix.engine }}" in engines["container"]["image"]
+    assert any(
+        step.get("name") == "Verify prebuilt Playwright engine"
+        for step in engines["steps"]
+    )
+    expose_playwright = next(
+        step["run"]
+        for step in engines["steps"]
+        if step.get("name") == "Expose prebuilt Playwright packages to the checkout"
+    )
+    assert "ln -s" in expose_playwright
+    assert 'import("@playwright/test")' in expose_playwright
+    assert (
+        'npm install --global "@playwright/test@${PLAYWRIGHT_VERSION}"'
+        in Path("ci/Dockerfile.stable").read_text()
+    )
+    stable_images = workflow("ci-image-stable.yml")["jobs"]["build"]["steps"]
+    assert any(
+        step.get("name") == "Build and publish Firefox nightly image"
+        for step in stable_images
+    )
+    assert any(
+        step.get("name") == "Build and publish WebKit nightly image"
+        for step in stable_images
+    )
+    stable_reconciler = Path("ci/reconcile_stable_environment.sh").read_text()
+    assert "environment.identity.json" in stable_reconciler
+    assert "sha256sum" in stable_reconciler
+    assert "EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION" in stable_reconciler
+    assert (
+        "pytest-homeassistant-custom-component==${EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION"
+        in stable_reconciler
+    )
+    stable_image_workflow = workflow("ci-image-stable.yml")["jobs"]["build"]
+    assert any(
+        step.get("name") == "Resolve stable Home Assistant and compatible test plugin"
+        for step in stable_image_workflow["steps"]
+    )
+    stable_dockerfile = Path("ci/Dockerfile.stable").read_text()
+    assert (
+        "pytest-homeassistant-custom-component==${HA_TEST_PLUGIN_VERSION}"
+        in stable_dockerfile
+    )
+    assert "homeassistant==${HOMEASSISTANT_VERSION}" in stable_dockerfile
+
+    dev_image_verify = next(
+        step["run"]
+        for step in workflow("ci-image-dev.yml")["jobs"]["build"]["steps"]
+        if step.get("name") == "Verify published image"
+    )
+    assert 'if [[ "$GITHUB_EVENT_NAME" != pull_request ]]' in dev_image_verify
+    assert "check_ha_dev_runtime.sh" in dev_image_verify
+    assert 'docker pull "${IMAGE_NAME}:typecheck-' in dev_image_verify
+    assert 'docker pull "${IMAGE_NAME}:ha-dev"' in dev_image_verify
+
+    persistence_job = jobs["persistence_runtime"]
+    assert persistence_job["needs"] == "prepare"
+    assert "HISTORICAL_RELEASE_SHA" in persistence_job["env"]
+    assert all(
+        "${{ runner." not in str(value) for value in persistence_job["env"].values()
+    )
+    assert any(
+        step.get("uses", "").startswith("actions/cache@")
+        for step in persistence_job["steps"]
+    )
+    historical_runtime = Path("ci/prepare_historical_runtime.sh").read_text()
+    assert 'python -m venv "$HISTORICAL_RUNTIME_DIR"' in historical_runtime
+    assert "homeassistant==$HISTORICAL_HA_VERSION" in historical_runtime
+    persistence_campaign = jobs["python-campaigns"]
+    assert persistence_campaign["needs"] == ["prepare", "persistence_runtime"]
+    assert "always()" in persistence_campaign["if"]
+    assert "Verify or safely build the historical runtime" in [
+        step.get("name") for step in persistence_campaign["steps"]
+    ]
+
+    dev_runner = Path("ci/run_prebuilt_ha_dev.sh").read_text()
+    assert '[[ -z "$BASE_IMAGE" ]]' in dev_runner
+    assert "this legacy image will be reconciled on each run" in dev_runner
+
+    assert jobs["prepare"]["steps"]
+    schedule_campaigns = next(
+        step
+        for step in jobs["prepare"]["steps"]
+        if step.get("name") == "Resolve reproducible run controls"
+    )
+    assert 'intensities=["normal","heavy"]' in schedule_campaigns["run"]

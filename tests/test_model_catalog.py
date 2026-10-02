@@ -267,7 +267,7 @@ async def test_corrupt_storage_falls_back_to_bundled(check_manager):
     check_manager.store.saved = {"catalog": {"schema_version": 99}}
     await check_manager.async_load()
     assert check_manager.status()["source"] == "bundled"
-    assert check_manager.status()["schema_version"] == 6
+    assert check_manager.status()["schema_version"] == data.CURRENT_SCHEMA_VERSION
     assert check_manager.last_error
 
 
@@ -518,7 +518,7 @@ def test_v1_migration_rejects_non_v1_and_preserves_monotonic_version() -> None:
 def test_validate_or_migrate_marks_legacy_schemas_as_migrated() -> None:
     migrated, changed = data.validate_or_migrate_catalog({"schema_version": 1})
     assert changed is True
-    assert migrated["schema_version"] == 6
+    assert migrated["schema_version"] == data.CURRENT_SCHEMA_VERSION
 
     legacy_v2 = deepcopy(data.BUNDLED_CATALOG)
     legacy_v2["models"] = [

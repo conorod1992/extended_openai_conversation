@@ -23,6 +23,12 @@ from .skill_resource_limits import (
     MAX_SKILL_DISCOVERY_ENTRIES,
     read_bounded_skill_text,
 )
+from .skill_transactions import (
+    commit_transaction,
+    prepare_transaction,
+    recover_transaction,
+    recover_transactions,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _SKILL_MANAGER_INSTANCE_LOCK = (
@@ -218,6 +224,9 @@ class SkillManager:
         async def initialize_locked() -> None:
             if self._initialized:
                 return
+            await self._hass.async_add_executor_job(
+                recover_transactions, self.staging_dir, self.user_skills_dir
+            )
             loaded = await self._async_discover_skills_locked()
             self._skills = loaded
             self._initialized = True
@@ -229,6 +238,9 @@ class SkillManager:
         """Rescan and atomically replace the published catalogue."""
 
         async def load_locked() -> None:
+            await self._hass.async_add_executor_job(
+                recover_transactions, self.staging_dir, self.user_skills_dir
+            )
             loaded = await self._async_discover_skills_locked()
             self._skills = loaded
             self._initialized = True
@@ -274,22 +286,31 @@ class SkillManager:
 
         async def publish_locked() -> None:
             await self._hass.async_add_executor_job(
-                self._activate_staged_skill_sync, staged, target, backup
+                recover_transactions, self.staging_dir, self.user_skills_dir
+            )
+            journal = await self._hass.async_add_executor_job(
+                prepare_transaction, self.staging_dir, target, backup, staged
             )
             try:
+                await self._hass.async_add_executor_job(
+                    self._activate_staged_skill_sync, staged, target, backup
+                )
                 loaded = await self._async_discover_skills_locked()
                 if skill_name not in loaded:
                     raise HomeAssistantError(
                         f"Downloaded Skill `{skill_name}` is not a valid installed Skill"
                     )
+                await self._hass.async_add_executor_job(commit_transaction, journal)
             except BaseException:
                 await self._hass.async_add_executor_job(
-                    self._rollback_staged_skill_sync, target, backup
+                    recover_transaction, journal, self.user_skills_dir
                 )
                 self._skills = await self._async_discover_skills_locked()
                 raise
             self._skills = loaded
-            await self._hass.async_add_executor_job(self._remove_path_sync, backup)
+            await self._hass.async_add_executor_job(
+                recover_transaction, journal, self.user_skills_dir
+            )
 
         await self._async_run_locked(publish_locked)
 
@@ -300,20 +321,29 @@ class SkillManager:
         backup = self.staging_dir / f"{skill_name}.remove-{uuid4().hex}"
 
         async def remove_locked() -> bool:
+            await self._hass.async_add_executor_job(
+                recover_transactions, self.staging_dir, self.user_skills_dir
+            )
             if not await self._hass.async_add_executor_job(target.exists):
                 return False
-            await self._hass.async_add_executor_job(
-                self._stage_removal_sync, target, backup
+            journal = await self._hass.async_add_executor_job(
+                prepare_transaction, self.staging_dir, target, backup, None
             )
             try:
+                await self._hass.async_add_executor_job(
+                    self._stage_removal_sync, target, backup
+                )
                 loaded = await self._async_discover_skills_locked()
+                await self._hass.async_add_executor_job(commit_transaction, journal)
             except BaseException:
                 await self._hass.async_add_executor_job(
-                    self._restore_removed_skill_sync, target, backup
+                    recover_transaction, journal, self.user_skills_dir
                 )
                 raise
             self._skills = loaded
-            await self._hass.async_add_executor_job(self._remove_path_sync, backup)
+            await self._hass.async_add_executor_job(
+                recover_transaction, journal, self.user_skills_dir
+            )
             return True
 
         return await self._async_run_locked(remove_locked)

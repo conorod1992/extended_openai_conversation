@@ -37,6 +37,17 @@ def python_selections(workflow=None):
                 )
             )
         )
+    lifecycle_runner = (ROOT / "ci/run_ha_lifecycle_contract.sh").read_text(
+        encoding="utf-8"
+    )
+    selections["lifecycle-matrix"] = sorted(
+        set(
+            re.findall(
+                r"tests(?:_stress|_real_ha)?/[A-Za-z0-9_./-]+\.py(?:::[A-Za-z0-9_]+)?",
+                lifecycle_runner,
+            )
+        )
+    )
     return selections
 
 

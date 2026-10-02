@@ -13,7 +13,16 @@ from custom_components.extended_openai_conversation_responses import (
     backup,
     backup_transfer,
     restore_recovery,
+    transfer_staging,
 )
+
+
+@pytest.fixture(autouse=True)
+def allocated_staging_directory(monkeypatch, tmp_path):
+    """Keep these worker-cancellation unit probes independent of owner allocation."""
+    monkeypatch.setattr(
+        transfer_staging, "async_get_transfer_staging", AsyncMock(return_value=tmp_path)
+    )
 
 
 def test_restore_journal_uses_scalable_backup_limit(monkeypatch) -> None:
@@ -117,7 +126,7 @@ async def test_async_build_archive_cancellation_cleans_late_result(
     removed = AsyncMock()
     monkeypatch.setattr(backup_transfer, "_async_remove_path", removed)
 
-    async def executor_job(_func, _snapshot):
+    async def executor_job(_func, *_args):
         await asyncio.sleep(0.01)
         return {"path": str(path)}
 
@@ -132,7 +141,7 @@ async def test_async_build_archive_cancellation_cleans_late_result(
 
 
 async def test_async_build_archive_cancellation_preserves_cancellation_if_worker_fails():
-    async def executor_job(_func, _snapshot):
+    async def executor_job(_func, *_args):
         await asyncio.sleep(0.01)
         raise RuntimeError("worker failed")
 
@@ -150,7 +159,7 @@ async def test_async_create_upload_cancellation_cleans_late_file(tmp_path, monke
     removed = AsyncMock()
     monkeypatch.setattr(backup_transfer, "_async_remove_path", removed)
 
-    async def executor_job(_func):
+    async def executor_job(_func, *_args):
         await asyncio.sleep(0.01)
         return str(path)
 
@@ -165,7 +174,7 @@ async def test_async_create_upload_cancellation_cleans_late_file(tmp_path, monke
 
 
 async def test_async_create_upload_cancellation_preserves_cancellation_if_worker_fails():
-    async def executor_job(_func):
+    async def executor_job(_func, *_args):
         await asyncio.sleep(0.01)
         raise OSError("disk failed")
 

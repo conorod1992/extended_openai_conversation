@@ -156,8 +156,8 @@ async def test_conversation_returns_retryable_provider_error_for_timeout() -> No
     error = ProviderTransportError("Provider request timed out")
     entity = SimpleNamespace(
         hass=MagicMock(),
-        entry=SimpleNamespace(async_start_reauth=MagicMock()),
-        subentry=SimpleNamespace(data={}),
+        entry=SimpleNamespace(entry_id="entry", async_start_reauth=MagicMock()),
+        subentry=SimpleNamespace(subentry_id="agent", data={}),
         _usage=_Usage(),
         _get_exposed_entities=lambda: [],
         _get_function_tools=lambda: [],

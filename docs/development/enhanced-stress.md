@@ -191,3 +191,47 @@ Process chaos schedules 50 normal / 100 heavy delayed calls through the real sch
 Chromium endurance adds equivalent-state post-GC heap, DOM, document and listener samples after route/module warm-up. Eight normal / sixteen heavy windows retain numeric diagnostics and reject sustained growth exceeding both generous absolute and relative thresholds. Firefox/WebKit keep the existing endurance path. The test exposed repeated help keyboard bindings retaining detached dialogs, unbounded native-selector readiness waiters, and Chromium radio-group ownership retaining removed import dialogs. Help now resolves the current dialog through one root handler; selector readiness uses one weak waiter per panel; removed dialogs release radio-group ownership before detachment. The existing editor matrix also holds a model-catalog response while reasoning is selected; the response now preserves the current choice instead of restoring its stale snapshot.
 
 These cases and minimum-operation evidence are selected only by enhanced overnight campaigns. Ordinary PR test selections and jobs are unchanged. All providers are deterministic local fixtures; no live OpenAI traffic or physical hardware is required.
+
+The existing browser and Firefox/WebKit native selections also run
+`test_native_editor_ownership_and_satellite_registry_recovery`. Its six native
+cases hold Save validation after the submitted YAML reaches backend validation,
+or hold UI completion after a real commit. Cancel/reopen must preserve the new
+draft, controls and destination; group, Request Rule and Guest references are
+checked before and after a fresh-manager reload. HA config-entry and manager
+Stores use the real atomic writer, with independent disk readback. The registry
+journey replaces Kitchen's entity/device association in the mounted document,
+saves through native entity/user pickers, and checks private markers in genuine
+public Assist provider requests from both devices. A first-fetch outage must
+retry in the same mounted panel. These cases remain Enhanced-only; the small
+editor-operation and registry-selection regressions extend the existing ordinary
+Node suite because they deterministically protect ownership, lookup settlement
+and retry without HA, browser or network costs.
+
+
+AI Task attachment continuity is mandatory in `ai-task`: both SDK API modes
+must dispatch the caller tool, retain the originating image/instructions and
+associated result on the continuation, and exclude that history from a later
+independent task. The existing `feature-crossroads` catalogue journey saves a
+real `ai_task_data` consumer, rejects a narrowing registered reset without
+changing disk state, then resets/reloads with a compatible choice. Evidence
+requires two image continuations/isolation checks, one rejected/successful AI
+Task reset and three actual SDK requests. These expensive cases stay in the
+existing Enhanced selections. The direct AI Task guard invariant joins the
+already-running catalogue unit suite because it is small and deterministic;
+it also proves that AI Tasks do not load conversation Request Rules.
+
+
+Durable publication acceptance uses existing selections and genuine Store IO.
+Archive, Knowledge and Memory use the real atomic-writer fixture; Quiet Hours
+uses its native non-atomic prepared-data writer boundary. `archive` and `persistence` require both first-intent
+replacement boundaries, independent journal readback, unrelated publication and
+fresh-manager convergence. `memory-knowledge` and `persistence` require held
+management mutations, entry into real public Assist reads, an actual target
+atomic failure, SDK tool-result inspection and committed retries for both stores.
+Readers may wait for settlement. `quiet-hours` requires observation/ownership
+write failures for both volume and wake sound with live/reloaded recovery and
+original-value restoration (eight cases), plus two pending-intent manual-change
+checks. Semantic recovery counts come from
+manager/device assertions, rather than the generic Store fault matrix. All cases
+are mandatory at the candidate SHA; existing minima and reviewed allowances
+remain unchanged. No expensive acceptance case is added to ordinary PR CI.

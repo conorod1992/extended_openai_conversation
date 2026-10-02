@@ -217,7 +217,7 @@ class ModelCatalogManager:
 
         for entry in self.hass.config_entries.async_entries(DOMAIN):
             for subentry in entry.subentries.values():
-                if subentry.subentry_type != "conversation":
+                if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                     continue
                 options = subentry.data
                 model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
@@ -229,6 +229,8 @@ class ModelCatalogManager:
                     )
                 except Exception:
                     return False
+                if subentry.subentry_type != "conversation":
+                    continue
                 rules = await async_get_request_rules(
                     self.hass, entry.entry_id, subentry.subentry_id
                 )
@@ -392,7 +394,7 @@ class ModelCatalogManager:
         bundled_efforts = set(catalog_reasoning_efforts(None))
         for entry in self.hass.config_entries.async_entries(DOMAIN):
             for subentry in entry.subentries.values():
-                if subentry.subentry_type != "conversation":
+                if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                     continue
 
                 configured_model = str(
@@ -411,6 +413,8 @@ class ModelCatalogManager:
                 ):
                     return True
 
+                if subentry.subentry_type != "conversation":
+                    continue
                 rules = await async_get_request_rules(
                     self.hass, entry.entry_id, subentry.subentry_id
                 )
