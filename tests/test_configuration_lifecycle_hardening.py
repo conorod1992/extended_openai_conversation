@@ -74,8 +74,7 @@ class FakeEntity:
         )
         self.embedding_calls: list[tuple[str, list[str]]] = []
 
-    async def _async_create_embeddings(self, inputs: list[str]) -> list[list[float]]:
-        model = self.subentry.data[CONF_MEMORY_EMBEDDING_MODEL]
+    async def _async_create_embeddings(self, inputs: list[str], *, model: str) -> list[list[float]]:
         self.embedding_calls.append((model, list(inputs)))
         return [[1.0, 0.0] for _ in inputs]
 
@@ -107,7 +106,7 @@ class RuntimeEntity:
         self.archive_init_calls: list[bool] = []
         self.statuses: list[tuple[str, bool, bool, type[Exception] | None]] = []
 
-    async def _async_create_embeddings(self, _inputs: list[str]) -> list[list[float]]:
+    async def _async_create_embeddings(self, _inputs: list[str], *, model: str) -> list[list[float]]:
         return []
 
     async def _async_initialize_archive(self, configured: bool) -> None:

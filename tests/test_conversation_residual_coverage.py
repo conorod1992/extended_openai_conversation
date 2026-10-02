@@ -192,8 +192,8 @@ async def test_embedding_and_temporary_retrieval_success_paths() -> None:
         create=AsyncMock(
             return_value=SimpleNamespace(
                 data=[
-                    SimpleNamespace(embedding=(0.1, 0.2)),
-                    SimpleNamespace(embedding=[0.3]),
+                    SimpleNamespace(index=1, embedding=[0.3]),
+                    SimpleNamespace(index=0, embedding=(0.1, 0.2)),
                 ]
             )
         )

@@ -73,7 +73,7 @@ def test_sqlite_query_deadline_interrupts_work(tmp_path) -> None:
             query,
             True,
             1,
-            timeout_seconds=0.0,
+            timeout_seconds=0.05,
             max_result_bytes=1024,
         )
 

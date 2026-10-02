@@ -1,6 +1,8 @@
 """Tests for non-sensitive integration diagnostics."""
 
 from types import SimpleNamespace
+
+from custom_components.extended_openai_conversation_responses.agent_configuration import MemoryEmbeddingProvider
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.extended_openai_conversation_responses import (
@@ -232,7 +234,7 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
     dependencies.archive.async_prune.assert_awaited_once_with(21)
     assert dependencies.memory.set_embedding_provider.call_count == 2
     dependencies.memory.set_embedding_provider.assert_called_with(
-        entity._async_create_embeddings, "text-embedding-test"
+        MemoryEmbeddingProvider(entity._async_create_embeddings, "text-embedding-test"), "text-embedding-test"
     )
     statuses = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent")]
     assert statuses == {

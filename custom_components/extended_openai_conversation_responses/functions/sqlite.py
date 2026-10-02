@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from pathlib import Path
 import sqlite3
@@ -123,6 +124,13 @@ def _execute_sqlite_query(
     deadline = time.monotonic() + timeout_seconds
     timed_out = False
 
+    def check_deadline() -> None:
+        if time.monotonic() >= deadline:
+            raise HomeAssistantError(
+                "SQLite query exceeded the configured execution deadline of "
+                f"{timeout_seconds:g} seconds"
+            )
+
     def progress_handler() -> int:
         nonlocal timed_out
         if time.monotonic() >= deadline:
@@ -130,7 +138,9 @@ def _execute_sqlite_query(
             return 1
         return 0
 
-    conn = sqlite3.connect(db_url, uri=True)
+    conn = sqlite3.connect(
+        db_url, uri=True, timeout=max(0, deadline - time.monotonic())
+    )
     try:
         # Apply SQLite's own length ceiling before executing user SQL so oversized
         # strings/BLOBs are rejected by the engine rather than materialized first.
@@ -138,16 +148,23 @@ def _execute_sqlite_query(
         # Set the built-in read-only guard before installing the authorizer because
         # the authorizer deliberately rejects user-issued PRAGMA statements.
         conn.execute("PRAGMA query_only = ON")
+        check_deadline()
+        # Progress callbacks do not run during native lock waits. Round up to
+        # SQLite's milliseconds; post-operation checks reject any late success.
+        busy_ms = math.ceil(max(0, deadline - time.monotonic()) * 1000)
+        conn.execute(f"PRAGMA busy_timeout = {busy_ms}")
         conn.set_authorizer(_read_only_authorizer)
         conn.set_progress_handler(progress_handler, _PROGRESS_HANDLER_STEPS)
         try:
             cursor = conn.execute(query)
+            check_deadline()
             if cursor.description is None:
                 raise HomeAssistantError("SQLite query did not return any columns")
 
             names = [description[0] for description in cursor.description]
             if single:
                 row = cursor.fetchone()
+                check_deadline()
                 if row is None:
                     return {}
                 result = {name: val for name, val in zip(names, row, strict=False)}
@@ -157,11 +174,13 @@ def _execute_sqlite_query(
                         "SQLite query result exceeded the configured result-size "
                         f"limit of {max_result_bytes} bytes"
                     )
+                check_deadline()
                 return result
 
             results: list[dict[str, Any]] = []
             result_bytes = 2
             for row_number, row in enumerate(cursor, start=1):
+                check_deadline()
                 if row_number > max_rows:
                     raise HomeAssistantError(
                         f"SQLite query returned more than {max_rows} rows; "
@@ -175,6 +194,7 @@ def _execute_sqlite_query(
                         f"limit of {max_result_bytes} bytes"
                     )
                 results.append(item)
+            check_deadline()
             return results
         except sqlite3.DataError as err:
             if "too big" in str(err).lower():
@@ -184,7 +204,7 @@ def _execute_sqlite_query(
                 ) from err
             raise
         except sqlite3.OperationalError as err:
-            if timed_out:
+            if timed_out or time.monotonic() >= deadline:
                 raise HomeAssistantError(
                     "SQLite query exceeded the configured execution deadline of "
                     f"{timeout_seconds:g} seconds"

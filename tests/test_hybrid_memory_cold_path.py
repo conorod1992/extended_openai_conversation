@@ -197,3 +197,34 @@ async def test_failed_cache_save_keeps_request_time_fallback() -> None:
 
     assert await memory.async_prepare_hybrid(["alice"], "breed") is None
     assert calls == [["pets | Oscar is a Cavachon."]]
+
+async def test_pending_query_discarded_after_same_dimension_model_replacement() -> None:
+    """An old query cannot use the newly populated, incompatible model space."""
+    memory = await _memory()
+    await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def old(inputs):
+        if inputs == ["old query"]:
+            started.set()
+            await release.wait()
+        return [[1.0, 0.0] for _ in inputs]
+
+    async def replacement(inputs):
+        return [[0.0, 1.0] for _ in inputs]
+
+    memory.set_embedding_provider(old, "model-a")
+    pending = asyncio.create_task(memory.async_prepare_hybrid(["alice"], "old query"))
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        memory.set_embedding_provider(replacement, "model-b")
+        assert await memory.async_prepare_hybrid(["alice"], "new query") == [0.0, 1.0]
+        release.set()
+        assert await pending is None
+        assert all(
+            entry.model == "model-b" for entry in memory._embedding_cache.values()
+        )
+        assert await memory.async_prepare_hybrid(["alice"], "healthy") == [0.0, 1.0]
+    finally:
+        release.set()
+        await asyncio.gather(pending, return_exceptions=True)

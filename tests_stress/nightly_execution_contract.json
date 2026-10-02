@@ -812,6 +812,9 @@
     "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[trickle-rest-responses]",
     "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[trickle-scrape-chat_completions]",
     "tests_stress/test_function_provider_wire_remaining.py::test_remote_function_socket_fault_recovers[trickle-scrape-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_sqlite_lock_deadline_and_worker_recovery_on_public_assist[cancel]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_sqlite_lock_deadline_and_worker_recovery_on_public_assist[deadline]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_sqlite_lock_deadline_and_worker_recovery_on_public_assist[release]",
     "tests_stress/test_generated_state_lifecycle.py::test_generated_valid_states_cross_real_ha_and_sdk_wire",
     "tests_stress/test_generated_valid_states.py::test_covering_generator_is_valid_complete_bounded_and_reproducible",
     "tests_stress/test_generated_valid_states.py::test_every_persistent_field_and_enum_is_classified",
@@ -852,7 +855,21 @@
     "tests_stress/test_management_transaction_matrix.py::test_rule_group_and_references_rollback_on_store_failure",
     "tests_stress/test_management_ws_contract.py::test_reviewed_browser_payloads_are_accepted_by_websocket_schemas",
     "tests_stress/test_management_ws_contract.py::test_shipped_frontend_mutation_actions_are_reviewed",
+    "tests_stress/test_memory_knowledge_scale.py::test_live_model_change_before_manager_sync_keeps_pending_provider_bound",
+    "tests_stress/test_memory_knowledge_scale.py::test_malformed_embedding_wire_falls_back_and_recovers[boolean]",
+    "tests_stress/test_memory_knowledge_scale.py::test_malformed_embedding_wire_falls_back_and_recovers[count]",
+    "tests_stress/test_memory_knowledge_scale.py::test_malformed_embedding_wire_falls_back_and_recovers[duplicate]",
+    "tests_stress/test_memory_knowledge_scale.py::test_malformed_embedding_wire_falls_back_and_recovers[fractional]",
+    "tests_stress/test_memory_knowledge_scale.py::test_malformed_embedding_wire_falls_back_and_recovers[missing]",
+    "tests_stress/test_memory_knowledge_scale.py::test_malformed_embedding_wire_falls_back_and_recovers[negative]",
+    "tests_stress/test_memory_knowledge_scale.py::test_malformed_embedding_wire_falls_back_and_recovers[nonfinite]",
+    "tests_stress/test_memory_knowledge_scale.py::test_malformed_embedding_wire_falls_back_and_recovers[range]",
+    "tests_stress/test_memory_knowledge_scale.py::test_malformed_embedding_wire_falls_back_and_recovers[transient]",
+    "tests_stress/test_memory_knowledge_scale.py::test_pending_embedding_after_real_ha_reload_cannot_poison_replacement[documents]",
+    "tests_stress/test_memory_knowledge_scale.py::test_pending_embedding_after_real_ha_reload_cannot_poison_replacement[query]",
     "tests_stress/test_memory_knowledge_scale.py::test_scaled_private_records_survive_reload_without_cross_user_reads",
+    "tests_stress/test_memory_knowledge_scale.py::test_shuffled_embedding_indices_preserve_semantic_ranking_and_cache[base64]",
+    "tests_stress/test_memory_knowledge_scale.py::test_shuffled_embedding_indices_preserve_semantic_ranking_and_cache[float]",
     "tests_stress/test_model_catalog_refresh_endurance.py::test_slow_invalid_and_failed_refresh_preserve_active_operations",
     "tests_stress/test_native_audio_delivery.py::test_recorded_audio_native_assist_delivery_recovers[cancel_stt]",
     "tests_stress/test_native_audio_delivery.py::test_recorded_audio_native_assist_delivery_recovers[disconnect_output]",
@@ -1411,7 +1428,10 @@
       "assist_mixed_serial": 2,
       "remote_resource_recovery_cases": 20,
       "composite_rejected_trees": 4,
-      "composite_cancelled_exchanges": 1
+      "composite_cancelled_exchanges": 1,
+      "sqlite_lock_waits": 3,
+      "sqlite_worker_settlements": 3,
+      "sqlite_healthy_recoveries": 3
     },
     "request-rules": {
       "ha_service_calls": 1,
@@ -1422,7 +1442,13 @@
       "private_context_probes": 1
     },
     "memory-knowledge": {
-      "public_turns": 1
+      "public_turns": 1,
+      "embedding_association_cases": 2,
+      "embedding_cache_rechecks": 2,
+      "embedding_malformed_responses": 9,
+      "embedding_live_configuration_races": 1,
+      "embedding_reload_races": 2,
+      "embedding_healthy_recoveries": 12
     },
     "process-chaos": {
       "process_terminations": 1,

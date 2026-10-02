@@ -628,10 +628,17 @@ class PersistentMemory:
                 )
                 return None
             provider = self._embedding_provider
+            model = self._embedding_model
             if provider is None:
                 self._set_hybrid_status("lexical_fallback", "provider_changed")
                 return None
             vectors = await provider([query])
+            if (
+                self._embedding_provider is not provider
+                or self._embedding_model != model
+            ):
+                self._set_hybrid_status("lexical_fallback", "provider_changed")
+                return None
             if len(vectors) != 1:
                 raise ValueError(
                     "embedding provider returned the wrong number of vectors"
