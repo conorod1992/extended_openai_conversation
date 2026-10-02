@@ -4,7 +4,9 @@ import path from "node:path";
 import crypto from "node:crypto";
 import {execFileSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
-const sourceRoot = fileURLToPath(new URL("../", import.meta.url));
+// Git's safe.directory comparison requires the checkout path without the URL's
+// trailing separator (container checkouts can be owned by another UID).
+const sourceRoot = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
 
 export default class ExecutionReporter {
   onBegin(config, suite) {

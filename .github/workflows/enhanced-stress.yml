@@ -123,6 +123,11 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.candidate_sha }}
+      - name: Set up Node.js for runtime certification guards
+        if: matrix.campaign == 'runtime'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
       - name: Reconcile current test requirements
         run: |
           CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
@@ -154,6 +159,19 @@ jobs:
           echo "UPGRADE_TO_VERSION=$CANDIDATE_VERSION" >> "$GITHUB_ENV"
           echo "Downgrade/upgrade source payload: $TAG" >> "$GITHUB_STEP_SUMMARY"
           echo "Upgrade candidate payload: $CANDIDATE_VERSION" >> "$GITHUB_STEP_SUMMARY"
+      - name: Prepare compatible published-release runtime
+        if: matrix.campaign == 'persistence'
+        run: |
+          # The published SDK pin is compatible with this reviewed prior stable
+          # HA. Keep its requirements isolated from the current candidate runtime.
+          RELEASED_ENV="$RUNNER_TEMP/eoai-released-ha"
+          python -m venv "$RELEASED_ENV"
+          "$RELEASED_ENV/bin/python" -m pip install "homeassistant==2026.9.4"
+          "$RELEASED_ENV/bin/python" ci/install_ha_dependencies.py --manifest "$DOWNGRADE_COMPONENT_DIR/manifest.json"
+          "$RELEASED_ENV/bin/python" -m pip check
+          echo "UPGRADE_RELEASED_PYTHON=$RELEASED_ENV/bin/python" >> "$GITHUB_ENV"
+          echo "UPGRADE_RELEASED_HA_VERSION=2026.9.4" >> "$GITHUB_ENV"
+          echo "Published upgrade runtime: HA 2026.9.4; candidate uses current installed HA" >> "$GITHUB_STEP_SUMMARY"
       - name: Stage candidate payload for clean-install acceptance
         if: matrix.campaign == 'setup'
         run: |

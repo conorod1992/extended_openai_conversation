@@ -43,4 +43,9 @@ export async function acceptConfirmation(panel) {
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#confirm-accept").click();
 }
+export async function openFunctionAddMenu(panel, action) {
+  const item = panel.locator(action);
+  if (!await item.isVisible()) await panel.locator("#function-add").click();
+  await item.click();
+}
 export const browserToolYaml = (description = "Browser journey tool") => `spec:\n  name: browser_tool\n  description: ${description}\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: native\n  name: get_user_from_user_id\n`;

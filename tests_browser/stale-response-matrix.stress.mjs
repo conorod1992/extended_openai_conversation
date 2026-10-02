@@ -1,6 +1,6 @@
 import {expect, test} from "@playwright/test";
 import {mkdirSync, readFileSync, writeFileSync} from "node:fs";
-import {acceptConfirmation, browserToolYaml, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {openFunctionAddMenu, acceptConfirmation, browserToolYaml, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 function recordInjection(surface, kind) {
   const directory = process.env.STRESS_ARTIFACT_DIR || "stress-artifacts";
@@ -142,7 +142,7 @@ test("Function late save cannot repaint a newer route", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
-  await panel.locator("#add-tool").click();
+  await openFunctionAddMenu(panel, "#add-tool");
   await panel.locator("#tool-yaml").fill(browserToolYaml("Late Function save"));
   await gateMutation(page, "tools", "save");
   await panel.locator("#tool-save").click();
