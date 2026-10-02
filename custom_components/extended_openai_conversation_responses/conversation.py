@@ -181,6 +181,7 @@ from .memory import (
     memory_enabled,
     memory_user_id,
 )
+from .model_lifecycle import clear_entity_retirement_failure
 from .model_search_hardening import _require_nonblank_query
 from .model_tool_results import (
     _compact_json_result_content,
@@ -1133,6 +1134,7 @@ class ExtendedOpenAIAgentEntity(
             )
 
         clear_unacknowledged_calls(self, chat_log.conversation_id)
+        clear_entity_retirement_failure(self)
 
         # Fire conversation finished event
         self._fire_conversation_finished(user_input, chat_log, status="success")

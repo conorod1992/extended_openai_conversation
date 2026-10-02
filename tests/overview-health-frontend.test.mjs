@@ -66,6 +66,31 @@ assert.equal(unknownChecks.memory.state, "unknown");
 assert.equal(unknownChecks.knowledge.state, "unknown");
 assert.equal(unknownChecks.knowledge.value, "Unable to determine");
 
+const deprecatedHealth = buildSetupHealth({
+  ...defaultFacts,
+  model_lifecycle: {
+    model: "gpt-5.1", status: "deprecated", shutdown_at: "2027-04-01",
+    shutdown_reached: false, confirmed_unavailable: false,
+    lifecycle_note: "Deprecated; migrate before shutdown.",
+  },
+});
+const deprecatedCheck = deprecatedHealth.checks.find(check => check.id === "model_lifecycle");
+assert.equal(deprecatedHealth.state, "warning");
+assert.equal(deprecatedCheck.value, "Scheduled for shutdown · 2027-04-01");
+assert.equal(deprecatedCheck.action.target, "config-chat_model");
+
+const retiredHealth = buildSetupHealth({
+  ...defaultFacts,
+  model_lifecycle: {
+    model: "gpt-5.1", status: "deprecated", shutdown_at: "2027-04-01",
+    shutdown_reached: true, confirmed_unavailable: true,
+  },
+});
+const retiredCheck = retiredHealth.checks.find(check => check.id === "model_lifecycle");
+assert.equal(retiredHealth.state, "error");
+assert.equal(retiredCheck.value, "Retired model unavailable");
+assert.match(retiredCheck.detail, /rejected by the provider/);
+
 const unavailableHealth = buildSetupHealth({unavailable: true, can_manage: true});
 assert.equal(unavailableHealth.state, "warning");
 assert.equal(unavailableHealth.unknown_count, 1);

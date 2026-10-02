@@ -440,7 +440,7 @@ async def test_options_update_reloads_runtime(hass) -> None:
     """Conversation subentry option changes reload their parent config entry."""
     hass.config_entries.async_reload = AsyncMock()
 
-    await update_listener(hass, SimpleNamespace(entry_id="entry-1"))
+    await update_listener(hass, SimpleNamespace(entry_id="entry-1", subentries={}))
 
     hass.config_entries.async_reload.assert_awaited_once_with("entry-1")
 
@@ -451,7 +451,7 @@ async def test_live_subentry_update_does_not_reload_runtime(hass) -> None:
 
     with live_subentry_update():
         task = asyncio.create_task(
-            update_listener(hass, SimpleNamespace(entry_id="entry-1"))
+            update_listener(hass, SimpleNamespace(entry_id="entry-1", subentries={}))
         )
     await task
 
