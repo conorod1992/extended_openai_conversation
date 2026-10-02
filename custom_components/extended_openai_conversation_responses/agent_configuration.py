@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 import logging
 from typing import Any
 
@@ -35,6 +37,17 @@ _RUNTIME_CONFIG_RETRY = "_extended_openai_runtime_config_retry"
 _RUNTIME_CONFIG_LOCK = "_extended_openai_runtime_config_lock"
 
 
+@dataclass(frozen=True)
+class MemoryEmbeddingProvider:
+    """Bind a model to its agent callback, with stable configuration equality."""
+
+    create: Callable[..., Awaitable[list[list[float]]]]
+    model: str
+
+    async def __call__(self, inputs: list[str]) -> list[list[float]]:
+        return await self.create(inputs, model=self.model)
+
+
 def sync_memory_embedding_provider(entity: Any) -> None:
     """Apply the entity's current Hybrid-memory settings to its shared manager."""
     memory = getattr(entity, "_memory", None)
@@ -51,7 +64,7 @@ def sync_memory_embedding_provider(entity: Any) -> None:
         options.get(CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE)
         == MEMORY_RETRIEVAL_HYBRID
     ):
-        setter(entity._async_create_embeddings, model)
+        setter(MemoryEmbeddingProvider(entity._async_create_embeddings, model), model)
     else:
         # The manager is shared per agent and can outlive one entity instance. Clear
         # a provider left by a previous Hybrid configuration/entity when Lexical is

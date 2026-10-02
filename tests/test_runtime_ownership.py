@@ -18,6 +18,9 @@ from custom_components.extended_openai_conversation_responses import (
     function_execution,
     tool_exchange,
 )
+from custom_components.extended_openai_conversation_responses.agent_configuration import (
+    MemoryEmbeddingProvider,
+)
 from custom_components.extended_openai_conversation_responses.conversation import (
     _TEMPORARY_MEMORY_PREFETCH,
 )
@@ -215,7 +218,7 @@ async def test_live_memory_gate_and_embedding_provider(runtime_agent):
     }
     await agent._async_retrieve_memories(None, "query")
     agent._memory.set_embedding_provider.assert_called_with(
-        agent._async_create_embeddings, "changed"
+        MemoryEmbeddingProvider(agent._async_create_embeddings, "changed"), "changed"
     )
 
 

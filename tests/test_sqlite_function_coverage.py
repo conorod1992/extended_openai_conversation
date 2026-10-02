@@ -132,7 +132,7 @@ class _FakeConnection:
         return None
 
     def execute(self, query: str) -> Any:
-        if query == "PRAGMA query_only = ON":
+        if query.startswith("PRAGMA"):
             return None
         if self.invoke_progress and self.progress_handler is not None:
             self.progress_handler()
@@ -157,7 +157,7 @@ class _NoColumnsConnection:
         return None
 
     def execute(self, query: str) -> Any:
-        if query == "PRAGMA query_only = ON":
+        if query.startswith("PRAGMA"):
             return None
         return SimpleNamespace(description=None)
 
@@ -293,3 +293,28 @@ async def test_execute_translates_executor_sqlite_errors(
             None,
             [],
         )
+
+@pytest.mark.parametrize("single", [True, False])
+def test_execute_query_rejects_deadline_expiring_during_result_processing(
+    tmp_path, monkeypatch, single
+) -> None:
+    """A statement completing before expiry cannot return late converted rows."""
+    db_url = sqlite_module._read_only_sqlite_uri(str(_make_db(tmp_path)))
+    clock = SimpleNamespace(now=10.0)
+    monkeypatch.setattr(
+        sqlite_module, "time", SimpleNamespace(monotonic=lambda: clock.now)
+    )
+
+    def estimate(_row):
+        clock.now = 20.0
+        return 10
+
+    monkeypatch.setattr(sqlite_module, "_estimated_row_bytes", estimate)
+    with pytest.raises(HomeAssistantError, match="execution deadline"):
+        sqlite_module._execute_sqlite_query(
+            db_url, "SELECT name FROM items LIMIT 1", single, 10
+        )
+    clock.now = 10.0
+    assert sqlite_module._execute_sqlite_query(
+        db_url, "SELECT 1 WHERE 0", single, 10
+    ) == ({} if single else [])

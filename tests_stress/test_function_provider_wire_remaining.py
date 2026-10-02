@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 import sqlite3
+import threading
+import time
 from typing import Any
 
 from aiohttp import web
@@ -15,6 +18,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_FUNCTION_TOOLS,
+)
+from custom_components.extended_openai_conversation_responses.functions import (
+    sqlite as sqlite_module,
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
@@ -53,6 +59,147 @@ ERROR_CASES = (
 )
 
 API_MODES = (API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES)
+
+
+@pytest.mark.parametrize("boundary", ["release", "deadline", "cancel"])
+async def test_sqlite_lock_deadline_and_worker_recovery_on_public_assist(
+    hass, monkeypatch, tmp_path, stress_trace, boundary
+):
+    """Real native lock waits settle under the tool deadline, even after cancellation."""
+    path = tmp_path / "locked.db"
+    connect = sqlite3.connect
+    writer = connect(path)
+    writer.execute("CREATE TABLE probes (value TEXT)")
+    writer.execute("INSERT INTO probes VALUES ('HEALTHY-SQLITE')")
+    writer.commit()
+    entry = _make_entry(
+        "SQLite lock recovery",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_FUNCTION_TOOLS: [
+                {
+                    "spec": {
+                        "name": "locked_read",
+                        "description": "Read local probe",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    "function": {
+                        "type": "sqlite",
+                        "db_url": str(path),
+                        "query": "SELECT value FROM probes",
+                        "timeout": 0.15,
+                    },
+                }
+            ],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    entered, closed = threading.Event(), threading.Event()
+
+    class ObservedConnection(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            if sql == "SELECT value FROM probes":
+                entered.set()
+            return super().execute(sql, *args, **kwargs)
+
+        def close(self):
+            super().close()
+            closed.set()
+
+    def observed_connect(url, *args, **kwargs):
+        if "locked.db" in str(url) and kwargs.get("uri"):
+            kwargs["factory"] = ObservedConnection
+        return connect(url, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite_module.sqlite3, "connect", observed_connect)
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        _provider_replies(
+            API_MODE_CHAT_COMPLETIONS, "locked-call", "locked_read", "Read settled"
+        ),
+    )
+    writer.execute("BEGIN EXCLUSIVE")
+    probe = connect(path, timeout=0)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            probe.execute("SELECT value FROM probes")
+    finally:
+        probe.close()
+    started = time.monotonic()
+    pending = asyncio.create_task(
+        conversation.async_converse(
+            hass=hass,
+            text="Read local probe",
+            conversation_id=None,
+            context=Context(),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        await asyncio.sleep(0.03)
+        assert not closed.is_set(), "Worker must actually be blocked by the held lock"
+        if boundary == "release":
+            writer.rollback()
+            result = await asyncio.wait_for(pending, 5)
+            assert _speech(result) == "Read settled"
+            assert _provider_result(
+                wire.requests[1], API_MODE_CHAT_COMPLETIONS, "locked-call"
+            ) == [{"value": "HEALTHY-SQLITE"}]
+        elif boundary == "cancel":
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        else:
+            result = await asyncio.wait_for(pending, 5)
+            assert _speech(result) == "Read settled"
+            assert "execution deadline" in str(
+                _provider_result(
+                    wire.requests[1], API_MODE_CHAT_COMPLETIONS, "locked-call"
+                )
+            )
+        # The native worker must close while the exclusive lock is STILL held in
+        # deadline/cancellation variants. Cancelling the coroutine is insufficient.
+        assert await asyncio.to_thread(closed.wait, 1)
+        elapsed = time.monotonic() - started
+        assert elapsed < 2
+    finally:
+        writer.rollback()
+        writer.close()
+        await asyncio.gather(pending, return_exceptions=True)
+    healthy_wire = _install_wire(
+        monkeypatch,
+        agent,
+        _provider_replies(
+            API_MODE_CHAT_COMPLETIONS, "healthy-call", "locked_read", "Recovered"
+        ),
+    )
+    healthy = await conversation.async_converse(
+        hass=hass,
+        text="Read again",
+        conversation_id=None,
+        context=Context(),
+        language="en",
+        agent_id=entry.entry_id,
+    )
+    assert _speech(healthy) == "Recovered"
+    assert _provider_result(
+        healthy_wire.requests[1], API_MODE_CHAT_COMPLETIONS, "healthy-call"
+    ) == [{"value": "HEALTHY-SQLITE"}]
+    record(
+        stress_trace,
+        "summary",
+        layer="provider-wire",
+        public_turns=2,
+        actual_function_executions=2,
+        sqlite_lock_waits=1,
+        sqlite_worker_settlements=1,
+        sqlite_healthy_recoveries=1,
+    )
 
 
 def _provider_replies(mode: str, call_id: str, name: str, text: str) -> list[bytes]:

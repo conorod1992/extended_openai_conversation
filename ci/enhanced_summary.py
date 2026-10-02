@@ -9,6 +9,15 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "sqlite_lock_waits",
+    "sqlite_worker_settlements",
+    "sqlite_healthy_recoveries",
+    "embedding_association_cases",
+    "embedding_cache_rechecks",
+    "embedding_malformed_responses",
+    "embedding_live_configuration_races",
+    "embedding_reload_races",
+    "embedding_healthy_recoveries",
     "assist_safe_overlap",
     "assist_mixed_serial",
     "remote_resource_recovery_cases",

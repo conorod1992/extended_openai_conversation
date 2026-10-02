@@ -112,7 +112,7 @@ async def test_startup_registers_one_retention_callback_using_live_settings(star
     await startup.agent.async_added_to_hass()
     for getter in startup.getters.values():
         getter.assert_awaited_once()
-    assert startup.memory._embedding_provider == startup.agent._async_create_embeddings
+    assert startup.memory._embedding_provider.create == startup.agent._async_create_embeddings
     assert len(startup.scheduled) == 1
     hass, callback, interval, cancel = startup.scheduled[0]
     assert hass is startup.agent.hass
@@ -139,7 +139,7 @@ async def test_reload_rebinds_shared_provider_and_clears_lexical_state(
     replacement.hass = startup.agent.hass
     monkeypatch.setattr(replacement, "async_on_remove", startup.removals.append)
     await replacement.async_added_to_hass()
-    assert startup.memory._embedding_provider == replacement._async_create_embeddings
+    assert startup.memory._embedding_provider.create == replacement._async_create_embeddings
     assert startup.scheduled[0][3].call_count == 1
     assert len(startup.removals) == 1
     replacement.subentry.data = {

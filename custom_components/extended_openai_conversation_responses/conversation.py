@@ -485,15 +485,7 @@ class ExtendedOpenAIAgentEntity(
                     == MEMORY_RETRIEVAL_HYBRID
                 )
             ):
-                self._memory.set_embedding_provider(
-                    self._async_create_embeddings,
-                    str(
-                        self.subentry.data.get(
-                            CONF_MEMORY_EMBEDDING_MODEL,
-                            DEFAULT_MEMORY_EMBEDDING_MODEL,
-                        )
-                    ),
-                )
+                sync_memory_embedding_provider(self)
 
         await asyncio.gather(
             initialize_temporary_memory(),
@@ -1513,15 +1505,33 @@ class ExtendedOpenAIAgentEntity(
             hybrid=hybrid and query_embedding is not None,
         )
 
-    async def _async_create_embeddings(self, inputs: list[str]) -> list[list[float]]:
+    async def _async_create_embeddings(
+        self, inputs: list[str], *, model: str | None = None
+    ) -> list[list[float]]:
         """Create embedding vectors without an LLM/classifier retrieval call."""
         response = await self._client.embeddings.create(
-            model=self.subentry.data.get(
+            model=model
+            if model is not None
+            else self.subentry.data.get(
                 CONF_MEMORY_EMBEDDING_MODEL, DEFAULT_MEMORY_EMBEDDING_MODEL
             ),
             input=inputs,
         )
-        return [list(item.embedding) for item in response.data]
+        if len(response.data) != len(inputs):
+            raise ValueError("embedding response returned the wrong number of entries")
+        ordered: dict[int, list[float]] = {}
+        for item in response.data:
+            index = item.index
+            if (
+                type(index) is not int
+                or not 0 <= index < len(inputs)
+                or index in ordered
+            ):
+                raise ValueError(
+                    "embedding response returned an invalid or duplicate index"
+                )
+            ordered[index] = list(item.embedding)
+        return [ordered[index] for index in range(len(inputs))]
 
     async def _async_retrieve_temporary_memories(self) -> list[TemporaryMemoryRecord]:
         """Consume one prefetch, checking live capability before exposing records."""
