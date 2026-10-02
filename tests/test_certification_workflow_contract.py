@@ -152,6 +152,10 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     lifecycle_install = lifecycle_step["run"]
     assert "pytest-homeassistant-custom-component==0.13.317" in lifecycle_install
     assert "homeassistant==$MINIMUM" in lifecycle_install
+    assert (
+        "apt-get install -y --no-install-recommends build-essential"
+        in lifecycle_install
+    )
     assert 'test "$(python -c' in lifecycle_install
     assert '= "$MINIMUM"' in lifecycle_install
     assert "$EOAI_EXPECTED_HA_VERSION" in lifecycle_install
