@@ -135,10 +135,14 @@ test.describe("nightly ownership", () => {
     const registry = await registryResponse.json();
     expect(registry.kitchen).toBe(process.env.REAL_HA_NEW_DEVICE);
     expect(registry.office).toBe(process.env.REAL_HA_OLD_DEVICE);
+    const currentRegistry = await panel.evaluate(host => host.hass.callWS({type:"config/entity_registry/list"}));
+    expect(currentRegistry.find(e => e.entity_id === "assist_satellite.ownership_kitchen").device_id).toBe(process.env.REAL_HA_NEW_DEVICE);
+    expect(currentRegistry.find(e => e.entity_id === "assist_satellite.ownership_office").device_id).toBe(process.env.REAL_HA_OLD_DEVICE);
     const row = panel.locator("[data-voice-mapping-row]").last();
     const picker = row.locator("ha-entity-picker");
     await picker.locator("ha-picker-field").click();
-    await picker.locator("ha-combo-box-item").filter({hasText:"assist_satellite.ownership_kitchen"}).locator("button").click();
+    await picker.locator("ha-combo-box-item").filter({hasText:"Replacement Kitchen device"}).locator("button").click();
+    await expect(picker).toHaveJSProperty("value", "assist_satellite.ownership_kitchen");
     await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_NEW_DEVICE);
     await row.locator(".voice-owner-type").selectOption("user");
     const user = row.locator("ha-user-picker");
@@ -153,8 +157,8 @@ test.describe("nightly ownership", () => {
     expect(read.config.voice_device_mappings[process.env.REAL_HA_OLD_DEVICE]).toBe("user:ownership-office-user");
     expect(read.config.voice_device_mappings[process.env.REAL_HA_NEW_DEVICE]).toBe(`user:${process.env.REAL_HA_SMOKE_USER_ID}`);
     const reloadResponse = await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/reload`);
-      expect(reloadResponse.ok(), await reloadResponse.text()).toBe(true);
-      const reloaded = await reloadResponse.json();
+    expect(reloadResponse.ok(), await reloadResponse.text()).toBe(true);
+    const reloaded = await reloadResponse.json();
     expect(reloaded.voice_device_mappings).toEqual(read.config.voice_device_mappings);
     const probeResponse = await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/probe-voice`);
     expect(probeResponse.ok(), await probeResponse.text()).toBe(true);
@@ -187,7 +191,8 @@ test.describe("nightly ownership", () => {
     await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_OLD_DEVICE);
     const picker = row.locator("ha-entity-picker");
     await picker.locator("ha-picker-field").click();
-    await picker.locator("ha-combo-box-item").filter({hasText:"assist_satellite.ownership_kitchen"}).locator("button").click();
+    await picker.locator("ha-combo-box-item").filter({hasText:"Replacement Kitchen device"}).locator("button").click();
+    await expect(picker).toHaveJSProperty("value", "assist_satellite.ownership_kitchen");
     await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_NEW_DEVICE);
     await expect(row.locator(".voice-satellite-warning")).toBeHidden();
     expect(await page.evaluate(() => window.__registryLists)).toBeGreaterThan(1);
