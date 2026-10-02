@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
@@ -287,6 +287,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         )
         if control is None:
             return
+        assert self._active is not None
         observed = self._active["observed_controls"]
         try:
             await self._async_set_volume(entity_id, self._config.max_volume)
@@ -322,6 +323,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         )
         if control is None:
             return
+        assert self._active is not None
         observed = self._active["observed_controls"]
         try:
             await self._async_set_switch(entity_id, desired)
@@ -382,7 +384,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             return None
         controls[entity_id] = pending.pop(entity_id)
         await self._async_save_control_state_locked()
-        return controls[entity_id]
+        return cast(dict[str, Any], controls[entity_id])
 
     async def _async_save_control_state_locked(self) -> None:
         """A reported control-write failure must reconcile its actual generation."""
