@@ -163,21 +163,23 @@ async def test_malformed_embedding_wire_falls_back_and_recovers(
         bad = _embedding_reply([[1.0, 0.0]])
     elif fault == "transient":
         bad = (
-            400,
+            503,
             {
                 "error": {
                     "message": "Controlled transient embedding failure",
-                    "type": "invalid_request_error",
+                    "type": "service_unavailable",
                 }
             },
         )
     elif fault == "nonfinite":
         bad = _embedding_reply([[float("nan"), 0.0], [0.0, 1.0]])
+    failure_count = _raw_client(agent).max_retries + 1 if fault == "transient" else 1
+    # Exhaust the real SDK's configured retries before proving next-call recovery.
     wire = _install_wire(
         monkeypatch,
         agent,
         [
-            bad,
+            *([bad] * failure_count),
             _embedding_reply([[0.0, 1.0], [1.0, 0.0]], [1, 0]),
             _embedding_reply([[1.0, 0.0]]),
         ],
@@ -194,7 +196,7 @@ async def test_malformed_embedding_wire_falls_back_and_recovers(
     assert [item.content for item in recovered] == [
         "Saffron key rests inside the pantry."
     ]
-    assert len(wire.requests) == 3
+    assert len(wire.requests) == failure_count + 2
     record(
         stress_trace,
         "summary",
