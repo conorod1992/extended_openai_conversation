@@ -158,6 +158,8 @@ class SkillHass:
         self.fail = False
 
     async def async_add_executor_job(self, _target: Any, *_args: Any) -> Any:
+        if _target.__name__ == "recover_transactions":
+            return _target(*_args)
         self.calls += 1
         self.started.set()
         await self.release.wait()

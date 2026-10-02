@@ -88,7 +88,7 @@ def _initialize_owner(root: Path) -> TransferStagingOwner:
 
 async def async_get_transfer_staging(hass: HomeAssistant) -> Path:
     """Reconcile abandoned private owners once, without reviving sessions."""
-    task = hass.data.get(_OWNER_KEY)
+    task: asyncio.Future[TransferStagingOwner] | None = hass.data.get(_OWNER_KEY)
     if task is None:
         root = Path(hass.config.config_dir) / ".storage" / f"{DOMAIN}.transfer-staging"
         task = asyncio.ensure_future(

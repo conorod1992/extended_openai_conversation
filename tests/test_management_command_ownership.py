@@ -75,6 +75,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from custom_components import extended_openai_conversation_responses as integration
 from custom_components.extended_openai_conversation_responses import management_ui as ui
 from custom_components.extended_openai_conversation_responses import management_loading_performance as loading
+from custom_components.extended_openai_conversation_responses import transfer_staging
 from homeassistant.components import panel_custom, websocket_api
 
 async def main():
@@ -92,6 +93,7 @@ async def main():
         "async_setup_services", "async_setup_intercom_services",
     )
     with ExitStack() as stack:
+        stack.enter_context(patch.object(transfer_staging, "async_get_transfer_staging", AsyncMock()))
         for name in async_io:
             stack.enter_context(patch.object(integration, name, AsyncMock()))
         stack.enter_context(patch.object(websocket_api, "async_register_command"))
