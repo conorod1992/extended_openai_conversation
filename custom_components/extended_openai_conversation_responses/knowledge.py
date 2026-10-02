@@ -142,6 +142,7 @@ class KnowledgeLibrary:
         self._lock = asyncio.Lock()
         self._initialized = False
         self._committed_state: dict[str, Any] | None = None
+        self._committed_chunk_count = 0
 
     async def async_initialize(self) -> None:
         """Load and index the library exactly once."""
@@ -194,26 +195,30 @@ class KnowledgeLibrary:
     def source_count(self) -> int:
         """Return the number of model-available sources."""
         self._ensure_initialized()
-        return sum(source.enabled for source in self._sources.values())
+        return sum(source.enabled for source in self._published_sources().values())
 
     @property
     def total_source_count(self) -> int:
         """Return all stored sources, including disabled sources."""
         self._ensure_initialized()
-        return len(self._sources)
+        return len(self._published_sources())
 
     async def async_list(self) -> list[dict[str, Any]]:
         """List all source metadata for management, including disabled sources."""
-        self._ensure_initialized()
-        sources = sorted(
-            self._sources.values(), key=lambda source: source.updated_at, reverse=True
-        )
-        return [source_summary(source) for source in sources]
+        async with self._lock:
+            self._ensure_initialized()
+            sources = sorted(
+                self._sources.values(),
+                key=lambda source: source.updated_at,
+                reverse=True,
+            )
+            return [source_summary(source) for source in sources]
 
     async def async_get(self, source_id: str) -> KnowledgeSource:
         """Get one complete source for the management UI."""
-        self._ensure_initialized()
-        return self._source(source_id)
+        async with self._lock:
+            self._ensure_initialized()
+            return self._source(source_id)
 
     async def async_catalog(
         self,
@@ -223,49 +228,53 @@ class KnowledgeLibrary:
         allowed_source_ids: frozenset[str] | None = None,
     ) -> dict[str, Any]:
         """List bounded enabled source metadata without returning content."""
-        self._ensure_initialized()
-        if query is not None and not isinstance(query, str):
-            raise ValueError("query must be a string")
-        if not isinstance(limit, int) or isinstance(limit, bool):
-            raise ValueError("limit must be an integer")
-        if not isinstance(offset, int) or isinstance(offset, bool):
-            raise ValueError("offset must be an integer")
-        limit = max(1, min(limit, MAX_CATALOG_LIMIT))
-        offset = max(0, offset)
-        normalized_query = _normalize(query or "")
-        query_tokens = _tokens(query or "")
+        async with self._lock:
+            self._ensure_initialized()
+            if query is not None and not isinstance(query, str):
+                raise ValueError("query must be a string")
+            if not isinstance(limit, int) or isinstance(limit, bool):
+                raise ValueError("limit must be an integer")
+            if not isinstance(offset, int) or isinstance(offset, bool):
+                raise ValueError("offset must be an integer")
+            limit = max(1, min(limit, MAX_CATALOG_LIMIT))
+            offset = max(0, offset)
+            normalized_query = _normalize(query or "")
+            query_tokens = _tokens(query or "")
 
-        sources = [
-            source
-            for source in self._sources.values()
-            if source.enabled
-            and (allowed_source_ids is None or source.source_id in allowed_source_ids)
-        ]
-        if normalized_query:
             sources = [
                 source
-                for source in sources
-                if (features := self._source_features.get(source.source_id)) is not None
+                for source in self._sources.values()
+                if source.enabled
                 and (
-                    normalized_query in features.normalized_metadata
-                    or bool(query_tokens & features.metadata_tokens)
+                    allowed_source_ids is None or source.source_id in allowed_source_ids
                 )
             ]
-        sources.sort(
-            key=lambda source: (source.updated_at, source.source_id), reverse=True
-        )
-        total = len(sources)
-        selected = sources[offset : offset + limit]
-        next_offset = offset + len(selected)
-        has_more = next_offset < total
-        return {
-            "sources": [source_summary(source) for source in selected],
-            "total": total,
-            "offset": offset,
-            "returned": len(selected),
-            "has_more": has_more,
-            "next_offset": next_offset if has_more else None,
-        }
+            if normalized_query:
+                sources = [
+                    source
+                    for source in sources
+                    if (features := self._source_features.get(source.source_id))
+                    is not None
+                    and (
+                        normalized_query in features.normalized_metadata
+                        or bool(query_tokens & features.metadata_tokens)
+                    )
+                ]
+            sources.sort(
+                key=lambda source: (source.updated_at, source.source_id), reverse=True
+            )
+            total = len(sources)
+            selected = sources[offset : offset + limit]
+            next_offset = offset + len(selected)
+            has_more = next_offset < total
+            return {
+                "sources": [source_summary(source) for source in selected],
+                "total": total,
+                "offset": offset,
+                "returned": len(selected),
+                "has_more": has_more,
+                "next_offset": next_offset if has_more else None,
+            }
 
     async def async_create(
         self, title: str, description: str, content: str, enabled: bool = True
@@ -355,70 +364,71 @@ class KnowledgeLibrary:
         limit: int = 5,
     ) -> list[SearchResult]:
         """Search enabled indexed chunks and return at most one excerpt per source."""
-        self._ensure_initialized()
-        if not isinstance(limit, int) or isinstance(limit, bool):
-            raise ValueError("limit must be an integer")
-        limit = max(1, min(limit, MAX_SEARCH_LIMIT))
-        query_tokens = _tokens(query)
-        normalized_query = _normalize(query)
-        if not query_tokens or not normalized_query:
-            return []
-        allowed, _ = self.resolve_source_filter(source_ids)
+        async with self._lock:
+            self._ensure_initialized()
+            if not isinstance(limit, int) or isinstance(limit, bool):
+                raise ValueError("limit must be an integer")
+            limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+            query_tokens = _tokens(query)
+            normalized_query = _normalize(query)
+            if not query_tokens or not normalized_query:
+                return []
+            allowed, _ = self.resolve_source_filter(source_ids)
 
-        candidates: set[tuple[str, int]] = set()
-        for token in query_tokens:
-            candidates.update(self._token_index.get(token, set()))
+            candidates: set[tuple[str, int]] = set()
+            for token in query_tokens:
+                candidates.update(self._token_index.get(token, set()))
 
-        best_by_source: dict[str, tuple[float, _Chunk]] = {}
-        for chunk_key in candidates:
-            chunk = self._chunks[chunk_key]
-            if allowed is not None and chunk.source_id not in allowed:
-                continue
-            features = self._source_features[chunk.source_id]
-            title_tokens = features.title_tokens
-            description_tokens = features.description_tokens
-            normalized_title = features.normalized_title
-            normalized_description = features.normalized_description
-            overlap = len(query_tokens & chunk.tokens) / len(query_tokens)
-            title_overlap = len(query_tokens & title_tokens) / len(query_tokens)
-            description_overlap = len(query_tokens & description_tokens) / len(
-                query_tokens
-            )
-            score = overlap + title_overlap * 8 + description_overlap * 4
-            if normalized_query in normalized_title:
-                score += 8
-            if normalized_query in normalized_description:
-                score += 5
-            if normalized_query in chunk.normalized_text:
-                score += 4
-            current = best_by_source.get(chunk.source_id)
-            if (
-                current is None
-                or score > current[0]
-                or (score == current[0] and chunk.start < current[1].start)
-            ):
-                best_by_source[chunk.source_id] = (score, chunk)
-
-        ranked = [
-            (score, self._sources[source_id].updated_at, source_id, chunk)
-            for source_id, (score, chunk) in best_by_source.items()
-            if score > 0
-        ]
-        ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-        results: list[SearchResult] = []
-        for score, _, source_id, chunk in ranked[:limit]:
-            source = self._sources[source_id]
-            results.append(
-                SearchResult(
-                    source_id=source.source_id,
-                    title=source.title,
-                    description=source.description,
-                    excerpt=chunk.text[:MAX_EXCERPT_CHARACTERS],
-                    score=round(score, 4),
-                    updated_at=source.updated_at,
+            best_by_source: dict[str, tuple[float, _Chunk]] = {}
+            for chunk_key in candidates:
+                chunk = self._chunks[chunk_key]
+                if allowed is not None and chunk.source_id not in allowed:
+                    continue
+                features = self._source_features[chunk.source_id]
+                title_tokens = features.title_tokens
+                description_tokens = features.description_tokens
+                normalized_title = features.normalized_title
+                normalized_description = features.normalized_description
+                overlap = len(query_tokens & chunk.tokens) / len(query_tokens)
+                title_overlap = len(query_tokens & title_tokens) / len(query_tokens)
+                description_overlap = len(query_tokens & description_tokens) / len(
+                    query_tokens
                 )
-            )
-        return results
+                score = overlap + title_overlap * 8 + description_overlap * 4
+                if normalized_query in normalized_title:
+                    score += 8
+                if normalized_query in normalized_description:
+                    score += 5
+                if normalized_query in chunk.normalized_text:
+                    score += 4
+                current = best_by_source.get(chunk.source_id)
+                if (
+                    current is None
+                    or score > current[0]
+                    or (score == current[0] and chunk.start < current[1].start)
+                ):
+                    best_by_source[chunk.source_id] = (score, chunk)
+
+            ranked = [
+                (score, self._sources[source_id].updated_at, source_id, chunk)
+                for source_id, (score, chunk) in best_by_source.items()
+                if score > 0
+            ]
+            ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+            results: list[SearchResult] = []
+            for score, _, source_id, chunk in ranked[:limit]:
+                source = self._sources[source_id]
+                results.append(
+                    SearchResult(
+                        source_id=source.source_id,
+                        title=source.title,
+                        description=source.description,
+                        excerpt=chunk.text[:MAX_EXCERPT_CHARACTERS],
+                        score=round(score, 4),
+                        updated_at=source.updated_at,
+                    )
+                )
+            return results
 
     def resolve_source_filter(
         self, source_ids: list[str] | None
@@ -432,7 +442,7 @@ class KnowledgeLibrary:
         ignored: list[str] = []
         for requested_id in source_ids:
             normalized_id = requested_id.strip()
-            source = self._sources.get(normalized_id)
+            source = self._published_sources().get(normalized_id)
             if normalized_id and source is not None and source.enabled:
                 valid.add(normalized_id)
             else:
@@ -446,32 +456,35 @@ class KnowledgeLibrary:
         max_characters: int = DEFAULT_GET_CHARACTERS,
     ) -> dict[str, Any]:
         """Return a bounded, pageable enabled source section for model use."""
-        self._ensure_initialized()
-        if not isinstance(start_character, int) or isinstance(start_character, bool):
-            raise ValueError("start_character must be an integer")
-        if not isinstance(max_characters, int) or isinstance(max_characters, bool):
-            raise ValueError("max_characters must be an integer")
-        if start_character < 0:
-            raise ValueError("start_character must be at least 0")
-        max_characters = max(500, min(max_characters, MAX_GET_CHARACTERS))
-        source = self._available_source(source_id)
-        total = len(source.content)
-        start = min(start_character, total)
-        content = source.content[start : start + max_characters]
-        next_start = start + len(content)
-        has_more = next_start < total
-        return {
-            "source_id": source.source_id,
-            "title": source.title,
-            "description": source.description,
-            "content": content,
-            "start_character": start,
-            "returned_characters": len(content),
-            "total_characters": total,
-            "has_more": has_more,
-            "next_start_character": next_start if has_more else None,
-            "updated_at": source.updated_at,
-        }
+        async with self._lock:
+            self._ensure_initialized()
+            if not isinstance(start_character, int) or isinstance(
+                start_character, bool
+            ):
+                raise ValueError("start_character must be an integer")
+            if not isinstance(max_characters, int) or isinstance(max_characters, bool):
+                raise ValueError("max_characters must be an integer")
+            if start_character < 0:
+                raise ValueError("start_character must be at least 0")
+            max_characters = max(500, min(max_characters, MAX_GET_CHARACTERS))
+            source = self._available_source(source_id)
+            total = len(source.content)
+            start = min(start_character, total)
+            content = source.content[start : start + max_characters]
+            next_start = start + len(content)
+            has_more = next_start < total
+            return {
+                "source_id": source.source_id,
+                "title": source.title,
+                "description": source.description,
+                "content": content,
+                "start_character": start,
+                "returned_characters": len(content),
+                "total_characters": total,
+                "has_more": has_more,
+                "next_start_character": next_start if has_more else None,
+                "updated_at": source.updated_at,
+            }
 
     def stats(self) -> dict[str, Any]:
         """Return non-sensitive diagnostics."""
@@ -479,12 +492,12 @@ class KnowledgeLibrary:
         return {
             "knowledge_backend": "home_assistant_store",
             "knowledge_storage_version": STORAGE_VERSION,
-            "knowledge_source_count": len(self._sources),
+            "knowledge_source_count": len(self._published_sources()),
             "knowledge_enabled_source_count": self.source_count,
             "knowledge_total_character_count": sum(
-                len(source.content) for source in self._sources.values()
+                len(source.content) for source in self._published_sources().values()
             ),
-            "knowledge_indexed_chunk_count": len(self._chunks),
+            "knowledge_indexed_chunk_count": self._committed_chunk_count,
         }
 
     async def async_backup_data(self) -> dict[str, Any]:
@@ -626,8 +639,15 @@ class KnowledgeLibrary:
         self._initialized = False
         self._committed_state = None
 
+    def _published_sources(self) -> dict[str, KnowledgeSource]:
+        """Synchronous availability reads use the last settled source snapshot."""
+        self._ensure_initialized()
+        assert self._committed_state is not None
+        return cast(dict[str, KnowledgeSource], self._committed_state["sources"])
+
     def _remember_committed_state(self) -> None:
         self._committed_state = {"sources": dict(self._sources)}
+        self._committed_chunk_count = len(self._chunks)
 
     def _restore_committed_state(self) -> None:
         snapshot = self._committed_state

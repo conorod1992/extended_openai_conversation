@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
@@ -267,27 +267,28 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         entity_id: str,
         controls: dict[str, Any],
     ) -> None:
-        observed = (
-            self._active.setdefault("observed_controls", []) if self._active else []
-        )
-        if entity_id in controls or entity_id in observed:
+        observed = (self._active or {}).get("observed_controls", [])
+        pending = (self._active or {}).get("pending_controls", {})
+        if entity_id in controls or (
+            entity_id in observed and entity_id not in pending
+        ):
             return
         original = _current_volume(self.hass, entity_id)
         if original is None:
             return
-
-        observed.append(entity_id)
-        await self._async_save_locked()
-        if original <= self._config.max_volume + _VOLUME_TOLERANCE:
+        control = await self._async_prepare_control_locked(
+            satellite_entity_id,
+            entity_id,
+            controls,
+            "volume",
+            original,
+            self._config.max_volume,
+            original > self._config.max_volume + _VOLUME_TOLERANCE,
+        )
+        if control is None:
             return
-
-        controls[entity_id] = {
-            "kind": "volume",
-            "satellite_entity_id": satellite_entity_id,
-            "original_value": original,
-            "quiet_value": self._config.max_volume,
-        }
-        await self._async_save_locked()
+        assert self._active is not None
+        observed = self._active["observed_controls"]
         try:
             await self._async_set_volume(entity_id, self._config.max_volume)
         except Exception:
@@ -302,33 +303,106 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         desired: bool,
         controls: dict[str, Any],
     ) -> None:
-        observed = (
-            self._active.setdefault("observed_controls", []) if self._active else []
-        )
-        if entity_id in controls or entity_id in observed:
+        observed = (self._active or {}).get("observed_controls", [])
+        pending = (self._active or {}).get("pending_controls", {})
+        if entity_id in controls or (
+            entity_id in observed and entity_id not in pending
+        ):
             return
         original = _current_switch(self.hass, entity_id)
         if original is None:
             return
-
-        observed.append(entity_id)
-        await self._async_save_locked()
-        if original == desired:
+        control = await self._async_prepare_control_locked(
+            satellite_entity_id,
+            entity_id,
+            controls,
+            "switch",
+            original,
+            desired,
+            original != desired,
+        )
+        if control is None:
             return
-
-        controls[entity_id] = {
-            "kind": "switch",
-            "satellite_entity_id": satellite_entity_id,
-            "original_value": original,
-            "quiet_value": desired,
-        }
-        await self._async_save_locked()
+        assert self._active is not None
+        observed = self._active["observed_controls"]
         try:
             await self._async_set_switch(entity_id, desired)
         except Exception:
             controls.pop(entity_id, None)
             observed.remove(entity_id)
             await self._async_save_locked()
+
+    async def _async_prepare_control_locked(
+        self,
+        satellite_entity_id: str,
+        entity_id: str,
+        controls: dict[str, Any],
+        kind: str,
+        original: float | bool,
+        desired: float | bool,
+        needs_action: bool,
+    ) -> dict[str, Any] | None:
+        """Persist observation and ownership without losing a retryable baseline."""
+        assert self._active is not None
+        observed = self._active.setdefault("observed_controls", [])
+        pending = self._active.setdefault("pending_controls", {})
+        if entity_id in controls or (
+            entity_id in observed and entity_id not in pending
+        ):
+            return None
+        intent = pending.get(entity_id)
+        if intent is not None:
+            same_baseline = (
+                abs(original - intent["original_value"]) <= _VOLUME_TOLERANCE
+                if kind == "volume"
+                else original == intent["original_value"]
+            )
+            if (
+                intent["kind"] != kind
+                or intent["satellite_entity_id"] != satellite_entity_id
+                or not same_baseline
+            ):
+                # A changed device association or manual value ends this attempt;
+                # keep observation so we do not claim or overwrite that change.
+                pending.pop(entity_id)
+                await self._async_save_control_state_locked()
+                return None
+        else:
+            intent = {
+                "kind": kind,
+                "satellite_entity_id": satellite_entity_id,
+                "original_value": original,
+                "quiet_value": desired,
+            }
+            observed.append(entity_id)
+        if needs_action:
+            pending[entity_id] = {**intent, "quiet_value": desired}
+        else:
+            pending.pop(entity_id, None)
+        await self._async_save_control_state_locked()
+        if not needs_action:
+            return None
+        controls[entity_id] = pending.pop(entity_id)
+        await self._async_save_control_state_locked()
+        return cast(dict[str, Any], controls[entity_id])
+
+    async def _async_save_control_state_locked(self) -> None:
+        """A reported control-write failure must reconcile its actual generation."""
+        try:
+            await self._async_save_locked()
+        except Exception:
+            try:
+                persisted = await self._store.async_load()
+                if not isinstance(persisted, Mapping):
+                    raise ValueError("Quiet Hours control state cannot be reconciled")
+                active = self._normalize_active(persisted.get("active"))
+                if active is None and persisted.get("active") is not None:
+                    raise ValueError("Quiet Hours control state is invalid")
+                self._active = active
+            except Exception:
+                self._active = None
+                self._initialized = False
+            raise
 
     def _normalize_active(self, value: Any) -> dict[str, Any] | None:
         normalized = super()._normalize_active(value)
@@ -339,7 +413,20 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         )
         observed = {item for item in raw_observed or [] if isinstance(item, str)}
         observed.update(normalized.get("controls", {}))
+        raw_pending = (
+            value.get("pending_controls") if isinstance(value, Mapping) else None
+        )
+        pending_state = super()._normalize_active(
+            {**value, "controls": raw_pending or {}}
+        )
+        pending = {
+            entity_id: control
+            for entity_id, control in (pending_state or {}).get("controls", {}).items()
+            if entity_id not in normalized["controls"]
+        }
+        observed.update(pending)
         normalized["observed_controls"] = sorted(observed)
+        normalized["pending_controls"] = pending
         return normalized
 
     async def async_shutdown(self) -> None:
