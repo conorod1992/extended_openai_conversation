@@ -261,6 +261,12 @@ async def test_websocket_setup_export_is_coherent_across_restore(
         async with asyncio.timeout(10):
             while not started.is_set() and gate._waiting_writers == 0:
                 await asyncio.sleep(0)
+        if started.is_set():
+            # An unguarded exporter must finish while publication is still held;
+            # otherwise releasing restore could conceal the mixed snapshot.
+            await asyncio.wait_for(asyncio.shield(export), 10)
+        else:
+            assert not export.done() and gate._waiting_writers == 1
         record(
             stress_trace,
             "setup_export_during_restore",
