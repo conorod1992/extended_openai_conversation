@@ -349,3 +349,274 @@ async def test_script_function_executes_local_ha_service_on_provider_wire(
         script_function_executions=1,
         ha_service_calls=1,
     )
+
+
+@pytest.mark.parametrize(
+    "safe_batch", [False, True], ids=["serial-prefix", "safe-atomic"]
+)
+async def test_public_budget_loading_multicall_and_completed_replay(
+    hass, monkeypatch, stress_trace, safe_batch
+):
+    """Loader exemption and request-local limits compose with completed-call refusal."""
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+    )
+    from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+        is_tool_result_content,
+    )
+    from tests_stress.test_function_provider_wire_remaining import _multicall_reply
+    from pytest_homeassistant_custom_component.common import MockUser
+
+    owner = MockUser(id="budget-owner", name="Budget owner", is_owner=True).add_to_hass(
+        hass
+    )
+    effects, results = [], []
+
+    async def effect(call):
+        effects.append(call.data["marker"])
+
+    hass.services.async_register("budget_probe", "record", effect)
+    add = conversation.ChatLog.async_add_assistant_content_without_tools
+
+    def capture(log, content):
+        if is_tool_result_content(content):
+            results.append(content.tool_call_id)
+        add(log, content)
+
+    monkeypatch.setattr(
+        conversation.ChatLog, "async_add_assistant_content_without_tools", capture
+    )
+    tools = []
+    for marker in ("warm", "a", "b"):
+        function = {
+            "type": "script",
+            "sequence": [{"action": "budget_probe.record", "data": {"marker": marker}}],
+        }
+        if safe_batch and marker != "warm":
+            function = {"type": "native", "name": "get_user_from_user_id"}
+        tools.append(
+            {
+                "spec": {
+                    "name": f"budget_{marker}",
+                    "description": "Budget boundary probe",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                "function": function,
+            }
+        )
+    group_id = "budget-group"
+    entry = _make_entry(
+        "Budget composition",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 2,
+            CONF_FUNCTION_TOOLS: tools,
+            CONF_FUNCTION_GROUPS: [
+                {
+                    "id": group_id,
+                    "name": "Budget group",
+                    "description": "Load local probes",
+                    "loading_mode": "on_demand",
+                    "functions": [tool["spec"]["name"] for tool in tools],
+                    "enabled": True,
+                }
+            ],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+
+    async def say(cid=None):
+        return await conversation.async_converse(
+            hass=hass,
+            text="Use budget probes",
+            conversation_id=cid,
+            context=Context(user_id=owner.id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call("load", "load_function_groups", {"groups": [group_id]}),
+            _chat_sse_tool_call("warm", "budget_warm", {}),
+            _multicall_reply(
+                API_MODE_CHAT_COMPLETIONS,
+                [("batch-a", "budget_a", {}), ("batch-b", "budget_b", {})],
+            ),
+        ],
+    )
+    failed = await say()
+    assert failed.response.error_code is not None
+    assert "Function call limit" in str(failed.response.as_dict())
+    assert len(wire.requests) == 3
+    assert effects == (["warm"] if safe_batch else ["warm", "a"])
+    assert results == ["load", "warm", "batch-a", "batch-b"]
+    # A fresh turn gets a fresh budget; a completed acknowledged id still cannot replay.
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call(
+                "fresh-load", "load_function_groups", {"groups": [group_id]}
+            ),
+            _chat_sse_tool_call("completed", "budget_warm", {}),
+            _chat_sse_text("Acknowledged"),
+        ],
+    )
+    acknowledged = await say()
+    assert _speech(acknowledged) == "Acknowledged"
+    before = list(effects)
+    _install_wire(
+        monkeypatch, agent, [_chat_sse_tool_call("completed", "budget_warm", {})]
+    )
+    replayed = await say(acknowledged.conversation_id)
+    assert replayed.response.error_code is not None
+    assert "completed tool call" in str(replayed.response.as_dict())
+    assert effects == before
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call(
+                "last-load", "load_function_groups", {"groups": [group_id]}
+            ),
+            _multicall_reply(
+                API_MODE_CHAT_COMPLETIONS,
+                [("fresh-a", "budget_a", {}), ("fresh-b", "budget_b", {})],
+            ),
+            _chat_sse_text("Fresh budget healthy"),
+        ],
+    )
+    assert _speech(await say()) == "Fresh budget healthy"
+    assert effects == (before if safe_batch else before + ["a", "b"])
+    record(
+        stress_trace,
+        "summary",
+        layer="provider-wire",
+        budget_loading_replay_cases=1,
+        budget_atomic_cases=int(safe_batch),
+        budget_serial_prefix_cases=int(not safe_batch),
+        completed_replay_rejections=1,
+        recovery_conversations=1,
+    )
+
+
+@pytest.mark.parametrize("initial", ["chat_completions", "responses"])
+async def test_api_transition_continues_completed_tool_history_without_replay(
+    hass, monkeypatch, stress_trace, initial
+):
+    """A live API transition retains protocol-valid completed tool history."""
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_CONVERSATION_CONTINUITY,
+        CONVERSATION_CONTINUITY_USER,
+    )
+    from pytest_homeassistant_custom_component.common import MockUser
+    from tests_stress.test_function_provider_wire_remaining import _provider_replies
+    from tests_real_ha.test_provider_wire_e2e import _responses_sse_text
+    from custom_components.extended_openai_conversation_responses.live_subentry_updates import (
+        update_live_subentry,
+    )
+
+    owner = MockUser(id="api-switch-owner", is_owner=True).add_to_hass(hass)
+    effects = []
+
+    async def effect(call):
+        effects.append("completed")
+
+    hass.services.async_register("api_switch_probe", "record", effect)
+    tool = {
+        "spec": {
+            "name": "switch_effect",
+            "description": "Complete one action",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "script",
+            "sequence": [{"action": "api_switch_probe.record"}],
+        },
+    }
+    entry = _make_entry(
+        "API history transition",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: initial,
+            CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_USER,
+            CONF_FUNCTION_TOOLS: [tool],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+
+    async def say(text, cid=None):
+        return await conversation.async_converse(
+            hass=hass,
+            text=text,
+            conversation_id=cid,
+            context=Context(user_id=owner.id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        _provider_replies(
+            initial,
+            "completed-switch-call",
+            "switch_effect",
+            "COMPLETED-HISTORY-MARKER",
+        ),
+    )
+    first = await say("RETAINED-USER-HISTORY")
+    assert _speech(first) == "COMPLETED-HISTORY-MARKER" and effects == ["completed"]
+    switched = "responses" if initial == "chat_completions" else "chat_completions"
+    subentry = agent.subentry
+    update_live_subentry(
+        hass, entry, subentry, data={**subentry.data, CONF_API_MODE: switched}
+    )
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    reply = _responses_sse_text if switched == "responses" else _chat_sse_text
+    followup_wire = _install_wire(monkeypatch, agent, [reply("Transition healthy")])
+    result = await say("FOLLOWUP-AFTER-SWITCH", first.conversation_id)
+    assert _speech(result) == "Transition healthy" and effects == ["completed"]
+    body = followup_wire.requests[0]["body"]
+    serialized = json.dumps(body)
+    assert (
+        "RETAINED-USER-HISTORY" in serialized
+        and "COMPLETED-HISTORY-MARKER" in serialized
+    )
+    if switched == "responses":
+        assert [
+            item["call_id"]
+            for item in body["input"]
+            if item.get("type") == "function_call"
+        ] == ["completed-switch-call"]
+        assert [
+            item["call_id"]
+            for item in body["input"]
+            if item.get("type") == "function_call_output"
+        ] == ["completed-switch-call"]
+    else:
+        assert [
+            call["id"]
+            for item in body["messages"]
+            for call in item.get("tool_calls", [])
+        ] == ["completed-switch-call"]
+        assert [
+            item["tool_call_id"]
+            for item in body["messages"]
+            if item.get("role") == "tool"
+        ] == ["completed-switch-call"]
+    record(
+        stress_trace,
+        "summary",
+        layer="provider-wire",
+        populated_api_transition_cases=1,
+        completed_tool_effects=1,
+        recovery_conversations=1,
+    )

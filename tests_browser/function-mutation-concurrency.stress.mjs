@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {openFunctionAddMenu, acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const toolYaml = (name, description = name) => `spec:
   name: ${name}
@@ -13,7 +13,7 @@ function:
 `;
 
 async function addTool(panel, name) {
-  await panel.locator("#add-tool").click();
+  await openFunctionAddMenu(panel, "#add-tool");
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#tool-yaml").fill(toolYaml(name, `${name} nightly probe`));
   await panel.locator("#tool-save").click();
@@ -21,7 +21,7 @@ async function addTool(panel, name) {
 }
 
 async function createGroup(panel, {name, id, description = "Nightly Function Group", members = []}) {
-  await panel.locator("#add-group").click();
+  await openFunctionAddMenu(panel, "#add-group");
   await expect(panel.locator("#group-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#group-name").fill(name);
   await panel.locator("#group-id").fill(id);
@@ -111,7 +111,7 @@ test("nightly Function Group validation, failure recovery, rename and delete sta
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
 
-  await panel.locator("#add-group").click();
+  await openFunctionAddMenu(panel, "#add-group");
   const save = panel.locator("#group-save");
   await save.click();
   await expect(panel.locator("#group-error")).toContainText("Group name is required");

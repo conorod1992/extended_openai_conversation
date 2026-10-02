@@ -1,9 +1,12 @@
 """Controlled failures run only by the manual/nightly diagnostics campaign."""
 
+import os
+
 import pytest
+import yaml
 from pytest_homeassistant_custom_component.common import MockUser
 
-from ci.enhanced_evidence import CANARIES
+from ci.enhanced_evidence import CANARIES, fresh_privacy_canaries
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
 )
@@ -15,18 +18,42 @@ from tests_stress.test_runtime_soak import _resource_footprint
 
 
 def _begin(trace, boundary):
-    record(trace, "begin", boundary=boundary, api_key=CANARIES[0])
+    fresh = fresh_privacy_canaries(os.environ.get("STRESS_SEED", "unknown"))
+    record(
+        trace,
+        "begin",
+        boundary=boundary,
+        api_key=fresh[0],
+        authorization=fresh[1],
+        diagnostic_marker="USEFUL-PRIVACY-DIAGNOSTIC",
+        artifact_privacy_probes=1,
+    )
+    try:
+        yaml.safe_load(f"api_key: [{fresh[0]}")
+    except yaml.YAMLError as err:
+        record(
+            trace,
+            "configuration_error",
+            api_key=CANARIES[0],
+            error=str(err),
+            diagnostic_marker="USEFUL-PRIVACY-DIAGNOSTIC",
+        )
 
 
 def _fail(trace, boundary):
+    fresh = fresh_privacy_canaries(os.environ.get("STRESS_SEED", "unknown"))
     record(
         trace,
         "before_assertion",
         private_content=CANARIES[1],
         knowledge_content=CANARIES[2],
         prompt=CANARIES[3],
+        user_text=fresh[2],
+        prompt_content=fresh[3],
     )
-    pytest.fail(f"controlled {boundary} failure {CANARIES[0]}")
+    pytest.fail(
+        f"controlled {boundary} failure USEFUL-PRIVACY-DIAGNOSTIC {fresh[0]} {fresh[1]}"
+    )
 
 
 def test_python_failure_artifact_survives_partial_trace(stress_trace):
@@ -48,6 +75,34 @@ async def test_provider_failure_artifact_has_real_assist_fault_phase(
     failed = await _say(hass, agent, "Diagnose a provider DNS failure")
     assert failed.response.error_code is not None
     record(stress_trace, "assist_failure", provider_requests=len(wire.requests))
+    from tests_real_ha.test_provider_wire_e2e import _install_wire
+
+    fresh = fresh_privacy_canaries(os.environ.get("STRESS_SEED", "unknown"))
+    provider_error = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            (
+                400,
+                {
+                    "error": {
+                        "message": f"USEFUL-PRIVACY-DIAGNOSTIC provider rejected {fresh[0]}",
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        ],
+    )
+    rejected = await _say(hass, agent, "Diagnose provider error payload")
+    assert (
+        rejected.response.error_code is not None and len(provider_error.requests) == 1
+    )
+    record(
+        stress_trace,
+        "provider_error_payload",
+        provider_requests=1,
+        error=f"USEFUL-PRIVACY-DIAGNOSTIC {fresh[0]}",
+    )
     _fail(stress_trace, "provider")
 
 

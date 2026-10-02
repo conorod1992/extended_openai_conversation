@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib
+from importlib.metadata import version
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,6 @@ import sys
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import pytest
 import yaml
 
 DOMAIN = "extended_openai_conversation_responses"
@@ -27,10 +27,15 @@ _CONFIG_DIR_ENV = "UPGRADE_ACCEPTANCE_CONFIG_DIR"
 _STATE_FILE = "upgrade-acceptance-state.json"
 _BACKUP_FILE = "upgrade-acceptance-current-backup.json"
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get(_FROM_COMPONENT_ENV) or not os.environ.get(_TO_COMPONENT_ENV),
-    reason="requires released and candidate component payloads",
-)
+if not os.environ.get(_CHILD_PHASE_ENV):
+    # Standalone HA child processes do not depend on the parent's test framework.
+    import pytest
+
+    pytestmark = pytest.mark.skipif(
+        not os.environ.get(_FROM_COMPONENT_ENV)
+        or not os.environ.get(_TO_COMPONENT_ENV),
+        reason="requires released and candidate component payloads",
+    )
 
 
 def _manifest(component_dir: Path) -> dict[str, Any]:
@@ -71,8 +76,16 @@ def _run_child(config_dir: Path, phase: str) -> subprocess.CompletedProcess[str]
     env = os.environ.copy()
     env[_CHILD_PHASE_ENV] = phase
     env[_CONFIG_DIR_ENV] = str(config_dir)
+    # Published pins may conflict with the candidate HA's core SDK constraint.
+    # Create historical state in its declared compatible runtime, then carry the
+    # unchanged configuration/storage into the current candidate runtime.
+    interpreter = (
+        os.environ.get("UPGRADE_RELEASED_PYTHON", sys.executable)
+        if phase == "released"
+        else sys.executable
+    )
     return subprocess.run(
-        [sys.executable, str(Path(__file__).resolve())],
+        [interpreter, str(Path(__file__).resolve())],
         cwd=config_dir,
         env=env,
         text=True,
@@ -108,7 +121,9 @@ def _tool_names(data: Any) -> list[str]:
     return names
 
 
-async def _exercise_public_conversation(hass: Any, entry_id: str, expected: str) -> None:
+async def _exercise_public_conversation(
+    hass: Any, entry_id: str, expected: str
+) -> None:
     """Prove the loaded agent remains usable through HA's public conversation API."""
     from homeassistant.components import conversation
     from homeassistant.core import Context
@@ -150,7 +165,7 @@ def _conversation_subentry(entry: Any) -> Any:
 
 async def _create_released_entry(hass: Any) -> Any:
     """Create an entry using the installed released integration's own config flow."""
-    from homeassistant.config_entries import ConfigEntryState, SOURCE_USER
+    from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
     from homeassistant.const import CONF_API_KEY, CONF_NAME
     from homeassistant.data_entry_flow import FlowResultType
 
@@ -230,7 +245,15 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
         "title": subentry.title,
         "custom_values": custom_values,
         "function_tool_names": _tool_names(subentry.data.get(function_tools_key)),
+        "released_runtime": {
+            "homeassistant": version("homeassistant"),
+            "openai": version("openai"),
+        },
     }
+    expected_ha = os.environ.get("UPGRADE_RELEASED_HA_VERSION")
+    if expected_ha:
+        assert state["released_runtime"]["homeassistant"] == expected_ha
+    print(f"Published release runtime: {state['released_runtime']}", flush=True)
     (config_dir / _STATE_FILE).write_text(json.dumps(state), encoding="utf-8")
 
 
@@ -313,7 +336,9 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
     assert entry.entry_id == state["entry_id"]
-    assert entry.version == const.CONFIG_ENTRY_VERSION == state["candidate_entry_version"]
+    assert (
+        entry.version == const.CONFIG_ENTRY_VERSION == state["candidate_entry_version"]
+    )
 
     subentry = _conversation_subentry(entry)
     assert subentry.subentry_id == state["subentry_id"]
@@ -340,7 +365,9 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     await hass.async_block_till_done()
     restored = _conversation_subentry(entry)
     assert restored.title == state["candidate_title"]
-    assert backup.export_configuration_snapshot(restored.data) == saved["agent"]["config"]
+    assert (
+        backup.export_configuration_snapshot(restored.data) == saved["agent"]["config"]
+    )
     await _exercise_public_conversation(
         hass, entry.entry_id, "Migrated candidate backup restored successfully."
     )
@@ -374,7 +401,9 @@ async def _child_main() -> None:
 
 
 def test_published_release_upgrades_to_candidate_and_survives_restart(
+    socket_enabled,
     tmp_path: Path,
+    unused_tcp_port: int,
 ) -> None:
     """Upgrade state made by a real release to the candidate across HA processes."""
     from_component = Path(os.environ[_FROM_COMPONENT_ENV]).resolve()
@@ -394,7 +423,7 @@ def test_published_release_upgrades_to_candidate_and_survives_restart(
     config_dir = tmp_path / "ha-config"
     config_dir.mkdir()
     (config_dir / "configuration.yaml").write_text(
-        "homeassistant:\n  name: Release Upgrade Acceptance\n",
+        f"homeassistant:\n  name: Release Upgrade Acceptance\nhttp:\n  server_host: 127.0.0.1\n  server_port: {unused_tcp_port}\n",
         encoding="utf-8",
     )
 

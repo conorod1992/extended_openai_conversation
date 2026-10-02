@@ -121,6 +121,7 @@ test("stale Function Tool and Group editors preserve the newer genuine HA revisi
     await page.goto(realFixtureUrl("capabilities/functions"));
     const panelA = page.locator("extended-openai-management-panel");
     await expect(panelA.getByRole("heading", {name: "Function Tools & Groups", exact: true})).toBeVisible();
+    await panelA.locator("#function-add").click();
     await panelA.locator("#add-tool").click();
     await panelA.locator("#tool-yaml").fill(browserToolYaml("Two-tab initial tool"));
     await panelA.locator("#tool-save").click();
@@ -141,6 +142,7 @@ test("stale Function Tool and Group editors preserve the newer genuine HA revisi
     trace.push("Tool same-object stale save rejected");
 
     await other.goto(realFixtureUrl("capabilities/functions"));
+    await panelA.locator("#function-add").click();
     await panelA.locator("#add-group").click();
     await panelA.locator("#group-name").fill("Two-tab group");
     await panelA.locator("#group-id").fill("two-tab-group");

@@ -90,6 +90,38 @@ async def recover(root):
     )
     assert hass is not None
     await base._register_execution_probe(hass, root)
+    # Keep selected real service actions in-flight while independent HA traffic runs.
+    service = hass.services.async_services()[base._SERVICE_DOMAIN][base._SERVICE_NAME]
+    original_probe = service.job.target
+    slow_started, slow_release = asyncio.Event(), asyncio.Event()
+    active, peak, slow_admitted = 0, 0, 0
+
+    async def slow_probe(call):
+        nonlocal active, peak, slow_admitted
+        active += 1
+        peak = max(peak, active)
+        try:
+            if slow_admitted < 3:
+                slow_admitted += 1
+                slow_started.set()
+                await slow_release.wait()
+            await original_probe(call)
+        finally:
+            active -= 1
+
+    hass.services.async_register(base._SERVICE_DOMAIN, base._SERVICE_NAME, slow_probe)
+    manager = hass.data[base.DOMAIN]["delayed_tool_manager"]
+    resolve = manager._resolve_agent
+    transient_failures = 0
+
+    def transient_resolution(*args):
+        nonlocal transient_failures
+        if os.environ[PHASE] != "verify-no-replay" and transient_failures < 6:
+            transient_failures += 1
+            return None  # Supported pre-dispatch agent reload/unavailability retry.
+        return resolve(*args)
+
+    manager._resolve_agent = transient_resolution
     await hass.async_start()
     lags = []
 
@@ -117,19 +149,13 @@ async def recover(root):
 
         expected = json.loads((root / "backlog-expected.json").read_text())
         manager = hass.data[base.DOMAIN]["delayed_tool_manager"]
-        async with asyncio.timeout(60):
-            while manager._records or manager._tasks:
-                await asyncio.sleep(0.05)
-        assert Counter(
-            item["marker"] for item in base._read_executions(root)
-        ) == Counter(expected["markers"])
-        assert all(
-            item["user_id"] == expected["user_id"]
-            for item in base._read_executions(root)
-        )
-        assert base._read_store(root)["data"]["calls"] == []
-        await asyncio.sleep(0.1)
-        assert lags and max(lags) < 5, lags
+        if os.environ[PHASE] != "verify-no-replay":
+            await asyncio.wait_for(slow_started.wait(), 20)
+            assert active > 0 and manager._records and manager._tasks
+            assert len(manager._tasks) <= expected["count"]
+            assert transient_failures == 6
+            assert any(record.retry_count > 0 for record in manager._records.values())
+        during_pending = len(manager._records)
         entry = hass.config_entries.async_entries(base.DOMAIN)[0]
         agent = conversation.async_get_agent(hass, entry.entry_id)
         assert agent is not None
@@ -167,6 +193,39 @@ async def recover(root):
         assert summary["agent"]["entry_id"] == entry.entry_id
         assert summary["agent"]["subentry_id"] == agent.subentry.subentry_id
         assert summary["load_errors"] == []
+        if os.environ[PHASE] == "partial-terminate":
+            async with asyncio.timeout(15):
+                while not base._read_executions(root):
+                    await asyncio.sleep(0.02)
+            payload = base._read_store(root)["data"]["calls"]
+            assert any(call["status"] == "executing" for call in payload)
+            assert any(call["status"] == "pending" for call in payload)
+            (root / "backlog-partial-proof.json").write_text(
+                json.dumps(
+                    {
+                        "completed": len(base._read_executions(root)),
+                        "pending": during_pending,
+                        "active": active,
+                        "foreground_reads": 2,
+                        "retryable_failures": transient_failures,
+                    }
+                )
+            )
+            os._exit(73)  # Genuine termination: no HA stop/finalize callbacks.
+        slow_release.set()
+        async with asyncio.timeout(60):
+            while manager._records or manager._tasks:
+                await asyncio.sleep(0.05)
+        assert Counter(
+            item["marker"] for item in base._read_executions(root)
+        ) == Counter(expected["markers"])
+        assert all(
+            item["user_id"] == expected["user_id"]
+            for item in base._read_executions(root)
+        )
+        assert base._read_store(root)["data"]["calls"] == []
+        await asyncio.sleep(0.1)
+        assert lags and max(lags) < 5, lags
         (root / f"backlog-health-{os.environ[PHASE]}.json").write_text(
             json.dumps(
                 {
@@ -177,10 +236,14 @@ async def recover(root):
                     "waiters": len(manager._tasks),
                     "assist_conversations": 1,
                     "management_reads": 1,
+                    "foreground_pending": during_pending,
+                    "peak_active": peak,
+                    "retryable_failures": transient_failures,
                 }
             )
         )
     finally:
+        slow_release.set()
         sampler.cancel()
         await asyncio.gather(sampler, return_exceptions=True)
         await hass.async_stop()
@@ -196,9 +259,17 @@ async def child():
         await recover(root)
 
 
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(360)
+@pytest.mark.parametrize(
+    "partial_termination", [False, True], ids=["slow-drain", "partial-termination"]
+)
 def test_overdue_backlog_drains_once_across_two_restarts(
-    tmp_path, stress_scale, stress_trace, socket_enabled, unused_tcp_port
+    tmp_path,
+    stress_scale,
+    stress_trace,
+    socket_enabled,
+    unused_tcp_port,
+    partial_termination,
 ):
     count = 50 if stress_scale == 1 else 100
     root = tmp_path / "ha-config"
@@ -210,13 +281,49 @@ def test_overdue_backlog_drains_once_across_two_restarts(
     (root / "configuration.yaml").write_text(
         f"homeassistant:\n  name: Overnight delayed backlog\nhttp:\n  server_host: 127.0.0.1\n  server_port: {unused_tcp_port}\n"
     )
-    for phase in ("schedule", "recover", "verify-no-replay"):
+    phases = (
+        ("schedule", "partial-terminate", "recover", "verify-no-replay")
+        if partial_termination
+        else ("schedule", "recover", "verify-no-replay")
+    )
+    for phase in phases:
         result = run_python_child(
             __file__,
             cwd=root,
             extra_env={PHASE: phase, ROOT_ENV: str(root), COUNT_ENV: str(count)},
             timeout=90,
         )
+        if phase == "partial-terminate":
+            assert result.returncode == 73, result.stdout + result.stderr
+            proof = json.loads((root / "backlog-partial-proof.json").read_text())
+            assert (
+                proof["completed"] > 0
+                and proof["active"] > 0
+                and proof["foreground_reads"] == 2
+            )
+            # Cold recovery deliberately discards durable executing records; no
+            # replay requirement is imposed on ambiguous already-started effects.
+            completed = {item["marker"] for item in base._read_executions(root)}
+            ambiguous = {
+                call["arguments"]["marker"]
+                for call in base._read_store(root)["data"]["calls"]
+                if call["status"] == "executing"
+            } - completed
+            expected_path = root / "backlog-expected.json"
+            expected = json.loads(expected_path.read_text())
+            expected["markers"] = [
+                marker for marker in expected["markers"] if marker not in ambiguous
+            ]
+            expected_path.write_text(json.dumps(expected))
+            record(
+                stress_trace,
+                "summary",
+                layer="process",
+                delayed_partial_termination_cases=1,
+                delayed_foreground_during_backlog=2,
+                ambiguous_started_calls=len(ambiguous),
+            )
+            continue
         base._assert_child_ok(result, phase)
         if phase == "schedule":
             payload = base._read_store(root)
@@ -239,6 +346,10 @@ def test_overdue_backlog_drains_once_across_two_restarts(
                 if phase == "recover"
                 else 0,
                 process_restarts=1,
+                delayed_foreground_during_backlog=2
+                if health["foreground_pending"]
+                else 0,
+                delayed_retryable_pre_dispatch_failures=health["retryable_failures"],
                 **health,
             )
 

@@ -127,3 +127,37 @@ def test_governance_cannot_cite_itself_as_semantic_evidence() -> None:
 
     with pytest.raises(AssertionError):
         _behavior_test("tests_stress/test_evidence_manifest.py::test_supported_features_have_reviewed_evidence_layer_entries")
+
+
+def test_fresh_debug_export_credentials_redacted_and_intended_user_content_retained(
+    tmp_path, stress_seed, stress_trace
+):
+    """Inspect an actual DebugTrace export under its credential-only privacy policy."""
+    from ci.enhanced_evidence import fresh_privacy_canaries
+    from tests.test_request_diagnostics import _trace
+    from tests_stress.conftest import record
+
+    probes = fresh_privacy_canaries(str(stress_seed))
+    trace = _trace()
+    trace.start_provider_request(
+        "responses",
+        (),
+        {
+            "input": [
+                {
+                    "role": "user",
+                    "content": "INTENDED-DEBUG-USER-CONTENT",
+                    "metadata": {"api_key": probes[0]},
+                }
+            ],
+            "headers": {"Authorization": probes[1]},
+            "tools": [],
+        },
+    )
+    export = tmp_path / "actual-debug-export.json"
+    export.write_text(json.dumps(trace.as_dict()), encoding="utf-8")
+    uploaded = export.read_text(encoding="utf-8")
+    assert probes[0] not in uploaded and probes[1] not in uploaded
+    assert "INTENDED-DEBUG-USER-CONTENT" in uploaded
+    assert "redacted credential" in uploaded
+    record(stress_trace, "summary", layer="debug export", debug_export_privacy_cases=1)

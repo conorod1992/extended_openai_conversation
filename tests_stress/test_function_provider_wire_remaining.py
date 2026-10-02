@@ -202,6 +202,39 @@ async def test_sqlite_lock_deadline_and_worker_recovery_on_public_assist(
     )
 
 
+def _multicall_reply(mode, calls):
+    """Use the existing real SDK stream builders for an ordered batch."""
+    from tests.test_openai_sdk_wire import _chat_chunk, _sse
+    from tests_real_ha.test_function_execution_composition import (
+        _responses_sse_tool_calls,
+    )
+
+    if mode == API_MODE_RESPONSES:
+        return _responses_sse_tool_calls(calls)
+    return _sse(
+        [
+            _chat_chunk(
+                delta={
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "index": index,
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(arguments),
+                            },
+                        }
+                        for index, (call_id, name, arguments) in enumerate(calls)
+                    ],
+                },
+                finish_reason="tool_calls",
+            )
+        ]
+    )
+
+
 def _provider_replies(mode: str, call_id: str, name: str, text: str) -> list[bytes]:
     if mode == API_MODE_RESPONSES:
         return [_responses_sse_tool_call(call_id, name, {}), _responses_sse_text(text)]
@@ -624,9 +657,11 @@ async def test_composite_late_failure_preserves_one_completed_side_effect(
 
 
 @pytest.mark.parametrize("api_mode", API_MODES)
-@pytest.mark.parametrize("mixed", [False, True], ids=["safe-overlap", "mixed-serial"])
+@pytest.mark.parametrize(
+    "variant", ["safe-overlap", "mixed-serial", "sibling-failure", "parent-cancel"]
+)
 async def test_public_assist_multicall_dispatch_concurrency(
-    hass, monkeypatch, stress_trace, api_mode, mixed
+    hass, monkeypatch, stress_trace, api_mode, variant
 ):
     """SDK parsing and public Assist retain safe overlap and serial side effects."""
     import asyncio
@@ -636,10 +671,25 @@ async def test_public_assist_multicall_dispatch_concurrency(
     from custom_components.extended_openai_conversation_responses.functions import (
         get_function,
     )
-    from tests.test_openai_sdk_wire import _chat_chunk, _sse
-    from tests_real_ha.test_function_execution_composition import (
-        _responses_sse_tool_calls,
+
+    from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+        is_tool_result_content,
+        tool_result_data,
     )
+
+    captured = []
+    add = conversation.ChatLog.async_add_assistant_content_without_tools
+
+    def capture(log, content):
+        if is_tool_result_content(content):
+            captured.append(content)
+        add(log, content)
+
+    monkeypatch.setattr(
+        conversation.ChatLog, "async_add_assistant_content_without_tools", capture
+    )
+    mixed = variant == "mixed-serial"
+    from homeassistant.exceptions import HomeAssistantError
 
     owner = MockUser(
         id="parallel-owner", name="Parallel owner", is_owner=True
@@ -648,13 +698,21 @@ async def test_public_assist_multicall_dispatch_concurrency(
     release = {name: asyncio.Event() for name in ("a", "b")}
     completed = {name: asyncio.Event() for name in ("a", "b")}
     effects = []
+    cancelled = set()
     native = get_function("native")
     original = native.get_user_from_user_id
 
     async def gated(*args):
-        marker = args[2]["marker"]
+        marker = args[2].get("marker", "a")
         started[marker].set()
-        await release[marker].wait()
+        try:
+            await release[marker].wait()
+        except asyncio.CancelledError:
+            cancelled.add(marker)
+            raise
+        if variant == "sibling-failure" and marker == "b":
+            completed[marker].set()
+            raise HomeAssistantError("EXPECTED-SIBLING-FAILURE")
         result = await original(*args)
         completed[marker].set()
         return result
@@ -692,10 +750,18 @@ async def test_public_assist_multicall_dispatch_concurrency(
                 }
             ],
         }
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_FUNCTION_TOOL_ERROR_RECOVERY,
+    )
+
     entry = _make_entry(
         "Assist concurrency",
         include_ai_task=False,
-        conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: tools},
+        conversation_options={
+            CONF_API_MODE: api_mode,
+            CONF_FUNCTION_TOOLS: tools,
+            CONF_FUNCTION_TOOL_ERROR_RECOVERY: True,
+        },
     )
     await _setup_entry(hass, entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
@@ -703,32 +769,7 @@ async def test_public_assist_multicall_dispatch_concurrency(
         (f"call-{marker}", f"probe_{marker}", {"marker": marker})
         for marker in ("a", "b")
     ]
-    first = (
-        _responses_sse_tool_calls(calls)
-        if api_mode == API_MODE_RESPONSES
-        else _sse(
-            [
-                _chat_chunk(
-                    delta={
-                        "role": "assistant",
-                        "tool_calls": [
-                            {
-                                "index": index,
-                                "id": call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": name,
-                                    "arguments": json.dumps(arguments),
-                                },
-                            }
-                            for index, (call_id, name, arguments) in enumerate(calls)
-                        ],
-                    },
-                    finish_reason="tool_calls",
-                )
-            ]
-        )
-    )
+    first = _multicall_reply(api_mode, calls)
     final = _responses_sse_text if api_mode == API_MODE_RESPONSES else _chat_sse_text
     wire = _install_wire(monkeypatch, agent, [first, final("Both complete")])
     turn = asyncio.create_task(
@@ -750,10 +791,91 @@ async def test_public_assist_multicall_dispatch_concurrency(
         else:
             await asyncio.wait_for(started["b"].wait(), 10)
             assert not completed["a"].is_set()
-            release["b"].set()
-            await asyncio.wait_for(completed["b"].wait(), 10)
+            if variant == "parent-cancel":
+                turn.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await turn
+                assert cancelled == {"a", "b"}
+                assert len(wire.requests) == 1
+            else:
+                release["b"].set()
+                await asyncio.wait_for(completed["b"].wait(), 10)
+                assert not completed["a"].is_set()
+                assert not turn.done()
+                assert cancelled == set()
         release["a"].set()
+        if variant == "parent-cancel":
+            release["b"].set()
+            healthy_wire = _install_wire(
+                monkeypatch,
+                agent,
+                [
+                    _multicall_reply(
+                        api_mode, [("healthy", "probe_a", {"marker": "a"})]
+                    ),
+                    final("Recovered"),
+                ],
+            )
+            # Recovery uses a fresh request after the cancelled history is settled.
+            healthy = await conversation.async_converse(
+                hass=hass,
+                text="Read again",
+                conversation_id=None,
+                context=Context(user_id=owner.id),
+                language="en",
+                agent_id=entry.entry_id,
+            )
+            assert _speech(healthy) == "Recovered"
+            assert len(healthy_wire.requests) == 2
+            record(
+                stress_trace,
+                "summary",
+                layer="provider-wire",
+                assist_parent_cancel_cases=1,
+                recovery_conversations=1,
+            )
+            return
         result = await asyncio.wait_for(turn, 10)
+        if variant == "sibling-failure":
+            assert result.response.error_code is not None
+            assert [content.tool_call_id for content in captured] == [
+                "call-a",
+                "call-b",
+            ]
+            assert "Parallel owner" in json.dumps(tool_result_data(captured[0]))
+            assert "EXPECTED-SIBLING-FAILURE" in json.dumps(
+                tool_result_data(captured[1])
+            )
+            assert cancelled == set()
+            assert len(wire.requests) == 1
+            healthy_wire = _install_wire(
+                monkeypatch,
+                agent,
+                [
+                    _multicall_reply(
+                        api_mode, [("healthy", "probe_a", {"marker": "a"})]
+                    ),
+                    final("Recovered"),
+                ],
+            )
+            healthy = await conversation.async_converse(
+                hass=hass,
+                text="Read again",
+                conversation_id=None,
+                context=Context(user_id=owner.id),
+                language="en",
+                agent_id=entry.entry_id,
+            )
+            assert _speech(healthy) == "Recovered"
+            assert len(healthy_wire.requests) == 2
+            record(
+                stress_trace,
+                "summary",
+                layer="provider-wire",
+                assist_sibling_failure_cases=1,
+                recovery_conversations=1,
+            )
+            return
         assert _speech(result) == "Both complete"
         assert all(event.is_set() for event in completed.values())
         assert effects == (["b"] if mixed else [])
@@ -785,6 +907,7 @@ async def test_public_assist_multicall_dispatch_concurrency(
             safe_overlap=int(not mixed),
             assist_safe_overlap=int(not mixed),
             assist_mixed_serial=int(mixed),
+            assist_sibling_failure_cases=int(variant == "sibling-failure"),
         )
     finally:
         for event in release.values():
@@ -797,7 +920,22 @@ async def test_public_assist_multicall_dispatch_concurrency(
 @pytest.mark.parametrize("api_mode", API_MODES)
 @pytest.mark.parametrize("kind", ["rest", "scrape"])
 @pytest.mark.parametrize(
-    "fault", ["length", "chunked", "trickle", "disconnect", "encoding"]
+    "fault",
+    [
+        "length",
+        "chunked",
+        "trickle",
+        "disconnect",
+        "encoding",
+        "gzip-valid",
+        "deflate-valid",
+        "gzip-expansion",
+        "deflate-expansion",
+        "gzip-corrupt",
+        "deflate-corrupt",
+        "gzip-truncated",
+        "deflate-truncated",
+    ],
 )
 async def test_remote_function_socket_fault_recovers(
     hass, monkeypatch, socket_enabled, tmp_path, stress_trace, api_mode, kind, fault
@@ -823,6 +961,28 @@ async def test_remote_function_socket_fault_recovers(
                 if kind == "scrape"
                 else "RECOVERED-REMOTE",
                 content_type="text/html" if kind == "scrape" else "text/plain",
+            )
+        if fault.startswith(("gzip-", "deflate-")):
+            import gzip
+            import zlib
+
+            codec, shape = fault.split("-")
+            body = b'<html><span class="probe">ENCODED-REMOTE</span>'
+            if shape == "expansion":
+                body += b"x" * (MAX_REMOTE_RESPONSE_BYTES + 1)
+            body += b"</html>"
+            encoded = gzip.compress(body) if codec == "gzip" else zlib.compress(body)
+            assert len(encoded) < MAX_REMOTE_RESPONSE_BYTES
+            if shape == "corrupt":
+                encoded = encoded[:8] + b"corrupt-compressed-data" + encoded[8:]
+            elif shape == "truncated":
+                encoded = encoded[:-8] if codec == "gzip" else encoded[:-4]
+            return web.Response(
+                body=encoded,
+                headers={
+                    "Content-Encoding": codec,
+                    "Content-Type": "text/html; charset=utf-8",
+                },
             )
         response = web.StreamResponse(
             headers={"Content-Type": "text/html; charset=utf-8"}
@@ -897,7 +1057,14 @@ async def test_remote_function_socket_fault_recovers(
             )
 
         failed = await asyncio.wait_for(say(), 10)
-        if failed.response.error_code is None:
+        if fault.endswith("-valid"):
+            assert failed.response.error_code is None
+            assert _provider_result(wire.requests[1], api_mode, "call-fault") == (
+                "ENCODED-REMOTE"
+                if kind == "scrape"
+                else '<html><span class="probe">ENCODED-REMOTE</span></html>'
+            )
+        elif failed.response.error_code is None:
             assert len(wire.requests) == 2
             value = _provider_result(wire.requests[1], api_mode, "call-fault")
             assert value is None or (
@@ -927,7 +1094,8 @@ async def test_remote_function_socket_fault_recovers(
             kind=kind,
             fault=fault,
             remote_resource_recovery_cases=1,
-            remote_failures=1,
+            remote_failures=int(not fault.endswith("-valid")),
+            compressed_remote_cases=int(fault.startswith(("gzip-", "deflate-"))),
             recovery_conversations=1,
             response_limit_bytes=MAX_REMOTE_RESPONSE_BYTES,
         )
@@ -1090,3 +1258,334 @@ async def test_nested_composite_cancellation_stops_later_side_effect_and_recover
         if not turn.done():
             turn.cancel()
         await asyncio.gather(turn, return_exceptions=True)
+
+
+@pytest.mark.parametrize("boundary", ["timeout", "cancel"])
+async def test_bash_exited_leader_pipe_descendants_settle_on_public_assist(
+    hass, monkeypatch, tmp_path, stress_trace, boundary
+):
+    """A real exited shell's inheriting child cannot hold owned readers indefinitely."""
+    import os
+    import shlex
+    import signal
+    import sys
+
+    import psutil
+
+    from custom_components.extended_openai_conversation_responses.functions import (
+        bash as bash_module,
+    )
+
+    child_file = tmp_path / "child.pid"
+    child_code = "import time; print('CHILD-STDOUT',flush=True); print('CHILD-STDERR',file=__import__('sys').stderr,flush=True); time.sleep(60)"
+    leader_code = f"import subprocess, pathlib; child=subprocess.Popen([{sys.executable!r}, '-c', {child_code!r}]); pathlib.Path({str(child_file)!r}).write_text(str(child.pid))"
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(leader_code)}"
+    processes, readers = [], []
+    pipe_started = asyncio.Event()
+    create = asyncio.create_subprocess_shell
+    read = bash_module._read_bounded_stream
+
+    async def observed_create(*args, **kwargs):
+        process = await create(*args, **kwargs)
+        processes.append(process)
+        if len(processes) == 1:
+            # Observe the real scheduling boundary: the leader has already exited
+            # before execute reaches Process.wait(), while both pipes remain owned.
+            async with asyncio.timeout(10):
+                while process.returncode is None or not child_file.exists():
+                    await asyncio.sleep(0.01)
+            assert process.returncode == 0
+            child = psutil.Process(int(child_file.read_text()))
+            assert child.is_running()
+            assert os.getpgid(child.pid) == process.pid
+        return process
+
+    async def observed_read(stream, *args):
+        readers.append(asyncio.current_task())
+        if len(readers) == 2:
+            pipe_started.set()
+        return await read(stream, *args)
+
+    monkeypatch.setattr(bash_module.asyncio, "create_subprocess_shell", observed_create)
+    monkeypatch.setattr(bash_module, "_read_bounded_stream", observed_read)
+    tool = {
+        "spec": {
+            "name": "tree_probe",
+            "description": "Owned process probe",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "healthy": {"type": "boolean"},
+                    "timeout": {"type": "number"},
+                },
+            },
+        },
+        "function": {
+            "type": "bash",
+            "command": "{% if healthy %}printf HEALTHY-TREE{% else %}"
+            + command
+            + "{% endif %}",
+            "cwd": str(tmp_path),
+            "restrict_to_workspace": False,
+            "allow_unsafe_shell": True,
+        },
+    }
+    entry = _make_entry(
+        "Owned Bash descendants",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_FUNCTION_TOOLS: [tool],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _multicall_reply(
+                API_MODE_CHAT_COMPLETIONS,
+                [
+                    (
+                        "tree",
+                        "tree_probe",
+                        {
+                            "healthy": False,
+                            "timeout": 0.3 if boundary == "timeout" else 10,
+                        },
+                    )
+                ],
+            ),
+            _chat_sse_text("Tree settled"),
+        ],
+    )
+
+    async def say():
+        return await conversation.async_converse(
+            hass=hass,
+            text="Execute tree probe",
+            conversation_id=None,
+            context=Context(),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+
+    turn = asyncio.create_task(say())
+    try:
+        await asyncio.wait_for(pipe_started.wait(), 10)
+        assert processes[0].returncode == 0
+        assert all(not reader.done() for reader in readers)
+        child_pid = int(child_file.read_text())
+        assert psutil.Process(child_pid).is_running()
+        if boundary == "cancel":
+            turn.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await turn
+        else:
+            result = await asyncio.wait_for(turn, 5)
+            assert _speech(result) == "Tree settled"
+            assert (
+                "timed out"
+                in _provider_result(
+                    wire.requests[1], API_MODE_CHAT_COMPLETIONS, "tree"
+                )["error"]
+            )
+        assert all(reader.done() for reader in readers)
+        async with asyncio.timeout(5):
+            while (
+                psutil.pid_exists(child_pid)
+                and psutil.Process(child_pid).status() != psutil.STATUS_ZOMBIE
+            ):
+                await asyncio.sleep(0.02)
+        healthy_wire = _install_wire(
+            monkeypatch,
+            agent,
+            [
+                _multicall_reply(
+                    API_MODE_CHAT_COMPLETIONS,
+                    [("healthy-tree", "tree_probe", {"healthy": True, "timeout": 2})],
+                ),
+                _chat_sse_text("Recovered tree"),
+            ],
+        )
+        assert _speech(await asyncio.wait_for(say(), 10)) == "Recovered tree"
+        assert _provider_result(
+            healthy_wire.requests[1], API_MODE_CHAT_COMPLETIONS, "healthy-tree"
+        ) == {"exit_code": 0, "stdout": "HEALTHY-TREE"}
+        record(
+            stress_trace,
+            "summary",
+            layer="provider-wire",
+            bash_pipe_tree_cases=1,
+            bash_pipe_settlements=1,
+            recovery_conversations=1,
+        )
+    finally:
+        if not turn.done():
+            turn.cancel()
+        await asyncio.gather(turn, return_exceptions=True)
+        for process in processes:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        await asyncio.gather(*readers, return_exceptions=True)
+
+
+async def test_shared_ha_http_pool_waiters_recover_after_tool_cancellation(
+    hass, monkeypatch, socket_enabled, tmp_path, stress_trace
+):
+    """Real REST/Scrape calls saturate one finite HA connector, then free its waiters."""
+    import httpx
+    from custom_components.extended_openai_conversation_responses.functions import (
+        web as web_module,
+    )
+    from tests_real_ha.test_provider_wire_e2e import _raw_client
+
+    del socket_enabled
+    release = asyncio.Event()
+    started = []
+    sessions = []
+    install = web_module._install_bounded_session
+    original_limits = {}
+
+    def observe_session(hass, data):
+        install(hass, data)
+        session = data._session._session
+        sessions.append(session)
+        connector = session.connector
+        if connector not in original_limits:
+            original_limits[connector] = connector._limit
+            connector._limit = 2
+
+    monkeypatch.setattr(web_module, "_install_bounded_session", observe_session)
+
+    async def slow(request):
+        started.append(request.path)
+        await release.wait()
+        return web.Response(text='<span class="probe">POOL-HEALTHY</span>')
+
+    async def healthy(request):
+        return web.Response(text="UNRELATED-HEALTHY")
+
+    app = web.Application()
+    app.router.add_get("/slow/{marker}", slow)
+    app.router.add_get("/healthy", healthy)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+    tools = []
+    for kind in ("rest", "scrape"):
+        config = _configuration(kind, tmp_path, url)
+        config.pop("resource")
+        config["resource_template"] = url + "/slow/{{ marker }}"
+        config["timeout"] = 15
+        tools.append(
+            {
+                "spec": {
+                    "name": f"pool_{kind}",
+                    "description": "Read pool probe",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"marker": {"type": "string"}},
+                        "required": ["marker"],
+                    },
+                },
+                "function": config,
+            }
+        )
+    entry = _make_entry(
+        "HA pool pressure",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_FUNCTION_TOOLS: tools,
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+
+    async def send(request, *args, **kwargs):
+        body = json.loads(request.content)
+        if any(item.get("role") == "tool" for item in body["messages"]):
+            content = _chat_sse_text("Pool tool recovered")
+        else:
+            marker = body["messages"][-1]["content"]
+            name = "pool_scrape" if marker == "b" else "pool_rest"
+            content = _multicall_reply(
+                API_MODE_CHAT_COMPLETIONS,
+                [(f"pool-{marker}", name, {"marker": marker})],
+            )
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=content,
+            request=request,
+        )
+
+    monkeypatch.setattr(_raw_client(agent)._client, "send", send)
+
+    async def say(marker):
+        return await conversation.async_converse(
+            hass=hass,
+            text=marker,
+            conversation_id=None,
+            context=Context(),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+
+    turns = [asyncio.create_task(say(marker)) for marker in ("a", "b")]
+    unrelated = None
+    try:
+        async with asyncio.timeout(10):
+            while len(started) < 2:
+                await asyncio.sleep(0.01)
+        assert set(started) == {"/slow/a", "/slow/b"}
+        assert len({id(session) for session in sessions}) == 1
+        session = sessions[0]
+        connector = session.connector
+        assert len(connector._acquired) == 2
+
+        async def ordinary_http():
+            async with session.get(url + "/healthy") as response:
+                return await response.text()
+
+        unrelated = asyncio.create_task(ordinary_http())
+        async with asyncio.timeout(10):
+            while not connector._waiters:
+                await asyncio.sleep(0.01)
+        assert not unrelated.done()
+        turns[0].cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turns[0]
+        assert await asyncio.wait_for(unrelated, 10) == "UNRELATED-HEALTHY"
+        assert not turns[1].done(), "Remaining Scrape still owns its slow response"
+        release.set()
+        assert _speech(await asyncio.wait_for(turns[1], 10)) == "Pool tool recovered"
+        assert _speech(await asyncio.wait_for(say("c"), 10)) == "Pool tool recovered"
+        assert await ordinary_http() == "UNRELATED-HEALTHY"
+        assert not session.closed and not connector._acquired and not connector._waiters
+        record(
+            stress_trace,
+            "summary",
+            layer="provider-wire",
+            shared_http_pool_pressure_cases=1,
+            shared_http_waiter_recoveries=1,
+            recovery_conversations=2,
+        )
+    finally:
+        release.set()
+        for task in [*turns, unrelated]:
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in [*turns, unrelated] if task is not None),
+            return_exceptions=True,
+        )
+        for connector, limit in original_limits.items():
+            connector._limit = limit
+        await runner.cleanup()

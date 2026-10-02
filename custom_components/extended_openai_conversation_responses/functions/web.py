@@ -6,6 +6,7 @@ import asyncio
 from contextlib import suppress
 import logging
 from typing import Any, cast
+import zlib
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -37,6 +38,49 @@ from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _decode_compressed_body(body: bytes, encoding: str, max_bytes: int) -> bytes:
+    """Bound accepted decoded content and reject incomplete gzip/deflate streams."""
+    if encoding in {"gzip", "deflate"}:
+        if not body:
+            raise aiohttp.ClientPayloadError("Empty compressed response")
+        wbits = 16 + zlib.MAX_WBITS if encoding == "gzip" else zlib.MAX_WBITS
+        # aiohttp also accepts the legacy raw-deflate representation.
+        if encoding == "deflate" and body and body[0] & 0x0F != 8:
+            wbits = -zlib.MAX_WBITS
+        decoded = bytearray()
+        while body:
+            decoder = zlib.decompressobj(wbits)
+            try:
+                decoded.extend(decoder.decompress(body, max_bytes + 1 - len(decoded)))
+            except zlib.error as err:
+                raise aiohttp.ClientPayloadError(
+                    "Malformed compressed response"
+                ) from err
+            if len(decoded) > max_bytes:
+                break
+            if not decoder.eof:
+                raise aiohttp.ClientPayloadError("Incomplete compressed response")
+            body = decoder.unused_data
+        result = bytes(decoded)
+    elif encoding in {"br", "zstd"}:
+        # Keep optional codecs supported by the installed aiohttp runtime.
+        from aiohttp import compression_utils
+
+        codec = (
+            compression_utils.BrotliDecompressor
+            if encoding == "br"
+            else compression_utils.ZSTDDecompressor
+        )
+        result = codec().decompress_sync(body)
+    else:
+        return body
+    if len(result) > max_bytes:
+        raise HomeAssistantError(
+            f"Remote response exceeds the configured safety limit of {max_bytes} bytes"
+        )
+    return result
 
 
 class _BoundedResponse:
@@ -73,6 +117,11 @@ class _BoundedResponse:
                 f"{self._max_bytes} bytes"
             )
 
+        encoding = self._response.headers.get("Content-Encoding", "").lower().strip()
+        if encoding:
+            body = await asyncio.to_thread(
+                _decode_compressed_body, body, encoding, self._max_bytes
+            )
         self._body = body
         return body
 
@@ -111,6 +160,9 @@ class _BoundedClientSession:
         self._max_bytes = max_bytes
 
     def request(self, *args: Any, **kwargs: Any) -> _BoundedRequestContext:
+        # Read encoded bytes ourselves: aiohttp accepts a truncated gzip stream
+        # as partial success, preventing an effective body-integrity check.
+        kwargs["auto_decompress"] = False
         return _BoundedRequestContext(
             self._session.request(*args, **kwargs), self._max_bytes
         )

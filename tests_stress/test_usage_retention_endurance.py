@@ -173,3 +173,88 @@ async def test_concurrent_usage_writes_survive_retention_jumps_and_reload(
         usage_scopes=2,
         forward_backward_clock_changes=3,
     )
+
+
+async def test_mixed_foreground_failure_detached_summary_accounting_survives_prune_reload(
+    hass, monkeypatch, _real_store_io, stress_trace
+):
+    """A detached completion adds its own request, never tokens to a finished run."""
+    from copy import deepcopy
+    from dataclasses import asdict
+    from tests_stress.test_extreme_context_matrix import _pending_summary_journey, _say
+    from tests_real_ha.test_provider_wire_e2e import _speech
+
+    state = await _pending_summary_journey(hass, monkeypatch, title="Mixed accounting")
+    agent, entry = state["agent"], state["entry"]
+    usage = agent._usage
+    assert usage.totals.api_request_count == 3
+    completed_runs = deepcopy([asdict(run) for run in usage.runs])
+    supplied_before = usage.totals.total_tokens
+    try:
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            [
+                (
+                    400,
+                    {
+                        "error": {
+                            "message": "controlled foreground failure",
+                            "type": "invalid_request_error",
+                        }
+                    },
+                )
+            ],
+        )
+        failure = await _say(
+            hass, entry.entry_id, state["owner"].id, "FAILED-INDEPENDENT-FOREGROUND"
+        )
+        assert failure.response.error_code is not None
+        assert len(wire.requests) == 1
+        assert usage.totals.failed_request_count == 1
+        failed_run = deepcopy(asdict(usage.runs[-1]))
+        state["release"].set()
+        await asyncio.wait_for(state["task"], 10)
+        assert usage.totals.api_request_count == 5
+        assert usage.totals.successful_request_count == 4
+        # Current policy records detached summaries in aggregates only. Detail
+        # records belong to active user runs; do not invent a new detached run.
+        assert len(usage.requests) == 4
+        assert usage.totals.total_tokens == supplied_before + 10
+        assert {request.run_id for request in usage.requests} == {
+            run.run_id for run in usage.runs
+        }
+        assert [asdict(run) for run in usage.runs[:3]] == completed_runs
+        assert asdict(usage.runs[-1]) == failed_run
+        aggregate = deepcopy(asdict(usage.totals))
+        await usage._async_save_details()
+        base = dt_util.utcnow()
+        with monkeypatch.context() as clock:
+            clock.setattr(
+                usage_module.dt_util, "utcnow", lambda: base + timedelta(days=400)
+            )
+            await usage.async_prune_details()
+        assert not usage.requests and not usage.runs
+        assert asdict(usage.totals) == aggregate
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        fresh = conversation.async_get_agent(hass, entry.entry_id)
+        assert asdict(fresh._usage.totals) == aggregate
+        _install_wire(monkeypatch, fresh, [_chat_sse_text("Accounting recovered")])
+        assert (
+            _speech(
+                await _say(hass, entry.entry_id, state["owner"].id, "HEALTHY-USAGE")
+            )
+            == "Accounting recovered"
+        )
+        assert fresh._usage.totals.api_request_count == 6
+        record(
+            stress_trace,
+            "summary",
+            layer="Real HA Store/provider",
+            mixed_usage_summary_cases=1,
+            usage_retention_prunes=1,
+            recovery_conversations=1,
+        )
+    finally:
+        state["release"].set()
+        await asyncio.gather(state["task"], return_exceptions=True)

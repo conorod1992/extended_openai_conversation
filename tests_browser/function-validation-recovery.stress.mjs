@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {openFunctionAddMenu, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const validYaml = (name = "nightly_tool", description = "Nightly Function Tool") => `spec:
   name: ${name}
@@ -13,7 +13,7 @@ function:
 `;
 
 async function openAddTool(panel) {
-  await panel.locator("#add-tool").click();
+  await openFunctionAddMenu(panel, "#add-tool");
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
   await expect(panel.locator("#tool-yaml")).toBeEditable();
   return panel.locator("#tool-yaml");
@@ -190,7 +190,7 @@ function:
     };
   });
 
-  await panel.locator("#add-tool").click();
+  await openFunctionAddMenu(panel, "#add-tool");
   await expect(panel.locator("#tool-error")).toContainText("Built-in catalogue unavailable");
   await expect(panel.locator("#tool-save")).toBeDisabled();
   await panel.locator("#tool-cancel").click();

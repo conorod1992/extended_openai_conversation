@@ -81,7 +81,7 @@ test("nightly run details show failed provider requests, recover from errors, an
 
   await panel.locator(".close-usage-requests").last().click();
   await panel.locator('[data-usage-run-id="run-empty"]').click();
-  await expect(panel.locator("#usage-request-body")).toContainText("No retained provider-request details are available");
+  await expect(panel.locator("#usage-request-body")).toContainText("No saved provider-request details are available");
   await panel.locator(".close-usage-requests").last().click();
 
   await panel.locator('[data-usage-run-id="run-retry"]').click();
@@ -142,7 +142,7 @@ test("nightly Clear Recent Details confirms, retries, deduplicates, and preserve
   await expect(clear).toBeEnabled();
   const clearedRunState = await panel.evaluate((host) => host._result.runs);
   expect(clearedRunState).toMatchObject({runs:[],total:0});
-  await expect(panel.locator("[data-eoc-usage-runs]")).toContainText("No retained recent runs");
+  await expect(panel.locator("[data-eoc-usage-runs]")).toContainText("No saved recent runs");
   await expect(panel.locator("#usage-window")).toHaveValue("year");
   expect(await panel.locator(".chart-column").evaluateAll((columns) => columns.map((column) => column.getAttribute("aria-label")))).toEqual(chartBefore);
   const aggregateAfter = await panel.evaluate((host) => ({days:host._result.days,retention:host._result.retention,summary:{today:host._result.summary.today,lifetime:host._result.summary.lifetime}}));

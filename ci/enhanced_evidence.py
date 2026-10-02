@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+from contextlib import suppress
 from functools import lru_cache
 import hashlib
 from importlib.metadata import PackageNotFoundError, distribution, version
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -13,6 +16,7 @@ import re
 import subprocess
 import sys
 from typing import Any
+from zipfile import ZipFile
 
 SCHEMA = "eoai-enhanced-evidence/v1"
 PRIVATE_KEYS = re.compile(
@@ -28,6 +32,17 @@ CANARIES = (
     "PRIVATE-KNOWLEDGE-CANARY-8274",
     "SENSITIVE-PROMPT-CANARY-8274",
 )
+
+
+def fresh_privacy_canaries(seed: str) -> tuple[str, ...]:
+    """Deterministic probes that are never added to the sanitizer's literal list."""
+    suffix = hashlib.sha256(f"artifact-privacy:{seed}".encode()).hexdigest()[:24]
+    return (
+        f"sk-probe-{suffix}",
+        f"Bearer probe-{suffix}",
+        f"private-memory-{suffix}",
+        f"private-prompt-{suffix}",
+    )
 
 
 def final_pytest_outcome(reports: dict[str, Any]) -> str:
@@ -105,7 +120,10 @@ def checkout_sha() -> str:
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-    except (OSError, subprocess.CalledProcessError):  # fmt: skip - standalone gates also run on Python 3.12
+    except (
+        OSError,
+        subprocess.CalledProcessError,
+    ):  # fmt: skip - standalone gates also run on Python 3.12
         return "unknown"
 
 
@@ -123,7 +141,10 @@ def environment_identity() -> dict[str, Any]:
         commit = json.loads(direct or "{}").get("vcs_info", {}).get("commit_id")
         if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit):
             ha_source = commit
-    except (PackageNotFoundError, ValueError):  # fmt: skip - standalone gates also run on Python 3.12
+    except (
+        PackageNotFoundError,
+        ValueError,
+    ):  # fmt: skip - standalone gates also run on Python 3.12
         pass
     built_environment = Path("/opt/eoai-ci/environment.sha256")
     built_digest = None
@@ -210,11 +231,58 @@ def sanitize_directory(root: Path) -> None:
         write_json(path, json.loads(path.read_text(encoding="utf-8")))
 
 
+def sanitize_browser_artifacts(root: Path) -> None:
+    """Redact credential-shaped diagnostics inside retained Playwright ZIPs.
+
+    Preserve trace structure and screenshots. User-visible UI content is not
+    removed; this is the same credential-string policy as nightly logs.
+    """
+    if not root.exists():
+        return
+
+    def sanitized_zip(content: bytes) -> bytes:
+        output = BytesIO()
+        with ZipFile(BytesIO(content)) as source, ZipFile(output, "w") as target:
+            for info in source.infolist():
+                body = source.read(info.filename)
+                # Playwright's attachment names can be extensionless hashes.
+                with suppress(UnicodeDecodeError):
+                    body = redact_text(body.decode("utf-8")).encode("utf-8")
+                target.writestr(info, body)
+        return output.getvalue()
+
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix == ".zip":
+            path.write_bytes(sanitized_zip(path.read_bytes()))
+        elif path.suffix in {".md", ".txt", ".log", ".json"}:
+            path.write_text(
+                redact_text(path.read_text(encoding="utf-8")), encoding="utf-8"
+            )
+        elif path.suffix == ".html":
+            html = path.read_text(encoding="utf-8")
+            # Playwright embeds report JSON in a base64 ZIP in its HTML report.
+            html = re.sub(
+                r'(<template id="playwrightReportBase64">data:application/zip;base64,)([^<]+)',
+                lambda match: (
+                    match[1]
+                    + base64.b64encode(
+                        sanitized_zip(base64.b64decode(match[2]))
+                    ).decode()
+                ),
+                html,
+            )
+            path.write_text(redact_text(html), encoding="utf-8")
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 4 and sys.argv[1] == "sanitize-log":
         sanitize_log(Path(sys.argv[2]), Path(sys.argv[3]))
     elif len(sys.argv) == 3 and sys.argv[1] == "sanitize-dir":
         sanitize_directory(Path(sys.argv[2]))
+    elif len(sys.argv) == 3 and sys.argv[1] == "sanitize-browser":
+        sanitize_browser_artifacts(Path(sys.argv[2]))
     else:
         raise SystemExit(
             "usage: enhanced_evidence.py sanitize-log SOURCE TARGET | sanitize-dir ROOT"

@@ -67,10 +67,10 @@ test("nightly Usage history windows load lazily, cache selections, page all hist
   await windowControl.selectOption("7");
   await expect(panel.getByText("No daily usage is recorded in this period.")).toBeVisible();
   await expect(panel.locator(".chart-column")).toHaveCount(0);
-  await expect(panel.locator(".usage-history-note")).toContainText("No recorded daily aggregates yet");
+  await expect(panel.locator(".usage-history-note")).toContainText("No daily usage history yet");
 
   await windowControl.selectOption("90");
-  await expect(panel.locator(".usage-history-note")).toContainText("first stored daily aggregate is");
+  await expect(panel.locator(".usage-history-note")).toContainText("Jul 17, 2026 to Sep 29, 2026");
   await expect(panel.locator(".chart-column")).toHaveCount(2);
   await windowControl.selectOption("30");
   await windowControl.selectOption("90");

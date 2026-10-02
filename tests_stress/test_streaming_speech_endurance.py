@@ -235,3 +235,160 @@ async def test_unload_during_fragmented_stream_recovers_clean_speech(
         interrupted_speech_unloads=1,
         recovered_speech_streams=1,
     )
+
+
+async def test_concurrent_distinct_matcher_workers_settle_and_keep_ha_responsive(
+    hass, monkeypatch, stress_trace
+):
+    """Bounded automata, executor regex, and async speech regex own separate work."""
+    import threading
+    from custom_components.extended_openai_conversation_responses import (
+        regex_execution,
+        request_rule_patterns,
+    )
+    from custom_components.extended_openai_conversation_responses.function_execution import (
+        async_validate_function_arguments,
+    )
+    from custom_components.extended_openai_conversation_responses.management_ui import (
+        async_management_command,
+    )
+    from homeassistant.exceptions import HomeAssistantError
+    from tests_stress.test_request_rules_matrix import manager, rule
+    from tests_real_ha.test_cross_feature_acceptance import _agent
+    from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _speech
+
+    agent = await _agent(hass)
+    rules = await manager(
+        rule("pressure", "start {a} x {b} x {c} x {d} end", "sentence_pattern")
+    )
+    processes, work = [], []
+    lock = threading.Lock()
+    popen = regex_execution.subprocess.Popen
+    spawn = regex_execution.asyncio.create_subprocess_exec
+    consume = request_rule_patterns.MatchBudget.consume
+
+    def observed_popen(*args, **kwargs):
+        process = popen(*args, **kwargs)
+        with lock:
+            processes.append(process)
+        return process
+
+    async def observed_spawn(*args, **kwargs):
+        process = await spawn(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    def charged(budget, amount=1):
+        if budget.used == 0:
+            work.append(budget)
+        return consume(budget, amount)
+
+    monkeypatch.setattr(regex_execution.subprocess, "Popen", observed_popen)
+    monkeypatch.setattr(
+        regex_execution.asyncio, "create_subprocess_exec", observed_spawn
+    )
+    monkeypatch.setattr(request_rule_patterns.MatchBudget, "consume", charged)
+    spec = {
+        "parameters": {
+            "type": "object",
+            "properties": {"value": {"type": "string", "pattern": "^(a+)+$"}},
+            "required": ["value"],
+        }
+    }
+    pathological = "a" * 30 + "!"
+    function_tasks = [
+        asyncio.create_task(
+            async_validate_function_arguments(hass, spec, {"value": pathological})
+        )
+        for _ in range(3)
+    ]
+    speech_tasks = [
+        asyncio.create_task(
+            regex_execution._async_apply_speech_replacements(
+                pathological, [{"pattern": "^(a+)+$", "replacement": "ok"}]
+            )
+        )
+        for _ in range(3)
+    ]
+    match_tasks = [
+        asyncio.create_task(rules.async_match(hass, "start " + "x " * 180 + "end"))
+        for _ in range(3)
+    ]
+    tasks = [*function_tasks, *speech_tasks, *match_tasks]
+    try:
+        async with asyncio.timeout(10):
+            while len(processes) < 6 or not work:
+                await asyncio.sleep(0.01)
+        assert any(
+            getattr(process, "returncode", None) is None for process in processes
+        )
+        function_tasks[0].cancel()
+        speech_tasks[0].cancel()
+        _install_wire(monkeypatch, agent, [_chat_sse_text("Matchers remain usable")])
+        usable = await asyncio.wait_for(
+            conversation.async_converse(
+                hass=hass,
+                text="Ordinary traffic under matching pressure",
+                conversation_id=None,
+                context=Context(),
+                language="en",
+                agent_id=agent.entry.entry_id,
+            ),
+            15,
+        )
+        assert _speech(usable) == "Matchers remain usable"
+        overview = await asyncio.wait_for(
+            async_management_command(
+                hass,
+                "matcher-admin",
+                True,
+                {
+                    "section": "overview",
+                    "action": "summary",
+                    "entry_id": agent.entry.entry_id,
+                    "subentry_id": agent.subentry.subentry_id,
+                },
+            ),
+            15,
+        )
+        assert overview["load_errors"] == []
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True), 15
+        )
+        assert isinstance(outcomes[0], asyncio.CancelledError)
+        assert isinstance(outcomes[3], asyncio.CancelledError)
+        assert all(isinstance(outcome, HomeAssistantError) for outcome in outcomes[1:3])
+        assert outcomes[4:6] == [pathological, pathological]
+        assert len(work) == 3 and all(budget.used > 1000 for budget in work)
+        async with asyncio.timeout(5):
+            while any(
+                getattr(process, "returncode", None) is None for process in processes
+            ):
+                await asyncio.sleep(0.02)
+        assert await async_validate_function_arguments(
+            hass, spec, {"value": "aaa"}
+        ) == {"value": "aaa"}
+        assert (
+            await regex_execution._async_apply_speech_replacements(
+                "aaa", [{"pattern": "a+", "replacement": "healthy"}]
+            )
+            == "healthy"
+        )
+        assert (
+            await rules.async_match(hass, "start one x two x three x four end")
+            is not None
+        )
+        record(
+            stress_trace,
+            "summary",
+            layer="Real HA workers",
+            distinct_matcher_pressure_cases=1,
+            regex_worker_settlements=6,
+            recovery_conversations=1,
+            bounded_automaton_work=sum(budget.used for budget in work),
+        )
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

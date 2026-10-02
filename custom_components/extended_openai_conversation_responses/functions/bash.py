@@ -336,11 +336,14 @@ class BashFunction(Function):
             stderr_task = asyncio.create_task(_read_bounded_stream(process.stderr))
 
             try:
-                await asyncio.wait_for(process.wait(), timeout=timeout)
-                (
-                    (stdout, stdout_truncated),
-                    (stderr, stderr_truncated),
-                ) = await asyncio.gather(stdout_task, stderr_task)
+                # An exited shell can leave descendants holding its pipes open.
+                # The command deadline includes draining those owned pipes.
+                async with asyncio.timeout(timeout):
+                    await process.wait()
+                    (
+                        (stdout, stdout_truncated),
+                        (stderr, stderr_truncated),
+                    ) = await asyncio.gather(stdout_task, stderr_task)
             except TimeoutError:
                 await _async_cleanup_process(
                     process,
