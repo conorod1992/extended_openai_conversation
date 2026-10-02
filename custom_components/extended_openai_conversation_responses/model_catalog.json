@@ -1,6 +1,6 @@
 {
   "schema_version": 6,
-  "catalog_version": 10,
+  "catalog_version": 11,
   "compatibility": {"minimum_eoai_version": "6.8.3"},
   "defaults": {
     "status": "unknown",
@@ -323,7 +323,8 @@
       "id": "gpt-5.4-nano",
       "display_name": "gpt-5.4-nano",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "lifecycle_note": "Deprecated on October 1, 2026; API shutdown on April 1, 2027. Migrate to gpt-6-luna before shutdown. Retained for existing configurations.",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high", "xhigh"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high", "xhigh"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high", "xhigh"]}}},
@@ -384,7 +385,8 @@
       "id": "gpt-5.1",
       "display_name": "gpt-5.1",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "lifecycle_note": "Deprecated on October 1, 2026; API shutdown on April 1, 2027. Migrate to gpt-6-sol before shutdown. Retained for existing configurations.",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": true, "efforts": ["none", "low", "medium", "high"], "openai_default": "none", "by_api": {"responses": {"efforts": ["none", "low", "medium", "high"]}, "chat_completions": {"efforts": ["none", "low", "medium", "high"]}}},

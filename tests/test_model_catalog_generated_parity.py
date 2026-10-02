@@ -65,6 +65,8 @@ def test_projected_api_and_tool_choices_match_backend_for_every_model(model):
         "gpt-6.1-sol",
         "gpt-6-sol",
         "gpt-5-mini",
+        "gpt-5.4-nano",
+        "gpt-5.1",
         "gpt-5.6",
         "gpt-4.1",
     ],
@@ -111,6 +113,7 @@ def test_selectable_representative_choices_build_safe_requests(model):
         )
         if not accepted:
             continue
+        assert snapshot.api_kwargs["model"] == model
         assert snapshot.api_mode == expected
         assert "max_tokens" not in snapshot.api_kwargs
         assert "temperature" not in snapshot.api_kwargs
