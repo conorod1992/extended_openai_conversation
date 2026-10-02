@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import atomicwrites
 import pytest
 
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
@@ -17,6 +16,8 @@ from custom_components.extended_openai_conversation_responses.quiet_hours import
     async_get_quiet_hours,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
+from homeassistant.util.file import WriteError
 from tests_real_ha.test_quiet_hours_scheduling import (
     _install_control_services,
     _install_satellite_entities,
@@ -367,7 +368,11 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
     stage,
     recovery,
 ):
-    """Fault the actual target control writes before any corresponding HA action."""
+    """Fault the real Store writer before commit and the corresponding HA action.
+
+    Quiet Hours uses HA's ordinary non-atomic writer. Gate its prepared-data
+    boundary, delegating every unaffected write to the actual native writer.
+    """
     await hass.config.async_set_time_zone("Europe/Dublin")
     now = [datetime(2026, 1, 10, 12, 0, tzinfo=DUBLIN)]
     from custom_components.extended_openai_conversation_responses import (
@@ -408,25 +413,24 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
     assert discovered["wake_sound_entity_id"] == wake
     target = media if kind == "volume" else wake
     path = Path(manager._store.path)
-    replace = atomicwrites._replace_atomic
+    write_prepared = Store._write_prepared_data
     faults = []
     attempted_writes = []
 
-    def fail_target_write(source, destination):
-        if Path(destination) == path and not faults:
-            payload = json.loads(Path(source).read_text())["data"]
+    def fail_target_write(store, mode, json_data):
+        if Path(store.path) == path and not faults:
+            payload = json.loads(json_data)["data"]
             active = payload.get("active") or {}
-            attempted_writes.append({"destination": str(destination), "active": active})
+            attempted_writes.append({"destination": str(store.path), "active": active})
             observed = target in active.get("observed_controls", [])
             owned = target in active.get("controls", {})
             if observed and owned == (stage == "ownership"):
                 faults.append({"observed": observed, "owned": owned})
                 assert all(entity_id != target for _, entity_id in calls)
-                raise OSError(
-                    errno.EIO,
-                    "Injected target control Store failure before replacement",
+                raise WriteError("Injected target control writer failure") from OSError(
+                    errno.EIO, "Target control write failed before commit"
                 )
-        return replace(source, destination)
+        return write_prepared(store, mode, json_data)
 
     try:
         now[0] = datetime(2026, 1, 10, 22, 5, tzinfo=DUBLIN)
@@ -436,7 +440,7 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
             is not None
         )
         with monkeypatch.context() as fault:
-            fault.setattr(atomicwrites, "_replace_atomic", fail_target_write)
+            fault.setattr(Store, "_write_prepared_data", fail_target_write)
             with pytest.raises(OSError, match="Private storage write failed"):
                 await manager.async_reconcile(now=now[0])
                 pytest.fail(
@@ -504,7 +508,7 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
         record(
             stress_trace,
             "summary",
-            layer="Real HA controls and atomic Store",
+            layer="Real HA controls and native Store writer",
             quiet_storage_failure_cases=1,
             quiet_storage_retry_checks=1,
             quiet_storage_restoration_checks=1,
