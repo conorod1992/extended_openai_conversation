@@ -140,8 +140,6 @@ jobs:
       HISTORICAL_RELEASE_SHA: ${{ needs.prepare.outputs.published_release_sha }}
       HISTORICAL_HA_VERSION: "2026.9.4"
       HISTORICAL_BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
-      HISTORICAL_RUNTIME_DIR: ${{ runner.temp }}/eoai-released-ha
-      HISTORICAL_INPUT_DIR: ${{ runner.temp }}/eoai-released-input
     steps:
       - name: Checkout immutable run candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -151,6 +149,14 @@ jobs:
         id: identity
         run: |
           set -euo pipefail
+          HISTORICAL_RUNTIME_DIR="$RUNNER_TEMP/eoai-released-ha"
+          HISTORICAL_INPUT_DIR="$RUNNER_TEMP/eoai-released-input"
+          HISTORICAL_MANIFEST="$HISTORICAL_INPUT_DIR/manifest.json"
+          echo "HISTORICAL_RUNTIME_DIR=$HISTORICAL_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "HISTORICAL_INPUT_DIR=$HISTORICAL_INPUT_DIR" >> "$GITHUB_ENV"
+          echo "HISTORICAL_MANIFEST=$HISTORICAL_MANIFEST" >> "$GITHUB_ENV"
+          echo "runtime_dir=$HISTORICAL_RUNTIME_DIR" >> "$GITHUB_OUTPUT"
+          echo "input_dir=$HISTORICAL_INPUT_DIR" >> "$GITHUB_OUTPUT"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git fetch --force origin "refs/tags/${HISTORICAL_RELEASE_TAG}:refs/tags/${HISTORICAL_RELEASE_TAG}"
           test "$(git rev-parse "${HISTORICAL_RELEASE_TAG}^{commit}")" = "$HISTORICAL_RELEASE_SHA"
@@ -175,12 +181,10 @@ jobs:
         id: historical-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ${{ runner.temp }}/eoai-released-ha
+          path: ${{ steps.identity.outputs.runtime_dir }}
           key: ${{ steps.identity.outputs.cache_key }}
       - name: Construct isolated runtime on cache miss
         if: steps.historical-cache.outputs.cache-hit != 'true'
-        env:
-          HISTORICAL_MANIFEST: ${{ runner.temp }}/eoai-released-input/manifest.json
         run: bash ci/prepare_historical_runtime.sh
       - name: Verify immutable historical runtime
         run: |
