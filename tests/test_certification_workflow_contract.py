@@ -48,6 +48,11 @@ def test_every_enhanced_job_checks_out_the_one_prepare_candidate():
         step["env"]["ENHANCED_CANDIDATE_SHA"]
         == "${{ needs.prepare.outputs.candidate_sha }}"
     )
+    assert jobs["prepare"]["outputs"]["ha_version"] == "${{ steps.ha.outputs.version }}"
+    assert (
+        step["env"]["ENHANCED_EXPECTED_STABLE_HA_VERSION"]
+        == "${{ needs.prepare.outputs.ha_version }}"
+    )
 
 
 def test_enhanced_dispatch_can_run_the_scheduled_intensity_matrix():
@@ -118,6 +123,7 @@ def test_standalone_certification_imports_support_the_lightweight_runner_python(
     for filename in (
         "enhanced_certification.py",
         "candidate_evidence.py",
+        "compatibility_evidence.py",
         "enhanced_evidence.py",
         "execution_contract.py",
         "release_certification.py",
@@ -156,6 +162,23 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
         for step in jobs["ha-lifecycle-dev"]["steps"]
     )
     assert "ha-lifecycle-dev" in jobs["certify"]["needs"]
+    dev_steps = jobs["ha-lifecycle-dev"]["steps"]
+    for name in (
+        "Select only an exact immutable HA dev image",
+        "Run lifecycle contract in the matching prebuilt runtime",
+    ):
+        environment = next(
+            step["env"] for step in dev_steps if step.get("name") == name
+        )
+        assert environment["EXPECTED_HA_CORE_SHA"] == "${{ steps.python.outputs.sha }}"
+        assert (
+            environment["EXPECTED_PYTHON_VERSION"]
+            == "${{ steps.python.outputs.version }}"
+        )
+    runtime = (ROOT / "ci/check_ha_dev_runtime.sh").read_text()
+    assert 'test "$IMAGE_SHA" = "$EXPECTED_HA_CORE_SHA"' in runtime
+    assert 'test "$IMAGE_PYTHON" = "$EXPECTED_PYTHON_VERSION"' in runtime
+    assert "--check /opt/eoai-ci/environment.identity.json" in runtime
 
     engines = jobs["browser-engines"]
     assert engines["strategy"]["matrix"]["engine"] == ["firefox", "webkit"]
