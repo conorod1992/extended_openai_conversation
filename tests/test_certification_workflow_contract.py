@@ -160,6 +160,50 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     stable_reconciler = Path("ci/reconcile_stable_environment.sh").read_text()
     assert "environment.identity.json" in stable_reconciler
     assert "sha256sum" in stable_reconciler
+    assert "EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION" in stable_reconciler
+    assert (
+        "pytest-homeassistant-custom-component==${EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION"
+        in stable_reconciler
+    )
+    stable_image_workflow = workflow("ci-image-stable.yml")["jobs"]["build"]
+    assert any(
+        step.get("name") == "Resolve stable Home Assistant and compatible test plugin"
+        for step in stable_image_workflow["steps"]
+    )
+    stable_dockerfile = Path("ci/Dockerfile.stable").read_text()
+    assert (
+        "pytest-homeassistant-custom-component==${HA_TEST_PLUGIN_VERSION}"
+        in stable_dockerfile
+    )
+    assert "homeassistant==${HOMEASSISTANT_VERSION}" in stable_dockerfile
+
+    dev_image_verify = next(
+        step["run"]
+        for step in workflow("ci-image-dev.yml")["jobs"]["build"]["steps"]
+        if step.get("name") == "Verify published image"
+    )
+    assert 'if [[ "$GITHUB_EVENT_NAME" != pull_request ]]' in dev_image_verify
+    assert "check_ha_dev_runtime.sh" in dev_image_verify
+    assert 'docker pull "${IMAGE_NAME}:typecheck-' in dev_image_verify
+    assert 'docker pull "${IMAGE_NAME}:ha-dev"' in dev_image_verify
+
+    persistence_job = jobs["persistence_runtime"]
+    assert persistence_job["needs"] == "prepare"
+    assert "HISTORICAL_RELEASE_SHA" in persistence_job["env"]
+    assert any(
+        step.get("uses", "").startswith("actions/cache@")
+        for step in persistence_job["steps"]
+    )
+    historical_runtime = Path("ci/prepare_historical_runtime.sh").read_text()
+    assert 'python -m venv "$HISTORICAL_RUNTIME_DIR"' in historical_runtime
+    assert "homeassistant==$HISTORICAL_HA_VERSION" in historical_runtime
+    persistence_campaign = jobs["python-campaigns"]
+    assert persistence_campaign["needs"] == ["prepare", "persistence_runtime"]
+    assert "always()" in persistence_campaign["if"]
+    assert "Verify or safely build the historical runtime" in [
+        step.get("name") for step in persistence_campaign["steps"]
+    ]
+
     dev_runner = Path("ci/run_prebuilt_ha_dev.sh").read_text()
     assert '[[ -z "$BASE_IMAGE" ]]' in dev_runner
     assert "this legacy image will be reconciled on each run" in dev_runner

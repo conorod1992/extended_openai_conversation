@@ -34,9 +34,21 @@ jobs:
   build:
     name: Build stable HA CI images
     runs-on: ubuntu-latest
+    outputs:
+      homeassistant_version: ${{ steps.environment.outputs.homeassistant_version }}
+      ha_test_plugin_version: ${{ steps.environment.outputs.ha_test_plugin_version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve stable Home Assistant and compatible test plugin
+        id: environment
+        run: |
+          HA_VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
+          PLUGIN_VERSION="$(python3 ci/resolve_ha_test_plugin.py "$HA_VERSION")"
+          echo "homeassistant_version=$HA_VERSION" >> "$GITHUB_OUTPUT"
+          echo "ha_test_plugin_version=$PLUGIN_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Home Assistant: $HA_VERSION; compatible pytest plugin: $PLUGIN_VERSION" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
@@ -55,6 +67,9 @@ jobs:
           context: .
           file: ci/Dockerfile.stable
           target: ha-stable
+          build-args: |
+            HOMEASSISTANT_VERSION=${{ steps.environment.outputs.homeassistant_version }}
+            HA_TEST_PLUGIN_VERSION=${{ steps.environment.outputs.ha_test_plugin_version }}
           push: ${{ github.event_name != 'pull_request' }}
           load: ${{ github.event_name == 'pull_request' }}
           tags: |
@@ -69,6 +84,9 @@ jobs:
           context: .
           file: ci/Dockerfile.stable
           target: browser-stable
+          build-args: |
+            HOMEASSISTANT_VERSION=${{ steps.environment.outputs.homeassistant_version }}
+            HA_TEST_PLUGIN_VERSION=${{ steps.environment.outputs.ha_test_plugin_version }}
           push: ${{ github.event_name != 'pull_request' }}
           load: ${{ github.event_name == 'pull_request' }}
           tags: |
@@ -85,6 +103,8 @@ jobs:
           target: browser-engine
           build-args: |
             PLAYWRIGHT_ENGINE=firefox
+            HOMEASSISTANT_VERSION=${{ steps.environment.outputs.homeassistant_version }}
+            HA_TEST_PLUGIN_VERSION=${{ steps.environment.outputs.ha_test_plugin_version }}
           push: ${{ github.event_name != 'pull_request' }}
           load: ${{ github.event_name == 'pull_request' }}
           tags: |
@@ -103,6 +123,8 @@ jobs:
           target: browser-engine
           build-args: |
             PLAYWRIGHT_ENGINE=webkit
+            HOMEASSISTANT_VERSION=${{ steps.environment.outputs.homeassistant_version }}
+            HA_TEST_PLUGIN_VERSION=${{ steps.environment.outputs.ha_test_plugin_version }}
           push: ${{ github.event_name != 'pull_request' }}
           load: ${{ github.event_name == 'pull_request' }}
           tags: |
@@ -116,8 +138,11 @@ jobs:
       - name: Verify published images
         run: |
           if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then docker pull "${IMAGE_NAME}:ha-stable"; fi
-          docker run --rm "${IMAGE_NAME}:ha-stable" python -c \
-            'from importlib.metadata import version; print("homeassistant=" + version("homeassistant")); print("pytest-homeassistant-custom-component=" + version("pytest-homeassistant-custom-component"))'
+          docker run --rm \
+            -e EXPECTED_HOMEASSISTANT_VERSION="${{ steps.environment.outputs.homeassistant_version }}" \
+            -e EXPECTED_HA_TEST_PLUGIN_VERSION="${{ steps.environment.outputs.ha_test_plugin_version }}" \
+            "${IMAGE_NAME}:ha-stable" python -c 'import os; from importlib.metadata import version; assert version("homeassistant") == os.environ["EXPECTED_HOMEASSISTANT_VERSION"]; assert version("pytest-homeassistant-custom-component") == os.environ["EXPECTED_HA_TEST_PLUGIN_VERSION"]'
+          docker run --rm "${IMAGE_NAME}:ha-stable" python -m pip check
           docker run --rm "${IMAGE_NAME}:ha-stable" test -s /opt/eoai-ci/media-dependencies.ready
 
           if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then docker pull "${IMAGE_NAME}:browser-stable"; fi

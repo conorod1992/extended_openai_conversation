@@ -16,7 +16,7 @@ if docker run --rm --network host --ipc=host \
   -e EXPECTED_HA_CORE_SHA -e EXPECTED_PYTHON_VERSION \
   "$IMAGE" bash ci/check_ha_dev_runtime.sh; then
   echo "match=true" >> "$GITHUB_OUTPUT"
-  echo "Using exact HA-dev image for Core `$EXPECTED_HA_CORE_SHA` and Python `$EXPECTED_PYTHON_VERSION`." >> "$GITHUB_STEP_SUMMARY"
+  echo "Using exact HA-dev image for Core ${EXPECTED_HA_CORE_SHA} and Python ${EXPECTED_PYTHON_VERSION}." >> "$GITHUB_STEP_SUMMARY"
 else
   echo "match=false" >> "$GITHUB_OUTPUT"
   echo "HA-dev image identity did not match; will construct the resolved runtime." >> "$GITHUB_STEP_SUMMARY"

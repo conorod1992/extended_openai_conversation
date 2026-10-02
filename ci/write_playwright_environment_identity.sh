@@ -18,11 +18,14 @@ python /opt/eoai-ci/environment_fingerprint.py \
   --recipe /opt/eoai-ci/install_ha_dependencies.py \
   --recipe /opt/eoai-ci/install_ha_media_dependencies.py \
   --recipe /opt/eoai-ci/environment_fingerprint.py \
+  --recipe /opt/eoai-ci/resolve_ha_test_plugin.py \
   --recipe /opt/eoai-ci/reconcile_stable_environment.sh \
   --recipe /opt/eoai-ci/write_playwright_environment_identity.sh \
   --recipe /opt/eoai-ci/verify_playwright_engine.mjs \
   --python-version "$(python -c 'import platform; print(platform.python_version())')" \
   --base-image "$(cat /opt/eoai-ci/base-image.txt)" \
+  --extra "ha_version=$(python -c 'from importlib.metadata import version; print(version("homeassistant"))')" \
+  --extra "ha_test_plugin_version=$(python -c 'from importlib.metadata import version; print(version("pytest-homeassistant-custom-component"))')" \
   --extra "playwright_engine=$EOAI_PLAYWRIGHT_ENGINE" \
   --extra "playwright_version=$EOAI_PLAYWRIGHT_VERSION" \
   --extra "node_version=$(node --version)" \
