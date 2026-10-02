@@ -9,6 +9,8 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "filesystem_recovery_cases",
+    "filesystem_recovery_kills",
     "provider_endpoint_wire_cases",
     "native_edit_settlement_cases",
     "retention_restore_ownership_cases",

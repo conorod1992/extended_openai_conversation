@@ -753,6 +753,9 @@
     "tests_stress/test_extreme_context_matrix.py::test_pending_summary_lifecycle_cannot_mutate_replacement_history[remove-recreate]",
     "tests_stress/test_extreme_context_matrix.py::test_pending_summary_lifecycle_cannot_mutate_replacement_history[reset]",
     "tests_stress/test_file_edit_native_cancellation.py::test_cancelled_native_edit_retains_path_until_worker_settles",
+    "tests_stress/test_filesystem_process_recovery.py::test_booted_filesystem_recovers_after_hard_kill[publish]",
+    "tests_stress/test_filesystem_process_recovery.py::test_booted_filesystem_recovers_after_hard_kill[remove]",
+    "tests_stress/test_filesystem_process_recovery.py::test_booted_filesystem_recovers_after_hard_kill[transfer]",
     "tests_stress/test_frontend_interaction_inventory.py::test_active_plans_allow_low_risk_work_but_never_reopen_high_risk_coverage",
     "tests_stress/test_frontend_interaction_inventory.py::test_completed_frontend_roadmap_entries_are_not_left_planned",
     "tests_stress/test_frontend_interaction_inventory.py::test_coverage_plans_reject_unaccountable_or_unbounded_gaps[change0]",
@@ -1602,7 +1605,9 @@
       "delayed_backlog_executions": 30,
       "delayed_partial_termination_cases": 1,
       "delayed_foreground_during_backlog": 6,
-      "delayed_retryable_pre_dispatch_failures": 12
+      "delayed_retryable_pre_dispatch_failures": 12,
+      "filesystem_recovery_cases": 3,
+      "filesystem_recovery_kills": 5
     },
     "browser": {
       "browser_creates": 1,
@@ -1677,7 +1682,9 @@
     "backup-transfer": {
       "backup_chunks_transferred": 1,
       "transfer_previews": 1,
-      "coherent_setup_restore_exports": 1
+      "coherent_setup_restore_exports": 1,
+      "filesystem_recovery_cases": 1,
+      "filesystem_recovery_kills": 3
     },
     "provider-resilience": {
       "tls_verified_requests": 4,
