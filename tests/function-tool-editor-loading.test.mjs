@@ -165,4 +165,42 @@ for (const change of ["removed", "replaced", "reopened"]) {
   assert.equal(c["tool-yaml"].value, "starter YAML");
   assert.equal(c["tool-save"].disabled, false);
 }
+// A Save completion belongs to its originating editor, even when the same DOM is reused.
+for (const phase of ["validate_yaml", "save"]) for (const fails of [false, true]) {
+  const {panel, controls: c, edit, calls, nextLoad} = harness();
+  const hydrate = nextLoad("serialize");
+  const opened = edit.emit("click");
+  (await hydrate).resolve({yaml: "Alpha YAML"});
+  await opened;
+  c["tool-yaml"].value = "Alpha renamed implementation";
+  const entered = deferred(), release = deferred();
+  const originalCall = panel._call.bind(panel);
+  panel._call = async (section, action, params) => {
+    const result = await originalCall(section, action, params);
+    if (action === phase) { entered.resolve(params); await release.promise; }
+    return result;
+  };
+  const saving = c["tool-save"].emit("click");
+  const submitted = await entered.promise;
+  if (phase === "validate_yaml") assert.equal(submitted.yaml, "Alpha renamed implementation");
+  else assert.equal(submitted.original_name, "example");
+  await c["tool-cancel"].emit("click");
+  panel._draft.functions.push({spec:{name:"beta", description:"Beta original"}, function:{type:"template"}});
+  const betaHydrate = nextLoad("serialize");
+  const betaOpened = openTool(panel, 1);
+  (await betaHydrate).resolve({yaml:"Beta YAML"});
+  await betaOpened;
+  c["tool-yaml"].value = "Beta unsaved draft";
+  // A newer operation owns this disabled state; old finally must not enable it.
+  c["tool-save"].disabled = true;
+  const status = c["tool-error"].textContent;
+  if (fails) release.reject(new Error("Old operation failed")); else release.resolve();
+  await saving;
+  assert.equal(c["tool-dialog"].open, true);
+  assert.equal(c["tool-yaml"].value, "Beta unsaved draft");
+  assert.equal(c["tool-error"].textContent, status);
+  assert.equal(c["tool-save"].disabled, true);
+  assert.equal(calls.filter(call => call.action === "save").length, phase === "save" ? 1 : 0);
+  assert.ok(!calls.some(call => call.action === "save" && call.params.original_name === "beta"));
+}
 console.log("Function Tool editor hydration, stale sessions, failure and save tests passed");

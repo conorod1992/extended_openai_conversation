@@ -191,3 +191,17 @@ Process chaos schedules 50 normal / 100 heavy delayed calls through the real sch
 Chromium endurance adds equivalent-state post-GC heap, DOM, document and listener samples after route/module warm-up. Eight normal / sixteen heavy windows retain numeric diagnostics and reject sustained growth exceeding both generous absolute and relative thresholds. Firefox/WebKit keep the existing endurance path. The test exposed repeated help keyboard bindings retaining detached dialogs, unbounded native-selector readiness waiters, and Chromium radio-group ownership retaining removed import dialogs. Help now resolves the current dialog through one root handler; selector readiness uses one weak waiter per panel; removed dialogs release radio-group ownership before detachment. The existing editor matrix also holds a model-catalog response while reasoning is selected; the response now preserves the current choice instead of restoring its stale snapshot.
 
 These cases and minimum-operation evidence are selected only by enhanced overnight campaigns. Ordinary PR test selections and jobs are unchanged. All providers are deterministic local fixtures; no live OpenAI traffic or physical hardware is required.
+
+The existing browser and Firefox/WebKit native selections also run
+`test_native_editor_ownership_and_satellite_registry_recovery`. Its six native
+cases hold Save validation after the submitted YAML reaches backend validation,
+or hold UI completion after a real commit. Cancel/reopen must preserve the new
+draft, controls and destination; group, Request Rule and Guest references are
+checked before and after a fresh-manager reload. HA config-entry and manager
+Stores use the real atomic writer, with independent disk readback. The registry
+journey replaces Kitchen's entity/device association in the mounted document,
+saves through native entity/user pickers, and checks private markers in genuine
+public Assist provider requests from both devices. A first-fetch outage must
+retry in the same mounted panel. These cases remain Enhanced-only; the small
+editor-operation regression extends the existing ordinary Node suite because
+it deterministically protects ownership without HA, browser or network costs.

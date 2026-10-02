@@ -631,6 +631,7 @@
     "tests_stress/test_backup_transfer.py::test_large_multichunk_transfer_retry_and_restore",
     "tests_stress/test_backup_transfer_preview_races.py::test_two_imports_reject_stale_preview_and_changed_target",
     "tests_stress/test_browser_backend_resilience.py::test_browser_reconnect_and_permission_changes_against_real_ha_ws",
+    "tests_stress/test_browser_backend_resilience.py::test_native_editor_ownership_and_satellite_registry_recovery",
     "tests_stress/test_browser_backend_resilience.py::test_native_shell_accessibility_error_recovery",
     "tests_stress/test_browser_backend_resilience.py::test_native_shell_lifetime_and_assistant_isolation",
     "tests_stress/test_browser_backend_resilience.py::test_published_frontend_assets_against_new_real_ha_backend",
@@ -1232,6 +1233,12 @@
       "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
       "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
       "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::warmed widgets plateau in one document and Ctrl+S commits once",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
       "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::lazy chunk 404 reports a section error and refresh loads current assets",
       "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::malformed browser-local cache clears through normal reload",
       "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::new frontend with a stale published lazy chunk recovers on a fresh document",
@@ -1297,6 +1304,12 @@
       "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
       "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
       "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
       "tests_browser/stale-response-ordering.spec.mjs::firefox::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
     ],
     "browser-webkit": [
@@ -1320,6 +1333,12 @@
       "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
       "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
       "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
       "tests_browser/stale-response-ordering.spec.mjs::webkit::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
     ],
     "native-browser-chromium": [
@@ -1571,7 +1590,11 @@
       "native_retention_windows": 8,
       "native_keyboard_commits": 1,
       "native_semantic_scans": 82,
-      "native_error_semantic_scans": 20
+      "native_error_semantic_scans": 20,
+      "native_editor_ownership_cases": 4,
+      "native_registry_recovery_cases": 1,
+      "native_registry_private_probes": 2,
+      "native_ownership_reload_checks": 5
     },
     "browser-firefox": {
       "multi_tab_conflicts": 1,
@@ -1580,7 +1603,11 @@
       "native_composite_recoveries": 1,
       "native_assistant_states": 2,
       "native_held_completions": 2,
-      "native_revision_conflicts": 1
+      "native_revision_conflicts": 1,
+      "native_editor_ownership_cases": 4,
+      "native_registry_recovery_cases": 1,
+      "native_registry_private_probes": 2,
+      "native_ownership_reload_checks": 5
     },
     "browser-webkit": {
       "multi_tab_conflicts": 1,
@@ -1589,7 +1616,11 @@
       "native_composite_recoveries": 1,
       "native_assistant_states": 2,
       "native_held_completions": 2,
-      "native_revision_conflicts": 1
+      "native_revision_conflicts": 1,
+      "native_editor_ownership_cases": 4,
+      "native_registry_recovery_cases": 1,
+      "native_registry_private_probes": 2,
+      "native_ownership_reload_checks": 5
     },
     "voice-intercom": {
       "voice_private_context_probes": 1,

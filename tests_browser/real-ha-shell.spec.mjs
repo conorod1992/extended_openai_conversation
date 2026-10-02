@@ -19,6 +19,164 @@ async function nativeEvidence(label, data) {
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
 
+test.describe("nightly ownership", () => {
+  test.skip(process.env.EOAI_NATIVE_OWNERSHIP !== "1", "Enhanced native ownership profile only");
+  for (const phase of ["validation", "commit"]) for (const completion of ["success", "failure"]) {
+    test(`Function Tool ${phase} ${completion} cannot take over another editor`, async ({context, page, request}) => {
+      const panel = await openColdHaRoute(context, page, "capabilities/functions");
+      const prefix = `owned_${phase}_${completion}`;
+      const alpha = `${prefix}_alpha`, beta = `${prefix}_beta`, renamed = `${alpha}_renamed`;
+      const tool = (name, marker) => ({spec:{name, description:marker, parameters:{type:"object", properties:{}}}, function:{type:"template", value_template:marker}});
+      await panel.evaluate(async (host, {alpha, beta, tools}) => {
+        for (const value of tools) await host._call("tools", "save", {tool:value});
+        await host._call("tools", "save_group", {group:{id:alpha, name:alpha, description:"Alpha association", loading_mode:"on_demand", enabled:true, functions:[alpha]}});
+        const policy = await host._call("guest_mode", "get");
+        await host._call("guest_mode", "save_policy", {revision:policy.revision, config:{...policy.config, guest_allowed_function_names:[alpha, beta]}});
+        await host._call("request_rules", "create", {rule:{name:alpha, phrases:[alpha], match_type:"equals", enabled:true, action_type:"local_action", action:{actions:[{type:"function", function:alpha, arguments:{}}], success_response:"Alpha action"}}});
+        await host._loadSection(true);
+      }, {alpha, beta, tools:[tool(alpha, "ALPHA_ORIGINAL"), tool(beta, "BETA_ORIGINAL")]});
+      await panel.locator(`[data-tool-key="${alpha}"] .edit-tool`).click();
+      const yaml = JSON.stringify(tool(renamed, "ALPHA_SUBMITTED_IMPLEMENTATION"));
+      await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), yaml);
+      await panel.evaluate((host, {phase, yaml, alpha}) => {
+        const original = host.hass.callWS.bind(host.hass);
+        window.__ownedRequests = [];
+        window.__ownedHeld = null;
+        host.hass.callWS = async message => {
+          if (message.section === "tools") window.__ownedRequests.push(structuredClone(message));
+          return original(message);
+        };
+        const call = host._call.bind(host);
+        host._call = async (section, action, params = {}) => {
+          const result = await call(section, action, params);
+          const message = {section, action, ...params};
+          if (!window.__ownedHeld && section === "tools"
+              && (phase === "validation" ? action === "validate_yaml" && params.yaml === yaml
+                : action === "save" && params.original_name === alpha)) {
+            window.__ownedHeld = {message:structuredClone(message), result:structuredClone(result)};
+            await new Promise((resolve, reject) => {window.__ownedRelease = {resolve, reject};});
+            window.__ownedSettled = true;
+          }
+          return result;
+        };
+      }, {phase, yaml, alpha});
+      await panel.locator("#tool-save").click();
+      await expect.poll(() => page.evaluate(() => Boolean(window.__ownedHeld))).toBe(true);
+      const held = await page.evaluate(() => window.__ownedHeld);
+      if (phase === "validation") { expect(held.message.yaml).toBe(yaml); expect(held.result.valid).toBe(true); }
+      else { expect(held.message.tool.function.value_template).toBe("ALPHA_SUBMITTED_IMPLEMENTATION"); expect(held.result.functions.some(t => t.spec.name === renamed)).toBe(true); }
+      await panel.locator("#tool-cancel").click();
+      await panel.locator(`[data-tool-key="${beta}"] .edit-tool`).click();
+      const betaYaml = JSON.stringify(tool(beta, "BETA_UNSAVED_DRAFT"));
+      await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), betaYaml);
+      const status = await panel.locator("#tool-error").textContent();
+      await panel.evaluate((host, completion) => {
+        window.__oldEditorSave = host._pendingMutations ? [...host._pendingMutations.values()] : [];
+        if (completion === "failure") window.__ownedRelease.reject(new Error("Old acknowledgement failed"));
+        else window.__ownedRelease.resolve();
+      }, completion);
+      // A round trip on the same socket follows the released completion; then
+      // drain microtasks and the panel's serialized mutation tail.
+      await panel.evaluate(async host => {
+        await host.hass.callWS({type:"config/entity_registry/list"});
+        await host._eocFunctionMutationTail?.catch(() => {});
+      });
+      await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
+      await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(e => e.yaml)).toBe(betaYaml);
+      await expect(panel.locator("#tool-error")).toHaveText(status);
+      await expect(panel.locator("#tool-save")).toBeEnabled();
+      const saves = await page.evaluate(() => window.__ownedRequests.filter(m => m.action === "save"));
+      expect(saves).toHaveLength(phase === "commit" ? 1 : 0);
+      expect(saves.some(m => m.original_name === beta)).toBe(false);
+      const snapshot = await panel.evaluate(async host => ({config:await host._call("configuration", "get"), rules:await host._call("request_rules", "list")}));
+      const expectedAlpha = phase === "commit" ? renamed : alpha;
+      expect(snapshot.config.config.functions.find(t => t.spec.name === beta).function.value_template).toBe("BETA_ORIGINAL");
+      expect(snapshot.config.config.function_groups.find(g => g.id === alpha).functions).toEqual([expectedAlpha]);
+      expect(snapshot.config.config.guest_allowed_function_names).toEqual([expectedAlpha, beta]);
+      expect(JSON.stringify(snapshot.rules.rules.find(r => r.name === alpha).action)).toContain(expectedAlpha);
+      // The committed Alpha revision is current; Beta saves through the normal UI.
+      await panel.locator("#tool-save").click();
+      await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+      const reloaded = await (await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/reload`)).json();
+      expect(reloaded.functions.find(t => t.spec.name === beta).function.value_template).toBe("BETA_UNSAVED_DRAFT");
+      expect(reloaded.function_groups.find(g => g.id === alpha).functions).toEqual([expectedAlpha]);
+      await page.reload();
+      await expect(panel.locator(`#agent`)).toBeEnabled();
+      await panel.locator(`[data-tool-key="${beta}"] .edit-tool`).click();
+      await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(e => e.yaml)).toContain("BETA_UNSAVED_DRAFT");
+      await panel.locator("#tool-cancel").click();
+    });
+  }
+
+  test("satellite registry replacement resolves the current native selection in one document", async ({context, page, request}) => {
+    const panel = await openColdHaRoute(context, page, "assistant/voice");
+    await panel.evaluate(host => {
+      const original = host.hass.callWS.bind(host.hass);
+      window.__registryLists = 0; window.__voicePayloads = [];
+      host.hass.callWS = async message => {
+        if (message.type === "config/entity_registry/list") {
+          window.__registryLists++;
+        }
+        if (message.section === "configuration" && ["save", "update"].includes(message.action)) window.__voicePayloads.push(structuredClone(message));
+        return original(message);
+      };
+    });
+    await panel.locator("#add-voice-mapping").click();
+    const warm = await panel.evaluate(host => host.hass.callWS({type:"config/entity_registry/list"}));
+    expect(warm.find(e => e.entity_id === "assist_satellite.ownership_kitchen").device_id).toBe(process.env.REAL_HA_OLD_DEVICE);
+    const registry = await (await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/replace-registry`)).json();
+    expect(registry.kitchen).toBe(process.env.REAL_HA_NEW_DEVICE);
+    expect(registry.office).toBe(process.env.REAL_HA_OLD_DEVICE);
+    const row = panel.locator("[data-voice-mapping-row]").last();
+    const picker = row.locator("ha-entity-picker");
+    await picker.locator("ha-picker-field").click();
+    await picker.locator("ha-combo-box-item").filter({hasText:"assist_satellite.ownership_kitchen"}).locator("button").click();
+    await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_NEW_DEVICE);
+    await row.locator(".voice-owner-type").selectOption("user");
+    const user = row.locator("ha-user-picker");
+    await user.locator("ha-picker-field").click();
+    await user.locator("ha-combo-box-item").filter({hasText:process.env.REAL_HA_PICKER_USER_NAME}).locator("button").click();
+    await panel.locator("#save-config").click();
+    await expect(panel.locator("#save-config")).toBeEnabled();
+    const payloads = await page.evaluate(() => window.__voicePayloads);
+    expect(payloads.length).toBeGreaterThan(0);
+    expect(payloads.at(-1).config.voice_device_mappings[process.env.REAL_HA_NEW_DEVICE]).toBe(`user:${process.env.REAL_HA_SMOKE_USER_ID}`);
+    const read = await panel.evaluate(host => host._call("configuration", "get"));
+    expect(read.config.voice_device_mappings[process.env.REAL_HA_OLD_DEVICE]).toBe("user:ownership-office-user");
+    expect(read.config.voice_device_mappings[process.env.REAL_HA_NEW_DEVICE]).toBe(`user:${process.env.REAL_HA_SMOKE_USER_ID}`);
+    const reloaded = await (await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/reload`)).json();
+    expect(reloaded.voice_device_mappings).toEqual(read.config.voice_device_mappings);
+    const probes = await (await request.post(`${process.env.REAL_HA_OWNERSHIP_CONTROL}/probe-voice`)).json();
+    expect(probes).toEqual({owners:2, private_markers:2, authenticated_users:[null, null]});
+    await page.reload();
+    await expect(panel.locator("#agent")).toBeEnabled();
+    expect((await panel.evaluate(host => host._call("configuration", "get"))).config.voice_device_mappings).toEqual(read.config.voice_device_mappings);
+  });
+
+  test("failed initial satellite registry request retries in the same panel", async ({context, page}) => {
+    const panel = await openColdHaRoute(context, page, "assistant/basics");
+    await panel.evaluate(host => {
+      const original = host.hass.callWS.bind(host.hass);
+      window.__registryLists = 0; window.__registryFailures = 0;
+      host.hass.callWS = async message => {
+        if (message.type === "config/entity_registry/list") {
+          window.__registryLists++;
+          if (window.__registryLists === 1) {window.__registryFailures++; throw new Error("Controlled registry outage");}
+        }
+        return original(message);
+      };
+      host._navigate("assistant", "voice");
+    });
+    await expect.poll(() => page.evaluate(() => window.__registryFailures)).toBe(1);
+    const row = panel.locator("[data-voice-mapping-row]").last();
+    const picker = row.locator("ha-entity-picker");
+    await picker.locator("ha-picker-field").click();
+    await picker.locator("ha-combo-box-item").filter({hasText:"assist_satellite.ownership_kitchen"}).locator("button").click();
+    await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_NEW_DEVICE);
+    expect(await page.evaluate(() => window.__registryLists)).toBeGreaterThan(1);
+  });
+});
+
 const lifetimeYaml = description => `spec:\n  name: native_lifetime_tool\n  description: ${description}\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: template\n  value_template: lifetime-healthy\n`;
 
 async function nativeRoute(panel, path) {

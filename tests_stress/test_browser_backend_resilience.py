@@ -28,6 +28,246 @@ from tests_real_ha.test_management_backend_acceptance import (
     _setup_entry,
 )
 from tests_stress.conftest import record
+from tests_stress.test_os_storage_faults import real_store_io as real_store_io
+
+
+@pytest.fixture
+async def ownership_shell(hass, real_ha_shell, real_store_io):
+    # The normal shell fixture provides authentication; all persisted manager and
+    # config-entry data in this journey use the restored, real atomic Store I/O.
+    return real_ha_shell
+
+
+async def test_native_editor_ownership_and_satellite_registry_recovery(
+    hass, ownership_shell, hass_ws_client, monkeypatch, stress_trace
+):
+    from homeassistant.components import conversation
+    from homeassistant.core import Context
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from tests_real_ha.test_management_backend_acceptance import (
+        _conversation_subentry,
+        _fresh_reload,
+        _management_call,
+    )
+    from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire
+
+    shell = ownership_shell
+    entry = shell["entry"]
+    client = await _admin_client(hass, hass_ws_client)
+    office_user = MockUser(id="ownership-office-user", name="Office retained owner")
+    office_user.add_to_hass(hass)
+    devices = dr.async_get(hass)
+    old = devices.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "ownership-old")},
+        name="Old Kitchen device",
+    )
+    replacement = devices.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "ownership-new")},
+        name="Replacement Kitchen device",
+    )
+    registry = er.async_get(hass)
+    kitchen = registry.async_get_or_create(
+        "assist_satellite",
+        DOMAIN,
+        "ownership-old",
+        device_id=old.id,
+        suggested_object_id="ownership_kitchen",
+    )
+    spare = registry.async_get_or_create(
+        "assist_satellite",
+        DOMAIN,
+        "ownership-new",
+        device_id=replacement.id,
+        suggested_object_id="ownership_spare",
+    )
+    for entity in (kitchen, spare):
+        hass.states.async_set(
+            entity.entity_id, "idle", {"friendly_name": entity.entity_id}
+        )
+    await _management_call(
+        client,
+        entry=entry,
+        section="configuration",
+        action="update",
+        config={
+            "api_mode": "chat_completions",
+            "chat_model": "gpt-5.6",
+            "memory_auto_retrieve_limit": 3,
+            "voice_scope_policy": "device_mapping",
+            "voice_device_mappings": {old.id: "user:ownership-office-user"},
+        },
+    )
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    for owner, marker in (
+        (office_user.id, "OFFICE_PRIVATE_REGISTRY"),
+        (shell["env"]["REAL_HA_SMOKE_USER_ID"], "KITCHEN_PRIVATE_REGISTRY"),
+    ):
+        await agent._memory.async_add(
+            owner,
+            f"My registry calibration token is {marker}",
+            "preferences",
+            "explicit",
+        )
+
+    async def replace_registry(_request):
+        registry.async_update_entity(
+            kitchen.entity_id, new_entity_id="assist_satellite.ownership_office"
+        )
+        registry.async_update_entity(
+            spare.entity_id, new_entity_id="assist_satellite.ownership_kitchen"
+        )
+        hass.states.async_remove(kitchen.entity_id)
+        hass.states.async_remove(spare.entity_id)
+        for entity_id in (
+            "assist_satellite.ownership_office",
+            "assist_satellite.ownership_kitchen",
+        ):
+            hass.states.async_set(entity_id, "idle", {"friendly_name": entity_id})
+        assert (
+            registry.async_get("assist_satellite.ownership_office").device_id == old.id
+        )
+        assert (
+            registry.async_get("assist_satellite.ownership_kitchen").device_id
+            == replacement.id
+        )
+        record(
+            stress_trace,
+            "registry_replaced",
+            old_device=old.id,
+            replacement_device=replacement.id,
+        )
+        return web.json_response({"office": old.id, "kitchen": replacement.id})
+
+    async def reload_state(_request):
+        before = await _management_call(
+            client, entry=entry, section="configuration", action="get"
+        )
+        rules_before = await _management_call(
+            client, entry=entry, section="request_rules", action="list"
+        )
+        # Flush HA's scheduled config-entry write, then independently inspect the
+        # actual disk envelope before discarding process-local managers.
+        await hass.config_entries._store._async_handle_delayed_save()
+        raw = json.loads(
+            Path(hass.config.path(".storage", "core.config_entries")).read_text()
+        )
+        subentry = _conversation_subentry(entry)
+
+        def persisted_subentry(value):
+            if isinstance(value, dict):
+                if value.get("subentry_id") == subentry.subentry_id and "data" in value:
+                    return value
+                for child in value.values():
+                    found = persisted_subentry(child)
+                    if found:
+                        return found
+            if isinstance(value, list):
+                for child in value:
+                    found = persisted_subentry(child)
+                    if found:
+                        return found
+            return None
+
+        persisted = persisted_subentry(raw)
+        assert persisted is not None
+        assert persisted["data"] == dict(subentry.data)
+        await _fresh_reload(hass, entry)
+        after = await _management_call(
+            client, entry=entry, section="configuration", action="get"
+        )
+        rules_after = await _management_call(
+            client, entry=entry, section="request_rules", action="list"
+        )
+        assert after["config"] == before["config"]
+        assert rules_after["rules"] == rules_before["rules"]
+        record(stress_trace, "durable_reload", native_ownership_reload_checks=1)
+        return web.json_response(after["config"])
+
+    async def probe_voice(_request):
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            [_chat_sse_text("Registry owner verified") for _ in range(2)],
+        )
+        users = []
+        original = agent.async_process
+
+        async def capture(user_input):
+            users.append(user_input.context.user_id)
+            return await original(user_input)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(agent, "async_process", capture)
+            for device, satellite, own, other in (
+                (
+                    old.id,
+                    "assist_satellite.ownership_office",
+                    "OFFICE_PRIVATE_REGISTRY",
+                    "KITCHEN_PRIVATE_REGISTRY",
+                ),
+                (
+                    replacement.id,
+                    "assist_satellite.ownership_kitchen",
+                    "KITCHEN_PRIVATE_REGISTRY",
+                    "OFFICE_PRIVATE_REGISTRY",
+                ),
+            ):
+                result = await conversation.async_converse(
+                    hass=hass,
+                    text="What is my registry calibration token?",
+                    conversation_id=None,
+                    context=Context(),
+                    language="en",
+                    agent_id=entry.entry_id,
+                    device_id=device,
+                    satellite_id=satellite,
+                )
+                assert result.response.error_code is None
+                body = json.dumps(wire.requests[-1]["body"])
+                assert own in body and other not in body
+        assert users == [None, None]
+        record(stress_trace, "voice_wire", native_registry_private_probes=2)
+        return web.json_response(
+            {"owners": 2, "private_markers": 2, "authenticated_users": users}
+        )
+
+    app = web.Application()
+    app.router.add_post("/replace-registry", replace_registry)
+    app.router.add_post("/reload", reload_state)
+    app.router.add_post("/probe-voice", probe_voice)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+    try:
+        await _run_playwright(
+            repo_root=Path(__file__).resolve().parent.parent,
+            spec="tests_browser/real-ha-shell.spec.mjs",
+            config="playwright.real-ha-shell.config.mjs",
+            env={
+                **shell["env"],
+                "EOAI_NATIVE_OWNERSHIP": "1",
+                "REAL_HA_OWNERSHIP_CONTROL": url,
+                "REAL_HA_OLD_DEVICE": old.id,
+                "REAL_HA_NEW_DEVICE": replacement.id,
+            },
+            failure_label="Native editor ownership and registry recovery failed",
+        )
+        record(
+            stress_trace,
+            "summary",
+            native_editor_ownership_cases=4,
+            native_registry_recovery_cases=1,
+        )
+    finally:
+        await runner.cleanup()
+        await _close_native_shell(hass, shell)
+
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_REAL_HA_BROWSER") != "1",
