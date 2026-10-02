@@ -2,9 +2,9 @@
   {
     "owner": "persistent_memory",
     "classification": "transactional_durable",
-    "guarantee": "After a Store failure, facts and indexes reconcile from validated persisted data or become unavailable; embedding vectors are separate regenerable data.",
+    "guarantee": "Readers wait for mutation settlement; synchronous availability uses committed facts. After a Store failure, facts and indexes reconcile from validated persisted data or become unavailable; embedding vectors are separate regenerable data.",
     "stores": [{"module": "memory.py", "constructor": "MemoryStore", "count": 1}],
-    "evidence": ["tests/test_memory_mutation_integrity.py::test_durable_save_failure_rolls_back_live_manager", "tests/test_persistence_cancellation_hardening.py::test_failed_acknowledgement_reconciles_to_candidate_and_rebuilds_indexes", "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable"]
+    "evidence": ["tests/test_memory_mutation_integrity.py::test_durable_save_failure_rolls_back_live_manager", "tests/test_persistence_cancellation_hardening.py::test_failed_acknowledgement_reconciles_to_candidate_and_rebuilds_indexes", "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable", "tests_stress/test_pending_retrieval_publication.py::test_pending_failed_management_write_never_reaches_assist_provider"]
   },
   {
     "owner": "memory_embedding_cache",
@@ -23,9 +23,9 @@
   {
     "owner": "knowledge",
     "classification": "transactional_durable",
-    "guarantee": "Library mutations reconcile sources and search indexes from validated persisted data after writer failure, or become unavailable until reload.",
+    "guarantee": "Readers wait for mutation settlement; synchronous availability uses committed sources. Library mutations reconcile sources and search indexes from validated persisted data after writer failure, or become unavailable until reload.",
     "stores": [{"module": "knowledge.py", "constructor": "KnowledgeStore", "count": 1}],
-    "evidence": ["tests/test_persistence_cancellation_hardening.py::test_failed_acknowledgement_reconciles_to_candidate_and_rebuilds_indexes", "tests_stress/test_os_storage_faults.py::test_knowledge_fsync_enospc_rolls_back_and_recovers"]
+    "evidence": ["tests/test_persistence_cancellation_hardening.py::test_failed_acknowledgement_reconciles_to_candidate_and_rebuilds_indexes", "tests_stress/test_os_storage_faults.py::test_knowledge_fsync_enospc_rolls_back_and_recovers", "tests_stress/test_pending_retrieval_publication.py::test_pending_failed_management_write_never_reaches_assist_provider"]
   },
   {
     "owner": "request_rules",
@@ -37,9 +37,9 @@
   {
     "owner": "conversation_archive",
     "classification": "transactional_durable",
-    "guarantee": "Metadata is the durable intent journal for partition changes; restart completes committed intent without exposing an uncommitted generation.",
+    "guarantee": "Metadata is the durable intent journal for partition changes, including replacement followed by acknowledgement failure; later publications retain validated persisted intent or remain unavailable until reload.",
     "stores": [{"module": "conversation_archive.py", "constructor": "PropagatingWriteStore", "count": 2}],
-    "evidence": ["tests/test_conversation_archive.py::test_partition_write_failure_recovers_private_state_on_restart", "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable"]
+    "evidence": ["tests/test_conversation_archive.py::test_partition_write_failure_recovers_private_state_on_restart", "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable", "tests_stress/test_archive_living_campaign.py::test_archive_first_intent_failure_cannot_be_erased_by_session_publication"]
   },
   {
     "owner": "guest_mode",

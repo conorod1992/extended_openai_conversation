@@ -547,72 +547,75 @@ class PersistentMemory:
         hybrid: bool = False,
     ) -> list[MemoryRecord]:
         """Return deterministic BM25-style lexical or hybrid results."""
-        self._ensure_initialized()
-        limit = max(1, min(limit, MAX_SEARCH_LIMIT))
-        scope_ids = (
-            (user_id,) if isinstance(user_id, str) else tuple(dict.fromkeys(user_id))
-        )
-        query_terms = _token_list(query)
-        query_tokens = set(query_terms)
-        if not query_tokens:
-            return []
-        category_filter = _clean_category(category) if category else None
-        corpus = [
-            memory
-            for memory in self._memories.values()
-            if memory.user_id in scope_ids
-            and (category_filter is None or memory.category == category_filter)
-        ]
-        if not corpus:
-            return []
-        document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
-        document_frequency = {token: 0 for token in query_tokens}
-        total_length = 0
-        for memory in corpus:
-            terms = _cached_memory_record_terms(memory)
-            token_set = _cached_memory_record_token_set(memory)
-            document_data[memory.memory_id] = (terms, token_set)
-            total_length += len(terms)
-            for token in query_tokens:
-                if token in token_set:
-                    document_frequency[token] += 1
-        average_length = max(1.0, total_length / len(corpus))
-        normalized_query = _normalize(query)
-        ranked: list[tuple[float, str, MemoryRecord]] = []
-        for memory in corpus:
-            terms, token_set = document_data[memory.memory_id]
-            lexical = _bm25_score(
-                query_terms,
-                terms,
-                document_frequency,
-                len(corpus),
-                average_length,
+        async with self._lock:
+            self._ensure_initialized()
+            limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+            scope_ids = (
+                (user_id,)
+                if isinstance(user_id, str)
+                else tuple(dict.fromkeys(user_id))
             )
-            lexical += _metadata_bonus(query_tokens, memory)
-            normalized_content = _normalize(memory.content)
-            if normalized_query and normalized_query in normalized_content:
-                lexical += 0.35
-            elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
-                lexical += 0.18
-            if lexical <= 0:
-                lexical = _fuzzy_relevance(query_tokens, token_set)
-            semantic = (
-                _cosine_similarity(query_embedding, self._cached_embedding(memory))
-                if hybrid
-                else None
-            )
-            relevance = lexical
-            if semantic is not None:
-                semantic = max(0.0, semantic)
-                relevance = 0.58 * lexical + 0.42 * semantic
-            if not (
-                lexical >= MIN_LEXICAL_RELEVANCE_SCORE
-                or (semantic is not None and semantic >= MIN_SEMANTIC_SIMILARITY)
-            ):
-                continue
-            ranked.append((relevance, memory.memory_id, memory))
-        ranked.sort(key=lambda item: (-item[0], item[1]))
-        return [memory for _, _, memory in ranked[:limit]]
+            query_terms = _token_list(query)
+            query_tokens = set(query_terms)
+            if not query_tokens:
+                return []
+            category_filter = _clean_category(category) if category else None
+            corpus = [
+                memory
+                for memory in self._memories.values()
+                if memory.user_id in scope_ids
+                and (category_filter is None or memory.category == category_filter)
+            ]
+            if not corpus:
+                return []
+            document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
+            document_frequency = {token: 0 for token in query_tokens}
+            total_length = 0
+            for memory in corpus:
+                terms = _cached_memory_record_terms(memory)
+                token_set = _cached_memory_record_token_set(memory)
+                document_data[memory.memory_id] = (terms, token_set)
+                total_length += len(terms)
+                for token in query_tokens:
+                    if token in token_set:
+                        document_frequency[token] += 1
+            average_length = max(1.0, total_length / len(corpus))
+            normalized_query = _normalize(query)
+            ranked: list[tuple[float, str, MemoryRecord]] = []
+            for memory in corpus:
+                terms, token_set = document_data[memory.memory_id]
+                lexical = _bm25_score(
+                    query_terms,
+                    terms,
+                    document_frequency,
+                    len(corpus),
+                    average_length,
+                )
+                lexical += _metadata_bonus(query_tokens, memory)
+                normalized_content = _normalize(memory.content)
+                if normalized_query and normalized_query in normalized_content:
+                    lexical += 0.35
+                elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
+                    lexical += 0.18
+                if lexical <= 0:
+                    lexical = _fuzzy_relevance(query_tokens, token_set)
+                semantic = (
+                    _cosine_similarity(query_embedding, self._cached_embedding(memory))
+                    if hybrid
+                    else None
+                )
+                relevance = lexical
+                if semantic is not None:
+                    semantic = max(0.0, semantic)
+                    relevance = 0.58 * lexical + 0.42 * semantic
+                if not (
+                    lexical >= MIN_LEXICAL_RELEVANCE_SCORE
+                    or (semantic is not None and semantic >= MIN_SEMANTIC_SIMILARITY)
+                ):
+                    continue
+                ranked.append((relevance, memory.memory_id, memory))
+            ranked.sort(key=lambda item: (-item[0], item[1]))
+            return [memory for _, _, memory in ranked[:limit]]
 
     async def async_prepare_hybrid(
         self, scope_ids: Sequence[str], query: str
@@ -660,15 +663,16 @@ class PersistentMemory:
         self, references: Sequence[tuple[str, str]], readable_scope_ids: Sequence[str]
     ) -> list[MemoryRecord]:
         """Resolve a selected bundle by owner and ID without reranking."""
-        self._ensure_initialized()
-        allowed = set(readable_scope_ids)
-        return [
-            record
-            for scope_id, memory_id in references
-            if scope_id in allowed
-            and (record := self._memories.get(memory_id)) is not None
-            and record.user_id == scope_id
-        ]
+        async with self._lock:
+            self._ensure_initialized()
+            allowed = set(readable_scope_ids)
+            return [
+                record
+                for scope_id, memory_id in references
+                if scope_id in allowed
+                and (record := self._memories.get(memory_id)) is not None
+                and record.user_id == scope_id
+            ]
 
     async def async_list(
         self,
@@ -678,19 +682,20 @@ class PersistentMemory:
         offset: int = 0,
     ) -> list[MemoryRecord]:
         """List memories for one user scope."""
-        self._ensure_initialized()
-        limit = max(1, min(limit, MAX_LIST_LIMIT))
-        offset = max(0, offset)
-        category_filter = _clean_category(category) if category else None
-        scope_ids = {user_id} if isinstance(user_id, str) else set(user_id)
-        memories = [
-            memory
-            for memory in self._memories.values()
-            if memory.user_id in scope_ids
-            and (category_filter is None or memory.category == category_filter)
-        ]
-        memories.sort(key=lambda memory: memory.updated_at, reverse=True)
-        return memories[offset : offset + limit]
+        async with self._lock:
+            self._ensure_initialized()
+            limit = max(1, min(limit, MAX_LIST_LIMIT))
+            offset = max(0, offset)
+            category_filter = _clean_category(category) if category else None
+            scope_ids = {user_id} if isinstance(user_id, str) else set(user_id)
+            memories = [
+                memory
+                for memory in self._memories.values()
+                if memory.user_id in scope_ids
+                and (category_filter is None or memory.category == category_filter)
+            ]
+            memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+            return memories[offset : offset + limit]
 
     async def async_list_page(
         self,
@@ -700,26 +705,27 @@ class PersistentMemory:
         offset: int = 0,
     ) -> tuple[list[MemoryRecord], bool]:
         """List one page and continuation state with a single scan and sort."""
-        self._ensure_initialized()
-        limit = max(1, min(limit, MAX_LIST_LIMIT))
-        offset = max(0, offset)
-        category_filter = _clean_category(category) if category else None
-        scope_ids = {user_id} if isinstance(user_id, str) else set(user_id)
-        memories = [
-            memory
-            for memory in self._memories.values()
-            if memory.user_id in scope_ids
-            and (category_filter is None or memory.category == category_filter)
-        ]
-        memories.sort(key=lambda memory: memory.updated_at, reverse=True)
-        end = offset + limit
-        return memories[offset:end], len(memories) > end
+        async with self._lock:
+            self._ensure_initialized()
+            limit = max(1, min(limit, MAX_LIST_LIMIT))
+            offset = max(0, offset)
+            category_filter = _clean_category(category) if category else None
+            scope_ids = {user_id} if isinstance(user_id, str) else set(user_id)
+            memories = [
+                memory
+                for memory in self._memories.values()
+                if memory.user_id in scope_ids
+                and (category_filter is None or memory.category == category_filter)
+            ]
+            memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+            end = offset + limit
+            return memories[offset:end], len(memories) > end
 
     @property
     def memory_count(self) -> int:
         """Return the number of retained persistent memories in O(1)."""
         self._ensure_initialized()
-        return len(self._memories)
+        return len(self._published_memories())
 
     async def async_browse(
         self,
@@ -729,23 +735,24 @@ class PersistentMemory:
         offset: int = 0,
     ) -> tuple[list[MemoryRecord], int]:
         """Browse one owner's complete management projection with bounded output."""
-        self._ensure_initialized()
-        limit = max(1, min(limit, MAX_LIST_LIMIT))
-        offset = max(0, offset)
-        folded_query = str(query).casefold()
-        memories = [
-            memory
-            for memory in self._memories.values()
-            if memory.user_id == user_id
-            and folded_query
-            in " ".join(
-                str(value or "")
-                for value in (memory.content, memory.category, memory.source)
-            ).casefold()
-        ]
-        memories.sort(key=lambda memory: memory.updated_at, reverse=True)
-        total = len(memories)
-        return memories[offset : offset + limit], total
+        async with self._lock:
+            self._ensure_initialized()
+            limit = max(1, min(limit, MAX_LIST_LIMIT))
+            offset = max(0, offset)
+            folded_query = str(query).casefold()
+            memories = [
+                memory
+                for memory in self._memories.values()
+                if memory.user_id == user_id
+                and folded_query
+                in " ".join(
+                    str(value or "")
+                    for value in (memory.content, memory.category, memory.source)
+                ).casefold()
+            ]
+            memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+            total = len(memories)
+            return memories[offset : offset + limit], total
 
     async def async_update(
         self,
@@ -917,11 +924,12 @@ class PersistentMemory:
     def stats(self) -> dict[str, Any]:
         """Return non-sensitive diagnostics."""
         self._ensure_initialized()
+        memories = self._published_memories()
         return {
             "backend": "home_assistant_store",
             "storage_version": STORAGE_VERSION,
-            "memory_count": len(self._memories),
-            "user_scope_count": len({m.user_id for m in self._memories.values()}),
+            "memory_count": len(memories),
+            "user_scope_count": len({m.user_id for m in memories.values()}),
             "hybrid_retrieval": self.hybrid_status(),
         }
 
@@ -929,9 +937,15 @@ class PersistentMemory:
         """Return memory totals grouped by their exact storage owner."""
         self._ensure_initialized()
         counts: dict[str, int] = {}
-        for memory in self._memories.values():
+        for memory in self._published_memories().values():
             counts[memory.user_id] = counts.get(memory.user_id, 0) + 1
         return counts
+
+    def _published_memories(self) -> dict[str, MemoryRecord]:
+        """Use committed facts for synchronous availability/owner diagnostics."""
+        self._ensure_initialized()
+        assert self._committed_state is not None
+        return self._committed_state.memories
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return the stable durable representation used by full backups."""
@@ -1109,12 +1123,14 @@ class PersistentMemory:
             return False
         model = self._embedding_model
         allowed_scopes = set(scope_ids)
-        missing = [
-            memory
-            for memory in self._memories.values()
-            if memory.user_id in allowed_scopes
-            and self._cached_embedding(memory) is None
-        ]
+        async with self._lock:
+            self._ensure_initialized()
+            missing = [
+                memory
+                for memory in self._memories.values()
+                if memory.user_id in allowed_scopes
+                and self._cached_embedding(memory) is None
+            ]
         for offset in range(0, len(missing), EMBEDDING_CACHE_BATCH_SIZE):
             batch = missing[offset : offset + EMBEDDING_CACHE_BATCH_SIZE]
             vectors = await provider([_embedding_text(memory) for memory in batch])

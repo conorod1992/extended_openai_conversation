@@ -221,8 +221,9 @@ already-running catalogue unit suite because it is small and deterministic;
 it also proves that AI Tasks do not load conversation Request Rules.
 
 
-Durable publication acceptance uses existing selections and the real Store
-atomic-writer fixture. `archive` and `persistence` require both first-intent
+Durable publication acceptance uses existing selections and genuine Store IO.
+Archive, Knowledge and Memory use the real atomic-writer fixture; Quiet Hours
+uses its native non-atomic prepared-data writer boundary. `archive` and `persistence` require both first-intent
 replacement boundaries, independent journal readback, unrelated publication and
 fresh-manager convergence. `memory-knowledge` and `persistence` require held
 management mutations, entry into real public Assist reads, an actual target

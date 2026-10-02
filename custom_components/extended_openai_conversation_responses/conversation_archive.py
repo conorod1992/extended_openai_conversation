@@ -16,6 +16,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .persistence_hardening import _async_settle_transactional_save
 from .scope import ResolvedDataScope
 from .strict_store import PropagatingWriteStore
 
@@ -778,6 +779,7 @@ class ConversationArchive:
         self, session_key: str, session: ArchiveSession
     ) -> None:
         """Publish a new active session, persisting only durable archive state."""
+        self._ensure_initialized()
         if session.retention_state == "unretained" and not self._pending_partitions:
             self._sessions[session.session_id] = session
             self._active[session_key] = session.session_id
@@ -880,11 +882,12 @@ class ConversationArchive:
     ) -> None:
         """Journal candidate Archive state before publishing it in memory.
 
-        The first metadata write is the durable commit point. If it fails, live
-        state remains unchanged. Once it succeeds, restart recovery can complete
-        every pending partition write, so RAM is moved to the target state even if
-        a later partition or final-metadata write fails.
+        The first metadata replacement commits intent even if acknowledgement
+        fails. Reconcile against persisted metadata before reporting that error;
+        later publications must retain the journal that restart will complete.
+        Partition/final-metadata failures preserve the published durable intent.
         """
+        self._ensure_initialized()
         partitions = self._partitions_for_turns(turns)
         removed_partitions = set(self._partitions) - partitions
         pending_names = (
@@ -895,16 +898,41 @@ class ConversationArchive:
             for partition in sorted(pending_names)
         }
 
-        await self._storage.async_save_metadata(
-            self._metadata_payload_for_state(sessions, active, partitions, pending)
+        previous = self._metadata_payload_locked(
+            {
+                partition: self._partition_payload_locked(partition)
+                for partition in sorted(self._pending_partitions)
+            }
+            if self._pending_partitions
+            else None
         )
+        intent = self._metadata_payload_for_state(sessions, active, partitions, pending)
 
-        # Durable intent exists now; publish exactly what restart recovery will finish.
-        self._sessions = sessions
-        self._turns = defaultdict(list, turns)
-        self._active = active
-        self._partitions = partitions
-        self._pending_partitions = set(pending_names)
+        def publish_intent() -> None:
+            self._sessions = sessions
+            self._turns = defaultdict(list, turns)
+            self._active = active
+            self._partitions = partitions
+            self._pending_partitions = set(pending_names)
+
+        async def reconcile_intent() -> None:
+            persisted = await self._storage.async_load_metadata()
+            if persisted == intent:
+                # Exact readback validates the candidate's journal, including all
+                # turn/owner associations. Surface the lost acknowledgement still.
+                publish_intent()
+            elif (
+                persisted or {"sessions": [], "active": {}, "partitions": []}
+            ) != previous:
+                raise ValueError("conversation archive metadata cannot be reconciled")
+
+        await _async_settle_transactional_save(
+            self._storage.async_save_metadata(intent),
+            lambda: None,
+            publish_intent,
+            reconcile_intent,
+            self._invalidate_after_unreadable_metadata,
+        )
 
         for partition, payload in pending.items():
             await self._storage.async_save_partition(partition, payload)
@@ -942,6 +970,15 @@ class ConversationArchive:
 
     def _partition_payload_locked(self, partition: str) -> dict[str, Any]:
         return self._partition_payload_for_state(partition, dict(self._turns))
+
+    def _invalidate_after_unreadable_metadata(self) -> None:
+        """Prevent stale state from overwriting an unvalidated durable journal."""
+        self._sessions.clear()
+        self._turns.clear()
+        self._active.clear()
+        self._partitions.clear()
+        self._pending_partitions.clear()
+        self._initialized = False
 
     def _ensure_initialized(self) -> None:
         if not self._initialized:
