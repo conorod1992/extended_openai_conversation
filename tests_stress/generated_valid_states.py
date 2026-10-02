@@ -10,7 +10,10 @@ from dataclasses import dataclass
 from hashlib import sha256
 from itertools import combinations, product
 import json
+import os
+from pathlib import Path
 import random
+from time import perf_counter
 from typing import Any
 
 from custom_components.extended_openai_conversation_responses import agent_config, const
@@ -266,6 +269,10 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
     capability-interaction core is exhausted for every pair/triple obligation;
     infeasible partials are counted by production error, never a mirrored rule.
     """
+    profile = os.environ.get("EOAI_GENERATOR_PROFILE") == "1"
+    timings: dict[str, float] = {}
+    generation_started = perf_counter()
+    phase_started = perf_counter()
     rng = random.Random(seed)
     default = {key: values[0] for key, values in DIMENSIONS.items()}
     candidates: dict[str, dict[str, Any]] = {}
@@ -286,6 +293,23 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
         else:
             capability_rejected.append((cap, reason))
     rng.shuffle(capability_states)
+    timings["capability_enumeration_and_validation_seconds"] = (
+        perf_counter() - phase_started
+    )
+    phase_started = perf_counter()
+    capability_index: dict[
+        tuple[str, ...], dict[tuple[Any, ...], list[dict[str, Any]]]
+    ] = {}
+    capability_key_sets = {
+        tuple(key for key in CAPABILITY_KEYS if key in keys) for keys in keys_to_cover
+    }
+    for key_set in capability_key_sets:
+        capability_index[key_set] = {}
+    for cap in capability_states:
+        for key_set, index in capability_index.items():
+            index.setdefault(tuple(cap[key] for key in key_set), []).append(cap)
+    timings["capability_index_seconds"] = perf_counter() - phase_started
+    phase_started = perf_counter()
     for keys in keys_to_cover:
         for values in product(*(DIMENSIONS[key] for key in keys)):
             obligation = tuple(zip(keys, values, strict=True))
@@ -294,7 +318,9 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
             fixed = dict(obligation)
             witness = None
             rejected_reason = None
-            for cap in capability_states:
+            compatible_keys = tuple(key for key in CAPABILITY_KEYS if key in fixed)
+            compatible_values = tuple(fixed[key] for key in compatible_keys)
+            for cap in capability_index[compatible_keys].get(compatible_values, ()):
                 if any(fixed[key] != cap[key] for key in keys if key in cap):
                     continue
                 state = default | cap | fixed
@@ -320,6 +346,8 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
                 excluded[reason] = excluded.get(reason, 0) + 1
             # An obligation with no capability witness is genuinely excluded by
             # production config/request validation (within these dimensions).
+    timings["obligation_witness_search_seconds"] = perf_counter() - phase_started
+    phase_started = perf_counter()
     # Diverse valid candidates make the cover small without removing a single
     # obligation.  These are candidate solutions, not padded executed cases.
     diverse = 0
@@ -335,24 +363,40 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
         if fingerprint not in candidates:
             candidates[fingerprint] = state
             diverse += 1
+    timings["diverse_candidate_validation_seconds"] = perf_counter() - phase_started
+    phase_started = perf_counter()
     # A valid witness may cover obligations not used in its construction.
-    required.update(*(obligations(case) for case in candidates.values()))
-    uncovered = set(required)
+    candidate_coverage = [obligations(case) for case in candidates.values()]
+    required.update(*(coverage for coverage in candidate_coverage))
+    obligation_ids = {obligation: index for index, obligation in enumerate(required)}
+    pool = []
+    for case, coverage in zip(candidates.values(), candidate_coverage, strict=True):
+        mask = 0
+        for obligation in coverage:
+            mask |= 1 << obligation_ids[obligation]
+        pool.append((case, mask))
+    timings["candidate_coverage_precompute_seconds"] = perf_counter() - phase_started
+    phase_started = perf_counter()
+    uncovered = (1 << len(obligation_ids)) - 1
     selected: list[dict[str, Any]] = []
-    pool = [(case, obligations(case)) for case in candidates.values()]
     rng.shuffle(pool)
     while uncovered:
-        best, best_cover = max(pool, key=lambda item: len(item[1] & uncovered))
+        best_index = max(
+            range(len(pool)), key=lambda index: (pool[index][1] & uncovered).bit_count()
+        )
+        best, best_cover = pool.pop(best_index)
         gain = best_cover & uncovered
         if not gain:
-            raise AssertionError(f"Uncovered generated obligations: {len(uncovered)}")
+            raise AssertionError(
+                f"Uncovered generated obligations: {uncovered.bit_count()}"
+            )
         selected.append(best)
-        uncovered.difference_update(gain)
-        pool.remove((best, best_cover))
+        uncovered &= ~gain
         if budget is not None and len(selected) > budget:
             raise AssertionError(
-                f"Covering budget {budget} exhausted with {len(uncovered)} obligations left"
+                f"Covering budget {budget} exhausted with {uncovered.bit_count()} obligations left"
             )
+    timings["greedy_cover_seconds"] = perf_counter() - phase_started
     exploratory_count = 0
     if heavy:
         for _ in range(8):
@@ -363,6 +407,29 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
                     exploratory_count += 1
                     break
     rng.shuffle(selected)
-    return CoveringSuite(
+    suite = CoveringSuite(
         tuple(selected), frozenset(required), excluded, exploratory_count
     )
+    if profile:
+        import sys
+
+        timings["total_seconds"] = perf_counter() - generation_started
+        record = json.dumps(
+            {
+                "event": "generated_valid_states_profile",
+                "seed": seed,
+                "heavy": heavy,
+                "candidate_count": len(candidates),
+                "selected_count": len(selected),
+                "obligation_count": len(required),
+                "timings": timings,
+            },
+            sort_keys=True,
+        )
+        print(record, file=sys.stderr)
+        if profile_path := os.environ.get("EOAI_GENERATOR_PROFILE_PATH"):
+            profile_file = Path(profile_path)
+            profile_file.parent.mkdir(parents=True, exist_ok=True)
+            with profile_file.open("a", encoding="utf-8") as stream:
+                stream.write(record + "\n")
+    return suite

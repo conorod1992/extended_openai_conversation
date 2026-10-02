@@ -187,6 +187,9 @@ jobs:
           echo "Clean-install candidate payload: $CANDIDATE_VERSION" >> "$GITHUB_STEP_SUMMARY"
       - name: Run enhanced campaign
         id: campaign_run
+        env:
+          EOAI_GENERATOR_PROFILE: ${{ matrix.campaign == 'large-installation' && '1' || '0' }}
+          EOAI_GENERATOR_PROFILE_PATH: ${{ matrix.campaign == 'large-installation' && 'stress-artifacts/generator-profile.jsonl' || '' }}
         run: |
           case "$STRESS_CAMPAIGN" in
             runtime) TEST_PATHS=(tests_stress/test_execution_contract.py tests_real_ha/test_management_backend_acceptance.py::test_configuration_transfer_survives_reload tests_real_ha/test_provider_serialization_invariants.py tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload tests_stress/test_runtime_soak.py tests_stress/test_process_resource_soak.py tests_stress/test_conversation_id_collision.py tests_stress/test_evidence_manifest.py tests_stress/test_frontend_route_inventory.py tests_stress/test_frontend_interaction_inventory.py tests_stress/test_management_action_inventory.py tests_stress/test_public_service_inventory.py tests_stress/test_backup_inventory.py tests_stress/test_nightly_inventory.py tests_real_ha/test_runtime_recovery_journey.py) ;;
