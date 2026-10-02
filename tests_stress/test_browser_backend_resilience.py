@@ -118,14 +118,16 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         )
 
     async def replace_registry(_request):
+        # HA also reserves IDs in the state machine. Remove the old software
+        # controls before reassigning their IDs through the real registry.
+        hass.states.async_remove(kitchen.entity_id)
+        hass.states.async_remove(spare.entity_id)
         registry.async_update_entity(
             kitchen.entity_id, new_entity_id="assist_satellite.ownership_office"
         )
         registry.async_update_entity(
             spare.entity_id, new_entity_id="assist_satellite.ownership_kitchen"
         )
-        hass.states.async_remove(kitchen.entity_id)
-        hass.states.async_remove(spare.entity_id)
         for entity_id in (
             "assist_satellite.ownership_office",
             "assist_satellite.ownership_kitchen",
