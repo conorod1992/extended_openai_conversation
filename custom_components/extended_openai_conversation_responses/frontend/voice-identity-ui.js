@@ -116,16 +116,22 @@ function setWarning(element,message="") {
   element.hidden = !message;
 }
 
-async function entityRegistry(panel) {
-  if (Array.isArray(panel.__voiceEntityRegistry)) return panel.__voiceEntityRegistry;
-  if (!panel.__voiceEntityRegistryPromise) {
+async function entityRegistry(panel, selection = false) {
+  // Share concurrent hydration requests, never a completed snapshot.
+  // Native HA pickers can stay mounted across entity/device registry changes.
+  if (selection || !panel.__voiceEntityRegistryPromise) {
     const hass = panelHass(panel);
-    panel.__voiceEntityRegistryPromise = hass?.callWS
-      ? hass.callWS({type:"config/entity_registry/list"}).then((entries) => {
-          panel.__voiceEntityRegistry = Array.isArray(entries) ? entries : [];
-          return panel.__voiceEntityRegistry;
-        }).catch(() => [])
+    const request = hass?.callWS
+      ? Promise.resolve().then(() => hass.callWS({type:"config/entity_registry/list"}))
+          .then(entries => Array.isArray(entries) ? entries : []).catch(() => [])
       : Promise.resolve([]);
+    // A selection must start after that interaction, even when hydration is
+    // still waiting for an older registry snapshot.
+    if (selection) return request;
+    const tracked = request.finally(() => {
+      if (panel.__voiceEntityRegistryPromise === tracked) panel.__voiceEntityRegistryPromise = null;
+    });
+    panel.__voiceEntityRegistryPromise = tracked;
   }
   return panel.__voiceEntityRegistryPromise;
 }
@@ -146,13 +152,15 @@ function configureEntityPicker(panel,picker,value="") {
 function rowsToMapping(root) {
   const mapping = {};
   let duplicate = null;
+  let lookup = null;
   root.querySelectorAll("[data-voice-mapping-row]").forEach((row) => {
+    lookup ||= row.dataset.voiceLookup;
     const deviceId = row.querySelector(".voice-device-id")?.value.trim() || "";
     if (!deviceId) return;
     if (Object.prototype.hasOwnProperty.call(mapping,deviceId)) duplicate ||= deviceId;
     mapping[deviceId] = row.querySelector(".voice-mapping-owner")?.value || UNRETAINED_SCOPE;
   });
-  return {mapping,duplicate};
+  return {mapping,duplicate,lookup};
 }
 
 function currentConfig(panel) {
@@ -184,10 +192,13 @@ function syncMappings(panel) {
   const root = panel.shadowRoot;
   const card = root.querySelector("#voice-mappings");
   if (!card) return;
-  const {mapping,duplicate} = rowsToMapping(root);
+  const {mapping,duplicate,lookup} = rowsToMapping(root);
   const error = root.querySelector('[data-error="voice_device_mappings"]');
-  if (error) error.textContent = duplicate ? `This Assist satellite is assigned more than once.` : "";
-  card.value = duplicate ? JSON.stringify(`duplicate device id: ${duplicate}`) : JSON.stringify(mapping,null,2);
+  const lookupError = lookup === "pending" ? "Wait for the Assist satellite device lookup to finish."
+    : lookup ? "Select an available Assist satellite before saving." : "";
+  if (error) error.textContent = lookupError || (duplicate ? `This Assist satellite is assigned more than once.` : "");
+  card.value = lookupError ? JSON.stringify(lookupError)
+    : duplicate ? JSON.stringify(`duplicate device id: ${duplicate}`) : JSON.stringify(mapping,null,2);
   card.dispatchEvent(new Event("input",{bubbles:true}));
   updateDependencies(panel);
 }
@@ -232,8 +243,38 @@ async function bindSatellitePicker(panel,row) {
   configureEntityPicker(panel,picker);
   const storedDeviceId = hidden.value.trim();
   const agentId = panel._agentId;
+  picker.addEventListener("value-changed",async (event) => {
+    const selection = {};
+    picker.__voiceSelection = selection;
+    const selectedEntity = String(event?.detail?.value || picker.value || "");
+    picker.value = selectedEntity;
+    // Do not let a pending or failed lookup save the previous device under a
+    // newly selected satellite. Preserve all other rows.
+    row.dataset.voiceLookup = selectedEntity ? "pending" : "";
+    syncMappings(panel);
+    if (!selectedEntity) {
+      hidden.value = "";
+      setWarning(warning);
+      syncMappings(panel);
+      return;
+    }
+    const registry = await entityRegistry(panel,true);
+    if (!row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice"
+        || picker.__voiceSelection !== selection) return;
+    const deviceId = deviceIdForSatellite(registry,selectedEntity);
+    if (!deviceId) {
+      row.dataset.voiceLookup = "unresolved";
+      setWarning(warning,"That Assist satellite is not linked to a Home Assistant device, so it cannot be used for a device assignment.");
+      syncMappings(panel);
+      return;
+    }
+    hidden.value = deviceId;
+    row.dataset.voiceLookup = "";
+    setWarning(warning);
+    syncMappings(panel);
+  });
   const entries = await entityRegistry(panel);
-  if (!row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
+  if (picker.__voiceSelection || !row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
   const entityId = satelliteForDeviceId(entries,storedDeviceId);
   if (entityId) {
     picker.value = entityId;
@@ -241,26 +282,7 @@ async function bindSatellitePicker(panel,row) {
   } else if (storedDeviceId) {
     setWarning(warning,`Saved device is unavailable in Home Assistant (${storedDeviceId}). It will remain saved until you replace or remove it.`);
   }
-  picker.addEventListener("value-changed",async (event) => {
-    const selectedEntity = String(event?.detail?.value || picker.value || "");
-    picker.value = selectedEntity;
-    if (!selectedEntity) {
-      hidden.value = "";
-      setWarning(warning);
-      syncMappings(panel);
-      return;
-    }
-    const registry = await entityRegistry(panel);
-    if (!row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
-    const deviceId = deviceIdForSatellite(registry,selectedEntity);
-    if (!deviceId) {
-      setWarning(warning,"That Assist satellite is not linked to a Home Assistant device, so it cannot be used for a device assignment.");
-      return;
-    }
-    hidden.value = deviceId;
-    setWarning(warning);
-    syncMappings(panel);
-  });
+
 }
 
 function bindRows(panel) {

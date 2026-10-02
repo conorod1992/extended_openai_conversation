@@ -450,6 +450,7 @@ jobs:
         run: >-
           python ci/run_sanitized.py stress-artifacts/browser-native-lifetime.log --
           pytest tests_stress/test_browser_backend_resilience.py::test_native_shell_lifetime_and_assistant_isolation
+          tests_stress/test_browser_backend_resilience.py::test_native_editor_ownership_and_satellite_registry_recovery
           -v -s --asyncio-mode=auto --timeout=600
           --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
       - name: Summarize engine evidence
