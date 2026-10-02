@@ -374,3 +374,30 @@ def test_home_assistant_error_uses_generic_path_without_provider_hooks(
     record.assert_not_called()
     provider_log.assert_not_called()
     logger.error.assert_called_once()
+
+
+def test_retired_model_failure_uses_actionable_assist_error(monkeypatch) -> None:
+    entity = _ConversationEntity()
+    user_input = SimpleNamespace(language="en", conversation_id="conversation-1")
+    error = OpenAIError("model unavailable")
+    log = Mock()
+    monkeypatch.setattr(hardening, "request_reauthentication", Mock())
+    monkeypatch.setattr(hardening, "record_current_provider_failure", Mock())
+    monkeypatch.setattr(hardening, "log_provider_failure", log)
+    monkeypatch.setattr(
+        hardening,
+        "record_entity_retirement_failure",
+        lambda _entity, _err, logger=None: (
+            "The configured model gpt-5.1 appears to have been retired by OpenAI on "
+            "2027-04-01. Select a different model for this assistant in Model & responses."
+        ),
+    )
+
+    result = hardening._conversation_error_result(
+        entity, user_input, SimpleNamespace(), error
+    )
+
+    speech = result.response.speech["plain"]["speech"]
+    assert "gpt-5.1 appears to have been retired" in speech
+    assert "Select a different model" in speech
+    log.assert_not_called()

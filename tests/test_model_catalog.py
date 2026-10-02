@@ -158,6 +158,8 @@ def test_october_deprecations_preserve_existing_model_choices(model, replacement
     )
     metadata = data.model_metadata(model)
     assert existing["status"] == metadata["status"] == "deprecated"
+    assert metadata["deprecated_at"] == existing["deprecated_at"] == "2026-10-01"
+    assert metadata["shutdown_at"] == existing["shutdown_at"] == "2027-04-01"
     assert "October 1, 2026" in metadata["lifecycle_note"]
     assert "April 1, 2027" in metadata["lifecycle_note"]
     assert replacement in metadata["lifecycle_note"]
@@ -250,7 +252,7 @@ async def test_stored_v1_catalog_is_migrated_to_authoritative_v4(check_manager):
         "last_checked": 0,
     }
     await check_manager.async_load()
-    assert check_manager.status()["schema_version"] == 6
+    assert check_manager.status()["schema_version"] == data.CURRENT_SCHEMA_VERSION
     assert data.model_metadata("gpt-5.6")["reasoning"]["efforts"] == [
         "none",
         "low",
@@ -446,6 +448,27 @@ def test_alias_target_and_lifecycle_note_are_strictly_validated() -> None:
         data.validate_catalog(value)
 
 
+def test_lifecycle_dates_are_strictly_validated() -> None:
+    value = _catalog()
+    _model(value).update(status="deprecated", deprecated_at="not-a-date")
+    with pytest.raises(ValueError, match="Invalid deprecated_at date"):
+        data.validate_catalog(value)
+
+    value = _catalog()
+    _model(value).update(status="current", shutdown_at="2027-04-01")
+    with pytest.raises(ValueError, match="Lifecycle dates require deprecated"):
+        data.validate_catalog(value)
+
+    value = _catalog()
+    _model(value).update(
+        status="deprecated",
+        deprecated_at="2027-04-02",
+        shutdown_at="2027-04-01",
+    )
+    with pytest.raises(ValueError, match="shutdown date cannot precede"):
+        data.validate_catalog(value)
+
+
 def test_defaults_must_describe_unknown_models() -> None:
     value = _catalog()
     value["defaults"]["status"] = "current"
@@ -488,7 +511,7 @@ def test_v1_migration_rejects_non_v1_and_preserves_monotonic_version() -> None:
             "catalog_version": data.BUNDLED_CATALOG["catalog_version"] + 5,
         }
     )
-    assert migrated["schema_version"] == 6
+    assert migrated["schema_version"] == data.CURRENT_SCHEMA_VERSION
     assert migrated["catalog_version"] == data.BUNDLED_CATALOG["catalog_version"] + 6
 
 

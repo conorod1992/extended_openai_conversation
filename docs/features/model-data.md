@@ -22,7 +22,7 @@ Downloaded data is stored in HA's `.storage/extended_openai_conversation_respons
 
 The root has `schema_version`, `catalog_version`, `compatibility`, `defaults`, and `models`:
 
-- `schema_version` is currently **6**. Increment it for any field or semantic change that needs new EOAI code. The validator also accepts schema 5 and migrates older persisted schemas where supported.
+- `schema_version` is currently **7**. Increment it for any field or semantic change that needs new EOAI code. The validator also accepts schema 5 and migrates older persisted schemas where supported.
 - `catalog_version` is a monotonically increasing factual revision. Increment it for a capability-data change within an already supported schema. Older versions and changed content with the same version are rejected.
 - `compatibility.minimum_eoai_version` is the earliest integration release that understands this catalogue. A newer schema or minimum release is shown as an incompatible update; active and saved catalogues remain usable. Rejected data is never cached with an ETag, so a later compatible update can be discovered.
 - `defaults` gives conservative metadata for unknown exact IDs.
@@ -38,9 +38,12 @@ Metadata fields:
 | `structured_outputs`, `responses_web_search` | Provider features EOAI currently uses |
 | `service_tiers` | Provider-accepted request values; account entitlement is separate |
 | `recommended_profile`, `auto_api` | EOAI application policy, rather than provider facts |
+| `status`, `deprecated_at`, `shutdown_at`, `lifecycle_note` | Model lifecycle metadata. Dates are ISO `YYYY-MM-DD`; deprecated models remain usable until the provider rejects them. |
 | `explicit_prompt_cache` | Whether EOAI uses its explicit cache-breakpoint optimization; `false` does not imply a lack of implicit provider caching |
 
 The catalogue is compatibility knowledge for EOAI's current request paths, not an account-access guarantee. It does not mirror unrelated hosted tools or specialized audio, image, embedding, and moderation products.
+
+Deprecated models are hidden from new model suggestions but retained for existing saved configurations. A structured `shutdown_at` date drives Overview warnings but never blocks a request by itself. After that date, EOAI only treats a model as retired when the provider also returns a model-unavailable/not-found failure; that confirmed failure produces an actionable Assist error and Home Assistant Repair until the model is changed or a later request succeeds.
 
 Exact IDs take precedence. Only snapshots that explicitly name a parent inherit capabilities. Unspecified IDs receive conservative unknown metadata. Parent chains are resolved once into an exact-ID index at catalogue activation; runtime requests never search or merge a family tree. Remote data cannot supply regexes, matching expressions, request templates, executable code, endpoints, tool/security rules, Guest Mode policy, or request-building instructions. Adding a new kind of capability requires a code/schema change.
 

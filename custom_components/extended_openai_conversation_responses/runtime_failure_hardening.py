@@ -13,6 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent
 
 from .debug import record_current_provider_failure
+from .model_lifecycle import record_entity_retirement_failure
 from .provider_errors import (
     ProviderTransportError,
     log_provider_failure,
@@ -47,10 +48,16 @@ def _conversation_error_result(
     if isinstance(err, OpenAIError):
         request_reauthentication(entity.hass, getattr(entity, "entry", None), err)
         record_current_provider_failure(err)
-        log_provider_failure(active_logger, provider_log_message, err)
-        message = (
-            f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}"
+        retirement_message = record_entity_retirement_failure(
+            entity, err, logger=active_logger
         )
+        if retirement_message is not None:
+            message = f"Sorry, {retirement_message}"
+        else:
+            log_provider_failure(active_logger, provider_log_message, err)
+            message = (
+                f"Sorry, I had a problem talking to OpenAI: {provider_user_message(err)}"
+            )
     else:
         active_logger.error("Error during conversation: %s", err, exc_info=True)
         message = f"Something went wrong: {err}"

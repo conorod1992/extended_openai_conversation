@@ -15,6 +15,7 @@ const HEALTH_ICONS = {
 function healthActionLabel(check) {
   return {
     provider_runtime: "Run live test",
+    model_lifecycle: "Change model",
     instructions: "Review",
     home_assistant_exposure: "Review",
     memory: "Configure",

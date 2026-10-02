@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import date
 import json
 from pathlib import Path
 import re
@@ -15,8 +16,8 @@ EOAI_VERSION = Version(
 )
 
 MAX_CATALOG_BYTES = 256 * 1024
-SUPPORTED_SCHEMA_VERSIONS = frozenset({5, 6})
-CURRENT_SCHEMA_VERSION = 6
+SUPPORTED_SCHEMA_VERSIONS = frozenset({5, 6, 7})
+CURRENT_SCHEMA_VERSION = 7
 COMPATIBILITY_MESSAGE = (
     "A newer model catalogue is available, but it requires a newer version "
     "of Extended OpenAI Conversation."
@@ -63,7 +64,7 @@ _METADATA_REQUIRED = {
     "tools",
 }
 _MODEL_WRAPPER_KEYS = {"id", "display_name", "kind"}
-_METADATA_OPTIONAL = {"alias_of", "lifecycle_note", "auto_api"}
+_METADATA_OPTIONAL = {"alias_of", "lifecycle_note", "auto_api", "deprecated_at", "shutdown_at"}
 
 
 class _PreparedCatalog(dict[str, Any]):
@@ -294,6 +295,25 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
     note = value.get("lifecycle_note")
     if note is not None and (not isinstance(note, str) or len(note) > 512):
         raise ValueError("Invalid lifecycle note")
+    lifecycle_dates: dict[str, date] = {}
+    for field in ("deprecated_at", "shutdown_at"):
+        raw_date = value.get(field)
+        if raw_date is None:
+            continue
+        if not isinstance(raw_date, str):
+            raise ValueError(f"Invalid {field} date")
+        try:
+            lifecycle_dates[field] = date.fromisoformat(raw_date)
+        except ValueError as exc:
+            raise ValueError(f"Invalid {field} date") from exc
+    if lifecycle_dates and value["status"] != "deprecated":
+        raise ValueError("Lifecycle dates require deprecated model status")
+    if (
+        "deprecated_at" in lifecycle_dates
+        and "shutdown_at" in lifecycle_dates
+        and lifecycle_dates["shutdown_at"] < lifecycle_dates["deprecated_at"]
+    ):
+        raise ValueError("Model shutdown date cannot precede deprecation date")
 
 
 def _merge_snapshot(parent: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -342,7 +362,7 @@ def validate_catalog(value: Any) -> _PreparedCatalog:
     _keys(
         value,
         {"schema_version", "catalog_version", "defaults", "models"}
-        | ({"compatibility"} if schema == 6 else set()),
+        | ({"compatibility"} if schema >= 6 else set()),
         {"compatibility"} if schema == 5 else set(),
     )
     if value["catalog_version"] < 7:
@@ -607,6 +627,8 @@ def catalog_picker_models(
             "display_name": item["display_name"],
             "status": item["status"],
             "lifecycle_note": item.get("lifecycle_note"),
+            "deprecated_at": item.get("deprecated_at"),
+            "shutdown_at": item.get("shutdown_at"),
         }
         for item in effective["models"]
         if item["status"] == "current"
@@ -619,6 +641,8 @@ def catalog_picker_models(
                 "display_name": metadata.get("display_name", selected),
                 "status": metadata["status"],
                 "lifecycle_note": metadata.get("lifecycle_note"),
+                "deprecated_at": metadata.get("deprecated_at"),
+                "shutdown_at": metadata.get("shutdown_at"),
             }
         )
     return result
@@ -809,4 +833,6 @@ def compatibility_capabilities(
         "status": metadata["status"],
         "alias_of": metadata.get("alias_of"),
         "lifecycle_note": metadata.get("lifecycle_note"),
+        "deprecated_at": metadata.get("deprecated_at"),
+        "shutdown_at": metadata.get("shutdown_at"),
     }

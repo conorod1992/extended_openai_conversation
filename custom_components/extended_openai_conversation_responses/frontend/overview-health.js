@@ -23,6 +23,35 @@ function providerRuntimeCheck(facts, fallback = {}) {
   };
 }
 
+
+function modelLifecycleCheck(facts) {
+  const lifecycle = facts.model_lifecycle || {};
+  if (lifecycle.status !== "deprecated") return null;
+  const model = lifecycle.model || facts.provider_runtime?.model || "Selected model";
+  const shutdown = lifecycle.shutdown_at || null;
+  const confirmed = lifecycle.confirmed_unavailable === true;
+  const reached = lifecycle.shutdown_reached === true;
+  return {
+    id: "model_lifecycle",
+    state: confirmed ? "error" : "warning",
+    title: "Model lifecycle",
+    value: confirmed
+      ? "Retired model unavailable"
+      : reached
+        ? "Shutdown date reached"
+        : shutdown
+          ? `Scheduled for shutdown · ${shutdown}`
+          : "Deprecated",
+    detail: confirmed
+      ? `${model} was rejected by the provider after its announced shutdown date. Choose a different model for this assistant.`
+      : lifecycle.lifecycle_note
+        || (shutdown
+          ? `${model} is deprecated and is scheduled to stop working on ${shutdown}. Choose a replacement before then.`
+          : `${model} is deprecated. Choose a replacement before the provider retires it.`),
+    action: action("assistant", "model-responses", "config-chat_model"),
+  };
+}
+
 function functionToolsCheck(facts) {
   const tools = facts.function_tools || {};
   if (tools.unavailable === true) return {
@@ -292,13 +321,14 @@ export function buildSetupHealth(facts = {}, fallback = {}) {
   }
   const checks = [
     providerRuntimeCheck(facts, fallback),
+    modelLifecycleCheck(facts),
     functionToolsCheck(facts),
     instructionsCheck(facts),
     exposureCheck(facts),
     memoryCheck(facts),
     knowledgeCheck(facts),
     webSearchCheck(facts),
-  ];
+  ].filter(Boolean);
   const errorCount = checks.filter((check) => check.state === "error").length;
   const warningCount = checks.filter((check) => check.state === "warning").length;
   const unknownCount = checks.filter((check) => check.state === "unknown").length;

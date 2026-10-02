@@ -101,6 +101,7 @@ from .management_function_repair import async_prewarm_persisted_config_projectio
 from .management_ui import async_setup_management_ui
 from .memory import get_memory_mode
 from .model_catalog_manager import async_setup_model_catalog
+from .model_lifecycle import sync_entry_model_lifecycle
 from .native_function_schema_migration import (
     migrate_legacy_stock_native_function_tools_yaml,
 )
@@ -236,6 +237,7 @@ async def async_setup_entry(
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    sync_entry_model_lifecycle(hass, entry)
     try:
         await async_setup_templates(hass, entry.entry_id)
         entry.async_on_unload(entry.add_update_listener(update_listener))
@@ -276,6 +278,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
+    sync_entry_model_lifecycle(hass, entry)
     if is_live_subentry_update():
         # Live management writes replace subentry.data in place. Conversation,
         # AI Task and sensor runtimes already consume that live object, while each
