@@ -2239,7 +2239,8 @@
       "quiet_prepared_recovery_cases": 12,
       "quiet_independent_goal_preservations": 8,
       "quiet_process_application_recoveries": 8,
-      "quiet_process_indeterminate_controls": 2,
+      "quiet_process_indeterminate_controls": 4,
+      "quiet_process_healthy_periods": 8,
       "quiet_service_acknowledgement_recoveries": 2
     },
     "setup": {

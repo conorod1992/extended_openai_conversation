@@ -444,6 +444,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 or not self._control_values_equal(
                     kind, original, existing["original_value"]
                 )
+                or not self._baseline_context_matches(entity_id, existing)
             ):
                 controls.pop(entity_id)
                 await self._async_save_control_state_locked()
@@ -462,6 +463,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 intent["kind"] != kind
                 or intent["satellite_entity_id"] != satellite_entity_id
                 or not same_baseline
+                or not self._baseline_context_matches(entity_id, intent, legacy=True)
             ):
                 # A changed device association or manual value ends this attempt;
                 # keep observation so we do not claim or overwrite that change.
@@ -474,6 +476,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 "satellite_entity_id": satellite_entity_id,
                 "original_value": original,
                 "quiet_value": desired,
+                "baseline_context_id": self._control_context_id(entity_id),
             }
             observed.append(entity_id)
         if needs_action:
@@ -490,6 +493,19 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         }
         await self._async_save_control_state_locked()
         return cast(dict[str, Any], controls[entity_id])
+
+    def _control_context_id(self, entity_id: str) -> str | None:
+        states = getattr(self.hass, "states", None)
+        state = states.get(entity_id) if states is not None else None
+        return getattr(getattr(state, "context", None), "id", None)
+
+    def _baseline_context_matches(
+        self, entity_id: str, control: dict[str, Any], *, legacy: bool = False
+    ) -> bool:
+        baseline = control.get("baseline_context_id")
+        if baseline is None:
+            return legacy
+        return bool(self._control_context_id(entity_id) == baseline)
 
     @staticmethod
     def _control_values_equal(kind: str, left: Any, right: Any) -> bool:
@@ -546,7 +562,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         )
         if self._control_values_equal(
             control["kind"], current, control["original_value"]
-        ):
+        ) and self._baseline_context_matches(entity_id, control, legacy=True):
             return True
         controls.pop(entity_id, None)
         # Preserve observation so subsequent reconciliation cannot reclaim a
@@ -578,6 +594,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             return None
         raw_controls = value.get("controls") or {}
         for entity_id, control in normalized["controls"].items():
+            self._normalize_baseline_context(control, raw_controls.get(entity_id, {}))
             phase = raw_controls.get(entity_id, {}).get("application_state")
             if phase is not None:
                 if phase not in {"prepared", "applied"}:
@@ -606,10 +623,24 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             for entity_id, control in (pending_state or {}).get("controls", {}).items()
             if entity_id not in normalized["controls"]
         }
+        for entity_id, control in pending.items():
+            self._normalize_baseline_context(
+                control, (raw_pending or {}).get(entity_id, {})
+            )
         observed.update(pending)
         normalized["observed_controls"] = sorted(observed)
         normalized["pending_controls"] = pending
         return normalized
+
+    @staticmethod
+    def _normalize_baseline_context(
+        control: dict[str, Any], raw: dict[str, Any]
+    ) -> None:
+        context_id = raw.get("baseline_context_id")
+        if context_id is not None:
+            if not isinstance(context_id, str) or not context_id:
+                raise ValueError("Quiet Hours baseline context is invalid")
+            control["baseline_context_id"] = context_id
 
     async def async_shutdown(self) -> None:
         for unsubscribe in self._unsubscribers:

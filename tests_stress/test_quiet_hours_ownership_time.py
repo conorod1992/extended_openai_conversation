@@ -617,7 +617,7 @@ async def test_pending_quiet_control_preserves_manual_change_after_storage_failu
 async def _application_probe(hass, freezer, kind):
     await hass.config.async_set_time_zone("Europe/Dublin")
     freezer.move_to(datetime(2026, 1, 10, 12, 0, tzinfo=DUBLIN))
-    satellite, media, wake = _install_satellite_entities(
+    _, media, wake = _install_satellite_entities(
         hass,
         slug="application-alpha",
         volume=0.77 if kind == "volume" else 0.08,
@@ -934,15 +934,17 @@ async def test_quiet_control_prepared_intent_recovers_in_fresh_process(
     status, output = await run("recover")
     assert status == 0, output
     result = json.loads(output.split("QUIET_APPLICATION_RECOVERY=")[-1].splitlines()[0])
-    indeterminate = boundary == "after_action" and not retain_context
+    indeterminate = not retain_context
     assert result == {
-        "applied_calls": 1,
-        "restored_calls": 1 if indeterminate else 2,
+        "applied_calls": int(not indeterminate or boundary == "after_action"),
+        "restored_calls": int(boundary == "after_action") if indeterminate else 2,
+        "healthy_calls": 1,
         "phase": "unowned" if indeterminate else "applied",
     }
     record(
         stress_trace,
         "summary",
         quiet_process_application_recoveries=1,
+        quiet_process_healthy_periods=1,
         quiet_process_indeterminate_controls=int(indeterminate),
     )

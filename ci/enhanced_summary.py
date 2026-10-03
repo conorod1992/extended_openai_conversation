@@ -118,6 +118,7 @@ COUNT_METRICS = {
     "quiet_independent_goal_preservations",
     "quiet_process_application_recoveries",
     "quiet_process_indeterminate_controls",
+    "quiet_process_healthy_periods",
     "quiet_service_acknowledgement_recoveries",
     "delayed_same_manager_recoveries",
     "delayed_compound_storage_faults",

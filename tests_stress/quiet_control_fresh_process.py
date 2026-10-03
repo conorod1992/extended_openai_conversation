@@ -94,6 +94,8 @@ async def main():
     manager = QuietHoursManager(hass)
     target = media if kind == "volume" else wake
     if phase == "interrupt":
+        device["context_id"] = hass.states.get(target).context.id
+        save_device()
         await manager.async_setup()
         now = dt_util.now()
         manager._config = _config_from_data(
@@ -138,28 +140,31 @@ async def main():
         await manager.async_setup()
         for _ in range(3):
             await manager.async_reconcile()
-        assert device["calls"] == 1
-        indeterminate = boundary == "after_action" and retain_context == "0"
-        applied = (
-            manager.active["controls"]
-            .get(target, {})
-            .get("application_state", "unowned")
-        )
+        indeterminate = retain_context == "0"
+        applied_calls = int(not indeterminate or boundary == "after_action")
+        assert device["calls"] == applied_calls
+        applied = manager.active["controls"].get(target, {}).get("application_state", "unowned")
         assert applied == ("unowned" if indeterminate else "applied")
         await manager.async_reconcile(now=dt_util.now() + timedelta(minutes=20))
-        assert device["calls"] == (1 if indeterminate else 2)
-        assert device["volume"] == (
-            (0.20 if indeterminate else 0.77) if kind == "volume" else 0.08
-        )
-        assert device["wake"] == (
-            "on" if kind == "wake_sound" and not indeterminate else "off"
-        )
+        restored_calls = device["calls"]
+        assert restored_calls == (applied_calls if indeterminate else 2)
+        preserve_quiet = indeterminate and boundary == "after_action"
+        assert device["volume"] == ((0.20 if preserve_quiet else 0.77) if kind == "volume" else 0.08)
+        assert device["wake"] == ("on" if kind == "wake_sound" and not preserve_quiet else "off")
+        device["volume"] = 0.77 if kind == "volume" else 0.08
+        device["wake"] = "on" if kind == "wake_sound" else "off"
+        hass.states.async_set(media, "idle", {"volume_level": device["volume"]})
+        hass.states.async_set(wake, device["wake"])
+        await manager.async_reconcile(now=dt_util.now() + timedelta(days=1))
+        healthy_calls = device["calls"] - restored_calls
+        assert healthy_calls == 1
         print(
             "QUIET_APPLICATION_RECOVERY="
             + json.dumps(
                 {
-                    "applied_calls": 1,
-                    "restored_calls": device["calls"],
+                    "applied_calls": applied_calls,
+                    "restored_calls": restored_calls,
+                    "healthy_calls": healthy_calls,
                     "phase": applied,
                 }
             ),
