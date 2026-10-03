@@ -111,6 +111,8 @@ COUNT_METRICS = {
     "rest_transport_recoveries",
     "rest_blocked_dependent_actions",
     "rest_received_response_controls",
+    "late_external_edit_conflicts",
+    "late_external_edit_recoveries",
     "delayed_same_manager_recoveries",
     "delayed_compound_storage_faults",
     "delayed_recovered_service_effects",

@@ -1539,7 +1539,11 @@
     "tests_stress/test_function_provider_wire_remaining.py::test_rest_completed_empty_and_http_error_responses_remain_data[204--chat_completions]",
     "tests_stress/test_function_provider_wire_remaining.py::test_rest_completed_empty_and_http_error_responses_remain_data[204--responses]",
     "tests_stress/test_function_provider_wire_remaining.py::test_rest_completed_empty_and_http_error_responses_remain_data[404-Received error body-chat_completions]",
-    "tests_stress/test_function_provider_wire_remaining.py::test_rest_completed_empty_and_http_error_responses_remain_data[404-Received error body-responses]"
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_completed_empty_and_http_error_responses_remain_data[404-Received error body-responses]",
+    "tests_stress/test_file_edit_native_cancellation.py::test_public_edit_preserves_external_change_during_native_preparation[chat_completions-in-place]",
+    "tests_stress/test_file_edit_native_cancellation.py::test_public_edit_preserves_external_change_during_native_preparation[chat_completions-atomic]",
+    "tests_stress/test_file_edit_native_cancellation.py::test_public_edit_preserves_external_change_during_native_preparation[responses-in-place]",
+    "tests_stress/test_file_edit_native_cancellation.py::test_public_edit_preserves_external_change_during_native_preparation[responses-atomic]"
   ],
   "browser": {
     "browser": [
@@ -1987,7 +1991,9 @@
       "rest_transport_failure_cases": 12,
       "rest_transport_recoveries": 12,
       "rest_blocked_dependent_actions": 8,
-      "rest_received_response_controls": 4
+      "rest_received_response_controls": 4,
+      "late_external_edit_conflicts": 4,
+      "late_external_edit_recoveries": 4
     },
     "request-rules": {
       "ha_service_calls": 1,

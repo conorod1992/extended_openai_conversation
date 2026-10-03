@@ -83,7 +83,9 @@ def _read_text_bounded_snapshot(path: Path) -> tuple[str, _FileFingerprint]:
     return content.decode("utf-8"), _fingerprint(after)
 
 
-def _atomic_replace_text(path: Path, content: str) -> int:
+def _atomic_replace_text(
+    path: Path, content: str, *, expected: _FileFingerprint | None = None
+) -> int:
     """Atomically write text, preserving an existing file's mode when present."""
     encoded = content.encode("utf-8")
     if len(encoded) > FILE_READ_SIZE_LIMIT:
@@ -105,6 +107,8 @@ def _atomic_replace_text(path: Path, content: str) -> int:
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(temp_path, current_mode)
+        if expected is not None:
+            _check_file_fingerprint(path, expected)
         os.replace(temp_path, path)
     finally:
         with suppress(FileNotFoundError):
@@ -116,13 +120,18 @@ def _atomic_replace_text_if_unchanged(
     path: Path, content: str, expected: _FileFingerprint
 ) -> int:
     """Atomically replace text only when the path still identifies the read version."""
+    _check_file_fingerprint(path, expected)
+    return _atomic_replace_text(path, content, expected=expected)
+
+
+def _check_file_fingerprint(path: Path, expected: _FileFingerprint) -> None:
+    """Reject a detected external edit without claiming conditional replacement."""
     try:
         current = _fingerprint(path.stat())
     except FileNotFoundError as err:
         raise RuntimeError("File changed since it was read; retry the edit") from err
     if current != expected:
         raise RuntimeError("File changed since it was read; retry the edit")
-    return _atomic_replace_text(path, content)
 
 
 def _get_edit_lock(hass: HomeAssistant, path: Path) -> asyncio.Lock:

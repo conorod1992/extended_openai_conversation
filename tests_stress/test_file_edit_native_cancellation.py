@@ -26,16 +26,16 @@ async def test_cancelled_native_edit_retains_path_until_worker_settles(
     native = file._atomic_replace_text
     loop = asyncio.get_running_loop()
 
-    def gated_native(path, content):
+    def gated_native(path, content, **kwargs):
         # Called by the real unchanged-fingerprint worker after its check.
         if content == "FIRST second":
             loop.call_soon_threadsafe(entered.set)
             try:
                 assert release.wait(20), "native gate was never released"
-                return native(path, content)
+                return native(path, content, **kwargs)
             finally:
                 loop.call_soon_threadsafe(settled.set)
-        return native(path, content)
+        return native(path, content, **kwargs)
 
     monkeypatch.setattr(file, "_atomic_replace_text", gated_native)
     config = {
@@ -120,15 +120,15 @@ async def test_cancelled_native_writer_retains_path_across_write_and_edit(
     probe = LockProbe(lock)
     monkeypatch.setattr(file, "_get_edit_lock", lambda _hass, path: probe)
 
-    def gated_native(path, content):
+    def gated_native(path, content, **kwargs):
         if content == "FIRST second":
             loop.call_soon_threadsafe(entered.set)
             try:
                 assert release.wait(20), "native gate was never released"
-                return native(path, content)
+                return native(path, content, **kwargs)
             finally:
                 loop.call_soon_threadsafe(settled.set)
-        return native(path, content)
+        return native(path, content, **kwargs)
 
     monkeypatch.setattr(file, "_atomic_replace_text", gated_native)
 
@@ -187,3 +187,73 @@ async def test_cancelled_native_writer_retains_path_across_write_and_edit(
         await asyncio.gather(
             first, *([second] if second else []), return_exceptions=True
         )
+
+
+@pytest.mark.parametrize("replacement", [False, True], ids=["in-place", "atomic"])
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+async def test_public_edit_preserves_external_change_during_native_preparation(
+    hass, monkeypatch, tmp_path, stress_trace, api_mode, replacement
+):
+    import os
+
+    from custom_components.extended_openai_conversation_responses.const import CONF_API_MODE, CONF_FUNCTION_TOOLS
+    from homeassistant.components import conversation
+    from homeassistant.core import Context
+    from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
+    from tests_real_ha.test_provider_wire_e2e import _install_wire, _speech
+    from tests_stress.test_function_provider_wire_remaining import _provider_replies, _provider_result
+
+    target = tmp_path / "external.txt"
+    target.write_text("alpha beta", encoding="utf-8")
+    tool = {"spec": {"name": "external_edit", "description": "Edit controlled file", "parameters": {"type": "object", "properties": {}}}, "function": {"type": "edit_file", "path": str(target), "old_text": "alpha", "new_text": "ALPHA", "allow_dir": [str(tmp_path)]}}
+    entry = _make_entry("Late external edit", include_ai_task=False, conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]})
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    entered = asyncio.Event()
+    release = threading.Event()
+    fsync = os.fsync
+    loop = asyncio.get_running_loop()
+
+    def held_fsync(fd):
+        fsync(fd)
+        if not entered.is_set() and Path(os.readlink(f"/proc/self/fd/{fd}")).name.startswith(".external.txt."):
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(15), "Native preparation was not released"
+
+    def independent_edit():
+        if replacement:
+            other = tmp_path / "external-editor.tmp"
+            other.write_text("alpha BETA_EXTERNAL", encoding="utf-8")
+            os.replace(other, target)
+        else:
+            target.write_text("alpha BETA_EXTERNAL", encoding="utf-8")
+
+    async def say():
+        return await conversation.async_converse(hass=hass, text="Edit the file", conversation_id=None, context=Context(), language="en", agent_id=entry.entry_id)
+
+    wire = _install_wire(monkeypatch, agent, _provider_replies(api_mode, "late-conflict", "external_edit", "Conflict handled"))
+    caller = None
+    try:
+        with monkeypatch.context() as gate:
+            gate.setattr(os, "fsync", held_fsync)
+            caller = asyncio.create_task(say())
+            await asyncio.wait_for(entered.wait(), 10)
+            await hass.async_add_executor_job(independent_edit)
+            assert target.read_text() == "alpha BETA_EXTERNAL"
+            release.set()
+            assert _speech(await caller) == "Conflict handled"
+        result = _provider_result(wire.requests[1], api_mode, "late-conflict")
+        assert "changed since it was read" in result["error"].lower()
+        assert "retry" in result["error"].lower()
+        assert target.read_text() == "alpha BETA_EXTERNAL"
+        assert list(tmp_path.glob(".external.txt.*.tmp")) == []
+        wire = _install_wire(monkeypatch, agent, _provider_replies(api_mode, "healthy-edit", "external_edit", "Healthy edit"))
+        assert _speech(await say()) == "Healthy edit"
+        assert _provider_result(wire.requests[1], api_mode, "healthy-edit")["success"] is True
+        assert target.read_text() == "ALPHA BETA_EXTERNAL"
+        assert list(tmp_path.glob(".external.txt.*.tmp")) == []
+        record(stress_trace, "summary", late_external_edit_conflicts=1, late_external_edit_recoveries=1)
+    finally:
+        release.set()
+        if caller is not None:
+            await asyncio.gather(caller, return_exceptions=True)
