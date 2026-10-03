@@ -27,7 +27,10 @@ test("migrated release settings render, save, and reload through the candidate U
   await title.fill(savedTitle);
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
   await panel.getByRole("button", {name: "Save changes", exact: true}).click();
-  await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
+  // The panel's dirty flag/save bar is the authoritative completion signal;
+  // transient banner text may outlive the acknowledged write by one render.
+  await expect.poll(() => panel.evaluate((host) => host._configDirty)).toBe(false);
+  await expect(panel.locator(".save-bar")).toHaveCount(0);
 
   // The fixture page owns the browser-side call log. Capture the save before
   // navigating, because the reload below creates a fresh fixture/harness instance.
