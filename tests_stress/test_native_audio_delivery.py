@@ -586,3 +586,154 @@ async def test_two_native_audio_journeys_interleave_without_cross_owned_output(
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_responses_native_audio_executes_tool_once_and_next_voice_turn_is_healthy(
+    hass,
+    monkeypatch,
+    stress_trace,
+):
+    """Native audio covers Responses tool continuation and a healthy later turn."""
+    from copy import deepcopy
+
+    from custom_components.extended_openai_conversation_responses.const import (
+        API_MODE_RESPONSES,
+        CONF_API_MODE,
+        CONF_CHAT_MODEL,
+        CONF_FUNCTION_TOOLS,
+        DEFAULT_CONF_FUNCTION_TOOLS,
+    )
+    from homeassistant.components.homeassistant.exposed_entities import (
+        async_expose_entity,
+    )
+    from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
+    from tests_real_ha.test_provider_wire_e2e import (
+        _responses_sse_text,
+        _responses_sse_tool_call,
+    )
+
+    owner = MockUser(
+        id="responses-audio-owner", name="Responses audio owner", is_owner=True
+    ).add_to_hass(hass)
+    entity_id = "light.responses_audio_probe"
+    hass.states.async_set(entity_id, "on")
+    async_expose_entity(hass, conversation.DOMAIN, entity_id, True)
+    effects = []
+
+    async def turn_off(call):
+        effects.append((call.domain, call.service, dict(call.data)))
+        hass.states.async_set(entity_id, "off")
+
+    hass.services.async_register("light", "turn_off", turn_off)
+    tool = deepcopy(DEFAULT_CONF_FUNCTION_TOOLS[0])
+    entry = _make_entry(
+        "Responses native audio",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_RESPONSES,
+            CONF_CHAT_MODEL: "gpt-5.6",
+            "reasoning_effort": "none",
+            CONF_FUNCTION_TOOLS: [tool],
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert agent is not None
+
+    recording = _test_wav()
+    entities, pcm = await _install_audio_entities(hass, recording)
+    speech, tts, satellite = (
+        entities[key] for key in ("stt", "tts", "assist_satellite")
+    )
+    store = hass.data[KEY_ASSIST_PIPELINE].pipeline_store
+    pipeline = await store.async_create_item(
+        {
+            "name": "EOAI Responses native audio",
+            "language": "en",
+            "conversation_language": "en",
+            "conversation_engine": agent.entity_id,
+            "stt_engine": speech.entity_id,
+            "stt_language": "en",
+            "tts_engine": tts.entity_id,
+            "tts_language": "en",
+            "tts_voice": None,
+            "wake_word_entity": None,
+            "wake_word_id": None,
+            "prefer_local_intents": False,
+        }
+    )
+    store.async_set_preferred_item(pipeline.id)
+
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _responses_sse_tool_call(
+                "responses-audio-action",
+                "execute_services",
+                {
+                    "list": [
+                        {
+                            "domain": "light",
+                            "service": "turn_off",
+                            "service_data": {"entity_id": [entity_id]},
+                        }
+                    ]
+                },
+            ),
+            _responses_sse_text("Voice action complete"),
+            _responses_sse_text("Follow-up voice healthy"),
+        ],
+    )
+
+    async def audio_stream():
+        for start in range(0, len(pcm), 640):
+            yield pcm[start : start + 640]
+            await asyncio.sleep(0)
+
+    async def run_once():
+        await asyncio.wait_for(
+            satellite.async_accept_pipeline_from_satellite(
+                audio_stream(), context=Context(user_id=owner.id)
+            ),
+            15,
+        )
+        assert not [
+            event for event in satellite.events if event.type.value == "error"
+        ]
+
+    await run_once()
+    assert effects == [("light", "turn_off", {"entity_id": [entity_id]})]
+    assert hass.states.get(entity_id).state == "off"
+    assert tts.messages == ["Voice action complete"]
+    assert len(wire.requests) == 2
+    continuation = wire.requests[1]["body"]
+    outputs = [
+        item
+        for item in continuation["input"]
+        if item.get("type") == "function_call_output"
+    ]
+    assert len(outputs) == 1
+    assert outputs[0]["call_id"] == "responses-audio-action"
+    satellite.tts_response_finished()
+    satellite.events.clear()
+
+    await run_once()
+    assert effects == [("light", "turn_off", {"entity_id": [entity_id]})]
+    assert tts.messages == ["Voice action complete", "Follow-up voice healthy"]
+    assert len(wire.requests) == 3
+    follow_up = json.dumps(wire.requests[2]["body"])
+    assert "responses-audio-action" not in follow_up
+    assert satellite.state == AssistSatelliteState.RESPONDING
+    satellite.tts_response_finished()
+    assert satellite.state == AssistSatelliteState.IDLE
+
+    record(
+        stress_trace,
+        "summary",
+        responses_native_audio_tool_journeys=1,
+        responses_native_audio_tool_effects=1,
+        responses_native_audio_healthy_followups=1,
+        provider_requests=3,
+        public_turns=2,
+    )
