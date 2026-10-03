@@ -346,6 +346,7 @@ class RequestRules:
         self._wording_groups = _copy_wording_groups(DEFAULT_WORDING_GROUPS)
         self._groups: list[dict[str, str]] = []
         self._matching_snapshot = _MatchingSnapshot((), ())
+        self._committed_matching_snapshot = self._matching_snapshot
         self._has_continuation = False
         self._condition_checkers: dict[str, tuple[list[Any], tuple[Any, ...]]] = {}
         self._diagnostics: dict[str, str] = {}
@@ -458,6 +459,8 @@ class RequestRules:
                 self._rules = []
                 self._opaque_fields = {}
                 self._sort_and_compile()
+                self._committed_matching_snapshot = self._matching_snapshot
+                self._has_continuation = False
                 self._initialized = False
                 self._committed_state = None
                 raise
@@ -797,7 +800,7 @@ class RequestRules:
         self, text: str, excluded_ids: frozenset[str] = frozenset()
     ) -> RuleMatch | None:
         """Use list-order deterministic precedence, with fuzzy only as fallback."""
-        snapshot = self._matching_snapshot
+        snapshot = self._committed_matching_snapshot
         validate_match_input(text)
         normalized_candidates: dict[tuple[bool, bool], str] = {}
         sentence_text: PreparedSentenceText | None = None
@@ -860,7 +863,7 @@ class RequestRules:
                 return eligible_match, skipped
             return None, skipped
         # Preserve the public match seam used by lightweight instrumentation.
-        snapshot = self._matching_snapshot
+        snapshot = self._committed_matching_snapshot
         if not snapshot.deterministic:
             validate_match_input(text)
             return None, []
@@ -936,7 +939,7 @@ class RequestRules:
         self, hass: HomeAssistant, text: str, skipped: list[dict[str, str]]
     ) -> AsyncIterator[RuleMatch]:
         """Stream matches from one snapshot and a single matcher work budget."""
-        cursor = _MatchCursor(self._matching_snapshot, text)
+        cursor = _MatchCursor(self._committed_matching_snapshot, text)
         if not cursor.snapshot.deterministic:
             return
         executor = getattr(hass, "async_add_executor_job", None)
@@ -968,10 +971,6 @@ class RequestRules:
     def _refresh_snapshot_rule(self, rule_id: str, replacement: dict[str, Any]) -> None:
         """Publish a metadata-only change without recompiling every phrase."""
         self._refresh_snapshot_rules({rule_id: replacement})
-        self._has_continuation = any(
-            rule.get("continue_matching", False)
-            for rule, _, _ in self._matching_snapshot.deterministic
-        )
 
     def _refresh_snapshot_rules(
         self, replacements: Mapping[str, dict[str, Any]]
@@ -1152,9 +1151,6 @@ class RequestRules:
             tuple(compiled_rules),
             fuzzy_rules,
         )
-        self._has_continuation = any(
-            rule.get("continue_matching", False) for rule, _, _ in compiled_rules
-        )
         self._diagnostics = diagnostics
         return order_changed
 
@@ -1224,6 +1220,8 @@ class RequestRules:
         self._rules = []
         self._condition_checkers.clear()
         self._sort_and_compile()
+        self._committed_matching_snapshot = self._matching_snapshot
+        self._has_continuation = False
 
     def _remember_committed_state(self) -> None:
         """Capture the exact last committed Request Rule configuration."""
@@ -1236,6 +1234,13 @@ class RequestRules:
             "rules": deepcopy(self._rules),
         }
         self._committed_opaque_fields = deepcopy(self._opaque_fields)
+        # Assist reads one immutable committed generation without waiting behind
+        # management I/O. Candidate compilation never grants execution authority.
+        self._committed_matching_snapshot = self._matching_snapshot
+        self._has_continuation = any(
+            rule.get("continue_matching", False)
+            for rule, _, _ in self._committed_matching_snapshot.deterministic
+        )
 
     def _restore_committed_state(self) -> None:
         snapshot = self._committed_state
@@ -2509,7 +2514,10 @@ async def async_evaluate_rule(
     context: Context | None = None,
 ) -> RuleEvaluation | None:
     """Apply each eligible rule once, stopping on handoff or failure."""
-    matching_revision = rules.revision() if isinstance(rules, RequestRules) else None
+    matching_generation = rules._generation if isinstance(rules, RequestRules) else None
+    matching_snapshot = (
+        rules._committed_matching_snapshot if isinstance(rules, RequestRules) else None
+    )
 
     execution_started = False
 
@@ -2521,8 +2529,11 @@ async def async_evaluate_rule(
     def require_matching_revision() -> None:
         if (
             not execution_started
-            and matching_revision is not None
-            and rules.revision() != matching_revision
+            and matching_generation is not None
+            and (
+                rules._generation != matching_generation
+                or rules._committed_matching_snapshot is not matching_snapshot
+            )
         ):
             raise HomeAssistantError(
                 "Request Rules changed during matching; please retry"

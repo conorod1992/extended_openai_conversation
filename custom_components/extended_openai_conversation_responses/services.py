@@ -1,5 +1,6 @@
 """Services for the extended openai conversation component."""
 
+import asyncio
 import base64
 from collections.abc import Mapping
 import logging
@@ -586,9 +587,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                             f"Downloaded Skill file `{repo_path}`",
                         )
                     download_budget.record_file(repo_path, len(content))
-                    await hass.async_add_executor_job(
-                        _write_file_sync, item_path, content
-                    )
+                    await _async_native_job(_write_file_sync, item_path, content)
                     downloaded_files.append(repo_path)
                 elif item_type == "dir":
                     child_url = item.get("url")
@@ -601,14 +600,32 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             file_path.write_bytes(content)
 
         def _prepare_staging(root: Path, staging: Path) -> None:
+            nonlocal owns_staging
             root.mkdir(parents=True, exist_ok=True)
-            if staging.exists():
-                shutil.rmtree(staging)
-            staging.mkdir(parents=True)
+            # A UUID collision is not authority to delete someone else's files.
+            staging.mkdir()
+            owns_staging = True
 
         def _cleanup_path(path: Path) -> None:
             if path.exists():
                 shutil.rmtree(path)
+
+        async def _async_native_job(function, *args) -> None:
+            """Native preparation/writes must settle before owned cleanup starts."""
+            task = asyncio.ensure_future(hass.async_add_executor_job(function, *args))
+            cancellation = None
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError as err:
+                    if task.cancelled():
+                        raise
+                    cancellation = cancellation or err
+                except Exception:
+                    break
+            task.result()
+            if cancellation is not None:
+                raise cancellation
 
         skill_manager = await SkillManager.async_get_instance(hass)
         skills_root = skill_manager.user_skills_dir.resolve()
@@ -618,24 +635,28 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
         staging_root = skill_manager.staging_dir.resolve()
         staging_dir = staging_root / f"{skill_name}.download-{uuid4().hex}"
-        await hass.async_add_executor_job(_prepare_staging, staging_root, staging_dir)
-        _LOGGER.info("Downloading skill `%s` from `%s`", skill_name, source_ref)
+        owns_staging = False
+        published = False
 
         try:
+            await _async_native_job(_prepare_staging, staging_root, staging_dir)
+            _LOGGER.info("Downloading skill `%s` from `%s`", skill_name, source_ref)
             await _download_directory(api_url, staging_dir)
             if not (staging_dir / "SKILL.md").is_file():
                 raise HomeAssistantError(
                     f"Downloaded skill `{skill_name}` does not contain SKILL.md"
                 )
             await skill_manager.async_publish_staged_skill(skill_name, staging_dir)
+            published = True
         except HomeAssistantError:
-            await hass.async_add_executor_job(_cleanup_path, staging_dir)
             raise
         except Exception as err:
-            await hass.async_add_executor_job(_cleanup_path, staging_dir)
             raise HomeAssistantError(
                 f"Failed to download skill `{skill_name}`: {err}"
             ) from err
+        finally:
+            if owns_staging and not published:
+                await _async_native_job(_cleanup_path, staging_dir)
 
         _LOGGER.info(
             "Successfully downloaded skill `%s` (%d files)",

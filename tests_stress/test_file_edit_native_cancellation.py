@@ -11,6 +11,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses.functions import file
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.template import Template
+from tests.lock_probe import LockProbe
 from tests_stress.conftest import record
 
 
@@ -90,6 +91,96 @@ async def test_cancelled_native_edit_retains_path_until_worker_settles(
         )
         record(
             stress_trace, "summary", native_edit_settlement_cases=1, layer="genuine-ha"
+        )
+    finally:
+        release.set()
+        await asyncio.gather(
+            first, *([second] if second else []), return_exceptions=True
+        )
+
+
+@pytest.mark.parametrize(
+    "older,newer", [("write", "write"), ("write", "edit"), ("edit", "write")]
+)
+async def test_cancelled_native_writer_retains_path_across_write_and_edit(
+    hass: HomeAssistant,
+    tmp_path: Path,
+    monkeypatch,
+    stress_trace: list[dict],
+    older,
+    newer,
+) -> None:
+    target = tmp_path / "owned.txt"
+    target.write_text("first second", encoding="utf-8")
+    entered, settled = asyncio.Event(), asyncio.Event()
+    release = threading.Event()
+    native = file._atomic_replace_text
+    loop = asyncio.get_running_loop()
+    lock = file._get_edit_lock(hass, target.resolve())
+    probe = LockProbe(lock)
+    monkeypatch.setattr(file, "_get_edit_lock", lambda _hass, path: probe)
+
+    def gated_native(path, content):
+        if content == "FIRST second":
+            loop.call_soon_threadsafe(entered.set)
+            try:
+                assert release.wait(20), "native gate was never released"
+                return native(path, content)
+            finally:
+                loop.call_soon_threadsafe(settled.set)
+        return native(path, content)
+
+    monkeypatch.setattr(file, "_atomic_replace_text", gated_native)
+
+    async def mutate(kind, *, first):
+        config = {
+            "path": Template(str(target), hass),
+            "allow_dir": [Template(str(tmp_path), hass)],
+        }
+        if kind == "write":
+            config["content"] = Template(
+                "FIRST second" if first else "ACKNOWLEDGED", hass
+            )
+            function = file.WriteFileFunction()
+        else:
+            config.update(
+                old_text=Template("first" if first else "second", hass),
+                new_text=Template("FIRST" if first else "SECOND", hass),
+            )
+            function = file.EditFileFunction()
+        return await function.execute(hass, config, {}, None, [])
+
+    first = asyncio.create_task(mutate(older, first=True))
+    second = None
+    try:
+        assert await probe.next_attempt() is first
+        await asyncio.wait_for(entered.wait(), 10)
+        first.cancel()
+        second = asyncio.create_task(mutate(newer, first=False))
+        assert await probe.next_attempt() is second
+        assert lock.locked() and not settled.is_set()
+        assert not first.done() and not second.done()
+        first.cancel()
+        await asyncio.sleep(0)
+        assert not first.done() and not second.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert (await asyncio.wait_for(second, 10))["success"]
+        await asyncio.wait_for(settled.wait(), 10)
+        await hass.async_block_till_done()
+        expected = "ACKNOWLEDGED" if newer == "write" else "FIRST SECOND"
+        assert target.read_text() == expected
+        assert list(tmp_path.glob(".owned.txt.*.tmp")) == []
+        assert (await mutate("write", first=False))["success"]
+        assert target.read_text() == "ACKNOWLEDGED"
+        record(
+            stress_trace,
+            "summary",
+            native_file_settlement_cases=1,
+            older=older,
+            newer=newer,
+            layer="genuine-ha",
         )
     finally:
         release.set()
