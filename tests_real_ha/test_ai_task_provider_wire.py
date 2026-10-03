@@ -442,3 +442,174 @@ async def test_truncated_provider_stream_cannot_complete_ai_task_or_poison_next(
     second = _input_text(wire.requests[1]["body"])
     assert "RECOVERED_TASK_MARKER" in second
     assert "TRUNCATED_TASK_MARKER" not in second
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize(
+    "payload,valid",
+    [
+        ("null", False),
+        ("[]", False),
+        ("{}", False),
+        ('{"answer":"ready"}', False),
+        ('{"answer":"ready","count":"two"}', False),
+        ('{"answer":"ready","count":2}', True),
+        ('{"answer":"ready","count":0,"active":false,"note":null}', True),
+    ],
+)
+async def test_structured_task_output_matches_caller_contract_and_recovers(
+    hass, monkeypatch, mode, payload, valid
+):
+    entry, entity_id = await _task_entity(hass, mode)
+    schema = vol.Schema(
+        {
+            vol.Required("answer"): str,
+            vol.Required("count"): int,
+            vol.Optional("active"): bool,
+            vol.Optional("note"): vol.Any(None, str),
+        }
+    )
+    wire = _wire(
+        monkeypatch,
+        entry,
+        [
+            _text_reply(mode, payload),
+            _text_reply(mode, '{"answer":"healthy","count":0}'),
+        ],
+    )
+
+    async def generate(name):
+        return await ai_task.async_generate_data(
+            hass,
+            task_name=name,
+            entity_id=entity_id,
+            instructions=name,
+            structure=schema,
+        )
+
+    if valid:
+        result = await generate("Contract task")
+        assert result.data == json.loads(payload)
+    else:
+        with pytest.raises(
+            HomeAssistantError, match="does not match the requested structure"
+        ):
+            await generate("Contract task")
+    healthy = await generate("Healthy independent task")
+    assert healthy.data == {"answer": "healthy", "count": 0}
+    _assert_paths(wire, mode, 2)
+    assert "Contract task" not in _input_text(wire.requests[-1]["body"])
+
+
+@pytest.mark.parametrize("mode", MODES)
+async def test_structured_task_returns_selector_normalized_data(
+    hass, monkeypatch, mode
+):
+    from homeassistant.helpers import selector
+
+    entry, entity_id = await _task_entity(hass, mode)
+    schema = vol.Schema(
+        {vol.Required("count"): selector.NumberSelector({"mode": "box", "min": 0})}
+    )
+    _wire(monkeypatch, entry, [_text_reply(mode, '{"count":2}')])
+    result = await ai_task.async_generate_data(
+        hass,
+        task_name="Selector task",
+        entity_id=entity_id,
+        instructions="Return count",
+        structure=schema,
+    )
+    assert result.data == {"count": 2.0}
+    assert isinstance(result.data["count"], float)
+
+
+@pytest.mark.parametrize("mode", MODES)
+async def test_invalid_final_task_structure_does_not_replay_completed_caller_action(
+    hass, monkeypatch, mode
+):
+    entry, entity_id = await _task_entity(hass, mode)
+    effects = []
+
+    async def action(call):
+        effects.append(call.data["value"])
+        hass.states.async_set("sensor.task_effect_count", len(effects))
+
+    hass.services.async_register("task_probe", "record", action)
+
+    class ActionProbe(ContextProbeTool):
+        async def async_call(self, hass, tool_input, llm_context):
+            await hass.services.async_call(
+                "task_probe",
+                "record",
+                {"value": tool_input.tool_args["value"]},
+                blocking=True,
+                context=llm_context.context,
+            )
+            return await super().async_call(hass, tool_input, llm_context)
+
+    probe = ActionProbe()
+    caller = CallerAPI(hass=hass, id="structured-action", name="Structured action")
+    caller.tools = [probe]
+    requests = []
+
+    async def send(request, *args, **kwargs):
+        body = json.loads(request.content)
+        requests.append({"path": request.url.path, "body": body})
+        if len(requests) == 1:
+            tool = body["tools"][0]
+            name = (
+                tool["name"] if mode == API_MODE_RESPONSES else tool["function"]["name"]
+            )
+            tool_reply = (
+                _responses_sse_tool_call
+                if mode == API_MODE_RESPONSES
+                else _chat_sse_tool_call
+            )
+            payload = tool_reply(
+                "completed-task-action", name, {"value": "already completed"}
+            )
+        elif len(requests) == 2:
+            payload = _text_reply(mode, '{"answer":"partial"}')
+        elif len(requests) == 3:
+            payload = _text_reply(mode, '{"answer":"healthy","count":0}')
+        else:
+            raise AssertionError("Invalid final output replayed the task")
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=payload,
+            request=request,
+        )
+
+    monkeypatch.setattr(
+        _raw_client(SimpleNamespace(_client=entry.runtime_data))._client, "send", send
+    )
+    schema = vol.Schema({vol.Required("answer"): str, vol.Required("count"): int})
+    with pytest.raises(
+        HomeAssistantError, match="does not match the requested structure"
+    ):
+        await ai_task.async_generate_data(
+            hass,
+            task_name="Action then invalid output",
+            entity_id=entity_id,
+            instructions="Call the action then answer",
+            structure=schema,
+            llm_api=caller,
+            context=Context(),
+        )
+    assert effects == ["already completed"]
+    assert len(probe.calls) == 1
+    assert len(requests) == 2
+    assert hass.states.get("sensor.task_effect_count").state == "1"
+    healthy = await ai_task.async_generate_data(
+        hass,
+        task_name="Healthy independent task",
+        entity_id=entity_id,
+        instructions="Answer only",
+        structure=schema,
+    )
+    assert healthy.data == {"answer": "healthy", "count": 0}
+    assert effects == ["already completed"]
+    assert len(probe.calls) == 1
+    assert len(requests) == 3
+    assert "already completed" not in _input_text(requests[-1]["body"])

@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from openai import OpenAIError
+import voluptuous as vol
 
 from homeassistant.components import ai_task, conversation
 from homeassistant.components.ai_task.const import DEFAULT_SYSTEM_PROMPT
@@ -24,13 +25,25 @@ from .provider_errors import log_provider_failure, request_reauthentication
 _LOGGER = logging.getLogger(__name__)
 
 
-def parse_ai_task_structured_response(text: str) -> Any:
-    """Parse AI Task JSON without exposing model content in logs."""
+def parse_ai_task_structured_response(
+    text: str, structure: vol.Schema | None = None
+) -> Any:
+    """Parse and validate the caller's contract without exposing task contents."""
     try:
-        return json_loads(text)
+        data = json_loads(text)
     except JSONDecodeError as err:
         _LOGGER.error("Failed to parse structured AI Task JSON response: %s", err)
         raise HomeAssistantError("Error with structured response") from err
+    if structure is not None:
+        try:
+            return structure(data)
+        except vol.Invalid:
+            # Selector errors may include model output. Expose a stable task
+            # failure and keep validation details out of logs and public errors.
+            raise HomeAssistantError(
+                "AI Task result does not match the requested structure"
+            ) from None
+    return data
 
 
 if TYPE_CHECKING:
@@ -127,7 +140,7 @@ class ExtendedOpenAITaskEntity(
                 data=text,
             )
 
-        data = parse_ai_task_structured_response(text)
+        data = parse_ai_task_structured_response(text, task.structure)
 
         return ai_task.GenDataTaskResult(
             conversation_id=chat_log.conversation_id,
