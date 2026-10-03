@@ -156,6 +156,7 @@ def _compiled_manager() -> RequestRules:
         )
     ]
     manager._sort_and_compile()
+    manager._remember_committed_state()  # Match hot paths over an already saved generation.
     return manager
 
 
