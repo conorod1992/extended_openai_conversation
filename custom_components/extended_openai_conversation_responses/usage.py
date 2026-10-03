@@ -15,7 +15,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -25,7 +25,7 @@ from .const import (
 )
 from .debug import record_current_run_failure
 from .operational_errors import log_handled_failure
-from .strict_store import RecoveryGuardedStore
+from .strict_store import PropagatingWriteStore, RecoveryGuardedStore
 
 STORAGE_VERSION = 2
 STORAGE_KEY_PREFIX = f"{DOMAIN}.usage"
@@ -37,6 +37,34 @@ _USAGE_PRUNE_RETRY_SECONDS = 300.0
 _USAGE_PRUNE_MAX_ATTEMPTS_PER_DAY = 2
 MAX_RECENT_LIMIT = 200
 _LOGGER = logging.getLogger(__name__)
+_EXPLICIT_USAGE_SAVE: ContextVar[bool] = ContextVar(
+    "explicit_usage_save", default=False
+)
+
+
+class _UsageStore(PropagatingWriteStore):
+    """Surface explicit save failures while keeping delayed telemetry best effort."""
+
+    async def async_save(self, data: dict[str, Any]) -> None:
+        token = _EXPLICIT_USAGE_SAVE.set(True)
+        try:
+            await super().async_save(data)
+            # HA normally defers saves during shutdown. An explicit mutation
+            # must finish its write before acknowledging durable completion.
+            if self.hass.state is CoreState.stopping:
+                await self._async_handle_write_data()
+        finally:
+            _EXPLICIT_USAGE_SAVE.reset(token)
+
+    async def _async_handle_write_data(self) -> None:
+        try:
+            await super()._async_handle_write_data()
+        except OSError:
+            if _EXPLICIT_USAGE_SAVE.get():
+                raise
+            _LOGGER.exception(
+                "Unable to persist delayed usage telemetry; in-memory accounting remains current"
+            )
 
 
 class UsageStorage(Protocol):
@@ -1201,16 +1229,16 @@ async def async_get_durable_usage(
     if manager is None:
         prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
         manager = UsageManager(
-            RecoveryGuardedStore(hass, 1, prefix, atomic_writes=True).bind_agent(
+            _UsageStore(hass, 1, prefix, atomic_writes=True).bind_agent(
                 entry_id, subentry_id
             ),
-            RecoveryGuardedStore(
+            _UsageStore(
                 hass,
                 STORAGE_VERSION,
                 f"{prefix}.daily",
                 atomic_writes=True,
             ).bind_agent(entry_id, subentry_id),
-            RecoveryGuardedStore(
+            _UsageStore(
                 hass,
                 STORAGE_VERSION,
                 f"{prefix}.details",
