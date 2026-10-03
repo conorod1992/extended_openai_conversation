@@ -1674,7 +1674,24 @@
     "tests/functions/test_native_automation_concurrency.py::test_unloaded_automation_rolls_back_without_success[False-False]",
     "tests/functions/test_native_automation_concurrency.py::test_unloaded_automation_rolls_back_without_success[False-True]",
     "tests/functions/test_native_automation_concurrency.py::test_unloaded_automation_rolls_back_without_success[True-False]",
-    "tests/functions/test_native_automation_concurrency.py::test_unloaded_automation_rolls_back_without_success[True-True]"
+    "tests/functions/test_native_automation_concurrency.py::test_unloaded_automation_rolls_back_without_success[True-True]",
+    "tests/functions/test_exploration_corpus_contract.py::test_exploration_corpus_has_unique_replayable_cases",
+    "tests/functions/test_exploration_corpus_contract.py::test_exploration_corpus_keeps_distinct_failure_signatures",
+    "tests/functions/test_exploration_corpus_contract.py::test_exploration_corpus_round_trip_is_semantically_stable",
+    "tests/functions/test_professional_nightly_contracts.py::test_failure_sequence_reducer_keeps_same_failure_signature",
+    "tests/functions/test_professional_nightly_contracts.py::test_generated_nested_container_contracts_preserve_values_and_constraints",
+    "tests/functions/test_professional_nightly_contracts.py::test_high_order_feature_witness_keeps_expected_request_boundary",
+    "tests/functions/test_professional_nightly_contracts.py::test_reviewed_configuration_witnesses_have_independent_expected_values[chat-completions-sampling]",
+    "tests/functions/test_professional_nightly_contracts.py::test_reviewed_configuration_witnesses_have_independent_expected_values[responses-durable-features]",
+    "tests/functions/test_professional_nightly_contracts.py::test_reviewed_invalid_configuration_neighbours_fail_closed[conversation-timeout]",
+    "tests/functions/test_professional_nightly_contracts.py::test_reviewed_invalid_configuration_neighbours_fail_closed[max-tokens]",
+    "tests/functions/test_professional_nightly_contracts.py::test_reviewed_invalid_configuration_neighbours_fail_closed[memory-retrieve-limit]",
+    "tests/functions/test_professional_nightly_contracts.py::test_saved_reproduction_envelope_is_seed_independent_and_serializable",
+    "tests/functions/test_professional_nightly_contracts.py::test_seeded_supported_schema_contracts_match_independent_oracle",
+    "tests/functions/test_professional_nightly_contracts.py::test_semantic_oracle_rejects_deliberately_wrong_effects",
+    "tests_real_ha/test_native_recorder_acceptance.py::test_native_history_reads_real_recorder_and_serializes_tool_result",
+    "tests_stress/test_generated_request_rule_action_contracts.py::test_generated_request_rule_action_sequences_keep_request_local_variables",
+    "tests_stress/test_generated_request_rule_action_contracts.py::test_generated_request_rule_failure_isolated_from_healthy_siblings"
   ],
   "browser": {
     "browser": [
