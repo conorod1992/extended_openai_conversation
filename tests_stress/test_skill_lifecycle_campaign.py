@@ -10,6 +10,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
 from homeassistant.core import HomeAssistant
+from tests.lock_probe import LockProbe
 from tests_stress.conftest import record
 
 
@@ -41,6 +42,8 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
         "Missing frontmatter", encoding="utf-8"
     )
     manager = await SkillManager.async_get_instance(hass, str(root))
+    probe = LockProbe(manager._filesystem_lock)
+    monkeypatch.setattr(manager, "_filesystem_lock", probe)
     rng = random.Random(stress_seed)
     operations = 20 * stress_scale
     publishes = removals = scans = blocked_mutations = 0
@@ -56,9 +59,15 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
     verify()
     for index in range(operations):
         name = f"skill-{rng.randrange(24):02d}"
+        if index == 1:
+            name = next(iter(expected))  # Guarantee an actual installed removal.
         action = (
             "publish"
             if index == 0
+            else "remove"
+            if index == 1
+            else "scan"
+            if index == 2
             else rng.choices(("publish", "remove", "scan"), (5, 3, 2))[0]
         )
         if action == "publish":
@@ -66,11 +75,14 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
             staged = manager.staging_dir / f"{name}.stage-{index}"
             _write_skill(staged, description)
             if index % 5 == 0:
+                while not probe.attempts.empty():
+                    probe.attempts.get_nowait()
                 async with manager.async_skill_read():
+                    await probe.next_attempt()  # The held read lease.
                     pending = asyncio.create_task(
                         manager.async_publish_staged_skill(name, staged)
                     )
-                    await asyncio.sleep(0)
+                    await probe.next_attempt()  # Publisher reached the same lock.
                     assert not pending.done()
                     verify()
                     blocked_mutations += 1

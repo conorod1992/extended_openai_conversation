@@ -102,8 +102,8 @@ jobs:
             echo "intensities=[\"$INTENSITY\"]" >> "$GITHUB_OUTPUT"
           fi
           case "${{ inputs.campaign }}" in
-            '') CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
-            all|browser) CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos"]' ;;
+            '') CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos","long-lifetime"]' ;;
+            all|browser) CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos","long-lifetime"]' ;;
             browser-engines) CAMPAIGNS='[]' ;;
             long-lifetime) CAMPAIGNS='["long-lifetime"]' ;;
             runtime|lifecycle|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|persistence|request-rules|guest-security|quiet-hours|functions|provider-resilience|memory-knowledge|large-installation|chaos|process-chaos|diagnostics) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
@@ -214,6 +214,8 @@ jobs:
       matrix:
         campaign: ${{ fromJSON(needs.prepare.outputs.campaigns) }}
         intensity: ${{ fromJSON(needs.prepare.outputs.intensities) }}
+        # Run elapsed/idle/expiry coverage once per nightly, at normal intensity.
+        exclude: ${{ github.event_name == 'schedule' && fromJSON('[{"campaign":"long-lifetime","intensity":"heavy"}]') || fromJSON('[]') }}
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:

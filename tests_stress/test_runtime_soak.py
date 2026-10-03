@@ -166,7 +166,12 @@ async def test_seeded_multi_entry_runtime_soak(
     warm_tasks = _eoai_task_count()
     for number in range(120 * stress_scale):
         agent_index = rng.randrange(2)
-        roll = rng.random()
+        # Every ten operations guarantee eight serial and one four-user batch
+        # turns, plus a real lifecycle cycle. Shuffle within each block.
+        if number % 10 == 0:
+            workload = [0.5] * 8 + [0.8, 0.95]
+            rng.shuffle(workload)
+        roll = workload[number % 10]
         if roll < 0.77:
             user_index = rng.randrange(6)
             record(stress_trace, "conversation", agent=agent_index, user=user_index)

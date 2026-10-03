@@ -18,6 +18,7 @@ from homeassistant.components import conversation
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from tests_stress.conftest import record
+from tests_stress.fresh_restore import assert_fresh_contents
 from tests_stress.health import HealthChecks, assert_enhanced_health
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -97,6 +98,7 @@ async def test_tagged_release_fixture_imports_and_reexports(
     await hass.async_block_till_done()
 
     current = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    await assert_fresh_contents(hass, entry, subentry, current)
     assert current["version"] == backup.BACKUP_VERSION
     assert "request_rules" in current
     assert current["memories"]["memories"][0]["content"] == memory_marker

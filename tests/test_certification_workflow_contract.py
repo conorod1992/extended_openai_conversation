@@ -69,6 +69,11 @@ def test_enhanced_dispatch_can_run_the_scheduled_intensity_matrix():
     )
     assert 'INTENSITY" == all' in controls["run"]
     assert 'intensities=["normal","heavy"]' in controls["run"]
+    scheduled = next(line for line in controls["run"].splitlines() if "'') CAMPAIGNS=" in line)
+    assert '"long-lifetime"' in scheduled
+    exclusion = jobs["python-campaigns"]["strategy"]["matrix"]["exclude"]
+    assert "github.event_name == 'schedule'" in exclusion
+    assert '{"campaign":"long-lifetime","intensity":"heavy"}' in exclusion
 
 
 def test_existing_historical_matrix_supports_complete_dispatch_and_exact_checkout():

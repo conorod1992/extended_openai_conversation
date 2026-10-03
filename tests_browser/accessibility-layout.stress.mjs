@@ -50,7 +50,6 @@ test("Request Rule dialog supports keyboard cancellation and returns usable focu
   await expect(panel.locator("#rule-name")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
-  await create.focus();
   await expect(create).toBeFocused();
   await expectHarnessClean(page, errors);
 });
