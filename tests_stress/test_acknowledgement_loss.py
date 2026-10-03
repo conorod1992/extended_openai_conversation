@@ -199,9 +199,9 @@ async def test_compound_memory_write_schedules_converge_retained_runtime_and_dis
     async def scheduled_write(data):
         nonlocal writes
         writes += 1
-        if writes != 2:
-            # Write 1 is the baseline above. Only the first scheduled mutation is
-            # faulted; later queued/recovery writes use the ordinary HA Store path.
+        if writes != 1:
+            # Only the first mutation under this patched Store boundary is faulted;
+            # later queued/recovery writes use the ordinary HA Store path.
             return await original_write(data)
         first_entered.set()
         if commit_first:
