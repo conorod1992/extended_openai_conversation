@@ -83,7 +83,7 @@ const MANAGEMENT_STYLESHEET_URL = new URL("./management.css", import.meta.url).h
 // Keep this deliberately small and geometry-identical to management.css: it exists
 // only to prevent FOUC/layout shift while the external stylesheet is still pending.
 const CRITICAL_STYLE = `
-  :host{--eoc-success-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--success-color,#0f9d58));--eoc-error-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--error-color,#db4437));--eoc-warning-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--warning-color,#ff9800));--eoc-accent-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--primary-color));--eoc-action-background:color-mix(in srgb,var(--primary-text-color) 80%,var(--primary-color));display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);font-size:14px;line-height:1.45;box-sizing:border-box;background:color-mix(in srgb,var(--secondary-background-color) 42%,var(--primary-background-color))}
+  :host{--eoc-success-text:light-dark(color-mix(in srgb,var(--primary-text-color) 32%,var(--success-color,#0f9d58)),color-mix(in srgb,var(--primary-text-color) 14%,var(--success-color,#0f9d58)));--eoc-error-text:light-dark(color-mix(in srgb,var(--primary-text-color) 14%,var(--error-color,#db4437)),color-mix(in srgb,var(--primary-text-color) 24%,var(--error-color,#db4437)));--eoc-accent-text:light-dark(color-mix(in srgb,var(--primary-text-color) 31%,var(--primary-color)),color-mix(in srgb,var(--primary-text-color) 12%,var(--primary-color)));--eoc-action-background:light-dark(color-mix(in srgb,var(--primary-text-color) 20%,var(--primary-color)),var(--primary-color));--eoc-error-background:color-mix(in srgb,var(--error-color,#db4437) 97%,#000);display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);font-size:14px;line-height:1.45;box-sizing:border-box;background:color-mix(in srgb,var(--secondary-background-color) 42%,var(--primary-background-color))}
   *{box-sizing:border-box}
   [hidden]{display:none!important}
   .page-shell{max-width:1380px;margin:auto}
@@ -297,6 +297,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   set hass(value) {
     const first = !this._hass;
     this._hass = value;
+    this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
     if (first) this._loadAgents();
   }

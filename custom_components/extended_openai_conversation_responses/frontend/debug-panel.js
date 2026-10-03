@@ -19,6 +19,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   set hass(value) {
     const first = !this._hass;
     this._hass = value;
+    this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     if (first) this._loadAgents();
   }
 
@@ -259,7 +260,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
 
   _styles() {
     return `<style>
-      :host{--eoc-success-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--success-color,#0f9d58));--eoc-error-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--error-color,#db4437));--eoc-warning-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--warning-color,#ff9800));--eoc-accent-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--primary-color));--eoc-action-background:color-mix(in srgb,var(--primary-text-color) 80%,var(--primary-color));display:block;color:var(--primary-text-color);background:var(--primary-background-color);min-height:100vh;box-sizing:border-box}
+      :host{--eoc-success-text:light-dark(color-mix(in srgb,var(--primary-text-color) 32%,var(--success-color,#0f9d58)),color-mix(in srgb,var(--primary-text-color) 14%,var(--success-color,#0f9d58)));--eoc-error-text:light-dark(color-mix(in srgb,var(--primary-text-color) 14%,var(--error-color,#db4437)),color-mix(in srgb,var(--primary-text-color) 24%,var(--error-color,#db4437)));--eoc-accent-text:light-dark(color-mix(in srgb,var(--primary-text-color) 31%,var(--primary-color)),color-mix(in srgb,var(--primary-text-color) 12%,var(--primary-color)));--eoc-action-background:light-dark(color-mix(in srgb,var(--primary-text-color) 20%,var(--primary-color)),var(--primary-color));--eoc-error-background:color-mix(in srgb,var(--error-color,#db4437) 97%,#000);display:block;color:var(--primary-text-color);background:var(--primary-background-color);min-height:100vh;box-sizing:border-box}
       :host([embedded]){min-height:0;background:transparent}
       :host([embedded]) main{max-width:none;padding:0;min-height:0}
       [hidden]{display:none!important}
