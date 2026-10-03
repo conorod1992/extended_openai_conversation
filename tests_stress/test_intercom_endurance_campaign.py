@@ -256,3 +256,192 @@ async def test_native_intercom_real_stability_expiry_and_playback_acknowledgemen
         intercom_expired=2,
         intercom_timing_recoveries=1,
     )
+
+
+@pytest.fixture
+async def native_broadcast(hass):
+    from homeassistant.components.assist_pipeline.pipeline import KEY_ASSIST_PIPELINE
+    from tests_real_ha.test_assist_streaming_speech_processing import _speech_agent
+    from tests_stress.test_native_audio_delivery import (
+        _install_audio_entities,
+        _SoftwareSatellite,
+        _test_wav,
+    )
+
+    agent = await _speech_agent(hass)
+    satellite = _SoftwareSatellite("intercom-timing", announce=True)
+    entities, _ = await _install_audio_entities(
+        hass, _test_wav(), satellites=[satellite]
+    )
+    store = hass.data[KEY_ASSIST_PIPELINE].pipeline_store
+    pipeline = await store.async_create_item(
+        {
+            "name": "Native timed Intercom",
+            "language": "en",
+            "conversation_language": "en",
+            "conversation_engine": agent.entity_id,
+            "stt_engine": entities["stt"].entity_id,
+            "stt_language": "en",
+            "tts_engine": entities["tts"].entity_id,
+            "tts_language": "en",
+            "tts_voice": None,
+            "wake_word_entity": None,
+            "wake_word_id": None,
+            "prefer_local_intents": False,
+        }
+    )
+    store.async_set_preferred_item(pipeline.id)
+    manager = await async_get_intercom(hass)
+    await manager.async_set_enabled(True)
+    return manager, satellite
+
+
+@pytest.mark.parametrize("boundary", ["expiry", "disable"])
+async def test_replacement_queue_survives_old_native_worker(
+    hass, monkeypatch, native_broadcast, boundary, stress_trace
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from homeassistant.util import dt as dt_util
+
+    manager, satellite = native_broadcast
+    entered, release = asyncio.Event(), asyncio.Event()
+    callbacks, cancellations = {}, []
+    original_timer = intercom.async_call_later
+
+    def timer(hass, delay, callback):
+        callbacks[len(callbacks)] = callback
+        cancel = original_timer(hass, delay, callback)
+        cancellations.append(cancel)
+        return cancel
+
+    first_wait = True
+
+    async def hold_first_wait(seconds):
+        nonlocal first_wait
+        if first_wait:
+            first_wait = False
+            entered.set()
+            await release.wait()
+        await asyncio.sleep(seconds)
+
+    monkeypatch.setattr(intercom, "asyncio", SimpleNamespace(sleep=hold_first_wait))
+    monkeypatch.setattr(intercom, "async_call_later", timer)
+
+    async def send(text):
+        return await hass.services.async_call(
+            DOMAIN,
+            "broadcast",
+            {"message": text, "entity_id": [satellite.entity_id], "ttl_seconds": 5},
+            blocking=True,
+            return_response=True,
+        )
+
+    try:
+        older = await send("Older pending message")
+        await asyncio.wait_for(entered.wait(), 5)
+        old_queue = manager._queues[satellite.entity_id]
+        if boundary == "expiry":
+            callbacks[0](dt_util.utcnow())
+        else:
+            await manager.async_set_enabled(False)
+            await manager.async_set_enabled(True)
+        assert satellite.entity_id not in manager._queues
+        newer = await send("Newer acknowledged message")
+        assert manager._queues[satellite.entity_id] is not old_queue
+        assert satellite.entity_id in manager._draining
+        release.set()
+        await hass.async_block_till_done()
+        assert [item.message for item in satellite.announcements] == [newer["message"]]
+        history = {item["id"]: item for item in manager.history()}
+        assert (
+            history[older["id"]]["deliveries"][satellite.entity_id]["status"]
+            == "expired"
+        )
+        assert (
+            history[newer["id"]]["deliveries"][satellite.entity_id]["status"]
+            == "delivered"
+        )
+        assert not manager._queues and not manager._draining
+        record(
+            stress_trace, "summary", replacement_queue_handoffs=1, intercom_deliveries=1
+        )
+    finally:
+        release.set()
+        for cancel in cancellations:
+            cancel()
+
+
+async def test_native_short_state_transitions_restart_continuous_idle(
+    hass, monkeypatch, native_broadcast, stress_trace
+):
+    import asyncio
+    from time import monotonic
+
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from homeassistant.components.assist_satellite.entity import AssistSatelliteState
+
+    manager, satellite = native_broadcast
+    monkeypatch.setattr(intercom, "async_call_later", lambda *args: None)
+    starts = []
+    original_announce = satellite.async_announce
+
+    async def announce(announcement):
+        starts.append(monotonic())
+        await original_announce(announcement)
+
+    monkeypatch.setattr(satellite, "async_announce", announce)
+    await hass.services.async_call(
+        DOMAIN,
+        "broadcast",
+        {"message": "Continuous idle", "entity_id": [satellite.entity_id]},
+        blocking=True,
+        return_response=True,
+    )
+    async with asyncio.timeout(5):
+        while (
+            manager.history()[0]["deliveries"][satellite.entity_id]["status"]
+            != "waiting_idle"
+        ):
+            await asyncio.sleep(0.01)
+    for _ in range(3):
+        await asyncio.sleep(0.08)
+        satellite._set_state(AssistSatelliteState.RESPONDING)
+        await asyncio.sleep(0.06)
+        satellite._set_state(AssistSatelliteState.IDLE)
+        last_idle = monotonic()
+    await asyncio.wait_for(satellite.announce_started.wait(), 5)
+    assert starts[0] - last_idle >= intercom.IDLE_STABILITY_SECONDS
+    await hass.async_block_till_done()
+    assert len(starts) == 1
+
+    # Repeated attribute-only publications must not starve a continuously idle satellite.
+    satellite.announce_started.clear()
+    await hass.services.async_call(
+        DOMAIN,
+        "broadcast",
+        {"message": "Idle attributes", "entity_id": [satellite.entity_id]},
+        blocking=True,
+        return_response=True,
+    )
+    began = monotonic()
+    async with asyncio.timeout(2):
+        index = 0
+        while not satellite.announce_started.is_set():
+            state = hass.states.get(satellite.entity_id)
+            hass.states.async_set(
+                satellite.entity_id, "idle", {**state.attributes, "probe": index}
+            )
+            index += 1
+            await asyncio.sleep(0.03)
+    assert starts[1] - began >= intercom.IDLE_STABILITY_SECONDS
+    assert starts[1] - began < 1.5
+    await hass.async_block_till_done()
+    assert len(starts) == 2
+    assert all(
+        item["deliveries"][satellite.entity_id]["status"] == "delivered"
+        for item in manager.history()
+    )
+    record(stress_trace, "summary", intercom_short_idle_flaps=3, intercom_deliveries=2)
