@@ -21,7 +21,11 @@ import pytest
 
 from tests_real_ha.process_harness import run_python_child
 from tests_real_ha.test_packaged_process_restart import DOMAIN, _assert_packaged_module
-from tests_stress.conftest import record
+
+if os.environ.get("EOAI_RESOURCE_SOAK_CHILD") != "1":
+    # The fixtures import production modules. A child must first select its
+    # staged payload in _booted_soak, rather than cache repository modules here.
+    from tests_stress.conftest import record
 
 _CHILD = "EOAI_RESOURCE_SOAK_CHILD"
 _REPORT = "process-resource-windows.json"
