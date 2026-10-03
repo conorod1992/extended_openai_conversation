@@ -117,6 +117,7 @@ def record_retirement_failure(
     title: str,
     model: str,
     error: BaseException,
+    configured_model: str | None = None,
     logger: logging.Logger | None = None,
 ) -> str | None:
     """Record a provider-confirmed retirement and create an actionable HA Repair."""
@@ -130,7 +131,11 @@ def record_retirement_failure(
 
     failures = hass.data.setdefault(_DATA_FAILURES, {})
     key = _failure_key(entry_id, subentry_id)
-    failure = {"model": model, "shutdown_at": lifecycle.get("shutdown_at")}
+    failure = {
+        "model": model,
+        "shutdown_at": lifecycle.get("shutdown_at"),
+        "configured_model": configured_model or model,
+    }
     first = failures.get(key) != failure
     failures[key] = failure
 
@@ -139,6 +144,8 @@ def record_retirement_failure(
         DOMAIN,
         _issue_id(entry_id, subentry_id),
         is_fixable=False,
+        is_persistent=True,
+        data=failure,
         severity=ir.IssueSeverity.ERROR,
         translation_key="retired_model",
         translation_placeholders={
@@ -225,16 +232,37 @@ def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
             title=subentry.title,
             lifecycle=lifecycle,
         )
-        failure = hass.data.setdefault(_DATA_FAILURES, {}).get(
-            _failure_key(entry.entry_id, subentry.subentry_id)
-        )
+        key = _failure_key(entry.entry_id, subentry.subentry_id)
+        failures = hass.data.setdefault(_DATA_FAILURES, {})
+        failure = failures.get(key)
+        stored_issue = None
+        if failure is None:
+            stored_issue = ir.async_get(hass).async_get_issue(
+                DOMAIN, _issue_id(entry.entry_id, subentry.subentry_id)
+            )
+            if stored_issue is not None and isinstance(stored_issue.data, dict):
+                failure = dict(stored_issue.data)
+                failures[key] = failure
         if isinstance(failure, dict) and (
-            failure.get("model") != lifecycle["model"]
-            or lifecycle["status"] != "deprecated"
-            or not lifecycle["shutdown_reached"]
+            failure.get("configured_model", failure.get("model")) != lifecycle["model"]
+            or lifecycle_snapshot(str(failure.get("model", "")))["status"]
+            != "deprecated"
+            or not lifecycle_snapshot(str(failure.get("model", "")))["shutdown_reached"]
         ):
             clear_retirement_failure(
                 hass, entry_id=entry.entry_id, subentry_id=subentry.subentry_id
+            )
+        elif stored_issue is not None and not stored_issue.active:
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                stored_issue.issue_id,
+                is_fixable=False,
+                is_persistent=True,
+                data=stored_issue.data,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="retired_model",
+                translation_placeholders=stored_issue.translation_placeholders,
             )
 
     failures = hass.data.setdefault(_DATA_FAILURES, {})
@@ -254,6 +282,16 @@ def sync_all_model_lifecycles(hass: Any) -> None:
         sync_entry_model_lifecycle(hass, entry)
 
 
+def _entity_request_model(entity: Any) -> str:
+    """Use the recorded request model, including overrides and in-flight edits."""
+    usage = getattr(entity, "_usage", None)
+    current_run = getattr(usage, "current_run", None)
+    run = current_run() if callable(current_run) else None
+    if run is not None and run.models:
+        return str(run.models[-1])
+    return str(entity.subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip()
+
+
 def record_entity_retirement_failure(
     entity: Any, error: BaseException, *, logger: logging.Logger | None = None
 ) -> str | None:
@@ -263,7 +301,7 @@ def record_entity_retirement_failure(
     subentry = getattr(entity, "subentry", None)
     if hass is None or entry is None or subentry is None:
         return None
-    model = str(subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip()
+    model = _entity_request_model(entity)
     return record_retirement_failure(
         hass,
         entry_id=entry.entry_id,
@@ -271,6 +309,9 @@ def record_entity_retirement_failure(
         title=getattr(subentry, "title", subentry.subentry_id),
         model=model,
         error=error,
+        configured_model=str(
+            subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+        ).strip(),
         logger=logger,
     )
 
@@ -282,7 +323,7 @@ def clear_entity_retirement_failure(entity: Any) -> None:
     subentry = getattr(entity, "subentry", None)
     if hass is None or entry is None or subentry is None:
         return
-    model = str(subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip()
+    model = _entity_request_model(entity)
     clear_retirement_failure(
         hass,
         entry_id=entry.entry_id,

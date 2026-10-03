@@ -56,6 +56,7 @@ from .model_payload import (
 )
 from .scope import resolve_data_scope
 from .temporary_memory import TemporaryMemoryRecord
+from .voice_identity_runtime import voice_source_device_id
 
 _DEFAULT_CURRENT_DATETIME_CONTEXT = """## Current date and time
 {{ now().isoformat(timespec='seconds') }}
@@ -251,9 +252,7 @@ def _prompt_memory_scope_available(options: Any, user_input: Any) -> bool:
     # capability decision below.
     if user_input is None or not hasattr(user_input, "context"):
         return True
-    source_device_id = getattr(user_input, "satellite_id", None) or getattr(
-        user_input, "device_id", None
-    )
+    source_device_id = voice_source_device_id(user_input)
     scope = resolve_data_scope(
         SimpleNamespace(
             context=getattr(user_input, "context", None),
