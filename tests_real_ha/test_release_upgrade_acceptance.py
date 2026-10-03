@@ -250,6 +250,47 @@ async def _exercise_populated_provider_journey(
     assert len(requests) == 4
 
 
+async def _assert_populated_release_state(
+    hass: Any, entry_id: str, state: dict[str, Any]
+) -> None:
+    """Read the exact release-created durable records through candidate managers."""
+    from homeassistant.components import conversation
+
+    agent = conversation.async_get_agent(hass, entry_id)
+    assert agent is not None
+    memories = await agent._memory.async_list(state["owner_id"], limit=100)
+    assert any(item.content == state["memory_marker"] for item in memories)
+    source = await agent._knowledge.async_get(state["knowledge_source_id"])
+    assert source.content == state["knowledge_marker"]
+    rules = agent._request_rules.snapshot()["rules"]
+    assert any(
+        rule["name"] == "Release upgrade local rule"
+        and rule["action"]["success_response"] == state["request_rule_marker"]
+        for rule in rules
+    )
+
+
+async def _exercise_release_rule(
+    hass: Any, entry_id: str, state: dict[str, Any]
+) -> None:
+    from homeassistant.components import conversation
+    from homeassistant.core import Context
+
+    result = await conversation.async_converse(
+        hass=hass,
+        text="release upgrade local rule",
+        conversation_id=None,
+        context=Context(user_id=state["owner_id"]),
+        language="en",
+        agent_id=entry_id,
+    )
+    assert result.response.error_code is None
+    assert (
+        result.response.as_dict()["speech"]["plain"]["speech"]
+        == state["request_rule_marker"]
+    )
+
+
 async def _exercise_public_conversation(
     hass: Any, entry_id: str, expected: str
 ) -> None:
@@ -484,8 +525,10 @@ async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
     candidate_tool_names = set(_tool_names(subentry.data.get(function_tools_key)))
     assert set(state["function_tool_names"]).issubset(candidate_tool_names)
 
-    await _exercise_public_conversation(
-        hass, entry.entry_id, "Candidate migrated release state successfully."
+    await _assert_populated_release_state(hass, entry.entry_id, state)
+    await _exercise_release_rule(hass, entry.entry_id, state)
+    await _exercise_populated_provider_journey(
+        hass, entry.entry_id, state, "Candidate migrated release state successfully."
     )
 
     # Save through Home Assistant's supported config-subentry mutation boundary,
@@ -510,8 +553,10 @@ async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
     reloaded = _conversation_subentry(entry)
     assert reloaded.subentry_id == state["subentry_id"]
     assert reloaded.title == "Upgrade Acceptance Agent - Candidate Saved"
-    await _exercise_public_conversation(
-        hass, entry.entry_id, "Candidate save and reload are healthy."
+    await _assert_populated_release_state(hass, entry.entry_id, state)
+    await _exercise_release_rule(hass, entry.entry_id, state)
+    await _exercise_populated_provider_journey(
+        hass, entry.entry_id, state, "Candidate save and reload are healthy."
     )
 
     state["candidate_title"] = reloaded.title
@@ -549,8 +594,10 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     if reasoning:
         assert subentry.data.get(reasoning["key"]) == reasoning["value"]
 
-    await _exercise_public_conversation(
-        hass, entry.entry_id, "Migrated candidate state survived a cold restart."
+    await _assert_populated_release_state(hass, entry.entry_id, state)
+    await _exercise_release_rule(hass, entry.entry_id, state)
+    await _exercise_populated_provider_journey(
+        hass, entry.entry_id, state, "Migrated candidate state survived a cold restart."
     )
 
     # A backup made *after* migration must recover from subsequent user changes.
@@ -570,8 +617,10 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     assert (
         backup.export_configuration_snapshot(restored.data) == saved["agent"]["config"]
     )
-    await _exercise_public_conversation(
-        hass, entry.entry_id, "Migrated candidate backup restored successfully."
+    await _assert_populated_release_state(hass, entry.entry_id, state)
+    await _exercise_release_rule(hass, entry.entry_id, state)
+    await _exercise_populated_provider_journey(
+        hass, entry.entry_id, state, "Migrated candidate backup restored successfully."
     )
 
 
