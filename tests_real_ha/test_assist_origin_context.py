@@ -175,7 +175,11 @@ async def test_voice_user_mapping_keeps_physical_room_for_local_light_command(
     )
     devices.async_update_device(device.id, area_id=hall.id)
     satellite = entities.async_get_or_create(
-        "assist_satellite", "voice_physical_room", "satellite", device_id=device.id
+        "assist_satellite",
+        "voice_physical_room",
+        "satellite",
+        device_id=device.id,
+        original_name="Kitchen Assist satellite",
     )
     if satellite_area:
         entities.async_update_entity(satellite.entity_id, area_id=kitchen.id)
@@ -187,6 +191,7 @@ async def test_voice_user_mapping_keeps_physical_room_for_local_light_command(
             "voice_physical_room",
             area.id,
             suggested_object_id=f"physical_room_{area.name.lower()}",
+            original_name=f"{area.name} lights",
         )
         entities.async_update_entity(light.entity_id, area_id=area.id)
         hass.states.async_set(

@@ -6,12 +6,13 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-from openai import OpenAIError
 import httpx
-
+from openai import OpenAIError
 import pytest
 
-from custom_components.extended_openai_conversation_responses import runtime_failure_hardening as hardening
+from custom_components.extended_openai_conversation_responses import (
+    runtime_failure_hardening as hardening,
+)
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
@@ -139,6 +140,14 @@ async def test_chat_stream_repairs_tool_call_id_received_in_later_delta(
                 )
             ]
         )
+
+    if initial_id is not None:
+        from custom_components.extended_openai_conversation_responses.provider_errors import (
+            ProviderStreamError,
+        )
+        with pytest.raises(ProviderStreamError, match="conflicting tool call id"):
+            _ = [item async for item in ExtendedOpenAIBaseLLMEntity._transform_chat_stream(entity, chat_log, stream())]
+        return
 
     output = [
         item

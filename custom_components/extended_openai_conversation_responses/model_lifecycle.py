@@ -287,8 +287,9 @@ def _entity_request_model(entity: Any) -> str:
     usage = getattr(entity, "_usage", None)
     current_run = getattr(usage, "current_run", None)
     run = current_run() if callable(current_run) else None
-    if run is not None and run.models:
-        return str(run.models[-1])
+    models = getattr(run, "models", ())
+    if models:
+        return str(models[-1])
     return str(entity.subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)).strip()
 
 
