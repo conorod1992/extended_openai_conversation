@@ -348,6 +348,42 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
             data[key] = value
             custom_values[key] = value
 
+    # Enable durable features that are present in the published release and add
+    # one harmless user-defined Function Tool using only stable configuration shapes.
+    for constant, value in (
+        ("CONF_API_MODE", "chat_completions"),
+        ("CONF_MEMORY_MODE", "manual"),
+        ("CONF_MEMORY_AUTO_RETRIEVE_LIMIT", 3),
+        ("CONF_KNOWLEDGE_ENABLED", True),
+    ):
+        key = getattr(const, constant, None)
+        if isinstance(key, str):
+            data[key] = value
+            custom_values[key] = value
+
+    function_tools_key = getattr(const, "CONF_FUNCTION_TOOLS", "function_tools")
+    raw_tools = data.get(function_tools_key, [])
+    tools = yaml.safe_load(raw_tools) if isinstance(raw_tools, str) else list(raw_tools or [])
+    tools.append(
+        {
+            "spec": {
+                "name": "upgrade_marker",
+                "description": "Return a durable upgrade acceptance marker.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            },
+            "function": {
+                "type": "template",
+                "value_template": "UPGRADE_TOOL_RESULT",
+            },
+            "enabled": True,
+        }
+    )
+    data[function_tools_key] = tools
+
     hass.config_entries.async_update_subentry(
         entry,
         subentry,
@@ -362,6 +398,38 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     assert entry.state is ConfigEntryState.LOADED
     subentry = _conversation_subentry(entry)
     assert subentry.title == "Upgrade Acceptance Agent"
+    agent = importlib.import_module("homeassistant.components.conversation").async_get_agent(
+        hass, entry.entry_id
+    )
+    assert agent is not None
+    owner = await hass.auth.async_create_user("Release upgrade owner")
+    memory_marker = "RELEASE_MEMORY_MARKER release memory marker"
+    knowledge_marker = "RELEASE_KNOWLEDGE_MARKER release knowledge marker"
+    assert agent._memory is not None
+    await agent._memory.async_add(
+        owner.id, memory_marker, "upgrade", "explicit", key="upgrade.release.memory"
+    )
+    assert agent._knowledge is not None
+    source = await agent._knowledge.async_create(
+        "Release upgrade reference",
+        "Created by the published release",
+        knowledge_marker,
+        True,
+    )
+    await agent._request_rules.async_create(
+        {
+            "name": "Release upgrade local rule",
+            "enabled": True,
+            "phrases": ["release upgrade local rule"],
+            "match_type": "equals",
+            "action_type": "local_action",
+            "action": {
+                "actions": [],
+                "success_response": "RELEASE_RULE_MARKER",
+                "failure_response": "RELEASE_RULE_FAILED",
+            },
+        }
+    )
     await _exercise_public_conversation(
         hass, entry.entry_id, "Published release state is healthy."
     )
@@ -374,6 +442,11 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
         "title": subentry.title,
         "custom_values": custom_values,
         "function_tool_names": _tool_names(subentry.data.get(function_tools_key)),
+        "owner_id": owner.id,
+        "memory_marker": memory_marker,
+        "knowledge_marker": knowledge_marker,
+        "knowledge_source_id": source.source_id,
+        "request_rule_marker": "RELEASE_RULE_MARKER",
         "released_runtime": {
             "homeassistant": version("homeassistant"),
             "openai": version("openai"),
