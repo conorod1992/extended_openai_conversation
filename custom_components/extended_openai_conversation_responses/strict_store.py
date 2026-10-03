@@ -17,7 +17,7 @@ from .agent_maintenance import AgentMaintenanceGate, get_agent_maintenance_gate
 from .operational_errors import storage_failure_reason
 
 
-async def _async_settle_write(operation: Awaitable[None]) -> None:
+async def _async_settle_store_io[T](operation: Awaitable[T]) -> T:
     """Keep storage ownership until surviving native work has finished."""
     task = asyncio.ensure_future(operation)
     cancelled: asyncio.CancelledError | None = None
@@ -30,9 +30,10 @@ async def _async_settle_write(operation: Awaitable[None]) -> None:
             cancelled = cancelled or err
         except Exception:
             break
-    task.result()
+    result = task.result()
     if cancelled is not None:
         raise cancelled
+    return result
 
 
 class RecoveryGuardedStore(Store[dict[str, Any]]):
@@ -58,28 +59,28 @@ class RecoveryGuardedStore(Store[dict[str, Any]]):
         if self._recovery_gate is None:
             return await super().async_load()
         async with self._recovery_gate.shared(maintenance=True):
-            return await super().async_load()
+            return await _async_settle_store_io(super().async_load())
 
     async def async_save(self, data: dict[str, Any]) -> None:
         if self._recovery_gate is None:
             await super().async_save(data)
             return
         async with self._recovery_gate.shared(maintenance=True):
-            await _async_settle_write(super().async_save(data))
+            await _async_settle_store_io(super().async_save(data))
 
     async def _async_write_data(self, data: dict[str, Any]) -> None:
         if self._recovery_gate is None:
             await super()._async_write_data(data)
             return
         async with self._recovery_gate.shared(maintenance=True):
-            await _async_settle_write(super()._async_write_data(data))
+            await _async_settle_store_io(super()._async_write_data(data))
 
     async def async_remove(self) -> None:
         if self._recovery_gate is None:
             await super().async_remove()
             return
         async with self._recovery_gate.shared(maintenance=True):
-            await _async_settle_write(super().async_remove())
+            await _async_settle_store_io(super().async_remove())
 
 
 class PropagatingWriteStore(RecoveryGuardedStore):

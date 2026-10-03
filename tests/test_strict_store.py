@@ -57,8 +57,9 @@ async def test_strict_store_handles_writer_error_without_oserror_cause(
 
 
 @pytest.mark.parametrize("failure", [False, True])
-async def test_cancelled_scoped_writer_keeps_restore_excluded_until_settlement(
-    monkeypatch, failure
+@pytest.mark.parametrize("operation", ["async_load", "_async_write_data"])
+async def test_cancelled_scoped_io_keeps_restore_excluded_until_settlement(
+    monkeypatch, failure, operation
 ):
     """Repeated cancellation cannot release the reader around surviving I/O."""
     from custom_components.extended_openai_conversation_responses.agent_maintenance import (
@@ -75,11 +76,11 @@ async def test_cancelled_scoped_writer_keeps_restore_excluded_until_settlement(
     store = object.__new__(RecoveryGuardedStore)
     store._recovery_gate = gate
 
-    async def held_native(_self, _data):
+    async def held_native(_self, *_args):
         entered.set()
         await release.wait()
         if failure:
-            raise OSError("settled native write failed")
+            raise OSError("settled native I/O failed")
 
     wait_for = gate._condition.wait_for
 
@@ -88,9 +89,14 @@ async def test_cancelled_scoped_writer_keeps_restore_excluded_until_settlement(
             writer_queued.set()
         return await wait_for(predicate)
 
-    monkeypatch.setattr(Store, "_async_write_data", held_native)
+    monkeypatch.setattr(Store, operation, held_native)
     monkeypatch.setattr(gate._condition, "wait_for", observed_wait)
-    task = asyncio.create_task(store._async_write_data({"data": {}}))
+    io = (
+        store.async_load()
+        if operation == "async_load"
+        else store._async_write_data({"data": {}})
+    )
+    task = asyncio.create_task(io)
     await entered.wait()
     task.cancel()
     await asyncio.sleep(0)
