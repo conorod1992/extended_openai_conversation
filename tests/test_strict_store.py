@@ -116,3 +116,42 @@ async def test_cancelled_scoped_io_keeps_restore_excluded_until_settlement(
         await task
     await maintenance
     assert restore_entered.is_set() and gate._active_readers == 0
+
+
+async def test_delayed_callback_waits_before_entering_ha_store_writer(monkeypatch):
+    """A deferred flush cannot hold HA's writer lock while waiting for restore."""
+    from contextvars import Context
+
+    from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+        AgentMaintenanceGate,
+    )
+    from custom_components.extended_openai_conversation_responses.strict_store import (
+        RecoveryGuardedStore,
+    )
+
+    gate = AgentMaintenanceGate()
+    store = object.__new__(RecoveryGuardedStore)
+    store._recovery_gate = gate
+    attempted, base_entered = asyncio.Event(), asyncio.Event()
+    wait_for = gate._condition.wait_for
+
+    async def observed_wait(predicate):
+        if gate._writer_active:
+            attempted.set()
+        return await wait_for(predicate)
+
+    async def base_writer(_self):
+        base_entered.set()
+
+    monkeypatch.setattr(gate._condition, "wait_for", observed_wait)
+    monkeypatch.setattr(Store, "_async_handle_write_data", base_writer)
+    async with gate.exclusive():
+        callback = asyncio.create_task(
+            store._async_handle_write_data(), context=Context()
+        )
+        queued = asyncio.create_task(attempted.wait())
+        await asyncio.wait({callback, queued}, return_when=asyncio.FIRST_COMPLETED)
+        assert attempted.is_set() and not callback.done() and not base_entered.is_set()
+        await queued
+    await callback
+    assert base_entered.is_set()

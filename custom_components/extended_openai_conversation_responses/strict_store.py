@@ -68,6 +68,16 @@ class RecoveryGuardedStore(Store[dict[str, Any]]):
         async with self._recovery_gate.shared(maintenance=True):
             await _async_settle_store_io(super().async_save(data))
 
+    async def _async_handle_write_data(self) -> None:
+        # Delayed Store callbacks enter here before HA takes its native writer
+        # lock. Waiting for maintenance while holding that lock would deadlock
+        # recovery's own save to this same Store.
+        if self._recovery_gate is None:
+            await super()._async_handle_write_data()
+            return
+        async with self._recovery_gate.shared(maintenance=True):
+            await _async_settle_store_io(super()._async_handle_write_data())
+
     async def _async_write_data(self, data: dict[str, Any]) -> None:
         if self._recovery_gate is None:
             await super()._async_write_data(data)
