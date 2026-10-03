@@ -22,7 +22,6 @@ from tests_real_ha.test_immediate_tool_process_crash import (
     _ensure_entry,
     _stage_component,
 )
-from tests_stress.conftest import record
 
 _PHASE = "FILESYSTEM_RECOVERY_PHASE"
 _CONFIG = "FILESYSTEM_RECOVERY_CONFIG"
@@ -330,6 +329,10 @@ def _kill(config, kind):
 def test_booted_filesystem_recovers_after_hard_kill(
     tmp_path, kind, stress_trace, monkeypatch
 ):
+    # Parent-only fixtures import the repository integration. Keep them out of
+    # the child before it selects and verifies the staged component below.
+    from tests_stress.conftest import record
+
     config = tmp_path / "ha-config"
     destination = config / "custom_components" / DOMAIN
     destination.parent.mkdir(parents=True)

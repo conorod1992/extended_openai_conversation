@@ -95,8 +95,25 @@ async def async_get_transfer_staging(hass: HomeAssistant) -> Path:
             hass.async_add_executor_job(_initialize_owner, root)
         )
         hass.data[_OWNER_KEY] = task
-    owner = await asyncio.shield(task)
+        task.add_done_callback(
+            lambda completed: _discard_failed_initialization(hass, completed)
+        )
+    try:
+        owner = await asyncio.shield(task)
+    except BaseException:
+        if task.done():
+            _discard_failed_initialization(hass, task)
+        raise
     return owner.directory
+
+
+def _discard_failed_initialization(
+    hass: HomeAssistant, task: asyncio.Future[TransferStagingOwner]
+) -> None:
+    """Retry failed allocations without evicting pending, successful or newer owners."""
+    failed = task.cancelled() or task.exception() is not None
+    if failed and hass.data.get(_OWNER_KEY) is task:
+        hass.data.pop(_OWNER_KEY)
 
 
 async def async_close_transfer_staging(hass: HomeAssistant) -> None:

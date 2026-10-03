@@ -9,6 +9,7 @@ import random
 import string
 import zipfile
 
+import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses import backup_transfer
@@ -29,6 +30,74 @@ from tests_real_ha.test_backup_transfer_protocol import (
 from tests_stress.conftest import record
 
 CHUNK_BYTES = 32 * 1024
+
+
+async def test_setup_staging_failure_recovers_before_registered_backup_transfer(
+    hass, hass_ws_client, monkeypatch, stress_trace
+):
+    """Repair a real allocation failure in-process, then use normal HA transfer APIs."""
+    import custom_components.extended_openai_conversation_responses as integration
+    from custom_components.extended_openai_conversation_responses import transfer_staging as staging
+
+    lock_file = staging._lock_file
+    attempts = 0
+
+    def fail_once(path):
+        nonlocal attempts
+        if path.name == "owner.lock":
+            attempts += 1
+            if attempts == 1:
+                raise PermissionError("controlled temporary staging failure")
+        return lock_file(path)
+
+    monkeypatch.setattr(staging, "_lock_file", fail_once)
+    with pytest.raises(PermissionError, match="controlled temporary"):
+        await integration.async_setup(hass, {})
+    assert staging._OWNER_KEY not in hass.data
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    assert attempts == 2
+    owner_directory = await staging.async_get_transfer_staging(hass)
+    assert list(owner_directory.parent.glob("owner-*")) == [owner_directory]
+    subentry = _conversation_subentry(entry)
+    memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
+    await memory.async_add("transfer-owner", "RECOVERED-STAGING-MEMORY", "acceptance", "explicit")
+    client = await hass_ws_client(hass, await _user_token(
+        hass, MockUser(id="staging-retry-admin", name="Transfer admin", is_owner=True)))
+    exported = await _real_transfer_call(client, entry=entry, action="export_start", data={"mode": "full"})
+    assert exported["success"], exported
+    metadata = exported["result"]
+    parts = []
+    for index in range(metadata["chunk_count"]):
+        chunk = await _real_transfer_call(client, entry=entry, action="export_chunk",
+            data={"session_id": metadata["session_id"], "index": index})
+        assert chunk["success"], chunk
+        parts.append(base64.b64decode(chunk["result"]["data"], validate=True))
+    archive = b"".join(parts)
+    imported = await _real_transfer_call(client, entry=entry, action="import_start",
+        data={"filename": metadata["filename"], "size": len(archive)})
+    assert imported["success"], imported
+    session = imported["result"]["session_id"]
+    for index, offset in enumerate(range(0, len(archive), backup_transfer.BACKUP_CHUNK_BYTES)):
+        chunk = await _real_transfer_call(client, entry=entry, action="import_chunk", data={
+            "session_id": session, "index": index,
+            "data": base64.b64encode(archive[offset:offset + backup_transfer.BACKUP_CHUNK_BYTES]).decode("ascii")})
+        assert chunk["success"], chunk
+    await memory.async_add("transfer-owner", "MUTATED-AFTER-EXPORT", "acceptance", "explicit")
+    preview = await _real_transfer_call(client, entry=entry, action="import_inspect", data={"session_id": session})
+    assert preview["success"] and preview["result"]["valid"], preview
+    restored = await _real_transfer_call(client, entry=entry, action="import_restore", data={
+        "session_id": session, "preview_token": preview["result"]["preview_token"]})
+    assert restored["success"], restored
+    actual = await memory.async_list("transfer-owner", limit=20)
+    assert [item.content for item in actual] == ["RECOVERED-STAGING-MEMORY"]
+    cancelled = await _real_transfer_call(client, entry=entry, action="export_cancel",
+        data={"session_id": metadata["session_id"]})
+    assert cancelled["success"], cancelled
+    assert list(owner_directory.parent.glob("owner-*")) == [owner_directory]
+    assert list(owner_directory.iterdir()) == [owner_directory / "owner.lock"]
+    record(stress_trace, "summary", staging_initialization_recoveries=1, allocation_attempts=attempts,
+           transfer_sessions=2, backup_archive_bytes=len(archive))
 
 
 async def test_large_multichunk_transfer_retry_and_restore(
