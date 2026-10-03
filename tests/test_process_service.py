@@ -354,7 +354,7 @@ async def test_early_failure_after_continuity_claim_releases_session(monkeypatch
     with pytest.raises(RuntimeError, match="setup failed"):
         await entity._async_process_with_continuity(user_input)
 
-    assert entity._continuity._sessions["device:kitchen"].in_flight is False
+    assert entity._continuity._sessions["user:alice:device:kitchen"].in_flight is False
 
 
 def _message_entity_and_input():

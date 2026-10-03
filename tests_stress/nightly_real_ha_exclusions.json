@@ -80,6 +80,12 @@
         "test_shipped_browser_frontend_talks_to_real_management_websocket"
       ],
       "remaining_evidence": "The genuine HA frontend shell runs in ordinary frontend CI; enhanced nightly repeats the management WebSocket bridge."
+    },
+    "tests_real_ha/test_public_version_journeys.py": {
+      "nodes": [
+        "test_public_script_function_cleanup_abort_and_repeat"
+      ],
+      "remaining_evidence": "All public version journeys also run through ci/run_ha_lifecycle_contract.sh on the supported HA matrix. The functions campaign additionally selects the generic Script Function journey."
     }
   },
   "exclusion_reasons": {

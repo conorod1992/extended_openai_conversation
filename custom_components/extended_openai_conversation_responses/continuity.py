@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any, cast
 from uuid import uuid4
@@ -88,6 +88,10 @@ class ConversationContinuity:
         }:
             if device_id:
                 key, label = f"device:{device_id}", "Assist device"
+                if namespace is None:
+                    # A physical device can change privacy owner while this cache
+                    # remains warm. All continuity-owned state must follow that owner.
+                    key = f"{scope.scope_id}:{key}"
             else:
                 key, label = None, "Home Assistant default"
         else:
@@ -185,8 +189,16 @@ class ConversationContinuity:
                     )
                     else self._new_conversation_id(namespace)
                 )
-                return ContinuityResolution(conversation_id, None, [], False)
-            return ContinuityResolution(incoming_conversation_id, None, [], False)
+            else:
+                conversation_id = incoming_conversation_id
+            claim_token = (
+                await self._async_claim_ha_default_conversation(conversation_id)
+                if conversation_id is not None
+                else None
+            )
+            return ContinuityResolution(
+                conversation_id, None, [], False, claim_token=claim_token
+            )
         now = dt_util.utcnow()
         cutoff = now - timedelta(minutes=timeout_minutes)
         async with self._lock:
@@ -225,6 +237,35 @@ class ConversationContinuity:
             return ContinuityResolution(
                 conversation_id, key, [], False, claim_token=claim_token
             )
+
+    async def async_replace_conversation_id(
+        self, resolution: ContinuityResolution, conversation_id: str | None
+    ) -> ContinuityResolution:
+        """Move an ownership-rejected resolution to a fresh, claimed ChatLog."""
+        if resolution.key is None:
+            await self.async_release(None, resolution.claim_token)
+            token = (
+                await self._async_claim_ha_default_conversation(conversation_id)
+                if conversation_id is not None
+                else None
+            )
+            return replace(
+                resolution,
+                conversation_id=conversation_id,
+                history=[],
+                resumed=False,
+                claim_token=token,
+            )
+        async with self._lock:
+            active = self._sessions.get(resolution.key)
+            if active is not None and active.claim_token == resolution.claim_token:
+                if conversation_id is not None:
+                    active.conversation_id = conversation_id
+                active.history = []
+                self._memory_bundles.pop(f"continuity:{resolution.key}", None)
+        return replace(
+            resolution, conversation_id=conversation_id, history=[], resumed=False
+        )
 
     async def _async_claim_ha_default_conversation(self, conversation_id: str) -> str:
         """Serialize mutations of one caller-owned HA-default ChatLog."""

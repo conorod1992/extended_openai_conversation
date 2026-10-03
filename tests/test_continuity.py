@@ -1,8 +1,10 @@
 """Focused conversation-continuity tests."""
 
+import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 
+import pytest
 
 from custom_components.extended_openai_conversation_responses import continuity
 from custom_components.extended_openai_conversation_responses.const import (
@@ -35,6 +37,120 @@ async def test_ha_default_preserves_incoming_id() -> None:
     )
     assert result.conversation_id == "incoming"
     assert result.key is None
+
+
+async def test_device_owner_changes_isolate_history_and_memory_bundles() -> None:
+    from custom_components.extended_openai_conversation_responses.function_groups import FunctionGroupRuntime
+    from custom_components.extended_openai_conversation_responses.request_rules import RequestRuleRuntime, request_rule_session_id
+
+    manager = ConversationContinuity("agent")
+    groups, rules = FunctionGroupRuntime(), RequestRuleRuntime()
+    scopes = [
+        user_scope("alice", source="test"),
+        user_scope("bob", source="test"),
+        shared_scope(source="test"),
+        unretained_scope(),
+    ]
+    resolutions = []
+    for index, scope in enumerate(scopes):
+        resolution = await manager.async_resolve(
+            CONVERSATION_CONTINUITY_DEVICE, scope, "kitchen", None, 30
+        )
+        assert not resolution.history
+        session = request_rule_session_id(resolution.key, resolution.conversation_id)
+        assert not groups.begin(session, 30).loaded_group_ids
+        assert rules.get(session, 30) == {}
+        groups.begin(session, 30).loaded_group_ids.add(str(index))
+        rules.set(session, {"model": str(index)}, 30)
+        assert (
+            await manager.async_get_memory_bundle(f"continuity:{resolution.key}", 30)
+            is None
+        )
+        await manager.async_set_memory_bundle(
+            f"continuity:{resolution.key}", [(scope.scope_id, str(index))], 30
+        )
+        await manager.async_record_success(
+            resolution.key,
+            resolution.claim_token,
+            [conversation.SystemContent(content=scope.scope_id)],
+        )
+        resolutions.append(resolution)
+    assert len({item.key for item in resolutions}) == 4
+    resumed = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_DEVICE, scopes[0], "kitchen", None, 30
+    )
+    assert resumed.history[0].content == "user:alice"
+    session = request_rule_session_id(resumed.key, resumed.conversation_id)
+    assert groups.begin(session, 30).loaded_group_ids == {"0"}
+    assert rules.get(session, 30) == {"model": "0"}
+    assert await manager.async_get_memory_bundle(f"continuity:{resumed.key}", 30) == [
+        ("user:alice", "0")
+    ]
+    await manager.async_release(resumed.key, resumed.claim_token)
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        CONVERSATION_CONTINUITY_HA_DEFAULT,
+        CONVERSATION_CONTINUITY_DEVICE,
+        CONVERSATION_CONTINUITY_USER,
+    ],
+)
+@pytest.mark.parametrize("namespace", [None, GUEST_CONTINUITY_NAMESPACE])
+async def test_effective_ha_default_serializes_and_releases_cancelled_waiter(
+    mode, namespace
+) -> None:
+    manager = ConversationContinuity("agent")
+    scope = shared_scope(source="test")
+
+    async def resolve(conversation_id):
+        return await manager.async_resolve(
+            mode, scope, None, conversation_id, 30, namespace=namespace
+        )
+
+    first = await resolve(None if namespace else "same")
+    if not namespace:
+        assert first.conversation_id == "same"
+    second = asyncio.create_task(resolve(first.conversation_id))
+    await asyncio.sleep(0)
+    assert not second.done()
+    other = await resolve(
+        "other" if not namespace else manager._new_conversation_id(namespace)
+    )
+    await manager.async_release(other.key, other.claim_token)
+    second.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second
+    await manager.async_release(first.key, first.claim_token)
+    third = await resolve(first.conversation_id)
+    await manager.async_release(third.key, third.claim_token)
+    assert not manager._ha_default_locks
+    assert not manager._ha_default_claims
+
+
+async def test_rejected_conversation_id_moves_claim_to_final_id() -> None:
+    manager = ConversationContinuity("agent")
+    original = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_DEVICE, shared_scope(source="test"), None, "old", 30
+    )
+    replacement = await manager.async_replace_conversation_id(original, "fresh")
+    assert "old" not in manager._ha_default_locks
+    waiting = asyncio.create_task(
+        manager.async_resolve(
+            CONVERSATION_CONTINUITY_DEVICE,
+            shared_scope(source="test"),
+            None,
+            "fresh",
+            30,
+        )
+    )
+    await asyncio.sleep(0)
+    assert not waiting.done()
+    await manager.async_release(replacement.key, replacement.claim_token)
+    resolved = await waiting
+    await manager.async_release(resolved.key, resolved.claim_token)
+    assert not manager._ha_default_locks
 
 
 async def test_per_device_resume_isolated_and_reset() -> None:
@@ -89,7 +205,7 @@ async def test_per_user_cross_device_and_safe_fallback() -> None:
     )
     assert cross_device.conversation_id == first.conversation_id
     assert unknown.conversation_id != first.conversation_id
-    assert unknown.key == "device:kitchen"
+    assert unknown.key == "unretained:device:kitchen"
     assert shared.conversation_id == "ha-id"
     assert shared.key is None
 
@@ -196,7 +312,7 @@ async def test_owner_to_guest_never_inherits_owner_history() -> None:
         namespace=GUEST_CONTINUITY_NAMESPACE,
     )
 
-    assert owner.key == "device:kitchen"
+    assert owner.key == "unretained:device:kitchen"
     assert guest.key == "guest:device:kitchen"
     assert guest.conversation_id != owner.conversation_id
     assert guest.history == []
