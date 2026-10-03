@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, cast
 
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
@@ -141,16 +141,21 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
     def __init__(self, hass: HomeAssistant) -> None:
         super().__init__(hass)
         self._registered_state_entity_id: str | None = None
+        self._published_state: State | None = None
 
     def _state_entity_id(self) -> str:
-        if self._registered_state_entity_id is not None:
-            return self._registered_state_entity_id
         registry = er.async_get(self.hass)
-        create = getattr(registry, "async_get_or_create", None)
-        if not callable(create):
-            self._registered_state_entity_id = _STATE_FALLBACK_ENTITY_ID
-            return self._registered_state_entity_id
         try:
+            lookup = getattr(registry, "async_get_entity_id", None)
+            if callable(lookup):
+                current = lookup("binary_sensor", DOMAIN, _STATE_UNIQUE_ID)
+                if isinstance(current, str):
+                    self._registered_state_entity_id = current
+                    return current
+            create = getattr(registry, "async_get_or_create", None)
+            if not callable(create):
+                self._registered_state_entity_id = _STATE_FALLBACK_ENTITY_ID
+                return self._registered_state_entity_id
             entry = create(
                 domain="binary_sensor",
                 platform=DOMAIN,
@@ -159,9 +164,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 original_name="Quiet Hours",
             )
         except AttributeError as err:
-            # Integrations can be set up before the entity registry has loaded its
-            # backing collection. Publishing the state must not make startup depend
-            # on that internal initialization detail.
+            # Integrations can be set up before the registry collection is loaded.
             if err.name != "entities":
                 raise
             self._registered_state_entity_id = _STATE_FALLBACK_ENTITY_ID
@@ -173,9 +176,20 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         self._registered_state_entity_id = entity_id
         return entity_id
 
+    def _remove_previous_publication(self, entity_id: str) -> None:
+        previous = self._published_state
+        if (
+            previous is not None
+            and previous.entity_id != entity_id
+            and self.hass.states.get(previous.entity_id) is previous
+        ):
+            self.hass.states.async_remove(previous.entity_id)
+
     def _publish_state(self, period: QuietPeriod | None) -> None:
+        entity_id = self._state_entity_id()
+        self._remove_previous_publication(entity_id)
         self.hass.states.async_set(
-            self._state_entity_id(),
+            entity_id,
             "on" if period is not None else "off",
             {
                 "friendly_name": "Quiet Hours",
@@ -189,6 +203,8 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 "period_ends_at": period.end.isoformat() if period else None,
             },
         )
+
+        self._published_state = self.hass.states.get(entity_id)
 
     def discovery_snapshot(self) -> list[dict[str, Any]]:
         return [
@@ -291,10 +307,25 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         observed = self._active["observed_controls"]
         try:
             await self._async_set_volume(entity_id, self._config.max_volume)
-        except Exception:
-            controls.pop(entity_id, None)
-            observed.remove(entity_id)
-            await self._async_save_locked()
+        except Exception as err:
+            # A service error does not prove that the device stayed unchanged.
+            # Keep the persisted baseline unless HA confirms no change occurred.
+            current = _current_volume(self.hass, entity_id)
+            unchanged = (
+                current is not None
+                and abs(current - control["original_value"]) <= _VOLUME_TOLERANCE
+            )
+            self._log_control_failure(
+                "apply",
+                entity_id,
+                control["kind"],
+                err,
+                ownership="released" if unchanged else "retained",
+            )
+            if unchanged:
+                controls.pop(entity_id, None)
+                observed.remove(entity_id)
+                await self._async_save_control_state_locked()
 
     async def _async_apply_switch_locked(
         self,
@@ -327,10 +358,21 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         observed = self._active["observed_controls"]
         try:
             await self._async_set_switch(entity_id, desired)
-        except Exception:
-            controls.pop(entity_id, None)
-            observed.remove(entity_id)
-            await self._async_save_locked()
+        except Exception as err:
+            unchanged = (
+                _current_switch(self.hass, entity_id) is control["original_value"]
+            )
+            self._log_control_failure(
+                "apply",
+                entity_id,
+                control["kind"],
+                err,
+                ownership="released" if unchanged else "retained",
+            )
+            if unchanged:
+                controls.pop(entity_id, None)
+                observed.remove(entity_id)
+                await self._async_save_control_state_locked()
 
     async def _async_prepare_control_locked(
         self,
@@ -433,7 +475,9 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
-        self.hass.states.async_remove(self._state_entity_id())
+        entity_id = self._state_entity_id()
+        self._remove_previous_publication(entity_id)
+        self.hass.states.async_remove(entity_id)
 
 
 async def _async_require_admin(hass: HomeAssistant, call: ServiceCall) -> None:

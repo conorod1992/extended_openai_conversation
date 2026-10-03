@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 import logging
 import math
 from typing import Any
@@ -144,32 +144,27 @@ def quiet_period_for(
     if start_time == end_time:
         raise ValueError("Quiet Hours start and end times must differ")
 
-    def at(day, clock: time) -> datetime:
+    def at(day: date, clock: time, *, ending: bool = False) -> datetime:
         candidate = datetime.combine(day, clock, tzinfo=now.tzinfo)
-        # zoneinfo permits construction of imaginary wall times during a
-        # spring-forward gap. Round-tripping through UTC maps those values to
-        # the corresponding first real wall time after the gap, while valid
-        # and ambiguous times retain their ordinary first-occurrence meaning.
+        # Preserve spring-gap normalization. For a repeated hour, one daily
+        # occurrence starts at the first instant and ends at the last instant.
         normalized = candidate.astimezone(UTC).astimezone(now.tzinfo)
         if normalized.replace(fold=0) != candidate.replace(fold=0):
             return normalized
+        if ending:
+            second = candidate.replace(fold=1)
+            if second.astimezone(UTC).astimezone(now.tzinfo) == second:
+                return max((candidate, second), key=lambda value: value.astimezone(UTC))
         return candidate
 
-    if start_time < end_time:
-        start = at(now.date(), start_time)
-        end = at(now.date(), end_time)
-        return QuietPeriod(start, end) if start <= now < end else None
-    wall_time = now.timetz().replace(tzinfo=None)
-    if wall_time >= start_time:
-        return QuietPeriod(
-            at(now.date(), start_time),
-            at(now.date() + timedelta(days=1), end_time),
+    instant = now.astimezone(UTC)
+    for day in (now.date(), now.date() - timedelta(days=1)):
+        start = at(day, start_time)
+        end = at(
+            day + timedelta(days=int(start_time > end_time)), end_time, ending=True
         )
-    if wall_time < end_time:
-        return QuietPeriod(
-            at(now.date() - timedelta(days=1), start_time),
-            at(now.date(), end_time),
-        )
+        if start.astimezone(UTC) <= instant < end.astimezone(UTC):
+            return QuietPeriod(start, end)
     return None
 
 
@@ -556,11 +551,17 @@ class QuietHoursManager:
                     )
 
     def _log_control_failure(
-        self, operation: str, entity_id: str, kind: str, error: Exception
+        self,
+        operation: str,
+        entity_id: str,
+        kind: str,
+        error: Exception,
+        *,
+        ownership: str = "released",
     ) -> None:
         log_handled_failure(
             logging.getLogger(__name__),
-            f"Quiet Hours operation={operation} control={kind} entity={entity_id}; outcome=failed ownership=released",
+            f"Quiet Hours operation={operation} control={kind} entity={entity_id}; outcome=failed ownership={ownership}",
             error,
         )
 
