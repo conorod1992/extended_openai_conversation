@@ -18,7 +18,9 @@ from tests_real_ha.test_request_rules_script_semantics import _local
 from tests_stress.conftest import record
 
 
-@pytest.mark.parametrize("transition", ["activate", "tighten", "deactivate"])
+@pytest.mark.parametrize(
+    "transition", ["activate", "tighten", "deactivate", "activate_then_disable"]
+)
 async def test_waiting_native_rule_obeys_live_guest_restrictions(
     hass, monkeypatch, stress_trace, transition
 ):
@@ -27,7 +29,7 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
         **{
             CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
             CONF_GUEST_EXCLUDED_ENTITIES: ["light.pending"]
-            if transition == "activate"
+            if transition.startswith("activate")
             else [],
         },
     )
@@ -36,6 +38,7 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
         hass.states.async_set(entity_id, "on")
         async_expose_entity(hass, "conversation", entity_id, True)
     entered = asyncio.Event()
+    second_wait = asyncio.Event()
     effects = []
 
     async def turn_off(call):
@@ -46,9 +49,11 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
         hass.states.async_set(entity_id, "off")
         if entity_id == "light.before":
             entered.set()
+        if entity_id == "light.healthy":
+            second_wait.set()
 
     hass.services.async_register("light", "turn_off", turn_off)
-    if transition != "activate":
+    if not transition.startswith("activate"):
         await agent._guest_mode.async_update_trusted(indefinite=True)
 
     def action(entity):
@@ -64,6 +69,18 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
                     "timeout": 10,
                     "continue_on_timeout": False,
                 },
+                *(
+                    [
+                        action("light.healthy"),
+                        {
+                            "wait_template": "{{ is_state('sensor.second_gate', 'open') }}",
+                            "timeout": 10,
+                            "continue_on_timeout": False,
+                        },
+                    ]
+                    if transition == "activate_then_disable"
+                    else []
+                ),
                 {"repeat": {"count": 1, "sequence": [action("light.pending")]}},
             ]
         )
@@ -76,7 +93,7 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
         await asyncio.wait_for(entered.wait(), 5)
         await hass.async_block_till_done()
         assert not running.done()
-        if transition == "activate":
+        if transition.startswith("activate"):
             await agent._guest_mode.async_update_trusted(indefinite=True)
         elif transition == "tighten":
             hass.config_entries.async_update_subentry(
@@ -90,6 +107,12 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
         else:
             await agent._guest_mode.async_disable_trusted()
         hass.states.async_set("sensor.rule_gate", "open")
+        if transition == "activate_then_disable":
+            await asyncio.wait_for(second_wait.wait(), 5)
+            await hass.async_block_till_done()
+            assert not running.done()
+            await agent._guest_mode.async_disable_trusted()
+            hass.states.async_set("sensor.second_gate", "open")
         response = await asyncio.wait_for(running, 5)
     finally:
         if not running.done():
@@ -98,7 +121,11 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
     denied = transition != "deactivate"
     assert _speech(response) == (GUEST_MODE_UNAVAILABLE if denied else "Done")
     assert effects == (
-        ["light.before"] if denied else ["light.before", "light.pending"]
+        ["light.before", "light.healthy"]
+        if transition == "activate_then_disable"
+        else ["light.before"]
+        if denied
+        else ["light.before", "light.pending"]
     )
     assert hass.states.get("light.pending").state == ("on" if denied else "off")
     await hass.async_block_till_done()
