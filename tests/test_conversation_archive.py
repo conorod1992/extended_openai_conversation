@@ -1,5 +1,6 @@
 """Tests for scoped archive search, privacy, deletion, and session stability."""
 
+import asyncio
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime
@@ -1198,3 +1199,164 @@ def test_text_search_and_time_helpers_cover_edge_forms() -> None:
     assert aware.utcoffset() is not None
     assert naive.tzinfo is not None
     assert invalid == datetime.min.replace(tzinfo=archive_module.dt_util.UTC)
+
+
+@pytest.mark.parametrize("partition", ["2026-07", "2026-08", "2026-09"])
+@pytest.mark.parametrize("failure", [OSError, asyncio.CancelledError])
+async def test_partial_initialize_retry_publishes_one_complete_generation(
+    partition, failure
+):
+    storage = FakeArchiveStorage()
+    sessions = [_session(f"session-{month}") for month in ("07", "08", "09")]
+    storage.metadata = {
+        "sessions": [asdict(session) for session in sessions],
+        "active": {"browser": sessions[0].session_id},
+        "partitions": ["2026-07", "2026-08", "2026-09"],
+    }
+    for month, session in zip(("07", "08", "09"), sessions, strict=True):
+        storage.partitions[f"2026-{month}"] = {
+            "turns": [
+                asdict(
+                    _turn(
+                        session.session_id,
+                        turn_id=f"turn-{month}",
+                        timestamp=f"2026-{month}-01T10:01:00+00:00",
+                    )
+                )
+            ]
+        }
+    load = storage.async_load_partition
+    failed = False
+
+    async def fail_once(month):
+        nonlocal failed
+        if month == partition and not failed:
+            failed = True
+            raise failure()
+        return await load(month)
+
+    storage.async_load_partition = fail_once
+    archive = ConversationArchive(storage, "agent-1")
+    with pytest.raises(failure):
+        await archive.async_initialize()
+    assert not archive._initialized
+    assert (
+        not archive._sessions
+        and not archive._turns
+        and not archive._active
+        and not archive._partitions
+    )
+    await archive.async_initialize()
+    fresh = ConversationArchive(storage, "agent-1")
+    await fresh.async_initialize()
+    assert await archive.async_backup_data() == await fresh.async_backup_data()
+    result = await archive.async_backup_data()
+    assert (
+        len({turn["turn_id"] for turn in result["turns"]}) == len(result["turns"]) == 3
+    )
+    ConversationArchive.validate_backup_data(result, "agent-1")
+
+
+async def test_private_titles_are_cleared_migrated_and_not_reimported():
+    archive = await _archive()
+    storage = archive._storage
+    session = await archive.async_begin_session(
+        "browser",
+        user_scope("alice", source="authenticated_user"),
+        "ha-private",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    await archive.async_record_turn(
+        session.session_id,
+        run_id="run",
+        user_text="PRIVATE_TITLE_MARKER",
+        assistant_text="Answer",
+        successful=True,
+    )
+    await archive.async_make_private(session.session_id)
+    assert "PRIVATE_TITLE_MARKER" not in str(storage.metadata)
+    assert "PRIVATE_TITLE_MARKER" not in str(await archive.async_backup_data())
+    storage.metadata["sessions"][0]["title"] = "LEGACY_PRIVATE_TITLE"
+    legacy = ConversationArchive(storage, "agent-1")
+    await legacy.async_initialize()
+    assert legacy._sessions[session.session_id].title == ""
+    assert "LEGACY_PRIVATE_TITLE" not in str(storage.metadata)
+    old_backup = await legacy.async_backup_data()
+    old_backup["sessions"][0]["title"] = "OLD_EXPORTED_TITLE"
+    sessions, turns = ConversationArchive.validate_backup_data(old_backup, "agent-1")
+    await legacy.async_replace_backup(sessions, turns)
+    assert "OLD_EXPORTED_TITLE" not in str(await legacy.async_backup_data())
+
+
+@pytest.mark.parametrize("count", [49, 50, 51, 200])
+async def test_date_range_deletes_more_than_selected_limit_in_one_transaction(count):
+    storage = FakeArchiveStorage()
+    sessions = [_session(f"selected-{index}") for index in range(count)]
+    controls = [
+        _session("other", scope_id="user:bob"),
+        _session("private", turn_count=0, retention_state="private"),
+        replace(_session("outside"), last_message_at="2026-10-01T10:01:00+00:00"),
+    ]
+    storage.metadata = {
+        "sessions": [asdict(session) for session in sessions + controls],
+        "partitions": ["2026-09"],
+        "active": {"browser": sessions[0].session_id},
+    }
+    storage.partitions["2026-09"] = {
+        "turns": [
+            asdict(_turn(session.session_id, turn_id=f"turn-{session.session_id}"))
+            for session in sessions + [controls[0], controls[2]]
+        ]
+    }
+    archive = ConversationArchive(storage, "agent-1")
+    await archive.async_initialize()
+    before_writes = storage.metadata_save_count
+    result = await archive.async_delete_date_range(
+        "user:alice", "2026-09-01", "2026-09-30", confirm=True
+    )
+    assert result == {"deleted_sessions": count, "deleted_turns": count}
+    assert set(archive._sessions) == {session.session_id for session in controls}
+    assert not archive._active
+    assert (
+        storage.metadata_save_count - before_writes == 2
+    )  # One intent and one final write.
+    fresh = ConversationArchive(storage, "agent-1")
+    await fresh.async_initialize()
+    assert await archive.async_backup_data() == await fresh.async_backup_data()
+
+
+@pytest.mark.parametrize("committed", [False, True])
+async def test_legacy_private_title_cleanup_failure_retries_without_publication(
+    committed,
+):
+    class MigrationStorage(FakeArchiveStorage):
+        async def async_save_metadata(self, data):
+            if self.metadata_save_count == 0:
+                self.metadata_save_count += 1
+                if committed:
+                    self.metadata = deepcopy(data)
+                raise OSError("Migration acknowledgement failed")
+            await super().async_save_metadata(data)
+
+    storage = MigrationStorage()
+    private = replace(
+        _session("private", turn_count=0, retention_state="private"),
+        title="LEGACY_PRIVATE_MARKER",
+    )
+    retained = _session("retained", turn_count=0)
+    storage.metadata = {
+        "sessions": [asdict(private), asdict(retained)],
+        "active": {},
+        "partitions": [],
+    }
+    archive = ConversationArchive(storage, "agent-1")
+    with pytest.raises(OSError):
+        await archive.async_initialize()
+    assert not archive._initialized and not archive._sessions and not archive._turns
+    assert ("LEGACY_PRIVATE_MARKER" not in str(storage.metadata)) is committed
+    await archive.async_initialize()
+    assert archive._sessions["private"].title == ""
+    assert archive._sessions["retained"].title == retained.title
+    assert "LEGACY_PRIVATE_MARKER" not in str(storage.metadata)

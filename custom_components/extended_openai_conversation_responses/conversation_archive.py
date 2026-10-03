@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 import logging
 import re
@@ -186,6 +186,9 @@ class ConversationArchive:
                     if key != "pending_partitions"
                 }
                 await self._storage.async_save_metadata(data)
+            staged_sessions: dict[str, ArchiveSession] = {}
+            staged_turns: dict[str, list[ArchiveTurn]] = defaultdict(list)
+            private_titles = False
             sessions = data.get("sessions")
             for raw in sessions if isinstance(sessions, list) else []:
                 try:
@@ -193,21 +196,24 @@ class ConversationArchive:
                 except TypeError, ValueError:
                     _LOGGER.warning("Ignoring malformed conversation archive session")
                     continue
-                self._sessions[session.session_id] = session
+                if session.retention_state == "private" and session.title:
+                    session = replace(session, title="")
+                    private_titles = True
+                staged_sessions[session.session_id] = session
             active = data.get("active")
-            self._active = {
+            staged_active = {
                 str(key): str(value)
                 for key, value in (active if isinstance(active, dict) else {}).items()
-                if isinstance(value, str) and value in self._sessions
+                if isinstance(value, str) and value in staged_sessions
             }
             partitions = data.get("partitions")
-            self._partitions = {
+            staged_partitions = {
                 value
                 for value in (partitions if isinstance(partitions, list) else [])
                 if isinstance(value, str)
                 and re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", value)
             }
-            for partition in sorted(self._partitions):
+            for partition in sorted(staged_partitions):
                 payload = await self._storage.async_load_partition(partition) or {}
                 turns = payload.get("turns") if isinstance(payload, dict) else None
                 for raw in turns if isinstance(turns, list) else []:
@@ -216,8 +222,21 @@ class ConversationArchive:
                     except TypeError, ValueError:
                         _LOGGER.warning("Ignoring malformed conversation archive turn")
                         continue
-                    if turn.session_id in self._sessions:
-                        self._turns[turn.session_id].append(turn)
+                    if turn.session_id in staged_sessions:
+                        staged_turns[turn.session_id].append(turn)
+            # Retry/cancellation must never expose a partially loaded generation.
+            # Persist legacy private-title cleanup before publishing normalized state.
+            if private_titles:
+                await self._storage.async_save_metadata(
+                    self._metadata_payload_for_state(
+                        staged_sessions, staged_active, staged_partitions
+                    )
+                )
+            self._sessions = staged_sessions
+            self._turns = defaultdict(list, staged_turns)
+            self._active = staged_active
+            self._partitions = staged_partitions
+            self._pending_partitions.clear()
             self._initialized = True
 
     async def async_begin_session(
@@ -325,7 +344,12 @@ class ConversationArchive:
             removed = list(turns.pop(session_id, ()))
             sessions = dict(self._sessions)
             sessions[session_id] = ArchiveSession(
-                **{**asdict(session), "turn_count": 0, "retention_state": "private"}
+                **{
+                    **asdict(session),
+                    "title": "",
+                    "turn_count": 0,
+                    "retention_state": "private",
+                }
             )
             await self._async_commit_state_locked(
                 sessions=sessions,
@@ -511,34 +535,35 @@ class ConversationArchive:
         if not session_ids or len(session_ids) > MAX_SEARCH_LIMIT:
             raise ValueError(f"session_ids must contain 1 to {MAX_SEARCH_LIMIT} IDs")
         async with self._lock:
-            targets = set(session_ids)
-            # Validate every supplied ID while holding the same lock used for commit.
-            for session_id in targets:
-                self._require_owned_session(scope_id, session_id)
-            sessions = {
-                session_id: session
-                for session_id, session in self._sessions.items()
-                if session_id not in targets
-            }
-            turns = dict(self._turns)
-            removed = [
-                turn for session_id in targets for turn in turns.pop(session_id, ())
-            ]
-            active = {
-                key: value
-                for key, value in self._active.items()
-                if value not in targets
-            }
-            await self._async_commit_state_locked(
-                sessions=sessions,
-                turns=turns,
-                active=active,
-                changed_partitions=self._changed_partitions(removed),
-            )
-            return {
-                "deleted_sessions": len(targets),
-                "deleted_turns": len(removed),
-            }
+            return await self._async_delete_owned_locked(scope_id, set(session_ids))
+
+    async def _async_delete_owned_locked(
+        self, scope_id: str, targets: set[str]
+    ) -> dict[str, int]:
+        """Delete an owned set in one journal transaction under the caller's lock."""
+        # Validate every supplied ID while holding the same lock used for commit.
+        for session_id in targets:
+            self._require_owned_session(scope_id, session_id)
+        sessions = {
+            session_id: session
+            for session_id, session in self._sessions.items()
+            if session_id not in targets
+        }
+        turns = dict(self._turns)
+        removed = [turn for session_id in targets for turn in turns.pop(session_id, ())]
+        active = {
+            key: value for key, value in self._active.items() if value not in targets
+        }
+        await self._async_commit_state_locked(
+            sessions=sessions,
+            turns=turns,
+            active=active,
+            changed_partitions=self._changed_partitions(removed),
+        )
+        return {
+            "deleted_sessions": len(targets),
+            "deleted_turns": len(removed),
+        }
 
     async def async_delete_date_range(
         self,
@@ -557,16 +582,18 @@ class ConversationArchive:
             or start_date > end_date
         ):
             raise ValueError("a valid start_date and end_date are required")
-        targets = [
-            session.session_id
-            for session in self._sessions.values()
-            if session.scope_id == scope_id
-            and session.retention_state == "retained"
-            and start_date <= session.last_message_at[:10] <= end_date
-        ]
-        if not targets:
-            return {"deleted_sessions": 0, "deleted_turns": 0}
-        return await self.async_delete_selected(scope_id, targets, confirm=True)
+        async with self._lock:
+            self._ensure_initialized()
+            targets = {
+                session.session_id
+                for session in self._sessions.values()
+                if session.scope_id == scope_id
+                and session.retention_state == "retained"
+                and start_date <= session.last_message_at[:10] <= end_date
+            }
+            if not targets:
+                return {"deleted_sessions": 0, "deleted_turns": 0}
+            return await self._async_delete_owned_locked(scope_id, targets)
 
     async def async_prune(self, retention_days: int) -> dict[str, int]:
         """Delete expired transcript sessions using the restart-safe journal."""
@@ -636,7 +663,7 @@ class ConversationArchive:
             ]
             retained_ids = {session.session_id for session in sessions}
             return {
-                "sessions": [asdict(session) for session in sessions],
+                "sessions": [_session_payload(session) for session in sessions],
                 "turns": [
                     asdict(turn)
                     for session_id, turns in self._turns.items()
@@ -701,7 +728,11 @@ class ConversationArchive:
             ):
                 raise ValueError("archive session metadata is invalid")
             session_ids.add(session.session_id)
-            sessions.append(session)
+            sessions.append(
+                replace(session, title="")
+                if session.retention_state == "private"
+                else session
+            )
 
         turns: list[ArchiveTurn] = []
         turn_ids: set[str] = set()
@@ -752,7 +783,12 @@ class ConversationArchive:
         """Replace durable archive data through the same restart-safe journal."""
         async with self._lock:
             self._ensure_initialized()
-            session_map = {session.session_id: session for session in sessions}
+            session_map = {
+                session.session_id: replace(session, title="")
+                if session.retention_state == "private"
+                else session
+                for session in sessions
+            }
             turn_map: dict[str, list[ArchiveTurn]] = defaultdict(list)
             for turn in turns:
                 turn_map[turn.session_id].append(turn)
@@ -819,7 +855,9 @@ class ConversationArchive:
             if session.retention_state != "unretained"
         }
         payload: dict[str, Any] = {
-            "sessions": [asdict(session) for session in persisted_sessions.values()],
+            "sessions": [
+                _session_payload(session) for session in persisted_sessions.values()
+            ],
             "active": {
                 key: value
                 for key, value in active.items()
@@ -1210,3 +1248,11 @@ def _parse_time(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=dt_util.UTC)
     return parsed
+
+
+def _session_payload(session: ArchiveSession) -> dict[str, Any]:
+    """Private boundaries retain identity, never conversation-derived titles."""
+    payload = asdict(session)
+    if session.retention_state == "private":
+        payload["title"] = ""
+    return payload
