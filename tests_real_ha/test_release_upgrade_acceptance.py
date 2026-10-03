@@ -546,13 +546,19 @@ async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
 
     # Save through Home Assistant's supported config-subentry mutation boundary,
     # then reload the entry so the candidate must consume its own post-migration state.
-    edited = dict(subentry.data)
-    # Make a genuine candidate-era configuration edit without invalidating the
-    # Function Tool capability combination being exercised by this journey.
+    # Save through the candidate's production configuration normalizer before
+    # crossing the HA persistence boundary. A raw dict copy can retain legacy
+    # coupled fields in a representation that runtime accepts in-process but a
+    # genuine candidate save would canonicalize before the next cold start.
+    agent_config = importlib.import_module(
+        f"custom_components.{DOMAIN}.agent_config"
+    )
     max_tokens_key = getattr(const, "CONF_MAX_TOKENS", None)
-    if isinstance(max_tokens_key, str) and max_tokens_key in edited:
-        edited[max_tokens_key] = 640
+    updates: dict[str, Any] = {}
+    if isinstance(max_tokens_key, str):
+        updates[max_tokens_key] = 640
         state["post_upgrade_edit"] = {"key": max_tokens_key, "value": 640}
+    edited = agent_config.merge_agent_config(dict(subentry.data), updates)
 
     hass.config_entries.async_update_subentry(
         entry,
