@@ -1616,7 +1616,8 @@
     "tests_real_ha/test_request_rules_script_semantics.py::test_nested_function_results_agree_in_native_action_and_speech[{battery.level}-9]",
     "tests_real_ha/test_request_rules_script_semantics.py::test_nested_function_results_agree_in_native_action_and_speech[{battery.map.0.level}-84]",
     "tests_real_ha/test_request_rules_script_semantics.py::test_nested_function_results_agree_in_native_action_and_speech[{{ battery['current']['level'] }}-62]",
-    "tests_stress/test_execution_contract.py::test_native_request_rule_semantics_are_mandatory"
+    "tests_stress/test_execution_contract.py::test_native_request_rule_semantics_are_mandatory",
+    "tests_stress/test_execution_contract.py::test_frontend_acknowledged_saves_are_mandatory"
   ],
   "browser": {
     "browser": [
@@ -1783,7 +1784,9 @@
       "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly non-admin Usage omits detail clearing and retention controls",
       "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly run details show failed provider requests, recover from errors, and ignore closed or switched dialogs",
       "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage history windows load lazily, cache selections, page all history, and keep charts responsive",
-      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection"
+      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection",
+      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::Guest save acknowledgement survives a failed refresh and edits in flight through genuine HA",
+      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::combined Request Rules settings remain current across warm and expired navigation through genuine HA"
     ],
     "browser-firefox": [
       "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",

@@ -63,21 +63,31 @@ export function initializePageDraft(panel) {
       });
       const savedResult = {...(current.result || result), ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
       if (panel._agentId === agentId) panel._result = {...panel._result, ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
-      if (view === GUEST) {
-        const details = await panel._call("guest_mode", "details");
-        if (panel._agentId === agentId && panel._viewKey?.() === GUEST && details?.policy) {
-          panel._result = {...panel._result, policy: details.policy};
-          const metrics = panel.shadowRoot?.querySelector(".metric-grid");
-          if (metrics) metrics.innerHTML = [
-            panel._metric("Guest-visible entities", details.policy.readable_entity_count ?? "—"),
-            panel._metric("Guest-controllable entities", details.policy.controllable_entity_count ?? "—"),
-            panel._metric("Guest functions", details.policy.configured_tool_count ?? "—"),
-          ].join("");
-        }
-      }
+      // The mutation acknowledgement owns the baseline and revision. A later
+      // capability read must neither undo that commit nor discard newer edits.
       current.result = savedResult;
       current.revision = saved.revision;
-      if (view === GUEST) { panel._guestMigrationReview = false; panel._guestStartingFresh = false; }
+      current.baseline = clone(saved.config);
+      if (same(current.read(), submitted)) current.write(clone(saved.config));
+      current.refreshWarning = null;
+      if (view === GUEST) {
+        panel._guestMigrationReview = false;
+        panel._guestStartingFresh = false;
+        try {
+          const details = await panel._call("guest_mode", "details");
+          if (panel._agentId === agentId && panel._viewKey?.() === GUEST && details?.policy) {
+            panel._result = {...panel._result, policy: details.policy};
+            const metrics = panel.shadowRoot?.querySelector(".metric-grid");
+            if (metrics) metrics.innerHTML = [
+              panel._metric("Guest-visible entities", details.policy.readable_entity_count ?? "—"),
+              panel._metric("Guest-controllable entities", details.policy.controllable_entity_count ?? "—"),
+              panel._metric("Guest functions", details.policy.configured_tool_count ?? "—"),
+            ].join("");
+          }
+        } catch (err) {
+          current.refreshWarning = `Guest capability details could not be refreshed: ${err.message || String(err)}`;
+        }
+      }
       return saved.config;
     },
   });
@@ -239,7 +249,7 @@ export async function savePageChanges(panel) {
     // control, details state, selection, and scroll position then remain native.
     // Fall back only if a future backend normalization changes editor structure.
     if (!syncSavedPageDom(panel)) panel._render();
-    panel._toast("Changes saved");
+    panel._toast(scope.refreshWarning ? `Changes saved. ${scope.refreshWarning}` : "Changes saved");
     return true;
   } catch (err) {
     panel._toast(`Unable to save changes: ${err.message || String(err)}`, true);

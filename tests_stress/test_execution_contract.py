@@ -710,3 +710,17 @@ def test_native_request_rule_semantics_are_mandatory():
         nodes = [node for node in cases if node.startswith(prefix + name + "[")]
         assert len(nodes) == count
         assert not set(nodes) & policy.get("allowances", {}).keys()
+
+
+
+def test_frontend_acknowledged_saves_are_mandatory():
+    policy = json.loads(CONTRACT.read_text())
+    cases = expected_cases(policy, "browser")
+    prefix = "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::"
+    for title in (
+        "Guest save acknowledgement survives a failed refresh and edits in flight through genuine HA",
+        "combined Request Rules settings remain current across warm and expired navigation through genuine HA",
+    ):
+        node = prefix + title
+        assert node in cases
+        assert node not in policy.get("allowances", {})
