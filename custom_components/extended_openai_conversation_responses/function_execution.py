@@ -686,6 +686,23 @@ def _validate_object(
     return result
 
 
+def _json_equal(left: Any, right: Any) -> bool:
+    """Compare JSON values without Python's boolean/number equivalence."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return left == right
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        return left.keys() == right.keys() and all(
+            _json_equal(value, right[key]) for key, value in left.items()
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _json_equal(a, b) for a, b in zip(left, right, strict=True)
+        )
+    return type(left) is type(right) and left == right
+
+
 def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
     """Recursively validate one JSON-schema value."""
     expected = schema.get("type")
@@ -705,14 +722,6 @@ def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
         _validate_length_constraint(
             name, value, schema, "minItems", "maxItems", "items"
         )
-        if schema.get("uniqueItems") is True:
-            for index, item in enumerate(value):
-                if item in value[:index]:
-                    raise HomeAssistantError(
-                        f"Function input `{name or 'input'}` must contain unique items"
-                    )
-        elif "uniqueItems" in schema and schema.get("uniqueItems") is not False:
-            raise _schema_error("uniqueItems must be boolean")
         items = schema.get("items")
         if items is not None:
             if not isinstance(items, Mapping):
@@ -723,6 +732,14 @@ def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
                 _validate_value(f"{name or 'input'}[{index}]", item, items)
                 for index, item in enumerate(value)
             ]
+        if schema.get("uniqueItems") is True:
+            for index, item in enumerate(value):
+                if any(_json_equal(item, previous) for previous in value[:index]):
+                    raise HomeAssistantError(
+                        f"Function input `{name or 'input'}` must contain unique items"
+                    )
+        elif "uniqueItems" in schema and schema.get("uniqueItems") is not False:
+            raise _schema_error("uniqueItems must be boolean")
     elif "string" in expected_types and isinstance(value, str):
         _validate_length_constraint(
             name, value, schema, "minLength", "maxLength", "characters"
@@ -750,12 +767,12 @@ def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
     if choices is not None:
         if not isinstance(choices, list):
             raise _schema_error("enum must be a list")
-        if value not in choices:
+        if not any(_json_equal(value, choice) for choice in choices):
             raise HomeAssistantError(
                 f"Function input `{name or 'input'}` must be one of its choices"
             )
 
-    if "const" in schema and value != schema["const"]:
+    if "const" in schema and not _json_equal(value, schema["const"]):
         raise HomeAssistantError(
             f"Function input `{name or 'input'}` must match its required value"
         )

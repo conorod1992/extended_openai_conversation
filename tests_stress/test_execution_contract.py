@@ -724,3 +724,20 @@ def test_frontend_acknowledged_saves_are_mandatory():
         node = prefix + title
         assert node in cases
         assert node not in policy.get("allowances", {})
+
+
+def test_normalized_function_constraints_are_mandatory():
+    policy = json.loads(CONTRACT.read_text())
+    cases = expected_cases(policy, "functions")
+    for name, count in {
+        "test_unique_items_checks_normalized_json_values": 12,
+        "test_enum_and_const_use_json_equality": 16,
+        "test_successful_normalization_satisfies_reference_schema": 1,
+        "test_normalized_arguments_guard_public_function_dispatch": 12,
+    }.items():
+        nodes = [node for node in cases if node.split("::")[-1].split("[")[0] == name]
+        assert len(nodes) == count
+        assert not set(nodes) & policy.get("allowances", {}).keys()
+    assert policy["minimums"]["functions"]["normalized_schema_dispatch_cases"] == 12
+    assert policy["minimums"]["functions"]["normalized_schema_rejections"] == 10
+    assert policy["minimums"]["functions"]["normalized_schema_healthy_dispatches"] == 12

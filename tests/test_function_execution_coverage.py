@@ -7,6 +7,8 @@ import re
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from hypothesis import given, settings, strategies as st
+from jsonschema import Draft202012Validator
 
 from custom_components.extended_openai_conversation_responses import (
     function_execution as execution,
@@ -25,6 +27,146 @@ from custom_components.extended_openai_conversation_responses.function_execution
     validate_function_schema,
 )
 from homeassistant.exceptions import HomeAssistantError
+
+
+@pytest.mark.parametrize(
+    "items_schema,raw,valid",
+    [
+        ({"type": "integer"}, ["01", 1], False),
+        ({"type": "boolean"}, ["false", False], False),
+        (
+            {"type": "object", "properties": {"n": {"type": "integer"}}},
+            [{"n": "01"}, {"n": 1}],
+            False,
+        ),
+        ({}, [0, False], True),
+        ({}, [1, True], True),
+        ({}, [{"n": 0}, {"n": False}], True),
+        ({}, [[0], [False]], True),
+        ({}, [1, 1.0], False),
+        ({"type": "integer"}, ["01", "2"], True),
+        ({"type": "boolean"}, ["false", "true"], True),
+        ({"type": "integer"}, [1, 1], False),
+        ({}, [{"a": 1, "b": 2}, {"b": 2, "a": 1}], False),
+    ],
+    ids=[
+        "integer-coercion",
+        "boolean-coercion",
+        "object-coercion",
+        "false-zero",
+        "true-one",
+        "object-bool-number",
+        "array-bool-number",
+        "numeric-equivalence",
+        "healthy-integers",
+        "healthy-booleans",
+        "direct-duplicate",
+        "object-key-order",
+    ],
+)
+def test_unique_items_checks_normalized_json_values(items_schema, raw, valid):
+    schema = {"type": "array", "items": items_schema, "uniqueItems": True}
+    spec = {"parameters": {"type": "object", "properties": {"values": schema}}}
+    before = deepcopy(raw)
+    if valid:
+        normalized = validate_function_arguments(spec, {"values": raw})
+        Draft202012Validator(spec["parameters"]).validate(normalized)
+    else:
+        with pytest.raises(HomeAssistantError, match="unique items"):
+            validate_function_arguments(spec, {"values": raw})
+    assert raw == before
+
+
+@pytest.mark.parametrize("keyword", ["enum", "const"])
+@pytest.mark.parametrize(
+    "value,literal,valid",
+    [
+        (False, 0, False),
+        (True, 1, False),
+        (0, False, False),
+        ({"n": False}, {"n": 0}, False),
+        ([True], [1], False),
+        (1, 1.0, True),
+        ({"a": [1], "b": 2}, {"b": 2.0, "a": [1.0]}, True),
+        (False, False, True),
+    ],
+    ids=[
+        "false-zero",
+        "true-one",
+        "zero-false",
+        "object-bool-number",
+        "array-bool-number",
+        "numeric-equivalence",
+        "recursive-numeric-equivalence",
+        "healthy-boolean",
+    ],
+)
+def test_enum_and_const_use_json_equality(keyword, value, literal, valid):
+    schema = {keyword: [literal] if keyword == "enum" else literal}
+    spec = {"parameters": {"type": "object", "properties": {"value": schema}}}
+    if valid:
+        normalized = validate_function_arguments(spec, {"value": value})
+        Draft202012Validator(spec["parameters"]).validate(normalized)
+    else:
+        with pytest.raises(HomeAssistantError, match="choices|required value"):
+            validate_function_arguments(spec, {"value": value})
+
+
+@settings(max_examples=80, derandomize=True)
+@given(
+    values=st.lists(
+        st.one_of(
+            st.integers(-3, 3),
+            st.booleans(),
+            st.sampled_from(["01", "1", "false", "true"]),
+        ),
+        max_size=8,
+    ),
+    nested=st.booleans(),
+)
+def test_successful_normalization_satisfies_reference_schema(values, nested):
+    """An independent validator checks the contract after intentional coercion."""
+    scalar = {"type": ["integer", "boolean"]}
+    items = (
+        {
+            "type": "object",
+            "properties": {"value": scalar},
+            "required": ["value"],
+            "additionalProperties": False,
+        }
+        if nested
+        else scalar
+    )
+    schema = {
+        "type": "object",
+        "properties": {
+            "values": {"type": "array", "items": items, "uniqueItems": True}
+        },
+        "required": ["values"],
+        "additionalProperties": False,
+    }
+    raw = {"values": [{"value": value} for value in values] if nested else values}
+    expected_values = [
+        int(value)
+        if isinstance(value, str) and value in {"01", "1"}
+        else value == "true"
+        if isinstance(value, str)
+        else value
+        for value in values
+    ]
+    expected = {
+        "values": [{"value": value} for value in expected_values]
+        if nested
+        else expected_values
+    }
+    reference = Draft202012Validator(schema)
+    if reference.is_valid(expected):
+        normalized = validate_function_arguments({"parameters": schema}, raw)
+        reference.validate(normalized)
+        assert normalized == expected
+    else:
+        with pytest.raises(HomeAssistantError, match="unique items"):
+            validate_function_arguments({"parameters": schema}, raw)
 
 
 def test_pattern_transform_preserves_property_names_and_literal_annotations():
