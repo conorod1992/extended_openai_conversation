@@ -43,6 +43,40 @@ class Storage:
         self.data = data
 
 
+@pytest.mark.parametrize("committed", [False, True])
+async def test_invalidated_add_recovers_authoritative_generation(committed):
+    class FaultStorage(Storage):
+        fault = False
+
+        async def async_load(self):
+            if self.fault:
+                raise OSError("Unreadable generation")
+            return deepcopy(self.data)
+
+        async def async_save(self, data):
+            if not self.fault or committed:
+                self.data = deepcopy(data)
+            if self.fault:
+                raise OSError("Lost write acknowledgement")
+
+    storage = FaultStorage({"records": [stored_record(0), stored_record(1, owner_scope_id="user:bob")]})
+    memory = TemporaryMemory(storage)
+    await memory.async_initialize()
+    storage.fault = True
+    with pytest.raises(OSError):
+        await memory.async_add("device:kitchen", "Unacknowledged fact", future(), owner_scope_id="user:alice")
+    assert not memory.initialized
+    durable = deepcopy(storage.data)
+    with pytest.raises(OSError, match="Unreadable"):
+        await memory.async_add("device:kitchen", "Unsafe fact", future(), owner_scope_id="user:alice")
+    assert storage.data == durable
+    storage.fault = False
+    result = await memory.async_add("device:kitchen", "Healthy fact", future(), owner_scope_id="user:alice")
+    assert result["status"] == "created"
+    assert {row["memory_id"] for row in durable["records"]} <= set(memory._records)
+    assert len(storage.data["records"]) == 3 + int(committed)
+
+
 def future(hours=1) -> str:
     return (dt_util.utcnow() + timedelta(hours=hours)).isoformat()
 

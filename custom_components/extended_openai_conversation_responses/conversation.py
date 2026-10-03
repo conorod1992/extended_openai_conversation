@@ -2177,6 +2177,7 @@ class ExtendedOpenAIAgentEntity(
             self._effective_guest_policy().knowledge_access
             and self.subentry.data.get(CONF_KNOWLEDGE_ENABLED, False)
             and self._knowledge is not None
+            and getattr(self._knowledge, "initialized", True) is not False
             and self._knowledge.source_count > 0
         )
 

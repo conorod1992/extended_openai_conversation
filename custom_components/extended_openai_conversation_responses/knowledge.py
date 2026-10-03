@@ -144,6 +144,11 @@ class KnowledgeLibrary:
         self._committed_state: dict[str, Any] | None = None
         self._committed_chunk_count = 0
 
+    @property
+    def initialized(self) -> bool:
+        """Return whether sources and indexes are authoritative."""
+        return self._initialized
+
     async def async_initialize(self) -> None:
         """Load and index the library exactly once."""
         async with async_storage_lock(self._storage, self._lock):

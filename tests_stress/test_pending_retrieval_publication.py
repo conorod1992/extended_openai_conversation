@@ -47,6 +47,96 @@ from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 from tests_stress.test_provider_wire_privacy import _say
 
 
+@pytest.mark.parametrize("kind", ["temporary", "knowledge"])
+@pytest.mark.parametrize("boundary", ["before", "after"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_retained_optional_manager_recovers_compound_storage_fault(
+    hass, monkeypatch, stress_trace, kind, boundary
+):
+    from datetime import timedelta
+
+    from homeassistant.helpers import storage as ha_storage
+    from homeassistant.util import dt as dt_util
+    from tests_real_ha.test_temporary_memory_lifecycle import _agent
+
+    owner = MockUser(id="retained-recovery-owner", name="Recovery owner")
+    owner.add_to_hass(hass)
+    if kind == "temporary":
+        agent = await _agent(hass)
+        manager = agent._temporary_memory
+        expires = (dt_util.utcnow() + timedelta(hours=2)).isoformat()
+
+        async def add(content, user=owner.id):
+            return await manager.async_add(f"user:{user}", content, expires, owner_scope_id=f"user:{user}")
+
+        await add("SAVED_ALICE")
+        await add("SAVED_BOB", "other-owner")
+        storage = manager._store
+    else:
+        agent = await _knowledge_agent(hass, API_MODE_CHAT_COMPLETIONS)
+        manager = agent._knowledge
+
+        async def add(content):
+            return await manager.async_create("Calibration reference", "Recovery reference", content, True)
+
+        await add("SAVED_KNOWLEDGE calibration")
+        storage = manager._storage._store
+    path = Path(storage.path)
+    replace = atomicwrites.replace_atomic
+    load = ha_storage.json_util.load_json
+
+    def fail_replace(source, target):
+        if Path(target) == path:
+            if boundary == "after":
+                replace(source, target)
+            raise OSError(errno.EIO, "Compound recovery write failure")
+        return replace(source, target)
+
+    def fail_read(filename, *args, **kwargs):
+        if Path(filename) == path:
+            raise OSError(errno.EIO, "Compound recovery read failure")
+        return load(filename, *args, **kwargs)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(atomicwrites, "replace_atomic", fail_replace)
+        fault.setattr(ha_storage.json_util, "load_json", fail_read)
+        with pytest.raises(OSError):
+            await add("UNACKNOWLEDGED_CANDIDATE")
+        assert not manager.initialized
+        durable = path.read_bytes()
+        if kind == "temporary":
+            with pytest.raises(OSError):
+                await add("MUST_NOT_OVERWRITE")
+        else:
+            # The same warm agent must permit an unrelated provider-bound turn
+            # while the optional library is still unavailable.
+            _install_wire(monkeypatch, agent, [_chat_sse_text("Still available")])
+            assert _speech(await _say(hass, agent.entry.entry_id, owner.id, "Tell me a joke")) == "Still available"
+        assert path.read_bytes() == durable
+    if kind == "temporary":
+        _install_wire(monkeypatch, agent, [
+            _chat_sse_tool_call("recovered-add", "temporary_memory_add", {"content": "HEALTHY_NEW", "category": "general", "expires_at": expires}),
+            _chat_sse_text("Recovered add"),
+        ])
+        assert _speech(await _say(hass, agent.entry.entry_id, owner.id, "Remember a new temporary fact")) == "Recovered add"
+        rows = json.loads(path.read_text())["data"]["records"]
+        assert {"SAVED_ALICE", "SAVED_BOB", "HEALTHY_NEW"} <= {row["content"] for row in rows}
+        assert len(rows) == 3 + int(boundary == "after")
+    else:
+        _install_wire(monkeypatch, agent, [_chat_sse_text("Recovered conversation")])
+        assert _speech(await _say(hass, agent.entry.entry_id, owner.id, "Tell me another joke")) == "Recovered conversation"
+        wire = _install_wire(monkeypatch, agent, [
+            _chat_sse_tool_call("recovered-lookup", "knowledge_search", {"query": "calibration", "limit": 5}),
+            _chat_sse_text("Recovered lookup"),
+        ])
+        assert _speech(await _say(hass, agent.entry.entry_id, owner.id, "Find calibration")) == "Recovered lookup"
+        assert "SAVED_KNOWLEDGE" in json.dumps(_chat_tool_result(wire.requests[-1]["body"], "recovered-lookup"))
+        assert manager.source_count == 1 + int(boundary == "after")
+    assert manager.initialized
+    assert getattr(agent, "_temporary_memory" if kind == "temporary" else "_knowledge") is manager
+    record(stress_trace, "summary", retained_manager_recoveries=1, compound_optional_manager_faults=1)
+
+
 @pytest.mark.parametrize("kind", ["knowledge", "memory"])
 @pytest.mark.usefixtures("real_store_io")
 async def test_pending_failed_management_write_never_reaches_assist_provider(
