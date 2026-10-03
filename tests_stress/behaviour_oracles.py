@@ -197,6 +197,8 @@ def last_tool_result(body, api):
             return json.loads(outer["result"])
         except json.JSONDecodeError:
             return outer
+    if isinstance(outer.get("result"), (dict, list)):
+        return outer["result"]
     return outer
 
 

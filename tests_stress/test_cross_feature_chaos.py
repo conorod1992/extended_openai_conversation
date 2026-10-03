@@ -42,10 +42,18 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     async_get_temporary_memory,
 )
+from homeassistant.auth.models import Group
+from homeassistant.auth.permissions.const import (
+    CAT_ENTITIES,
+    POLICY_CONTROL,
+    POLICY_READ,
+)
+from homeassistant.auth.permissions.entities import ENTITY_ENTITY_IDS
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
@@ -80,10 +88,24 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
     stress_trace: list[dict],
 ) -> None:
     rng = random.Random(stress_seed ^ 0xC4A05)
+    control_group = Group(
+        id="chaos-light-control",
+        name="Chaos light control",
+        policy={
+            CAT_ENTITIES: {
+                ENTITY_ENTITY_IDS: {
+                    "light.chaos_probe": {POLICY_READ: True, POLICY_CONTROL: True}
+                }
+            }
+        },
+    )
     for number in range(4):
-        MockUser(id=f"chaos-user-{number}", name=f"Chaos user {number}").add_to_hass(
-            hass
-        )
+        MockUser(
+            id=f"chaos-user-{number}",
+            name=f"Chaos user {number}",
+            groups=[control_group],
+            is_owner=False,
+        ).add_to_hass(hass)
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Chaos agent",
@@ -119,7 +141,21 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
         for item in entry.subentries.values()
         if item.subentry_type == "conversation"
     )
-    expected = ExpectedEffects()
+    probe_entity = er.async_get(hass).async_get_or_create(
+        "light",
+        "chaos_fixture",
+        "probe",
+        suggested_object_id="chaos_probe",
+        original_name="Chaos probe",
+        config_entry=entry,
+    )
+    assert probe_entity.entity_id == "light.chaos_probe"
+    hass.states.async_set(
+        probe_entity.entity_id, "on", {"friendly_name": "Chaos probe"}
+    )
+    async_expose_entity(hass, conversation.DOMAIN, probe_entity.entity_id, True)
+    await hass.async_block_till_done()
+    expected = ExpectedEffects(exposed=True)
     effects = []
 
     async def observe(call):
@@ -310,6 +346,8 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
                 hass.states.async_remove(entity_id)
             async_expose_entity(hass, conversation.DOMAIN, entity_id, exposed)
             expected.exposed = exposed
+            # HA delivers exposure/state cache invalidations through its event loop.
+            await hass.async_block_till_done()
             record(stress_trace, operation, step=step, exposed=exposed)
         elif operation == "checkpoint":
             checkpoints.append(
@@ -412,7 +450,7 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
                 return await original_send(request, *args, **kwargs)
 
             monkeypatch.setattr(_raw_client(current)._client, "send", validate_send)
-            baseline = len(effects)
+            effect_start = baseline = len(effects)
             result = await conversation.async_converse(
                 hass=hass,
                 text=text,
@@ -448,12 +486,16 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
                     assert expected.knowledge[arguments["source_id"]] in json.dumps(
                         output, ensure_ascii=False
                     )
+                elif name == "execute_services":
+                    assert isinstance(output, list) and len(output) == 1, output
+                    assert output[0].get("success") is True, output
             expected_new = (
                 [("light", "turn_off", {"entity_id": ["light.chaos_probe"]})]
                 if any(name == "execute_services" for name, _ in calls)
                 else []
             )
             assert effects[baseline:] == expected_new
+            provider_action_count = len(effects) - effect_start
             expected.effects.extend(expected_new)
             assert effects == expected.effects
             if expected.guest_active:
@@ -493,6 +535,8 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
                 guest=expected.guest_active,
                 provider_requests=len(wire.requests),
                 effect_count=len(expected.effects),
+                actual_tool_executions=provider_action_count,
+                ha_service_effects=len(effects) - effect_start,
             )
             return result
 

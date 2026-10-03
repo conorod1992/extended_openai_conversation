@@ -295,6 +295,7 @@ async def test_generated_valid_states_cross_real_ha_and_sdk_wire(
     source_id = await seed_behaviour(hass, entry, _conversation_subentry(entry))
     for number, case in enumerate(suite.cases):
         case_started = monotonic()
+        case_effect_start = len(effects)
         normalized, api = normalized_state(case)
         record(
             stress_trace,
@@ -397,6 +398,7 @@ async def test_generated_valid_states_cross_real_ha_and_sdk_wire(
             model=normalized["chat_model"],
             api=api,
             behaviours_exercised=request["behaviours"],
+            actual_tool_executions=len(effects) - case_effect_start,
             live_and_reloaded=True,
             elapsed_seconds=round(monotonic() - case_started, 3),
         )
@@ -539,6 +541,7 @@ async def test_populated_feature_combinations_work_live_and_after_reload(
         )
         case = {"function_tools": "direct", "function_groups": mode}
         for boundary in ["live save", "reload"]:
+            boundary_effect_start = len(effects)
             if boundary == "reload":
                 await _fresh_reload(hass, entry)
             first = await _converse(
@@ -656,6 +659,11 @@ async def test_populated_feature_combinations_work_live_and_after_reload(
                 group_loading=mode,
                 boundary=boundary,
                 exact_action_effects=True,
+                actual_tool_executions=sum(
+                    domain == "coverage_probe"
+                    for domain, _service, _data in effects[boundary_effect_start:]
+                ),
+                ha_service_effects=len(effects) - boundary_effect_start,
                 voice_owner=OWNER,
                 guest_restricted=True,
                 local_provider_calls=0,
