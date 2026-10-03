@@ -46,6 +46,11 @@ A minimal template example:
 
 The schema should describe only inputs the model genuinely needs to choose.
 
+Argument names such as `pattern`, `type` and `items` remain ordinary field names.
+Regex constraints apply at schema nodes; keys inside literal `const`, `enum`,
+default and example values are preserved. Configured regex matching uses the
+bounded regex worker after other argument validation and normalization.
+
 If a Function Tool is edited, disabled, deleted, or removed from an available Function Group while a provider request is outstanding, a call from that old request is rejected. EOAI does not bind arguments generated for the old definition to a new implementation with the same name. The next request advertises the current definition. HA-owned tools keep their request-round schema and still pass through Home Assistant's live permission and schema checks before execution.
 
 ## Optional function groups

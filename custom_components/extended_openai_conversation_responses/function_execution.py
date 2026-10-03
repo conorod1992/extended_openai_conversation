@@ -342,14 +342,25 @@ def _schema_contains_pattern(schema: Mapping[str, Any]) -> bool:
 def _schema_without_patterns(value: Any) -> Any:
     """Copy a JSON-schema tree while removing only runtime pattern constraints."""
     if isinstance(value, Mapping):
-        return {
-            key: _schema_without_patterns(item)
-            for key, item in value.items()
-            if key != "pattern"
-        }
-    if isinstance(value, list):
-        return [_schema_without_patterns(item) for item in value]
-    return value
+        result = {}
+        for key, item in value.items():
+            if key == "pattern":
+                continue
+            if key == "properties" and isinstance(item, Mapping):
+                # These keys are argument names, including legal names such as
+                # "pattern". Only their values are schemas.
+                result[key] = {
+                    name: _schema_without_patterns(child)
+                    for name, child in item.items()
+                }
+            elif key in {"items", "additionalProperties"} and isinstance(item, Mapping):
+                result[key] = _schema_without_patterns(item)
+            else:
+                # const/enum/default/examples and other annotations contain data,
+                # not recursively applicable schema keywords.
+                result[key] = deepcopy(item)
+        return result
+    return deepcopy(value)
 
 
 def _collect_pattern_checks(

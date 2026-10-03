@@ -30,6 +30,188 @@ from tests_real_ha.test_provider_wire_e2e import (
 from tests_stress.conftest import record
 
 
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("outcome", ["valid", "bad-pattern", "bad-const", "bad-enum"])
+async def test_schema_pattern_names_and_literals_survive_public_function_execution(
+    hass, monkeypatch, stress_trace, api_mode, outcome
+):
+    from copy import deepcopy
+
+    from custom_components.extended_openai_conversation_responses import regex_execution
+    from tests_real_ha.test_provider_wire_e2e import (
+        _responses_sse_text,
+        _responses_sse_tool_call,
+    )
+    from tests_stress.test_function_provider_wire_remaining import _provider_result
+
+    literal = {"pattern": "keep", "nested": {"pattern": "preserve"}}
+    schema = {
+        "type": "object",
+        "properties": {
+            "pattern": {"type": "string"},
+            "label": {"type": "string", "pattern": "^ok$"},
+            "payload": {
+                "type": "object",
+                "const": literal,
+                "properties": {
+                    "pattern": {"type": "string"},
+                    "nested": {
+                        "type": "object",
+                        "properties": {"pattern": {"type": "string"}},
+                        "required": ["pattern"],
+                        "additionalProperties": False,
+                    },
+                },
+                "required": ["pattern", "nested"],
+                "additionalProperties": False,
+            },
+            "choice": {
+                "type": "object",
+                "properties": {"pattern": {"type": "string"}},
+                "required": ["pattern"],
+                "additionalProperties": False,
+                "enum": [{"pattern": "keep"}, {"pattern": "alternative"}],
+            },
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"pattern": {"type": "string", "pattern": "^ok$"}},
+                    "required": ["pattern"],
+                    "additionalProperties": False,
+                },
+            },
+            "count": {"type": "integer"},
+            "enabled": {"type": "boolean"},
+        },
+        "required": [
+            "pattern",
+            "label",
+            "payload",
+            "choice",
+            "items",
+            "count",
+            "enabled",
+        ],
+        "additionalProperties": False,
+    }
+    tool = {
+        "spec": {
+            "name": "schema_payload",
+            "description": "Record validated schema data",
+            "parameters": schema,
+        },
+        "function": {
+            "type": "script",
+            "sequence": [
+                {
+                    "action": "schema_probe.record",
+                    "data": {
+                        field: "{{ " + field + " }}" for field in schema["properties"]
+                    },
+                }
+            ],
+        },
+    }
+    effects = []
+
+    async def effect(call):
+        effects.append(dict(call.data))
+
+    hass.services.async_register("schema_probe", "record", effect)
+    owner = await hass.auth.async_create_user("Schema owner")
+    entry = _make_entry(
+        "Schema boundaries",
+        include_ai_task=False,
+        conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]},
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    regex_calls = []
+    bounded_search = regex_execution.async_search_configured_patterns
+
+    async def observed_search(hass, checks):
+        regex_calls.append(checks)
+        return await bounded_search(hass, checks)
+
+    monkeypatch.setattr(
+        regex_execution, "async_search_configured_patterns", observed_search
+    )
+    healthy_args = {
+        "pattern": "business name",
+        "label": "ok",
+        "payload": literal,
+        "choice": {"pattern": "keep"},
+        "items": [{"pattern": "ok"}],
+        "count": "0",
+        "enabled": False,
+    }
+    expected = {**healthy_args, "count": 0}
+    args = deepcopy(healthy_args)
+    if outcome == "bad-pattern":
+        args["items"][0]["pattern"] = "bad"
+    elif outcome == "bad-const":
+        args["payload"]["nested"]["pattern"] = "wrong"
+    elif outcome == "bad-enum":
+        args["choice"]["pattern"] = "unknown"
+
+    async def say(arguments, call_id):
+        call = (
+            _responses_sse_tool_call(call_id, "schema_payload", arguments)
+            if api_mode == "responses"
+            else _chat_sse_tool_call(call_id, "schema_payload", arguments)
+        )
+        text = _responses_sse_text if api_mode == "responses" else _chat_sse_text
+        wire = _install_wire(monkeypatch, agent, [call, text("Schema result handled")])
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Execute the schema tool",
+            conversation_id=None,
+            context=Context(user_id=owner.id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+        advertised = next(
+            item if api_mode == "responses" else item["function"]
+            for item in wire.requests[0]["body"]["tools"]
+            if (item if api_mode == "responses" else item["function"])["name"]
+            == "schema_payload"
+        )["parameters"]
+        assert advertised["properties"]["pattern"] == schema["properties"]["pattern"]
+        assert advertised["properties"]["payload"]["const"] == literal
+        assert (
+            advertised["properties"]["choice"]["enum"]
+            == schema["properties"]["choice"]["enum"]
+        )
+        return result, wire
+
+    initial, wire = await say(args, "initial-schema")
+    if outcome == "valid":
+        assert initial.response.error_code is None
+        assert effects == [expected]
+        assert (
+            _provider_result(wire.requests[1], api_mode, "initial-schema") == "Success"
+        )
+    else:
+        assert initial.response.error_code is not None
+        assert effects == []
+        assert len(wire.requests) == 1
+    healthy, wire = await say(healthy_args, "healthy-schema")
+    assert healthy.response.error_code is None
+    assert effects == [expected] * (2 if outcome == "valid" else 1)
+    assert _provider_result(wire.requests[1], api_mode, "healthy-schema") == "Success"
+    assert len(regex_calls) == (2 if outcome in {"valid", "bad-pattern"} else 1)
+    assert all(len(checks) == 2 for checks in regex_calls)
+    record(
+        stress_trace,
+        "summary",
+        schema_pattern_boundary_cases=1,
+        schema_contract_rejections=int(outcome != "valid"),
+        schema_healthy_tool_recoveries=1,
+        schema_bounded_regex_exchanges=len(regex_calls),
+    )
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

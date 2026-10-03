@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+import re
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -23,6 +25,141 @@ from custom_components.extended_openai_conversation_responses.function_execution
     validate_function_schema,
 )
 from homeassistant.exceptions import HomeAssistantError
+
+
+def test_pattern_transform_preserves_property_names_and_literal_annotations():
+    literal = {"pattern": "keep", "nested": {"pattern": "also keep"}}
+    schema = {
+        "properties": {"pattern": {"type": "string", "pattern": "^ok$"}},
+        "items": {"properties": {"pattern": {"pattern": "nested"}}},
+        "additionalProperties": {"pattern": "extra"},
+        **{
+            name: deepcopy(value)
+            for name, value in {
+                "const": literal,
+                "enum": [literal],
+                "default": literal,
+                "example": literal,
+                "examples": [literal],
+                "contentSchema": literal,
+            }.items()
+        },
+    }
+    before = deepcopy(schema)
+    stripped = _schema_without_patterns(schema)
+    assert stripped["properties"]["pattern"] == {"type": "string"}
+    assert stripped["items"]["properties"]["pattern"] == {}
+    assert stripped["additionalProperties"] == {}
+    for name in ("const", "enum", "default", "example", "examples", "contentSchema"):
+        assert stripped[name] == schema[name]
+    stripped["default"]["pattern"] = "changed copy"
+    assert schema == before
+    assert _schema_without_patterns([literal]) == [literal]
+
+
+@pytest.mark.parametrize(
+    "field", ["pattern", "type", "properties", "items", "enum", "const"]
+)
+async def test_keyword_named_arguments_have_equal_sync_async_validation(hass, field):
+    # Execution mechanics are covered by the native wire journey; these bounded,
+    # tiny regexes let this unit matrix compare validation and normalization.
+    async def short_checks(_hass, checks):
+        return [
+            re.search(pattern, value, flags) is not None
+            for pattern, value, flags in checks
+        ]
+
+    spec = {
+        "parameters": {
+            "type": "object",
+            "properties": {
+                field: {"type": "string"},
+                "label": {"type": "string", "pattern": "^ok$"},
+                "count": {"type": "integer"},
+                "enabled": {"type": "boolean"},
+                "nullable": {"type": ["string", "null"]},
+                "nested": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "pattern": {"type": "string", "pattern": "^ok$"},
+                        },
+                        "required": ["pattern"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": [field, "label"],
+            "additionalProperties": False,
+        }
+    }
+    validate_function_schema(spec["parameters"])
+    arguments = {
+        field: "business data",
+        "label": "ok",
+        "count": "0",
+        "enabled": False,
+        "nullable": None,
+        "nested": [{"pattern": "ok"}],
+    }
+    expected = {**arguments, "count": 0}
+    with patch(
+        "custom_components.extended_openai_conversation_responses.regex_execution.async_search_configured_patterns",
+        short_checks,
+    ):
+        assert validate_function_arguments(spec, arguments) == expected
+        assert (
+            await async_validate_function_arguments(hass, spec, arguments) == expected
+        )
+        for invalid in (
+            {**arguments, "label": "bad"},
+            {**arguments, "nested": [{"pattern": "bad"}]},
+            {**arguments, field: None},
+        ):
+            with pytest.raises(HomeAssistantError):
+                validate_function_arguments(spec, invalid)
+            with pytest.raises(HomeAssistantError):
+                await async_validate_function_arguments(hass, spec, invalid)
+
+
+@pytest.mark.parametrize("constraint", ["const", "enum"])
+async def test_literal_pattern_keys_survive_async_constraints(hass, constraint):
+    literal = {"pattern": "keep", "nested": {"pattern": "preserve"}}
+    payload_schema = {
+        "type": "object",
+        constraint: literal if constraint == "const" else [literal],
+    }
+    spec = {
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string", "pattern": "^ok$"},
+                "payload": payload_schema,
+            },
+            "required": ["label", "payload"],
+            "additionalProperties": False,
+        }
+    }
+    validate_function_schema(spec["parameters"])
+    with patch(
+        "custom_components.extended_openai_conversation_responses.regex_execution.async_search_configured_patterns",
+        AsyncMock(return_value=[True]),
+    ):
+        args = {"label": "ok", "payload": literal}
+        assert (
+            await async_validate_function_arguments(hass, spec, args)
+            == validate_function_arguments(spec, args)
+            == args
+        )
+        for invalid in (
+            {"label": "ok", "payload": {}},
+            {"label": "ok", "payload": {"pattern": "wrong"}},
+        ):
+            with pytest.raises(HomeAssistantError):
+                await async_validate_function_arguments(hass, spec, invalid)
+            with pytest.raises(HomeAssistantError):
+                validate_function_arguments(spec, invalid)
 
 
 @pytest.mark.parametrize(
@@ -162,8 +299,8 @@ def test_pattern_tree_helpers_cover_inference_and_additional_properties() -> Non
     )
     assert _schema_contains_pattern({"type": "object", "properties": {}}) is False
     assert _schema_without_patterns(
-        {"pattern": "root", "items": [{"pattern": "nested"}, "value"]}
-    ) == {"items": [{}, "value"]}
+        {"pattern": "root", "items": {"pattern": "nested"}}
+    ) == {"items": {}}
 
     checks: list[tuple[str, str, str, int]] = []
     _collect_pattern_checks(
