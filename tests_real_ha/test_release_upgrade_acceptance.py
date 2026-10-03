@@ -121,6 +121,135 @@ def _tool_names(data: Any) -> list[str]:
     return names
 
 
+def _chat_sse_tool_call(call_id: str, name: str, arguments: dict[str, Any]) -> bytes:
+    chunk = {
+        "id": "chatcmpl-upgrade-tool",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "gpt-5.6",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(arguments, separators=(",", ":")),
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+    return f"data: {json.dumps(chunk)}\\n\\ndata: [DONE]\\n\\n".encode()
+
+
+def _chat_sse_text(text: str) -> bytes:
+    chunk = {
+        "id": "chatcmpl-upgrade-text",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "gpt-5.6",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+    return f"data: {json.dumps(chunk)}\\n\\ndata: [DONE]\\n\\n".encode()
+
+
+def _unwrap_sdk_client(agent: Any) -> Any:
+    client = agent._client
+    while hasattr(client, "_delegate"):
+        client = client._delegate
+    return client
+
+
+async def _exercise_populated_provider_journey(
+    hass: Any, entry_id: str, state: dict[str, Any], expected: str
+) -> None:
+    """Prove migrated release-owned data and tools through the real SDK wire."""
+    import httpx
+    from homeassistant.components import conversation
+    from homeassistant.core import Context
+
+    agent = conversation.async_get_agent(hass, entry_id)
+    assert agent is not None
+    requests: list[dict[str, Any]] = []
+    replies = [
+        _chat_sse_tool_call(
+            "upgrade-memory",
+            "memory_search",
+            {"query": "release memory marker", "scope": "personal", "limit": 5},
+        ),
+        _chat_sse_tool_call(
+            "upgrade-knowledge",
+            "knowledge_search",
+            {"query": "release knowledge marker", "limit": 5},
+        ),
+        _chat_sse_tool_call("upgrade-function", "upgrade_marker", {}),
+        _chat_sse_text(expected),
+    ]
+
+    async def send(request: Any, *args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        body = json.loads(request.content)
+        requests.append(body)
+        index = len(requests) - 1
+        assert index < len(replies), "Unexpected provider request during upgrade journey"
+        if index == 0:
+            names = {
+                item["function"]["name"]
+                for item in body.get("tools", [])
+                if isinstance(item, dict) and isinstance(item.get("function"), dict)
+            }
+            assert {"memory_search", "knowledge_search", "upgrade_marker"} <= names
+        elif index == 1:
+            assert state["memory_marker"] in json.dumps(body)
+        elif index == 2:
+            assert state["knowledge_marker"] in json.dumps(body)
+        elif index == 3:
+            serialized = json.dumps(body)
+            assert "UPGRADE_TOOL_RESULT" in serialized
+            assert state["memory_marker"] in serialized
+            assert state["knowledge_marker"] in serialized
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=replies[index],
+            request=request,
+        )
+
+    sdk = _unwrap_sdk_client(agent)
+    original_send = sdk._client.send
+    sdk._client.send = send
+    try:
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Use the release memory, release knowledge, and upgrade marker tool.",
+            conversation_id=None,
+            context=Context(user_id=state["owner_id"]),
+            language="en",
+            agent_id=entry_id,
+        )
+    finally:
+        sdk._client.send = original_send
+
+    assert result.response.error_code is None
+    assert result.response.as_dict()["speech"]["plain"]["speech"] == expected
+    assert len(requests) == 4
+
+
 async def _exercise_public_conversation(
     hass: Any, entry_id: str, expected: str
 ) -> None:
