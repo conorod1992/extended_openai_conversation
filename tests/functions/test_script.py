@@ -1,5 +1,6 @@
 """Tests for ScriptFunction using yaml definitions."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -135,7 +136,9 @@ class TestScriptFunctionYaml:
             ) as mock_script_class,
         ):
             mock_script = AsyncMock()
-            mock_script.async_run = AsyncMock(return_value=None)
+            mock_script.async_run = AsyncMock(
+                return_value=SimpleNamespace(variables={})
+            )
             mock_script.async_unload = AsyncMock()
             mock_script_class.return_value = mock_script
 
@@ -183,3 +186,31 @@ class TestScriptFunctionYaml:
 
         mock_validate.assert_awaited_once()
         mock_script_class.assert_not_called()
+
+
+async def test_script_function_older_cleanup_surface_and_empty_run(hass):
+    from homeassistant.exceptions import HomeAssistantError
+    from custom_components.extended_openai_conversation_responses.functions import (
+        script as module,
+    )
+
+    older = SimpleNamespace(
+        async_run=AsyncMock(
+            return_value=SimpleNamespace(variables={"_function_result": False})
+        ),
+        async_stop=AsyncMock(),
+    )
+    with patch.object(module, "Script", return_value=older):
+        assert (
+            await ScriptFunction().execute(hass, {"sequence": []}, {}, None, [])
+            is False
+        )
+        assert (
+            await ScriptFunction().execute(hass, {"sequence": []}, {}, None, [])
+            is False
+        )
+        assert older.async_stop.await_count == 2
+        older.async_run.return_value = None
+        with pytest.raises(HomeAssistantError, match="did not complete"):
+            await ScriptFunction().execute(hass, {"sequence": []}, {}, None, [])
+    assert older.async_stop.await_count == 3

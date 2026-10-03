@@ -146,8 +146,9 @@ async def test_function_result_values_survive_public_request_rule(
 
 
 @pytest.mark.parametrize("capture", [False, True], ids=["uncaptured", "captured"])
+@pytest.mark.parametrize("failure_kind", ["service", "timeout"])
 async def test_function_execution_failure_stops_rule_independently_of_capture(
-    hass, monkeypatch, stress_trace, capture
+    hass, monkeypatch, stress_trace, capture, failure_kind
 ):
     """An actual Script Function failure stops dependent work and permits recovery."""
     tool = {
@@ -156,7 +157,20 @@ async def test_function_execution_failure_stops_rule_independently_of_capture(
             "description": "Fail a controlled action",
             "parameters": {"type": "object", "properties": {}},
         },
-        "function": {"type": "script", "sequence": [{"action": "rule_probe.fail"}]},
+        "function": {
+            "type": "script",
+            "sequence": [{"action": "rule_probe.fail"}]
+            if failure_kind == "service"
+            else [
+                _record_action("tool before"),
+                {
+                    "wait_template": "{{ false }}",
+                    "timeout": {"milliseconds": 10},
+                    "continue_on_timeout": False,
+                },
+                _record_action("tool after"),
+            ],
+        },
     }
     agent = await _cross_feature_agent(hass, **{CONF_FUNCTION_TOOLS: [tool]})
     _cross_feature_provider(monkeypatch, agent, [])
@@ -189,23 +203,23 @@ async def test_function_execution_failure_stops_rule_independently_of_capture(
         _cross_feature_speech(await _cross_feature_say(hass, agent, "run rule"))
         == "Failed safely"
     )
-    assert calls == ["before"]
+    expected = ["before"] if failure_kind == "service" else ["before", "tool before"]
+    assert calls == expected
     assert agent._usage.runs[-1].successful is False
     assert (
         _cross_feature_speech(await _cross_feature_say(hass, agent, "healthy"))
         == "Done"
     )
-    assert calls == ["before", "healthy"]
+    assert calls == [*expected, "healthy"]
     assert agent._usage.runs[-1].successful is True
     record(
         stress_trace,
         "summary",
         returned_execution_failure_cases=1,
         capture=capture,
+        failure_kind=failure_kind,
         markers=calls,
     )
-
-
 
 
 async def test_referenced_function_recreation_cannot_rebind_inflight_rule(
