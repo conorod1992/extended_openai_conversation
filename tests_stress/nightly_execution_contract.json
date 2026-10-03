@@ -1579,7 +1579,15 @@
     "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_prepared_intent_recovers_in_fresh_process[retained-context-after_action-volume]",
     "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_prepared_intent_recovers_in_fresh_process[retained-context-after_action-wake_sound]",
     "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_lost_service_acknowledgement_does_not_replay_effect[volume]",
-    "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_lost_service_acknowledgement_does_not_replay_effect[wake_sound]"
+    "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_lost_service_acknowledgement_does_not_replay_effect[wake_sound]",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_optional_structured_output_round_trips_provider_contract[False-chat_completions]",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_optional_structured_output_round_trips_provider_contract[False-responses]",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_optional_structured_output_round_trips_provider_contract[True-chat_completions]",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_optional_structured_output_round_trips_provider_contract[True-responses]",
+    "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[chat_completions-False]",
+    "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[chat_completions-True]",
+    "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[responses-False]",
+    "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[responses-True]"
   ],
   "browser": {
     "browser": [

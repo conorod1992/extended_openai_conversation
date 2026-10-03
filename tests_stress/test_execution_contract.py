@@ -683,3 +683,15 @@ def test_critical_campaign_counts_reach_certification_summary(tmp_path, monkeypa
     actual = json.loads((tmp_path / "certification.json").read_text())
     assert actual["measured_totals"] == expected
     assert actual["trace_outcomes"] == {"passed": 1, "failed": 1}
+
+
+@pytest.mark.parametrize("nested", ["False", "True"])
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+def test_optional_ai_task_wire_round_trips_are_mandatory(nested, mode):
+    policy = json.loads(CONTRACT.read_text())
+    node = (
+        "tests_real_ha/test_ai_task_provider_wire.py::"
+        f"test_optional_structured_output_round_trips_provider_contract[{nested}-{mode}]"
+    )
+    assert node in expected_cases(policy, "ai-task")
+    assert node not in policy.get("allowances", {})
