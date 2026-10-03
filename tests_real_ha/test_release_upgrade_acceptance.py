@@ -466,7 +466,10 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
             "match_type": "equals",
             "action_type": "local_action",
             "action": {
-                "actions": [],
+                # 6.8.3 already required at least one native HA Script action.
+                # A tiny delay is side-effect free while exercising persisted
+                # local-action semantics across the release boundary.
+                "actions": [{"delay": {"milliseconds": 1}}],
                 "success_response": "RELEASE_RULE_MARKER",
                 "failure_response": "RELEASE_RULE_FAILED",
             },
