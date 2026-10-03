@@ -768,6 +768,116 @@ async def test_concurrent_deferred_summaries_keep_owner_and_recent_turns(
         await asyncio.gather(*followups, return_exceptions=True)
 
 
+@pytest.mark.parametrize("mode,outcome", [
+    ("responses", "failed"), ("responses", "cancelled"), ("responses", "incomplete"),
+    ("chat_completions", "length"), ("chat_completions", "content_filter"),
+])
+async def test_noncompleted_summary_text_is_rejected_and_recovers(
+    hass, monkeypatch, stress_trace, mode, outcome
+):
+    """HTTP-success generation failures never replace public Assist history."""
+    import asyncio
+    import httpx
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONTEXT_TRUNCATE_SUMMARIZE,
+    )
+    from tests_real_ha.test_provider_wire_e2e import (
+        _raw_client, _response_object, _responses_sse_text,
+    )
+
+    owner = MockUser(id="summary-recovery-owner", name="Summary owner", is_owner=True).add_to_hass(hass)
+    entry = _make_entry("Summary completion recovery", include_ai_task=False,
+        conversation_options={CONF_API_MODE: mode, CONF_CHAT_MODEL: "gpt-5.6",
+            CONF_FUNCTION_TOOLS: [], CONF_CONTEXT_THRESHOLD: 1000,
+            CONF_CONTEXT_TRUNCATE_STRATEGY: CONTEXT_TRUNCATE_SUMMARIZE})
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    requests, foreground, summaries = [], 0, 0
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def send(request, *args, **kwargs):
+        nonlocal foreground, summaries
+        body = json.loads(request.content)
+        requests.append(body)
+        if not body.get("stream"):
+            summaries += 1
+            first = summaries == 1
+            if first:
+                started.set()
+                await release.wait()
+            text = "REJECTED-PARTIAL-SUMMARY" if first else "HEALTHY-RECOVERED-SUMMARY"
+            status = outcome if first else ("completed" if mode == "responses" else "stop")
+            if mode == "responses":
+                payload = _response_object("summary", [{"id": "summary-message", "type": "message",
+                    "role": "assistant", "status": "completed", "content": [{"type": "output_text",
+                    "text": text, "annotations": [], "logprobs": []}]}])
+                payload["status"] = status
+                if status == "failed":
+                    payload["error"] = {"code": "server_error", "message": "controlled summary failure"}
+                if status == "incomplete":
+                    payload["incomplete_details"] = {"reason": "max_output_tokens"}
+                payload["usage"] = {"input_tokens": 7, "output_tokens": 3, "total_tokens": 10}
+            else:
+                payload = {"id": "summary", "object": "chat.completion", "created": 0,
+                    "model": "gpt-5.6", "choices": [{"index": 0,
+                    "message": {"role": "assistant", "content": text}, "finish_reason": status}],
+                    "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}}
+            return httpx.Response(200, json=payload, request=request)
+        foreground += 1
+        tokens = 10000 if foreground in {3, 6} else 50
+        if mode == "responses":
+            events = [json.loads(line[6:]) for line in _responses_sse_text("Healthy reply").decode().splitlines()
+                      if line.startswith("data: ")]
+            events[-1]["response"]["usage"] = {"input_tokens": tokens, "output_tokens": 10,
+                                                "total_tokens": tokens + 10}
+            content = "".join(f"data: {json.dumps(event)}\n\n" for event in events).encode()
+        else:
+            content = _text_with_usage("Healthy reply", tokens)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=content, request=request)
+
+    monkeypatch.setattr(_raw_client(agent)._client, "send", send)
+    conversation_id = None
+
+    async def say(text):
+        nonlocal conversation_id
+        result = await _say(hass, entry.entry_id, owner.id,
+                           text + " private history " * 60, conversation_id)
+        conversation_id = result.conversation_id
+        assert _speech(result) == "Healthy reply"
+
+    try:
+        for text in ("OLD", "MIDDLE", "RECENT"):
+            await say(text)
+        await asyncio.wait_for(started.wait(), 10)
+        manager = agent._deferred_context_summary_manager
+        failed_task = manager._pending[conversation_id].task
+        tokens_before = agent._usage.totals.total_tokens
+        assert all(run.successful for run in agent._usage.runs)
+        release.set()
+        await asyncio.wait_for(failed_task, 10)
+        assert agent._usage.totals.failed_request_count == 1
+        assert agent._usage.totals.total_tokens == tokens_before + 10
+        assert all(run.successful for run in agent._usage.runs)
+        await say("FOLLOWUP")
+        context = json.dumps([body for body in requests if body.get("stream")][-1])
+        assert "REJECTED-PARTIAL-SUMMARY" not in context
+        assert "RECENT" in context and "FOLLOWUP" in context
+        await say("RECOVERY-WARMUP")
+        await say("RECOVERY-RECENT")
+        await asyncio.wait_for(manager._pending[conversation_id].task, 10)
+        await say("AFTER-RECOVERY")
+        context = json.dumps([body for body in requests if body.get("stream")][-1])
+        assert "HEALTHY-RECOVERED-SUMMARY" in context
+        assert "REJECTED-PARTIAL-SUMMARY" not in context
+        assert summaries == 2
+        assert agent._usage.totals.failed_request_count == 1
+        assert all(run.successful for run in agent._usage.runs)
+        record(stress_trace, "summary", rejected_summary_cases=1, recovery_summaries=1,
+               mode=mode, generation_outcome=outcome, foreground_replies=foreground)
+    finally:
+        release.set()
+
+
 async def _pending_summary_journey(hass, monkeypatch, *, title="Summary replacement"):
     """Warm real public history until a detached SDK summary has entered transport."""
     import asyncio
