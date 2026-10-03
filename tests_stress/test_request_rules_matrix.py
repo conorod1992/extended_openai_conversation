@@ -144,6 +144,8 @@ async def test_seeded_rule_mutation_and_persistence(
     store = MemoryStore({"rules": []})
     rules = RequestRules(store)
     await rules.async_initialize()
+    # Only inputs and the specified move/delete semantics update this oracle.
+    # Never adopt snapshots or management return values as expected state.
     live: dict[str, dict] = {}
     for step in range(100 * stress_scale):
         operation = (
@@ -155,18 +157,22 @@ async def test_seeded_rule_mutation_and_persistence(
             identifier = f"rule-{step}"
             phrase = f"command {step} café"
             record(stress_trace, operation, id=identifier, phrase=phrase)
-            created = await rules.async_create(
-                rule(identifier, phrase, order=len(live)),
+            expected = rule(identifier, phrase, order=len(live), enabled=True)
+            expected["phrases"].append("shared command café")
+            expected["action"]["success_response"] = f"Outcome {identifier}"
+            await rules.async_create(
+                deepcopy(expected),
                 expected_revision=rules.revision(),
             )
-            live[identifier] = created
+            live[identifier] = deepcopy(expected)
         elif operation == "toggle":
             identifier = rng.choice(list(live))
             changed = {**live[identifier], "enabled": not live[identifier]["enabled"]}
             record(stress_trace, operation, id=identifier, enabled=changed["enabled"])
-            live[identifier] = await rules.async_update(
-                identifier, changed, expected_revision=rules.revision()
+            await rules.async_update(
+                identifier, deepcopy(changed), expected_revision=rules.revision()
             )
+            live[identifier] = changed
         elif operation == "delete":
             identifier = rng.choice(list(live))
             record(stress_trace, operation, id=identifier)
@@ -174,6 +180,8 @@ async def test_seeded_rule_mutation_and_persistence(
                 identifier, expected_revision=rules.revision()
             )
             del live[identifier]
+            for order, item in enumerate(live.values()):
+                item["order"] = order
         elif operation == "move":
             identifier = rng.choice(list(live))
             direction = rng.choice(("top", "bottom", "up", "down"))
@@ -181,22 +189,48 @@ async def test_seeded_rule_mutation_and_persistence(
             await rules.async_move(
                 identifier, direction, expected_revision=rules.revision()
             )
-            live = {item["id"]: item for item in rules.snapshot()["rules"]}
+            identifiers = list(live)
+            index = identifiers.index(identifier)
+            target = {
+                "top": 0,
+                "bottom": len(live) - 1,
+                "up": index - 1,
+                "down": index + 1,
+            }[direction]
+            if 0 <= target < len(live) and target != index:
+                identifiers.insert(target, identifiers.pop(index))
+                live = {key: live[key] for key in identifiers}
+                for order, item in enumerate(live.values()):
+                    item["order"] = order
         else:
             record(stress_trace, "reload")
             rules = RequestRules(store)
             await rules.async_initialize()
-            live = {item["id"]: item for item in rules.snapshot()["rules"]}
 
         snapshot = rules.snapshot()
         assert len(snapshot["rules"]) == len(live)
         assert len({item["id"] for item in snapshot["rules"]}) == len(live)
-        for item in snapshot["rules"]:
+        assert [item["id"] for item in snapshot["rules"]] == list(live)
+        for actual, item in zip(snapshot["rules"], live.values(), strict=True):
+            for key, expected in item.items():
+                if key in {"action", "matching"}:
+                    assert {name: actual[key][name] for name in expected} == expected
+                else:
+                    assert actual[key] == expected, (step, key, actual, item)
             match = rules.match(item["phrases"][0])
             assert (match is not None) == item["enabled"]
             if match:
                 assert match.rule["id"] == item["id"]
             assert request_rule_match_preview(match)["matched"] == (match is not None)
+        winner = next((item for item in live.values() if item["enabled"]), None)
+        shared = rules.match("shared command café")
+        assert (shared is not None) == (winner is not None)
+        if winner:
+            assert shared.rule["id"] == winner["id"]
+            assert (
+                shared.rule["action"]["success_response"]
+                == winner["action"]["success_response"]
+            )
         backup = await rules.async_backup_data()
         cloned = RequestRules(MemoryStore({"rules": []}))
         await cloned.async_initialize()
@@ -206,3 +240,43 @@ async def test_seeded_rule_mutation_and_persistence(
     record(
         stress_trace, "summary", operations=100 * stress_scale, final_rules=len(live)
     )
+
+
+@pytest.mark.parametrize("broken", ["contents", "enabled", "ordering", "persistence"])
+async def test_seeded_oracle_rejects_broken_mutations(monkeypatch, broken):
+    """The campaign must detect faults rather than learning them as its oracle."""
+    if broken == "persistence":
+        original = MemoryStore.async_save
+
+        async def lose_rules(store, data):
+            await original(store, {**data, "rules": []})
+
+        monkeypatch.setattr(MemoryStore, "async_save", lose_rules)
+    elif broken == "ordering":
+
+        async def ignore_move(*args, **kwargs):
+            return {}
+
+        monkeypatch.setattr(RequestRules, "async_move", ignore_move)
+    else:
+        original = (
+            RequestRules.async_create
+            if broken == "contents"
+            else RequestRules.async_update
+        )
+
+        async def corrupt(manager, *args, **kwargs):
+            value = deepcopy(args[-1])
+            if broken == "contents":
+                value["phrases"] = ["unrequested phrase"]
+            else:
+                value["enabled"] = not value["enabled"]
+            return await original(manager, *args[:-1], value, **kwargs)
+
+        monkeypatch.setattr(
+            RequestRules,
+            "async_create" if broken == "contents" else "async_update",
+            corrupt,
+        )
+    with pytest.raises(AssertionError):
+        await test_seeded_rule_mutation_and_persistence(42, 1, [])

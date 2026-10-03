@@ -38,6 +38,7 @@ from tests_real_ha.test_management_backend_acceptance import (
     _management_call,
 )
 from tests_stress.conftest import record
+from tests_stress.fresh_restore import assert_fresh_contents
 
 
 @pytest.mark.asyncio
@@ -212,6 +213,7 @@ async def test_restore_drains_paused_management_memory_commit(
     ] == target["memories"]
 
     await _fresh_reload(hass, entry)
+    await assert_fresh_contents(hass, entry, subentry, target)
     reloaded = await _management_call(
         client, entry=entry, section="memories", action="list"
     )
@@ -311,6 +313,7 @@ async def test_restore_wins_after_committed_management_write_loses_ack(
     )["memories"] == target["memories"]
 
     await _fresh_reload(hass, entry)
+    await assert_fresh_contents(hass, entry, subentry, target)
     reload_client = await _admin_client(
         hass,
         hass_ws_client,

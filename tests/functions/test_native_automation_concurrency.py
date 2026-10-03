@@ -9,14 +9,14 @@ from unittest.mock import AsyncMock
 import pytest
 import yaml
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses.functions import native
 from custom_components.extended_openai_conversation_responses.functions.native import (
     NativeFunction,
     _append_automation_atomic,
     _restore_automation_file,
 )
+from homeassistant.exceptions import HomeAssistantError
+from tests.lock_probe import LockProbe
 
 
 async def _disable_automation_validation(monkeypatch) -> None:
@@ -33,22 +33,54 @@ async def test_concurrent_add_automation_calls_preserve_both_entries(
     await _disable_automation_validation(monkeypatch)
     function = NativeFunction()
 
-    await asyncio.gather(
+    probe = LockProbe(asyncio.Lock())
+    hass.data[native._AUTOMATION_WRITE_LOCK_KEY] = probe
+    reload_entered = asyncio.Event()
+    release_reload = asyncio.Event()
+    reloads = []
+    original_append = native._append_automation_atomic
+    writes = []
+
+    def append(*args):
+        writes.append(args)
+        return original_append(*args)
+
+    async def reload(*args, **kwargs):
+        reloads.append(args)
+        if len(reloads) == 1:
+            reload_entered.set()
+            await release_reload.wait()
+
+    monkeypatch.setattr(native, "_append_automation_atomic", append)
+    hass.services.async_call = AsyncMock(side_effect=reload)
+    first = asyncio.create_task(
         function.add_automation(
             hass,
             {"name": "add_automation"},
             {"automation_config": "alias: First\ntriggers: []\nactions: []\n"},
             None,
             [],
-        ),
+        )
+    )
+    await asyncio.wait_for(reload_entered.wait(), timeout=5)
+    assert await probe.next_attempt() is first
+    second = asyncio.create_task(
         function.add_automation(
             hass,
             {"name": "add_automation"},
             {"automation_config": "alias: Second\ntriggers: []\nactions: []\n"},
             None,
             [],
-        ),
+        )
     )
+    try:
+        assert await probe.next_attempt() is second
+        assert not second.done()
+        assert len(writes) == len(reloads) == 1
+    finally:
+        release_reload.set()
+        await asyncio.gather(first, second)
+    assert len(writes) == len(reloads) == 2
 
     document = yaml.safe_load(
         Path(hass.config.config_dir, "automations.yaml").read_text()
@@ -154,10 +186,11 @@ async def test_reload_failure_preserves_external_edit_during_rollback(
 @pytest.fixture(autouse=True)
 def authenticated_automation_admin(hass):
     from types import SimpleNamespace
-    from homeassistant.core import Context
+
     from custom_components.extended_openai_conversation_responses.ha_permissions import (
         bind_active_ha_context,
     )
+    from homeassistant.core import Context
 
     hass.auth.async_get_user = AsyncMock(
         return_value=SimpleNamespace(is_active=True, is_admin=True)

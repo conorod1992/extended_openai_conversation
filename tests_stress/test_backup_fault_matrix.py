@@ -54,6 +54,7 @@ from tests_real_ha.test_provider_wire_e2e import (
     _speech,
 )
 from tests_stress.conftest import record
+from tests_stress.fresh_restore import assert_fresh_contents
 from tests_stress.maximal_agent_fixture import FIXTURE_EXCEPTIONS, maximal_agent_options
 from tests_stress.test_backup_inventory import BACKED_UP_SUBSYSTEMS
 
@@ -188,6 +189,7 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
     assert semantic(
         await backup.async_collect_backup_snapshot(hass, entry, subentry)
     ) == semantic(target)
+    await assert_fresh_contents(hass, entry, subentry, target)
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
     wire = _install_wire(
@@ -367,6 +369,7 @@ async def test_every_restore_phase_rolls_back_and_reloads(
         semantic(await backup.async_collect_backup_snapshot(hass, entry, subentry))
         == before
     )
+    await assert_fresh_contents(hass, entry, subentry, before)
     record(stress_trace, "summary", rollback_phases=1, reloads=1)
 
 
@@ -425,6 +428,7 @@ async def test_committed_restore_finishes_after_configuration_write_failure(
         semantic(await backup.async_collect_backup_snapshot(hass, entry, subentry))
         == after
     )
+    await assert_fresh_contents(hass, entry, subentry, after)
     record(
         stress_trace, "committed_restore_recovered", config_write_faults=1, reloads=1
     )

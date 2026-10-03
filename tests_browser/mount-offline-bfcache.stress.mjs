@@ -67,6 +67,8 @@ test("repeated mount cycles plus offline and browser restoration keep one health
     }, {once: true});
     browserHarness.panel.__beforeBfcacheMarker = "preserve-or-reload-safely";
   });
+  const restorationUrl = page.url();
+  const beforeNavigation = Object.fromEntries(["consoleErrors", "requestFailures", "badResponses"].map(key => [key, errors[key].length]));
   await page.goto("data:text/html,<title>away</title><p>away</p>");
   await page.goBack({waitUntil: "domcontentloaded"});
   let hasHarness = await page.evaluate(() => Boolean(window.browserHarness)).catch(() => false);
@@ -75,10 +77,17 @@ test("repeated mount cycles plus offline and browser restoration keep one health
     // panel URL. Recover through a fresh mount; the persisted path is asserted when
     // the engine actually grants bfcache.
     await page.goto(fixtureUrl("capabilities/home-assistant"));
-    errors.length = 0;
-    errors.consoleErrors.length = 0;
-    errors.requestFailures.length = 0;
-    errors.badResponses.length = 0;
+    // Only a failed reload of the synthetic navigation URL is expected. Keep
+    // earlier errors and unrelated failures, including all JavaScript errors.
+    const expectedNavigationFailure = {
+      consoleErrors: value => value.includes(`(${restorationUrl}`) && /404|ERR_ABORTED|NS_BINDING_ABORTED/.test(value),
+      requestFailures: value => value.startsWith(`GET ${restorationUrl}: `) && /ERR_ABORTED|NS_BINDING_ABORTED/.test(value),
+      badResponses: value => value === `404 GET ${restorationUrl}`,
+    };
+    for (const [key, allowed] of Object.entries(expectedNavigationFailure)) {
+      const start = beforeNavigation[key];
+      errors[key].splice(start, errors[key].length - start, ...errors[key].slice(start).filter(value => !allowed(value)));
+    }
     hasHarness = true;
   }
   expect(hasHarness).toBe(true);

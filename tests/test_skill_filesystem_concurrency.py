@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
+from tests.lock_probe import LockProbe
 
 
 def _write_skill(directory: Path, description: str = "Test Skill") -> None:
@@ -111,7 +112,7 @@ async def test_staging_is_outside_discovery_and_incomplete_paths_stay_hidden(
 
 
 async def test_scan_publish_and_remove_share_one_serialized_boundary(
-    hass, tmp_path
+    hass, tmp_path, monkeypatch
 ) -> None:
     """Concurrent operations never expose staging or partial removal state."""
     manager = await _manager(hass, tmp_path)
@@ -122,13 +123,18 @@ async def test_scan_publish_and_remove_share_one_serialized_boundary(
     staged_beta = manager.staging_dir / "beta.download-test"
     _write_skill(staged_beta, "Beta")
 
+    probe = LockProbe(manager._filesystem_lock)
+    monkeypatch.setattr(manager, "_filesystem_lock", probe)
+
     async with manager.async_skill_read():
+        await probe.next_attempt()
         publish = asyncio.create_task(
             manager.async_publish_staged_skill("beta", staged_beta)
         )
         scan = asyncio.create_task(manager.async_load_skills())
         remove = asyncio.create_task(manager.async_remove_skill("alpha"))
-        await asyncio.sleep(0)
+        attempts = [await probe.next_attempt() for _ in range(3)]
+        assert set(attempts) == {publish, scan, remove}
         assert not publish.done()
         assert not scan.done()
         assert not remove.done()

@@ -15,6 +15,7 @@ function controlValues(panel) {
     .map(control => ({
       key:control.dataset.config || control.dataset.memoryConfig,
       kind:control.type || control.tagName.toLowerCase(),
+      dataType:control.dataset.type,
       value:control.type === "checkbox" ? control.checked : control.value,
     })));
 }
@@ -25,15 +26,19 @@ async function changeControl(panel, key) {
   if (!(await control.isVisible())) return null;
   const state = await control.evaluate(element => ({
     tag:element.tagName.toLowerCase(), type:element.type, disabled:element.disabled,
+    dataType:element.dataset.type, checked:element.checked,
     min:element.min, max:element.max, value:element.value,
     options:element.tagName === "SELECT" ? [...element.options].filter(option => !option.disabled).map(option => option.value) : [],
   }));
   if (state.disabled) return null;
+  let edited;
   if (state.type === "checkbox") {
-    await control.setChecked(!(await control.isChecked()));
+    edited = !state.checked;
+    await control.setChecked(edited);
   } else if (state.tag === "select") {
     const next = state.options.find(value => value !== state.value);
     if (next === undefined) return null;
+    edited = next;
     await control.selectOption(next);
   } else if (state.type === "number" || state.type === "range") {
     const min = state.min === "" ? null : Number(state.min), max = state.max === "" ? null : Number(state.max);
@@ -51,15 +56,27 @@ async function changeControl(panel, key) {
     }
     const current = Number(state.value || 0);
     const target = min !== null && current !== min ? min : max !== null && current !== max ? max : current + 1;
+    edited = String(target);
     await control.fill(String(target));
     await control.dispatchEvent("change");
     expect(await control.evaluate(element => element.validity.valid), `${key} should accept its selected numeric value`).toBe(true);
   } else if (state.tag === "textarea") {
-    await control.fill("Nightly control matrix content");
+    edited = "Nightly control matrix content";
+    await control.fill(edited);
   } else {
-    await control.fill(`${state.value || ""} nightly`);
+    edited = `${state.value || ""} nightly`;
+    await control.fill(edited);
   }
-  return control;
+  return {key, kind:state.type || state.tag, dataType:state.dataType, value:edited};
+}
+
+// This oracle parses the values we entered; Save output never supplies it.
+function expectedValue(field) {
+  if (field.kind === "checkbox") return field.value;
+  if (field.dataType === "number" || ["archive_retention_days", "usage_request_retention_days", "usage_run_retention_days"].includes(field.key)) return Number(field.value);
+  if (field.key === "skills") return String(field.value).split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+  if (/^guest_(readable|controllable)_/.test(field.key)) return String(field.value).split(",").map(value => value.trim()).filter(Boolean);
+  return field.value;
 }
 
 test("nightly assistant configuration control matrix edits, saves, and reloads every ordinary field", async ({page}) => {
@@ -80,18 +97,21 @@ test("nightly assistant configuration control matrix edits, saves, and reloads e
       return checkbox(a) - checkbox(b);
     });
     const changed = [];
+    const edits = new Map();
     for (const key of keys) {
       const control = await changeControl(panel, key);
-      if (control) changed.push(key);
+      if (control) { changed.push(key); edits.set(key, control); }
     }
     for (const {key} of await controlValues(panel)) {
       if (keys.includes(key) || changed.includes(key)) continue;
       const control = await changeControl(panel, key);
-      if (control) changed.push(key);
+      if (control) { changed.push(key); edits.set(key, control); }
     }
     expect(changed.length, `${route} should exercise its enabled controls through the UI`).toBeGreaterThan(0);
     await expect(panel.locator("#save-config")).toBeVisible();
     const visibleBeforeSave = await controlValues(panel);
+    const expected = [...edits.values()]
+      .map(field => ({...field, expected: expectedValue(field)}));
     await panel.locator("#save-config").click();
     await expect(panel.locator("#save-config")).toHaveCount(0);
     const saved = await panel.evaluate(host => ({
@@ -100,21 +120,21 @@ test("nightly assistant configuration control matrix edits, saves, and reloads e
       draftTitle:host._draftTitle,
     }));
     coverage[route] = {keys, changed, dependentDisabled:keys.filter(key => !changed.includes(key)), visibleBeforeSave};
+    for (const field of expected) {
+      if (field.key === "__title") expect(saved.title).toBe(field.expected);
+      else {
+        expect(Object.hasOwn(saved.config, field.key), `${route}/${field.key} missing from Save`).toBe(true);
+        expect(saved.config[field.key], `${route}/${field.key} Save`).toEqual(field.expected);
+      }
+    }
 
     await page.goto(fixtureUrl(route));
     await waitForManagementRouteReady(page, {name: route, path: route}, 30000);
     const reloaded = await controlValues(panelFor(page));
-    for (const field of visibleBeforeSave) {
-      if (!changed.includes(field.key)) continue;
+    for (const field of expected) {
       const actual = reloaded.find(item => item.key === field.key);
       expect(actual, `${route}/${field.key} should remain present after fresh load`).toBeTruthy();
-      if (field.key === "__title") expect(actual.value).toBe(saved.title);
-      else if (Object.hasOwn(saved.config, field.key)) {
-        const expected = saved.config[field.key];
-        if (typeof field.value === "boolean") expect(actual.value).toBe(Boolean(expected));
-        else if (Array.isArray(expected)) expect(actual.value).toBe(expected.join(", "));
-        else expect(String(actual.value), `${route}/${field.key}: saved=${JSON.stringify(expected)} loaded=${JSON.stringify(actual.value)}`).toBe(String(expected ?? ""));
-      }
+      expect(expectedValue(actual), `${route}/${field.key} fresh load`).toEqual(field.expected);
     }
   }
   expect(Object.keys(coverage)).toEqual(routes);

@@ -212,6 +212,14 @@ async def test_seeded_multi_entry_runtime_soak(
             gc.collect()
             assert _eoai_task_count() <= warm_tasks + 2
 
+    # Preserve every seeded operation, then guarantee the existing conversation
+    # floor. A reload-heavy seed adds real validated Assist turns rather than
+    # lowering the requirement or replacing the original random workload.
+    for number in range(max(0, 120 * stress_scale - calls)):
+        agent_index, user_index = number % 2, number % 6
+        record(stress_trace, "minimum_conversation", agent=agent_index, user=user_index)
+        await converse(agent_index, user_index, 120 * stress_scale + number)
+
     for entry in entries:
         assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -231,3 +239,13 @@ async def test_seeded_multi_entry_runtime_soak(
         warm_resource_counts=warm_resources,
         warm_eoai_tasks=warm_tasks,
     )
+
+
+async def test_reload_heavy_seed_guarantees_conversation_floor(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, stress_trace: list[dict]
+) -> None:
+    """Seed 3676 originally completed its operations with only 119 Assist turns."""
+    record(stress_trace, "fixed_minimum_seed", seed=3676)
+    await test_seeded_multi_entry_runtime_soak(hass, monkeypatch, 3676, 1, stress_trace)
+    assert any(item["operation"] == "minimum_conversation" for item in stress_trace)
+    assert next(item for item in stress_trace if item["operation"] == "summary")["conversation_turns"] >= 120
