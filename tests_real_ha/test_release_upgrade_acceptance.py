@@ -255,12 +255,20 @@ async def _assert_populated_release_state(
 ) -> None:
     """Read the exact release-created durable records through candidate managers."""
     from homeassistant.components import conversation
+    from custom_components.extended_openai_conversation_responses.knowledge import (
+        async_get_knowledge,
+    )
+    from custom_components.extended_openai_conversation_responses.memory import (
+        async_get_memory,
+    )
 
     agent = conversation.async_get_agent(hass, entry_id)
     assert agent is not None
-    memories = await agent._memory.async_list(state["owner_id"], limit=100)
+    memory = await async_get_memory(hass, entry_id, state["subentry_id"])
+    memories = await memory.async_list(state["owner_id"], limit=100)
     assert any(item.content == state["memory_marker"] for item in memories)
-    source = await agent._knowledge.async_get(state["knowledge_source_id"])
+    knowledge = await async_get_knowledge(hass, entry_id, state["subentry_id"])
+    source = await knowledge.async_get(state["knowledge_source_id"])
     assert source.content == state["knowledge_marker"]
     rules = agent._request_rules.snapshot()["rules"]
     assert any(
