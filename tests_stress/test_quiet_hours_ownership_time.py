@@ -612,3 +612,337 @@ async def test_pending_quiet_control_preserves_manual_change_after_storage_failu
         )
     finally:
         await manager.async_shutdown()
+
+
+async def _application_probe(hass, freezer, kind):
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    freezer.move_to(datetime(2026, 1, 10, 12, 0, tzinfo=DUBLIN))
+    satellite, media, wake = _install_satellite_entities(
+        hass,
+        slug="application-alpha",
+        volume=0.77 if kind == "volume" else 0.08,
+        wake="on" if kind == "wake_sound" else "off",
+    )
+    _, beta_media, _ = _install_satellite_entities(
+        hass, slug="application-beta", volume=0.65, wake="off"
+    )
+    calls = []
+    _install_control_services(hass, calls)
+    manager = await async_get_quiet_hours(hass)
+    manager._config = _config_from_data(
+        {
+            "enabled": True,
+            "start": "22:00",
+            "end": "07:00",
+            "max_volume": 0.20,
+            "wake_sound": "off",
+        }
+    )
+    await manager._async_save_locked()
+    freezer.move_to(datetime(2026, 1, 10, 22, 5, tzinfo=DUBLIN))
+    return manager, media if kind == "volume" else wake, beta_media, calls
+
+
+@pytest.mark.parametrize("kind", ["volume", "wake_sound"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_quiet_control_lost_service_acknowledgement_does_not_replay_effect(
+    hass, monkeypatch, stress_trace, freezer, kind
+):
+    from homeassistant.exceptions import HomeAssistantError
+
+    manager, target, beta, calls = await _application_probe(hass, freezer, kind)
+    registry_type = type(hass.services)
+    native = registry_type.async_call
+    faults = []
+
+    async def lost_ack(registry, domain, service, data, **kwargs):
+        result = await native(registry, domain, service, data, **kwargs)
+        if data.get("entity_id") == target and not faults:
+            faults.append(True)
+            raise HomeAssistantError("Device effect completed; acknowledgement lost")
+        return result
+
+    try:
+        with monkeypatch.context() as fault:
+            fault.setattr(registry_type, "async_call", lost_ack)
+            await manager.async_reconcile()
+        assert faults and sum(entity == target for _, entity in calls) == 1
+        assert manager.active["controls"][target]["application_state"] == "prepared"
+        for _ in range(3):
+            await manager.async_reconcile()
+        assert sum(entity == target for _, entity in calls) == 1
+        assert manager.active["controls"][target]["application_state"] == "applied"
+        assert _volume(hass, beta) == pytest.approx(0.20)
+        await manager.async_reconcile(now=datetime(2026, 1, 11, 8, 0, tzinfo=DUBLIN))
+        assert sum(entity == target for _, entity in calls) == 2
+        record(stress_trace, "summary", quiet_service_acknowledgement_recoveries=1)
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("kind", ["volume", "wake_sound"])
+@pytest.mark.parametrize("recovery", ["live", "reload"])
+@pytest.mark.parametrize("end_immediately", [False, True])
+@pytest.mark.usefixtures("real_store_io")
+async def test_unacknowledged_quiet_intent_does_not_claim_independent_goal(
+    hass, monkeypatch, stress_trace, freezer, kind, recovery, end_immediately
+):
+    manager, target, beta, calls = await _application_probe(hass, freezer, kind)
+    path = Path(manager._store.path)
+    native = Store._write_prepared_data
+    faults = []
+
+    def failed_write(store, mode, data):
+        if Path(store.path) == path and not faults:
+            active = json.loads(data)["data"].get("active") or {}
+            if (
+                active.get("controls", {}).get(target, {}).get("application_state")
+                == "prepared"
+            ):
+                faults.append(True)
+                native(store, mode, data)
+                raise WriteError("Prepared acknowledgement lost") from OSError(
+                    errno.EIO, "Lost acknowledgement"
+                )
+        return native(store, mode, data)
+
+    try:
+        with monkeypatch.context() as fault:
+            fault.setattr(Store, "_write_prepared_data", failed_write)
+            with pytest.raises(OSError):
+                await manager.async_reconcile()
+        assert faults and not any(entity == target for _, entity in calls)
+        if kind == "volume":
+            await hass.services.async_call(
+                "media_player",
+                "volume_set",
+                {"entity_id": target, "volume_level": 0.20},
+                blocking=True,
+            )
+        else:
+            await hass.services.async_call(
+                "switch", "turn_off", {"entity_id": target}, blocking=True
+            )
+        ending = datetime(2026, 1, 11, 8, 0, tzinfo=DUBLIN)
+        if end_immediately:
+            freezer.move_to(ending)
+        if recovery == "reload":
+            await manager.async_shutdown()
+            manager = QuietHoursManager(hass)
+            await manager.async_setup()
+        else:
+            await manager.async_reconcile()
+        if not end_immediately:
+            assert target not in manager.active["controls"]
+            assert _volume(hass, beta) == pytest.approx(0.20)
+            for _ in range(3):
+                await manager.async_reconcile()
+            await manager.async_reconcile(now=ending)
+        assert sum(entity == target for _, entity in calls) == 1
+        if kind == "volume":
+            assert _volume(hass, target) == pytest.approx(0.20)
+        else:
+            assert hass.states.get(target).state == "off"
+        record(stress_trace, "summary", quiet_independent_goal_preservations=1)
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.parametrize(
+    "kind,new_value", [("volume", 0.05), ("volume", 0.60), ("wake_sound", False)]
+)
+@pytest.mark.parametrize("stage", ["observation", "ownership"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_successful_quiet_control_save_preserves_newer_independent_value(
+    hass, monkeypatch, stress_trace, freezer, kind, new_value, stage
+):
+    import asyncio
+    import threading
+
+    manager, target, beta, calls = await _application_probe(hass, freezer, kind)
+    path = Path(manager._store.path)
+    entered = asyncio.Event()
+    release = threading.Event()
+    native = Store._write_prepared_data
+    loop = asyncio.get_running_loop()
+
+    def held_write(store, mode, data):
+        if Path(store.path) == path and not entered.is_set():
+            active = json.loads(data)["data"].get("active") or {}
+            if target in active.get("observed_controls", []) and (
+                target in active.get("controls", {})
+            ) == (stage == "ownership"):
+                loop.call_soon_threadsafe(entered.set)
+                assert release.wait(15), "Control write was not released"
+        return native(store, mode, data)
+
+    caller = None
+    try:
+        with monkeypatch.context() as gate:
+            gate.setattr(Store, "_write_prepared_data", held_write)
+            caller = asyncio.create_task(manager.async_reconcile())
+            await asyncio.wait_for(entered.wait(), 10)
+            if kind == "volume":
+                await hass.services.async_call(
+                    "media_player",
+                    "volume_set",
+                    {"entity_id": target, "volume_level": new_value},
+                    blocking=True,
+                )
+            else:
+                await hass.services.async_call(
+                    "switch", "turn_off", {"entity_id": target}, blocking=True
+                )
+            release.set()
+            await caller
+        for _ in range(3):
+            await manager.async_reconcile()
+        assert sum(entity == target for _, entity in calls) == 1, (
+            "Quiet Hours overwrote the independent service action"
+        )
+        assert target not in manager.active["controls"]
+        assert target not in json.loads(path.read_text())["data"]["active"]["controls"]
+        assert _volume(hass, beta) == pytest.approx(0.20)
+        await manager.async_reconcile(now=datetime(2026, 1, 11, 8, 0, tzinfo=DUBLIN))
+        assert sum(entity == target for _, entity in calls) == 1
+        if kind == "volume":
+            assert _volume(hass, target) == pytest.approx(new_value)
+        else:
+            assert hass.states.get(target).state == "off"
+        assert _volume(hass, beta) == pytest.approx(0.65)
+        record(stress_trace, "summary", quiet_saved_control_manual_changes=1)
+    finally:
+        release.set()
+        if caller is not None:
+            await asyncio.gather(caller, return_exceptions=True)
+        await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("kind", ["volume", "wake_sound"])
+@pytest.mark.parametrize("boundary", ["prepared_ack", "applied_before", "applied_ack"])
+@pytest.mark.parametrize("recovery", ["live", "reload"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_quiet_control_reconciles_prepared_and_applied_write_outcomes(
+    hass, monkeypatch, stress_trace, freezer, kind, boundary, recovery
+):
+    manager, target, beta, calls = await _application_probe(hass, freezer, kind)
+    path = Path(manager._store.path)
+    native = Store._write_prepared_data
+    faults = []
+
+    def failed_write(store, mode, data):
+        if Path(store.path) == path and not faults:
+            active = json.loads(data)["data"].get("active") or {}
+            phase = active.get("controls", {}).get(target, {}).get("application_state")
+            if phase == ("prepared" if boundary == "prepared_ack" else "applied"):
+                faults.append(phase)
+                if boundary != "applied_before":
+                    native(store, mode, data)
+                raise WriteError(
+                    "Injected control acknowledgement failure"
+                ) from OSError(errno.EIO, "Control write outcome failure")
+        return native(store, mode, data)
+
+    try:
+        with monkeypatch.context() as fault:
+            fault.setattr(Store, "_write_prepared_data", failed_write)
+            with pytest.raises(OSError):
+                await manager.async_reconcile()
+        assert len(faults) == 1
+        assert sum(entity == target for _, entity in calls) == int(
+            boundary != "prepared_ack"
+        )
+        durable = json.loads(path.read_text())["data"]["active"]["controls"][target]
+        assert durable["application_state"] == (
+            "applied" if boundary == "applied_ack" else "prepared"
+        )
+        if recovery == "reload":
+            await manager.async_shutdown()
+            manager = QuietHoursManager(hass)
+            await manager.async_setup()
+        else:
+            await manager.async_reconcile()
+        for _ in range(3):
+            await manager.async_reconcile()
+        assert sum(entity == target for _, entity in calls) == 1
+        assert manager.active["controls"][target]["application_state"] == "applied"
+        assert (
+            json.loads(path.read_text())["data"]["active"]["controls"][target][
+                "application_state"
+            ]
+            == "applied"
+        )
+        if kind == "volume":
+            assert _volume(hass, target) == pytest.approx(0.20)
+        else:
+            assert hass.states.get(target).state == "off"
+        assert _volume(hass, beta) == pytest.approx(0.20)
+        await manager.async_reconcile(now=datetime(2026, 1, 11, 8, 0, tzinfo=DUBLIN))
+        assert sum(entity == target for _, entity in calls) == 2
+        if kind == "volume":
+            assert _volume(hass, target) == pytest.approx(0.77)
+        else:
+            assert hass.states.get(target).state == "on"
+        assert _volume(hass, beta) == pytest.approx(0.65)
+        record(stress_trace, "summary", quiet_prepared_recovery_cases=1)
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("kind", ["volume", "wake_sound"])
+@pytest.mark.parametrize("boundary", ["before_action", "after_action"])
+@pytest.mark.parametrize(
+    "retain_context", [False, True], ids=["indeterminate-context", "retained-context"]
+)
+async def test_quiet_control_prepared_intent_recovers_in_fresh_process(
+    tmp_path, stress_trace, kind, boundary, retain_context
+):
+    import asyncio
+    import os
+    import sys
+
+    helper = Path(__file__).with_name("quiet_control_fresh_process.py")
+    root = helper.parent.parent
+    environment = {**os.environ, "PYTHONPATH": str(root)}
+
+    async def run(phase):
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            str(helper),
+            str(tmp_path),
+            kind,
+            boundary,
+            phase,
+            str(int(retain_context)),
+            cwd=root,
+            env=environment,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            output, _ = await asyncio.wait_for(process.communicate(), 40)
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+        return process.returncode, output.decode()
+
+    status, output = await run("interrupt")
+    assert status == 74, output
+    device = json.loads((tmp_path / "device.json").read_text())
+    assert device["calls"] == int(boundary == "after_action")
+    status, output = await run("recover")
+    assert status == 0, output
+    result = json.loads(output.split("QUIET_APPLICATION_RECOVERY=")[-1].splitlines()[0])
+    indeterminate = boundary == "after_action" and not retain_context
+    assert result == {
+        "applied_calls": 1,
+        "restored_calls": 1 if indeterminate else 2,
+        "phase": "unowned" if indeterminate else "applied",
+    }
+    record(
+        stress_trace,
+        "summary",
+        quiet_process_application_recoveries=1,
+        quiet_process_indeterminate_controls=int(indeterminate),
+    )

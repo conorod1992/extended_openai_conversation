@@ -146,7 +146,7 @@ async def _install_services(hass):
     volume_calls: list[tuple[str, float]] = []
     switch_calls: list[tuple[str, bool]] = []
 
-    async def async_call(domain, service, data, *, blocking=False) -> None:
+    async def async_call(domain, service, data, *, blocking=False, context=None) -> None:
         entity_id = data["entity_id"]
         if domain == "media_player" and service == "volume_set":
             volume = float(data["volume_level"])
@@ -732,7 +732,7 @@ async def test_volume_apply_covers_skip_noop_success_and_rollback(
     )
     manager._async_save_locked.assert_not_awaited()
 
-    values = iter((0.1, 0.8, 0.9, 0.9))
+    values = iter((0.1, 0.8, 0.8, 0.9, 0.9, 0.9))
     monkeypatch.setattr(quiet_hours, "_current_volume", lambda *_args: next(values))
     await manager._async_apply_volume_locked(
         "assist_satellite.test", "media_player.quiet", controls
@@ -777,7 +777,7 @@ async def test_switch_apply_covers_skip_noop_success_and_rollback(
     )
     manager._async_save_locked.assert_not_awaited()
 
-    values = iter((False, True, True, True))
+    values = iter((False, True, True, True, True, True))
     monkeypatch.setattr(quiet_hours, "_current_switch", lambda *_args: next(values))
     await manager._async_apply_switch_locked(
         "assist_satellite.test", "switch.already_off", False, controls

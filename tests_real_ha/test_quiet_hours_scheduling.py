@@ -102,7 +102,7 @@ def _install_control_services(
         assert state is not None
         attributes = dict(state.attributes)
         attributes["volume_level"] = call.data["volume_level"]
-        hass.states.async_set(entity_id, state.state, attributes)
+        hass.states.async_set(entity_id, state.state, attributes, context=call.context)
 
     async def turn_on(call: ServiceCall) -> None:
         entity_id = call.data["entity_id"]
@@ -110,7 +110,7 @@ def _install_control_services(
             calls.append(("turn_on", entity_id))
         state = hass.states.get(entity_id)
         assert state is not None
-        hass.states.async_set(entity_id, "on", dict(state.attributes))
+        hass.states.async_set(entity_id, "on", dict(state.attributes), context=call.context)
 
     async def turn_off(call: ServiceCall) -> None:
         entity_id = call.data["entity_id"]
@@ -118,7 +118,7 @@ def _install_control_services(
             calls.append(("turn_off", entity_id))
         state = hass.states.get(entity_id)
         assert state is not None
-        hass.states.async_set(entity_id, "off", dict(state.attributes))
+        hass.states.async_set(entity_id, "off", dict(state.attributes), context=call.context)
 
     hass.services.async_register("media_player", "volume_set", volume_set)
     hass.services.async_register("switch", "turn_on", turn_on)
@@ -379,4 +379,3 @@ async def test_real_ha_fall_back_duplicate_time_is_one_quiet_period(
         assert manager.active is None
     finally:
         await manager.async_shutdown()
-

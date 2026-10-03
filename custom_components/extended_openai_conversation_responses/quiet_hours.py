@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, cast
 
-from homeassistant.core import HomeAssistant, ServiceCall, State
+from homeassistant.core import Context, HomeAssistant, ServiceCall, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
@@ -285,8 +285,13 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
     ) -> None:
         observed = (self._active or {}).get("observed_controls", [])
         pending = (self._active or {}).get("pending_controls", {})
-        if entity_id in controls or (
-            entity_id in observed and entity_id not in pending
+        if (
+            entity_id in controls
+            and controls[entity_id].get("application_state") != "prepared"
+        ) or (
+            entity_id in observed
+            and entity_id not in pending
+            and entity_id not in controls
         ):
             return
         original = _current_volume(self.hass, entity_id)
@@ -302,6 +307,10 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             original > self._config.max_volume + _VOLUME_TOLERANCE,
         )
         if control is None:
+            return
+        if not await self._async_revalidate_control_locked(
+            entity_id, controls, control
+        ):
             return
         assert self._active is not None
         observed = self._active["observed_controls"]
@@ -326,6 +335,13 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 controls.pop(entity_id, None)
                 observed.remove(entity_id)
                 await self._async_save_control_state_locked()
+            # A failed service acknowledgement leaves any retained intent
+            # prepared; later reconciliation must attribute its actual effect.
+            return
+
+        if entity_id in controls:
+            control["application_state"] = "applied"
+            await self._async_save_control_state_locked()
 
     async def _async_apply_switch_locked(
         self,
@@ -336,8 +352,13 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
     ) -> None:
         observed = (self._active or {}).get("observed_controls", [])
         pending = (self._active or {}).get("pending_controls", {})
-        if entity_id in controls or (
-            entity_id in observed and entity_id not in pending
+        if (
+            entity_id in controls
+            and controls[entity_id].get("application_state") != "prepared"
+        ) or (
+            entity_id in observed
+            and entity_id not in pending
+            and entity_id not in controls
         ):
             return
         original = _current_switch(self.hass, entity_id)
@@ -353,6 +374,10 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             original != desired,
         )
         if control is None:
+            return
+        if not await self._async_revalidate_control_locked(
+            entity_id, controls, control
+        ):
             return
         assert self._active is not None
         observed = self._active["observed_controls"]
@@ -373,6 +398,11 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 controls.pop(entity_id, None)
                 observed.remove(entity_id)
                 await self._async_save_control_state_locked()
+            return
+
+        if entity_id in controls:
+            control["application_state"] = "applied"
+            await self._async_save_control_state_locked()
 
     async def _async_prepare_control_locked(
         self,
@@ -388,9 +418,38 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         assert self._active is not None
         observed = self._active.setdefault("observed_controls", [])
         pending = self._active.setdefault("pending_controls", {})
-        if entity_id in controls or (
-            entity_id in observed and entity_id not in pending
-        ):
+        existing = controls.get(entity_id)
+        if existing is not None:
+            if existing.get("application_state") != "prepared":
+                return None
+            same_control = (
+                existing["kind"] == kind
+                and existing["satellite_entity_id"] == satellite_entity_id
+            )
+            at_quiet_value = self._control_values_equal(
+                kind, original, existing["quiet_value"]
+            )
+            state = self.hass.states.get(entity_id)
+            context_id = existing.get("application_context_id")
+            own_effect = bool(context_id and state and state.context.id == context_id)
+            if same_control and at_quiet_value and own_effect:
+                # The action may have completed before acknowledgement was lost.
+                # Reconcile attainment without replaying the device operation.
+                existing["application_state"] = "applied"
+                await self._async_save_control_state_locked()
+                return None
+            if (
+                at_quiet_value
+                or not same_control
+                or not self._control_values_equal(
+                    kind, original, existing["original_value"]
+                )
+            ):
+                controls.pop(entity_id)
+                await self._async_save_control_state_locked()
+                return None
+            return cast(dict[str, Any], existing)
+        if entity_id in observed and entity_id not in pending:
             return None
         intent = pending.get(entity_id)
         if intent is not None:
@@ -424,9 +483,76 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         await self._async_save_control_state_locked()
         if not needs_action:
             return None
-        controls[entity_id] = pending.pop(entity_id)
+        controls[entity_id] = {
+            **pending.pop(entity_id),
+            "application_state": "prepared",
+            "application_context_id": Context().id,
+        }
         await self._async_save_control_state_locked()
         return cast(dict[str, Any], controls[entity_id])
+
+    @staticmethod
+    def _control_values_equal(kind: str, left: Any, right: Any) -> bool:
+        if kind == "volume":
+            return left is not None and abs(left - right) <= _VOLUME_TOLERANCE
+        return left is right
+
+    async def _async_set_volume(self, entity_id: str, volume_level: float) -> None:
+        await self._async_call_control_service(
+            "media_player", "volume_set", entity_id, {"volume_level": volume_level}
+        )
+
+    async def _async_restore_locked(self) -> None:
+        if self._active is not None:
+            controls = self._active.get("controls", {})
+            for entity_id, control in list(controls.items()):
+                if control.get("application_state") != "prepared":
+                    continue
+                state = self.hass.states.get(entity_id)
+                context_id = control.get("application_context_id")
+                if not context_id or state is None or state.context.id != context_id:
+                    # Ending a period must not restore a value merely because an
+                    # unacknowledged intent happens to match an independent effect.
+                    controls.pop(entity_id)
+        await super()._async_restore_locked()
+
+    async def _async_set_switch(self, entity_id: str, enabled: bool) -> None:
+        await self._async_call_control_service(
+            "switch", "turn_on" if enabled else "turn_off", entity_id, {}
+        )
+
+    async def _async_call_control_service(
+        self, domain: str, service: str, entity_id: str, data: dict[str, Any]
+    ) -> None:
+        """Associate an observable HA effect with its persisted prepared intent."""
+        control = (self._active or {}).get("controls", {}).get(entity_id, {})
+        context_id = control.get("application_context_id")
+        await self.hass.services.async_call(
+            domain,
+            service,
+            {"entity_id": entity_id, **data},
+            blocking=True,
+            context=Context(id=context_id) if context_id else None,
+        )
+
+    async def _async_revalidate_control_locked(
+        self, entity_id: str, controls: dict[str, Any], control: dict[str, Any]
+    ) -> bool:
+        """Release prepared ownership if persistence outlived its observation."""
+        current = (
+            _current_volume(self.hass, entity_id)
+            if control["kind"] == "volume"
+            else _current_switch(self.hass, entity_id)
+        )
+        if self._control_values_equal(
+            control["kind"], current, control["original_value"]
+        ):
+            return True
+        controls.pop(entity_id, None)
+        # Preserve observation so subsequent reconciliation cannot reclaim a
+        # newer independent value during the same quiet period.
+        await self._async_save_control_state_locked()
+        return False
 
     async def _async_save_control_state_locked(self) -> None:
         """A reported control-write failure must reconcile its actual generation."""
@@ -450,6 +576,20 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         normalized = super()._normalize_active(value)
         if normalized is None:
             return None
+        raw_controls = value.get("controls") or {}
+        for entity_id, control in normalized["controls"].items():
+            phase = raw_controls.get(entity_id, {}).get("application_state")
+            if phase is not None:
+                if phase not in {"prepared", "applied"}:
+                    raise ValueError("Quiet Hours control application state is invalid")
+                control["application_state"] = phase
+                context_id = raw_controls.get(entity_id, {}).get(
+                    "application_context_id"
+                )
+                if context_id is not None:
+                    if not isinstance(context_id, str) or not context_id:
+                        raise ValueError("Quiet Hours application context is invalid")
+                    control["application_context_id"] = context_id
         raw_observed = (
             value.get("observed_controls") if isinstance(value, Mapping) else None
         )
