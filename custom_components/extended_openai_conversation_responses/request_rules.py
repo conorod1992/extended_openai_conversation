@@ -2303,12 +2303,24 @@ def _native_result_sequence(
         if isinstance(step.get("data"), Mapping) and step["data"].get("result_alias")
     }
 
+    def result_template(match: re.Match[str]) -> str:
+        alias, *path = match.group(0)[1:-1].split(".")
+        expression = alias
+        for part in path:
+            # Bracket lookup avoids dict methods (for example ``items``).
+            # Numeric segments index lists but retain string keys in mappings,
+            # exactly as the final-response resolver does.
+            index = (
+                f"({part!r} if {expression} is mapping else {int(part)})"
+                if part.isdigit()
+                else repr(part)
+            )
+            expression += f"[{index}]"
+        return "{{ " + expression + " }}"
+
     def native_templates(value: Any) -> Any:
         if isinstance(value, str):
-            value = RESULT_REFERENCE.sub(
-                lambda match: "{{ " + match.group(1) + match.group(2) + " }}",
-                value,
-            )
+            value = RESULT_REFERENCE.sub(result_template, value)
             return SLOT_REFERENCE.sub(
                 lambda match: (
                     "{{ " + match.group(1) + " }}"
@@ -2377,9 +2389,26 @@ def _outcome_probes(
                     and isinstance(item, Mapping)
                     and "stop" in item
                 ):
-                    sequence.append(
-                        {"variables": {stopped: not item.get("error", False)}}
-                    )
+                    marker = {"variables": {stopped: not item.get("error", False)}}
+                    if "enabled" in item:
+                        # Let HA evaluate enabled once for both the probe and
+                        # its Stop. Native sequence sub-scripts propagate Stops
+                        # and fatal aborts, and update the existing outer marker.
+                        stop = dict(item)
+                        enabled = stop.pop("enabled")
+                        sequence.append(
+                            {
+                                "sequence": [marker, stop],
+                                "enabled": enabled,
+                                **{
+                                    name: item[name]
+                                    for name in ("alias", "continue_on_error")
+                                    if name in item
+                                },
+                            }
+                        )
+                        continue
+                    sequence.append(marker)
                 sequence.append(instrument(item))
             return sequence
         return value

@@ -695,3 +695,18 @@ def test_optional_ai_task_wire_round_trips_are_mandatory(nested, mode):
     )
     assert node in expected_cases(policy, "ai-task")
     assert node not in policy.get("allowances", {})
+
+
+
+def test_native_request_rule_semantics_are_mandatory():
+    policy = json.loads(CONTRACT.read_text())
+    cases = expected_cases(policy, "request-rules")
+    prefix = "tests_real_ha/test_request_rules_script_semantics.py::"
+    for name, count in {
+        "test_nested_function_results_agree_in_native_action_and_speech": 5,
+        "test_native_stop_enabled_decision_does_not_mask_later_abort": 15,
+        "test_instrumented_stops_preserve_native_nested_scope": 8,
+    }.items():
+        nodes = [node for node in cases if node.startswith(prefix + name + "[")]
+        assert len(nodes) == count
+        assert not set(nodes) & policy.get("allowances", {}).keys()

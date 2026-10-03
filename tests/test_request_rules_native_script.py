@@ -291,3 +291,24 @@ def test_outcome_instrumentation_leaves_service_payloads_untouched():
     action = {"action": "test.echo", "data": {"items": [{"stop": "payload"}]}}
     instrumented, _, _ = _outcome_probes([action])
     assert instrumented[1] == action
+
+
+def test_stop_probe_shares_one_native_enabled_decision_and_keeps_source():
+    stop = {
+        "stop": "finished",
+        "enabled": "{{ now().second > 10 }}",
+        "alias": "Dynamic stop",
+        "continue_on_error": True,
+    }
+    original = deepcopy(stop)
+    sequence, _, marker = _outcome_probes([stop])
+    wrapper = sequence[1]
+    assert wrapper["enabled"] == original["enabled"]
+    assert wrapper["alias"] == original["alias"]
+    assert wrapper["continue_on_error"] is True
+    assert wrapper["sequence"][0] == {"variables": {marker: True}}
+    assert "enabled" not in wrapper["sequence"][1]
+    assert wrapper["sequence"][1] == {
+        key: value for key, value in original.items() if key != "enabled"
+    }
+    assert stop == original
