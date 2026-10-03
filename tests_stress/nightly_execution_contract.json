@@ -1521,7 +1521,25 @@
     "tests_stress/test_usage_retention_endurance.py::test_concurrent_usage_writes_survive_retention_jumps_and_reload",
     "tests_stress/test_usage_retention_endurance.py::test_mixed_foreground_failure_detached_summary_accounting_survives_prune_reload",
     "tests_stress/test_valid_configuration_transitions.py::test_generated_configuration_transitions_remain_live_and_reversible",
-    "tests_stress/test_voice_household_campaign.py::test_voice_household_scopes_survive_concurrency_mapping_edits_and_reload"
+    "tests_stress/test_voice_household_campaign.py::test_voice_household_scopes_survive_concurrency_mapping_edits_and_reload",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_request_templates_keep_per_invocation_arguments[chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_request_templates_keep_per_invocation_arguments[responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[disconnect-direct-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[disconnect-direct-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[disconnect-composite-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[disconnect-composite-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[disconnect-rule-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[disconnect-rule-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[timeout-direct-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[timeout-direct-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[timeout-composite-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[timeout-composite-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[timeout-rule-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_transport_failure_stops_dependent_actions[timeout-rule-responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_completed_empty_and_http_error_responses_remain_data[204--chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_completed_empty_and_http_error_responses_remain_data[204--responses]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_completed_empty_and_http_error_responses_remain_data[404-Received error body-chat_completions]",
+    "tests_stress/test_function_provider_wire_remaining.py::test_rest_completed_empty_and_http_error_responses_remain_data[404-Received error body-responses]"
   ],
   "browser": {
     "browser": [
@@ -1963,7 +1981,13 @@
       "schema_pattern_boundary_cases": 8,
       "schema_contract_rejections": 6,
       "schema_healthy_tool_recoveries": 8,
-      "schema_bounded_regex_exchanges": 12
+      "schema_bounded_regex_exchanges": 12,
+      "rest_scoped_requests": 8,
+      "rest_overlapping_requests": 4,
+      "rest_transport_failure_cases": 12,
+      "rest_transport_recoveries": 12,
+      "rest_blocked_dependent_actions": 8,
+      "rest_received_response_controls": 4
     },
     "request-rules": {
       "ha_service_calls": 1,

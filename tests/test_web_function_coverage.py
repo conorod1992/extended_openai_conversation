@@ -107,3 +107,25 @@ def test_extract_value_handles_attribute_raw_text_and_normal_text() -> None:
         )
         is None
     )
+
+
+@pytest.mark.parametrize("kind", ["timeout", "disconnect"])
+async def test_rest_execute_propagates_recorded_transport_failure(monkeypatch, kind):
+    import aiohttp
+    from homeassistant.exceptions import HomeAssistantError
+
+    error = TimeoutError("Timed out") if kind == "timeout" else aiohttp.ServerDisconnectedError("Disconnected")
+
+    class FailedRestData:
+        last_exception = error
+
+        async def async_update(self):
+            return None
+
+        def data_without_xml(self):
+            raise AssertionError("Transport failure must be inspected before returning data")
+
+    monkeypatch.setattr(web, "get_rest_data", lambda *args: FailedRestData())
+    with pytest.raises(HomeAssistantError, match="REST request failed") as caught:
+        await web.RestFunction().execute(SimpleNamespace(), {}, {}, None, [])
+    assert caught.value.__cause__ is error
