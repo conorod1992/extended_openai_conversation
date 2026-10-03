@@ -47,6 +47,7 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
     rng = random.Random(stress_seed)
     operations = 20 * stress_scale
     publishes = removals = scans = blocked_mutations = 0
+    successful_removals = 0
 
     def verify() -> None:
         actual = {skill.name: skill.description for skill in manager.get_all_skills()}
@@ -59,15 +60,9 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
     verify()
     for index in range(operations):
         name = f"skill-{rng.randrange(24):02d}"
-        if index == 1:
-            name = next(iter(expected))  # Guarantee an actual installed removal.
         action = (
             "publish"
             if index == 0
-            else "remove"
-            if index == 1
-            else "scan"
-            if index == 2
             else rng.choices(("publish", "remove", "scan"), (5, 3, 2))[0]
         )
         if action == "publish":
@@ -96,15 +91,27 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
             assert removed is (name in expected)
             expected.pop(name, None)
             removals += 1
+            successful_removals += int(removed)
         else:
             await manager.async_load_skills()
             scans += 1
         verify()
         record(stress_trace, action, name=name, catalogue_size=len(expected))
 
+    # Keep the full original random journey, adding only an unexercised minimum.
+    if not successful_removals:
+        name = next(iter(expected))
+        assert await manager.async_remove_skill(name)
+        del expected[name]
+        removals += 1
+        successful_removals += 1
+        operations += 1
+        verify()
+        record(stress_trace, "remove", name=name, guaranteed_minimum=True)
     await manager.async_load_skills()
+    scans += 1
     verify()
-    assert publishes and removals and scans and blocked_mutations
+    assert publishes and removals and successful_removals and scans and blocked_mutations
     record(
         stress_trace,
         "summary",
@@ -112,6 +119,18 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
         skill_lifecycle_operations=operations,
         skill_publishes=publishes,
         skill_removals=removals,
-        skill_scans=scans + 1,
+        skill_scans=scans,
         skill_blocked_mutations=blocked_mutations,
     )
+
+
+async def test_seed_without_removal_guarantees_installed_mutation(
+    hass: HomeAssistant, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    stress_trace: list[dict],
+) -> None:
+    """Seed 149 exercises no successful random removal in its original journey."""
+    record(stress_trace, "fixed_minimum_seed", seed=149)
+    await test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
+        hass, tmp_path, monkeypatch, 149, 1, stress_trace
+    )
+    assert any(item.get("guaranteed_minimum") for item in stress_trace)

@@ -1138,6 +1138,7 @@
     "tests_stress/test_runtime_soak.py::test_reload_heavy_seed_guarantees_conversation_floor",
     "tests_stress/test_runtime_soak.py::test_seeded_multi_entry_runtime_soak",
     "tests_stress/test_skill_lifecycle_campaign.py::test_installed_skills_remain_atomic_during_repeated_lifecycle_changes",
+    "tests_stress/test_skill_lifecycle_campaign.py::test_seed_without_removal_guarantees_installed_mutation",
     "tests_stress/test_store_structure_recovery.py::test_invalid_store_structure_stays_durable_until_repaired",
     "tests_stress/test_store_structure_recovery.py::test_knowledge_read_failure_preserves_store_and_sibling_state",
     "tests_stress/test_store_structure_recovery.py::test_knowledge_write_failure_rolls_back_and_survives_reload",
