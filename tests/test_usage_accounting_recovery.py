@@ -95,7 +95,7 @@ async def test_concurrent_usage_acquisition_publishes_one_manager(monkeypatch) -
                 await release.wait()
             return deepcopy(self.data)
 
-    monkeypatch.setattr(usage_module, "RecoveryGuardedStore", BlockingStore)
+    monkeypatch.setattr(usage_module, "_UsageStore", BlockingStore)
     hass = SimpleNamespace(data={})
 
     first = asyncio.create_task(async_get_usage(hass, "entry-1", "agent-1"))

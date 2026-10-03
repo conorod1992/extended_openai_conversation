@@ -72,6 +72,7 @@ def test_transactional_store_subclasses_propagate_writer_failures() -> None:
         ("temporary_memory.py", "TemporaryMemoryStore"),
         ("knowledge.py", "KnowledgeStore"),
         ("request_rules.py", "RequestRuleStore"),
+        ("usage.py", "_UsageStore"),
     ):
         tree = ast.parse((INTEGRATION / module).read_text(encoding="utf-8"))
         declaration = next(
