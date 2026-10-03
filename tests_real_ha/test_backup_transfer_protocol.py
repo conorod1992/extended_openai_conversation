@@ -33,6 +33,7 @@ from custom_components.extended_openai_conversation_responses.memory import (
 from custom_components.extended_openai_conversation_responses.transfer import (
     SECTION_PERSISTENT_MEMORY,
 )
+from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
@@ -202,6 +203,7 @@ async def test_full_backup_round_trip_through_registered_websocket(
     entry = _entry()
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
+    registered = conversation.async_get_agent(hass, entry.entry_id)
     admin = MockUser(id="backup-admin", name="Backup Admin", is_owner=True)
     admin_client = await hass_ws_client(hass, await _user_token(hass, admin))
 
@@ -265,6 +267,8 @@ async def test_full_backup_round_trip_through_registered_websocket(
         SECTION_PERSISTENT_MEMORY in restored["result"]["transfer"]["selected_sections"]
     )
 
+    await hass.async_block_till_done()
+    assert conversation.async_get_agent(hass, entry.entry_id) is registered
     memories = await memory.async_list(owner)
     assert [(item.memory_id, item.content) for item in memories] == [
         (original_id, "Original full-backup acceptance marker.")
@@ -312,6 +316,7 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
     entry = _entry()
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
+    registered = conversation.async_get_agent(hass, entry.entry_id)
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
     original_config = agent_config_snapshot(subentry.data)
     owner = "custom-backup-owner"
@@ -387,6 +392,8 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
             )
             assert cancelled["success"], cancelled
 
+    await hass.async_block_till_done()
+    assert conversation.async_get_agent(hass, entry.entry_id) is registered
     memories = await memory.async_list(owner)
     assert [(item.memory_id, item.content) for item in memories] == [
         (original_id, "Custom backup acceptance marker.")

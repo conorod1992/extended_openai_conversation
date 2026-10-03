@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import json
 from pathlib import Path
@@ -272,3 +273,74 @@ async def test_bad_journal_is_preserved_and_other_assistant_remains_usable(
         fresh_reads=1,
         reloads=2,
     )
+
+
+@pytest.mark.parametrize("category", ["memory", "knowledge"])
+@pytest.mark.usefixtures("real_store_io")
+async def test_restore_drains_direct_manager_failure_reconciliation(
+    hass, monkeypatch, stress_trace, category
+):
+    """A failed writer cannot deadlock recovery between save and reconciliation."""
+    agent, memory, knowledge, target, _previous = await _populated(hass)
+    entry, subentry = agent.entry, agent.subentry
+    manager = memory if category == "memory" else knowledge
+    store = manager._storage._store
+    entered, release, writer_queued = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    reconcile = manager._async_reconcile_failed_save
+    gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
+    wait_for = gate._condition.wait_for
+    replace = atomicwrites.replace_atomic
+    faults = []
+
+    async def held_reconcile():
+        entered.set()
+        await release.wait()
+        return await reconcile()
+
+    async def observed_wait(predicate):
+        if gate._waiting_writers:
+            writer_queued.set()
+        return await wait_for(predicate)
+
+    def fail_once(source, destination):
+        if Path(destination) == Path(store.path) and not faults:
+            faults.append("pre-replacement native failure")
+            raise OSError(errno.EROFS, "failed direct writer")
+        return replace(source, destination)
+
+    monkeypatch.setattr(manager, "_async_reconcile_failed_save", held_reconcile)
+    monkeypatch.setattr(gate._condition, "wait_for", observed_wait)
+    monkeypatch.setattr(atomicwrites, "replace_atomic", fail_once)
+    operation = (
+        memory.async_add("owner", "UNACKNOWLEDGED", "test", "explicit")
+        if category == "memory"
+        else knowledge.async_create("UNACKNOWLEDGED", "", "candidate")
+    )
+    writer = asyncio.create_task(operation)
+    restore = None
+    try:
+        await asyncio.wait_for(entered.wait(), 10)
+        assert faults == ["pre-replacement native failure"] and not writer.done()
+        restore = asyncio.create_task(
+            backup.async_restore_backup(hass, entry, subentry, target)
+        )
+        await asyncio.wait_for(writer_queued.wait(), 10)
+        assert not gate._writer_active and not restore.done()
+        release.set()
+        with pytest.raises(OSError):
+            await asyncio.wait_for(writer, 15)
+        assert (await asyncio.wait_for(restore, 15))["status"] == "restored"
+        await assert_fresh_contents(hass, entry, subentry, target)
+        record(
+            stress_trace,
+            "summary",
+            restore_manager_settlement_cases=1,
+            native_restore_faults=1,
+        )
+    finally:
+        release.set()
+        tasks = [task for task in [writer, restore] if task is not None]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

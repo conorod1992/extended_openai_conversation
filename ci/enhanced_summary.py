@@ -17,6 +17,7 @@ COUNT_METRICS = {
     "process_fresh_boots",
     "native_restore_faults",
     "restore_pending_cases",
+    "restore_manager_settlement_cases",
     "restore_journal_fault_cases",
     "restore_recovery_cold_cases",
     "rejected_recovery_operations",

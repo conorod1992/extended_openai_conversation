@@ -1168,6 +1168,8 @@
     "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable[structure]",
     "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable[truncated]",
     "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable[unreadable]",
+    "tests_stress/test_restore_recovery_safety.py::test_restore_drains_direct_manager_failure_reconciliation[knowledge]",
+    "tests_stress/test_restore_recovery_safety.py::test_restore_drains_direct_manager_failure_reconciliation[memory]",
     "tests_stress/test_restore_recovery_safety.py::test_pending_restore_rejects_writes_until_durable_recovery[completion]",
     "tests_stress/test_restore_recovery_safety.py::test_pending_restore_rejects_writes_until_durable_recovery[rollback]",
     "tests_stress/test_runtime_soak.py::test_reload_heavy_seed_guarantees_conversation_floor",
@@ -1734,7 +1736,8 @@
       "restore_recovery_cold_cases": 1,
       "rejected_recovery_operations": 37,
       "process_fresh_boots": 5,
-      "native_restore_faults": 3
+      "native_restore_faults": 5,
+      "restore_manager_settlement_cases": 2
     },
     "backup-transfer": {
       "backup_chunks_transferred": 1,
@@ -1783,7 +1786,8 @@
       "restore_recovery_cold_cases": 1,
       "rejected_recovery_operations": 37,
       "process_fresh_boots": 5,
-      "native_restore_faults": 3
+      "native_restore_faults": 5,
+      "restore_manager_settlement_cases": 2
     },
     "diagnostics": {
       "artifact_privacy_probes": 4

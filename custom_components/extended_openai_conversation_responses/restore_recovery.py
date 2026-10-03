@@ -22,6 +22,7 @@ from .agent_maintenance import (
     get_agent_maintenance_gate,
 )
 from .const import DOMAIN, SUBSYSTEM_STATUS_KEY
+from .live_subentry_updates import update_live_subentry
 from .operational_errors import log_handled_failure
 
 _LOGGER = logging.getLogger(__name__)
@@ -428,8 +429,11 @@ async def _update_configuration(
     subentry: Any,
     prepared: backup.PreparedRestore,
 ) -> None:
-    hass.config_entries.async_update_subentry(
-        entry, subentry, data=prepared.config, title=prepared.title
+    # The owned restore already resets live subsystem runtimes. Apply its
+    # configuration through the normal live-update path instead of starting an
+    # unowned entry reload while exclusive recovery is still settling.
+    update_live_subentry(
+        hass, entry, subentry, data=prepared.config, title=prepared.title
     )
     await _async_persist_config_entries(
         hass, entry.entry_id, subentry.subentry_id, prepared

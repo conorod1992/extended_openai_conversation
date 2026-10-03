@@ -102,6 +102,7 @@ async def test_conversation_platform_adds_only_conversation_subentries(
     )
     other_subentry = SimpleNamespace(subentry_type="ai_task", subentry_id="task")
     entry = SimpleNamespace(
+        entry_id="entry",
         subentries={"task": other_subentry, "agent": conversation_subentry}
     )
     created_entity = object()
@@ -111,7 +112,7 @@ async def test_conversation_platform_adds_only_conversation_subentries(
         conversation_module, "ExtendedOpenAIAgentEntity", constructor
     )
 
-    await conversation_module.async_setup_entry(object(), entry, add_entities)
+    await conversation_module.async_setup_entry(SimpleNamespace(data={}), entry, add_entities)
 
     constructor.assert_called_once_with(entry, conversation_subentry)
     add_entities.assert_called_once_with(

@@ -7,7 +7,8 @@ managers must instead receive that failure before publishing the mutation.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable
+from contextlib import asynccontextmanager
 from typing import Any, Self
 
 from homeassistant.helpers.storage import Store
@@ -108,3 +109,15 @@ class PropagatingWriteStore(RecoveryGuardedStore):
                 f"Private storage write failed: {storage_failure_reason(number)}; "
                 "the EOAI state change could not be persisted",
             ) from None
+
+
+@asynccontextmanager
+async def async_storage_lock(storage: Any, lock: asyncio.Lock) -> AsyncIterator[None]:
+    """Own manager settlement before taking its lock, including reconciliation."""
+    store = getattr(storage, "_store", None)
+    if isinstance(store, RecoveryGuardedStore) and store._recovery_gate is not None:
+        async with store._recovery_gate.shared(maintenance=True), lock:
+            yield
+    else:
+        async with lock:
+            yield

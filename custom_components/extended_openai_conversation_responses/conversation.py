@@ -376,13 +376,14 @@ class ExtendedOpenAIAgentEntity(
         self._agent_ready = asyncio.Event()
         self._agent_initialization_failed = False
         try:
-            await super().async_added_to_hass()
-            await self._async_initialize_agent_state()
-            await self._async_initialize_optional_managers()
-            # Shared managers can retain a provider bound to the previous entity.
-            sync_memory_embedding_provider(self)
-            self._schedule_archive_retention()
-            conversation.async_set_agent(self.hass, self.entry, self)
+            async with conversation_request_lease(self):
+                await super().async_added_to_hass()
+                await self._async_initialize_agent_state()
+                await self._async_initialize_optional_managers()
+                # Shared managers can retain a provider bound to the previous entity.
+                sync_memory_embedding_provider(self)
+                self._schedule_archive_retention()
+                conversation.async_set_agent(self.hass, self.entry, self)
         except BaseException:
             self._agent_initialization_failed = True
             raise
