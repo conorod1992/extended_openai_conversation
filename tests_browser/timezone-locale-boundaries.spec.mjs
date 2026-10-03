@@ -1,7 +1,7 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
-for (const locale of ["en-GB", "en-US"]) {
+for (const locale of ["en-GB", "en-US", "en-IE", "fr-FR"]) {
   test.describe(`browser Honolulu / HA Dublin / ${locale}`, () => {
     test.use({timezoneId: "Pacific/Honolulu", locale});
 
