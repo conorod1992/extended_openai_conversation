@@ -146,6 +146,67 @@ def item(sha=SOURCE):
 
 
 @pytest.mark.parametrize(
+    "event,omitted,expected",
+    [
+        ("schedule", ("long-lifetime", "heavy"), 0),
+        ("workflow_dispatch", ("long-lifetime", "heavy"), 1),
+        ("schedule", ("long-lifetime", "normal"), 1),
+        ("schedule", ("runtime", "heavy"), 1),
+        ("workflow_dispatch", None, 0),
+    ],
+)
+def test_final_gate_requires_every_row_of_the_actual_lifetime_matrix(
+    tmp_path, monkeypatch, event, omitted, expected
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    for key, value in {
+        "GITHUB_EVENT_NAME": event,
+        "ENHANCED_CANDIDATE_SHA": SOURCE,
+        "ENHANCED_EXPECTED_STABLE_HA_VERSION": "2026.9.4",
+        "ENHANCED_CAMPAIGNS": '["runtime","long-lifetime"]',
+        "ENHANCED_INTENSITIES": '["normal","heavy"]',
+        "ENHANCED_SELECTED": "runtime",
+        "STRESS_SEED": "123",
+        "ENHANCED_NEEDS": "{}",
+    }.items():
+        monkeypatch.setenv(key, value)
+    contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    jobs = {}
+    for campaign in ("runtime", "long-lifetime"):
+        for intensity in ("normal", "heavy"):
+            if (campaign, intensity) == omitted:
+                continue
+            row = lifecycle_item("stable", "2026.9.4")
+            row.pop("ha_point")
+            row.update(
+                campaign=campaign,
+                intensity=intensity,
+                execution_cases=[
+                    {
+                        "nodeid": node,
+                        "execution_id": "probe",
+                        "collected": True,
+                        "executed": True,
+                        "outcome": "passed",
+                    }
+                    for node in sorted(expected_cases(contract, campaign))
+                ],
+                measured_totals=contract.get("minimums", {}).get(campaign, {}),
+            )
+            directory = tmp_path / f"{campaign}-{intensity}"
+            directory.mkdir()
+            (directory / "certification.json").write_text(json.dumps(row), encoding="utf-8")
+            jobs[f"{campaign} / {intensity}"] = "success"
+    monkeypatch.setattr(gate, "actual_jobs", lambda: jobs)
+    assert gate.main(tmp_path) == expected
+    index = json.loads((tmp_path / "certification-final.json").read_text())
+    assert index["passed"] is (expected == 0)
+    assert not index["identity_errors"]
+    assert not index["execution_errors"]
+
+
+@pytest.mark.parametrize(
     "shas,expected", [([SOURCE, SOURCE], 0), ([WRONG, WRONG], 1), ([SOURCE, WRONG], 1)]
 )
 def test_real_final_gate_requires_intended_candidate_even_when_jobs_agree(

@@ -59,6 +59,11 @@ def main(root: Path) -> int:
         (campaign, intensity, None)
         for campaign in campaigns
         for intensity in intensities
+        if not (
+            os.environ.get("GITHUB_EVENT_NAME") == "schedule"
+            and campaign == "long-lifetime"
+            and intensity == "heavy"
+        )
     }
     if selected in {"all", "browser", "diagnostics"}:
         browser_campaign = (
