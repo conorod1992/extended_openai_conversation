@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import suppress
 from datetime import timedelta
@@ -54,6 +55,191 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util, file as ha_file
 from tests_stress.conftest import record
+
+
+@pytest.mark.parametrize(
+    "phase,boundary,timing",
+    [
+        ("schedule", boundary, timing)
+        for boundary in ("before", "after")
+        for timing in ("future", "overdue")
+    ]
+    + [("execution", boundary, "overdue") for boundary in ("before", "after")],
+)
+async def test_delayed_scheduler_same_process_recovers_after_write_and_read_failure(
+    hass, monkeypatch, real_store_io, stress_trace, phase, boundary, timing
+):
+    from copy import deepcopy
+    import json
+
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        normalize_agent_config,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_API_MODE,
+        CONF_FUNCTION_TOOLS,
+        DEFAULT_CONF_FUNCTION_TOOLS,
+    )
+    from custom_components.extended_openai_conversation_responses.delayed_tools import (
+        async_setup_delayed_tools,
+    )
+    from homeassistant.components import conversation
+    from homeassistant.components.homeassistant.exposed_entities import (
+        async_expose_entity,
+    )
+    from homeassistant.core import Context
+    from homeassistant.helpers import storage as ha_storage
+    from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _chat_sse_tool_call,
+        _install_wire,
+    )
+
+    owner = await hass.auth.async_create_user("Delayed recovery owner")
+    delivered = asyncio.Event()
+    effects = []
+
+    async def turn_off(call):
+        effects.append(call)
+        delivered.set()
+
+    hass.services.async_register("light", "turn_off", turn_off)
+    hass.states.async_set("light.scheduler_recovery", "on")
+    async_expose_entity(hass, conversation.DOMAIN, "light.scheduler_recovery", True)
+    await hass.async_start()
+    entry = _make_entry(
+        "Delayed recovery",
+        include_ai_task=False,
+        conversation_options=normalize_agent_config(
+            {
+                CONF_API_MODE: "chat_completions",
+                CONF_FUNCTION_TOOLS: [deepcopy(DEFAULT_CONF_FUNCTION_TOOLS[0])],
+            }
+        ),
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    manager = await async_setup_delayed_tools(hass)
+    path = Path(manager._store.path)
+
+    async def schedule(call_id):
+        arguments = {
+            "delay": {"seconds": 2},
+            "list": [
+                {
+                    "domain": "light",
+                    "service": "turn_off",
+                    "service_data": {"entity_id": ["light.scheduler_recovery"]},
+                }
+            ],
+        }
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            [
+                _chat_sse_tool_call(call_id, "execute_services", arguments),
+                _chat_sse_text("Finished scheduling attempt"),
+            ],
+        )
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Schedule the light",
+            conversation_id=None,
+            context=Context(user_id=owner.id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+        assert result.response.error_code is None
+        return next(
+            json.loads(message["content"])
+            for message in wire.requests[-1]["body"]["messages"]
+            if message.get("tool_call_id") == call_id
+        )
+
+    assert "Scheduled" in json.dumps(await schedule("initial"))
+    assert len(manager._records) == 1
+    original_worker = next(iter(manager._tasks.values()))
+    assert not effects
+    replace = atomicwrites.replace_atomic
+    load = ha_storage.json_util.load_json
+    write_attempted = asyncio.Event()
+
+    def failed_replace(source, destination):
+        if Path(destination) == path:
+            if boundary == "after":
+                replace(source, destination)
+            hass.loop.call_soon_threadsafe(write_attempted.set)
+            raise OSError(errno.EIO, "Controlled delayed write failure")
+        return replace(source, destination)
+
+    def failed_read(filename, *args, **kwargs):
+        if Path(filename) == path:
+            raise OSError(errno.EIO, "Controlled delayed readback failure")
+        return load(filename, *args, **kwargs)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(atomicwrites, "replace_atomic", failed_replace)
+        fault.setattr(ha_storage.json_util, "load_json", failed_read)
+        if phase == "schedule":
+            with pytest.raises(OSError):
+                await schedule("unacknowledged")
+        else:
+            await asyncio.wait_for(write_attempted.wait(), 8)
+            await asyncio.gather(original_worker, return_exceptions=True)
+        assert not manager._setup_complete and not manager._started
+        assert not manager._records and not manager._tasks and not effects
+        with pytest.raises(OSError):
+            await async_setup_delayed_tools(hass)
+        if phase == "schedule" and timing == "overdue":
+            await asyncio.sleep(2.1)
+    disk = json.loads(path.read_text())["data"]["calls"]
+    expected = len(disk) if phase == "schedule" else int(boundary == "before")
+    recovered = await async_setup_delayed_tools(hass)
+    assert recovered is manager
+    assert manager._setup_complete and manager._started
+    assert not manager._invalidated_tasks
+    assert len(manager._tasks) == expected
+    async with asyncio.timeout(8):
+        while len(effects) < expected:
+            delivered.clear()
+            await delivered.wait()
+        while manager._tasks:
+            await asyncio.sleep(0.01)
+    assert len(effects) == expected
+    assert not manager._records
+    assert json.loads(path.read_text())["data"]["calls"] == []
+    # A discarded executing tombstone must not hide or replay the next healthy call.
+    assert "Scheduled" in json.dumps(await schedule("healthy-retry"))
+    async with asyncio.timeout(8):
+        while len(effects) < expected + 1:
+            delivered.clear()
+            await delivered.wait()
+        while manager._tasks:
+            await asyncio.sleep(0.01)
+    assert len(effects) == expected + 1
+    assert json.loads(path.read_text())["data"]["calls"] == []
+    _install_wire(monkeypatch, agent, [_chat_sse_text("Healthy foreground")])
+    result = await conversation.async_converse(
+        hass=hass,
+        text="Are you healthy?",
+        conversation_id=None,
+        context=Context(user_id=owner.id),
+        language="en",
+        agent_id=entry.entry_id,
+    )
+    assert result.response.error_code is None
+    record(
+        stress_trace,
+        "summary",
+        delayed_same_manager_recoveries=1,
+        delayed_compound_storage_faults=1,
+        delayed_recovered_service_effects=expected,
+        delayed_healthy_retry_effects=1,
+        delayed_indeterminate_replay_rejections=int(
+            phase == "execution" and boundary == "after"
+        ),
+    )
 
 
 def _raise_os_error(number: int):

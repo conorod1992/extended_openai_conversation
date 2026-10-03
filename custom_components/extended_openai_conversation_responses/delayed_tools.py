@@ -141,6 +141,7 @@ class DelayedToolManager:
         )
         self._records: dict[str, DelayedToolCall] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._invalidated_tasks: set[asyncio.Task[None]] = set()
         self._lock = asyncio.Lock()
         self._setup_lock = asyncio.Lock()
         self._started = False
@@ -154,6 +155,19 @@ class DelayedToolManager:
         async with self._setup_lock:
             if self._setup_complete:
                 return
+
+            # Cancellation can leave an executor-backed tool or write settling.
+            # Do not load/rearm the next generation while those workers still own it.
+            settling = tuple(self._invalidated_tasks)
+            try:
+                if settling:
+                    await asyncio.shield(
+                        asyncio.gather(*settling, return_exceptions=True)
+                    )
+            finally:
+                self._invalidated_tasks.difference_update(
+                    task for task in settling if task.done()
+                )
 
             raw_data = await self._store.async_load() or {}
             raw_calls = raw_data.get("calls", []) if isinstance(raw_data, dict) else []
@@ -248,7 +262,9 @@ class DelayedToolManager:
         """Stop the scheduler rather than execute from unverified in-memory data."""
         self._records.clear()
         self._setup_complete = False
+        self._started = False
         for task in self._tasks.values():
+            self._invalidated_tasks.add(task)
             task.cancel()
         self._tasks.clear()
 
@@ -330,7 +346,8 @@ class DelayedToolManager:
         except asyncio.CancelledError:
             raise
         finally:
-            self._tasks.pop(call_id, None)
+            if self._tasks.get(call_id) is asyncio.current_task():
+                self._tasks.pop(call_id, None)
 
     async def _async_execute_due(self, call_id: str) -> bool:
         """Re-authorize a due call against live configuration and execute it once."""

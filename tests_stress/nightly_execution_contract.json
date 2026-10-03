@@ -1190,6 +1190,12 @@
     "tests_stress/test_nightly_inventory.py::test_evidence_filenames_bound_parametrized_node_ids",
     "tests_stress/test_nightly_inventory.py::test_native_browser_version_matrix_stays_compact_and_names_its_points",
     "tests_stress/test_os_storage_faults.py::test_broadcast_switch_failure_does_not_report_enabled",
+    "tests_stress/test_os_storage_faults.py::test_delayed_scheduler_same_process_recovers_after_write_and_read_failure[execution-after-overdue]",
+    "tests_stress/test_os_storage_faults.py::test_delayed_scheduler_same_process_recovers_after_write_and_read_failure[execution-before-overdue]",
+    "tests_stress/test_os_storage_faults.py::test_delayed_scheduler_same_process_recovers_after_write_and_read_failure[schedule-after-future]",
+    "tests_stress/test_os_storage_faults.py::test_delayed_scheduler_same_process_recovers_after_write_and_read_failure[schedule-after-overdue]",
+    "tests_stress/test_os_storage_faults.py::test_delayed_scheduler_same_process_recovers_after_write_and_read_failure[schedule-before-future]",
+    "tests_stress/test_os_storage_faults.py::test_delayed_scheduler_same_process_recovers_after_write_and_read_failure[schedule-before-overdue]",
     "tests_stress/test_os_storage_faults.py::test_guest_schedule_failure_does_not_publish_and_retries",
     "tests_stress/test_os_storage_faults.py::test_knowledge_fsync_enospc_rolls_back_and_recovers",
     "tests_stress/test_os_storage_faults.py::test_request_rules_atomic_replace_erofs_rolls_back_and_recovers",
@@ -2092,7 +2098,12 @@
       "rejected_recovery_operations": 37,
       "process_fresh_boots": 5,
       "native_restore_faults": 5,
-      "restore_manager_settlement_cases": 2
+      "restore_manager_settlement_cases": 2,
+      "delayed_same_manager_recoveries": 6,
+      "delayed_compound_storage_faults": 6,
+      "delayed_recovered_service_effects": 7,
+      "delayed_healthy_retry_effects": 6,
+      "delayed_indeterminate_replay_rejections": 1
     },
     "diagnostics": {
       "artifact_privacy_probes": 4
