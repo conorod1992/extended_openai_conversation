@@ -32,6 +32,38 @@ from custom_components.extended_openai_conversation_responses.entity import (
 from homeassistant.components import conversation
 
 
+@pytest.mark.parametrize("mode,outcome", [
+    ("responses", "failed"), ("responses", "cancelled"), ("responses", "incomplete"),
+    ("chat_completions", "length"), ("chat_completions", "content_filter"),
+    ("chat_completions", "tool_calls"), ("chat_completions", "missing-choice"),
+    ("responses", "completed"), ("chat_completions", "stop"),
+])
+async def test_summary_generation_outcomes_preserve_accounting(mode, outcome):
+    response = SimpleNamespace(
+        output_text="partial summary", status=outcome,
+        error={"message": "controlled failure"} if outcome == "failed" else None,
+        choices=[] if outcome == "missing-choice" else [SimpleNamespace(
+            message=SimpleNamespace(content="partial summary"), finish_reason=outcome)],
+        usage=SimpleNamespace(input_tokens=7, output_tokens=3, total_tokens=10,
+                              prompt_tokens=7, completion_tokens=3),
+    )
+    create = AsyncMock(return_value=response)
+    usage = SimpleNamespace(async_record_request=AsyncMock())
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(data={}, runtime_data=SimpleNamespace(
+        responses=SimpleNamespace(create=create),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    entity._usage = usage
+    result = await entity._async_summarize_history(
+        [conversation.UserContent(content="old conversation")], "gpt-5.6", mode)
+    successful = outcome in {"completed", "stop"}
+    assert result == ("partial summary" if successful else None)
+    recorded = usage.async_record_request.await_args.kwargs
+    assert recorded["successful"] is successful
+    assert recorded["request_stage"] == "context_summary"
+    assert recorded["usage"].total_tokens == 10
+
+
 def _history(turns: int = 5) -> list[conversation.Content]:
     content: list[conversation.Content] = [
         conversation.SystemContent(content="System prompt")

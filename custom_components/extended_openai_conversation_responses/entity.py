@@ -104,6 +104,7 @@ from .non_streaming import completed_chat_chunks, completed_responses_events
 from .operational_errors import log_handled_failure
 from .provider_errors import (
     ProviderStreamError,
+    ensure_successful_responses_result,
     provider_stream_error,
     provider_transport_error,
 )
@@ -1874,10 +1875,18 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     else None
                 )
             request_usage = extract_usage(getattr(response, "usage", None))
+            if api_mode == API_MODE_RESPONSES:
+                ensure_successful_responses_result(response)
+            elif not choices or getattr(choices[0], "finish_reason", None) != "stop":
+                raise ProviderStreamError(
+                    "Context summary did not complete normally",
+                    error_type="summary_finish_reason",
+                )
         except BaseException as err:
             if self._usage is not None:
                 await self._usage.async_record_request(
                     successful=False,
+                    usage=request_usage,
                     provider=getattr(self.entry, "data", {}).get(
                         CONF_API_PROVIDER, DEFAULT_API_PROVIDER
                     ),
