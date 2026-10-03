@@ -381,7 +381,10 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     custom_values: dict[str, Any] = {}
     for name, value in (
         ("CONF_CHAT_MODEL", "gpt-5.6"),
-        ("CONF_REASONING_EFFORT", "medium"),
+        # gpt-5.6 Chat Completions only supports function calling with
+        # reasoning_effort=none in the current capability catalogue. Keep the
+        # release-created state valid on both sides of the upgrade boundary.
+        ("CONF_REASONING_EFFORT", "none"),
         ("CONF_TEMPERATURE", 0.42),
     ):
         key = getattr(const, name, None)
