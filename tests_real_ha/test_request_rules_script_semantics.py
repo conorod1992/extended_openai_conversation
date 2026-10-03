@@ -3,6 +3,8 @@
 import asyncio
 from unittest.mock import AsyncMock
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses import services
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
@@ -347,3 +349,186 @@ async def test_failing_ha_action_stops_without_replaying_previous_steps(
     assert _speech(await _say(hass, agent, "healthy rule")) == "Done"
     assert calls == ["before", "healthy"]
     assert debug.summaries()[0]["successful"] is True
+
+
+@pytest.mark.parametrize(
+    "reference,expected",
+    [
+        ("{battery.level}", 9),
+        ("{battery.current.level}", 62),
+        ("{battery.items.0.level}", 73),
+        ("{battery.map.0.level}", 84),
+        ("{{ battery['current']['level'] }}", 62),
+    ],
+)
+async def test_nested_function_results_agree_in_native_action_and_speech(
+    hass,
+    monkeypatch,
+    reference,
+    expected,
+):
+    tool = {
+        "spec": {
+            "name": "rule_battery",
+            "description": "Battery",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "template",
+            "value_template": '{"level":9,"current":{"level":62},"items":[{"level":73}],"map":{"0":{"level":84}}}',
+        },
+    }
+    agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: [tool]})
+    _provider(monkeypatch, agent, [])
+    calls = []
+
+    async def record(call):
+        calls.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "record", record)
+    capture = {
+        "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+        "data": {
+            "function": "rule_battery",
+            "arguments": {},
+            "result_alias": "battery",
+        },
+    }
+    response = (
+        reference if reference.startswith("{battery.") else "{battery.current.level}"
+    )
+    await agent._request_rules.async_create(
+        _local([capture, _record_action(reference)], success="Battery " + response)
+    )
+    assert _speech(await _say(hass, agent, "run rule")) == f"Battery {expected}"
+    assert calls == [expected]
+    await agent._request_rules.async_create(
+        _local(
+            [capture, _record_action("{battery.current.missing}")],
+            phrase="missing rule",
+        )
+    )
+    assert _speech(await _say(hass, agent, "missing rule")) == "Failed safely"
+    assert calls == [expected]
+
+
+@pytest.mark.parametrize(
+    "stop_kind", ["removed", "disabled", "template-disabled", "enabled", "error"]
+)
+@pytest.mark.parametrize("abort_kind", ["condition", "fatal-wait", "nonfatal-wait"])
+async def test_native_stop_enabled_decision_does_not_mask_later_abort(
+    hass,
+    monkeypatch,
+    stop_kind,
+    abort_kind,
+):
+    agent = await _agent(hass)
+    _provider(monkeypatch, agent, [])
+    calls = []
+
+    async def record(call):
+        calls.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "record", record)
+    actions = [_record_action("before")]
+    if stop_kind != "removed":
+        stop = {"stop": "finish"}
+        if stop_kind == "disabled":
+            stop["enabled"] = False
+        elif stop_kind == "template-disabled":
+            stop["enabled"] = "{{ false }}"
+        elif stop_kind == "enabled":
+            stop["enabled"] = "{{ true }}"
+        else:
+            stop.update(enabled=True, error=True)
+        actions.append(stop)
+    if abort_kind == "condition":
+        actions.append({"condition": "template", "value_template": "{{ false }}"})
+    else:
+        actions.append(
+            {
+                "wait_template": "{{ false }}",
+                "timeout": {"milliseconds": 1},
+                "continue_on_timeout": abort_kind == "nonfatal-wait",
+            }
+        )
+    actions.append(_record_action("after"))
+    await agent._request_rules.async_create(_local(actions))
+    await agent._request_rules.async_create(
+        _local([_record_action("healthy")], phrase="healthy rule")
+    )
+    successful = stop_kind == "enabled" or (
+        stop_kind != "error" and abort_kind == "nonfatal-wait"
+    )
+    assert _speech(await _say(hass, agent, "run rule")) == (
+        "Done" if successful else "Failed safely"
+    )
+    continued = (
+        stop_kind in {"removed", "disabled", "template-disabled"}
+        and abort_kind == "nonfatal-wait"
+    )
+    assert calls == (["before", "after"] if continued else ["before"])
+    assert _speech(await _say(hass, agent, "healthy rule")) == "Done"
+    assert calls == (
+        ["before", "after", "healthy"] if continued else ["before", "healthy"]
+    )
+
+
+@pytest.mark.parametrize("scope", ["sequence", "choose"])
+@pytest.mark.parametrize(
+    "ending", ["disabled-condition", "disabled-fatal-wait", "enabled", "error"]
+)
+async def test_instrumented_stops_preserve_native_nested_scope(
+    hass, monkeypatch, scope, ending
+):
+    agent = await _agent(hass)
+    _provider(monkeypatch, agent, [])
+    calls = []
+
+    async def record(call):
+        calls.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "record", record)
+    inner = [
+        _record_action("inside"),
+        {
+            "stop": "nested",
+            "enabled": "{{ false }}" if ending.startswith("disabled") else "{{ true }}",
+            "error": ending == "error",
+        },
+    ]
+    if ending == "disabled-fatal-wait":
+        inner.append(
+            {
+                "wait_template": "{{ false }}",
+                "timeout": {"milliseconds": 1},
+                "continue_on_timeout": False,
+            }
+        )
+    else:
+        inner.append({"condition": "template", "value_template": "{{ false }}"})
+    inner.append(_record_action("late inside"))
+    container = (
+        {"sequence": inner}
+        if scope == "sequence"
+        else {
+            "choose": [
+                {
+                    "conditions": [
+                        {"condition": "template", "value_template": "{{ true }}"}
+                    ],
+                    "sequence": inner,
+                }
+            ]
+        }
+    )
+    await agent._request_rules.async_create(
+        _local([container, _record_action("outside")])
+    )
+    result = await _say(hass, agent, "run rule")
+    assert _speech(result) == (
+        "Failed safely" if ending in {"disabled-fatal-wait", "error"} else "Done"
+    )
+    assert calls == (
+        ["inside", "outside"] if ending == "disabled-condition" else ["inside"]
+    )
