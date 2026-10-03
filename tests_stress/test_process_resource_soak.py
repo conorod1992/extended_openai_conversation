@@ -166,6 +166,7 @@ async def _booted_soak(config_dir, seed, scale):
     agent_module = importlib.import_module(f"custom_components.{DOMAIN}.conversation")
     transfers = importlib.import_module(f"custom_components.{DOMAIN}.backup_transfer")
     long_lifetime = os.environ.get("STRESS_CAMPAIGN") == "long-lifetime"
+    uninterrupted = os.environ.get("EOAI_UNINTERRUPTED_SOAK") == "1"
     lifetime_started = monotonic()
     retention_callbacks = 0
     idle_seconds = 0.0
@@ -386,7 +387,7 @@ async def _booted_soak(config_dir, seed, scale):
                         idle_seconds += monotonic() - idle_began
                 # Reload/failed transport/cancellation recovery exercise real client
                 # and background lifetimes, rather than counting logical managers.
-                if window in ((1, 3, 5, 7) if long_lifetime else (1, 3)):
+                if not uninterrupted and window in ((1, 3, 5, 7) if long_lifetime else (1, 3)):
                     assert await hass.config_entries.async_reload(entry.entry_id)
                     config_entry_reloads += 1
                     await hass.async_block_till_done()
@@ -432,6 +433,7 @@ async def _booted_soak(config_dir, seed, scale):
                             "windows": windows,
                             "provider_requests": provider_requests,
                             "config_entry_reloads": config_entry_reloads,
+                            "uninterrupted_runtime": uninterrupted,
                             "elapsed_seconds": monotonic() - lifetime_started,
                             "idle_seconds": idle_seconds,
                             "retention_callbacks": retention_callbacks,
@@ -451,7 +453,7 @@ async def _booted_soak(config_dir, seed, scale):
                 assert monotonic() - lifetime_started >= 1800
                 assert idle_seconds >= 1500
                 assert retention_callbacks >= 20
-                assert config_entry_reloads == 4
+                assert config_entry_reloads == (0 if uninterrupted else 4)
                 assert expired_transfer_reclaims == 1
             report = json.loads((config_dir / _REPORT).read_text(encoding="utf-8"))
             report["final_healthy_requests"] = 1
