@@ -288,7 +288,7 @@ def test_request_reauthentication_starts_flow_for_401() -> None:
 @pytest.mark.parametrize("field,value", [
     ("api_key", "replacement"), ("base_url", "https://replacement.example"),
     ("api_version", "replacement"), ("organization", "replacement"),
-    ("api_provider", "azure"), ("skip_authentication", True),
+    ("api_provider", "azure"),
 ])
 def test_superseded_authentication_settings_cannot_reopen_reauth(field, value):
     entry = SimpleNamespace(entry_id="entry", data={"api_key": "original-secret"},
@@ -310,6 +310,17 @@ def test_unchanged_credentials_still_reauthenticate_after_runtime_replacement():
     error._eoai_authentication_snapshot = provider_authentication_snapshot(entry)
     entry.runtime_data = object()
     entry.data = {**entry.data, "model": "new-model"}
+    assert request_reauthentication(object(), entry, error) is True
+    entry.async_start_reauth.assert_called_once()
+
+
+def test_setup_validation_policy_does_not_supersede_authentication():
+    entry = SimpleNamespace(entry_id="entry", data={"api_key": "unchanged-secret"},
+                            async_start_reauth=Mock())
+    error = Exception("unauthorized")
+    error.status_code = 401
+    error._eoai_authentication_snapshot = provider_authentication_snapshot(entry)
+    entry.data = {**entry.data, "skip_authentication": True}
     assert request_reauthentication(object(), entry, error) is True
     entry.async_start_reauth.assert_called_once()
 

@@ -18,9 +18,7 @@ from .const import (
     CONF_API_VERSION,
     CONF_BASE_URL,
     CONF_ORGANIZATION,
-    CONF_SKIP_AUTHENTICATION,
     DEFAULT_API_PROVIDER,
-    DEFAULT_SKIP_AUTHENTICATION,
 )
 
 _MAX_MESSAGE = 1000
@@ -276,7 +274,6 @@ def provider_authentication_snapshot(entry: Any) -> tuple[str, str]:
         data.get(CONF_API_VERSION),
         data.get(CONF_ORGANIZATION),
         data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
-        data.get(CONF_SKIP_AUTHENTICATION, DEFAULT_SKIP_AUTHENTICATION),
     ]
     fingerprint = hashlib.sha256(json.dumps(authentication).encode()).hexdigest()
     return str(getattr(entry, "entry_id", "")), fingerprint
