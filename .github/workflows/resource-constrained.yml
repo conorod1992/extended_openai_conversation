@@ -1,0 +1,33 @@
+name: EOAI constrained resource acceptance
+
+on:
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  constrained:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_test.txt
+          pip install homeassistant
+          python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+      - name: Run mixed workload on one CPU with bounded address space
+        env:
+          STRESS_SEED: "424242"
+          STRESS_INTENSITY: "normal"
+        run: |
+          set -euo pipefail
+          ulimit -v 1572864
+          taskset -c 0 pytest tests_stress/test_responses_scale_fairness.py::test_mixed_background_pressure_preserves_lightweight_progress -v -s --asyncio-mode=auto --timeout=300 --tb=short
