@@ -1135,6 +1135,7 @@
     "tests_stress/test_request_rules_provider_wire.py::test_referenced_function_recreation_cannot_rebind_inflight_rule",
     "tests_stress/test_restore_background_ownership.py::test_installed_retention_waits_for_restored_policy",
     "tests_stress/test_restore_background_ownership.py::test_websocket_setup_export_is_coherent_across_restore",
+    "tests_stress/test_runtime_soak.py::test_reload_heavy_seed_guarantees_conversation_floor",
     "tests_stress/test_runtime_soak.py::test_seeded_multi_entry_runtime_soak",
     "tests_stress/test_skill_lifecycle_campaign.py::test_installed_skills_remain_atomic_during_repeated_lifecycle_changes",
     "tests_stress/test_store_structure_recovery.py::test_invalid_store_structure_stays_durable_until_repaired",
