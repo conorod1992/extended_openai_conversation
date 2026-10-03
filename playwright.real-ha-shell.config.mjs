@@ -18,7 +18,7 @@ const profile = process.env.REAL_HA_BROWSER_PROFILE || "chromium";
 const profiles = {
   chromium: devices["Desktop Chrome"], firefox: devices["Desktop Firefox"],
   webkit: devices["Desktop Safari"],
-  "webkit-mobile": {...devices["Desktop Safari"], viewport: {width:390, height:844}},
+  "webkit-mobile": {...devices["iPhone 13"]},
 };
 if (!profiles[profile]) throw new Error(`Unknown native HA browser profile: ${profile}`);
 const artifactKey = artifactSuffix();
@@ -27,7 +27,7 @@ const reportFolder = artifactKey ? `playwright-report/${artifactKey}` : "playwri
 
 export default defineConfig({
   testDir: "./tests_browser",
-  testMatch: ["real-ha-shell.spec.mjs", "real-ha-golden.spec.mjs", "real-ha-credential-replacement.spec.mjs", "real-ha-compatibility.spec.mjs"],
+  testMatch: ["real-ha-shell.spec.mjs", "real-ha-golden.spec.mjs", "real-ha-credential-replacement.spec.mjs", "real-ha-compatibility.spec.mjs", "real-ha-professional-browser.spec.mjs"],
   grep: process.env.EOAI_NATIVE_OWNERSHIP === "1" ? /nightly ownership/ : process.env.EOAI_NATIVE_ENDURANCE === "1"
     ? profile === "chromium" ? /nightly native/ : /nightly native.*(?:Composite rejection|two assistants)/
     : undefined,
@@ -50,7 +50,11 @@ export default defineConfig({
   projects: [
     {
       name: profile,
-      use: {...profiles[profile]},
+      use: {
+        ...profiles[profile],
+        ...(process.env.EOAI_BROWSER_LOCALE ? {locale: process.env.EOAI_BROWSER_LOCALE} : {}),
+        ...(process.env.EOAI_BROWSER_TIMEZONE ? {timezoneId: process.env.EOAI_BROWSER_TIMEZONE} : {}),
+      },
     },
   ],
 });
