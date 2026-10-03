@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -25,6 +26,34 @@ async def _disable_automation_validation(monkeypatch) -> None:
         "_async_validate_config_item",
         AsyncMock(),
     )
+
+
+@pytest.mark.parametrize("component_present", [False, True])
+@pytest.mark.parametrize("file_exists", [False, True])
+async def test_unloaded_automation_rolls_back_without_success(
+    hass, monkeypatch, component_present, file_exists
+):
+    await _disable_automation_validation(monkeypatch)
+    path = Path(hass.config.config_dir, "automations.yaml")
+    original = "- id: existing\n  alias: Existing\n"
+    if file_exists:
+        path.write_text(original)
+    if component_present:
+        hass.data[native.automation.DOMAIN] = SimpleNamespace(entities=[])
+    hass.services.async_call = AsyncMock()
+    with pytest.raises(HomeAssistantError, match="not loaded.*automations.yaml"):
+        await NativeFunction().add_automation(
+            hass,
+            {},
+            {"automation_config": "alias: New\ntriggers: []\nactions: []\n"},
+            None,
+            [],
+        )
+    assert path.exists() is file_exists
+    if file_exists:
+        assert path.read_text() == original
+    assert hass.services.async_call.await_count == 2
+    hass.bus.async_fire.assert_not_called()
 
 
 async def test_concurrent_add_automation_calls_preserve_both_entries(
@@ -50,6 +79,12 @@ async def test_concurrent_add_automation_calls_preserve_both_entries(
         if len(reloads) == 1:
             reload_entered.set()
             await release_reload.wait()
+        document = yaml.safe_load(
+            Path(hass.config.config_dir, "automations.yaml").read_text()
+        )
+        hass.data[native.automation.DOMAIN] = SimpleNamespace(
+            entities=[SimpleNamespace(unique_id=item["id"]) for item in document]
+        )
 
     monkeypatch.setattr(native, "_append_automation_atomic", append)
     hass.services.async_call = AsyncMock(side_effect=reload)

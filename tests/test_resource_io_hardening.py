@@ -51,9 +51,7 @@ def _admin_llm_context(hass):
     return SimpleNamespace(context=Context(user_id="admin-user"))
 
 
-async def test_sqlite_single_empty_and_row_limit_are_safe(
-    hass, tmp_path: Path
-) -> None:
+async def test_sqlite_single_empty_and_row_limit_are_safe(hass, tmp_path: Path) -> None:
     """SQLite empty single results and oversized result sets fail cleanly."""
     import sqlite3
 
@@ -186,7 +184,14 @@ async def test_add_automation_owns_id_and_preserves_existing_yaml(
         "_async_validate_config_item",
         AsyncMock(return_value=None),
     )
-    hass.services.async_call = AsyncMock(return_value=None)
+
+    async def reload(*args, **kwargs):
+        document = yaml.safe_load(automation_path.read_text())
+        hass.data[native_module.automation.DOMAIN] = SimpleNamespace(
+            entities=[SimpleNamespace(unique_id=item["id"]) for item in document]
+        )
+
+    hass.services.async_call = AsyncMock(side_effect=reload)
     llm_context = _admin_llm_context(hass)
 
     function = NativeFunction()
@@ -260,11 +265,7 @@ async def test_add_automation_rolls_back_when_reload_fails(
         await function.add_automation(
             hass,
             {"type": "native", "name": "add_automation"},
-            {
-                "automation_config": (
-                    "alias: New automation\ntrigger: []\naction: []\n"
-                )
-            },
+            {"automation_config": ("alias: New automation\ntrigger: []\naction: []\n")},
             llm_context,
             [],
         )
@@ -288,7 +289,14 @@ async def test_concurrent_add_automation_calls_do_not_lose_updates(
         "_async_validate_config_item",
         AsyncMock(return_value=None),
     )
-    hass.services.async_call = AsyncMock(return_value=None)
+
+    async def reload(*args, **kwargs):
+        document = yaml.safe_load(automation_path.read_text())
+        hass.data[native_module.automation.DOMAIN] = SimpleNamespace(
+            entities=[SimpleNamespace(unique_id=item["id"]) for item in document]
+        )
+
+    hass.services.async_call = AsyncMock(side_effect=reload)
     llm_context = _admin_llm_context(hass)
     function = NativeFunction()
 
