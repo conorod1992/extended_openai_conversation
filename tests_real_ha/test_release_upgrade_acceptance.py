@@ -148,7 +148,7 @@ def _chat_sse_tool_call(call_id: str, name: str, arguments: dict[str, Any]) -> b
             }
         ],
     }
-    return f"data: {json.dumps(chunk)}\\n\\ndata: [DONE]\\n\\n".encode()
+    return f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode()
 
 
 def _chat_sse_text(text: str) -> bytes:
@@ -165,7 +165,7 @@ def _chat_sse_text(text: str) -> bytes:
             }
         ],
     }
-    return f"data: {json.dumps(chunk)}\\n\\ndata: [DONE]\\n\\n".encode()
+    return f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode()
 
 
 def _unwrap_sdk_client(agent: Any) -> Any:
