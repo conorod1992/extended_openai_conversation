@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from openai import OpenAIError
 import pytest
+import voluptuous as vol
 
 from custom_components.extended_openai_conversation_responses import (
     ai_task as ai_task_platform,
@@ -141,18 +142,14 @@ async def test_generate_structured_data_preserves_caller_api_and_serializer(
     monkeypatch.setattr(entity, "_async_handle_chat_log", fake_handle)
     monkeypatch.setattr(
         ai_task_platform,
-        "parse_ai_task_structured_response",
-        lambda text: {"parsed": text},
-    )
-    monkeypatch.setattr(
-        ai_task_platform,
         "tool_snapshot_scope",
         lambda current: (
             pytest.MonkeyPatch.context() if current is snapshot else AssertionError()
         ),
     )
 
-    task = SimpleNamespace(name="structured", structure={"type": "object"})
+    structure = vol.Schema({vol.Required("answer"): str})
+    task = SimpleNamespace(name="structured", structure=structure)
     result = await entity._async_generate_data(cast(Any, task), cast(Any, chat_log))
 
     assert provided["llm_context"] is llm_context
@@ -161,8 +158,8 @@ async def test_generate_structured_data_preserves_caller_api_and_serializer(
     assert handled["function_tools"] is tools
     assert handled["llm_context"] is llm_context
     assert handled["structure_name"] == "structured"
-    assert handled["structure"] == {"type": "object"}
-    assert result.data == {"parsed": '{"answer": "ok"}'}
+    assert handled["structure"] is structure
+    assert result.data == {"answer": "ok"}
 
 
 @pytest.mark.asyncio
