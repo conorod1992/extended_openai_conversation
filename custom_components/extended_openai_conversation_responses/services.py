@@ -534,6 +534,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         )
         downloaded_files: list[str] = []
         download_budget = SkillDownloadBudget()
+        owns_staging = False
 
         def _safe_child(base: Path, name: str) -> Path:
             root = base.resolve()
@@ -635,7 +636,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
         staging_root = skill_manager.staging_dir.resolve()
         staging_dir = staging_root / f"{skill_name}.download-{uuid4().hex}"
-        owns_staging = False
         published = False
 
         try:
