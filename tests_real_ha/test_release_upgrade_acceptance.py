@@ -423,7 +423,13 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
             "enabled": True,
         }
     )
-    data[function_tools_key] = tools
+    # Persist the release's canonical storage representation. 6.8.3 stores
+    # Function Tools as YAML text even though frontend snapshots expose a list.
+    # Writing a raw list directly into the subentry bypasses that normalization
+    # and creates an artificial migration shape no real user save would produce.
+    data[function_tools_key] = yaml.safe_dump(
+        tools, sort_keys=False, allow_unicode=True
+    )
 
     hass.config_entries.async_update_subentry(
         entry,
