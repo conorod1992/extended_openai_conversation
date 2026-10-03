@@ -547,10 +547,12 @@ async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
     # Save through Home Assistant's supported config-subentry mutation boundary,
     # then reload the entry so the candidate must consume its own post-migration state.
     edited = dict(subentry.data)
-    reasoning_key = getattr(const, "CONF_REASONING_EFFORT", None)
-    if isinstance(reasoning_key, str) and reasoning_key in edited:
-        edited[reasoning_key] = "high"
-        state["post_upgrade_reasoning"] = {"key": reasoning_key, "value": "high"}
+    # Make a genuine candidate-era configuration edit without invalidating the
+    # Function Tool capability combination being exercised by this journey.
+    max_tokens_key = getattr(const, "CONF_MAX_TOKENS", None)
+    if isinstance(max_tokens_key, str) and max_tokens_key in edited:
+        edited[max_tokens_key] = 640
+        state["post_upgrade_edit"] = {"key": max_tokens_key, "value": 640}
 
     hass.config_entries.async_update_subentry(
         entry,
@@ -603,9 +605,11 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     subentry = _conversation_subentry(entry)
     assert subentry.subentry_id == state["subentry_id"]
     assert subentry.title == state["candidate_title"]
-    reasoning = state.get("post_upgrade_reasoning")
-    if reasoning:
-        assert subentry.data.get(reasoning["key"]) == reasoning["value"]
+    post_upgrade_edit = state.get("post_upgrade_edit")
+    if post_upgrade_edit:
+        assert (
+            subentry.data.get(post_upgrade_edit["key"]) == post_upgrade_edit["value"]
+        )
 
     await _assert_populated_release_state(hass, entry.entry_id, state)
     await _exercise_release_rule(hass, entry.entry_id, state)
