@@ -104,6 +104,7 @@ class IntercomManager:
         self._history: deque[BroadcastMessage] = deque(maxlen=HISTORY_LIMIT)
         self._queues: dict[str, deque[BroadcastMessage]] = {}
         self._draining: set[str] = set()
+        self._state_generations: dict[str, int] = {}
         self._tracked_entities: set[str] = set()
         self._unsub_state: Any = None
         self._store: Store[dict[str, Any]] = PropagatingWriteStore(
@@ -358,6 +359,7 @@ class IntercomManager:
                     delivery.set("queued_busy")
                     return
                 delivery.set("waiting_idle")
+                generation = self._state_generations.get(entity_id, 0)
                 await asyncio.sleep(IDLE_STABILITY_SECONDS)
                 if not queue or queue[0] is not item:
                     continue
@@ -376,6 +378,10 @@ class IntercomManager:
                 if state is None or state.state != "idle":
                     delivery.set("queued_busy")
                     return
+                # A brief busy/idle transition must restart the full interval.
+                # Attribute-only publications do not change the generation.
+                if self._state_generations.get(entity_id, 0) != generation:
+                    continue
                 delivery.set("delivering")
                 try:
                     await self.hass.services.async_call(
@@ -391,7 +397,7 @@ class IntercomManager:
                     delivery.set("delivered")
                 if queue and queue[0] is item:
                     queue.popleft()
-            if queue is not None and not queue:
+            if queue is not None and not queue and self._queues.get(entity_id) is queue:
                 self._queues.pop(entity_id, None)
         finally:
             self._draining.discard(entity_id)
@@ -400,8 +406,10 @@ class IntercomManager:
                 queued_delivery = queue[0].deliveries.get(entity_id)
                 state = self.hass.states.get(entity_id)
                 if (
-                    queued_delivery is not None
-                    and queued_delivery.status == "queued_busy"
+                    self._enabled
+                    and queued_delivery is not None
+                    and queued_delivery.status
+                    in {"pending", "queued_idle", "queued_busy", "waiting_idle"}
                     and state is not None
                     and state.state == "idle"
                 ):
@@ -411,6 +419,13 @@ class IntercomManager:
     def _async_state_changed(self, event: Event[Any]) -> None:
         entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if entity_id is not None and (
+            getattr(old_state, "state", None) != getattr(new_state, "state", None)
+        ):
+            self._state_generations[entity_id] = (
+                self._state_generations.get(entity_id, 0) + 1
+            )
         if (
             entity_id in self._queues
             and new_state is not None
