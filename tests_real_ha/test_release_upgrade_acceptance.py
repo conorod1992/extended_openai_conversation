@@ -451,11 +451,12 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
         owner.id, memory_marker, "upgrade", "explicit", key="upgrade.release.memory"
     )
     assert agent._knowledge is not None
+    # Use the oldest supported published-release call shape. Newer candidates
+    # default enabled=True, while 6.8.3 predates the explicit enabled argument.
     source = await agent._knowledge.async_create(
         "Release upgrade reference",
         "Created by the published release",
         knowledge_marker,
-        True,
     )
     await agent._request_rules.async_create(
         {
