@@ -164,10 +164,30 @@ async def test_atomic_commit_survives_lost_acknowledgement(
 @pytest.mark.parametrize(
     ("schedule", "commit_first", "cancel_first", "cancel_waiter"),
     [
-        ("fail-before-then-retry", False, False, False),
-        ("fail-after-commit-then-retry", True, False, False),
-        ("cancel-after-commit-then-retry", True, True, False),
-        ("fail-before-cancel-waiter-then-recover", False, False, True),
+        pytest.param(
+            "fail-before-then-retry", False, False, False, id="fail-before-then-retry"
+        ),
+        pytest.param(
+            "fail-after-commit-then-retry",
+            True,
+            False,
+            False,
+            id="fail-after-commit-then-retry",
+        ),
+        pytest.param(
+            "cancel-after-commit-then-retry",
+            True,
+            True,
+            False,
+            id="cancel-after-commit-then-retry",
+        ),
+        pytest.param(
+            "fail-before-cancel-waiter-then-recover",
+            False,
+            False,
+            True,
+            id="fail-before-cancel-waiter-then-recover",
+        ),
     ],
 )
 @pytest.mark.usefixtures("real_store_io")
