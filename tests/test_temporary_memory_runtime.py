@@ -207,6 +207,10 @@ async def test_parallel_request_contexts_never_cross_owners():
 class Manager(temporary.TemporaryMemory):
     def __init__(self, save) -> None:
         super().__init__(None)
+        # These scheduler-only tests model an already loaded manager. Invalidated
+        # managers now reload their real store before publishing a generation.
+        self._initialized = True
+        self._remember_committed_state()
         self._async_save_locked = save
 
 

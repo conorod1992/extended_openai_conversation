@@ -81,6 +81,7 @@ class TemporaryMemory:
         """Load retryably, then persist canonical ownership and the startup ceiling."""
         async with self._lock:
             await self._async_initialize_locked()
+            await self._async_normalize_loaded_records_locked()
 
     @property
     def initialized(self) -> bool:
@@ -90,7 +91,6 @@ class TemporaryMemory:
     async def _async_initialize_locked(self) -> None:
         """Recover authoritative storage before reading or replacing a generation."""
         if self._initialized:
-            await self._async_normalize_loaded_records_locked()
             return
         try:
             if not self._initialized:
