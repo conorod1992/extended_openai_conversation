@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 CORPUS = (
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[2]
     / "tests_stress"
     / "fixtures"
     / "exploration_corpus.json"
