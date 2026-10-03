@@ -763,12 +763,17 @@ def test_configured_tool_policy_uses_exact_membership() -> None:
     assert policy.allows_configured_tool("calendar_write") is False
 
 
-def test_resolve_guest_policy_is_unrestricted_without_active_manager(monkeypatch) -> None:
+def test_resolve_guest_policy_is_unrestricted_without_active_manager(
+    monkeypatch,
+) -> None:
     """Missing or inactive Guest Mode managers must bypass guest restrictions."""
     monkeypatch.setattr(guest_mode, "_resolve_exclusion_policy", _unexpected_resolver)
     monkeypatch.setattr(guest_mode, "_resolve_legacy_policy", _unexpected_resolver)
 
-    assert guest_mode.resolve_guest_policy(SimpleNamespace(), {}, None).guest_active is False
+    assert (
+        guest_mode.resolve_guest_policy(SimpleNamespace(), {}, None).guest_active
+        is False
+    )
     inactive = SimpleNamespace(is_active=lambda: False)
     assert (
         guest_mode.resolve_guest_policy(SimpleNamespace(), {}, inactive).guest_active
@@ -776,7 +781,9 @@ def test_resolve_guest_policy_is_unrestricted_without_active_manager(monkeypatch
     )
 
 
-def test_resolve_guest_policy_routes_current_policy_to_exclusion_resolver(monkeypatch) -> None:
+def test_resolve_guest_policy_routes_current_policy_to_exclusion_resolver(
+    monkeypatch,
+) -> None:
     """An active current-version Guest policy uses the v2 exclusion resolver."""
     manager = SimpleNamespace(is_active=lambda: True)
     expected = guest_mode.GuestCapabilityPolicy(True, readable_entity_ids=frozenset())
@@ -798,7 +805,9 @@ def test_resolve_guest_policy_routes_current_policy_to_exclusion_resolver(monkey
     assert called == [(hass, options, configured_tools)]
 
 
-def test_resolve_guest_policy_routes_legacy_policy_to_legacy_resolver(monkeypatch) -> None:
+def test_resolve_guest_policy_routes_legacy_policy_to_legacy_resolver(
+    monkeypatch,
+) -> None:
     """An active policy without the current version stays on the legacy resolver."""
     manager = SimpleNamespace(is_active=lambda: True)
     expected = guest_mode.GuestCapabilityPolicy(True, readable_entity_ids=frozenset())
@@ -818,3 +827,29 @@ def test_resolve_guest_policy_routes_legacy_policy_to_legacy_resolver(monkeypatc
 
     assert result is expected
     assert called == [(hass, options, configured_tools)]
+
+
+def test_request_policy_intersection_never_restores_authority():
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        GuestCapabilityPolicy,
+    )
+
+    admitted = GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset({"light.allowed", "light.later"}),
+        controllable_entity_ids=frozenset({"light.allowed", "light.later"}),
+        configured_tool_names=frozenset({"safe"}),
+        private_capabilities=False,
+    )
+    tightened = admitted.restricted_by(
+        GuestCapabilityPolicy(
+            True,
+            controllable_entity_ids=frozenset({"light.allowed"}),
+            configured_tool_names=frozenset(),
+        )
+    )
+    disabled = tightened.restricted_by(GuestCapabilityPolicy.unrestricted())
+    assert disabled == tightened
+    assert not disabled.allows_entity_control("light.later")
+    assert not disabled.allows_configured_tool("safe")
+    assert not disabled.private_capabilities
