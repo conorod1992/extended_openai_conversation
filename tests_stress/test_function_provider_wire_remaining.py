@@ -1067,9 +1067,7 @@ async def test_remote_function_socket_fault_recovers(
         elif failed.response.error_code is None:
             assert len(wire.requests) == 2
             value = _provider_result(wire.requests[1], api_mode, "call-fault")
-            assert value is None or (
-                isinstance(value, dict) and value.get("status") == "error"
-            ), value
+            assert isinstance(value, dict) and value.get("status") == "error", value
         assert attempts == [fault]
         healthy = True
         release.set()
@@ -1588,4 +1586,184 @@ async def test_shared_ha_http_pool_waiters_recover_after_tool_cancellation(
         )
         for connector, limit in original_limits.items():
             connector._limit = limit
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize("api_mode", API_MODES)
+async def test_rest_request_templates_keep_per_invocation_arguments(
+    hass, monkeypatch, socket_enabled, stress_trace, api_mode
+):
+    from copy import deepcopy
+    import httpx
+
+    from tests_real_ha.test_provider_wire_e2e import _raw_client
+
+    seen = []
+    overlap = asyncio.Event()
+    release = asyncio.Event()
+    cities = ["Carlow", "Dublin", "Galway", "Cork"]
+
+    async def receive(request):
+        seen.append((request.match_info["city"], request.headers["X-City"], dict(request.query), await request.text()))
+        if request.match_info["city"] in {"Galway", "Cork"}:
+            if len(seen) == 4:
+                overlap.set()
+            await release.wait()
+        return web.Response(text="Received")
+
+    app = web.Application()
+    app.router.add_post("/{city}", receive)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    tasks = []
+    try:
+        url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+        tool = {
+            "spec": {"name": "scoped_rest", "description": "Send scoped city", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}},
+            "function": {"type": "rest", "method": "POST", "resource_template": url + "/{{ city }}", "payload_template": "body={{ city }}", "headers": {"X-City": "{{ city.upper() }}"}, "params": {"city": "{{ city.lower() }}"}},
+        }
+        entry = _make_entry("REST invocation scope", include_ai_task=False, conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]})
+        await _setup_entry(hass, entry)
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        saved = deepcopy(agent.subentry.data[CONF_FUNCTION_TOOLS])
+        requests = []
+
+        async def send(request, *args, **kwargs):
+            body = json.loads(request.content)
+            requests.append(body)
+            city = next(city for city in cities if f"scope {city}" in json.dumps(body))
+            messages = body.get("messages", body.get("input", []))
+            complete = any(item.get("role") == "tool" or item.get("type") == "function_call_output" for item in messages)
+            if api_mode == API_MODE_RESPONSES:
+                reply = _responses_sse_text("Received city") if complete else _responses_sse_tool_call(f"scope-{city}", "scoped_rest", {"city": city})
+            else:
+                reply = _chat_sse_text("Received city") if complete else _chat_sse_tool_call(f"scope-{city}", "scoped_rest", {"city": city})
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=reply, request=request)
+
+        monkeypatch.setattr(_raw_client(agent)._client, "send", send)
+
+        async def say(city):
+            return await conversation.async_converse(hass=hass, text=f"scope {city}", conversation_id=None, context=Context(), language="en", agent_id=entry.entry_id)
+
+        for city in cities[:2]:
+            assert _speech(await say(city)) == "Received city"
+        tasks = [asyncio.create_task(say(city)) for city in cities[2:]]
+        await asyncio.wait_for(overlap.wait(), 10)
+        release.set()
+        assert all(_speech(result) == "Received city" for result in await asyncio.gather(*tasks))
+        assert sorted(seen) == sorted((city, city.upper(), {"city": city.lower()}, f"body={city}") for city in cities)
+        assert agent.subentry.data[CONF_FUNCTION_TOOLS] == saved
+        assert len(requests) == 8
+        record(stress_trace, "summary", rest_scoped_requests=4, rest_overlapping_requests=2)
+    finally:
+        release.set()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize("api_mode", API_MODES)
+@pytest.mark.parametrize("route", ["direct", "composite", "rule"])
+@pytest.mark.parametrize("fault", ["disconnect", "timeout"])
+async def test_rest_transport_failure_stops_dependent_actions(
+    hass, monkeypatch, socket_enabled, stress_trace, api_mode, route, fault
+):
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN, SERVICE_CALL_FUNCTION
+    from tests_real_ha.test_request_rules_script_semantics import _local, _record_action
+
+    healthy = False
+    release = asyncio.Event()
+    attempts = []
+    effects = []
+
+    async def remote(request):
+        attempts.append("healthy" if healthy else fault)
+        if healthy:
+            return web.Response(text="HEALTHY_REST")
+        if fault == "disconnect":
+            request.transport.close()
+        else:
+            await release.wait()
+        return web.Response(text="UNUSABLE")
+
+    async def marker(call):
+        effects.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "record", marker)
+    app = web.Application()
+    app.router.add_post("/probe", remote)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    try:
+        url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/probe"
+        config = {"type": "rest", "method": "POST", "resource": url, "timeout": 1}
+        if route == "composite":
+            config = {"type": "composite", "sequence": [{"type": "script", "sequence": [_record_action("before")]}, config, {"type": "script", "sequence": [_record_action("after")]}]}
+        tool = {"spec": {"name": "transport_probe", "description": "Probe transport", "parameters": {"type": "object", "properties": {}}}, "function": config}
+        entry = _make_entry("REST failure consequences", include_ai_task=False, conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]})
+        await _setup_entry(hass, entry)
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        if route == "rule":
+            await agent._request_rules.async_create(_local([_record_action("before"), {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": {"function": "transport_probe", "arguments": {}}}, _record_action("after")]))
+            replies = []
+        else:
+            replies = _provider_replies(api_mode, "transport-failure", "transport_probe", "Failure handled")
+        wire = _install_wire(monkeypatch, agent, replies)
+
+        async def say():
+            return await conversation.async_converse(hass=hass, text="run rule" if route == "rule" else "Probe transport", conversation_id=None, context=Context(), language="en", agent_id=entry.entry_id)
+
+        result = await say()
+        if route == "rule":
+            assert _speech(result) == "Failed safely"
+            assert not agent._usage.runs[-1].successful
+        else:
+            assert _speech(result) == "Failure handled"
+            outcome = _provider_result(wire.requests[1], api_mode, "transport-failure")
+            assert outcome["status"] == "error", outcome
+        assert effects == ([] if route == "direct" else ["before"])
+        assert attempts == [fault], "An uncertain remote operation must not be replayed"
+        healthy = True
+        release.set()
+        wire = _install_wire(monkeypatch, agent, [] if route == "rule" else _provider_replies(api_mode, "transport-recovery", "transport_probe", "Recovered transport"))
+        result = await say()
+        assert _speech(result) == ("Done" if route == "rule" else "Recovered transport")
+        assert effects == ([] if route == "direct" else ["before", "before", "after"])
+        assert attempts == [fault, "healthy"]
+        record(stress_trace, "summary", rest_transport_failure_cases=1, rest_transport_recoveries=1, rest_blocked_dependent_actions=int(route != "direct"))
+    finally:
+        release.set()
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize("api_mode", API_MODES)
+@pytest.mark.parametrize("status,body", [(204, ""), (404, "Received error body")])
+async def test_rest_completed_empty_and_http_error_responses_remain_data(
+    hass, monkeypatch, socket_enabled, stress_trace, api_mode, status, body
+):
+    async def remote(request):
+        return web.Response(status=status, text=body)
+
+    app = web.Application()
+    app.router.add_get("/probe", remote)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    try:
+        url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/probe"
+        tool = {"spec": {"name": "response_probe", "description": "Probe response", "parameters": {"type": "object", "properties": {}}}, "function": {"type": "rest", "resource": url}}
+        entry = _make_entry("REST received responses", include_ai_task=False, conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]})
+        await _setup_entry(hass, entry)
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        wire = _install_wire(monkeypatch, agent, _provider_replies(api_mode, "received-response", "response_probe", "Received response"))
+        result = await conversation.async_converse(hass=hass, text="Read response", conversation_id=None, context=Context(), language="en", agent_id=entry.entry_id)
+        assert _speech(result) == "Received response"
+        assert _provider_result(wire.requests[1], api_mode, "received-response") == body
+        record(stress_trace, "summary", rest_received_response_controls=1)
+    finally:
         await runner.cleanup()

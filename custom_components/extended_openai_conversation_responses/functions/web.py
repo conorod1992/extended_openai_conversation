@@ -209,6 +209,12 @@ def get_rest_data(
             arguments, parse_result=False
         )
 
+    for key in (CONF_HEADERS, CONF_PARAMS):
+        if key in rendered_config:
+            rendered_config[key] = render_complex(
+                rendered_config[key], arguments, parse_result=key == CONF_PARAMS
+            )
+
     rest_data = rest.create_rest_data_from_config(hass, rendered_config)
     if isinstance(rest_data, rest.data.RestData):
         _install_bounded_session(hass, rest_data)
@@ -241,6 +247,10 @@ class RestFunction(Function):
         rest_data = get_rest_data(hass, function_config, arguments)
 
         await rest_data.async_update()
+        if (error := getattr(rest_data, "last_exception", None)) is not None:
+            raise HomeAssistantError(
+                f"REST request failed: {type(error).__name__}: {error}"
+            ) from error
         value = rest_data.data_without_xml()
         value_template = function_config.get(CONF_VALUE_TEMPLATE)
 
@@ -275,15 +285,7 @@ class ScrapeFunction(Function):
         exposed_entities: list[dict[str, Any]],
     ) -> Any:
         """Execute web scraping."""
-        # Resolve only schema-declared request templates, with this invocation's
-        # arguments. RestData's render_complex leaves these plain values alone.
-        request_config = dict(function_config)
-        for key in (CONF_HEADERS, CONF_PARAMS):
-            if key in request_config:
-                request_config[key] = render_complex(
-                    request_config[key], arguments, parse_result=key == CONF_PARAMS
-                )
-        rest_data = get_rest_data(hass, request_config, arguments)
+        rest_data = get_rest_data(hass, function_config, arguments)
         coordinator = scrape.coordinator.ScrapeCoordinator(
             hass,
             None,

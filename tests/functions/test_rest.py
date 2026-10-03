@@ -31,6 +31,7 @@ class TestRestFunctionYaml:
             "custom_components.extended_openai_conversation_responses.functions.web.rest.create_rest_data_from_config"
         ) as mock_create_rest:
             mock_rest_data = AsyncMock()
+            mock_rest_data.last_exception = None
             mock_rest_data.async_update = AsyncMock()
             # Mock weather API response
             weather_response = """{
