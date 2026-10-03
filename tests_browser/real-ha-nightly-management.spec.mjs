@@ -104,6 +104,9 @@ test("Guest save acknowledgement survives a failed refresh and edits in flight t
   const errors = trackPageErrors(page);
   await page.goto(realFixtureUrl("capabilities/guest-mode"));
   const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.getByRole("heading", {name: "Guest Mode", exact: true})).toBeVisible();
+  const migrationReview = panel.locator("#guest-review-converted");
+  if (await migrationReview.isVisible()) await migrationReview.click();
   const control = panel.locator("#guest-controls-enabled");
   await expect(control).toBeAttached();
   await control.evaluate(input => { for (let parent=input.parentElement; parent; parent=parent.parentElement) if (parent.tagName==="DETAILS") parent.open=true; });
