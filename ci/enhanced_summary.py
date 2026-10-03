@@ -1,4 +1,4 @@
-"""Turn deterministic enhanced-test traces into a useful GitHub Step Summary."""
+"""Turn deterministic enhanced-test traces into a useful GitHub Step Summary"""
 
 from collections import Counter
 import json
