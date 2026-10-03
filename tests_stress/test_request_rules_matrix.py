@@ -161,7 +161,7 @@ async def test_seeded_rule_mutation_and_persistence(
             expected["phrases"].append("shared command café")
             expected["action"]["success_response"] = f"Outcome {identifier}"
             await rules.async_create(
-                expected,
+                deepcopy(expected),
                 expected_revision=rules.revision(),
             )
             live[identifier] = deepcopy(expected)
@@ -170,7 +170,7 @@ async def test_seeded_rule_mutation_and_persistence(
             changed = {**live[identifier], "enabled": not live[identifier]["enabled"]}
             record(stress_trace, operation, id=identifier, enabled=changed["enabled"])
             await rules.async_update(
-                identifier, changed, expected_revision=rules.revision()
+                identifier, deepcopy(changed), expected_revision=rules.revision()
             )
             live[identifier] = changed
         elif operation == "delete":
