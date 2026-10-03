@@ -120,7 +120,7 @@ The `mutants/` directory is Mutmut's generated working state and can be removed 
 
 ## CI
 
-The `Targeted mutation testing` workflow is intentionally `workflow_dispatch` only. It is not part of normal pull-request CI and does not run a stable/dev Home Assistant matrix.
+The `Targeted mutation testing` workflow is not part of normal pull-request CI and does not run a stable/dev Home Assistant matrix. It remains available through `workflow_dispatch`, and all five established campaigns also run nightly from the default branch.
 
 Run it from **Actions → Targeted mutation testing → Run workflow**, then choose one of:
 
