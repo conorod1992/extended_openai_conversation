@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields, replace
 import logging
 from typing import Any, cast
 
@@ -131,6 +131,23 @@ class GuestCapabilityPolicy:
     def unrestricted(cls) -> GuestCapabilityPolicy:
         """Return the normal baseline policy."""
         return cls(False)
+
+    def restricted_by(self, other: GuestCapabilityPolicy) -> GuestCapabilityPolicy:
+        """Intersect authority without restoring permissions during a request."""
+        updates: dict[str, Any] = {}
+        for item in fields(self):
+            before, current = getattr(self, item.name), getattr(other, item.name)
+            if item.name in {"guest_active", "legacy_function_flags"}:
+                updates[item.name] = before or current
+            elif item.name.endswith("_ids") or item.name == "configured_tool_names":
+                updates[item.name] = (
+                    current
+                    if before is None
+                    else (before if current is None else before & current)
+                )
+            else:
+                updates[item.name] = before and current
+        return replace(self, **updates)
 
     def allows_entity_read(self, entity_id: str) -> bool:
         return self.readable_entity_ids is None or entity_id in self.readable_entity_ids

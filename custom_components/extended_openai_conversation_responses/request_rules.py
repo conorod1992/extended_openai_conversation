@@ -25,7 +25,7 @@ from typing import Any, cast
 import unicodedata
 from uuid import uuid4
 
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import Context, HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import condition as ha_condition, config_validation as cv
 from homeassistant.helpers.script import Script, async_validate_actions_config
@@ -120,6 +120,10 @@ SENSITIVE_DOMAINS = {"lock", "alarm_control_panel"}
 RequestRuleFunctionExecutor = Callable[[str, dict[str, Any]], Awaitable[Any]]
 _ACTIVE_FUNCTION_EXECUTOR: ContextVar[RequestRuleFunctionExecutor | None] = ContextVar(
     "request_rule_function_executor", default=None
+)
+_GUARD_SERVICE = "request_rule_guard"
+_ACTIVE_ACTION_GUARD: ContextVar[Callable[[Mapping[str, Any]], None] | None] = (
+    ContextVar("request_rule_action_guard", default=None)
 )
 _ACTIVE_FUNCTION_RESULTS: ContextVar[dict[str, Any] | None] = ContextVar(
     "request_rule_function_results", default=None
@@ -2414,9 +2418,17 @@ def _guest_script_allowed(
     hass: HomeAssistant,
     sequence: Sequence[Mapping[str, Any]],
     policy: GuestCapabilityPolicy,
+    *,
+    slots: Mapping[str, str] | None = None,
 ) -> bool:
-    """Preauthorize every executable action before a Guest script can start."""
+    """Authorize effects without interpreting native wait/condition templates."""
     for item in _iter_script_actions(sequence):
+        if slots is not None and any(
+            key in item for key in ("action", "service", "scene")
+        ):
+            item = _resolve_guest_slot_templates(item, slots)
+        if "scene" in item:
+            item = {"action": "scene.turn_on", "target": {"entity_id": item["scene"]}}
         action_name = item.get("action", item.get("service"))
         if action_name is not None:
             if not isinstance(action_name, str):
@@ -2442,6 +2454,58 @@ def _guest_script_allowed(
         elif any(key in item for key in ("device_id", "event", "event_type")):
             return False
     return True
+
+
+def _guard_native_actions(actions: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Place live authorization beside effects while preserving HA script scopes."""
+    containers = {"sequence", "then", "else", "default", "choose", "parallel", "repeat"}
+
+    def instrument(value: Any, key: str = "") -> Any:
+        if isinstance(value, Mapping):
+            return {
+                name: instrument(item, name) if name in containers else item
+                for name, item in value.items()
+            }
+        if not isinstance(value, list):
+            return value
+        result = []
+        for item in value:
+            if isinstance(item, Mapping) and any(
+                name in item
+                for name in (
+                    "action",
+                    "service",
+                    "device_id",
+                    "event",
+                    "event_type",
+                    "scene",
+                )
+            ):
+                guard = {
+                    "action": f"{DOMAIN}.{_GUARD_SERVICE}",
+                    "data": {"pending_action": dict(item)},
+                }
+                if "enabled" in item:
+                    guard["enabled"] = item["enabled"]
+                result.append(guard)
+            result.append(instrument(item))
+        return result
+
+    return cast(list[dict[str, Any]], instrument(list(actions)))
+
+
+def _ensure_action_guard_service(hass: HomeAssistant) -> None:
+    """Register an internal guard usable only inside its owning rule execution."""
+    if hass.services.has_service(DOMAIN, _GUARD_SERVICE):
+        return
+
+    async def guard(call: ServiceCall) -> None:
+        authorize = _ACTIVE_ACTION_GUARD.get()
+        if authorize is None:
+            raise HomeAssistantError("No active Request Rule action authorization")
+        authorize(call.data["pending_action"])
+
+    hass.services.async_register(DOMAIN, _GUARD_SERVICE, guard)
 
 
 def _resolved_routing_value(value: str, slots: Mapping[str, str], field: str) -> str:
@@ -2506,6 +2570,7 @@ async def async_evaluate_rule(
     timeout_minutes: int = DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     function_executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
     context: Context | None = None,
+    live_guest_policy: Callable[[], GuestCapabilityPolicy] | None = None,
 ) -> RuleEvaluation | None:
     """Apply each eligible rule once, stopping on handoff or failure."""
     matching_generation = rules._generation if isinstance(rules, RequestRules) else None
@@ -2557,6 +2622,7 @@ async def async_evaluate_rule(
             context,
             require_matching_revision=require_matching_revision,
             commit_execution_snapshot=commit_execution_snapshot,
+            live_guest_policy=live_guest_policy,
         )
         require_matching_revision()
         return evaluation
@@ -2581,6 +2647,7 @@ async def async_evaluate_rule(
                 request_override,
                 require_matching_revision=require_matching_revision,
                 commit_execution_snapshot=commit_execution_snapshot,
+                live_guest_policy=live_guest_policy,
             )
             require_matching_revision()
             action = match.rule["action"]
@@ -2645,6 +2712,7 @@ async def _async_evaluate_matched_rule(
     prior_request_override: Mapping[str, str] | None = None,
     require_matching_revision: Callable[[], None] | None = None,
     commit_execution_snapshot: Callable[[], None] | None = None,
+    live_guest_policy: Callable[[], GuestCapabilityPolicy] | None = None,
 ) -> RuleEvaluation:
     """Execute one already matched and condition-eligible rule."""
     rule = match.rule
@@ -2656,13 +2724,11 @@ async def _async_evaluate_matched_rule(
         executable_actions = action["actions"]
         if policy.guest_active:
             try:
-                executable_actions = _resolve_guest_slot_templates(
-                    executable_actions, match.slots
-                )
                 allowed = _guest_script_allowed(
                     hass,
                     cast(Sequence[Mapping[str, Any]], executable_actions),
                     policy,
+                    slots=match.slots,
                 )
             except GuestModeDenied:
                 allowed = False
@@ -2687,6 +2753,9 @@ async def _async_evaluate_matched_rule(
                 if captures_results
                 else executable_actions
             )
+            if live_guest_policy is not None:
+                _ensure_action_guard_service(hass)
+                script_actions = _guard_native_actions(script_actions)
             script_actions, completion_marker, stop_marker = _outcome_probes(
                 script_actions
             )
@@ -2708,6 +2777,23 @@ async def _async_evaluate_matched_rule(
                 DOMAIN,
                 log_exceptions=False,
             )
+
+            def authorize_pending(pending: Mapping[str, Any]) -> None:
+                nonlocal policy
+                if live_guest_policy is not None:
+                    policy = policy.restricted_by(live_guest_policy())
+                if not policy.guest_active:
+                    return
+                # Scene activation is native service execution too.
+                if "scene" in pending:
+                    pending = {
+                        "action": "scene.turn_on",
+                        "target": {"entity_id": pending["scene"]},
+                    }
+                if not _guest_script_allowed(hass, [pending], policy):
+                    raise GuestModeDenied()
+
+            guard_token = _ACTIVE_ACTION_GUARD.set(authorize_pending)
             token = _ACTIVE_FUNCTION_EXECUTOR.set(function_executor)
             result_values: dict[str, Any] = {}
             result_token = _ACTIVE_FUNCTION_RESULTS.set(result_values)
@@ -2744,6 +2830,7 @@ async def _async_evaluate_matched_rule(
                 _ACTIVE_RESULT_PATHS.reset(paths_token)
                 _ACTIVE_FUNCTION_RESULTS.reset(result_token)
                 _ACTIVE_FUNCTION_EXECUTOR.reset(token)
+                _ACTIVE_ACTION_GUARD.reset(guard_token)
                 # Script.async_unload was added after our minimum supported HA.
                 # Older Script releases expose async_stop for the same final
                 # run cleanup; keep using async_unload where it is available.

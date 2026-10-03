@@ -890,6 +890,7 @@ class ExtendedOpenAIAgentEntity(
                                 )
                             ),
                             context=user_input.context,
+                            live_guest_policy=self._effective_guest_policy,
                         )
                         if self._request_rules is not None
                         and self._request_rule_runtime is not None
@@ -1624,9 +1625,9 @@ class ExtendedOpenAIAgentEntity(
             request_policy, getattr(self, "_guest_mode", None)
         ):
             return request_policy
-        if request_policy is not None and request_policy.guest_active:
-            return request_policy
         live_policy = self._resolve_live_guest_policy()
+        if request_policy is not None:
+            live_policy = request_policy.restricted_by(live_policy)
         if live_policy.guest_active:
             # Pin a mid-request activation so a later trusted disable cannot
             # expand this in-flight request. The next user turn resolves afresh.
