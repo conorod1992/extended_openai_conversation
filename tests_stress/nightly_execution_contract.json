@@ -691,7 +691,6 @@
     "tests_real_ha/test_native_automation_acceptance.py::test_cancelled_native_automation_retains_ownership_until_settled[rollback]",
     "tests_real_ha/test_native_automation_acceptance.py::test_native_add_automation_validates_reloads_and_triggers_once",
     "tests_real_ha/test_native_indirect_target_resolution.py::test_native_area_and_device_targets_follow_live_ha_registries",
-    "tests_real_ha/test_native_recorder_acceptance.py::test_native_history_reads_real_recorder_and_serializes_tool_result",
     "tests_real_ha/test_native_recorder_acceptance.py::test_native_statistics_reads_real_recorder_and_enforces_exposure",
     "tests_real_ha/test_native_service_disappearance.py::test_native_service_disappears_before_dispatch_and_next_turn_recovers",
     "tests_real_ha/test_packaged_release.py::test_packaged_release_is_discovered_and_imported_by_home_assistant",
@@ -1659,7 +1658,23 @@
     "tests_stress/test_function_provider_wire.py::test_normalized_arguments_guard_public_function_dispatch[const-boolean-responses]",
     "tests_stress/test_function_provider_wire.py::test_normalized_arguments_guard_public_function_dispatch[healthy-mixed-chat_completions]",
     "tests_stress/test_function_provider_wire.py::test_normalized_arguments_guard_public_function_dispatch[healthy-mixed-responses]",
-    "tests_stress/test_execution_contract.py::test_normalized_function_constraints_are_mandatory"
+    "tests_stress/test_execution_contract.py::test_normalized_function_constraints_are_mandatory",
+    "tests_real_ha/test_native_recorder_acceptance.py::test_native_history_reads_real_recorder_and_serializes_tool_result[later]",
+    "tests_real_ha/test_native_recorder_acceptance.py::test_native_history_reads_real_recorder_and_serializes_tool_result[unavailable]",
+    "tests_real_ha/test_native_recorder_acceptance.py::test_native_history_reads_real_recorder_and_serializes_tool_result[unknown]",
+    "tests_real_ha/test_native_recorder_acceptance.py::test_native_history_preserves_entity_and_exposure_boundaries[unexposed]",
+    "tests_real_ha/test_native_recorder_acceptance.py::test_native_history_preserves_entity_and_exposure_boundaries[missing]",
+    "tests_stress/test_native_history_automation_lifecycle.py::test_native_automation_success_requires_generated_id_loaded[standard]",
+    "tests_stress/test_native_history_automation_lifecycle.py::test_native_automation_success_requires_generated_id_loaded[standard-disabled]",
+    "tests_stress/test_native_history_automation_lifecycle.py::test_native_automation_success_requires_generated_id_loaded[inline]",
+    "tests_stress/test_native_history_automation_lifecycle.py::test_native_automation_success_requires_generated_id_loaded[alternate]",
+    "tests_stress/test_native_history_automation_lifecycle.py::test_native_history_worker_owns_session_until_query_finishes[False]",
+    "tests_stress/test_native_history_automation_lifecycle.py::test_native_history_worker_owns_session_until_query_finishes[True]",
+    "tests_stress/test_execution_contract.py::test_native_history_and_automation_lifecycles_are_mandatory",
+    "tests/functions/test_native_automation_concurrency.py::test_unloaded_automation_rolls_back_without_success[False-False]",
+    "tests/functions/test_native_automation_concurrency.py::test_unloaded_automation_rolls_back_without_success[False-True]",
+    "tests/functions/test_native_automation_concurrency.py::test_unloaded_automation_rolls_back_without_success[True-False]",
+    "tests/functions/test_native_automation_concurrency.py::test_unloaded_automation_rolls_back_without_success[True-True]"
   ],
   "browser": {
     "browser": [
@@ -2114,7 +2129,12 @@
       "late_external_edit_recoveries": 4,
       "normalized_schema_dispatch_cases": 12,
       "normalized_schema_rejections": 10,
-      "normalized_schema_healthy_dispatches": 12
+      "normalized_schema_healthy_dispatches": 12,
+      "native_history_worker_settlements": 2,
+      "native_history_cancelled_recoveries": 1,
+      "native_automation_layout_cases": 4,
+      "native_automation_load_rejections": 2,
+      "native_disabled_automation_loads": 1
     },
     "request-rules": {
       "ha_service_calls": 1,

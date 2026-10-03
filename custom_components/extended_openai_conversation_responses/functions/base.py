@@ -112,6 +112,8 @@ class Function(ABC):
         hass: HomeAssistant,
         entity_ids: list[str],
         exposed_entities: list[dict[str, Any]],
+        *,
+        require_available: bool = True,
     ) -> None:
         states = {entity_id: hass.states.get(entity_id) for entity_id in entity_ids}
         not_found = [entity_id for entity_id, state in states.items() if state is None]
@@ -122,7 +124,7 @@ class Function(ABC):
             for entity_id, state in states.items()
             if state is not None and state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}
         ]
-        if unavailable:
+        if require_available and unavailable:
             raise HomeAssistantError(f"Entity is unavailable: {', '.join(unavailable)}")
         exposed_entity_ids = {e["entity_id"] for e in exposed_entities}
         not_exposed = [

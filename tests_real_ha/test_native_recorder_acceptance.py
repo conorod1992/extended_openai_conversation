@@ -35,8 +35,9 @@ _EXPOSED = [{"entity_id": "sensor.recorder_acceptance"}]
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("current_state", ["later", "unavailable", "unknown"])
 async def test_native_history_reads_real_recorder_and_serializes_tool_result(
-    hass: HomeAssistant, tmp_path
+    hass: HomeAssistant, tmp_path, current_state
 ) -> None:
     assert await async_setup_component(
         hass,
@@ -88,6 +89,9 @@ async def test_native_history_reads_real_recorder_and_serializes_tool_result(
         "include_start_time_state": False,
         "significant_changes_only": False,
     }
+    hass.states.async_set("sensor.recorder_acceptance", current_state)
+    await hass.async_block_till_done()
+    await recorder.get_instance(hass).async_block_till_done()
     raw = await NativeFunction().get_history(hass, {}, args, None, _EXPOSED)
     assert [[item["state"] for item in group] for group in raw] == [["inside"]], (
         raw,
@@ -124,6 +128,36 @@ async def test_native_history_reads_real_recorder_and_serializes_tool_result(
     serialized = tool_result_data(result)
     assert "inside" in json.dumps(serialized)
     assert "private" not in json.dumps(serialized)
+
+
+@pytest.mark.parametrize("boundary", ["unexposed", "missing"])
+async def test_native_history_preserves_entity_and_exposure_boundaries(
+    hass, tmp_path, boundary
+):
+    from custom_components.extended_openai_conversation_responses.exceptions import (
+        EntityNotFound,
+    )
+
+    assert await async_setup_component(
+        hass,
+        "recorder",
+        {"recorder": {"db_url": f"sqlite:///{tmp_path / 'boundary.db'}"}},
+    )
+    hass.states.async_set("sensor.recorder_acceptance", "recorded")
+    await hass.async_block_till_done()
+    await recorder.get_instance(hass).async_block_till_done()
+    if boundary == "missing":
+        hass.states.async_remove("sensor.recorder_acceptance")
+    else:
+        hass.states.async_set("sensor.recorder_acceptance", "unavailable")
+    with pytest.raises(EntityNotFound if boundary == "missing" else EntityNotExposed):
+        await NativeFunction().get_history(
+            hass,
+            {},
+            {"entity_ids": ["sensor.recorder_acceptance"]},
+            None,
+            _EXPOSED if boundary == "missing" else [],
+        )
 
 
 @pytest.mark.asyncio

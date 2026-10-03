@@ -267,9 +267,6 @@ class TestNativeGetHistory:
                 "custom_components.extended_openai_conversation_responses.functions.native.recorder.get_instance",
                 return_value=mock_recorder_instance,
             ),
-            patch(
-                "custom_components.extended_openai_conversation_responses.functions.native.recorder.util.session_scope"
-            ),
         ):
             result = await function.execute(
                 hass, function_config, arguments, llm_context, exposed_entities

@@ -470,6 +470,15 @@ class NativeFunction(Function):
                 await hass.services.async_call(
                     automation.config.DOMAIN, SERVICE_RELOAD, blocking=True
                 )
+                component = hass.data.get(automation.DOMAIN)
+                if component is None or not any(
+                    entity.unique_id == config["id"] for entity in component.entities
+                ):
+                    raise HomeAssistantError(
+                        "New automation was not loaded. Configure "
+                        "automation: !include automations.yaml in configuration.yaml "
+                        "to enable automation creation, then retry."
+                    )
             except Exception:
                 try:
                     await hass.async_add_executor_job(
@@ -521,23 +530,23 @@ class NativeFunction(Function):
         start_time = self.as_utc(start_time, now - one_day, "start_time not valid")
         end_time = self.as_utc(end_time, start_time + one_day, "end_time not valid")
 
-        self.validate_entity_ids(hass, entity_ids, exposed_entities)
+        self.validate_entity_ids(
+            hass, entity_ids, exposed_entities, require_available=False
+        )
 
         try:
-            with recorder.util.session_scope(hass=hass, read_only=True) as session:
-                result = await recorder.get_instance(hass).async_add_executor_job(
-                    recorder_history.get_significant_states_with_session,
-                    hass,
-                    session,
-                    start_time,
-                    end_time,
-                    entity_ids,
-                    None,
-                    include_start_time_state,
-                    significant_changes_only,
-                    minimal_response,
-                    no_attributes,
-                )
+            result = await recorder.get_instance(hass).async_add_executor_job(
+                recorder_history.get_significant_states,
+                hass,
+                start_time,
+                end_time,
+                entity_ids,
+                None,
+                include_start_time_state,
+                significant_changes_only,
+                minimal_response,
+                no_attributes,
+            )
         except (RuntimeError, OSError) as err:
             raise HomeAssistantError("History is temporarily unavailable") from err
 
