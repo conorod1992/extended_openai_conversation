@@ -1691,7 +1691,13 @@
     "tests/functions/test_professional_nightly_contracts.py::test_semantic_oracle_rejects_deliberately_wrong_effects",
     "tests_real_ha/test_native_recorder_acceptance.py::test_native_history_reads_real_recorder_and_serializes_tool_result",
     "tests_stress/test_generated_request_rule_action_contracts.py::test_generated_request_rule_action_sequences_keep_request_local_variables",
-    "tests_stress/test_generated_request_rule_action_contracts.py::test_generated_request_rule_failure_isolated_from_healthy_siblings"
+    "tests_stress/test_generated_request_rule_action_contracts.py::test_generated_request_rule_failure_isolated_from_healthy_siblings",
+    "tests_real_ha/test_native_automation_acceptance.py::test_native_script_consumes_real_eoai_process_service_response",
+    "tests_stress/test_ai_task_continuity.py::test_overlapping_caller_tools_keep_context_and_cancellation_request_local[chat_completions]",
+    "tests_stress/test_ai_task_continuity.py::test_overlapping_caller_tools_keep_context_and_cancellation_request_local[responses]",
+    "tests_stress/test_native_audio_delivery.py::test_responses_native_audio_executes_tool_once_and_next_voice_turn_is_healthy",
+    "tests_stress/test_provider_endpoint_selection.py::test_provider_family_keeps_tool_continuation_on_selected_sdk_wire[https://compatible.example/v1-openai-False-/v1/chat/completions]",
+    "tests_stress/test_provider_endpoint_selection.py::test_provider_family_keeps_tool_continuation_on_selected_sdk_wire[https://example.openai.azure.com-openai-True-/openai/deployments/gpt-5.6/chat/completions]"
   ],
   "browser": {
     "browser": [
