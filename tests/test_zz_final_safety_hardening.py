@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import yaml
 
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
@@ -152,7 +153,14 @@ async def test_add_automation_requires_active_admin(
     hass.auth.async_get_user = AsyncMock(
         return_value=SimpleNamespace(is_active=True, is_admin=True)
     )
-    hass.services.async_call = AsyncMock(return_value=None)
+
+    async def reload(*args, **kwargs):
+        document = yaml.safe_load(automation_path.read_text())
+        hass.data["automation"] = SimpleNamespace(
+            entities=[SimpleNamespace(unique_id=item["id"]) for item in document]
+        )
+
+    hass.services.async_call = AsyncMock(side_effect=reload)
 
     assert (
         await function.add_automation(
