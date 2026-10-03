@@ -476,6 +476,7 @@ def _public_manager(
     manager._initialized = True
     manager._unsubscribers = []
     manager._registered_state_entity_id = None
+    manager._published_state = None
     return manager
 
 
@@ -575,12 +576,18 @@ def test_state_entity_id_registers_once_and_propagates_other_attribute_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     create = MagicMock(return_value=SimpleNamespace(entity_id="binary_sensor.quiet"))
-    registry = SimpleNamespace(async_get_or_create=create)
+    lookup = Mock(
+        side_effect=[None, "binary_sensor.quiet", "binary_sensor.renamed", None]
+    )
+    registry = SimpleNamespace(async_get_or_create=create, async_get_entity_id=lookup)
     monkeypatch.setattr(quiet_hours.er, "async_get", lambda _hass: registry)
     manager = _public_manager(SimpleNamespace())
 
     assert manager._state_entity_id() == "binary_sensor.quiet"
     assert manager._state_entity_id() == "binary_sensor.quiet"
+    create.assert_called_once()
+    assert manager._state_entity_id() == "binary_sensor.renamed"
+    assert lookup.call_count == 3
     create.assert_called_once()
 
     def fail(**_kwargs: Any) -> Any:
@@ -604,7 +611,7 @@ def test_publish_state_projects_active_and_inactive_periods(
             )
         ),
     )
-    states = SimpleNamespace(async_set=MagicMock())
+    states = SimpleNamespace(async_set=MagicMock(), get=lambda _id: None)
     manager = _public_manager(
         SimpleNamespace(states=states),
         QuietHoursConfig(enabled=True, max_volume=0.2, wake_sound="off"),
@@ -725,7 +732,7 @@ async def test_volume_apply_covers_skip_noop_success_and_rollback(
     )
     manager._async_save_locked.assert_not_awaited()
 
-    values = iter((0.1, 0.8, 0.9))
+    values = iter((0.1, 0.8, 0.9, 0.9))
     monkeypatch.setattr(quiet_hours, "_current_volume", lambda *_args: next(values))
     await manager._async_apply_volume_locked(
         "assist_satellite.test", "media_player.quiet", controls
@@ -770,7 +777,7 @@ async def test_switch_apply_covers_skip_noop_success_and_rollback(
     )
     manager._async_save_locked.assert_not_awaited()
 
-    values = iter((False, True, True))
+    values = iter((False, True, True, True))
     monkeypatch.setattr(quiet_hours, "_current_switch", lambda *_args: next(values))
     await manager._async_apply_switch_locked(
         "assist_satellite.test", "switch.already_off", False, controls
@@ -817,7 +824,14 @@ def test_normalize_active_merges_observed_and_owned_controls() -> None:
     ]
 
 
-async def test_shutdown_unsubscribes_and_removes_registered_state() -> None:
+async def test_shutdown_unsubscribes_and_removes_registered_state(monkeypatch) -> None:
+    monkeypatch.setattr(
+        quiet_hours.er,
+        "async_get",
+        lambda _hass: SimpleNamespace(
+            async_get_entity_id=lambda *_args: "binary_sensor.quiet"
+        ),
+    )
     first = MagicMock()
     second = MagicMock()
     states = SimpleNamespace(async_remove=MagicMock())

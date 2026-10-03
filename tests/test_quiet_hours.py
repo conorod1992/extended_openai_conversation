@@ -20,6 +20,31 @@ from custom_components.extended_openai_conversation_responses.quiet_hours import
 _DUBLIN = ZoneInfo("Europe/Dublin")
 
 
+@pytest.mark.parametrize(
+    ("start", "end", "first", "last"),
+    [
+        ("01:30", "03:00", (0, 30), (3, 0)),
+        ("00:00", "01:30", (-1, 0), (1, 30)),
+        ("01:15", "01:45", (0, 15), (1, 45)),
+    ],
+)
+def test_repeated_hour_membership_uses_elapsed_instants(start, end, first, last):
+    """A small pure regression covers every minute around the rollback in UTC."""
+    midnight = datetime(2026, 10, 25, tzinfo=UTC)
+    begin = midnight + timedelta(hours=first[0], minutes=first[1])
+    finish = midnight + timedelta(hours=last[0], minutes=last[1])
+    identities = set()
+    for minute in range(-1, 182):
+        instant = midnight + timedelta(minutes=minute)
+        period = quiet_period_for(instant.astimezone(_DUBLIN), start, end)
+        assert (period is not None) is (begin <= instant < finish), instant
+        if period is not None:
+            assert period.start.astimezone(UTC) == begin
+            assert period.end.astimezone(UTC) == finish
+            identities.add((period.start.isoformat(), period.end.isoformat()))
+    assert len(identities) == 1
+
+
 def _discovery_entry(
     entity_id: str,
     domain: str,
