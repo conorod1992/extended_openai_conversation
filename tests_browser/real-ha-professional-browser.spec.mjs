@@ -1,6 +1,7 @@
 import {expect, test} from "@playwright/test";
 import {stat} from "node:fs/promises";
 import {openColdHaRoute, replaceNativeYaml} from "./real-ha-shell-helpers.mjs";
+import {acceptConfirmation} from "./browser-helpers.mjs";
 import {retentionGrowth, sampleRetainedRuntime} from "./browser-retention-metrics.mjs";
 
 const enabled = process.env.EOAI_PROFESSIONAL_BROWSER === "1";
@@ -46,8 +47,11 @@ test("production-sized backup crosses real browser and HA websocket in multiple 
   expect(importStart.result.chunk_size).toBe(512 * 1024);
   expect(afterUpload.filter(item => item.message.action === "import_chunk").length).toBeGreaterThanOrEqual(2);
   await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
-  await panel.locator("#restore-transfer-cancel").click();
+  await panel.locator("#restore-transfer-apply").click();
+  await acceptConfirmation(panel);
   await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
+  const completed = await page.evaluate(() => window.__transferCalls);
+  expect(completed.filter(item => item.message.action === "import_restore")).toHaveLength(1);
 });
 
 test("genuine native controls survive repeated mounts without duplicate backend actions", async ({context, page}, testInfo) => {
