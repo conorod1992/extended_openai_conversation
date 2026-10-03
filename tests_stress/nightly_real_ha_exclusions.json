@@ -3,7 +3,6 @@
   "excluded": [
     "tests_real_ha/test_acceptance_lifecycle.py",
     "tests_real_ha/test_acceptance_seams.py",
-    "tests_real_ha/test_assist_origin_context.py",
     "tests_real_ha/test_backup_restore_atomicity.py",
     "tests_real_ha/test_backup_restore_delayed_tool_collision.py",
     "tests_real_ha/test_backup_restore_live_runtime_refresh.py",

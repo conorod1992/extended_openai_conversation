@@ -13,6 +13,7 @@ import custom_components.extended_openai_conversation_responses as integration
 from custom_components.extended_openai_conversation_responses import (
     management_function_repair as repair,
     management_ui,
+    model_lifecycle,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
@@ -78,10 +79,11 @@ def _hass(*entries):
 
 
 def _stub_setup(monkeypatch):
+    monkeypatch.setattr(model_lifecycle.ir, "async_get", lambda _hass: SimpleNamespace(async_get_issue=lambda *_args: None))
     monkeypatch.setattr(
         integration, "get_authenticated_client", AsyncMock(return_value=object())
     )
-    monkeypatch.setattr(integration, "DebugOpenAIClientProxy", lambda client: client)
+    monkeypatch.setattr(integration, "DebugOpenAIClientProxy", lambda client, **_kwargs: client)
     monkeypatch.setattr(
         integration,
         "PerformanceOpenAIClientProxy",

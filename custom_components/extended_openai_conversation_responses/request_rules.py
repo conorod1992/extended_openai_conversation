@@ -2187,12 +2187,6 @@ async def async_call_active_function(
         if isinstance(payload, str):
             with suppress(json.JSONDecodeError):
                 payload = json.loads(payload)
-        if isinstance(payload, Mapping) and payload.get("status") in {
-            "error",
-            "denied",
-            "unavailable",
-        }:
-            raise HomeAssistantError("Function Tool returned a failure")
         results[result_alias] = _bounded_function_result(payload)
         for reference in (_ACTIVE_RESULT_PATHS.get() or {}).get(result_alias, set()):
             resolve_result_values(reference, {}, results)

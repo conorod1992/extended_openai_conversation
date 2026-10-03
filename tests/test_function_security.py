@@ -458,9 +458,10 @@ async def test_request_rule_function_uses_structured_outcome(
     entity.subentry = SimpleNamespace(subentry_id="agent-1", data=latest_data)
     entity._configured_function_tools_from_data = lambda _data: [tool]
     entity._get_exposed_entities = lambda: []
-    entity._execute_function_tool = AsyncMock(
-        return_value=SimpleNamespace(tool_result={"result": json.dumps(outcome)})
-    )
+    async def execute(_tool, tool_input, *_args):
+        return entity._tool_result(tool_input, outcome)
+
+    entity._execute_function_tool = AsyncMock(side_effect=execute)
     with pytest.raises(error_type, match=message):
         await entity._async_execute_request_rule_function("control", {}, None)
 

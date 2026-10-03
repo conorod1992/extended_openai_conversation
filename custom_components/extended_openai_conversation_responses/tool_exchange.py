@@ -62,7 +62,7 @@ def retained_tool_calls_since(
     return calls
 
 
-def _reject_duplicate_tool_call_ids(tool_calls: Iterable[llm.ToolInput]) -> None:
+def validate_tool_call_ids(tool_calls: Iterable[llm.ToolInput]) -> None:
     """Reject one provider round whose call IDs cannot be paired unambiguously."""
     seen: set[str] = set()
     for tool_call in tool_calls:
@@ -497,7 +497,7 @@ async def async_execute_tool_exchange(
         raise HomeAssistantError(
             "Function Tool configuration changed during the provider request; the pending tool call was stopped"
         )
-    _reject_duplicate_tool_call_ids(pending_tool_calls)
+    validate_tool_call_ids(pending_tool_calls)
     prior_results = {
         call_id
         for content in getattr(chat_log, "content", ())

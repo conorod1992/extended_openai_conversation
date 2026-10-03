@@ -51,6 +51,163 @@ MATCHERS = sorted(CLASSIFIED_MATCHERS)
 API_MODES = [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES]
 
 
+@pytest.mark.parametrize("capture", [False, True], ids=["uncaptured", "captured"])
+@pytest.mark.parametrize("parse_result", [False, True], ids=["text", "parsed"])
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("0", 0),
+        ("false", False),
+        ("null", None),
+        ("[]", []),
+        ('{"level":62}', {"level": 62}),
+        ("plain text", "plain text"),
+        ("", ""),
+        (
+            '{"status":"error","error":"business data"}',
+            {"status": "error", "error": "business data"},
+        ),
+    ],
+    ids=[
+        "zero",
+        "false",
+        "null",
+        "array",
+        "object",
+        "plain",
+        "empty",
+        "business-error",
+    ],
+)
+async def test_function_result_values_survive_public_request_rule(
+    hass, monkeypatch, stress_trace, capture, parse_result, text, expected
+):
+    """Valid Function data reaches capture and later actions through public Assist."""
+    tool = {
+        "spec": {
+            "name": "reading",
+            "description": "Return a reading",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "template",
+            "value_template": text,
+            "parse_result": parse_result,
+        },
+    }
+    agent = await _cross_feature_agent(hass, **{CONF_FUNCTION_TOOLS: [tool]})
+    _cross_feature_provider(monkeypatch, agent, [])
+    calls, captured = [], []
+
+    async def marker(call):
+        calls.append(call.data["message"])
+
+    from custom_components.extended_openai_conversation_responses import services
+
+    original = services.async_call_active_function
+
+    async def observe(*args, **kwargs):
+        value = await original(*args, **kwargs)
+        if capture:
+            captured.append(value)
+        return value
+
+    monkeypatch.setattr(services, "async_call_active_function", observe)
+    hass.services.async_register("rule_probe", "record", marker)
+    data = {"function": "reading", "arguments": {}}
+    if capture:
+        data["result_alias"] = "reading"
+    await agent._request_rules.async_create(
+        _local(
+            [
+                _record_action("before"),
+                {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": data},
+                _record_action("after"),
+            ]
+        )
+    )
+    assert (
+        _cross_feature_speech(await _cross_feature_say(hass, agent, "run rule"))
+        == "Done"
+    )
+    assert calls == ["before", "after"]
+    if capture:
+        assert captured == [expected]
+        assert type(captured[0]) is type(expected)
+    assert agent._usage.runs[-1].successful is True
+    record(
+        stress_trace,
+        "summary",
+        function_result_cases=1,
+        capture=capture,
+        parse_result=parse_result,
+        markers=calls,
+    )
+
+
+@pytest.mark.parametrize("capture", [False, True], ids=["uncaptured", "captured"])
+async def test_function_execution_failure_stops_rule_independently_of_capture(
+    hass, monkeypatch, stress_trace, capture
+):
+    """An actual Script Function failure stops dependent work and permits recovery."""
+    tool = {
+        "spec": {
+            "name": "failing",
+            "description": "Fail a controlled action",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "script", "sequence": [{"action": "rule_probe.fail"}]},
+    }
+    agent = await _cross_feature_agent(hass, **{CONF_FUNCTION_TOOLS: [tool]})
+    _cross_feature_provider(monkeypatch, agent, [])
+    calls = []
+
+    async def marker(call):
+        calls.append(call.data["message"])
+
+    async def fail(_call):
+        raise HomeAssistantError("controlled tool failure")
+
+    hass.services.async_register("rule_probe", "record", marker)
+    hass.services.async_register("rule_probe", "fail", fail)
+    data = {"function": "failing", "arguments": {}}
+    if capture:
+        data["result_alias"] = "failure"
+    await agent._request_rules.async_create(
+        _local(
+            [
+                _record_action("before"),
+                {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": data},
+                _record_action("after"),
+            ]
+        )
+    )
+    await agent._request_rules.async_create(
+        _local([_record_action("healthy")], phrase="healthy")
+    )
+    assert (
+        _cross_feature_speech(await _cross_feature_say(hass, agent, "run rule"))
+        == "Failed safely"
+    )
+    assert calls == ["before"]
+    assert agent._usage.runs[-1].successful is False
+    assert (
+        _cross_feature_speech(await _cross_feature_say(hass, agent, "healthy"))
+        == "Done"
+    )
+    assert calls == ["before", "healthy"]
+    assert agent._usage.runs[-1].successful is True
+    record(
+        stress_trace,
+        "summary",
+        returned_execution_failure_cases=1,
+        capture=capture,
+        markers=calls,
+    )
+
+
+
+
 async def test_referenced_function_recreation_cannot_rebind_inflight_rule(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,

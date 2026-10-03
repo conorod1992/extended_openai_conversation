@@ -33,10 +33,15 @@ from homeassistant.exceptions import HomeAssistantError
 TOOL = {
     "spec": {
         "name": "coverage_marker",
-        "description": "Return a marker",
+        "description": "Record a harmless marker",
         "parameters": {"type": "object", "properties": {}},
     },
-    "function": {"type": "native", "name": "execute_service"},
+    "function": {
+        "type": "script",
+        "sequence": [
+            {"action": "coverage_probe.record", "data": {"marker": "generated-action"}}
+        ],
+    },
     "enabled": True,
 }
 DISABLED_TOOL = {**TOOL, "enabled": False}

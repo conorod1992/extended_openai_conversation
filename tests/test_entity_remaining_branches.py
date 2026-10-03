@@ -401,7 +401,7 @@ async def test_chat_history_summary_token_parameter(
 ) -> None:
     """Chat summary requests use the model-compatible output-token parameter."""
     response = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=" summary "))],
+        choices=[SimpleNamespace(message=SimpleNamespace(content=" summary "), finish_reason="stop")],
         usage=None,
     )
     create = AsyncMock(return_value=response)

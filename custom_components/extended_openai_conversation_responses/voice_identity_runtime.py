@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator, Mapping
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from typing import Any
 
 from .const import (
@@ -24,30 +24,11 @@ from .scope import (
 )
 
 
-@contextmanager
-def _prefer_registry_device_source(user_input: Any) -> Iterator[None]:
-    """Prefer HA's registry device ID while preserving satellite metadata afterwards.
-
-    Home Assistant supplies both ``device_id`` and ``satellite_id`` for Assist
-    satellite requests. Voice Identity mappings and device-scoped continuity are
-    keyed by the device-registry ID, while ``satellite_id`` identifies the Assist
-    satellite entity. The conversation engine historically preferred the latter.
-
-    Temporarily hide only the satellite source when a registry device ID is also
-    available so the existing resolver follows its normal ``device_id`` path. Keep
-    the satellite fallback unchanged for callers that genuinely have no device ID.
-    """
-    device_id = getattr(user_input, "device_id", None)
-    satellite_id = getattr(user_input, "satellite_id", None)
-    if not device_id or not satellite_id:
-        yield
-        return
-
-    user_input.satellite_id = None
-    try:
-        yield
-    finally:
-        user_input.satellite_id = satellite_id
+def voice_source_device_id(user_input: Any) -> str | None:
+    """Resolve data ownership without modifying the physical Assist origin."""
+    return getattr(user_input, "device_id", None) or getattr(
+        user_input, "satellite_id", None
+    )
 
 
 async def _user_is_active(agent: Any, user_id: str) -> bool:
@@ -65,9 +46,7 @@ async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str
 
     options = getattr(agent.subentry, "data", {})
     policy = str(options.get(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY))
-    device_id = getattr(user_input, "satellite_id", None) or getattr(
-        user_input, "device_id", None
-    )
+    device_id = voice_source_device_id(user_input)
 
     if policy == VOICE_POLICY_DEVICE_MAPPING:
         mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS, {})
@@ -106,7 +85,6 @@ async def voice_identity_scope(agent: Any, user_input: Any) -> AsyncIterator[Non
     Voice Identity selects data ownership only; it never replaces the authenticated
     Home Assistant caller context used to authorize tools and entity access.
     """
-    with _prefer_registry_device_source(user_input):
-        active_users = await _active_configured_users(agent, user_input)
-        with bind_active_voice_identity_users(active_users):
-            yield
+    active_users = await _active_configured_users(agent, user_input)
+    with bind_active_voice_identity_users(active_users):
+        yield

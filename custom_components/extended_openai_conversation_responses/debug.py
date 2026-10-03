@@ -20,6 +20,8 @@ import time
 from typing import Any, cast
 from uuid import uuid4
 
+from openai import OpenAIError
+
 from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
 
@@ -567,9 +569,15 @@ class _DebugAsyncStream:
 
 
 class _DebugEndpointProxy:
-    def __init__(self, delegate: Any, api_surface: str) -> None:
+    def __init__(
+        self,
+        delegate: Any,
+        api_surface: str,
+        authentication_snapshot: tuple[str, str] | None = None,
+    ) -> None:
         self._delegate = delegate
         self._api_surface = api_surface
+        self._authentication_snapshot = authentication_snapshot
 
     async def create(self, *args: Any, **kwargs: Any) -> Any:
         trace = current_debug_trace()
@@ -582,6 +590,15 @@ class _DebugEndpointProxy:
         try:
             result = await self._delegate.create(*args, **kwargs)
         except BaseException as err:
+            if (
+                isinstance(err, OpenAIError)
+                and self._authentication_snapshot is not None
+            ):
+                # This belongs to the client selected for the actual SDK call,
+                # even if the config entry is repaired while that call awaits.
+                cast(
+                    Any, err
+                )._eoai_authentication_snapshot = self._authentication_snapshot
             if request is not None:
                 request.finish(successful=False, error=err)
             raise
@@ -598,9 +615,13 @@ class _DebugEndpointProxy:
 
 
 class _DebugChatProxy:
-    def __init__(self, delegate: Any) -> None:
+    def __init__(
+        self, delegate: Any, authentication_snapshot: tuple[str, str] | None = None
+    ) -> None:
         self._delegate = delegate
-        self.completions = _DebugEndpointProxy(delegate.completions, "chat.completions")
+        self.completions = _DebugEndpointProxy(
+            delegate.completions, "chat.completions", authentication_snapshot
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._delegate, name)
@@ -609,11 +630,17 @@ class _DebugChatProxy:
 class DebugOpenAIClientProxy:
     """Transparent OpenAI client proxy that captures exact non-secret call kwargs."""
 
-    def __init__(self, delegate: Any) -> None:
+    def __init__(
+        self, delegate: Any, *, authentication_snapshot: tuple[str, str] | None = None
+    ) -> None:
         self._delegate = delegate
-        self.responses = _DebugEndpointProxy(delegate.responses, "responses")
-        self.chat = _DebugChatProxy(delegate.chat)
-        self.embeddings = _DebugEndpointProxy(delegate.embeddings, "embeddings")
+        self.responses = _DebugEndpointProxy(
+            delegate.responses, "responses", authentication_snapshot
+        )
+        self.chat = _DebugChatProxy(delegate.chat, authentication_snapshot)
+        self.embeddings = _DebugEndpointProxy(
+            delegate.embeddings, "embeddings", authentication_snapshot
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._delegate, name)

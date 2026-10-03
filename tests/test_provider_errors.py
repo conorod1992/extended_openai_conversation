@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import logging
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
+
+import httpx
+from openai import AuthenticationError
 
 import pytest
 
@@ -16,6 +19,7 @@ from custom_components.extended_openai_conversation_responses.provider_errors im
     ensure_successful_responses_result,
     log_provider_failure,
     provider_error_metadata,
+    provider_authentication_snapshot,
     provider_log_remediation,
     provider_stream_error,
     provider_transport_error,
@@ -279,6 +283,75 @@ def test_request_reauthentication_starts_flow_for_401() -> None:
 
     assert request_reauthentication(hass, entry, error) is True
     entry.async_start_reauth.assert_called_once_with(hass)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("api_key", "replacement"), ("base_url", "https://replacement.example"),
+    ("api_version", "replacement"), ("organization", "replacement"),
+    ("api_provider", "azure"),
+])
+def test_superseded_authentication_settings_cannot_reopen_reauth(field, value):
+    entry = SimpleNamespace(entry_id="entry", data={"api_key": "original-secret"},
+                            async_start_reauth=Mock())
+    error = Exception("unauthorized")
+    error.status_code = 401
+    error._eoai_authentication_snapshot = provider_authentication_snapshot(entry)
+    assert "original-secret" not in repr(error._eoai_authentication_snapshot)
+    entry.data = {**entry.data, field: value}
+    assert request_reauthentication(object(), entry, error) is False
+    entry.async_start_reauth.assert_not_called()
+
+
+def test_unchanged_credentials_still_reauthenticate_after_runtime_replacement():
+    entry = SimpleNamespace(entry_id="entry", data={"api_key": "unchanged-secret"},
+                            async_start_reauth=Mock(), runtime_data=object())
+    error = Exception("unauthorized")
+    error.status_code = 401
+    error._eoai_authentication_snapshot = provider_authentication_snapshot(entry)
+    entry.runtime_data = object()
+    entry.data = {**entry.data, "model": "new-model"}
+    assert request_reauthentication(object(), entry, error) is True
+    entry.async_start_reauth.assert_called_once()
+
+
+def test_setup_validation_policy_does_not_supersede_authentication():
+    entry = SimpleNamespace(entry_id="entry", data={"api_key": "unchanged-secret"},
+                            async_start_reauth=Mock())
+    error = Exception("unauthorized")
+    error.status_code = 401
+    error._eoai_authentication_snapshot = provider_authentication_snapshot(entry)
+    entry.data = {**entry.data, "skip_authentication": True}
+    assert request_reauthentication(object(), entry, error) is True
+    entry.async_start_reauth.assert_called_once()
+
+
+@pytest.mark.parametrize("surface", ["responses", "chat", "embeddings"])
+@pytest.mark.parametrize("replace", [False, True])
+async def test_sdk_error_retains_authentication_of_actual_call(surface, replace):
+    from custom_components.extended_openai_conversation_responses.debug import DebugOpenAIClientProxy
+
+    entry = SimpleNamespace(entry_id="entry", data={"api_key": "original-secret"},
+                            async_start_reauth=Mock())
+    snapshot = provider_authentication_snapshot(entry)
+    error = AuthenticationError("unauthorized", response=httpx.Response(
+        401, request=httpx.Request("POST", "https://example.com")), body=None)
+
+    async def create(**kwargs):
+        if replace:
+            entry.data = {"api_key": "replacement"}
+        raise error
+
+    endpoint = SimpleNamespace(create=AsyncMock(side_effect=create))
+    delegate = SimpleNamespace(responses=endpoint, embeddings=endpoint,
+                               chat=SimpleNamespace(completions=endpoint))
+    proxy = DebugOpenAIClientProxy(delegate, authentication_snapshot=snapshot)
+    selected = proxy.chat.completions if surface == "chat" else getattr(proxy, surface)
+    with pytest.raises(AuthenticationError) as caught:
+        await selected.create(model="test")
+    assert caught.value is error
+    assert error._eoai_authentication_snapshot == snapshot
+    assert request_reauthentication(object(), entry, error) is (not replace)
+    assert entry.async_start_reauth.call_count == int(not replace)
 
 
 def test_request_reauthentication_handles_start_failure(
