@@ -306,3 +306,105 @@ async def test_backup_restore_privacy_boundary_and_assist(
     )
     assert _speech(await _say(hass, entry, "Are you ready?")) == "Restored and ready"
     assert len(wire.requests) == 1
+
+
+async def test_public_script_function_cleanup_abort_and_repeat(hass, monkeypatch):
+    """The generic adapter runs, rejects a real abort, cleans up and runs again."""
+    import json
+
+    tool = {
+        "spec": {
+            "name": "script_contract",
+            "description": "Run a harmless script",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "abort": {"type": "boolean"},
+                },
+                "required": ["label", "abort"],
+            },
+        },
+        "function": {
+            "type": "script",
+            "sequence": [
+                {
+                    "action": "script_probe.record",
+                    "data": {"marker": "{{ label }} before"},
+                },
+                {
+                    "if": "{{ abort }}",
+                    "then": [
+                        {
+                            "wait_template": "{{ false }}",
+                            "timeout": {"milliseconds": 10},
+                            "continue_on_timeout": False,
+                        },
+                    ],
+                },
+                {
+                    "action": "script_probe.record",
+                    "data": {"marker": "{{ label }} after"},
+                },
+                {"variables": {"_function_result": 0}},
+            ],
+        },
+    }
+    entry = _make_entry(
+        "Script compatibility",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: "chat_completions",
+            CONF_FUNCTION_TOOLS: [tool],
+        },
+    )
+    effects = []
+
+    async def record(call):
+        effects.append(call.data["marker"])
+
+    hass.services.async_register("script_probe", "record", record)
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call(
+                "first", "script_contract", {"label": "first", "abort": False}
+            ),
+            _chat_sse_text("First done"),
+            _chat_sse_tool_call(
+                "aborted", "script_contract", {"label": "aborted", "abort": True}
+            ),
+            _chat_sse_text("Stopped"),
+            _chat_sse_tool_call(
+                "healthy", "script_contract", {"label": "healthy", "abort": False}
+            ),
+            _chat_sse_text("Healthy done"),
+        ],
+    )
+    assert _speech(await _say(hass, entry, "first")) == "First done"
+    assert _speech(await _say(hass, entry, "abort")) == "Stopped"
+    assert _speech(await _say(hass, entry, "healthy")) == "Healthy done"
+
+    def outcome(index, call_id):
+        message = next(
+            m
+            for m in wire.requests[index]["body"]["messages"]
+            if m.get("tool_call_id") == call_id
+        )
+        return json.loads(message["content"])["result"]
+
+    assert outcome(1, "first") == 0
+    failure = outcome(3, "aborted")
+    assert failure["status"] == "error"
+    assert "aborted before completion" in failure["error"]
+    assert outcome(5, "healthy") == 0
+    assert effects == [
+        "first before",
+        "first after",
+        "aborted before",
+        "healthy before",
+        "healthy after",
+    ]
