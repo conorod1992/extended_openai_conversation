@@ -219,3 +219,184 @@ async def test_image_and_owner_survive_caller_tool_continuation_then_isolate_nex
         ai_task_image_continuations=1,
         ai_task_image_isolation_checks=1,
     )
+
+
+@pytest.mark.parametrize("mode", MODES)
+async def test_overlapping_caller_tools_keep_context_and_cancellation_request_local(
+    hass,
+    monkeypatch,
+    stress_trace,
+    mode: str,
+) -> None:
+    """Two overlapping tasks with the same tool name must never share bindings."""
+    from homeassistant.helpers import llm
+    import voluptuous as vol
+
+    entry, entity_id = await _task_entity(hass, mode)
+
+    class TaggedProbe(ContextProbeTool):
+        def __init__(self, tag: str) -> None:
+            super().__init__()
+            self.tag = tag
+
+        async def async_call(self, hass, tool_input, llm_context):
+            self.calls.append((tool_input, llm_context))
+            return {"echo": f"{self.tag}:{tool_input.tool_args['value']}"}
+
+    alpha_probe, bravo_probe = TaggedProbe("alpha"), TaggedProbe("bravo")
+    alpha_api = CallerAPI(hass=hass, id="overlap-alpha", name="Overlap Alpha")
+    bravo_api = CallerAPI(hass=hass, id="overlap-bravo", name="Overlap Bravo")
+    alpha_api.tools = [alpha_probe]
+    bravo_api.tools = [bravo_probe]
+    alpha_user = MockUser(id="overlap-task-alpha", name="Overlap Alpha")
+    bravo_user = MockUser(id="overlap-task-bravo", name="Overlap Bravo")
+    alpha_user.add_to_hass(hass)
+    bravo_user.add_to_hass(hass)
+    alpha_context = Context(user_id=alpha_user.id)
+    bravo_context = Context(user_id=bravo_user.id)
+
+    admitted = {"alpha": asyncio.Event(), "bravo": asyncio.Event()}
+    alpha_continuation = asyncio.Event()
+    release_alpha = asyncio.Event()
+    requests: list[tuple[str, dict]] = []
+
+    def owner(body: dict) -> str:
+        serialized = json.dumps(body)
+        matches = [
+            name
+            for name, marker in (
+                ("alpha", "OVERLAP_TASK_ALPHA"),
+                ("bravo", "OVERLAP_TASK_BRAVO"),
+            )
+            if marker in serialized
+        ]
+        assert len(matches) == 1, serialized
+        return matches[0]
+
+    async def send(request: httpx.Request, *args, **kwargs) -> httpx.Response:
+        del args, kwargs
+        body = json.loads(request.content)
+        current = owner(body)
+        requests.append((current, body))
+        continuation = (
+            any(item.get("type") == "function_call_output" for item in body.get("input", []))
+            if mode == API_MODE_RESPONSES
+            else any(item.get("role") == "tool" for item in body.get("messages", []))
+        )
+        if not continuation:
+            admitted[current].set()
+            other = "bravo" if current == "alpha" else "alpha"
+            await asyncio.wait_for(admitted[other].wait(), 5)
+            tool = body["tools"][0]
+            tool_name = (
+                tool["name"]
+                if mode == API_MODE_RESPONSES
+                else tool["function"]["name"]
+            )
+            assert tool_name == "context_probe"
+            call_id = f"overlap-{current}-{mode}"
+            reply = (
+                _responses_sse_tool_call
+                if mode == API_MODE_RESPONSES
+                else _chat_sse_tool_call
+            )
+            payload = reply(call_id, tool_name, {"value": current})
+        elif current == "alpha":
+            alpha_continuation.set()
+            await release_alpha.wait()
+            payload = _text_reply(mode, "Alpha must not complete")
+        else:
+            serialized = json.dumps(body)
+            assert "bravo:bravo" in serialized
+            assert "alpha:alpha" not in serialized
+            payload = _text_reply(mode, '{"owner":"bravo","status":"complete"}')
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=payload,
+            request=request,
+        )
+
+    raw = _raw_client(SimpleNamespace(_client=entry.runtime_data))
+    monkeypatch.setattr(raw._client, "send", send)
+
+    alpha_task = asyncio.create_task(
+        ai_task.async_generate_data(
+            hass,
+            task_name="Overlapping Alpha",
+            entity_id=entity_id,
+            instructions="OVERLAP_TASK_ALPHA use the caller probe.",
+            llm_api=alpha_api,
+            context=alpha_context,
+        )
+    )
+    bravo_task = asyncio.create_task(
+        ai_task.async_generate_data(
+            hass,
+            task_name="Overlapping Bravo",
+            entity_id=entity_id,
+            instructions="OVERLAP_TASK_BRAVO use the caller probe.",
+            structure=vol.Schema(
+                {
+                    vol.Required("owner"): str,
+                    vol.Required("status"): str,
+                }
+            ),
+            llm_api=bravo_api,
+            context=bravo_context,
+        )
+    )
+    try:
+        await asyncio.wait_for(alpha_continuation.wait(), 10)
+        assert len(alpha_probe.calls) == 1
+        assert alpha_probe.calls[0][1].context is alpha_context
+        assert alpha_probe.calls[0][0].tool_args == {"value": "alpha"}
+        alpha_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await alpha_task
+
+        bravo = await asyncio.wait_for(bravo_task, 10)
+        assert bravo.data == {"owner": "bravo", "status": "complete"}
+        assert len(bravo_probe.calls) == 1
+        assert bravo_probe.calls[0][1].context is bravo_context
+        assert bravo_probe.calls[0][0].tool_args == {"value": "bravo"}
+        assert len(alpha_probe.calls) == len(bravo_probe.calls) == 1
+
+        # A fresh task after cancellation must have no caller tool or prior result.
+        async def healthy_send(request: httpx.Request, *args, **kwargs):
+            body = json.loads(request.content)
+            serialized = json.dumps(body)
+            assert "OVERLAP_TASK_HEALTHY" in serialized
+            assert "tools" not in body
+            assert "alpha:alpha" not in serialized and "bravo:bravo" not in serialized
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=_text_reply(mode, "Healthy after overlap"),
+                request=request,
+            )
+
+        monkeypatch.setattr(raw._client, "send", healthy_send)
+        healthy = await ai_task.async_generate_data(
+            hass,
+            task_name="Healthy after overlap",
+            entity_id=entity_id,
+            instructions="OVERLAP_TASK_HEALTHY",
+        )
+        assert healthy.data == "Healthy after overlap"
+        assert len(alpha_probe.calls) == len(bravo_probe.calls) == 1
+    finally:
+        release_alpha.set()
+        for task in (alpha_task, bravo_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(alpha_task, bravo_task, return_exceptions=True)
+
+    record(
+        stress_trace,
+        "summary",
+        overlapping_ai_tasks=2,
+        overlapping_caller_tool_executions=2,
+        ai_task_cancellations_after_effect=1,
+        ai_task_overlap_healthy_recoveries=1,
+    )
