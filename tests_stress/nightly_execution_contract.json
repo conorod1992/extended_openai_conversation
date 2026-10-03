@@ -855,6 +855,19 @@
     "tests_stress/test_complete_user_journeys.py::test_complete_user_journey[installation-to-mature]",
     "tests_stress/test_complete_user_journeys.py::test_complete_user_journey[long-lived-evolution]",
     "tests_stress/test_complete_user_journeys.py::test_complete_user_journey[model-api-migration]",
+    "tests_stress/test_conversation_id_collision.py::test_device_continuity_owner_transition_isolated_on_provider_wire[expired-core-chat_completions]",
+    "tests_stress/test_conversation_id_collision.py::test_device_continuity_owner_transition_isolated_on_provider_wire[expired-core-responses]",
+    "tests_stress/test_conversation_id_collision.py::test_device_continuity_owner_transition_isolated_on_provider_wire[warm-core-chat_completions]",
+    "tests_stress/test_conversation_id_collision.py::test_device_continuity_owner_transition_isolated_on_provider_wire[warm-core-responses]",
+    "tests_stress/test_conversation_id_collision.py::test_effective_ha_default_overlap_preserves_completed_turns[cancel-waiter-device]",
+    "tests_stress/test_conversation_id_collision.py::test_effective_ha_default_overlap_preserves_completed_turns[cancel-waiter-ha_default]",
+    "tests_stress/test_conversation_id_collision.py::test_effective_ha_default_overlap_preserves_completed_turns[cancel-waiter-user]",
+    "tests_stress/test_conversation_id_collision.py::test_effective_ha_default_overlap_preserves_completed_turns[error-device]",
+    "tests_stress/test_conversation_id_collision.py::test_effective_ha_default_overlap_preserves_completed_turns[error-ha_default]",
+    "tests_stress/test_conversation_id_collision.py::test_effective_ha_default_overlap_preserves_completed_turns[error-user]",
+    "tests_stress/test_conversation_id_collision.py::test_effective_ha_default_overlap_preserves_completed_turns[success-device]",
+    "tests_stress/test_conversation_id_collision.py::test_effective_ha_default_overlap_preserves_completed_turns[success-ha_default]",
+    "tests_stress/test_conversation_id_collision.py::test_effective_ha_default_overlap_preserves_completed_turns[success-user]",
     "tests_stress/test_conversation_id_collision.py::test_same_conversation_id_cannot_cross_user_or_agent_boundaries",
     "tests_stress/test_cross_feature_chaos.py::test_seeded_cross_store_chaos_preserves_valid_agent_state",
     "tests_stress/test_delayed_backlog.py::test_overdue_backlog_drains_once_across_two_restarts[partial-termination]",
@@ -1891,7 +1904,10 @@
   "minimums": {
     "runtime": {
       "conversation_turns": 1,
-      "process_soak_windows": 5
+      "process_soak_windows": 5,
+      "continuity_owner_transitions": 16,
+      "continuity_wire_checks": 24,
+      "continuity_serialized_overlaps": 9
     },
     "functions": {
       "actual_function_executions": 1,

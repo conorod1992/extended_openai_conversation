@@ -747,8 +747,8 @@ class ExtendedOpenAIAgentEntity(
                     guest_active=request_policy.guest_active,
                 )
                 if claimed_conversation_id != resolved_conversation_id:
-                    resolution = replace(
-                        resolution, conversation_id=claimed_conversation_id
+                    resolution = await self._continuity.async_replace_conversation_id(
+                        resolution, claimed_conversation_id
                     )
                 try:
                     return await self._async_process_claimed(

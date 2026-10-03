@@ -7,12 +7,18 @@ immediately after an answer.
 
 - **Home Assistant default** preserves the existing conversation-ID behaviour.
 - **Per device** lets the same Assist satellite/device resume recent context.
+  Device context is isolated by resolved privacy owner: changing the authenticated
+  user or device mapping cannot resume another owner's history or session settings.
 - **Per user** lets requests resolved to the same Home Assistant user resume across
   devices. This uses the integration's existing authenticated-user and voice-device
   mappings; it does not perform speaker recognition. If a personal user cannot be
   resolved, continuity falls back to that device, or to a new/Home Assistant-default
   session when no usable device exists. Shared household scope is never treated as a
   personal user.
+
+Requests using the same Home Assistant conversation ID are serialized, including
+device/user modes that fall back to Home Assistant default. Separate conversation
+IDs can still run concurrently.
 
 ## Inactivity and lifecycle
 
