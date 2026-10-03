@@ -213,6 +213,10 @@ async def async_setup_entry(
 ) -> bool:
     """Set up Extended OpenAI Conversation (Responses) from a config entry."""
 
+    from .provider_errors import provider_authentication_snapshot
+
+    authentication_snapshot = provider_authentication_snapshot(entry)
+
     try:
         client = await get_authenticated_client(
             hass=hass,
@@ -237,7 +241,9 @@ async def async_setup_entry(
         )
         raise ConfigEntryNotReady(provider_log_remediation(err)) from err
 
-    debug_client = DebugOpenAIClientProxy(client)
+    debug_client = DebugOpenAIClientProxy(
+        client, authentication_snapshot=authentication_snapshot
+    )
     entry.runtime_data = PerformanceOpenAIClientProxy(  # type: ignore[assignment]
         debug_client,
         direct_openai=supports_openai_hosted_tools(

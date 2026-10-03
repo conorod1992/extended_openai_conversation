@@ -83,7 +83,7 @@ def _stub_setup(monkeypatch):
     monkeypatch.setattr(
         integration, "get_authenticated_client", AsyncMock(return_value=object())
     )
-    monkeypatch.setattr(integration, "DebugOpenAIClientProxy", lambda client: client)
+    monkeypatch.setattr(integration, "DebugOpenAIClientProxy", lambda client, **_kwargs: client)
     monkeypatch.setattr(
         integration,
         "PerformanceOpenAIClientProxy",

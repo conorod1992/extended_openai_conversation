@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import hashlib
 import json
 import logging
 import re
 from typing import Any
 
 from openai import APIConnectionError, AuthenticationError, OpenAIError
+
+from homeassistant.const import CONF_API_KEY
+
+from .const import (
+    CONF_API_PROVIDER,
+    CONF_API_VERSION,
+    CONF_BASE_URL,
+    CONF_ORGANIZATION,
+    DEFAULT_API_PROVIDER,
+)
 
 _MAX_MESSAGE = 1000
 _MAX_FIELD = 200
@@ -254,12 +265,32 @@ def classify_config_provider_error(error: BaseException) -> str:
     return "provider_error"
 
 
+def provider_authentication_snapshot(entry: Any) -> tuple[str, str]:
+    """Identify a client's authentication configuration without retaining secrets."""
+    data = getattr(entry, "data", {})
+    authentication = [
+        data.get(CONF_API_KEY),
+        data.get(CONF_BASE_URL),
+        data.get(CONF_API_VERSION),
+        data.get(CONF_ORGANIZATION),
+        data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+    ]
+    fingerprint = hashlib.sha256(json.dumps(authentication).encode()).hexdigest()
+    return str(getattr(entry, "entry_id", "")), fingerprint
+
+
 def request_reauthentication(hass: Any, entry: Any, error: BaseException) -> bool:
     """Start Home Assistant reauthentication for runtime authentication failures."""
     status = _integer(getattr(error, "status_code", None))
     if not isinstance(error, AuthenticationError) and status != 401:
         return False
     if entry is None:
+        return False
+    originating_auth = getattr(error, "_eoai_authentication_snapshot", None)
+    if (
+        originating_auth is not None
+        and originating_auth != provider_authentication_snapshot(entry)
+    ):
         return False
     try:
         entry.async_start_reauth(hass)
