@@ -949,6 +949,7 @@ def _manager(rules: list[dict]) -> tuple[RequestRules, SimpleNamespace]:
     manager._initialized = True
     manager._rules = rules
     manager._sort_and_compile()
+    manager._remember_committed_state()  # This fixture models the saved starting list.
     return manager, store
 
 

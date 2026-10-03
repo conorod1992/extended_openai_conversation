@@ -41,6 +41,7 @@ def test_request_rule_match_reuses_normalization_by_profile(monkeypatch: Any) ->
         )
     ]
     manager._sort_and_compile()
+    manager._remember_committed_state()  # Profile reuse is measured after publication.
     calls: list[tuple[bool, bool]] = []
 
     def fake_normalize(text: str, settings: Any, wording_groups: Any) -> str:

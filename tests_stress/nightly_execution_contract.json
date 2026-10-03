@@ -753,6 +753,9 @@
     "tests_stress/test_extreme_context_matrix.py::test_pending_summary_lifecycle_cannot_mutate_replacement_history[remove-recreate]",
     "tests_stress/test_extreme_context_matrix.py::test_pending_summary_lifecycle_cannot_mutate_replacement_history[reset]",
     "tests_stress/test_file_edit_native_cancellation.py::test_cancelled_native_edit_retains_path_until_worker_settles",
+    "tests_stress/test_file_edit_native_cancellation.py::test_cancelled_native_writer_retains_path_across_write_and_edit[edit-write]",
+    "tests_stress/test_file_edit_native_cancellation.py::test_cancelled_native_writer_retains_path_across_write_and_edit[write-edit]",
+    "tests_stress/test_file_edit_native_cancellation.py::test_cancelled_native_writer_retains_path_across_write_and_edit[write-write]",
     "tests_stress/test_filesystem_process_recovery.py::test_booted_filesystem_recovers_after_hard_kill[publish]",
     "tests_stress/test_filesystem_process_recovery.py::test_booted_filesystem_recovers_after_hard_kill[remove]",
     "tests_stress/test_filesystem_process_recovery.py::test_booted_filesystem_recovers_after_hard_kill[transfer]",
@@ -897,6 +900,10 @@
     "tests_stress/test_generated_valid_transitions.py::test_transition_seed_reproduces_and_changes_equivalent_paths",
     "tests_stress/test_guest_functions_matrix.py::test_guest_policy_matrix_never_grants_unsafe_function_or_private_memory",
     "tests_stress/test_guest_functions_matrix.py::test_new_function_or_guest_mode_requires_classification",
+    "tests_stress/test_guest_mode_acknowledgement.py::test_post_replace_guest_acknowledgement_reconciles_effective_policy[False-False]",
+    "tests_stress/test_guest_mode_acknowledgement.py::test_post_replace_guest_acknowledgement_reconciles_effective_policy[False-True]",
+    "tests_stress/test_guest_mode_acknowledgement.py::test_post_replace_guest_acknowledgement_reconciles_effective_policy[True-False]",
+    "tests_stress/test_guest_mode_acknowledgement.py::test_post_replace_guest_acknowledgement_reconciles_effective_policy[True-True]",
     "tests_stress/test_guest_provider_wire.py::test_blocked_provider_request_keeps_guest_authorization_snapshot",
     "tests_stress/test_guest_provider_wire.py::test_guest_wire_only_subtracts_private_context_and_function_capabilities[custom]",
     "tests_stress/test_guest_provider_wire.py::test_guest_wire_only_subtracts_private_context_and_function_capabilities[off]",
@@ -1083,6 +1090,26 @@
     "tests_stress/test_quiet_hours_ownership_time.py::test_runtime_timezone_switch_reconciles_the_same_instant",
     "tests_stress/test_quiet_hours_ownership_time.py::test_transient_control_service_failure_retries_without_losing_baseline",
     "tests_stress/test_reauth_active_traffic.py::test_reauth_replaces_provider_client_without_crossing_active_traffic",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[cancel-action]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[cancel-create]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[cancel-disable]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[cancel-enable]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[cancel-update]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[post-replace-action]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[post-replace-create]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[post-replace-disable]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[post-replace-enable]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[post-replace-update]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[pre-replace-action]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[pre-replace-create]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[pre-replace-disable]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[pre-replace-enable]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[pre-replace-update]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[success-action]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[success-create]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[success-disable]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[success-enable]",
+    "tests_stress/test_request_rule_publication.py::test_management_rule_generation_waits_for_authoritative_persistence[success-update]",
     "tests_stress/test_request_rules_matrix.py::test_behavioral_inventory_is_classified",
     "tests_stress/test_request_rules_matrix.py::test_generated_strict_matcher_matrix[  turn on  -expected1]",
     "tests_stress/test_request_rules_matrix.py::test_generated_strict_matcher_matrix[Turn On-expected0]",
@@ -1137,6 +1164,11 @@
     "tests_stress/test_restore_background_ownership.py::test_websocket_setup_export_is_coherent_across_restore",
     "tests_stress/test_runtime_soak.py::test_reload_heavy_seed_guarantees_conversation_floor",
     "tests_stress/test_runtime_soak.py::test_seeded_multi_entry_runtime_soak",
+    "tests_stress/test_skill_download_cancellation.py::test_cancelled_download_settles_native_work_before_owned_cleanup[collision]",
+    "tests_stress/test_skill_download_cancellation.py::test_cancelled_download_settles_native_work_before_owned_cleanup[file-response]",
+    "tests_stress/test_skill_download_cancellation.py::test_cancelled_download_settles_native_work_before_owned_cleanup[listing-response]",
+    "tests_stress/test_skill_download_cancellation.py::test_cancelled_download_settles_native_work_before_owned_cleanup[prepare]",
+    "tests_stress/test_skill_download_cancellation.py::test_cancelled_download_settles_native_work_before_owned_cleanup[write]",
     "tests_stress/test_skill_lifecycle_campaign.py::test_installed_skills_remain_atomic_during_repeated_lifecycle_changes",
     "tests_stress/test_skill_lifecycle_campaign.py::test_seed_without_removal_guarantees_installed_mutation",
     "tests_stress/test_store_structure_recovery.py::test_invalid_store_structure_stays_durable_until_repaired",
@@ -1584,15 +1616,18 @@
       "budget_serial_prefix_cases": 1,
       "completed_replay_rejections": 2,
       "populated_api_transition_cases": 2,
-      "native_edit_settlement_cases": 1
+      "native_edit_settlement_cases": 1,
+      "native_file_settlement_cases": 3
     },
     "request-rules": {
       "ha_service_calls": 1,
-      "public_turns": 1
+      "public_turns": 1,
+      "rule_publication_cases": 20
     },
     "guest-security": {
       "public_turns": 1,
-      "private_context_probes": 1
+      "private_context_probes": 1,
+      "guest_ambiguous_ack_cases": 4
     },
     "memory-knowledge": {
       "public_turns": 1,
@@ -1713,7 +1748,9 @@
       "debug_export_privacy_cases": 1,
       "catalog_ai_task_reset_rejections": 1,
       "catalog_ai_task_resets": 1,
-      "catalog_ai_task_wire_checks": 3
+      "catalog_ai_task_wire_checks": 3,
+      "skill_download_cancellation_cases": 4,
+      "skill_download_unowned_cases": 5
     },
     "persistence": {
       "composite_ingestion_cases": 8,

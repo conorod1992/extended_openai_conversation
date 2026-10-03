@@ -400,7 +400,8 @@ async def test_persistence_reset_clears_matching_and_diagnostics(monkeypatch) ->
     manager = RequestRules(store)
 
     async def fail_save(data):
-        assert manager.match("hello") is not None
+        assert manager._matching_snapshot.deterministic
+        assert manager.match("hello") is None, "repair candidate executed before persistence"
         assert manager.snapshot()["diagnostics"]
         raise OSError("repair write failed")
 

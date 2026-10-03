@@ -53,6 +53,7 @@ from .const import (
 )
 from .functions.security import FunctionSecurity, classify_tool
 from .helpers import get_exposed_entities
+from .persistence_hardening import _async_settle_transactional_save
 from .strict_store import PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -207,6 +208,7 @@ class GuestModeManager:
         self._listeners: set[Callable[[], None]] = set()
         self._mutation_lock = asyncio.Lock()
         self._initialized = False
+        self._persistence_unavailable = False
         self._initialization_lock = asyncio.Lock()
 
     async def async_initialize(self) -> None:
@@ -217,6 +219,15 @@ class GuestModeManager:
             # Storage I/O failures are not malformed state. Propagate them so a
             # later getter/setup can retry instead of silently disabling Guest Mode.
             data = await self._store.async_load()
+            if self._persistence_unavailable:
+                # An ambiguous write cannot recover by ignoring malformed data.
+                self._schedule = self.validate_backup_data(
+                    {"schedule": None} if data is None else data
+                )
+                self._persistence_unavailable = False
+                self._initialized = True
+                self._notify()
+                return
             raw = data.get("schedule") if isinstance(data, Mapping) else None
             schedule = None
             if isinstance(raw, Mapping):
@@ -241,6 +252,10 @@ class GuestModeManager:
 
     def status(self, now: Any | None = None) -> dict[str, Any]:
         """Return the current non-sensitive state and schedule."""
+        if self._persistence_unavailable:
+            raise HomeAssistantError(
+                "Guest Mode persistence is unavailable; retry after storage recovery"
+            )
         current = _as_utc(now or dt_util.utcnow())
         schedule = self._schedule
         if schedule is None:
@@ -364,6 +379,10 @@ class GuestModeManager:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return JSON-compatible Guest Mode state for a private agent backup."""
+        if self._persistence_unavailable:
+            raise HomeAssistantError(
+                "Guest Mode persistence is unavailable; retry after storage recovery"
+            )
         return {"schedule": asdict(self._schedule) if self._schedule else None}
 
     @staticmethod
@@ -423,35 +442,40 @@ class GuestModeManager:
     async def _async_commit_schedule(self, schedule: GuestModeSchedule | None) -> None:
         """Persist one schedule before publishing it to live Guest Mode readers."""
         payload = {"schedule": asdict(schedule) if schedule is not None else None}
-        save_task = asyncio.ensure_future(self._store.async_save(payload))
-        cancellation: asyncio.CancelledError | None = None
 
-        while not save_task.done():
-            try:
-                await asyncio.shield(save_task)
-            except asyncio.CancelledError as err:
-                if save_task.cancelled():
-                    raise
-                if cancellation is None:
-                    cancellation = err
-            except Exception:
-                break
+        def publish() -> None:
+            self._schedule = schedule
+            self._persistence_unavailable = False
+            self._notify()
 
-        try:
-            save_task.result()
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:
-            if cancellation is not None:
-                raise cancellation from err
-            raise
+        async def reconcile() -> None:
+            data = await self._store.async_load()
+            durable = self.validate_backup_data(
+                {"schedule": None} if data is None else data
+            )
+            changed = durable != self._schedule
+            self._schedule = durable
+            self._persistence_unavailable = False
+            if changed:
+                self._notify()
 
-        self._schedule = schedule
-        self._notify()
-        if cancellation is not None:
-            raise cancellation
+        def invalidate() -> None:
+            self._persistence_unavailable = True
+            self._initialized = False
+
+        await _async_settle_transactional_save(
+            self._store.async_save(payload),
+            lambda: None,
+            publish,
+            reconcile,
+            invalidate,
+        )
 
     def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
+        if self._persistence_unavailable:
+            raise HomeAssistantError(
+                "Guest Mode persistence is unavailable; retry after storage recovery"
+            )
         schedule = self._schedule
         if schedule is None or schedule.active_until is None:
             return schedule

@@ -340,9 +340,12 @@ class WriteFileFunction(FileFunction):
 
         try:
             target_path = self._resolve_path(hass, path_str, allow_dirs)
-            bytes_written = await hass.async_add_executor_job(
-                _atomic_replace_text, target_path, content
-            )
+            async with _get_edit_lock(hass, target_path):
+                bytes_written = await _async_settle_native_edit(
+                    hass.async_add_executor_job(
+                        _atomic_replace_text, target_path, content
+                    )
+                )
 
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool file write failed", err)

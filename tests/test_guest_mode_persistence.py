@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -17,7 +18,9 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
 
 def _manager(hass) -> GuestModeManager:
     manager = GuestModeManager(hass, "entry", "agent")
-    manager._store = SimpleNamespace(async_save=AsyncMock(), async_load=AsyncMock())
+    manager._store = SimpleNamespace(
+        async_save=AsyncMock(), async_load=AsyncMock(return_value={"schedule": None})
+    )
     manager._initialized = True
     return manager
 
@@ -36,6 +39,7 @@ async def test_failed_guest_mode_disable_keeps_committed_live_policy(hass) -> No
     committed = _active_schedule()
     manager._schedule = committed
     manager._store.async_save = AsyncMock(side_effect=OSError("disk full"))
+    manager._store.async_load.return_value = {"schedule": asdict(committed)}
     listener = Mock()
     manager.async_add_listener(listener)
 
@@ -51,6 +55,7 @@ async def test_failed_guest_mode_update_keeps_previous_schedule(hass) -> None:
     committed = _active_schedule()
     manager._schedule = committed
     manager._store.async_save = AsyncMock(side_effect=OSError("write failed"))
+    manager._store.async_load.return_value = {"schedule": asdict(committed)}
 
     with pytest.raises(OSError, match="write failed"):
         await manager.async_update_trusted(
@@ -66,6 +71,7 @@ async def test_failed_guest_mode_restore_keeps_previous_schedule(hass) -> None:
     committed = _active_schedule()
     manager._schedule = committed
     manager._store.async_save = AsyncMock(side_effect=OSError("restore write failed"))
+    manager._store.async_load.return_value = {"schedule": asdict(committed)}
     replacement = GuestModeSchedule(
         active_from="2026-09-12T00:00:00+00:00",
         active_until="2026-09-13T00:00:00+00:00",
