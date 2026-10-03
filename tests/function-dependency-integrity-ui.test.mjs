@@ -77,3 +77,14 @@ assert.equal(
 await panel._call("tools", "validate_current", {});
 assert.equal(calls[2].extra.revision, undefined, "read-only tool calls need no revision");
 assert.equal(panel._configData.revision, "revision-3");
+
+
+for (const action of ["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move"]) {
+  const key = "agent-1|capabilities/request-rules", other = "agent-2|capabilities/request-rules";
+  panel._sectionCache.set(key, {revision:"old"}); panel._eocSectionCacheTimes.set(key, Date.now());
+  panel._sectionCache.set(other, {revision:"other"}); panel._eocSectionCacheTimes.set(other, Date.now());
+  panel._invalidateAfterMutation("agent-1", "request_rules", action);
+  assert.equal(panel._sectionCache.has(key), false, `${action} affects the cached Request Rules route`);
+  assert.equal(panel._eocSectionCacheTimes.has(key), false);
+  assert.equal(panel._sectionCache.has(other), true, "other agents retain their cache");
+}

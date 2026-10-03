@@ -86,3 +86,45 @@ test("central navigation shares config context, cancels safely, and discards wit
   assert.equal(state.hasChanges(), false);
   assert.equal(same({x: [1, 2]}, {x: [2, 1]}), false);
 });
+
+
+for (const refreshFails of [false, true]) {
+  for (const newerEdit of [false, true]) {
+    test(`Guest acknowledgement survives secondary refresh (${refreshFails}) and newer edits (${newerEdit})`, async () => {
+      let commit, refresh, revision = "v1", failDetails = refreshFails;
+      const calls = [];
+      const panel = {_agentId:"a", _viewKey:() => "capabilities/guest-mode", _result:{config:{enabled:false, count:0}, revision},
+        _call:async (_section, action, payload) => {
+          if (action === "details") {
+            await new Promise(resolve => { refresh = resolve; });
+            if (failDetails) throw Error("Secondary read offline");
+            return {policy:{readable_entity_count:1}};
+          }
+          calls.push(payload.revision); assert.equal(payload.revision, revision);
+          await new Promise(resolve => { commit = resolve; });
+          revision = revision === "v1" ? "v2" : "v3";
+          return {config:structuredClone(payload.config), revision};
+        }};
+      initializePageDraft(panel); const scope = currentPageScope(panel);
+      scope.read().enabled = true;
+      const pending = scope.save();
+      if (newerEdit) scope.read().count = 2;
+      commit();
+      while (!refresh) await Promise.resolve();
+      assert.equal(scope.revision, "v2", "adopt acknowledgement before refresh completes");
+      assert.deepEqual(scope.baseline, {enabled:true, count:0});
+      assert.equal(scope.read().count, newerEdit ? 2 : 0);
+      assert.equal(scope.dirty(), newerEdit);
+      refresh(); assert.equal(await pending, true);
+      assert.equal(Boolean(scope.refreshWarning), refreshFails);
+      assert.equal(scope.dirty(), newerEdit);
+      scope.read().enabled = false; failDetails = false; refresh = null;
+      const second = scope.save(); commit();
+      while (!refresh) await Promise.resolve();
+      refresh(); assert.equal(await second, true);
+      assert.deepEqual(calls, ["v1", "v2"]);
+      assert.equal(scope.revision, "v3"); assert.equal(scope.dirty(), false);
+      assert.equal(scope.refreshWarning, null);
+    });
+  }
+}

@@ -878,7 +878,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (this._scopeCatalogVisitKey?.startsWith(prefix)) this._scopeCatalogVisitKey = null;
     } else {
       const mutations = {
-        request_rules: new Set(["defaults", "wording_groups", "create", "update", "delete", "duplicate"]),
+        request_rules: REQUEST_RULE_MUTATIONS,
         knowledge: new Set(["create", "update", "delete", "set_enabled"]),
         memories: new Set(["add", "update", "delete", "clear", "temporary_add", "temporary_update", "temporary_delete", "temporary_clear", "reassign_legacy"]),
       };
@@ -886,7 +886,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         this._cacheGeneration += 1;
         const prefix = `${agentId}|`;
         const view = {request_rules:"capabilities/request-rules", knowledge:"data-memory/knowledge"}[section];
-        if (view) this._sectionCache.delete(`${prefix}${view}`);
+        if (view) {
+          this._sectionCache.delete(`${prefix}${view}`);
+          this._eocSectionCacheTimes.delete(`${prefix}${view}`);
+        }
         if (["memories", "conversations"].includes(section)) {
           for (const key of this._scopeCatalogCache.keys()) {
             if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
