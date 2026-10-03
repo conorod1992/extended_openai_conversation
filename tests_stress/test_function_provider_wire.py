@@ -31,6 +31,151 @@ from tests_stress.conftest import record
 
 
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "integer-duplicate",
+        "boolean-duplicate",
+        "object-duplicate",
+        "enum-boolean",
+        "const-boolean",
+        "healthy-mixed",
+    ],
+)
+async def test_normalized_arguments_guard_public_function_dispatch(
+    hass, monkeypatch, stress_trace, api_mode, case
+):
+    """Invalid normalized arguments never reach an actual native service action."""
+    from jsonschema import Draft202012Validator
+
+    from tests_real_ha.test_provider_wire_e2e import (
+        _responses_sse_text,
+        _responses_sse_tool_call,
+    )
+    from tests_stress.test_function_provider_wire_remaining import _provider_result
+
+    if case == "integer-duplicate":
+        field = {"type": "array", "items": {"type": "integer"}, "uniqueItems": True}
+        invalid, healthy, expected = ["01", 1], ["01", "2"], [1, 2]
+    elif case == "boolean-duplicate":
+        field = {"type": "array", "items": {"type": "boolean"}, "uniqueItems": True}
+        invalid, healthy, expected = ["false", False], ["false", "true"], [False, True]
+    elif case == "object-duplicate":
+        field = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"n": {"type": "integer"}},
+                "required": ["n"],
+                "additionalProperties": False,
+            },
+            "uniqueItems": True,
+        }
+        invalid, healthy, expected = (
+            [{"n": "01"}, {"n": 1}],
+            [{"n": "01"}, {"n": "2"}],
+            [{"n": 1}, {"n": 2}],
+        )
+    elif case in {"enum-boolean", "const-boolean"}:
+        keyword = case.split("-")[0]
+        field = {
+            "type": ["integer", "boolean"],
+            keyword: [0] if keyword == "enum" else 0,
+        }
+        invalid, healthy, expected = False, "0", 0
+    else:
+        field = {
+            "type": "array",
+            "items": {"type": ["integer", "boolean"]},
+            "uniqueItems": True,
+        }
+        invalid = healthy = expected = [0, False]
+    schema = {
+        "type": "object",
+        "properties": {"values": field},
+        "required": ["values"],
+        "additionalProperties": False,
+    }
+    tool = {
+        "spec": {
+            "name": "normalized_values",
+            "description": "Record validated values",
+            "parameters": schema,
+        },
+        "function": {
+            "type": "script",
+            "sequence": [
+                {
+                    "action": "normalized_probe.record",
+                    "data": {"values": "{{ values }}"},
+                }
+            ],
+        },
+    }
+    effects = []
+
+    async def effect(call):
+        effects.append(dict(call.data))
+
+    hass.services.async_register("normalized_probe", "record", effect)
+    owner = await hass.auth.async_create_user("Normalization owner")
+    entry = _make_entry(
+        "Normalized Function validation",
+        include_ai_task=False,
+        conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]},
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+
+    async def say(value, call_id):
+        call = (
+            _responses_sse_tool_call if api_mode == "responses" else _chat_sse_tool_call
+        )(call_id, "normalized_values", {"values": value})
+        text = _responses_sse_text if api_mode == "responses" else _chat_sse_text
+        wire = _install_wire(
+            monkeypatch, agent, [call, text("Validated values recorded")]
+        )
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Record these values",
+            conversation_id=None,
+            context=Context(user_id=owner.id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+        return result, wire
+
+    result, wire = await say(invalid, "initial-normalization")
+    if case != "healthy-mixed":
+        assert result.response.error_code is not None
+        assert result.response.as_dict()["speech"]["plain"]["speech"]
+        assert effects == []
+        assert len(wire.requests) == 1, "Rejected arguments must not execute or replay"
+    else:
+        assert result.response.error_code is None
+        assert _speech(result) == "Validated values recorded"
+        assert effects == [{"values": expected}]
+        Draft202012Validator(schema).validate(effects[0])
+    result, wire = await say(healthy, "healthy-normalization")
+    assert result.response.error_code is None
+    assert _speech(result) == "Validated values recorded"
+    assert effects == [{"values": expected}] * (2 if case == "healthy-mixed" else 1)
+    for data in effects:
+        Draft202012Validator(schema).validate(data)
+    assert (
+        _provider_result(wire.requests[1], api_mode, "healthy-normalization")
+        == "Success"
+    )
+    record(
+        stress_trace,
+        "summary",
+        normalized_schema_dispatch_cases=1,
+        normalized_schema_rejections=int(case != "healthy-mixed"),
+        normalized_schema_healthy_dispatches=1,
+    )
+
+
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
 @pytest.mark.parametrize("outcome", ["valid", "bad-pattern", "bad-const", "bad-enum"])
 async def test_schema_pattern_names_and_literals_survive_public_function_execution(
     hass, monkeypatch, stress_trace, api_mode, outcome
