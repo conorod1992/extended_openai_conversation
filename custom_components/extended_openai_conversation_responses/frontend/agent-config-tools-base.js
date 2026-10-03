@@ -1,3 +1,4 @@
+import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 import {functionAddMenu, bindFunctionAddMenu} from "./function-add-menu.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
 import {COMPACT_CHOICE_STYLE} from "./compact-choice-styles.js";
@@ -28,7 +29,9 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
 export {skillNamesFromText} from "./configuration-controls.js";
 export function invalidateImportPreview(panel, applyButton, summary) {
+  invalidateOperation(panel, "import-preview");
   panel._importDocument = null;
+  panel._importRevision = null;
   if (applyButton) applyButton.disabled = true;
   if (summary) summary.textContent = "Validate the document to preview it.";
 }
@@ -416,10 +419,31 @@ export function bindConfiguration(panel) {
   const importDocument = root.querySelector("#import-document"), importApply = root.querySelector("#import-apply"), importSummary = root.querySelector("#import-summary");
   bindOwnedEvent(root.querySelector("#import-agent"), "click", "assistant-actions", () => { invalidateImportPreview(panel, importApply, importSummary); root.querySelector("#import-dialog")?.showModal(); });
   bindOwnedEvent(importDocument, "input", "assistant-actions", () => invalidateImportPreview(panel, importApply, importSummary));
-  bindOwnedEvent(root.querySelector("#import-preview"), "click", "assistant-actions", async () => { try { const result=await panel._call("configuration","import_preview",{document:importDocument.value}); panel._importDocument=importDocument.value; importSummary.textContent=`${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.function_groups} function groups / ${result.summary.speech_rules} speech rules`; importApply.disabled=false; } catch(err){panel._importDocument=null;importSummary.textContent=err.message||String(err);importApply.disabled=true;} });
-  bindOwnedEvent(root.querySelector("#import-apply"), "click", "assistant-actions", async () => { const mode=root.querySelector('input[name="import-mode"]:checked').value, source=importDocument.value; if(!panel._importDocument||panel._importDocument!==source){invalidateImportPreview(panel,importApply,importSummary);return;} if(mode==="current"&&!await panel._confirm("Overwrite this agent?",`The saved configuration will be replaced.${panel._configDirty ? " Your unsaved shared draft will be discarded." : ""} Retained history and parent-entry credentials are not affected.`,"Overwrite"))return; try { await panel._call("configuration","import",{document:panel._importDocument,mode,confirm:mode==="current",...(mode==="current"?{revision:panel._configData?.revision}:{})}); root.querySelector("#import-dialog").close(); if(mode==="current")panel._clearConfigDraft(); await panel._loadAgents(panel._agentId); panel._toast(mode==="current"?"Configuration imported":"Agent created from import; your current draft is preserved"); } catch(err){panel._toast(`Unable to import: ${err.message||String(err)}`,true);} });
-  bindOwnedEvent(root.querySelector("#import-cancel"), "click", "assistant-actions",()=>{root.querySelector("#import-dialog").close();actionsMenu?.querySelector("summary")?.focus();});
-  bindOwnedEvent(root.querySelector("#import-dialog"), "cancel", "assistant-actions",()=>requestAnimationFrame(()=>actionsMenu?.querySelector("summary")?.focus()));
+  bindOwnedEvent(root.querySelector("#import-preview"), "click", "assistant-actions", async () => {
+    invalidateImportPreview(panel, importApply, importSummary);
+    const document = importDocument.value, revision = panel._configData?.revision;
+    const agent = panel._agentId, dialog = root.querySelector("#import-dialog");
+    const ownsOperation = beginOperation(panel, "import-preview");
+    const current = () => ownsOperation() && dialog?.open && importDocument.isConnected
+      && importDocument.value === document && panel._agentId === agent
+      && panel._configData?.revision === revision;
+    try {
+      const result = await panel._call("configuration", "import_preview", {document});
+      if (!current()) return;
+      panel._importDocument = document;
+      panel._importRevision = revision;
+      importSummary.textContent = `${result.title} / ${result.summary.model} / ${result.summary.tools} tools / ${result.summary.function_groups} function groups / ${result.summary.speech_rules} speech rules`;
+      importApply.disabled = false;
+    } catch (err) {
+      if (!current()) return;
+      panel._importDocument = null;
+      importSummary.textContent = err.message || String(err);
+      importApply.disabled = true;
+    }
+  });
+  bindOwnedEvent(root.querySelector("#import-apply"), "click", "assistant-actions", async () => { const mode=root.querySelector('input[name="import-mode"]:checked').value, source=importDocument.value, revision=panel._importRevision; if(!panel._importDocument||panel._importDocument!==source||panel._importRevision!==panel._configData?.revision){invalidateImportPreview(panel,importApply,importSummary);return;} if(mode==="current"&&!await panel._confirm("Overwrite this agent?",`The saved configuration will be replaced.${panel._configDirty ? " Your unsaved shared draft will be discarded." : ""} Retained history and parent-entry credentials are not affected.`,"Overwrite"))return; if(panel._importDocument!==source||importDocument.value!==source||panel._configData?.revision!==revision){invalidateImportPreview(panel,importApply,importSummary);return;} try { await panel._call("configuration","import",{document:source,mode,confirm:mode==="current",...(mode==="current"?{revision}:{})}); root.querySelector("#import-dialog").close(); if(mode==="current")panel._clearConfigDraft(); await panel._loadAgents(panel._agentId); panel._toast(mode==="current"?"Configuration imported":"Agent created from import; your current draft is preserved"); } catch(err){panel._toast(`Unable to import: ${err.message||String(err)}`,true);} });
+  bindOwnedEvent(root.querySelector("#import-cancel"), "click", "assistant-actions",()=>{invalidateImportPreview(panel,importApply,importSummary);root.querySelector("#import-dialog").close();actionsMenu?.querySelector("summary")?.focus();});
+  bindOwnedEvent(root.querySelector("#import-dialog"), "cancel", "assistant-actions",()=>{invalidateImportPreview(panel,importApply,importSummary);requestAnimationFrame(()=>actionsMenu?.querySelector("summary")?.focus());});
   if (panel._configRestoreFocus) { const selector=panel._configRestoreFocus; panel._configRestoreFocus=null; requestAnimationFrame(()=>root.querySelector(selector)?.focus({preventScroll:true})); }
 }
 
