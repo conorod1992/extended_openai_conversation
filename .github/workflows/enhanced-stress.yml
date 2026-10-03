@@ -331,6 +331,8 @@ jobs:
       - name: Run enhanced campaign
         id: campaign_run
         env:
+          EOAI_UNINTERRUPTED_SOAK: ${{ matrix.campaign == 'long-lifetime' && '1' || '0' }}
+        env:
           EOAI_GENERATOR_PROFILE: ${{ matrix.campaign == 'large-installation' && '1' || '0' }}
           EOAI_GENERATOR_PROFILE_PATH: ${{ matrix.campaign == 'large-installation' && 'stress-artifacts/generator-profile.jsonl' || '' }}
         run: |
@@ -355,7 +357,7 @@ jobs:
             chaos) TEST_PATHS=(tests_stress/test_cross_feature_chaos.py) ;;
             process-chaos) TEST_PATHS=(tests_stress/test_filesystem_process_recovery.py tests_stress/test_delayed_backlog.py tests_stress/test_backup_inventory.py tests_real_ha/test_immediate_tool_process_crash.py tests_real_ha/test_store_write_process_crash.py tests_real_ha/test_restore_transaction_process_crash.py tests_real_ha/test_delayed_tool_process_restart.py tests_real_ha/test_active_request_shutdown_recovery.py) ;;
             diagnostics) TEST_PATHS=(tests_stress/test_diagnostics_failure_probe.py) ;;
-            long-lifetime) TEST_PATHS=(tests_stress/test_process_resource_soak.py) ;;
+            long-lifetime) TEST_PATHS=(tests_stress/test_process_resource_soak.py tests_stress/test_responses_scale_fairness.py) ;;
             *) exit 2 ;;
           esac
           set +e
