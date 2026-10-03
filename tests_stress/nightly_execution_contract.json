@@ -896,6 +896,8 @@
     "tests_stress/test_function_provider_wire_remaining.py::test_sqlite_lock_deadline_and_worker_recovery_on_public_assist[deadline]",
     "tests_stress/test_function_provider_wire_remaining.py::test_sqlite_lock_deadline_and_worker_recovery_on_public_assist[release]",
     "tests_stress/test_generated_state_lifecycle.py::test_generated_valid_states_cross_real_ha_and_sdk_wire",
+    "tests_stress/test_generated_state_lifecycle.py::test_populated_feature_combinations_work_live_and_after_reload[chat_completions]",
+    "tests_stress/test_generated_state_lifecycle.py::test_populated_feature_combinations_work_live_and_after_reload[responses]",
     "tests_stress/test_generated_valid_states.py::test_covering_generator_is_valid_complete_bounded_and_reproducible",
     "tests_stress/test_generated_valid_states.py::test_every_persistent_field_and_enum_is_classified",
     "tests_stress/test_generated_valid_states.py::test_seed_changes_equivalent_covering_choice",
