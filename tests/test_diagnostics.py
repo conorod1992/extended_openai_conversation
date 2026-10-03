@@ -369,7 +369,7 @@ async def test_config_entry_diagnostics_projects_populated_runtime_without_secre
     }
     guest_mode = SimpleNamespace(status=lambda: {"enabled": False})
     guest_policy = SimpleNamespace(as_diagnostics=lambda: {"mode": "disabled"})
-    usage = SimpleNamespace(as_dict=lambda: {"requests": 7})
+    usage = SimpleNamespace(as_dict=lambda: {"requests": 7}, persistence_status=lambda: {"mode": "durable"})
 
     with (
         patch.object(
@@ -443,7 +443,7 @@ async def test_config_entry_diagnostics_isolates_independent_collector_failure(
     entry = _diagnostics_entry()
     guest_mode = SimpleNamespace(status=lambda: {"enabled": False})
     guest_policy = SimpleNamespace(as_diagnostics=lambda: {})
-    usage = SimpleNamespace(as_dict=lambda: {"requests": 9})
+    usage = SimpleNamespace(as_dict=lambda: {"requests": 9}, persistence_status=lambda: {"mode": "durable"})
 
     with (
         patch.object(
@@ -556,7 +556,8 @@ async def test_diagnostics_ignores_non_conversation_subentries(hass) -> None:
 
     result = await async_get_config_entry_diagnostics(hass, entry)
 
-    assert result == {"conversation_agents": []}
+    assert result["conversation_agents"] == []
+    assert result["provider_category"] == "openai"
 
 
 async def test_function_configuration_failure_is_reported_and_collectors_continue(

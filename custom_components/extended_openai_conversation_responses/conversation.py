@@ -36,7 +36,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
 from . import ExtendedOpenAIConfigEntry, ha_actions
-from .agent_config import function_tool_enabled
+from .agent_config import AgentConfigError, function_tool_enabled
 from .agent_configuration import (
     _archive_runtime_required,
     async_ensure_optional_manager,
@@ -120,12 +120,7 @@ from .debug import (
     record_system_prompt,
 )
 from .entity import ExtendedOpenAIBaseLLMEntity
-from .exceptions import (
-    EntityNotExposed,
-    FunctionLoadFailed,
-    FunctionNotFound,
-    InvalidFunction,
-)
+from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
 from .function_groups import (
     FunctionGroupRuntime,
     FunctionGroupSession,
@@ -190,6 +185,7 @@ from .model_tool_results import (
     model_memory_as_dict,
     omit_null_paging_cursor,
 )
+from .operational_errors import log_handled_failure
 from .prompt import render_effective_prompt
 from .prompt_cache import _PROMPT_CACHE_CONTEXT, prompt_cache_context
 from .regex_execution import async_process_speech_text
@@ -1664,7 +1660,12 @@ class ExtendedOpenAIAgentEntity(
             entity_id = sorted(missing)[0]
             if hass.states.get(entity_id) is None:
                 raise HomeAssistantError(f"Target entity {entity_id} no longer exists")
-            raise EntityNotExposed(entity_id)
+            policy = self._effective_guest_policy()
+            if policy.guest_active and not policy.allows_entity_control(entity_id):
+                raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
+            from .ha_permissions import entity_access_error
+
+            raise entity_access_error(hass, missing)
 
     def _get_function_tools(self) -> list[dict[str, Any]]:
         """Get the effective configured and integration-owned function tools."""
@@ -1716,9 +1717,15 @@ class ExtendedOpenAIAgentEntity(
                 )
                 record_tool_assembly(self, result, assembly_started)
                 return result
-        except (InvalidFunction, FunctionNotFound) as e:
+        except (InvalidFunction, FunctionNotFound, AgentConfigError) as e:
             raise e
         except Exception as e:
+            log_handled_failure(
+                _LOGGER,
+                f"Function Tool assembly failed entry={getattr(getattr(self, 'entry', None), 'entry_id', 'unknown')} "
+                f"assistant={getattr(self.subentry, 'subentry_id', 'unknown')}",
+                e,
+            )
             raise FunctionLoadFailed() from e
 
     def _get_configured_function_tools(self) -> list[dict[str, Any]]:

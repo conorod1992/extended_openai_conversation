@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 import yaml
@@ -12,7 +13,11 @@ from homeassistant.core import HomeAssistant
 
 from .agent_config import validate_function_groups, validate_function_tools
 from .const import (
+    CONF_API_MODE,
+    CONF_API_PROVIDER,
     CONF_ARCHIVE_ENABLED,
+    CONF_BASE_URL,
+    CONF_CHAT_MODEL,
     CONF_CONVERSATION_CONTINUITY,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
@@ -22,7 +27,10 @@ from .const import (
     CONF_MEMORY_ENABLED,
     CONF_MEMORY_RETRIEVAL_MODE,
     CONF_TEMPORARY_MEMORY,
+    DEFAULT_API_MODE,
+    DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
+    DEFAULT_CHAT_MODEL,
     DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_FUNCTION_GROUPS,
@@ -38,8 +46,12 @@ from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
 from .function_groups import get_function_group_runtime
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
+from .helpers import is_azure_url, supports_openai_hosted_tools
 from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
+from .model_catalog import BUNDLED_CATALOG
+from .model_catalog_manager import DATA_MANAGER
+from .request import build_provider_request_snapshot
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
 
@@ -59,11 +71,14 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return non-sensitive persistent-memory diagnostics."""
     agents: list[dict[str, Any]] = []
+    parent_data = getattr(entry, "data", {})
     for subentry in entry.subentries.values():
         if subentry.subentry_type != "conversation":
             continue
         diagnostics: dict[str, Any] = {
             "subentry_id": subentry.subentry_id,
+            "selected_model": subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
+            "configured_api_mode": subentry.data.get(CONF_API_MODE, DEFAULT_API_MODE),
             "memory_mode": get_memory_mode(subentry.data),
             "memory_enabled": subentry.data.get(
                 CONF_MEMORY_ENABLED, DEFAULT_MEMORY_ENABLED
@@ -91,6 +106,19 @@ async def async_get_config_entry_diagnostics(
                 CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY
             ),
         }
+        try:
+            snapshot = build_provider_request_snapshot(subentry.data, parent_data)
+            diagnostics["effective_api_mode"] = snapshot.api_mode
+            diagnostics["provider_request_flags"] = {
+                "streaming": bool(snapshot.api_kwargs.get("stream")),
+                "structured_outputs": snapshot.structured_outputs,
+                "effective_response_limit": snapshot.api_kwargs.get(
+                    "max_output_tokens",
+                    snapshot.api_kwargs.get("max_completion_tokens"),
+                ),
+            }
+        except Exception as err:
+            diagnostics["provider_configuration_error"] = type(err).__name__
         subsystem_status = hass.data.get(SUBSYSTEM_STATUS_KEY, {}).get(
             (entry.entry_id, subentry.subentry_id), {}
         )
@@ -169,7 +197,32 @@ async def async_get_config_entry_diagnostics(
         try:
             usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
             diagnostics["usage"] = usage.as_dict()
+            diagnostics["usage_persistence"] = usage.persistence_status()
         except Exception as err:
             diagnostics["usage_storage_error"] = type(err).__name__
         agents.append(diagnostics)
-    return {"conversation_agents": agents}
+    manager = hass.data.get(DATA_MANAGER)
+    catalog_status = manager.status() if manager is not None else BUNDLED_CATALOG
+    try:
+        sdk_version = version("openai")
+    except PackageNotFoundError:
+        sdk_version = None
+    # Allowlist only: never serialize entry.data, catalogue models, prompts,
+    # provider URLs, tool definitions or retained request-debug captures.
+    provider = parent_data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER)
+    base_url = parent_data.get(CONF_BASE_URL)
+    if provider == "azure" or is_azure_url(base_url):
+        provider_category = "azure"
+    elif supports_openai_hosted_tools(provider, base_url):
+        provider_category = "openai"
+    else:
+        provider_category = "compatible"
+    return {
+        "conversation_agents": agents,
+        "provider_category": provider_category,
+        "openai_sdk_version": sdk_version,
+        "model_catalogue": {
+            key: catalog_status.get(key)
+            for key in ("catalog_version", "schema_version")
+        },
+    }

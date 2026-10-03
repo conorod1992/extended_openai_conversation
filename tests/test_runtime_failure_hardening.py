@@ -248,7 +248,11 @@ def test_conversation_error_helper_preserves_phase_logger_and_reset_id(
     )
 
     assert result.conversation_id is None
-    log.assert_called_once_with(logger, "OpenAI conversation request failed", error)
+    log.assert_called_once()
+    assert log.call_args.args[0] is logger
+    assert log.call_args.args[1].startswith("OpenAI conversation request failed entry=")
+    assert "configured_api_mode=auto" in log.call_args.args[1]
+    assert log.call_args.args[2] is error
     assert entity.finished == [("error", "OpenAIError")]
 
 
@@ -339,11 +343,10 @@ def test_httpx_request_error_uses_provider_transport_path_without_usage_manager(
     assert isinstance(converted, hardening.ProviderTransportError)
     assert isinstance(converted.__cause__, httpx.ConnectError)
     record.assert_called_once_with(converted)
-    log.assert_called_once_with(
-        hardening._LOGGER,
-        "provider stream failed",
-        converted,
-    )
+    log.assert_called_once()
+    assert log.call_args.args[0] is hardening._LOGGER
+    assert log.call_args.args[1].startswith("provider stream failed entry=")
+    assert log.call_args.args[2] is converted
 
 
 def test_home_assistant_error_uses_generic_path_without_provider_hooks(
@@ -373,7 +376,9 @@ def test_home_assistant_error_uses_generic_path_without_provider_hooks(
     reauth.assert_not_called()
     record.assert_not_called()
     provider_log.assert_not_called()
-    logger.error.assert_called_once()
+    logger.log.assert_called_once()
+    assert logger.log.call_args.args[0] == hardening.logging.WARNING
+    assert logger.log.call_args.args[3] == "HomeAssistantError"
 
 
 def test_retired_model_failure_uses_actionable_assist_error(monkeypatch) -> None:

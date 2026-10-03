@@ -231,12 +231,10 @@ def _sampling_value(
     if parameter_is_allowed(model, parameter, effort):
         return value
     _LOGGER.debug(
-        "Omitting stale %s=%r for model %s at reasoning_effort=%r because the "
+        "Omitting stale parameter=%s for model=%s because the "
         "active capability catalogue marks it invalid or undocumented",
         parameter,
-        value,
         model,
-        effort,
     )
     return None
 
@@ -275,8 +273,7 @@ def build_provider_request_snapshot(
                 stale_effort = options.get(CONF_REASONING_EFFORT)
                 if stale_effort not in {None, DEFAULT_REASONING_EFFORT}:
                     _LOGGER.debug(
-                        "Ignoring stale reasoning_effort=%r for non-reasoning model %s",
-                        stale_effort,
+                        "Ignoring stale reasoning_effort for non-reasoning model=%s",
                         model,
                     )
             api_mode = select_api_path(

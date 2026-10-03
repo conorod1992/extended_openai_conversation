@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from openai import OpenAIError
@@ -24,6 +25,7 @@ from .const import (
     DOMAIN,
 )
 from .helpers import get_authenticated_client
+from .operational_errors import log_handled_failure
 from .provider_errors import classify_config_provider_error
 
 WS_UPDATE_API_KEY = f"{DOMAIN}/management/update_api_key"
@@ -79,8 +81,19 @@ async def async_replace_api_key(
             api_provider=candidate.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
         )
     except OpenAIError as err:
+        log_handled_failure(
+            logging.getLogger(__name__),
+            f"API-key validation rejected entry={entry.entry_id} category={classify_config_provider_error(err)}; existing credential retained",
+            err,
+            level=logging.DEBUG,
+        )
         raise _validation_error(err) from err
     except Exception as err:
+        log_handled_failure(
+            logging.getLogger(__name__),
+            f"API-key validation failed entry={entry.entry_id}; existing credential retained",
+            err,
+        )
         raise HomeAssistantError(
             "The new API key could not be validated. The existing API key was not changed."
         ) from err

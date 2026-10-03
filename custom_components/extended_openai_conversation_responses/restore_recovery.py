@@ -16,6 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from . import backup
 from .const import DOMAIN, SUBSYSTEM_STATUS_KEY
+from .operational_errors import log_handled_failure
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -434,6 +435,11 @@ async def _recover_failed_apply(
             "Restore failed and recovery is still pending; restart Home Assistant "
             "to retry the saved rollback"
         ) from original_error
+    log_handled_failure(
+        _LOGGER,
+        f"Agent restore failed entry={entry.entry_id} assistant={subentry.subentry_id}; rollback=recovered",
+        original_error,
+    )
     raise backup.BackupError(
         "Restore failed; the previous agent state was recovered"
     ) from original_error

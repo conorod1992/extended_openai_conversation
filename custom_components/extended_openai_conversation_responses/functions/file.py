@@ -24,6 +24,7 @@ from ..const import (
     DOMAIN,
     FILE_READ_SIZE_LIMIT,
 )
+from ..operational_errors import log_handled_failure
 from ..skills import SkillManager
 from .base import Function
 
@@ -263,7 +264,7 @@ class ReadFileFunction(FileFunction):
             file_size = target_path.stat().st_size
             content = await hass.async_add_executor_job(_read_text_bounded, target_path)
         except Exception as err:
-            _LOGGER.error(err)
+            log_handled_failure(_LOGGER, "Function Tool file read failed", err)
             return {"error": str(err)}
         return {"content": content, "size": file_size}
 
@@ -344,7 +345,7 @@ class WriteFileFunction(FileFunction):
             )
 
         except Exception as err:
-            _LOGGER.exception("File write error: %s", err)
+            log_handled_failure(_LOGGER, "Function Tool file write failed", err)
             return {"error": str(err)}
 
         return {
@@ -422,7 +423,7 @@ class EditFileFunction(FileFunction):
                 )
 
         except Exception as err:
-            _LOGGER.error(err)
+            log_handled_failure(_LOGGER, "Function Tool file edit failed", err)
             return {"error": str(err)}
 
         return {

@@ -97,6 +97,7 @@ from .ha_tool_result_compat import (
 )
 from .helpers import get_api_mode, get_model_config
 from .non_streaming import completed_chat_chunks, completed_responses_events
+from .operational_errors import log_handled_failure
 from .provider_errors import (
     ProviderStreamError,
     provider_stream_error,
@@ -138,13 +139,23 @@ async def _async_close_provider_streams(
     if transformed_stream is not None:
         try:
             await transformed_stream.aclose()
-        except Exception:
-            _LOGGER.debug("Unable to close transformed provider stream", exc_info=True)
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER,
+                "Unable to close transformed provider stream",
+                err,
+                level=logging.DEBUG,
+            )
     if provider_stream is not None:
         try:
             await provider_stream.close()
-        except Exception:
-            _LOGGER.debug("Unable to close OpenAI provider stream", exc_info=True)
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER,
+                "Unable to close OpenAI provider stream",
+                err,
+                level=logging.DEBUG,
+            )
 
 
 def _shorten_tool_call_id(tool_call_id: str) -> str:
@@ -1175,9 +1186,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         first_chunk = True
         refusal_seen = False
         terminal_finish_seen = False
+        event_count = 0
 
         async for chunk in normalized_chat_stream(chat_log, result, request_usage):
-            _LOGGER.debug("Received chunk: %s", chunk)
+            event_count += 1
             # Signal new assistant message on first chunk
             if first_chunk:
                 yield {"role": "assistant"}
@@ -1300,6 +1312,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             raise HomeAssistantError(
                 "OpenAI Chat Completions stream ended before a terminal finish reason"
             )
+        _LOGGER.debug(
+            "Provider stream ended api_mode=chat_completions events=%d outcome=completed",
+            event_count,
+        )
 
     async def _transform_responses_stream(
         self,
@@ -1317,8 +1333,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}
         terminal_event_seen = False
         completed_items: set[tuple[Any, Any]] = set()
+        event_count = 0
         async for event in normalized_responses_stream(chat_log, result, request_usage):
-            _LOGGER.debug("Received Responses event: %s", event)
+            event_count += 1
             event_type = getattr(event, "type", "")
             if terminal_event_seen and event_type in {
                 "response.completed",
@@ -1504,6 +1521,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             raise HomeAssistantError(
                 "OpenAI Responses stream ended before a terminal event"
             )
+        _LOGGER.debug(
+            "Provider stream ended api_mode=responses events=%d outcome=completed",
+            event_count,
+        )
 
     async def _execute_function_tool(
         self,
@@ -1577,20 +1598,25 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
             function_config = function_tool["function"]
             function = get_function(function_config["type"])
-            result = await function.execute(
-                self.hass,
-                function_config,
-                execution_arguments,
-                llm_context,
-                exposed_entities,
-            )
+            from .operational_errors import function_tool_log_context
+
+            with function_tool_log_context(tool_input.tool_name):
+                result = await function.execute(
+                    self.hass,
+                    function_config,
+                    execution_arguments,
+                    llm_context,
+                    exposed_entities,
+                )
             if delayed:
                 # Retain the scheduler's existing textual result contract.
                 result = str(result)
         except HomeAssistantError as err:
             if delayed or strict_execution_failures_enabled():
                 raise
-            _LOGGER.warning("Function Tool `%s` failed: %s", tool_input.tool_name, err)
+            log_handled_failure(
+                _LOGGER, f"Function Tool {tool_input.tool_name} failed", err
+            )
             result = {"status": "error", "error": str(err)}
 
         return make_tool_result_content(

@@ -59,7 +59,7 @@ def test_retirement_failure_creates_repair_and_deduplicates_log(monkeypatch) -> 
     )
     logger = Mock()
     error = ProviderStreamError(
-        "The model gpt-5.1 does not exist",
+        "The model gpt-5.1 does not exist PRIVATE-PROVIDER-CANARY",
         code="model_not_found",
         status_code=404,
     )
@@ -87,6 +87,8 @@ def test_retirement_failure_creates_repair_and_deduplicates_log(monkeypatch) -> 
     assert second == first
     assert create.call_count == 2
     logger.error.assert_called_once()
+    assert "PRIVATE-PROVIDER-CANARY" not in str(logger.error.call_args)
+    assert "model_not_found" in str(logger.error.call_args)
     assert model_lifecycle.confirmed_retirement_failure(
         hass, "entry", "agent", "gpt-5.1"
     )

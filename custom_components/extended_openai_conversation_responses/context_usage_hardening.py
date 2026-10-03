@@ -14,6 +14,7 @@ import logging
 import math
 from typing import Any
 
+from .operational_errors import log_handled_failure
 from .request_static_cache import (
     formatted_tool_measurement,
     remember_formatted_tool_measurement,
@@ -269,8 +270,10 @@ def estimate_prepared_request(
             tools,
             tool_measurement=tool_measurement,
         )[2]
-    except Exception:
-        _LOGGER.debug("Unable to estimate provider input size", exc_info=True)
+    except Exception as err:
+        log_handled_failure(
+            _LOGGER, "Unable to estimate provider input size", err, level=logging.DEBUG
+        )
         return
     request_usage.input_tokens = estimate
     request_usage.total_tokens = estimate

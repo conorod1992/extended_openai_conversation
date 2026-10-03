@@ -21,6 +21,7 @@ from ..const import (
     SHELL_OUTPUT_LIMIT,
     SHELL_TIMEOUT,
 )
+from ..operational_errors import log_handled_failure
 from ..regex_execution import async_search_configured_patterns
 from .base import Function
 
@@ -375,7 +376,7 @@ class BashFunction(Function):
                 result["stderr"] = stderr_text
 
         except Exception as err:
-            _LOGGER.error(err)
+            log_handled_failure(_LOGGER, "Function Tool shell execution failed", err)
             return {"error": str(err)}
 
         return result

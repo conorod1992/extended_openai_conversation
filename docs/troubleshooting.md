@@ -128,6 +128,8 @@ The test checks local configuration plus at most one minimal model request. It d
 
 ## Enable debug logging
 
-See [Logging](reference/logging.md) for the recommended logger configuration and privacy precautions.
+Use **Settings → Devices & services → Extended OpenAI Conversation → Enable debug logging**, reproduce the issue, then disable debug logging to download the log. Review it before sharing; Home Assistant does not guarantee automatic redaction.
+
+This captures operational logs. EOAI's separate **Request debugging** feature captures deeper per-request details; neither switch enables the other. See [Logging](reference/logging.md) for details and privacy precautions.
 
 When reporting an issue, include the smallest relevant log excerpt and redact credentials, private URLs, entity data, and conversation text as necessary.

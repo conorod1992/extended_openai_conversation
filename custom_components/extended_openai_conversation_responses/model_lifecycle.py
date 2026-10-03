@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-import json
 import logging
 from typing import Any
 
@@ -11,7 +10,7 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL, DOMAIN
 from .model_catalog import model_metadata
-from .provider_errors import provider_error_metadata
+from .provider_errors import log_provider_failure, provider_error_metadata
 
 _LOGGER = logging.getLogger(__name__)
 _DATA_FAILURES = f"{DOMAIN}.model_lifecycle_failures"
@@ -153,10 +152,10 @@ def record_retirement_failure(
 
     message = retirement_message(lifecycle)
     if first:
-        (logger or _LOGGER).error(
-            "%s Provider details: %s",
-            message,
-            json.dumps(provider_error_metadata(error), sort_keys=True),
+        log_provider_failure(
+            logger or _LOGGER,
+            f"{message} entry={entry_id} assistant={subentry_id} configured_model={model}",
+            error,
         )
     return message
 

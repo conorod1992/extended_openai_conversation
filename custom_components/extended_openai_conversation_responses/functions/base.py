@@ -13,7 +13,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
-from ..exceptions import EntityNotExposed, EntityNotFound, InvalidFunction
+from ..exceptions import EntityNotFound, InvalidFunction
+from ..ha_permissions import entity_access_error
 
 
 class _RuntimeFunctionConfig(dict[str, Any]):
@@ -128,7 +129,7 @@ class Function(ABC):
             entity_id for entity_id in entity_ids if entity_id not in exposed_entity_ids
         ]
         if not_exposed:
-            raise EntityNotExposed(", ".join(not_exposed))
+            raise entity_access_error(hass, not_exposed)
 
     @abstractmethod
     async def execute(

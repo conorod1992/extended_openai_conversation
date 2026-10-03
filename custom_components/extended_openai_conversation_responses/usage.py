@@ -25,6 +25,7 @@ from .const import (
     DOMAIN,
 )
 from .debug import record_current_run_failure
+from .operational_errors import log_handled_failure
 
 STORAGE_VERSION = 2
 STORAGE_KEY_PREFIX = f"{DOMAIN}.usage"
@@ -701,6 +702,14 @@ class UsageManager:
     def as_dict(self) -> dict[str, Any]:
         return asdict(self.totals)
 
+    def persistence_status(self) -> dict[str, Any]:
+        """Expose only persistence state, without request or conversation details."""
+        volatile = isinstance(self._storage, _VolatileUsageStorage)
+        return {
+            "mode": "volatile" if volatile else "durable",
+            "survives_restart": not volatile,
+        }
+
     async def async_backup_data(self) -> dict[str, Any]:
         """Return all persisted usage categories without in-flight run state."""
         async with self._lock:
@@ -1230,7 +1239,7 @@ async def async_get_usage(
 
         try:
             return await async_get_durable_usage(hass, entry_id, subentry_id)
-        except Exception:
+        except Exception as err:
             # The durable getter publishes before initialization so concurrent callers
             # converge on one manager. Discard a failed published instance before
             # installing the shared volatile fallback for this Home Assistant runtime.
@@ -1238,8 +1247,12 @@ async def async_get_usage(
             if isinstance(persistent_managers, dict):
                 persistent_managers.pop(key, None)
 
-            _LOGGER.exception(
-                "Unable to initialize Usage storage; continuing with volatile accounting"
+            log_handled_failure(
+                _LOGGER,
+                f"Unable to initialize Usage storage entry={entry_id} assistant={subentry_id}; "
+                "continuing with volatile accounting in memory. Usage totals/history recorded "
+                "in this mode will be lost on Home Assistant restart; conversation remains available",
+                err,
             )
             manager = UsageManager(
                 _VolatileUsageStorage(),
