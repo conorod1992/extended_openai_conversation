@@ -86,15 +86,57 @@ test("scan genuine HA route and editor accessibility semantics", async ({browser
             await writeFile(output, JSON.stringify({scans, diagnostic_picker:process.env.EOAI_ACCESSIBILITY_DIAGNOSTIC_PICKER === "1", browser_environment:{chromium:browser.version(), playwright:require("@playwright/test/package.json").version, axe:require("axe-core/package.json").version}}, null, 2));
           };
           await scan("route");
+          if (route.name === "assistant-prompt-context") {
+            const picker = panel.locator("#exposed-entity-picker");
+            await expect(picker.locator("ha-picker-field")).toHaveAttribute("role", "list");
+            await picker.locator("ha-picker-field").click();
+            await picker.locator("ha-combo-box-item").filter({hasText:"sensor.cold_attribute_kitchen"}).locator("button").click();
+            await expect(panel.locator("[data-exposed-editor]")).toContainText("sensor.cold_attribute_kitchen");
+            // Selecting replaces the EOAI section and hydrates a fresh native
+            // field. Its collapsed item must retain the list parent too.
+            await expect(panel.locator("#exposed-entity-picker ha-picker-field")).toHaveAttribute("role", "list");
+            await panel.locator("[data-close-exposed-editor]").click();
+          }
           if (route.name === "capabilities-functions") {
             await openFunctionAddMenu(panel, "#add-tool");
             await expect(panel.locator("#tool-yaml-native")).toBeVisible();
             await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(host => Boolean(host.codemirror))).toBe(true);
             await expect(panel.locator("#tool-yaml-native .cm-content")).toHaveAttribute("contenteditable", "true");
+            const content = panel.locator("#tool-yaml-native .cm-content");
+            await expect(content).toHaveAccessibleName("Function Tool YAML");
+            await expect(content).toHaveAttribute("tabindex", "0");
+            await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(editor => editor.shadowRoot.querySelector("ha-code-editor").codemirror.state.doc.length)).toBeGreaterThan(0);
+            const originalYaml = await panel.locator("#tool-yaml-native").evaluate(editor => editor.shadowRoot.querySelector("ha-code-editor").codemirror.state.doc.toString());
+            await panel.locator("#built-in-function").focus();
+            await page.keyboard.press("Tab");
+            await expect(content).toBeFocused();
+            await page.keyboard.press("ControlOrMeta+A");
+            await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(editor => {
+              const view = editor.shadowRoot.querySelector("ha-code-editor").codemirror;
+              return view.state.selection.main.from === 0 && view.state.selection.main.to === view.state.doc.length;
+            })).toBe(true);
+            const editedYaml = `${originalYaml.trimEnd()}\n# Keyboard accessibility regression`;
+            await page.keyboard.insertText(editedYaml);
+            await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(editor => editor.yaml)).toBe(editedYaml);
+            // HA's native lint-panel shortcut moves focus out of the document
+            // while preserving Tab for indentation and Ctrl+S for saving.
+            await page.keyboard.press("ControlOrMeta+Shift+M");
+            await expect(panel.locator("#tool-yaml-native .cm-panel-lint")).toBeVisible();
+            await page.keyboard.press("Tab");
+            await expect(content).not.toBeFocused();
+            // Native HA may place its editor toolbar between the document and
+            // EOAI's footer. Traverse it rather than assuming a fixed tab order.
+            for (let step = 0; step < 12 && !await panel.locator("#tool-cancel").evaluate(button => button.getRootNode().activeElement === button); step++) {
+              await page.keyboard.press("Tab");
+            }
+            await expect(panel.locator("#tool-cancel")).toBeFocused();
+            await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), originalYaml);
             await scan("tool-editor");
             await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), "spec: [invalid");
             await panel.locator("#tool-validate").click();
             await expect(panel.locator("#tool-error")).toHaveClass(/invalid/);
+            await panel.locator("#tool-yaml-native .cm-lint-marker-error").hover();
+            await expect(panel.locator("#tool-yaml-native .cm-tooltip-lint")).toBeVisible();
             await scan("tool-invalid");
             const tool = {spec:{name:"accessibility_saved_tool", description:"Preserved saved tool", parameters:{type:"object", properties:{}}}, function:{type:"template", value_template:"healthy"}};
             await panel.evaluate((host, tool) => host._call("tools", "save", {tool}), tool);
