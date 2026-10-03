@@ -10,6 +10,7 @@ export const nightlyInteractionSpecs = [
   "native-yaml-editor-crud.spec.mjs",
   "conversation-actions.spec.mjs",
   "request-debug-persistence.spec.mjs",
+  "timezone-locale-boundaries.spec.mjs",
 ];
 export default {
   ...base,
