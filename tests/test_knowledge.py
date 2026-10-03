@@ -695,6 +695,7 @@ async def test_home_assistant_storage_adapter_builds_private_atomic_store_and_de
         async_load=AsyncMock(return_value={"sources": []}),
         async_save=AsyncMock(),
     )
+    backing.bind_agent = Mock(return_value=backing)
     store_factory = Mock(return_value=backing)
     monkeypatch.setattr(knowledge, "KnowledgeStore", store_factory)
     hass = object()
@@ -709,6 +710,7 @@ async def test_home_assistant_storage_adapter_builds_private_atomic_store_and_de
         atomic_writes=True,
         serialize_in_event_loop=False,
     )
+    backing.bind_agent.assert_called_once_with("entry-1", "agent-1")
     assert await storage.async_load() == {"sources": []}
     await storage.async_save({"sources": [{"source_id": "one"}]})
     backing.async_save.assert_awaited_once_with({"sources": [{"source_id": "one"}]})

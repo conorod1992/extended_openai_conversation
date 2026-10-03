@@ -228,6 +228,12 @@ async def async_collect_transfer_snapshot(
     sections: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Collect only the sections requested for a portable/custom transfer."""
+    from .agent_maintenance import get_agent_maintenance_gate
+
+    get_agent_maintenance_gate(
+        hass, entry.entry_id, subentry.subentry_id
+    ).require_available()
+
     if mode == "setup":
         selected = SETUP_SECTIONS
     elif mode == "custom":

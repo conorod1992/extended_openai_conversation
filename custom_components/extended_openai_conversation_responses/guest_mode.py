@@ -203,7 +203,7 @@ class GuestModeManager:
             private=True,
             atomic_writes=True,
             serialize_in_event_loop=False,
-        )
+        ).bind_agent(entry_id, subentry_id)
         self._schedule: GuestModeSchedule | None = None
         self._listeners: set[Callable[[], None]] = set()
         self._mutation_lock = asyncio.Lock()

@@ -397,3 +397,55 @@ async def test_management_lease_bypasses_owned_paths_and_gates_agent_commands(
         },
     ):
         assert gate.shared_entries == 1
+
+
+async def test_pending_recovery_rejects_queued_reader_after_writer_releases():
+    """A reader queued before failure cannot slip into the mixed generation."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    gate = AgentMaintenanceGate()
+    entered = asyncio.Event()
+
+    async def reader():
+        async with gate.shared():
+            entered.set()
+
+    async with gate.exclusive():
+        task = asyncio.create_task(reader())
+        await asyncio.sleep(0)
+        assert not entered.is_set() and not task.done()
+        gate.recovery_required = True
+    with pytest.raises(HomeAssistantError, match="recovery"):
+        await task
+    assert not entered.is_set()
+    gate.recovery_required = False
+    await reader()
+    assert entered.is_set()
+
+
+async def test_recovery_store_access_requires_current_exclusive_owner():
+    """A propagated child context loses its recovery privilege at release."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    gate = AgentMaintenanceGate()
+    release = asyncio.Event()
+
+    async def stale_child():
+        await release.wait()
+        async with gate.shared(maintenance=True):
+            pytest.fail("stale recovery owner bypassed quarantine")
+
+    async with gate.exclusive():
+        gate.recovery_required = True
+        with gate.recovery_work():
+            async with gate.shared(maintenance=True):
+                assert gate.owns_exclusive()
+            task = asyncio.create_task(stale_child())
+        with pytest.raises(HomeAssistantError, match="recovery"):
+            gate.require_available()
+    release.set()
+    with pytest.raises(HomeAssistantError, match="recovery"):
+        await task
+    assert not gate.owns_exclusive()
+    with pytest.raises(RuntimeError, match="exclusive"), gate.recovery_work():
+        pytest.fail("unowned recovery was admitted")

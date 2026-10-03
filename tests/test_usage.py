@@ -789,6 +789,10 @@ async def test_async_get_durable_usage_publishes_single_manager_before_initializ
     created = []
 
     class FakeStore(CoverageMemoryStorage):
+        def bind_agent(self, entry_id, subentry_id):
+            self.agent_identity = (entry_id, subentry_id)
+            return self
+
         def __init__(self, hass, version, key, **kwargs):
             super().__init__()
             created.append((version, key, kwargs))
@@ -805,7 +809,7 @@ async def test_async_get_durable_usage_publishes_single_manager_before_initializ
         await release.wait()
         await real_initialize(self)
 
-    monkeypatch.setattr(usage, "Store", FakeStore)
+    monkeypatch.setattr(usage, "RecoveryGuardedStore", FakeStore)
     monkeypatch.setattr(usage.UsageManager, "async_initialize", blocked_initialize)
     listeners = []
     hass = SimpleNamespace(

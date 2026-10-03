@@ -121,7 +121,7 @@ class HomeAssistantKnowledgeStorage:
             private=True,
             atomic_writes=True,
             serialize_in_event_loop=False,
-        )
+        ).bind_agent(entry_id, subentry_id)
 
     async def async_load(self) -> dict[str, Any] | None:
         return await self._store.async_load()
@@ -661,6 +661,9 @@ class KnowledgeLibrary:
             self._index(source)
 
     def _ensure_initialized(self) -> None:
+        store = getattr(self._storage, "_store", None)
+        if isinstance(store, PropagatingWriteStore):
+            store.require_available()
         if not self._initialized:
             raise RuntimeError("Knowledge Library has not been initialized")
 

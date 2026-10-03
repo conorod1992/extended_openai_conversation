@@ -109,13 +109,14 @@ class HomeAssistantArchiveStorage:
         prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
         self._hass = hass
         self._prefix = prefix
+        self._agent_identity = (entry_id, subentry_id)
         self._metadata = PropagatingWriteStore(
             hass,
             STORAGE_VERSION,
             f"{prefix}.metadata",
             private=True,
             atomic_writes=True,
-        )
+        ).bind_agent(entry_id, subentry_id)
 
     def _partition_store(self, partition: str) -> Store[dict[str, Any]]:
         return PropagatingWriteStore(
@@ -125,7 +126,7 @@ class HomeAssistantArchiveStorage:
             private=True,
             atomic_writes=True,
             serialize_in_event_loop=False,
-        )
+        ).bind_agent(*self._agent_identity)
 
     async def async_load_metadata(self) -> dict[str, Any] | None:
         return await self._metadata.async_load()

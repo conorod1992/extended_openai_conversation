@@ -79,6 +79,10 @@ async def test_concurrent_usage_acquisition_publishes_one_manager(monkeypatch) -
     stores = []
 
     class BlockingStore(FakeStorage):
+        def bind_agent(self, entry_id, subentry_id):
+            self.agent_identity = (entry_id, subentry_id)
+            return self
+
         def __init__(self, _hass, _version, key, **_kwargs) -> None:
             super().__init__()
             self.key = key
@@ -91,7 +95,7 @@ async def test_concurrent_usage_acquisition_publishes_one_manager(monkeypatch) -
                 await release.wait()
             return deepcopy(self.data)
 
-    monkeypatch.setattr(usage_module, "Store", BlockingStore)
+    monkeypatch.setattr(usage_module, "RecoveryGuardedStore", BlockingStore)
     hass = SimpleNamespace(data={})
 
     first = asyncio.create_task(async_get_usage(hass, "entry-1", "agent-1"))
@@ -100,6 +104,7 @@ async def test_concurrent_usage_acquisition_publishes_one_manager(monkeypatch) -
     await asyncio.sleep(0)
 
     assert len(stores) == 3
+    assert all(store.agent_identity == ("entry-1", "agent-1") for store in stores)
     release.set()
     first_manager, second_manager = await asyncio.gather(first, second)
 

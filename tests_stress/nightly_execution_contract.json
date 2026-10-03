@@ -1162,6 +1162,14 @@
     "tests_stress/test_request_rules_provider_wire.py::test_referenced_function_recreation_cannot_rebind_inflight_rule",
     "tests_stress/test_restore_background_ownership.py::test_installed_retention_waits_for_restored_policy",
     "tests_stress/test_restore_background_ownership.py::test_websocket_setup_export_is_coherent_across_restore",
+    "tests_stress/test_restore_recovery_process.py::test_corrupt_restore_journal_cold_boot_isolation_and_repair",
+    "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable[corrupt]",
+    "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable[destination]",
+    "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable[structure]",
+    "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable[truncated]",
+    "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable[unreadable]",
+    "tests_stress/test_restore_recovery_safety.py::test_pending_restore_rejects_writes_until_durable_recovery[completion]",
+    "tests_stress/test_restore_recovery_safety.py::test_pending_restore_rejects_writes_until_durable_recovery[rollback]",
     "tests_stress/test_runtime_soak.py::test_reload_heavy_seed_guarantees_conversation_floor",
     "tests_stress/test_runtime_soak.py::test_seeded_multi_entry_runtime_soak",
     "tests_stress/test_skill_download_cancellation.py::test_cancelled_download_settles_native_work_before_owned_cleanup[collision]",
@@ -1720,7 +1728,13 @@
     },
     "backup": {
       "rollback_phases": 1,
-      "retention_restore_ownership_cases": 1
+      "retention_restore_ownership_cases": 1,
+      "restore_pending_cases": 2,
+      "restore_journal_fault_cases": 5,
+      "restore_recovery_cold_cases": 1,
+      "rejected_recovery_operations": 37,
+      "process_fresh_boots": 5,
+      "native_restore_faults": 3
     },
     "backup-transfer": {
       "backup_chunks_transferred": 1,
@@ -1763,7 +1777,13 @@
       "archive_intent_reload_checks": 2,
       "pending_publication_failure_cases": 2,
       "pending_publication_retry_checks": 2,
-      "pending_publication_actual_tool_calls": 4
+      "pending_publication_actual_tool_calls": 4,
+      "restore_pending_cases": 2,
+      "restore_journal_fault_cases": 5,
+      "restore_recovery_cold_cases": 1,
+      "rejected_recovery_operations": 37,
+      "process_fresh_boots": 5,
+      "native_restore_faults": 3
     },
     "diagnostics": {
       "artifact_privacy_probes": 4

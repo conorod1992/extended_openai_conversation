@@ -793,7 +793,7 @@ def _temporary_memory_store(
         private=True,
         atomic_writes=True,
         serialize_in_event_loop=False,
-    )
+    ).bind_agent(entry_id, subentry_id)
 
 
 def get_loaded_temporary_memory(

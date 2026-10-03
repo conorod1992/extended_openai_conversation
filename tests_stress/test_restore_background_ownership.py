@@ -161,9 +161,9 @@ async def test_installed_retention_waits_for_restored_policy(
     prune = archive.async_prune
 
     @asynccontextmanager
-    async def observed_shared():
+    async def observed_shared(**kwargs):
         lease_attempted.set()
-        async with shared():
+        async with shared(**kwargs):
             yield
 
     async def observed_prune(days):

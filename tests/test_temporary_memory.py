@@ -558,6 +558,10 @@ def test_store_factory_uses_private_atomic_non_loop_serialization(monkeypatch) -
     captured = SimpleNamespace(args=None, kwargs=None)
 
     class FakeStore:
+        def bind_agent(self, entry_id, subentry_id):
+            self.agent_identity = (entry_id, subentry_id)
+            return self
+
         def __init__(self, *args, **kwargs) -> None:
             captured.args = args
             captured.kwargs = kwargs
@@ -568,6 +572,7 @@ def test_store_factory_uses_private_atomic_non_loop_serialization(monkeypatch) -
     result = temporary_memory._temporary_memory_store(hass, "entry", "agent")
 
     assert isinstance(result, FakeStore)
+    assert result.agent_identity == ("entry", "agent")
     assert captured.args == (
         hass,
         temporary_memory.STORAGE_VERSION,
