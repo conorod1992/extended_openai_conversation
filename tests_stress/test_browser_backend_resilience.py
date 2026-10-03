@@ -638,3 +638,66 @@ async def test_published_frontend_assets_against_new_real_ha_backend(
         record(stress_trace, "published_frontend_cache", seed=stress_seed)
     finally:
         await runner.cleanup()
+
+
+async def test_professional_genuine_browser_transfer_controls_and_locale(
+    hass,
+    real_ha_shell,
+    stress_trace,
+):
+    """Large real-browser transfer, native-control endurance and locale boundaries."""
+    import random
+    import string
+
+    from custom_components.extended_openai_conversation_responses.knowledge import (
+        async_get_knowledge,
+    )
+    from tests_real_ha.test_management_backend_acceptance import (
+        _conversation_subentry,
+    )
+
+    shell = real_ha_shell
+    entry = shell["entry"]
+    subentry = _conversation_subentry(entry)
+    knowledge = await async_get_knowledge(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    rng = random.Random(0xBACC0FFE)
+    alphabet = string.ascii_letters + string.digits + "-_"
+    # Use deliberately incompressible, valid Knowledge content so the shipped
+    # 512 KiB transfer size is exercised by more than one browser/WebSocket chunk.
+    sources = 12
+    chars_per_source = 90_000
+    for index in range(sources):
+        payload = "".join(rng.choices(alphabet, k=chars_per_source))
+        await knowledge.async_create(
+            f"Professional transfer source {index:02d}",
+            "Deterministic incompressible browser transfer fixture",
+            payload,
+            True,
+        )
+
+    env = {
+        **shell["env"],
+        "EOAI_PROFESSIONAL_BROWSER": "1",
+        "REAL_HA_BROWSER_PROFILE": "chromium",
+        "EOAI_BROWSER_LOCALE": "en-IE",
+        "EOAI_BROWSER_TIMEZONE": "Pacific/Honolulu",
+        "EOAI_EXPECT_BROWSER_LOCALE": "en-IE",
+        "EOAI_EXPECT_BROWSER_TIMEZONE": "Pacific/Honolulu",
+    }
+    await _run_playwright(
+        repo_root=Path(__file__).resolve().parent.parent,
+        spec="tests_browser/real-ha-professional-browser.spec.mjs",
+        config="playwright.real-ha-shell.config.mjs",
+        env=env,
+        failure_label="Professional genuine-HA browser acceptance failed",
+    )
+    record(
+        stress_trace,
+        "summary",
+        production_backup_browser_journeys=1,
+        production_backup_seed_bytes=sources * chars_per_source,
+        native_control_endurance_journeys=1,
+        genuine_locale_timezone_journeys=1,
+    )
