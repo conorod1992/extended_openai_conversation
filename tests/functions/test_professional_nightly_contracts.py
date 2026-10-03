@@ -88,6 +88,7 @@ def _independent_scalar(kind: str, raw):
             },
         ),
     ],
+    ids=["chat-completions-sampling", "responses-durable-features"],
 )
 def test_reviewed_configuration_witnesses_have_independent_expected_values(
     saved, expected
@@ -108,6 +109,7 @@ def test_reviewed_configuration_witnesses_have_independent_expected_values(
         ({"memory_auto_retrieve_limit": -1}, "memory_auto_retrieve_limit"),
         ({"conversation_timeout_minutes": 0}, "conversation_timeout_minutes"),
     ],
+    ids=["max-tokens", "memory-retrieve-limit", "conversation-timeout"],
 )
 def test_reviewed_invalid_configuration_neighbours_fail_closed(payload, field):
     with pytest.raises(agent_config.AgentConfigError, match=field):
