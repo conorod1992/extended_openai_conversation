@@ -10,9 +10,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from homeassistant.components import conversation
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     CONF_API_MODE,
@@ -22,6 +19,8 @@ from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
     _convert_content_to_param,
 )
+from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
 
 
 class _FakeStream:
@@ -328,9 +327,6 @@ async def test_chat_completions_duplicate_tool_call_ids_fail_before_execution(
 
     history = _convert_content_to_param(chat_log.content)
     calls, outputs = _protocol_messages(history)
-    assert [call["id"] for call in calls] == [
-        "call-duplicate",
-        "call-duplicate",
-    ]
+    assert calls == []
     assert outputs == []
 

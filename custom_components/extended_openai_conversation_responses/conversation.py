@@ -226,7 +226,7 @@ from .temporary_memory import (
 )
 from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledged_calls
 from .usage import async_get_usage
-from .voice_identity_runtime import voice_identity_scope
+from .voice_identity_runtime import voice_identity_scope, voice_source_device_id
 
 _TEMPORARY_MEMORY_PREFETCH: ContextVar[asyncio.Task[Any] | None] = ContextVar(
     "extended_openai_temporary_memory_prefetch", default=None
@@ -700,7 +700,7 @@ class ExtendedOpenAIAgentEntity(
             request_policy = self._resolve_live_guest_policy()
             guest_policy_token = _ACTIVE_GUEST_POLICY.set(request_policy)
             try:
-                source_device_id = user_input.satellite_id or user_input.device_id
+                source_device_id = voice_source_device_id(user_input)
                 scope = resolve_data_scope(
                     SimpleNamespace(
                         context=llm_context.context,

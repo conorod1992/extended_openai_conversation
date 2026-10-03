@@ -23,15 +23,14 @@ from custom_components.extended_openai_conversation_responses.scope import (
 )
 
 
-def test_registry_device_temporarily_overrides_satellite_source() -> None:
+def test_registry_device_owns_data_without_changing_satellite_source() -> None:
     user_input = SimpleNamespace(
         device_id="device-registry-id",
         satellite_id="assist_satellite.kitchen",
     )
 
-    with voice_identity_runtime._prefer_registry_device_source(user_input):
-        assert user_input.device_id == "device-registry-id"
-        assert user_input.satellite_id is None
+    assert voice_identity_runtime.voice_source_device_id(user_input) == "device-registry-id"
+    assert user_input.device_id == "device-registry-id"
 
     assert user_input.satellite_id == "assist_satellite.kitchen"
 
@@ -42,8 +41,8 @@ def test_satellite_fallback_is_preserved_without_registry_device() -> None:
         satellite_id="assist_satellite.kitchen",
     )
 
-    with voice_identity_runtime._prefer_registry_device_source(user_input):
-        assert user_input.satellite_id == "assist_satellite.kitchen"
+    assert voice_identity_runtime.voice_source_device_id(user_input) == "assist_satellite.kitchen"
+    assert user_input.satellite_id == "assist_satellite.kitchen"
 
 
 async def test_request_owner_uses_registry_device_and_restores_satellite(
@@ -56,7 +55,7 @@ async def test_request_owner_uses_registry_device_and_restores_satellite(
     entry_agent._async_process_with_continuity = process
     result = await entry_agent.async_process(entry_input)
     assert result == "processed"
-    assert observed == [("device-registry-id", None)]
+    assert observed == [("device-registry-id", "assist_satellite.kitchen")]
     assert entry_input.satellite_id == "assist_satellite.kitchen"
     entry_agent.hass.auth.async_get_user.assert_not_awaited()
 
@@ -72,7 +71,7 @@ async def test_runtime_stale_mapping_follows_unmapped_policy(
     observed_scopes = []
     async def process(request):
         observed_scopes.append(resolve_data_scope(
-            SimpleNamespace(context=request.context, device_id=request.satellite_id or request.device_id),
+            SimpleNamespace(context=request.context, device_id=voice_identity_runtime.voice_source_device_id(request)),
             options,
         ))
         return "processed"

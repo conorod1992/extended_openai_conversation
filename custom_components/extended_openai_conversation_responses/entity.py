@@ -117,6 +117,7 @@ from .tool_exchange import (
     append_unresolved_tool_results,
     async_execute_tool_exchange,
     retained_tool_calls_since,
+    validate_tool_call_ids,
 )
 from .usage import RequestUsage, UsageManager, extract_usage
 
@@ -1215,6 +1216,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                 continue
 
+            if terminal_finish_seen:
+                raise ProviderStreamError(
+                    "Provider returned malformed data: event after terminal response",
+                    error_type="invalid_event_sequence",
+                )
             choice = chunk.choices[0]
             delta = choice.delta
             finish_reason = choice.finish_reason
@@ -1255,11 +1261,27 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             "arguments": "",
                         }
 
+                    if tool_call_delta.id and current_tool_calls[idx]["id"] not in {
+                        "",
+                        tool_call_delta.id,
+                    }:
+                        raise ProviderStreamError(
+                            "Provider returned malformed data: conflicting tool call id",
+                            error_type="invalid_event_sequence",
+                        )
                     if tool_call_delta.id and not current_tool_calls[idx]["id"]:
                         current_tool_calls[idx]["id"] = tool_call_delta.id
 
                     if tool_call_delta.function:
                         if tool_call_delta.function.name:
+                            if current_tool_calls[idx]["name"] not in {
+                                "",
+                                tool_call_delta.function.name,
+                            }:
+                                raise ProviderStreamError(
+                                    "Provider returned malformed data: conflicting tool name",
+                                    error_type="invalid_event_sequence",
+                                )
                             current_tool_calls[idx]["name"] = (
                                 tool_call_delta.function.name
                             )
@@ -1281,6 +1303,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         args = recovery_state.remember_malformed(
                             tool_call["id"], tool_call["arguments"]
                         )
+                    if tool_call["name"] in {
+                        CONTINUE_CONVERSATION_TOOL_NAME,
+                        FUNCTION_GROUP_LOADER_TOOL_NAME,
+                    } and not isinstance(args, dict):
+                        raise ParseArgumentsFailed(tool_call["arguments"])
                     tool_calls_list.append(
                         llm.ToolInput(
                             id=tool_call["id"],
@@ -1289,6 +1316,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             external=True,  # Mark as external so ChatLog doesn't try to execute
                         )
                     )
+                validate_tool_call_ids(tool_calls_list)
                 if tool_calls_list:
                     yield {"tool_calls": tool_calls_list}
                 current_tool_calls.clear()
@@ -1333,22 +1361,89 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}
         terminal_event_seen = False
         completed_items: set[tuple[Any, Any]] = set()
+        output_items: dict[Any, tuple[Any, Any, Any]] = {}
+        completed_calls: list[llm.ToolInput] = []
+        argument_fragments: dict[Any, str] = {}
         event_count = 0
         async for event in normalized_responses_stream(chat_log, result, request_usage):
             event_count += 1
             event_type = getattr(event, "type", "")
-            if terminal_event_seen and event_type in {
-                "response.completed",
-                "response.incomplete",
-                "response.output_item.added",
-                "response.output_item.done",
-                "response.output_text.delta",
-                "response.refusal.delta",
-            }:
+            if (
+                terminal_event_seen
+                and event_type.startswith("response.")
+                and event_type not in {"response.usage", "response.usage.updated"}
+            ):
                 raise ProviderStreamError(
                     "Provider returned malformed data: event after terminal response",
                     error_type="invalid_event_sequence",
                 )
+
+            if event_type in {
+                "response.output_item.added",
+                "response.output_item.done",
+            }:
+                index = getattr(event, "output_index", None)
+                item = event.item
+                identity = (
+                    getattr(item, "id", None),
+                    getattr(item, "call_id", None),
+                    getattr(item, "name", None),
+                )
+                if (
+                    index is not None
+                    and index in output_items
+                    and output_items[index] != identity
+                ):
+                    raise ProviderStreamError(
+                        "Provider returned malformed data: conflicting output item",
+                        error_type="invalid_event_sequence",
+                    )
+                if index is not None:
+                    if identity[0] and any(
+                        other_index != index and other_identity[0] == identity[0]
+                        for other_index, other_identity in output_items.items()
+                    ):
+                        raise ProviderStreamError(
+                            "Provider returned malformed data: duplicate output item id",
+                            error_type="invalid_event_sequence",
+                        )
+                    output_items[index] = identity
+                    if (
+                        event_type == "response.output_item.done"
+                        and index in argument_fragments
+                        and getattr(item, "arguments", None)
+                        != argument_fragments[index]
+                    ):
+                        raise ProviderStreamError(
+                            "Provider returned malformed data: conflicting tool arguments",
+                            error_type="invalid_event_sequence",
+                        )
+            elif event_type in {
+                "response.function_call_arguments.delta",
+                "response.function_call_arguments.done",
+            }:
+                index = getattr(event, "output_index", None)
+                if (
+                    index in output_items
+                    and getattr(event, "item_id", None) != output_items[index][0]
+                ):
+                    raise ProviderStreamError(
+                        "Provider returned malformed data: conflicting argument item",
+                        error_type="invalid_event_sequence",
+                    )
+
+                if event_type == "response.function_call_arguments.delta":
+                    argument_fragments[index] = (
+                        argument_fragments.get(index, "") + event.delta
+                    )
+                elif (
+                    index in argument_fragments
+                    and event.arguments != argument_fragments[index]
+                ):
+                    raise ProviderStreamError(
+                        "Provider returned malformed data: conflicting tool arguments",
+                        error_type="invalid_event_sequence",
+                    )
 
             if event_type == "response.output_item.added":
                 item_type = getattr(event.item, "type", "")
@@ -1459,6 +1554,20 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         arguments = recovery_state.remember_malformed(
                             item.call_id, item.arguments
                         )
+                    if item.name in {
+                        CONTINUE_CONVERSATION_TOOL_NAME,
+                        FUNCTION_GROUP_LOADER_TOOL_NAME,
+                    } and not isinstance(arguments, dict):
+                        raise ParseArgumentsFailed(item.arguments)
+                    completed_calls.append(
+                        llm.ToolInput(
+                            id=item.call_id,
+                            tool_name=item.name,
+                            tool_args=arguments,
+                            external=True,
+                        )
+                    )
+                    validate_tool_call_ids(completed_calls)
                     yield {
                         "tool_calls": [
                             llm.ToolInput(
