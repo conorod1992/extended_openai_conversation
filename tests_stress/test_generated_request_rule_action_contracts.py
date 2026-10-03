@@ -6,7 +6,6 @@ import asyncio
 
 from tests_real_ha.test_cross_feature_acceptance import (
     _agent,
-    _provider,
     _rule,
     _say,
     _speech,
@@ -14,11 +13,10 @@ from tests_real_ha.test_cross_feature_acceptance import (
 
 
 async def test_generated_request_rule_action_sequences_keep_request_local_variables(
-    hass, monkeypatch
+    hass
 ):
     """Concurrent generated sequences retain ordering and request-local variables."""
     agent = await _agent(hass, title="Generated Request Rule actions")
-    _provider(monkeypatch, agent, [])
     observed = []
 
     async def record(call):
@@ -73,11 +71,10 @@ async def test_generated_request_rule_action_sequences_keep_request_local_variab
 
 
 async def test_generated_request_rule_failure_isolated_from_healthy_siblings(
-    hass, monkeypatch
+    hass
 ):
     """One generated native failure must not poison neighboring generated rules."""
     agent = await _agent(hass, title="Generated Request Rule failures")
-    _provider(monkeypatch, agent, [])
     effects = []
 
     async def healthy(call):
