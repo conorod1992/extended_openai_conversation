@@ -150,7 +150,7 @@ async def test_control_changes_then_raises_preserves_durable_ownership(
         else:
             state = "on" if call.service == "turn_on" else "off"
             value = state == "on"
-        hass.states.async_set(entity_id, state, attributes)
+        hass.states.async_set(entity_id, state, attributes, context=call.context)
         calls.append((entity_id, value))
         if entity_id == target and not faults:
             faults.append((entity_id, value))
@@ -175,6 +175,8 @@ async def test_control_changes_then_raises_preserves_durable_ownership(
         assert faults == [(target, desired)] and calls == [(target, desired)]
         owned = manager.active["controls"][target]
         assert owned["original_value"] == original and owned["quiet_value"] == desired
+        assert owned["application_state"] == "prepared"
+        assert hass.states.get(target).context.id == owned["application_context_id"]
         assert (
             json.loads(Path(manager._store.path).read_text())["data"]["active"][
                 "controls"
@@ -195,7 +197,17 @@ async def test_control_changes_then_raises_preserves_durable_ownership(
         await manager.async_shutdown()
         manager = QuietHoursManager(hass)
         await manager.async_setup()
-        assert manager.active["controls"][target] == owned and calls == before_restart
+        if manual:
+            assert target not in manager.active["controls"]
+        else:
+            assert manager.active["controls"][target] == {
+                **owned,
+                "application_state": "applied",
+            }
+        assert calls == before_restart
+        assert json.loads(Path(manager._store.path).read_text())["data"]["active"][
+            "controls"
+        ] == manager.active["controls"]
         await manager.async_reconcile()
         assert calls == before_restart
         freezer.move_to(datetime(2026, 1, 11, 7, tzinfo=UTC))
