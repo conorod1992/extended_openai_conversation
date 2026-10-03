@@ -37,7 +37,7 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
     tool_result_data,
 )
 from homeassistant.components import conversation
-from homeassistant.core import Context
+from homeassistant.core import Context, CoreState
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.util import dt as dt_util
@@ -82,9 +82,7 @@ async def test_schedule_is_persisted_before_becoming_live(hass) -> None:
     manager = DelayedToolManager(hass)
     manager._setup_complete = True
     manager._store = SimpleNamespace(async_save=AsyncMock())
-    context = SimpleNamespace(
-        context=Context(user_id="user-1"), device_id="device-1"
-    )
+    context = SimpleNamespace(context=Context(user_id="user-1"), device_id="device-1")
 
     record = await manager.async_schedule(
         _entity(hass),
@@ -128,9 +126,7 @@ async def test_schedule_reconciles_after_lost_store_acknowledgement(hass) -> Non
     manager = DelayedToolManager(hass)
     manager._setup_complete = True
     manager._store = SimpleNamespace(async_save=save_then_fail, async_load=load)
-    context = SimpleNamespace(
-        context=Context(user_id="user-1"), device_id="device-1"
-    )
+    context = SimpleNamespace(context=Context(user_id="user-1"), device_id="device-1")
 
     with pytest.raises(OSError, match="directory fsync acknowledgement failed"):
         await manager.async_schedule(
@@ -178,7 +174,9 @@ async def test_delayed_state_transitions_reconcile_after_lost_acknowledgement(
     assert persisted["calls"] == []
 
 
-async def test_due_call_uses_current_tool_and_current_exposure(hass, monkeypatch) -> None:
+async def test_due_call_uses_current_tool_and_current_exposure(
+    hass, monkeypatch
+) -> None:
     """Execution re-resolves the tool and exposure instead of stale snapshots."""
     manager = DelayedToolManager(hass)
     manager._setup_complete = True
@@ -215,7 +213,9 @@ async def test_due_call_uses_current_tool_and_current_exposure(hass, monkeypatch
     assert retry is False
     assert record.call_id not in manager._records
     agent._execute_function_tool.assert_awaited_once()
-    called_tool, tool_input, context, exposed = agent._execute_function_tool.await_args.args
+    called_tool, tool_input, context, exposed = (
+        agent._execute_function_tool.await_args.args
+    )
     assert called_tool is current_tool
     assert isinstance(tool_input, llm.ToolInput)
     assert tool_input.tool_args == record.arguments
@@ -572,7 +572,9 @@ def test_arm_ignores_live_waiter_missing_record_and_nonpending_record(hass) -> N
     manager._arm("missing")
     assert manager._tasks == {}
 
-    manager._records["executing"] = _coverage_record(call_id="executing", status=_EXECUTING)
+    manager._records["executing"] = _coverage_record(
+        call_id="executing", status=_EXECUTING
+    )
     manager._arm("executing")
     assert manager._tasks == {}
 
@@ -585,7 +587,7 @@ async def test_waiter_discards_invalid_due_timestamp_and_cleans_task(
     manager._started = True
     record = _coverage_record(due_at="not-a-date")
     manager._records = {record.call_id: record}
-    manager._tasks = {record.call_id: MagicMock()}
+    manager._tasks = {record.call_id: asyncio.current_task()}
     discard = AsyncMock(return_value=True)
     monkeypatch.setattr(manager, "_async_discard", discard)
 
@@ -603,7 +605,7 @@ async def test_waiter_uses_maintenance_gate_and_stops_after_execution(
     manager._started = True
     record = _coverage_record()
     manager._records = {record.call_id: record}
-    manager._tasks = {record.call_id: MagicMock()}
+    manager._tasks = {record.call_id: asyncio.current_task()}
 
     class Gate:
         def shared(self):
@@ -1058,6 +1060,83 @@ async def test_concurrent_setup_loads_and_registers_once(hass) -> None:
     assert manager._setup_complete is True
 
 
+@pytest.mark.parametrize("status", ["pending", "executing"])
+async def test_same_manager_recovery_rearms_only_verified_pending_calls(
+    hass, monkeypatch, status
+):
+    manager = DelayedToolManager(hass)
+    record = _record(status=status)
+    manager._started = manager._setup_complete = True
+    manager._records = {record.call_id: record}
+    manager._invalidate_after_unreadable_store()
+    assert not manager._started
+    manager._store = SimpleNamespace(
+        async_load=AsyncMock(return_value={"calls": [record.as_dict()]}),
+        async_save=AsyncMock(),
+    )
+    hass.state = CoreState.running
+    armed = MagicMock()
+    monkeypatch.setattr(manager, "_arm", armed)
+    await manager.async_setup()
+    assert manager._setup_complete and manager._started
+    if status == "pending":
+        armed.assert_called_once_with(record.call_id)
+    else:
+        armed.assert_not_called()
+        assert not manager._records
+        manager._store.async_save.assert_awaited_once_with({"calls": []})
+
+
+@pytest.mark.parametrize("cancel_recovery", [False, True])
+async def test_recovery_waits_for_cancelled_worker_before_publishing(
+    hass, monkeypatch, cancel_recovery
+):
+    manager = DelayedToolManager(hass)
+    entered, settling, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def worker():
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            settling.set()
+            await release.wait()
+
+    old = asyncio.create_task(worker())
+    manager._tasks["old"] = old
+    await entered.wait()
+    manager._invalidate_after_unreadable_store()
+    await settling.wait()
+    load = AsyncMock(return_value={"calls": []})
+    manager._store = SimpleNamespace(async_load=load, async_save=AsyncMock())
+    recovery = asyncio.create_task(manager.async_setup())
+    await asyncio.sleep(0)
+    assert not recovery.done()
+    load.assert_not_awaited()
+    if cancel_recovery:
+        recovery.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await recovery
+        assert not old.done()
+        assert not manager._setup_complete
+        recovery = asyncio.create_task(manager.async_setup())
+    release.set()
+    await recovery
+    assert not manager._invalidated_tasks
+    assert old.done()
+
+
+async def test_old_waiter_cleanup_preserves_replacement_task(hass, monkeypatch):
+    manager = DelayedToolManager(hass)
+    replacement = asyncio.create_task(asyncio.sleep(60))
+    manager._tasks["same"] = replacement
+    await manager._async_wait_and_execute("same")
+    assert manager._tasks["same"] is replacement
+    replacement.cancel()
+    await asyncio.gather(replacement, return_exceptions=True)
+    manager._tasks.clear()
+
+
 async def test_arm_does_not_duplicate_an_active_waiter(hass, monkeypatch) -> None:
     """Repeated arming of one call must not create duplicate execution waiters."""
     manager = DelayedToolManager(hass)
@@ -1184,7 +1263,9 @@ async def test_transient_execution_failure_retries_same_pending_call(
     assert _AGENT_RETRY_SECONDS in sleeps
 
 
-async def test_waiter_cancellation_propagates_and_removes_task(hass, monkeypatch) -> None:
+async def test_waiter_cancellation_propagates_and_removes_task(
+    hass, monkeypatch
+) -> None:
     """Stopping a pending waiter must not leave a stale task registration behind."""
     manager = DelayedToolManager(hass)
     record = _race_record()

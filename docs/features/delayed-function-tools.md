@@ -6,6 +6,11 @@ Configured Function Tools can request actions that should happen later, such as 
 
 Pending delayed calls are saved. If Home Assistant or the integration restarts before a call is due, an eligible pending action can be restored and executed once using the Home Assistant user context that originally scheduled it.
 
+If a write fails and its stored outcome cannot be read, the scheduler pauses.
+After storage is repaired, successful setup in the same Home Assistant process
+reloads verified pending calls and resumes their timers. Calls that crossed the
+durable execution boundary are excluded from recovery.
+
 If Home Assistant stops at a point where the action may already have begun, Extended OpenAI does **not** automatically run it again after restart. This avoids accidentally performing the same real-world action twice when the earlier result is uncertain. In technical terms, delayed execution follows an at-most-once restart boundary.
 
 ## Permission is checked again when the action is due

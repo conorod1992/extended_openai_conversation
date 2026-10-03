@@ -51,9 +51,9 @@
   {
     "owner": "delayed_function_tools",
     "classification": "transactional_durable",
-    "guarantee": "Scheduled calls reconcile from validated persisted records after write failure and are armed only when present there; terminal tombstones prevent replay.",
+    "guarantee": "Scheduled calls reconcile from validated persisted records after write failure. Unreadable outcomes pause the scheduler; same-manager setup settles cancelled workers before rearming verified pending records. Executing tombstones prevent replay.",
     "stores": [{"module": "delayed_tools.py", "constructor": "PropagatingWriteStore", "count": 1}],
-    "evidence": ["tests/test_delayed_tools.py::test_schedule_is_persisted_before_becoming_live", "tests/test_delayed_tools.py::test_schedule_reconciles_after_lost_store_acknowledgement", "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable"]
+    "evidence": ["tests/test_delayed_tools.py::test_schedule_is_persisted_before_becoming_live", "tests/test_delayed_tools.py::test_schedule_reconciles_after_lost_store_acknowledgement", "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable", "tests_stress/test_os_storage_faults.py::test_delayed_scheduler_same_process_recovers_after_write_and_read_failure"]
   },
   {
     "owner": "model_catalogue",
