@@ -80,15 +80,15 @@
     "owner": "usage_history",
     "classification": "best_effort_or_coalesced",
     "guarantee": "Accounting is coalesced and must not fail an otherwise healthy Assist request; later writes recover.",
-    "stores": [{"module": "usage.py", "constructor": "Store", "count": 3}],
+    "stores": [{"module": "usage.py", "constructor": "RecoveryGuardedStore", "count": 3}],
     "evidence": ["tests/test_usage.py::test_persistence_failure_keeps_successful_request_and_run_in_memory"]
   },
   {
     "owner": "backup_restore_journal",
     "classification": "transactional_durable",
-    "guarantee": "Journal writes use explicit disk read-back because HA Store can swallow WriteError; a separate Store verifies the committed decision.",
-    "stores": [{"module": "restore_recovery.py", "constructor": "Store", "count": 2}],
-    "evidence": ["tests_stress/test_os_storage_faults.py::test_restore_journal_replace_eacces_never_claims_commit", "tests_stress/test_backup_fault_matrix.py::test_committed_restore_finishes_after_configuration_write_failure"]
+    "guarantee": "Journal writes use explicit disk read-back because HA Store can swallow WriteError; a process-fresh strict reader verifies decisions and preserves unreadable evidence; unresolved journals quarantine their exact assistant until recovery converges.",
+    "stores": [{"module": "restore_recovery.py", "constructor": "Store", "count": 1}, {"module": "restore_recovery.py", "constructor": "_RestoreJournalStore", "count": 1}],
+    "evidence": ["tests_stress/test_os_storage_faults.py::test_restore_journal_replace_eacces_never_claims_commit", "tests_stress/test_backup_fault_matrix.py::test_committed_restore_finishes_after_configuration_write_failure", "tests_stress/test_restore_recovery_safety.py::test_pending_restore_rejects_writes_until_durable_recovery", "tests_stress/test_restore_recovery_safety.py::test_bad_journal_is_preserved_and_other_assistant_remains_usable"]
   },
   {
     "owner": "agent_configuration_and_subentries",

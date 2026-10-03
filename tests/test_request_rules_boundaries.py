@@ -244,7 +244,7 @@ async def test_runtime_guest_denial_returns_generic_unavailable(monkeypatch) -> 
 
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -650,11 +650,14 @@ def test_routing_and_name_helpers_cover_remaining_guards() -> None:
 async def test_shared_manager_and_runtime_factories(monkeypatch) -> None:
     hass = SimpleNamespace(data={})
     initialize = AsyncMock()
-    monkeypatch.setattr(rr, "RequestRuleStore", lambda *_args: ResidualMemoryStore(None))
+    storage = ResidualMemoryStore(None)
+    storage.bind_agent = Mock(return_value=storage)
+    monkeypatch.setattr(rr, "RequestRuleStore", lambda *_args: storage)
     monkeypatch.setattr(rr.RequestRules, "async_initialize", initialize)
     first = await rr.async_get_request_rules(hass, "entry", "agent")
     second = await rr.async_get_request_rules(hass, "entry", "agent")
     assert first is second
+    storage.bind_agent.assert_called_once_with("entry", "agent")
     assert initialize.await_count == 2
     assert rr.get_request_rule_runtime(
         hass, "entry", "agent"

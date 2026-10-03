@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import suppress
 from datetime import timedelta
 import errno
+import os
 from pathlib import Path
 
 import atomicwrites
@@ -81,11 +83,19 @@ def real_store_io(
     async def load_from_disk(store: Store):
         return await store._async_load_data()
 
+    async def remove_from_disk(store: Store) -> None:
+        store._manager.async_invalidate(store.key)
+        store._async_cleanup_delay_listener()
+        store._async_cleanup_final_write_listener()
+        with suppress(FileNotFoundError):
+            await store.hass.async_add_executor_job(os.unlink, store.path)
+
     # Restore the plugin's Store shim before its own fixture tears down. A
     # function-scoped monkeypatch teardown runs too late for its autospec.
     with monkeypatch.context() as scoped:
         scoped.setattr(Store, "_async_write_data", write_to_disk)
         scoped.setattr(Store, "_async_load", load_from_disk)
+        scoped.setattr(Store, "async_remove", remove_from_disk)
         yield
 
 

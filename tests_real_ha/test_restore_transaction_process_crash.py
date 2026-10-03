@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import time
@@ -136,6 +137,117 @@ async def _child(config_dir: Path, phase: str, cut: str) -> None:
                 hass, entry.entry_id, subentry.subentry_id
             )
             assert await journal.async_load() is None
+        elif phase in {"acknowledge", "verify-acknowledged"}:
+            subentry, memory, knowledge = await _state(hass, entry)
+            assert (
+                await restore_recovery._journal_store(
+                    hass, entry.entry_id, subentry.subentry_id
+                ).async_load()
+                is None
+            )
+            if phase == "acknowledge":
+                assert await _observed(hass, entry) == (_PREVIOUS, _PREVIOUS)
+                await memory.async_add(
+                    _OWNER, "ACKNOWLEDGED AFTER REPAIR", "test", "explicit"
+                )
+                await knowledge.async_create(
+                    "ACKNOWLEDGED AFTER REPAIR", "", "ACKNOWLEDGED AFTER REPAIR"
+                )
+            else:
+                records = await memory.async_list(_OWNER)
+                sources = await knowledge.async_list()
+                assert {record.content for record in records} == {
+                    _PREVIOUS,
+                    "ACKNOWLEDGED AFTER REPAIR",
+                }
+                assert {
+                    (await knowledge.async_get(source["source_id"])).content
+                    for source in sources
+                } == {_PREVIOUS, "ACKNOWLEDGED AFTER REPAIR"}
+                assert await _observed(hass, entry, title=_SIBLING) == (
+                    _SIBLING,
+                    _SIBLING,
+                )
+        elif phase == "quarantine":
+            from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+                get_agent_maintenance_gate,
+            )
+            from custom_components.extended_openai_conversation_responses.management_ui import (
+                async_management_command,
+            )
+            from custom_components.extended_openai_conversation_responses.memory import (
+                async_get_memory,
+            )
+            from homeassistant.components import conversation
+            from homeassistant.core import Context
+            from homeassistant.exceptions import HomeAssistantError
+
+            affected = next(s for s in entry.subentries.values() if s.title != _SIBLING)
+            gate = get_agent_maintenance_gate(
+                hass, entry.entry_id, affected.subentry_id
+            )
+            assert gate.recovery_required
+            with pytest.raises(HomeAssistantError, match="recovery"):
+                await async_get_memory(hass, entry.entry_id, affected.subentry_id)
+            admin = await hass.auth.async_create_user(
+                "Recovery administrator", group_ids=["system-admin"]
+            )
+            with pytest.raises(HomeAssistantError, match="recovery"):
+                await async_management_command(
+                    hass,
+                    admin.id,
+                    True,
+                    {
+                        "section": "configuration",
+                        "action": "save",
+                        "config": {"prompt": "UNSAFE"},
+                        "entry_id": entry.entry_id,
+                        "subentry_id": affected.subentry_id,
+                    },
+                )
+            assert await _observed(hass, entry, title=_SIBLING) == (_SIBLING, _SIBLING)
+            agents = list(hass.data[conversation.DATA_COMPONENT].entities)
+            assert not any(
+                getattr(agent, "subentry", None) == affected for agent in agents
+            )
+            sibling_agent = next(
+                agent
+                for agent in agents
+                if getattr(getattr(agent, "subentry", None), "title", None) == _SIBLING
+            )
+            markers = []
+
+            async def record_service(call):
+                markers.append(call.data["message"])
+
+            hass.services.async_register("recovery_probe", "record", record_service)
+            await sibling_agent._request_rules.async_create(
+                {
+                    "name": "Healthy sibling",
+                    "enabled": True,
+                    "phrases": ["prove sibling health"],
+                    "match_type": "equals",
+                    "action_type": "local_action",
+                    "action": {
+                        "actions": [
+                            {
+                                "action": "recovery_probe.record",
+                                "data": {"message": "HEALTHY"},
+                            }
+                        ]
+                    },
+                }
+            )
+            result = await conversation.async_converse(
+                hass=hass,
+                text="prove sibling health",
+                conversation_id=None,
+                context=Context(),
+                language="en",
+                agent_id=sibling_agent.entity_id,
+            )
+            assert result.response.error_code is None
+            assert markers == ["HEALTHY"]
         elif phase == "restore":
             subentry, memory, _ = await _state(hass, entry)
             target = json.loads(
@@ -175,6 +287,14 @@ async def _child(config_dir: Path, phase: str, cut: str) -> None:
     finally:
         if recovery_patch:
             recovery_patch.stop()
+
+
+def _configuration(name: str) -> str:
+    """Isolate child HA HTTP from any running instance on the host."""
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    return f"homeassistant:\n  name: {name}\nhttp:\n  server_port: {port}\n"
 
 
 def _env(config_dir: Path, phase: str, cut: str) -> dict[str, str]:
@@ -225,6 +345,7 @@ def _kill_at(config_dir: Path, phase: str, cut: str, marker: str) -> None:
     ("cut", "interrupt_recovery"),
     [("applying", False), ("partial", False), ("committed", False), ("partial", True)],
 )
+@pytest.mark.usefixtures("socket_enabled")
 def test_restore_transaction_converges_after_process_kills(
     tmp_path: Path, cut: str, interrupt_recovery: bool
 ) -> None:
@@ -234,17 +355,14 @@ def test_restore_transaction_converges_after_process_kills(
     destination.parent.mkdir(parents=True)
     _stage_component(source, destination)
     config = config_dir / "configuration.yaml"
-    config.write_text(
-        "homeassistant:\n  name: Restore Process Boundary\n", encoding="utf-8"
-    )
+    configuration = _configuration("Restore Process Boundary")
+    config.write_text(configuration, encoding="utf-8")
     _run(config_dir, "seed", cut)
     _kill_at(config_dir, "restore", cut, "restore-paused")
     if interrupt_recovery:
         _kill_at(config_dir, "interrupt-recovery", cut, "recovery-paused")
     _run(config_dir, "verify", cut)
-    assert config.read_text(encoding="utf-8") == (
-        "homeassistant:\n  name: Restore Process Boundary\n"
-    )
+    assert config.read_text(encoding="utf-8") == configuration
 
 
 if __name__ == "__main__" and os.environ.get(_PHASE):

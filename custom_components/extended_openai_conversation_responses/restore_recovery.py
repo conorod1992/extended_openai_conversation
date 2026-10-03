@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict
+import json
 import logging
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
@@ -15,7 +17,12 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import backup
+from .agent_maintenance import (
+    _async_run_exclusive_operation,
+    get_agent_maintenance_gate,
+)
 from .const import DOMAIN, SUBSYSTEM_STATUS_KEY
+from .live_subentry_updates import update_live_subentry
 from .operational_errors import log_handled_failure
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,11 +38,39 @@ class _JournalVerificationUnavailable(Exception):
     """The durable outcome of one journal write could not be determined."""
 
 
+class _RestoreJournalStore(Store[dict[str, Any]]):
+    """Read recovery evidence directly without HA's corrupt-file removal policy."""
+
+    async def _async_load_data(self) -> dict[str, Any] | None:
+        def read() -> dict[str, Any] | None:
+            try:
+                envelope = json.loads(Path(self.path).read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                return None
+            except (OSError, UnicodeError, ValueError) as err:
+                raise backup.BackupError(
+                    "Restore journal is unreadable; recovery is required"
+                ) from err
+            if (
+                not isinstance(envelope, dict)
+                or envelope.get("version") != self.version
+                or envelope.get("minor_version", 1) != self.minor_version
+                or envelope.get("key") != self.key
+                or not isinstance(envelope.get("data"), dict)
+            ):
+                raise backup.BackupError(
+                    "Restore journal is corrupted; recovery is required"
+                )
+            return cast(dict[str, Any], envelope["data"])
+
+        return await self.hass.async_add_executor_job(read)
+
+
 def _journal_store(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> Store[dict[str, Any]]:
     """Return the deterministic private journal for one exact agent."""
-    return Store(
+    return _RestoreJournalStore(
         hass,
         RESTORE_JOURNAL_VERSION,
         f"{RESTORE_JOURNAL_PREFIX}.{entry_id}.{subentry_id}",
@@ -394,8 +429,11 @@ async def _update_configuration(
     subentry: Any,
     prepared: backup.PreparedRestore,
 ) -> None:
-    hass.config_entries.async_update_subentry(
-        entry, subentry, data=prepared.config, title=prepared.title
+    # The owned restore already resets live subsystem runtimes. Apply its
+    # configuration through the normal live-update path instead of starting an
+    # unowned entry reload while exclusive recovery is still settling.
+    update_live_subentry(
+        hass, entry, subentry, data=prepared.config, title=prepared.title
     )
     await _async_persist_config_entries(
         hass, entry.entry_id, subentry.subentry_id, prepared
@@ -445,7 +483,7 @@ async def _recover_failed_apply(
     ) from original_error
 
 
-async def async_restore_backup_recoverably(
+async def _async_restore_backup_recoverably(
     hass: HomeAssistant, entry: Any, subentry: Any, value: Any
 ) -> dict[str, Any]:
     """Restore one agent with a durable cross-category commit decision.
@@ -529,7 +567,7 @@ async def async_restore_backup_recoverably(
     return {"status": "restored", "summary": prepared.summary()}
 
 
-async def async_recover_pending_restore(
+async def _async_recover_pending_restore(
     hass: HomeAssistant, entry: Any, subentry: Any
 ) -> bool:
     """Finish or roll back one interrupted transaction; safe to call repeatedly."""
@@ -562,10 +600,88 @@ async def async_recover_pending_restore(
         return True
 
 
+async def _async_recovery_operation[T](
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    operation: Callable[[], Awaitable[T]],
+    *,
+    quarantine_on_entry: bool = True,
+) -> T:
+    """Retain quarantine until the journal is authoritatively absent."""
+    gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
+
+    async def run() -> T:
+        if quarantine_on_entry:
+            gate.recovery_required = True
+        with gate.recovery_work():
+            try:
+                return await operation()
+            finally:
+                try:
+                    absent = (
+                        await _journal_store(
+                            hass, entry.entry_id, subentry.subentry_id
+                        ).async_load()
+                        is None
+                    )
+                except Exception:
+                    absent = False
+                gate.recovery_required = not absent
+                statuses = hass.data.setdefault(SUBSYSTEM_STATUS_KEY, {})
+                if not absent:
+                    statuses.setdefault((entry.entry_id, subentry.subentry_id), {})[
+                        "restore_recovery"
+                    ] = {
+                        "configured": True,
+                        "status": "recovery_required",
+                    }
+                elif (
+                    status := statuses.get((entry.entry_id, subentry.subentry_id))
+                ) is not None:
+                    status.pop("restore_recovery", None)
+
+    if gate.owns_exclusive():
+        return await run()
+    return await _async_run_exclusive_operation(gate, run)
+
+
+async def async_restore_backup_recoverably(
+    hass: HomeAssistant, entry: Any, subentry: Any, value: Any
+) -> dict[str, Any]:
+    """Restore with exclusive ownership and quarantine any unresolved journal."""
+    return await _async_recovery_operation(
+        hass,
+        entry,
+        subentry,
+        lambda: _async_restore_backup_recoverably(hass, entry, subentry, value),
+        quarantine_on_entry=False,
+    )
+
+
+async def async_recover_pending_restore(
+    hass: HomeAssistant, entry: Any, subentry: Any
+) -> bool:
+    """Recover under exclusive ownership, keeping failures isolated to this agent."""
+    return await _async_recovery_operation(
+        hass,
+        entry,
+        subentry,
+        lambda: _async_recover_pending_restore(hass, entry, subentry),
+    )
+
+
 async def async_recover_pending_restores(hass: HomeAssistant) -> None:
     """Recover all configured conversation-agent journals before agents are loaded."""
     for entry in hass.config_entries.async_entries(DOMAIN):
         for subentry in entry.subentries.values():
             if subentry.subentry_type != "conversation":
                 continue
-            await async_recover_pending_restore(hass, entry, subentry)
+            try:
+                await async_recover_pending_restore(hass, entry, subentry)
+            except Exception:
+                _LOGGER.exception(
+                    "Assistant %s/%s remains unavailable pending restore recovery",
+                    entry.entry_id,
+                    subentry.subentry_id,
+                )

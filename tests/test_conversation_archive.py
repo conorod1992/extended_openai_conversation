@@ -1082,6 +1082,10 @@ async def test_home_assistant_storage_delegates_to_private_atomic_stores(monkeyp
         def __class_getitem__(cls, item):
             return cls
 
+        def bind_agent(self, entry_id, subentry_id):
+            self.agent_identity = (entry_id, subentry_id)
+            return self
+
         def __init__(self, hass, version, key, **kwargs):
             created.append((hass, version, key, kwargs))
             self.loaded = {"key": key}
@@ -1102,6 +1106,7 @@ async def test_home_assistant_storage_delegates_to_private_atomic_stores(monkeyp
     }
     await storage.async_save_metadata({"sessions": []})
     assert storage._metadata.saved == [{"sessions": []}]
+    assert storage._metadata.agent_identity == ("entry", "agent")
     assert await storage.async_load_partition("2026-09") == {
         "key": f"{archive_module.STORAGE_KEY_PREFIX}.entry.agent.turns.2026-09"
     }

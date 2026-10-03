@@ -35,7 +35,7 @@ from .operational_errors import log_handled_failure
 from .persistence_hardening import _async_settle_transactional_save
 from .provider_errors import provider_failure_category, provider_log_remediation
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
-from .strict_store import PropagatingWriteStore
+from .strict_store import PropagatingWriteStore, async_storage_lock
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -225,7 +225,7 @@ class HomeAssistantMemoryStorage:
             private=True,
             atomic_writes=True,
             serialize_in_event_loop=False,
-        )
+        ).bind_agent(entry_id, subentry_id)
 
     async def async_load(self) -> dict[str, Any] | None:
         """Load data."""
@@ -290,7 +290,7 @@ class PersistentMemory:
 
     async def async_initialize(self) -> None:
         """Load, validate, and self-heal memory data once."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             if self._initialized:
                 return
             try:
@@ -400,7 +400,7 @@ class PersistentMemory:
         if source not in {"explicit", "implicit"}:
             raise ValueError("source must be explicit or implicit")
         _validate_privacy(content, source)
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             if key and (user_id, key) in self._key_index:
                 raise ValueError("canonical key already exists in this memory scope")
@@ -459,7 +459,7 @@ class PersistentMemory:
         if source not in {"explicit", "implicit"}:
             raise ValueError("source must be explicit or implicit")
         _validate_privacy(content, source)
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             timestamp = dt_util.utcnow().isoformat()
             keyed_identity = isinstance(cleaned_key, str)
@@ -550,7 +550,7 @@ class PersistentMemory:
         hybrid: bool = False,
     ) -> list[MemoryRecord]:
         """Return deterministic BM25-style lexical or hybrid results."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             limit = max(1, min(limit, MAX_SEARCH_LIMIT))
             scope_ids = (
@@ -677,7 +677,7 @@ class PersistentMemory:
         self, references: Sequence[tuple[str, str]], readable_scope_ids: Sequence[str]
     ) -> list[MemoryRecord]:
         """Resolve a selected bundle by owner and ID without reranking."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             allowed = set(readable_scope_ids)
             return [
@@ -696,7 +696,7 @@ class PersistentMemory:
         offset: int = 0,
     ) -> list[MemoryRecord]:
         """List memories for one user scope."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             limit = max(1, min(limit, MAX_LIST_LIMIT))
             offset = max(0, offset)
@@ -719,7 +719,7 @@ class PersistentMemory:
         offset: int = 0,
     ) -> tuple[list[MemoryRecord], bool]:
         """List one page and continuation state with a single scan and sort."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             limit = max(1, min(limit, MAX_LIST_LIMIT))
             offset = max(0, offset)
@@ -749,7 +749,7 @@ class PersistentMemory:
         offset: int = 0,
     ) -> tuple[list[MemoryRecord], int]:
         """Browse one owner's complete management projection with bounded output."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             limit = max(1, min(limit, MAX_LIST_LIMIT))
             offset = max(0, offset)
@@ -810,7 +810,7 @@ class PersistentMemory:
         ):
             raise ValueError("a metadata field cannot be updated and cleared together")
 
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             current = self._owned_memory(user_id, memory_id)
             if (
@@ -865,7 +865,7 @@ class PersistentMemory:
         """Delete selected memories owned by one user scope."""
         if not memory_ids or len(memory_ids) > MAX_SEARCH_LIMIT:
             raise ValueError(f"memory_ids must contain 1 to {MAX_SEARCH_LIMIT} IDs")
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             deleted = 0
             for memory_id in set(memory_ids):
@@ -883,7 +883,7 @@ class PersistentMemory:
     async def async_clear(self, user_id: str, category: str | None = None) -> int:
         """Clear a user's memories, optionally within one category."""
         category_filter = _clean_category(category) if category else None
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             targets = [
                 memory
@@ -911,7 +911,7 @@ class PersistentMemory:
             raise ValueError("different source and target scopes are required")
         if not memory_ids or len(memory_ids) > MAX_LIST_LIMIT:
             raise ValueError(f"memory_ids must contain 1 to {MAX_LIST_LIMIT} IDs")
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             requested = len(set(memory_ids))
             moved = 0
@@ -963,7 +963,7 @@ class PersistentMemory:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return the stable durable representation used by full backups."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             return {
                 "memories": [
@@ -1012,7 +1012,7 @@ class PersistentMemory:
                 if pair in seen_keys:
                     raise ValueError("duplicate canonical key in memory scope")
                 seen_keys.add(pair)
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             self._memories = {record.memory_id: record for record in records}
             self._embedding_cache.clear()
@@ -1137,7 +1137,7 @@ class PersistentMemory:
             return False
         model = self._embedding_model
         allowed_scopes = set(scope_ids)
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             missing = [
                 memory
@@ -1153,7 +1153,7 @@ class PersistentMemory:
                     "embedding provider returned the wrong number of vectors"
                 )
             batch_generated = False
-            async with self._lock:
+            async with async_storage_lock(self._storage, self._lock):
                 if (
                     self._embedding_provider is not provider
                     or self._embedding_model != model
@@ -1335,6 +1335,9 @@ class PersistentMemory:
         }
 
     def _ensure_initialized(self) -> None:
+        store = getattr(self._storage, "_store", None)
+        if isinstance(store, PropagatingWriteStore):
+            store.require_available()
         if not self._initialized:
             raise RuntimeError("persistent memory has not been initialized")
 

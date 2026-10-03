@@ -3038,7 +3038,7 @@ async def async_get_request_rules(
                 hass,
                 STORAGE_VERSION,
                 f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
-            )
+            ).bind_agent(entry_id, subentry_id)
         )
     manager = cast(RequestRules, managers[key])
     await manager.async_initialize()

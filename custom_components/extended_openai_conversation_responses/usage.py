@@ -16,7 +16,6 @@ from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -26,6 +25,7 @@ from .const import (
 )
 from .debug import record_current_run_failure
 from .operational_errors import log_handled_failure
+from .strict_store import RecoveryGuardedStore
 
 STORAGE_VERSION = 2
 STORAGE_KEY_PREFIX = f"{DOMAIN}.usage"
@@ -371,6 +371,14 @@ class UsageManager:
                     task.cancel()
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            if (
+                isinstance(self._storage, RecoveryGuardedStore)
+                and self._storage.recovery_pending
+            ):
+                _LOGGER.info(
+                    "Usage flush deferred while assistant restore recovery is pending"
+                )
+                return
             await self._async_save_aggregates()
             await self._async_save_details()
 
@@ -1193,21 +1201,23 @@ async def async_get_durable_usage(
     if manager is None:
         prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
         manager = UsageManager(
-            Store(hass, 1, prefix, atomic_writes=True),
-            Store(
+            RecoveryGuardedStore(hass, 1, prefix, atomic_writes=True).bind_agent(
+                entry_id, subentry_id
+            ),
+            RecoveryGuardedStore(
                 hass,
                 STORAGE_VERSION,
                 f"{prefix}.daily",
                 atomic_writes=True,
-            ),
-            Store(
+            ).bind_agent(entry_id, subentry_id),
+            RecoveryGuardedStore(
                 hass,
                 STORAGE_VERSION,
                 f"{prefix}.details",
                 private=True,
                 atomic_writes=True,
                 serialize_in_event_loop=False,
-            ),
+            ).bind_agent(entry_id, subentry_id),
             agent_subentry_id=subentry_id,
         )
         # Publish before the first await so every concurrent caller initializes and

@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .persistence_hardening import _async_settle_transactional_save
-from .strict_store import PropagatingWriteStore
+from .strict_store import PropagatingWriteStore, async_storage_lock
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ class HomeAssistantKnowledgeStorage:
             private=True,
             atomic_writes=True,
             serialize_in_event_loop=False,
-        )
+        ).bind_agent(entry_id, subentry_id)
 
     async def async_load(self) -> dict[str, Any] | None:
         return await self._store.async_load()
@@ -146,7 +146,7 @@ class KnowledgeLibrary:
 
     async def async_initialize(self) -> None:
         """Load and index the library exactly once."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             if self._initialized:
                 return
             try:
@@ -205,7 +205,7 @@ class KnowledgeLibrary:
 
     async def async_list(self) -> list[dict[str, Any]]:
         """List all source metadata for management, including disabled sources."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             sources = sorted(
                 self._sources.values(),
@@ -216,7 +216,7 @@ class KnowledgeLibrary:
 
     async def async_get(self, source_id: str) -> KnowledgeSource:
         """Get one complete source for the management UI."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             return self._source(source_id)
 
@@ -228,7 +228,7 @@ class KnowledgeLibrary:
         allowed_source_ids: frozenset[str] | None = None,
     ) -> dict[str, Any]:
         """List bounded enabled source metadata without returning content."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             if query is not None and not isinstance(query, str):
                 raise ValueError("query must be a string")
@@ -282,7 +282,7 @@ class KnowledgeLibrary:
         """Create and persist a source."""
         title, description, content = _validated_fields(title, description, content)
         enabled = _validated_enabled(enabled)
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             if len(self._sources) >= MAX_SOURCES_PER_AGENT:
                 raise ValueError(
@@ -313,7 +313,7 @@ class KnowledgeLibrary:
         expected_revision: str | None = None,
     ) -> KnowledgeSource:
         """Update and immediately re-index one source."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             current = self._source(source_id)
             if (
@@ -348,7 +348,7 @@ class KnowledgeLibrary:
 
     async def async_delete(self, source_id: str) -> bool:
         """Delete one source."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             if source_id not in self._sources:
                 return False
@@ -364,7 +364,7 @@ class KnowledgeLibrary:
         limit: int = 5,
     ) -> list[SearchResult]:
         """Search enabled indexed chunks and return at most one excerpt per source."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             if not isinstance(limit, int) or isinstance(limit, bool):
                 raise ValueError("limit must be an integer")
@@ -456,7 +456,7 @@ class KnowledgeLibrary:
         max_characters: int = DEFAULT_GET_CHARACTERS,
     ) -> dict[str, Any]:
         """Return a bounded, pageable enabled source section for model use."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             if not isinstance(start_character, int) or isinstance(
                 start_character, bool
@@ -502,7 +502,7 @@ class KnowledgeLibrary:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return canonical Knowledge sources, excluding the derived index."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             return {"sources": [asdict(source) for source in self._sources.values()]}
 
@@ -537,7 +537,7 @@ class KnowledgeLibrary:
 
     async def async_replace_backup(self, sources: list[KnowledgeSource]) -> None:
         """Replace source material and rebuild the derived lexical index."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             self._sources = {source.source_id: source for source in sources}
             self._chunks.clear()
@@ -661,6 +661,9 @@ class KnowledgeLibrary:
             self._index(source)
 
     def _ensure_initialized(self) -> None:
+        store = getattr(self._storage, "_store", None)
+        if isinstance(store, PropagatingWriteStore):
+            store.require_available()
         if not self._initialized:
             raise RuntimeError("Knowledge Library has not been initialized")
 

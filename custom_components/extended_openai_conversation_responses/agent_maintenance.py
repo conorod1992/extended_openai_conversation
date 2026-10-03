@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 
@@ -27,10 +28,56 @@ class AgentMaintenanceGate:
         self._reader_depth: dict[object, int] = {}
         self._waiting_writers = 0
         self._writer_active = False
+        self.recovery_required = False
+        self._exclusive_owner: ContextVar[object | None] = ContextVar(
+            f"extended_openai_maintenance_writer_{id(self)}", default=None
+        )
+        self._active_owner: object | None = None
+        self._recovery_owner: object | None = None
+
+    def require_available(self) -> None:
+        """Reject indeterminate generations except inside owned recovery work."""
+        if self.recovery_required and not (
+            self._active_owner is not None
+            and self._exclusive_owner.get() is self._active_owner
+            and self._recovery_owner is self._active_owner
+        ):
+            raise HomeAssistantError(
+                "Assistant restore recovery is required; retry after recovery completes"
+            )
+
+    async def async_wait_idle(self) -> None:
+        """Let platform reloads observe the settled maintenance outcome."""
+        async with self._condition:
+            await self._condition.wait_for(lambda: not self._writer_active)
+
+    def owns_exclusive(self) -> bool:
+        """Whether this logical task still owns the active maintenance lease."""
+        return (
+            self._active_owner is not None
+            and self._exclusive_owner.get() is self._active_owner
+        )
+
+    @contextmanager
+    def recovery_work(self) -> Iterator[None]:
+        """Permit only the exclusive owner's recovery to access affected stores."""
+        owner = self._exclusive_owner.get()
+        if owner is None or owner is not self._active_owner:
+            raise RuntimeError("Recovery requires exclusive maintenance ownership")
+        previous = self._recovery_owner
+        self._recovery_owner = owner
+        try:
+            yield
+        finally:
+            self._recovery_owner = previous
 
     @asynccontextmanager
-    async def shared(self) -> AsyncIterator[None]:
+    async def shared(self, *, maintenance: bool = False) -> AsyncIterator[None]:
         """Enter ordinary agent work, preserving a logical lease across child tasks."""
+        self.require_available()
+        if maintenance and self.owns_exclusive():
+            yield
+            return
         owner = self._reader_owner.get()
         owner_token = None
 
@@ -45,6 +92,7 @@ class AgentMaintenanceGate:
                 await self._condition.wait_for(
                     lambda: not self._writer_active and self._waiting_writers == 0
                 )
+                self.require_available()
                 owner = object()
                 owner_token = self._reader_owner.set(owner)
                 self._reader_depth[owner] = 1
@@ -77,17 +125,21 @@ class AgentMaintenanceGate:
                     lambda: not self._writer_active and self._active_readers == 0
                 )
                 self._writer_active = True
+                self._active_owner = object()
                 acquired = True
             finally:
                 self._waiting_writers -= 1
                 if not acquired:
                     # A cancelled writer must not strand readers behind its waiter bit.
                     self._condition.notify_all()
+        token = self._exclusive_owner.set(self._active_owner)
         try:
             yield
         finally:
+            self._exclusive_owner.reset(token)
             async with self._condition:
                 self._writer_active = False
+                self._active_owner = None
                 self._condition.notify_all()
 
 

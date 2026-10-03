@@ -576,7 +576,7 @@ async def test_snapshot_rejects_unknown_mode() -> None:
     entry, subentry = _entry_and_subentry()
     with pytest.raises(backup.BackupError, match="mode must be setup or custom"):
         await transfer.async_collect_transfer_snapshot(
-            SimpleNamespace(), entry, subentry, mode="full"
+            SimpleNamespace(data={}), entry, subentry, mode="full"
         )
 
 

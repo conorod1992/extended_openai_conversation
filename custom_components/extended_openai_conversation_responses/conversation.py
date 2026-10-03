@@ -43,7 +43,7 @@ from .agent_configuration import (
     async_reconcile_runtime_configuration,
     sync_memory_embedding_provider,
 )
-from .agent_maintenance import conversation_request_lease
+from .agent_maintenance import conversation_request_lease, get_agent_maintenance_gate
 from .const import (
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -302,10 +302,23 @@ async def async_setup_entry(
         if subentry.subentry_type != "conversation":
             continue
 
-        async_add_entities(
-            [ExtendedOpenAIAgentEntity(config_entry, subentry)],
-            config_subentry_id=subentry.subentry_id,
+        gate = get_agent_maintenance_gate(
+            hass, config_entry.entry_id, subentry.subentry_id
         )
+        await gate.async_wait_idle()
+        try:
+            async with gate.shared():
+                async_add_entities(
+                    [ExtendedOpenAIAgentEntity(config_entry, subentry)],
+                    config_subentry_id=subentry.subentry_id,
+                )
+        except HomeAssistantError:
+            if not gate.recovery_required:
+                raise
+            _LOGGER.error(
+                "Assistant %s remains unavailable pending restore recovery",
+                subentry.subentry_id,
+            )
 
 
 class ExtendedOpenAIAgentEntity(
@@ -363,13 +376,14 @@ class ExtendedOpenAIAgentEntity(
         self._agent_ready = asyncio.Event()
         self._agent_initialization_failed = False
         try:
-            await super().async_added_to_hass()
-            await self._async_initialize_agent_state()
-            await self._async_initialize_optional_managers()
-            # Shared managers can retain a provider bound to the previous entity.
-            sync_memory_embedding_provider(self)
-            self._schedule_archive_retention()
-            conversation.async_set_agent(self.hass, self.entry, self)
+            async with conversation_request_lease(self):
+                await super().async_added_to_hass()
+                await self._async_initialize_agent_state()
+                await self._async_initialize_optional_managers()
+                # Shared managers can retain a provider bound to the previous entity.
+                sync_memory_embedding_provider(self)
+                self._schedule_archive_retention()
+                conversation.async_set_agent(self.hass, self.entry, self)
         except BaseException:
             self._agent_initialization_failed = True
             raise

@@ -181,6 +181,10 @@ async def async_collect_backup_snapshot(
     hass: HomeAssistant, entry: Any, subentry: Any
 ) -> dict[str, Any]:
     """Collect mutable agent state into one local snapshot."""
+    get_agent_maintenance_gate(
+        hass, entry.entry_id, subentry.subentry_id
+    ).require_available()
+
     (
         memory,
         temporary,

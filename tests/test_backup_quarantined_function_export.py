@@ -95,7 +95,7 @@ async def test_full_backup_collection_succeeds_with_quarantined_function(
     monkeypatch.setattr(backup, "_managers", AsyncMock(return_value=managers))
 
     snapshot = await backup.async_collect_backup_snapshot(
-        SimpleNamespace(), entry, subentry
+        SimpleNamespace(data={}), entry, subentry
     )
 
     exported = snapshot["agent"]["config"]
