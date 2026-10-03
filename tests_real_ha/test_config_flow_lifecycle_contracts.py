@@ -236,7 +236,7 @@ async def test_user_flow_output_is_consumed_by_runtime_setup(
     with (
         patch(f"{CONFIG_FLOW_MODULE}.get_authenticated_client", validate_authenticate),
         patch(f"{INTEGRATION_MODULE}.get_authenticated_client", runtime_authenticate),
-        patch(f"{INTEGRATION_MODULE}.DebugOpenAIClientProxy", side_effect=lambda value: value),
+        patch(f"{INTEGRATION_MODULE}.DebugOpenAIClientProxy", side_effect=lambda value, **_kwargs: value),
         patch(
             f"{INTEGRATION_MODULE}.PerformanceOpenAIClientProxy",
             side_effect=lambda value, **_kwargs: value,
