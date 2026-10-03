@@ -1,0 +1,1 @@
+var e=new WeakMap;function t(t,n){let r=e.get(t);r||e.set(t,r=new Map);let i={};return r.set(n,i),()=>r.get(n)===i}function n(t,n){e.get(t)?.delete(n)}export{n,t};
