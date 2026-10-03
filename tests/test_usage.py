@@ -809,7 +809,7 @@ async def test_async_get_durable_usage_publishes_single_manager_before_initializ
         await release.wait()
         await real_initialize(self)
 
-    monkeypatch.setattr(usage, "RecoveryGuardedStore", FakeStore)
+    monkeypatch.setattr(usage, "_UsageStore", FakeStore)
     monkeypatch.setattr(usage.UsageManager, "async_initialize", blocked_initialize)
     listeners = []
     hass = SimpleNamespace(

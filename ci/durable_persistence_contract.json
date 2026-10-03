@@ -79,9 +79,9 @@
   {
     "owner": "usage_history",
     "classification": "best_effort_or_coalesced",
-    "guarantee": "Accounting is coalesced and must not fail an otherwise healthy Assist request; later writes recover.",
-    "stores": [{"module": "usage.py", "constructor": "RecoveryGuardedStore", "count": 3}],
-    "evidence": ["tests/test_usage.py::test_persistence_failure_keeps_successful_request_and_run_in_memory"]
+    "guarantee": "Routine accounting is coalesced and must not fail an otherwise healthy Assist request. Explicit clear/prune and authoritative restore saves propagate native writer failures; clear/prune publish only after durable completion, including during shutdown. The legacy totals mirror remains best effort.",
+    "stores": [{"module": "usage.py", "constructor": "_UsageStore", "count": 3}],
+    "evidence": ["tests/test_usage.py::test_persistence_failure_keeps_successful_request_and_run_in_memory", "tests_stress/test_os_storage_faults.py::test_usage_explicit_deletion_requires_real_durable_write", "tests_stress/test_os_storage_faults.py::test_usage_delayed_writer_failure_keeps_foreground_accounting_best_effort", "tests_stress/test_os_storage_faults.py::test_usage_restore_writer_failure_retains_recovery_evidence", "tests_stress/test_os_storage_faults.py::test_usage_explicit_clear_during_shutdown_finishes_native_write"]
   },
   {
     "owner": "backup_restore_journal",
