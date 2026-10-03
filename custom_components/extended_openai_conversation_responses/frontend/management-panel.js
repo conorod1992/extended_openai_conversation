@@ -82,7 +82,7 @@ const MANAGEMENT_STYLESHEET_URL = new URL("./management.css", import.meta.url).h
 // Keep this deliberately small and geometry-identical to management.css: it exists
 // only to prevent FOUC/layout shift while the external stylesheet is still pending.
 const CRITICAL_STYLE = `
-  :host{display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);font-size:14px;line-height:1.45;box-sizing:border-box;background:color-mix(in srgb,var(--secondary-background-color) 42%,var(--primary-background-color))}
+  :host{--eoc-success-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--success-color,#0f9d58));--eoc-error-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--error-color,#db4437));--eoc-warning-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--warning-color,#ff9800));--eoc-accent-text:color-mix(in srgb,var(--primary-text-color) 80%,var(--primary-color));--eoc-action-background:color-mix(in srgb,var(--primary-text-color) 80%,var(--primary-color));display:block;min-height:100%;padding:28px;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);font-size:14px;line-height:1.45;box-sizing:border-box;background:color-mix(in srgb,var(--secondary-background-color) 42%,var(--primary-background-color))}
   *{box-sizing:border-box}
   [hidden]{display:none!important}
   .page-shell{max-width:1380px;margin:auto}
@@ -95,7 +95,7 @@ const CRITICAL_STYLE = `
   label{display:grid;gap:7px;font-size:14px;color:var(--secondary-text-color)}
   input,select,textarea,button{font:inherit}
   input,select,textarea{width:100%;min-height:42px;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:9px;padding:10px 12px}
-  button{min-height:42px;border:0;border-radius:9px;padding:9px 16px;cursor:pointer;background:var(--primary-color);color:var(--text-primary-color)}
+  button{min-height:42px;border:0;border-radius:9px;padding:9px 16px;cursor:pointer;background:var(--eoc-action-background);color:var(--card-background-color)}
   .mobile-nav{display:none}
   .eoc-agent-context-row{display:flex;align-items:end;gap:12px;margin:0 0 14px}
   .eoc-agent-context-row .agent-picker{width:min(390px,100%);min-width:0;margin:0}
@@ -104,10 +104,10 @@ const CRITICAL_STYLE = `
   nav{display:flex;overflow:auto;border-bottom:1px solid var(--divider-color);margin-bottom:28px}
   .top-nav{overflow:visible}
   nav button{background:transparent;color:var(--secondary-text-color);border-radius:0;padding:13px 18px;white-space:nowrap}
-  nav button.active{color:var(--primary-color);border-bottom:3px solid var(--primary-color)}
+  nav button.active{color:var(--eoc-accent-text);border-bottom:3px solid var(--primary-color)}
   .subsection-nav{display:flex;gap:8px;flex-wrap:wrap;overflow:visible;border:0;margin:0 0 12px;padding:0}
   .subsection-nav button{min-height:38px;padding:8px 13px;border:1px solid var(--divider-color);border-radius:999px;background:var(--card-background-color);color:var(--secondary-text-color)}
-  .subsection-nav button.active{border-color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 10%,var(--card-background-color));color:var(--primary-color)}
+  .subsection-nav button.active{border-color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 10%,var(--card-background-color));color:var(--eoc-accent-text)}
   .section-layout{display:block}
   .section-selector{margin:0 0 20px}
   main{display:grid;gap:30px}
