@@ -42,6 +42,7 @@ globalThis.window = {
 globalThis.history = {pushState() {}};
 globalThis.localStorage = {getItem() { return null; }, setItem() {}};
 globalThis.HTMLElement = class {
+  style = {};
   attachShadow() {
     this.shadowRoot = {
       hasChildNodes: () => false,

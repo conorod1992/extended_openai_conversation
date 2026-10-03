@@ -1,5 +1,0 @@
-<<<<<<<< HEAD:custom_components/extended_openai_conversation_responses/frontend/dist/assets/management-capabilities-ia-OcYyYdmq.js
-import{s as e}from"./management-route-DKkvESag.js";function t(t,n){let r=e();return r?r.renderConfiguration(t,n):t._loading?.()||`<div class="loading">Loading configuration…</div>`}function n(t){return e()?.bindConfiguration(t)}function r(e){let t=e._viewKey();[`capabilities/home-assistant`,`capabilities/web-skills`].includes(t)&&n(e)}export{r as bindCapabilities,t as renderConfiguration};
-========
-import{s as e}from"./management-route-DvZIoDKb.js";function t(t,n){let r=e();return r?r.renderConfiguration(t,n):t._loading?.()||`<div class="loading">Loading configuration…</div>`}function n(t){return e()?.bindConfiguration(t)}function r(e){let t=e._viewKey();[`capabilities/home-assistant`,`capabilities/web-skills`].includes(t)&&n(e)}export{r as bindCapabilities,t as renderConfiguration};
->>>>>>>> be8362e8 (Resolve baselined frontend accessibility findings):custom_components/extended_openai_conversation_responses/frontend/dist/assets/management-capabilities-ia-BlwzteVY.js
