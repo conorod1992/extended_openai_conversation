@@ -151,6 +151,40 @@ export function bindNativeToolYaml(panel) {
   let destroyed = false;
   let syncGeneration = 0;
 
+  // Labels on a custom-element host do not name CodeMirror's nested textbox.
+  // Observe only this adapter's editor, including late native hydration and
+  // CodeMirror recreations. Release the observer with the adapter.
+  const observedRoots = new Set();
+  const repairAccessibility = () => {
+    if (destroyed) return;
+    const codeEditor = nativeEditor.shadowRoot?.querySelector("ha-code-editor");
+    for (const node of [nativeEditor, nativeEditor.shadowRoot, codeEditor?.shadowRoot]) {
+      if (!node || observedRoots.has(node)) continue;
+      accessibilityObserver?.observe(node, {
+        subtree: true, childList: true, attributes: true,
+        attributeFilter: ["aria-label", "tabindex"],
+      });
+      observedRoots.add(node);
+    }
+    const content = codeEditor?.shadowRoot?.querySelector(".cm-content");
+    if (!content) return;
+    // CodeMirror's diagnostic surfaces otherwise keep fixed light backgrounds
+    // in HA's dark theme. Keep syntax diagnostics readable in both themes.
+    if (!codeEditor.shadowRoot.querySelector("style[data-eoc-yaml-accessibility]")) {
+      const style = document.createElement("style");
+      style.dataset.eocYamlAccessibility = "";
+      style.textContent = ".cm-editor .cm-tooltip{background:var(--card-background-color);color:var(--primary-text-color);border-color:var(--divider-color)}.cm-editor .cm-panel.cm-panel-lint ul li[aria-selected]{background:var(--secondary-background-color);color:var(--primary-text-color)}";
+      codeEditor.shadowRoot.append(style);
+    }
+    const label = nativeEditor.getAttribute?.("aria-label") || "Function Tool YAML";
+    if (content.getAttribute("aria-label") !== label) content.setAttribute("aria-label", label);
+    if (content.tabIndex !== 0) content.tabIndex = 0;
+    constrainNativeCodeEditor(nativeEditor);
+  };
+  const accessibilityObserver = globalThis.MutationObserver
+    ? new MutationObserver(repairAccessibility) : null;
+  repairAccessibility();
+
   const isCurrent = () => !destroyed
     && panel?._toolYamlEditorAdapter === adapter
     && nativeEditor.isConnected;
@@ -245,6 +279,8 @@ export function bindNativeToolYaml(panel) {
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      accessibilityObserver?.disconnect();
+      observedRoots.clear();
       ++syncGeneration;
       textarea.removeEventListener?.("input", onTextareaInput);
       nativeEditor.removeEventListener?.("value-changed", onNativeChange);

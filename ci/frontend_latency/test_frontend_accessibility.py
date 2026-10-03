@@ -13,6 +13,7 @@ from ci.enhanced_evidence import (
     environment_fingerprint,
     environment_identity,
 )
+from ci.frontend_latency.review import POLICY, check_accessibility
 from tests_real_ha.test_browser_backend_acceptance import (
     _run_playwright,
     real_ha_shell as real_ha_shell,
@@ -50,3 +51,9 @@ async def test_genuine_shell_accessibility_semantics(real_ha_shell):
         environment_sha256=environment_fingerprint(environment),
     )
     output.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+    errors = check_accessibility(
+        result, checkout_sha(), json.loads(POLICY.read_text(encoding="utf-8"))
+    )
+    assert not errors, "Genuine HA accessibility evidence rejected:\n" + "\n".join(
+        errors
+    )

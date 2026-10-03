@@ -5,7 +5,7 @@ const ROUTE_STYLE = `/* Guide route */
 .guide-quick-tasks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:4px}
 .guide-quick-card{display:grid;grid-template-columns:auto 1fr;align-content:start;gap:3px 11px;min-height:0;padding:15px 16px;text-align:left;color:var(--primary-text-color);background:var(--card-background-color);border:1px solid color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color));border-radius:10px}
 .guide-quick-card:hover{border-color:var(--primary-color);background:color-mix(in srgb,var(--primary-color) 4%,var(--card-background-color))}
-.guide-quick-icon{grid-row:1/3;display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:color-mix(in srgb,var(--primary-color) 10%,var(--card-background-color));color:var(--primary-color)}
+.guide-quick-icon{grid-row:1/3;display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:color-mix(in srgb,var(--primary-color) 10%,var(--card-background-color));color:var(--eoc-accent-text)}
 .guide-quick-icon ha-icon{--mdc-icon-size:20px}
 .guide-quick-card strong{font-size:14px}
 .guide-quick-card small{font-weight:400;line-height:1.45;color:var(--secondary-text-color)}
