@@ -18,15 +18,42 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util.json import json_loads
 
 from .debug import record_current_provider_failure
-from .entity import ExtendedOpenAIBaseLLMEntity
+from .entity import (
+    ExtendedOpenAIBaseLLMEntity,
+    _schema_explicitly_allows_null,
+    _serialize_structured_output,
+)
 from .ha_llm_tools import ToolSnapshot, caller_api_tools, tool_snapshot_scope
 from .provider_errors import log_provider_failure, request_reauthentication
 
 _LOGGER = logging.getLogger(__name__)
 
 
+def _omit_optional_nulls(data: Any, schema: dict[str, Any]) -> Any:
+    """Undo strict-output placeholders using the unmodified caller schema."""
+    if isinstance(data, dict):
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        return {
+            key: _omit_optional_nulls(value, properties.get(key, {}))
+            for key, value in data.items()
+            if not (
+                key in properties
+                and key not in required
+                and value is None
+                and not _schema_explicitly_allows_null(properties[key])
+            )
+        }
+    if isinstance(data, list) and isinstance(schema.get("items"), dict):
+        return [_omit_optional_nulls(item, schema["items"]) for item in data]
+    return data
+
+
 def parse_ai_task_structured_response(
-    text: str, structure: vol.Schema | None = None
+    text: str,
+    structure: vol.Schema | None = None,
+    *,
+    original_schema: dict[str, Any] | None = None,
 ) -> Any:
     """Parse and validate the caller's contract without exposing task contents."""
     try:
@@ -34,6 +61,8 @@ def parse_ai_task_structured_response(
     except JSONDecodeError as err:
         _LOGGER.error("Failed to parse structured AI Task JSON response: %s", err)
         raise HomeAssistantError("Error with structured response") from err
+    if original_schema is not None:
+        data = _omit_optional_nulls(data, original_schema)
     if structure is not None:
         try:
             return structure(data)
@@ -108,6 +137,11 @@ class ExtendedOpenAITaskEntity(
                     user_llm_prompt=DEFAULT_SYSTEM_PROMPT,
                 )
                 chat_log.llm_api = caller_instance
+            original_schema = (
+                _serialize_structured_output(task.structure, chat_log.llm_api)
+                if task.structure is not None
+                else None
+            )
             with tool_snapshot_scope(snapshot):
                 await self._async_handle_chat_log(
                     chat_log,
@@ -118,6 +152,7 @@ class ExtendedOpenAITaskEntity(
                     else None,
                     structure_name=task.name,
                     structure=task.structure,
+                    structure_schema=original_schema,
                 )
         except OpenAIError as err:
             request_reauthentication(self.hass, getattr(self, "entry", None), err)
@@ -140,7 +175,9 @@ class ExtendedOpenAITaskEntity(
                 data=text,
             )
 
-        data = parse_ai_task_structured_response(text, task.structure)
+        data = parse_ai_task_structured_response(
+            text, task.structure, original_schema=original_schema
+        )
 
         return ai_task.GenDataTaskResult(
             conversation_id=chat_log.conversation_id,

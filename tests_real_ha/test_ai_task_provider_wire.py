@@ -613,3 +613,91 @@ async def test_invalid_final_task_structure_does_not_replay_completed_caller_act
     assert len(probe.calls) == 1
     assert len(requests) == 3
     assert "already completed" not in _input_text(requests[-1]["body"])
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("nested_present", [False, True])
+async def test_optional_structured_output_round_trips_provider_contract(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    nested_present: bool,
+) -> None:
+    """Provider-accepted optional nulls become omission; caller nulls survive."""
+    from jsonschema import Draft202012Validator
+
+    entry, entity_id = await _task_entity(hass, mode)
+    schema = vol.Schema(
+        {
+            vol.Required("answer"): str,
+            vol.Optional("text"): str,
+            vol.Optional("number"): int,
+            vol.Optional("select"): vol.In(["red", "blue"]),
+            vol.Optional("fixed"): vol.Equal("fixed"),
+            vol.Optional("nested"): {
+                vol.Required("key"): str,
+                vol.Optional("count"): int,
+            },
+            vol.Optional("nullable"): vol.Any(None, str),
+            vol.Required("required_nullable"): vol.Any(None, str),
+            vol.Optional("rows"): [{vol.Optional("text"): str}],
+        }
+    )
+    payload = {
+        "answer": "ready",
+        "text": None,
+        "number": None,
+        "select": None,
+        "fixed": None,
+        "nested": {"key": "inside", "count": None} if nested_present else None,
+        "nullable": None,
+        "required_nullable": None,
+        "rows": [{"text": None}],
+    }
+    invalid = dict(payload, answer=None)
+    wire = _wire(
+        monkeypatch,
+        entry,
+        [
+            _text_reply(mode, json.dumps(payload)),
+            _text_reply(mode, json.dumps(invalid)),
+            _text_reply(mode, json.dumps(dict(payload, number="not-a-number"))),
+        ],
+    )
+    result = await ai_task.async_generate_data(
+        hass,
+        task_name="Optional wire",
+        entity_id=entity_id,
+        instructions="Return structured data",
+        structure=schema,
+    )
+    emitted = wire.requests[0]["body"]
+    emitted = (
+        emitted["text"]["format"]
+        if mode == API_MODE_RESPONSES
+        else emitted["response_format"]["json_schema"]
+    )["schema"]
+    assert set(emitted["required"]) == set(emitted["properties"])
+    assert emitted["properties"]["answer"] == {"type": "string"}
+    Draft202012Validator(emitted).validate(payload)
+    assert not Draft202012Validator(emitted).is_valid(invalid)
+    expected = {
+        "answer": "ready",
+        "nullable": None,
+        "required_nullable": None,
+        "rows": [{}],
+    }
+    if nested_present:
+        expected["nested"] = {"key": "inside"}
+    assert result.data == expected
+    assert schema(result.data) == result.data
+    for _ in range(2):
+        with pytest.raises(HomeAssistantError, match="requested structure"):
+            await ai_task.async_generate_data(
+                hass,
+                task_name="Invalid wire",
+                entity_id=entity_id,
+                instructions="Return structured data",
+                structure=schema,
+            )
+    _assert_paths(wire, mode, 3)

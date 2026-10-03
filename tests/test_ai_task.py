@@ -111,7 +111,7 @@ async def test_generate_structured_data_preserves_caller_api_and_serializer(
 ) -> None:
     entity = _entity()
     llm_context = object()
-    caller_api = SimpleNamespace(llm_context=llm_context)
+    caller_api = SimpleNamespace(llm_context=llm_context, custom_serializer=None)
     snapshot = object()
     tools = [{"spec": {"name": "caller_tool"}}]
     provided: dict[str, Any] = {}

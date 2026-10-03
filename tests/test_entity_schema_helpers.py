@@ -241,3 +241,41 @@ def test_normalize_function_result_preserves_json_and_stringifies_fallback() -> 
 
     assert _normalize_function_result(structured) is structured
     assert _normalize_function_result(UnsupportedResult()) == "unsupported-result"
+
+@pytest.mark.parametrize("constraint", [{"enum": ["red", "blue"]}, {"const": "red"}])
+def test_optional_constraints_accept_provider_null_without_losing_values(constraint):
+    from jsonschema import Draft202012Validator
+
+    original = {
+        "type": "object",
+        "properties": {"choice": {"type": "string", **constraint}},
+    }
+    provider = deepcopy(original)
+    _adjust_schema(provider)
+    validator = Draft202012Validator(provider)
+    assert validator.is_valid({"choice": None})
+    assert validator.is_valid({"choice": "red"})
+    assert not validator.is_valid({"choice": "other"})
+    assert not validator.is_valid({})
+    _adjust_schema(provider)
+    assert validator.is_valid({"choice": None})
+
+
+def test_nullable_type_with_nonnull_constraint_still_needs_null_branch():
+    schema = {"type": ["string", "null"], "enum": ["red"]}
+    assert not _schema_explicitly_allows_null(schema)
+    _make_schema_nullable(schema)
+    from jsonschema import Draft202012Validator
+
+    assert Draft202012Validator(schema).is_valid(None)
+
+
+def test_openapi_nullable_is_adapted_to_json_schema_null():
+    schema = {"type": "string", "nullable": True, "enum": ["red"]}
+    _adjust_schema(schema)
+    from jsonschema import Draft202012Validator
+
+    assert "nullable" not in schema
+    assert Draft202012Validator(schema).is_valid(None)
+    assert not Draft202012Validator(schema).is_valid("other")
+

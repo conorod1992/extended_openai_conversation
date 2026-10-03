@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
+from copy import deepcopy
 from dataclasses import replace
 import json
 import logging
@@ -206,28 +207,38 @@ def _normalize_function_result(result: Any) -> Any:
 
 def _schema_explicitly_allows_null(schema: dict[str, Any]) -> bool:
     """Return whether a schema explicitly accepts JSON null."""
+    if schema.get("nullable") is True:
+        return True
+    if "enum" in schema and None not in schema["enum"]:
+        return False
+    if "const" in schema and schema["const"] is not None:
+        return False
     schema_type = schema.get("type")
-    if schema_type == "null":
-        return True
-    if isinstance(schema_type, list) and "null" in schema_type:
-        return True
-
-    for keyword in ("anyOf", "oneOf"):
+    if (
+        schema_type is not None
+        and schema_type != "null"
+        and (not isinstance(schema_type, list) or "null" not in schema_type)
+    ):
+        return False
+    for keyword in ("anyOf", "oneOf", "allOf"):
         variants = schema.get(keyword)
-        if isinstance(variants, list) and any(
-            isinstance(variant, dict) and _schema_explicitly_allows_null(variant)
-            for variant in variants
-        ):
-            return True
-
-    variants = schema.get("allOf")
+        if isinstance(variants, list):
+            accepts = [
+                isinstance(variant, dict) and _schema_explicitly_allows_null(variant)
+                for variant in variants
+            ]
+            if keyword == "anyOf" and not any(accepts):
+                return False
+            if keyword == "oneOf" and sum(accepts) != 1:
+                return False
+            if keyword == "allOf" and (not accepts or not all(accepts)):
+                return False
     return (
-        bool(variants)
-        and isinstance(variants, list)
-        and all(
-            isinstance(variant, dict) and _schema_explicitly_allows_null(variant)
-            for variant in variants
-        )
+        schema_type == "null"
+        or (isinstance(schema_type, list) and "null" in schema_type)
+        or ("enum" in schema and None in schema["enum"])
+        or ("const" in schema and schema["const"] is None)
+        or any(keyword in schema for keyword in _SCHEMA_COMPOSITION_KEYS)
     )
 
 
@@ -236,7 +247,9 @@ def _make_schema_nullable(schema: dict[str, Any]) -> None:
     if _schema_explicitly_allows_null(schema):
         return
 
-    if not any(keyword in schema for keyword in _SCHEMA_COMPOSITION_KEYS):
+    if not any(
+        keyword in schema for keyword in (*_SCHEMA_COMPOSITION_KEYS, "enum", "const")
+    ):
         schema_type = schema.get("type")
         if isinstance(schema_type, str):
             schema["type"] = [schema_type, "null"]
@@ -252,6 +265,8 @@ def _make_schema_nullable(schema: dict[str, Any]) -> None:
 
 def _adjust_schema(schema: dict[str, Any]) -> None:
     """Adjust the schema to be compatible with OpenAI API."""
+    if schema.pop("nullable", False):
+        _make_schema_nullable(schema)
     for keyword in _SCHEMA_COMPOSITION_KEYS:
         variants = schema.get(keyword)
         if isinstance(variants, list):
@@ -290,10 +305,10 @@ def _adjust_schema(schema: dict[str, Any]) -> None:
             _adjust_schema(items)
 
 
-def _format_structured_output(
+def _serialize_structured_output(
     schema: vol.Schema, llm_api: llm.APIInstance | None
 ) -> dict[str, Any]:
-    """Format the schema to be compatible with OpenAI API."""
+    """Serialize the caller contract without provider adaptation."""
     from .ha_llm_tools import compatible_to_openapi
 
     result: dict[str, Any] = compatible_to_openapi(
@@ -303,8 +318,15 @@ def _format_structured_output(
         ),
     )
 
-    _adjust_schema(result)
+    return result
 
+
+def _format_structured_output(
+    schema: vol.Schema, llm_api: llm.APIInstance | None
+) -> dict[str, Any]:
+    """Adapt a fresh caller schema to the provider's strict contract."""
+    result = _serialize_structured_output(schema, llm_api)
+    _adjust_schema(result)
     return result
 
 
@@ -522,6 +544,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
         function_group_loader: Callable[[Any], dict[str, Any]] | None = None,
         request_options: Mapping[str, Any] | None = None,
+        structure_schema: dict[str, Any] | None = None,
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
         async with context_summary_request(self, chat_log):
@@ -600,9 +623,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     raise HomeAssistantError(
                         f"{model} does not support native Structured Outputs."
                     )
-                structured_schema = _format_structured_output(
-                    structure, chat_log.llm_api
-                )
+                if structure_schema is None:
+                    structured_schema = _format_structured_output(
+                        structure, chat_log.llm_api
+                    )
+                else:
+                    structured_schema = deepcopy(structure_schema)
+                    _adjust_schema(structured_schema)
                 output_format = {
                     "type": "json_schema",
                     "name": slugify(structure_name),
