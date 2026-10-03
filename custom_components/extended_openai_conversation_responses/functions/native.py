@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from datetime import timedelta
 import logging
 import os
@@ -54,6 +55,38 @@ _INDIRECT_TARGET_KEYS = (
 _AUTOMATION_WRITE_LOCK_KEY = f"{DOMAIN}.automation_write_lock"
 _UNCONDITIONAL_WRITE = object()
 _MAX_STATISTIC_IDS = 100
+
+
+async def _async_settle_automation_update(operation: Awaitable[str]) -> str:
+    """Retain transaction ownership until native work and reload have settled."""
+
+    async def observe() -> tuple[str | None, BaseException | None]:
+        # HA's shield reports exceptions from an abandoned await as uncaught.
+        # This owner deliberately observes them after settling cancellation.
+        try:
+            return await operation, None
+        except BaseException as err:
+            return None, err
+
+    task = asyncio.ensure_future(observe())
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as err:
+            if task.cancelled():
+                raise
+            if cancellation is None:
+                cancellation = err
+        except Exception:
+            break
+    result, failure = task.result()
+    if failure is not None:
+        raise failure
+    if cancellation is not None:
+        raise cancellation
+    assert result is not None
+    return result
 
 
 def _exposed_entity_ids(exposed_entities: list[dict[str, Any]]) -> set[str]:
@@ -428,7 +461,8 @@ class NativeFunction(Function):
             os.path.join(hass.config.config_dir, AUTOMATION_CONFIG_PATH)
         )
         lock = hass.data.setdefault(_AUTOMATION_WRITE_LOCK_KEY, asyncio.Lock())
-        async with lock:
+
+        async def update() -> str:
             previous, raw_config, written = await hass.async_add_executor_job(
                 _append_automation_atomic, automation_path, config
             )
@@ -456,11 +490,14 @@ class NativeFunction(Function):
                     )
                 raise
 
-        hass.bus.async_fire(
-            EVENT_AUTOMATION_REGISTERED,
-            {"automation_config": config, "raw_config": raw_config},
-        )
-        return "Success"
+            hass.bus.async_fire(
+                EVENT_AUTOMATION_REGISTERED,
+                {"automation_config": config, "raw_config": raw_config},
+            )
+            return "Success"
+
+        async with lock:
+            return await _async_settle_automation_update(update())
 
     async def get_history(
         self,
