@@ -1,4 +1,688 @@
 {
+  "allowances": {
+    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::a stale Request Rule editor in another tab cannot overwrite a newer save": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::a staged Assistant edit cannot overwrite a genuine HA backup restore": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::backgrounded Memory tab rejects stale edits and delayed reads after a newer HA save": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::dropped save keeps its draft and the authoritative HA state": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::expired transport and owner-to-restricted change never claim a successful save": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::slow reads and a dropped read converge on real HA state": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::long-lived browser and fresh browser agree after seeded saves": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::slow genuine HA WebSocket save never reports success before the backend replies": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::revoked HA session while editing cannot commit a save": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::genuine HA WebSocket drop during a save leaves the backend authoritative": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::old frontend shell kept open against new HA backend converges after hard refresh": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::new frontend with a stale published lazy chunk recovers on a fresh document": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::lazy chunk 404 reports a section error and refresh loads current assets": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::malformed browser-local cache clears through normal reload": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    },
+    "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly saved wording defaults change the real Safe Preview matcher result": {
+      "outcomes": [
+        "skipped"
+      ],
+      "requires_pass": true,
+      "reason": "Static fixture copy skips without a real backend; the saved-defaults journey must pass through the genuine HA management bridge.",
+      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
+      "expires": "2027-10-01"
+    }
+  },
+  "minimums": {
+    "memory-knowledge": {
+      "public_turns": 1,
+      "embedding_association_cases": 2,
+      "embedding_cache_rechecks": 2,
+      "embedding_malformed_responses": 9,
+      "embedding_live_configuration_races": 1,
+      "embedding_reload_races": 2,
+      "embedding_healthy_recoveries": 12,
+      "pending_publication_failure_cases": 2,
+      "pending_publication_retry_checks": 2,
+      "pending_publication_actual_tool_calls": 4,
+      "retained_manager_recoveries": 4,
+      "compound_optional_manager_faults": 4
+    },
+    "runtime": {
+      "conversation_turns": 1,
+      "process_soak_windows": 5,
+      "continuity_owner_transitions": 16,
+      "continuity_wire_checks": 24,
+      "continuity_serialized_overlaps": 9
+    },
+    "backup": {
+      "rollback_phases": 1,
+      "retention_restore_ownership_cases": 1,
+      "restore_pending_cases": 2,
+      "restore_journal_fault_cases": 5,
+      "restore_recovery_cold_cases": 1,
+      "rejected_recovery_operations": 37,
+      "process_fresh_boots": 5,
+      "native_restore_faults": 5,
+      "restore_manager_settlement_cases": 2
+    },
+    "functions": {
+      "actual_function_executions": 1,
+      "assist_safe_overlap": 2,
+      "assist_mixed_serial": 2,
+      "remote_resource_recovery_cases": 20,
+      "composite_rejected_trees": 4,
+      "composite_cancelled_exchanges": 1,
+      "sqlite_lock_waits": 3,
+      "sqlite_worker_settlements": 3,
+      "sqlite_healthy_recoveries": 3,
+      "assist_sibling_failure_cases": 2,
+      "assist_parent_cancel_cases": 2,
+      "compressed_remote_cases": 32,
+      "bash_pipe_tree_cases": 2,
+      "bash_pipe_settlements": 2,
+      "shared_http_pool_pressure_cases": 1,
+      "shared_http_waiter_recoveries": 1,
+      "budget_loading_replay_cases": 2,
+      "budget_atomic_cases": 1,
+      "budget_serial_prefix_cases": 1,
+      "completed_replay_rejections": 2,
+      "populated_api_transition_cases": 2,
+      "native_edit_settlement_cases": 1,
+      "native_file_settlement_cases": 3,
+      "schema_pattern_boundary_cases": 8,
+      "schema_contract_rejections": 6,
+      "schema_healthy_tool_recoveries": 8,
+      "schema_bounded_regex_exchanges": 12,
+      "rest_scoped_requests": 8,
+      "rest_overlapping_requests": 4,
+      "rest_transport_failure_cases": 12,
+      "rest_transport_recoveries": 12,
+      "rest_blocked_dependent_actions": 8,
+      "rest_received_response_controls": 4,
+      "late_external_edit_conflicts": 4,
+      "late_external_edit_recoveries": 4,
+      "normalized_schema_dispatch_cases": 12,
+      "normalized_schema_rejections": 10,
+      "normalized_schema_healthy_dispatches": 12,
+      "native_history_worker_settlements": 2,
+      "native_history_cancelled_recoveries": 1,
+      "native_automation_layout_cases": 4,
+      "native_automation_load_rejections": 2,
+      "native_disabled_automation_loads": 1
+    },
+    "setup": {
+      "provider_endpoint_wire_cases": 4
+    },
+    "long-lifetime": {
+      "process_soak_windows": 9,
+      "lifetime_elapsed_seconds": 1800,
+      "lifetime_idle_seconds": 1500,
+      "lifetime_retention_callbacks": 20,
+      "lifetime_expired_transfer_reclaims": 1,
+      "lifetime_reloads": 4,
+      "lifetime_final_healthy_requests": 1
+    },
+    "backup-transfer": {
+      "backup_chunks_transferred": 1,
+      "transfer_previews": 1,
+      "coherent_setup_restore_exports": 1,
+      "filesystem_recovery_cases": 1,
+      "filesystem_recovery_kills": 3
+    },
+    "feature-crossroads": {
+      "distinct_matcher_pressure_cases": 1,
+      "regex_worker_settlements": 6,
+      "mixed_usage_summary_cases": 1,
+      "permission_cache_churn_cases": 1,
+      "restricted_context_probes": 11,
+      "permission_group_updates": 3,
+      "debug_export_privacy_cases": 1,
+      "catalog_ai_task_reset_rejections": 1,
+      "catalog_ai_task_resets": 1,
+      "catalog_ai_task_wire_checks": 3,
+      "skill_download_cancellation_cases": 4,
+      "skill_download_unowned_cases": 5
+    },
+    "browser-webkit": {
+      "multi_tab_conflicts": 1,
+      "native_lifetime_journeys": 1,
+      "native_composite_rejections": 1,
+      "native_composite_recoveries": 1,
+      "native_assistant_states": 2,
+      "native_held_completions": 2,
+      "native_revision_conflicts": 1,
+      "native_editor_ownership_cases": 4,
+      "native_registry_recovery_cases": 1,
+      "native_registry_private_probes": 2,
+      "native_ownership_reload_checks": 5,
+      "native_registry_fetch_recoveries": 1
+    },
+    "browser-firefox": {
+      "multi_tab_conflicts": 1,
+      "native_lifetime_journeys": 1,
+      "native_composite_rejections": 1,
+      "native_composite_recoveries": 1,
+      "native_assistant_states": 2,
+      "native_held_completions": 2,
+      "native_revision_conflicts": 1,
+      "native_editor_ownership_cases": 4,
+      "native_registry_recovery_cases": 1,
+      "native_registry_private_probes": 2,
+      "native_ownership_reload_checks": 5,
+      "native_registry_fetch_recoveries": 1
+    },
+    "persistence": {
+      "composite_ingestion_cases": 8,
+      "composite_ingestion_rejections": 6,
+      "mixed_maintenance_contention_cases": 1,
+      "cancelled_maintenance_waiters": 1,
+      "storage_failure_recoveries": 1,
+      "archive_first_intent_failure_cases": 2,
+      "archive_first_intent_disk_commits": 1,
+      "archive_intent_reload_checks": 2,
+      "pending_publication_failure_cases": 2,
+      "pending_publication_retry_checks": 2,
+      "pending_publication_actual_tool_calls": 4,
+      "restore_pending_cases": 2,
+      "restore_journal_fault_cases": 5,
+      "restore_recovery_cold_cases": 1,
+      "rejected_recovery_operations": 37,
+      "process_fresh_boots": 5,
+      "native_restore_faults": 5,
+      "restore_manager_settlement_cases": 2,
+      "delayed_same_manager_recoveries": 6,
+      "delayed_compound_storage_faults": 6,
+      "delayed_recovered_service_effects": 7,
+      "delayed_healthy_retry_effects": 6,
+      "delayed_indeterminate_replay_rejections": 1,
+      "retained_manager_recoveries": 4,
+      "compound_optional_manager_faults": 4
+    },
+    "ai-task": {
+      "ai_task_image_continuations": 2,
+      "ai_task_image_isolation_checks": 2
+    },
+    "archive": {
+      "archive_first_intent_failure_cases": 2,
+      "archive_first_intent_disk_commits": 1,
+      "archive_intent_reload_checks": 2
+    },
+    "voice-intercom": {
+      "voice_private_context_probes": 1,
+      "intercom_deliveries": 1,
+      "audio_deliveries": 2,
+      "concurrent_audio_journeys": 2,
+      "audio_interleavings": 1,
+      "targeted_tts_failures": 1,
+      "native_audio_recoveries": 1,
+      "intercom_timing_cases": 1,
+      "intercom_idle_flaps": 1,
+      "actual_expiry_callbacks": 4,
+      "delayed_playback_acknowledgements": 1,
+      "intercom_timing_recoveries": 1
+    },
+    "quiet-hours": {
+      "quiet_storage_failure_cases": 8,
+      "quiet_storage_retry_checks": 8,
+      "quiet_storage_restoration_checks": 8,
+      "quiet_pending_manual_override_checks": 2,
+      "quiet_repeated_hour_cases": 3,
+      "quiet_monotonic_utc_checks": 500,
+      "quiet_exact_transition_checks": 6,
+      "quiet_post_change_failure_cases": 4,
+      "quiet_durable_baseline_checks": 8,
+      "quiet_manual_failure_checks": 2,
+      "quiet_registry_rename_cases": 1,
+      "quiet_renamed_transition_checks": 3,
+      "quiet_registry_restart_checks": 1,
+      "quiet_saved_control_manual_changes": 6,
+      "quiet_prepared_recovery_cases": 12,
+      "quiet_independent_goal_preservations": 8,
+      "quiet_process_application_recoveries": 8,
+      "quiet_process_indeterminate_controls": 4,
+      "quiet_process_healthy_periods": 8,
+      "quiet_service_acknowledgement_recoveries": 2
+    },
+    "browser": {
+      "browser_creates": 1,
+      "browser_edits": 1,
+      "multi_tab_conflicts": 1,
+      "browser_retention_windows": 8,
+      "native_lifetime_journeys": 1,
+      "native_composite_rejections": 1,
+      "native_composite_recoveries": 1,
+      "native_assistant_states": 2,
+      "native_held_completions": 2,
+      "native_revision_conflicts": 1,
+      "native_abandoned_uploads": 1,
+      "native_upload_bytes": 1,
+      "native_transfer_reclaims": 1,
+      "native_retention_windows": 8,
+      "native_keyboard_commits": 1,
+      "native_semantic_scans": 82,
+      "native_error_semantic_scans": 20,
+      "native_editor_ownership_cases": 4,
+      "native_registry_recovery_cases": 1,
+      "native_registry_private_probes": 2,
+      "native_ownership_reload_checks": 5,
+      "native_registry_fetch_recoveries": 1,
+      "production_backup_browser_journeys": 1,
+      "native_control_endurance_journeys": 1,
+      "genuine_locale_timezone_journeys": 1
+    },
+    "large-installation": {
+      "concurrent_summary_cases": 2,
+      "summary_lifecycle_cases": 3,
+      "summary_replacement_recoveries": 3
+    },
+    "process-chaos": {
+      "process_terminations": 1,
+      "delayed_backlog_restarts": 4,
+      "delayed_backlog_calls": 50,
+      "delayed_backlog_executions": 30,
+      "delayed_partial_termination_cases": 1,
+      "delayed_foreground_during_backlog": 6,
+      "delayed_retryable_pre_dispatch_failures": 12,
+      "filesystem_recovery_cases": 3,
+      "filesystem_recovery_kills": 5
+    },
+    "provider-resilience": {
+      "tls_verified_requests": 4,
+      "transport_tool_recovery_cases": 2
+    },
+    "guest-security": {
+      "public_turns": 1,
+      "private_context_probes": 1,
+      "guest_ambiguous_ack_cases": 4
+    },
+    "diagnostics": {
+      "artifact_privacy_probes": 4
+    },
+    "request-rules": {
+      "ha_service_calls": 1,
+      "public_turns": 1,
+      "rule_publication_cases": 20
+    }
+  },
+  "browser": {
+    "native-browser-chromium": [
+      "tests_browser/real-ha-compatibility.spec.mjs::chromium::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
+    ],
+    "native-browser-webkit": [
+      "tests_browser/real-ha-compatibility.spec.mjs::webkit::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
+    ],
+    "native-browser-webkit-mobile": [
+      "tests_browser/real-ha-compatibility.spec.mjs::webkit-mobile::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
+    ],
+    "browser-webkit": [
+      "tests_browser/accessibility-layout.stress.mjs::webkit::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
+      "tests_browser/accessibility-layout.stress.mjs::webkit::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
+      "tests_browser/backend-reconnect.spec.mjs::webkit::backend-reconnect.spec.mjs::mounted management panel recovers after HA backend disconnect and reconnect",
+      "tests_browser/cross-browser-keyboard.stress.mjs::webkit::cross-browser-keyboard.stress.mjs::keyboard-only Memory journey creates, cancels, edits and deletes with usable focus",
+      "tests_browser/cross-browser-keyboard.stress.mjs::webkit::cross-browser-keyboard.stress.mjs::keyboard-only navigation, lazy routes and large-text viewport retain reachable focus",
+      "tests_browser/cross-browser-keyboard.stress.mjs::webkit::cross-browser-keyboard.stress.mjs::malformed browser-local state cannot prevent a fresh management load",
+      "tests_browser/enhanced-endurance.stress.mjs::webkit::enhanced-endurance.stress.mjs::one mounted panel survives a long seeded route journey",
+      "tests_browser/frontend-resilience.spec.mjs::webkit::frontend-resilience.spec.mjs::failed Memory save keeps the editor and draft intact, then retries cleanly",
+      "tests_browser/frontend-resilience.spec.mjs::webkit::frontend-resilience.spec.mjs::server-rejected general configuration save remains dirty and retries without losing the draft",
+      "tests_browser/management-crud.spec.mjs::webkit::management-crud.spec.mjs::persistent memories support create, reload, edit, and delete",
+      "tests_browser/management-lazy-ownership.spec.mjs::webkit::management-lazy-ownership.spec.mjs::a cold lazy import failure reaches the section error and a fresh load recovers",
+      "tests_browser/management-lazy-ownership.spec.mjs::webkit::management-lazy-ownership.spec.mjs::search into a cold configuration route retains focus until its assets arrive",
+      "tests_browser/mount-offline-bfcache.stress.mjs::webkit::mount-offline-bfcache.stress.mjs::repeated mount cycles plus offline and browser restoration keep one healthy panel",
+      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::a staged Assistant edit cannot overwrite a genuine HA backup restore",
+      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::a stale Request Rule editor in another tab cannot overwrite a newer save",
+      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::backgrounded Memory tab rejects stale edits and delayed reads after a newer HA save",
+      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions",
+      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy",
+      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
+      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
+      "tests_browser/stale-response-ordering.spec.mjs::webkit::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
+    ],
+    "browser": [
+      "ci/frontend_latency/accessibility.spec.mjs::chromium::accessibility.spec.mjs::scan genuine HA route and editor accessibility semantics",
+      "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::390px save bars and validation dialogs complete critical writes without page overflow",
+      "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::Request Rule dialog supports keyboard cancellation and returns usable focus",
+      "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
+      "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
+      "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly exposed attribute preferences survive context disable and save",
+      "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly model capability transitions and dedicated reset stay coherent",
+      "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly request preview ignores an older completion after a newer preview",
+      "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly speech regex lifecycle and preview ordering remain stable",
+      "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly voice mappings follow policy dependencies and persist",
+      "tests_browser/assistant-config-control-matrix.stress.mjs::chromium::assistant-config-control-matrix.stress.mjs::nightly assistant configuration control matrix edits, saves, and reloads every ordinary field",
+      "tests_browser/assistant-config-control-matrix.stress.mjs::chromium::assistant-config-control-matrix.stress.mjs::nightly configuration parent controls reveal and enable their dependent settings",
+      "tests_browser/assistant-config-control-matrix.stress.mjs::chromium::assistant-config-control-matrix.stress.mjs::nightly configuration validation maps backend field errors onto the matching control",
+      "tests_browser/backend-reconnect.spec.mjs::chromium::backend-reconnect.spec.mjs::mounted management panel recovers after HA backend disconnect and reconnect",
+      "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Backup export modes validate selection, preserve settings and reset on reopen",
+      "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Restore rejects corrupt input, supports cancel and requires file reselection after failure",
+      "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Restore selection preview follows the latest section choice and successful restore reloads",
+      "tests_browser/conversation-actions.spec.mjs::chromium::conversation-actions.spec.mjs::Archive search and repeated page navigation settle their controls",
+      "tests_browser/conversation-actions.spec.mjs::chromium::conversation-actions.spec.mjs::Conversation history reads turns and persists end-active and delete mutations",
+      "tests_browser/cross-browser-keyboard.stress.mjs::chromium::cross-browser-keyboard.stress.mjs::keyboard-only Memory journey creates, cancels, edits and deletes with usable focus",
+      "tests_browser/cross-browser-keyboard.stress.mjs::chromium::cross-browser-keyboard.stress.mjs::keyboard-only navigation, lazy routes and large-text viewport retain reachable focus",
+      "tests_browser/cross-browser-keyboard.stress.mjs::chromium::cross-browser-keyboard.stress.mjs::malformed browser-local state cannot prevent a fresh management load",
+      "tests_browser/enhanced-endurance.stress.mjs::chromium::enhanced-endurance.stress.mjs::one mounted panel survives a long seeded route journey",
+      "tests_browser/function-mutation-concurrency.stress.mjs::chromium::function-mutation-concurrency.stress.mjs::nightly Function Group validation, failure recovery, rename and delete stay single-fire",
+      "tests_browser/function-mutation-concurrency.stress.mjs::chromium::function-mutation-concurrency.stress.mjs::nightly HA LLM catalogue handles scale, duplicate opening, filtering, add failure and retry",
+      "tests_browser/function-mutation-concurrency.stress.mjs::chromium::function-mutation-concurrency.stress.mjs::nightly HA LLM refresh is single-flight and latest catalogue state wins",
+      "tests_browser/function-mutation-concurrency.stress.mjs::chromium::function-mutation-concurrency.stress.mjs::nightly mixed Function and Group mutations preserve semantic state and fresh revisions",
+      "tests_browser/function-validation-recovery.stress.mjs::chromium::function-validation-recovery.stress.mjs::nightly Function Tool save failure preserves the editor and a corrected retry succeeds",
+      "tests_browser/function-validation-recovery.stress.mjs::chromium::function-validation-recovery.stress.mjs::nightly Function Tool validation rejects malformed/schema/dependency cases without saving",
+      "tests_browser/function-validation-recovery.stress.mjs::chromium::function-validation-recovery.stress.mjs::nightly built-in preset loading and replacement failure paths remain recoverable",
+      "tests_browser/function-validation-recovery.stress.mjs::chromium::function-validation-recovery.stress.mjs::nightly saved-configuration validation reports mixed failures and recovers",
+      "tests_browser/knowledge-memory-robustness.stress.mjs::chromium::knowledge-memory-robustness.stress.mjs::Knowledge CRUD failures, retry, filtering and availability reconcile against the collection",
+      "tests_browser/knowledge-memory-robustness.stress.mjs::chromium::knowledge-memory-robustness.stress.mjs::Knowledge availability and source mutation can finish out of order without losing either result",
+      "tests_browser/knowledge-memory-robustness.stress.mjs::chromium::knowledge-memory-robustness.stress.mjs::Memory date metadata survives backend failure, retry and fresh section load",
+      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Captured AI input keeps an invalid selection visible for repair",
+      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Knowledge sources support create, reload, edit, and delete",
+      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Request Rule Show filter keeps global priorities and group changes preserve order",
+      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Request Rule condition selector, local continuation, and group survive reload",
+      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Request Rules support create, precedence changes, reload, edit, and delete",
+      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Rule Sharing reviews before importing disabled rules at the bottom",
+      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::persistent memories support create, reload, edit, and delete",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Assistant becomes usable while supplemental configuration guidance is pending",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Assistant loads only the selected section family (bundle)",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Assistant loads only the selected section family (source)",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Home Assistant route paints its intro while configuration assets are still pending",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Memory Settings becomes usable while configuration guidance is pending",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Overview navigation reuses a strong-intent read without reading on hover",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Settings Search metadata loads only on first search interaction",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Usage data loader remains behind the Usage route",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Usage request details bind once after repeated explicit binding",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::a cold lazy import failure reaches the section error and a fresh load recovers",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::agent changes and reconnects during a shared lazy import keep the newest data",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::agent-config-editor: data starts during import and a stale completion cannot replace Guide",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::agent-config-editor: failed feature load remains unavailable and a fresh page recovers",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::agent-config-tools: failed feature load remains unavailable and a fresh page recovers",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::cold Overview exposes stable shell, agent, asset, summary, and paint milestones",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::cold guide keeps features unloaded and first visits cache them (bundle)",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::cold guide keeps features unloaded and first visits cache them (source)",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::cold overview keeps features unloaded and first visits cache them (bundle)",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::cold overview keeps features unloaded and first visits cache them (source)",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::credential diagnostics result handler is disposed on disconnect and restored on reconnect",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::embedded Debug pins its assistant and binds paged view/copy once",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::hover does not compete with a cold route but pointerdown still warms the destination",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::management-guest-feature: data starts during import and a stale completion cannot replace Guide",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::management-knowledge-feature: data starts during import and a stale completion cannot replace Guide",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::management-memory-feature: data starts during import and a stale completion cannot replace Guide",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::ordinary config routes do not load the Functions editor chunk",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::request-rules-ui: data starts during import and a stale completion cannot replace Guide",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::request-rules-ui: failed feature load remains unavailable and a fresh page recovers",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::route hover warming waits for intent while focus and pointerdown stay immediate",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::search into a cold configuration route retains focus until its assets arrive",
+      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::visiting lazy routes keeps the panel prototype fixed and feature imports lazy",
+      "tests_browser/mount-offline-bfcache.stress.mjs::chromium::mount-offline-bfcache.stress.mjs::repeated mount cycles plus offline and browser restoration keep one healthy panel",
+      "tests_browser/native-yaml-editor-crud.spec.mjs::chromium::native-yaml-editor-crud.spec.mjs::modified native YAML requires confirmation before built-in preset replacement",
+      "tests_browser/native-yaml-editor-crud.spec.mjs::chromium::native-yaml-editor-crud.spec.mjs::native YAML editor validates, duplicates, isolates tool state, deletes, and fits a narrow viewport",
+      "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::Overview is usable while Broadcast implementation is still loading",
+      "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::Overview snapshot is usable while the full implementation is still loading",
+      "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::leaving Overview while Broadcast loads prevents stale hydration",
+      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours retries a failed save and protects agent selection while saving",
+      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours satellite overrides clear to pending automatic resolution and preserve other drafts",
+      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours schedule controls round-trip through save, route reopen, and fresh load",
+      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours surfaces unavailable and changing satellite candidates while editing",
+      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser creates, edits, and deletes Knowledge through genuine HA",
+      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser creates, edits, reloads, and deletes a Memory through HA",
+      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser creates, groups, edits, reloads, and deletes a Request Rule through HA",
+      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser exports, reviews, and imports a Request Rule Pack through HA",
+      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser full backup restores cross-feature state through genuine HA",
+      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser manages a Function Tool and dependent Group through genuine HA",
+      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser saves General Settings through the genuine HA backend",
+      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser saves Guest and Quiet Hours policy payloads through HA",
+      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::shipped frontend keeps hostile stored text literal across mutation and fresh panels",
+      "tests_browser/real-ha-function-repair.spec.mjs::chromium::real-ha-function-repair.spec.mjs::quarantined Function Tools repair through shipped frontend and genuine HA",
+      "tests_browser/real-ha-credential-replacement.spec.mjs::chromium::real-ha-credential-replacement.spec.mjs::API key replacement uses native management WebSocket",
+      "tests_browser/real-ha-golden.spec.mjs::chromium::real-ha-golden.spec.mjs::cold native shell authoring reaches runtime and availability boundaries",
+      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::a staged Assistant edit cannot overwrite a genuine HA backup restore",
+      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::a stale Request Rule editor in another tab cannot overwrite a newer save",
+      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::backgrounded Memory tab rejects stale edits and delayed reads after a newer HA save",
+      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions",
+      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy",
+      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
+      "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::dropped save keeps its draft and the authoritative HA state",
+      "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::expired transport and owner-to-restricted change never claim a successful save",
+      "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::long-lived browser and fresh browser agree after seeded saves",
+      "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::slow reads and a dropped read converge on real HA state",
+      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::shipped frontend duplicates, updates, and imports agents through genuine HA",
+      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::shipped frontend persists an empty Request Rule wording list through genuine HA",
+      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::shipped frontend starts and ends Guest Mode through genuine HA",
+      "tests_browser/real-ha-seeded-management.spec.mjs::chromium::real-ha-seeded-management.spec.mjs::seeded Management owners mutate through shipped frontend and genuine HA",
+      "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::genuine HA WebSocket drop during a save leaves the backend authoritative",
+      "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::revoked HA session while editing cannot commit a save",
+      "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::slow genuine HA WebSocket save never reports success before the backend replies",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::abandoned real upload consumes quota until elapsed expiry then reconnect recovers",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::warmed widgets plateau in one document and Ctrl+S commits once",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
+      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
+      "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::lazy chunk 404 reports a section error and refresh loads current assets",
+      "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::malformed browser-local cache clears through normal reload",
+      "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::new frontend with a stale published lazy chunk recovers on a fresh document",
+      "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::old frontend shell kept open against new HA backend converges after hard refresh",
+      "tests_browser/reconnect-endurance.stress.mjs::chromium::reconnect-endurance.stress.mjs::one mounted panel has bounded backend calls after repeated disconnects",
+      "tests_browser/request-debug-persistence.spec.mjs::chromium::request-debug-persistence.spec.mjs::Request debugging capture policy persists across a fresh panel",
+      "tests_browser/request-rules-captures-aliases.stress.mjs::chromium::request-rules-captures-aliases.stress.mjs::nightly capture and result-alias transitions remain stable across repeated edits",
+      "tests_browser/request-rules-continue-matching.stress.mjs::chromium::request-rules-continue-matching.stress.mjs::nightly Continue Matching chain survives repeated authoring and fresh load",
+      "tests_browser/request-rules-editor-roundtrip.stress.mjs::chromium::request-rules-editor-roundtrip.stress.mjs::nightly Request Rule editor matrix round-trips all matchers and major form modes",
+      "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly Request Rules defaults and wording edits persist, recover from failure, and control rule matching modes",
+      "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly Safe Preview presents match, captures, skipped conditions, no-match, and never starts a live request",
+      "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly Sentence Pattern helpers replace selections, insert at the caret, and edit empty fields",
+      "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly saved wording defaults change the real Safe Preview matcher result",
+      "tests_browser/request-rules-mutation-queue.stress.mjs::chromium::request-rules-mutation-queue.stress.mjs::nightly Request Rules queue serializes a burst of distinct mutations",
+      "tests_browser/request-rules-sharing-live.stress.mjs::chromium::request-rules-sharing-live.stress.mjs::nightly Live Request confirmation, repeated activation, results, errors, stale navigation, and preview independence",
+      "tests_browser/request-rules-sharing-live.stress.mjs::chromium::request-rules-sharing-live.stress.mjs::nightly Rule Pack UI rejects malformed and oversized files, preserves review cancellation, retries failures, and round-trips priority",
+      "tests_browser/retained-mutation-state.spec.mjs::chromium::retained-mutation-state.spec.mjs::Temporary Memory delete and clear update only the selected scope count",
+      "tests_browser/retained-mutation-state.spec.mjs::chromium::retained-mutation-state.spec.mjs::a late Knowledge save cannot replace a newer route load",
+      "tests_browser/retained-mutation-state.spec.mjs::chromium::retained-mutation-state.spec.mjs::clearing Usage details preserves aggregates, retention, and history selection",
+      "tests_browser/route-inventory.stress.mjs::chromium::route-inventory.stress.mjs::all management routes navigate, settle and refresh at desktop width",
+      "tests_browser/route-inventory.stress.mjs::chromium::route-inventory.stress.mjs::all management routes navigate, settle and refresh at mobile width",
+      "tests_browser/route-inventory.stress.mjs::chromium::route-inventory.stress.mjs::all management routes navigate, settle and refresh at tablet width",
+      "tests_browser/route-inventory.stress.mjs::chromium::route-inventory.stress.mjs::every shipped route has an explicit nightly browser acceptance level",
+      "tests_browser/seeded-frontend-state-machine.stress.mjs::chromium::seeded-frontend-state-machine.stress.mjs::seeded cross-surface state machine seed=20260930",
+      "tests_browser/seeded-frontend-state-machine.stress.mjs::chromium::seeded-frontend-state-machine.stress.mjs::seeded cross-surface state machine seed=24301",
+      "tests_browser/seeded-frontend-state-machine.stress.mjs::chromium::seeded-frontend-state-machine.stress.mjs::seeded cross-surface state machine seed=7319",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Assistant late read cannot repaint a newer route",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Assistant late save preserves a newer local draft",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Function Groups late read cannot repaint a newer route",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Function Tools late read cannot repaint a newer route",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Function late save cannot repaint a newer route",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Guest Mode late read cannot repaint a newer route",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Guest policy late save cannot repaint a newer route",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Knowledge late delete cannot resurrect the deleted source after navigation",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Knowledge late read cannot repaint a newer route",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Memory late read cannot repaint a newer route",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Quiet Hours late read cannot repaint a newer route",
+      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Request Rules late read cannot repaint a newer route",
+      "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly Clear Recent Details confirms, retries, deduplicates, and preserves aggregate history",
+      "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly non-admin Usage omits detail clearing and retention controls",
+      "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly run details show failed provider requests, recover from errors, and ignore closed or switched dialogs",
+      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage history windows load lazily, cache selections, page all history, and keep charts responsive",
+      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection",
+      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::Guest save acknowledgement survives a failed refresh and edits in flight through genuine HA",
+      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::combined Request Rules settings remain current across warm and expired navigation through genuine HA",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-GB \u00e2\u20ac\u00ba Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-IE \u00e2\u20ac\u00ba Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-US \u00e2\u20ac\u00ba Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / fr-FR \u00e2\u20ac\u00ba Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Kiritimati / HA Dublin wall clock \u00e2\u20ac\u00ba Quiet Hours saves a wall-clock time without browser timezone conversion"
+    ],
+    "browser-firefox": [
+      "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
+      "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
+      "tests_browser/backend-reconnect.spec.mjs::firefox::backend-reconnect.spec.mjs::mounted management panel recovers after HA backend disconnect and reconnect",
+      "tests_browser/cross-browser-keyboard.stress.mjs::firefox::cross-browser-keyboard.stress.mjs::keyboard-only Memory journey creates, cancels, edits and deletes with usable focus",
+      "tests_browser/cross-browser-keyboard.stress.mjs::firefox::cross-browser-keyboard.stress.mjs::keyboard-only navigation, lazy routes and large-text viewport retain reachable focus",
+      "tests_browser/cross-browser-keyboard.stress.mjs::firefox::cross-browser-keyboard.stress.mjs::malformed browser-local state cannot prevent a fresh management load",
+      "tests_browser/enhanced-endurance.stress.mjs::firefox::enhanced-endurance.stress.mjs::one mounted panel survives a long seeded route journey",
+      "tests_browser/frontend-resilience.spec.mjs::firefox::frontend-resilience.spec.mjs::failed Memory save keeps the editor and draft intact, then retries cleanly",
+      "tests_browser/frontend-resilience.spec.mjs::firefox::frontend-resilience.spec.mjs::server-rejected general configuration save remains dirty and retries without losing the draft",
+      "tests_browser/management-crud.spec.mjs::firefox::management-crud.spec.mjs::persistent memories support create, reload, edit, and delete",
+      "tests_browser/management-lazy-ownership.spec.mjs::firefox::management-lazy-ownership.spec.mjs::a cold lazy import failure reaches the section error and a fresh load recovers",
+      "tests_browser/management-lazy-ownership.spec.mjs::firefox::management-lazy-ownership.spec.mjs::search into a cold configuration route retains focus until its assets arrive",
+      "tests_browser/mount-offline-bfcache.stress.mjs::firefox::mount-offline-bfcache.stress.mjs::repeated mount cycles plus offline and browser restoration keep one healthy panel",
+      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::a staged Assistant edit cannot overwrite a genuine HA backup restore",
+      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::a stale Request Rule editor in another tab cannot overwrite a newer save",
+      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::backgrounded Memory tab rejects stale edits and delayed reads after a newer HA save",
+      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions",
+      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy",
+      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation failure cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
+      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
+      "tests_browser/stale-response-ordering.spec.mjs::firefox::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
+    ],
+    "native-browser-firefox": [
+      "tests_browser/real-ha-compatibility.spec.mjs::firefox::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
+    ]
+  },
+  "fixture_only": {},
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
     "tests/functions/test_base.py::TestFunctionBase::test_validate_entity_ids_not_exposed",
@@ -1697,684 +2381,9 @@
     "tests_stress/test_ai_task_continuity.py::test_overlapping_caller_tools_keep_context_and_cancellation_request_local[responses]",
     "tests_stress/test_native_audio_delivery.py::test_responses_native_audio_executes_tool_once_and_next_voice_turn_is_healthy",
     "tests_stress/test_provider_endpoint_selection.py::test_provider_family_keeps_tool_continuation_on_selected_sdk_wire[https://compatible.example/v1-openai-False-/v1/chat/completions]",
-    "tests_stress/test_provider_endpoint_selection.py::test_provider_family_keeps_tool_continuation_on_selected_sdk_wire[https://example.openai.azure.com-openai-True-/openai/deployments/gpt-5.6/chat/completions]"
+    "tests_stress/test_provider_endpoint_selection.py::test_provider_family_keeps_tool_continuation_on_selected_sdk_wire[https://example.openai.azure.com-openai-True-/openai/deployments/gpt-5.6/chat/completions]",
+    "tests_stress/test_browser_backend_resilience.py::test_professional_genuine_browser_transfer_controls_and_locale"
   ],
-  "browser": {
-    "browser": [
-      "ci/frontend_latency/accessibility.spec.mjs::chromium::accessibility.spec.mjs::scan genuine HA route and editor accessibility semantics",
-      "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::390px save bars and validation dialogs complete critical writes without page overflow",
-      "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::Request Rule dialog supports keyboard cancellation and returns usable focus",
-      "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
-      "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
-      "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly exposed attribute preferences survive context disable and save",
-      "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly model capability transitions and dedicated reset stay coherent",
-      "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly request preview ignores an older completion after a newer preview",
-      "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly speech regex lifecycle and preview ordering remain stable",
-      "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly voice mappings follow policy dependencies and persist",
-      "tests_browser/assistant-config-control-matrix.stress.mjs::chromium::assistant-config-control-matrix.stress.mjs::nightly assistant configuration control matrix edits, saves, and reloads every ordinary field",
-      "tests_browser/assistant-config-control-matrix.stress.mjs::chromium::assistant-config-control-matrix.stress.mjs::nightly configuration parent controls reveal and enable their dependent settings",
-      "tests_browser/assistant-config-control-matrix.stress.mjs::chromium::assistant-config-control-matrix.stress.mjs::nightly configuration validation maps backend field errors onto the matching control",
-      "tests_browser/backend-reconnect.spec.mjs::chromium::backend-reconnect.spec.mjs::mounted management panel recovers after HA backend disconnect and reconnect",
-      "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Backup export modes validate selection, preserve settings and reset on reopen",
-      "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Restore rejects corrupt input, supports cancel and requires file reselection after failure",
-      "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Restore selection preview follows the latest section choice and successful restore reloads",
-      "tests_browser/conversation-actions.spec.mjs::chromium::conversation-actions.spec.mjs::Archive search and repeated page navigation settle their controls",
-      "tests_browser/conversation-actions.spec.mjs::chromium::conversation-actions.spec.mjs::Conversation history reads turns and persists end-active and delete mutations",
-      "tests_browser/cross-browser-keyboard.stress.mjs::chromium::cross-browser-keyboard.stress.mjs::keyboard-only Memory journey creates, cancels, edits and deletes with usable focus",
-      "tests_browser/cross-browser-keyboard.stress.mjs::chromium::cross-browser-keyboard.stress.mjs::keyboard-only navigation, lazy routes and large-text viewport retain reachable focus",
-      "tests_browser/cross-browser-keyboard.stress.mjs::chromium::cross-browser-keyboard.stress.mjs::malformed browser-local state cannot prevent a fresh management load",
-      "tests_browser/enhanced-endurance.stress.mjs::chromium::enhanced-endurance.stress.mjs::one mounted panel survives a long seeded route journey",
-      "tests_browser/function-mutation-concurrency.stress.mjs::chromium::function-mutation-concurrency.stress.mjs::nightly Function Group validation, failure recovery, rename and delete stay single-fire",
-      "tests_browser/function-mutation-concurrency.stress.mjs::chromium::function-mutation-concurrency.stress.mjs::nightly HA LLM catalogue handles scale, duplicate opening, filtering, add failure and retry",
-      "tests_browser/function-mutation-concurrency.stress.mjs::chromium::function-mutation-concurrency.stress.mjs::nightly HA LLM refresh is single-flight and latest catalogue state wins",
-      "tests_browser/function-mutation-concurrency.stress.mjs::chromium::function-mutation-concurrency.stress.mjs::nightly mixed Function and Group mutations preserve semantic state and fresh revisions",
-      "tests_browser/function-validation-recovery.stress.mjs::chromium::function-validation-recovery.stress.mjs::nightly Function Tool save failure preserves the editor and a corrected retry succeeds",
-      "tests_browser/function-validation-recovery.stress.mjs::chromium::function-validation-recovery.stress.mjs::nightly Function Tool validation rejects malformed/schema/dependency cases without saving",
-      "tests_browser/function-validation-recovery.stress.mjs::chromium::function-validation-recovery.stress.mjs::nightly built-in preset loading and replacement failure paths remain recoverable",
-      "tests_browser/function-validation-recovery.stress.mjs::chromium::function-validation-recovery.stress.mjs::nightly saved-configuration validation reports mixed failures and recovers",
-      "tests_browser/knowledge-memory-robustness.stress.mjs::chromium::knowledge-memory-robustness.stress.mjs::Knowledge CRUD failures, retry, filtering and availability reconcile against the collection",
-      "tests_browser/knowledge-memory-robustness.stress.mjs::chromium::knowledge-memory-robustness.stress.mjs::Knowledge availability and source mutation can finish out of order without losing either result",
-      "tests_browser/knowledge-memory-robustness.stress.mjs::chromium::knowledge-memory-robustness.stress.mjs::Memory date metadata survives backend failure, retry and fresh section load",
-      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Captured AI input keeps an invalid selection visible for repair",
-      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Knowledge sources support create, reload, edit, and delete",
-      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Request Rule Show filter keeps global priorities and group changes preserve order",
-      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Request Rule condition selector, local continuation, and group survive reload",
-      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Request Rules support create, precedence changes, reload, edit, and delete",
-      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::Rule Sharing reviews before importing disabled rules at the bottom",
-      "tests_browser/management-crud.spec.mjs::chromium::management-crud.spec.mjs::persistent memories support create, reload, edit, and delete",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Assistant becomes usable while supplemental configuration guidance is pending",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Assistant loads only the selected section family (bundle)",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Assistant loads only the selected section family (source)",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Home Assistant route paints its intro while configuration assets are still pending",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Memory Settings becomes usable while configuration guidance is pending",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Overview navigation reuses a strong-intent read without reading on hover",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Settings Search metadata loads only on first search interaction",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Usage data loader remains behind the Usage route",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::Usage request details bind once after repeated explicit binding",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::a cold lazy import failure reaches the section error and a fresh load recovers",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::agent changes and reconnects during a shared lazy import keep the newest data",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::agent-config-editor: data starts during import and a stale completion cannot replace Guide",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::agent-config-editor: failed feature load remains unavailable and a fresh page recovers",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::agent-config-tools: failed feature load remains unavailable and a fresh page recovers",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::cold Overview exposes stable shell, agent, asset, summary, and paint milestones",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::cold guide keeps features unloaded and first visits cache them (bundle)",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::cold guide keeps features unloaded and first visits cache them (source)",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::cold overview keeps features unloaded and first visits cache them (bundle)",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::cold overview keeps features unloaded and first visits cache them (source)",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::credential diagnostics result handler is disposed on disconnect and restored on reconnect",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::embedded Debug pins its assistant and binds paged view/copy once",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::hover does not compete with a cold route but pointerdown still warms the destination",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::management-guest-feature: data starts during import and a stale completion cannot replace Guide",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::management-knowledge-feature: data starts during import and a stale completion cannot replace Guide",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::management-memory-feature: data starts during import and a stale completion cannot replace Guide",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::ordinary config routes do not load the Functions editor chunk",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::request-rules-ui: data starts during import and a stale completion cannot replace Guide",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::request-rules-ui: failed feature load remains unavailable and a fresh page recovers",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::route hover warming waits for intent while focus and pointerdown stay immediate",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::search into a cold configuration route retains focus until its assets arrive",
-      "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::visiting lazy routes keeps the panel prototype fixed and feature imports lazy",
-      "tests_browser/mount-offline-bfcache.stress.mjs::chromium::mount-offline-bfcache.stress.mjs::repeated mount cycles plus offline and browser restoration keep one healthy panel",
-      "tests_browser/native-yaml-editor-crud.spec.mjs::chromium::native-yaml-editor-crud.spec.mjs::modified native YAML requires confirmation before built-in preset replacement",
-      "tests_browser/native-yaml-editor-crud.spec.mjs::chromium::native-yaml-editor-crud.spec.mjs::native YAML editor validates, duplicates, isolates tool state, deletes, and fits a narrow viewport",
-      "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::Overview is usable while Broadcast implementation is still loading",
-      "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::Overview snapshot is usable while the full implementation is still loading",
-      "tests_browser/overview-broadcast-lazy.spec.mjs::chromium::overview-broadcast-lazy.spec.mjs::leaving Overview while Broadcast loads prevents stale hydration",
-      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours retries a failed save and protects agent selection while saving",
-      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours satellite overrides clear to pending automatic resolution and preserve other drafts",
-      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours schedule controls round-trip through save, route reopen, and fresh load",
-      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours surfaces unavailable and changing satellite candidates while editing",
-      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser creates, edits, and deletes Knowledge through genuine HA",
-      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser creates, edits, reloads, and deletes a Memory through HA",
-      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser creates, groups, edits, reloads, and deletes a Request Rule through HA",
-      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser exports, reviews, and imports a Request Rule Pack through HA",
-      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser full backup restores cross-feature state through genuine HA",
-      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser manages a Function Tool and dependent Group through genuine HA",
-      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser saves General Settings through the genuine HA backend",
-      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser saves Guest and Quiet Hours policy payloads through HA",
-      "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::shipped frontend keeps hostile stored text literal across mutation and fresh panels",
-      "tests_browser/real-ha-function-repair.spec.mjs::chromium::real-ha-function-repair.spec.mjs::quarantined Function Tools repair through shipped frontend and genuine HA",
-      "tests_browser/real-ha-credential-replacement.spec.mjs::chromium::real-ha-credential-replacement.spec.mjs::API key replacement uses native management WebSocket",
-      "tests_browser/real-ha-golden.spec.mjs::chromium::real-ha-golden.spec.mjs::cold native shell authoring reaches runtime and availability boundaries",
-      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::a staged Assistant edit cannot overwrite a genuine HA backup restore",
-      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::a stale Request Rule editor in another tab cannot overwrite a newer save",
-      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::backgrounded Memory tab rejects stale edits and delayed reads after a newer HA save",
-      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions",
-      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy",
-      "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
-      "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::dropped save keeps its draft and the authoritative HA state",
-      "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::expired transport and owner-to-restricted change never claim a successful save",
-      "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::long-lived browser and fresh browser agree after seeded saves",
-      "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::slow reads and a dropped read converge on real HA state",
-      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::shipped frontend duplicates, updates, and imports agents through genuine HA",
-      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::shipped frontend persists an empty Request Rule wording list through genuine HA",
-      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::shipped frontend starts and ends Guest Mode through genuine HA",
-      "tests_browser/real-ha-seeded-management.spec.mjs::chromium::real-ha-seeded-management.spec.mjs::seeded Management owners mutate through shipped frontend and genuine HA",
-      "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::genuine HA WebSocket drop during a save leaves the backend authoritative",
-      "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::revoked HA session while editing cannot commit a save",
-      "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::slow genuine HA WebSocket save never reports success before the backend replies",
-      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::abandoned real upload consumes quota until elapsed expiry then reconnect recovers",
-      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
-      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
-      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly native::warmed widgets plateau in one document and Ctrl+S commits once",
-      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit failure cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit success cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation failure cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
-      "tests_browser/real-ha-shell.spec.mjs::chromium::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
-      "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::lazy chunk 404 reports a section error and refresh loads current assets",
-      "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::malformed browser-local cache clears through normal reload",
-      "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::new frontend with a stale published lazy chunk recovers on a fresh document",
-      "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::old frontend shell kept open against new HA backend converges after hard refresh",
-      "tests_browser/reconnect-endurance.stress.mjs::chromium::reconnect-endurance.stress.mjs::one mounted panel has bounded backend calls after repeated disconnects",
-      "tests_browser/request-debug-persistence.spec.mjs::chromium::request-debug-persistence.spec.mjs::Request debugging capture policy persists across a fresh panel",
-      "tests_browser/request-rules-captures-aliases.stress.mjs::chromium::request-rules-captures-aliases.stress.mjs::nightly capture and result-alias transitions remain stable across repeated edits",
-      "tests_browser/request-rules-continue-matching.stress.mjs::chromium::request-rules-continue-matching.stress.mjs::nightly Continue Matching chain survives repeated authoring and fresh load",
-      "tests_browser/request-rules-editor-roundtrip.stress.mjs::chromium::request-rules-editor-roundtrip.stress.mjs::nightly Request Rule editor matrix round-trips all matchers and major form modes",
-      "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly Request Rules defaults and wording edits persist, recover from failure, and control rule matching modes",
-      "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly Safe Preview presents match, captures, skipped conditions, no-match, and never starts a live request",
-      "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly Sentence Pattern helpers replace selections, insert at the caret, and edit empty fields",
-      "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly saved wording defaults change the real Safe Preview matcher result",
-      "tests_browser/request-rules-mutation-queue.stress.mjs::chromium::request-rules-mutation-queue.stress.mjs::nightly Request Rules queue serializes a burst of distinct mutations",
-      "tests_browser/request-rules-sharing-live.stress.mjs::chromium::request-rules-sharing-live.stress.mjs::nightly Live Request confirmation, repeated activation, results, errors, stale navigation, and preview independence",
-      "tests_browser/request-rules-sharing-live.stress.mjs::chromium::request-rules-sharing-live.stress.mjs::nightly Rule Pack UI rejects malformed and oversized files, preserves review cancellation, retries failures, and round-trips priority",
-      "tests_browser/retained-mutation-state.spec.mjs::chromium::retained-mutation-state.spec.mjs::Temporary Memory delete and clear update only the selected scope count",
-      "tests_browser/retained-mutation-state.spec.mjs::chromium::retained-mutation-state.spec.mjs::a late Knowledge save cannot replace a newer route load",
-      "tests_browser/retained-mutation-state.spec.mjs::chromium::retained-mutation-state.spec.mjs::clearing Usage details preserves aggregates, retention, and history selection",
-      "tests_browser/route-inventory.stress.mjs::chromium::route-inventory.stress.mjs::all management routes navigate, settle and refresh at desktop width",
-      "tests_browser/route-inventory.stress.mjs::chromium::route-inventory.stress.mjs::all management routes navigate, settle and refresh at mobile width",
-      "tests_browser/route-inventory.stress.mjs::chromium::route-inventory.stress.mjs::all management routes navigate, settle and refresh at tablet width",
-      "tests_browser/route-inventory.stress.mjs::chromium::route-inventory.stress.mjs::every shipped route has an explicit nightly browser acceptance level",
-      "tests_browser/seeded-frontend-state-machine.stress.mjs::chromium::seeded-frontend-state-machine.stress.mjs::seeded cross-surface state machine seed=20260930",
-      "tests_browser/seeded-frontend-state-machine.stress.mjs::chromium::seeded-frontend-state-machine.stress.mjs::seeded cross-surface state machine seed=24301",
-      "tests_browser/seeded-frontend-state-machine.stress.mjs::chromium::seeded-frontend-state-machine.stress.mjs::seeded cross-surface state machine seed=7319",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Assistant late read cannot repaint a newer route",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Assistant late save preserves a newer local draft",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Function Groups late read cannot repaint a newer route",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Function Tools late read cannot repaint a newer route",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Function late save cannot repaint a newer route",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Guest Mode late read cannot repaint a newer route",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Guest policy late save cannot repaint a newer route",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Knowledge late delete cannot resurrect the deleted source after navigation",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Knowledge late read cannot repaint a newer route",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Memory late read cannot repaint a newer route",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Quiet Hours late read cannot repaint a newer route",
-      "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Request Rules late read cannot repaint a newer route",
-      "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly Clear Recent Details confirms, retries, deduplicates, and preserves aggregate history",
-      "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly non-admin Usage omits detail clearing and retention controls",
-      "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly run details show failed provider requests, recover from errors, and ignore closed or switched dialogs",
-      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage history windows load lazily, cache selections, page all history, and keep charts responsive",
-      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection",
-      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::Guest save acknowledgement survives a failed refresh and edits in flight through genuine HA",
-      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::combined Request Rules settings remain current across warm and expired navigation through genuine HA"
-    ],
-    "browser-firefox": [
-      "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
-      "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
-      "tests_browser/backend-reconnect.spec.mjs::firefox::backend-reconnect.spec.mjs::mounted management panel recovers after HA backend disconnect and reconnect",
-      "tests_browser/cross-browser-keyboard.stress.mjs::firefox::cross-browser-keyboard.stress.mjs::keyboard-only Memory journey creates, cancels, edits and deletes with usable focus",
-      "tests_browser/cross-browser-keyboard.stress.mjs::firefox::cross-browser-keyboard.stress.mjs::keyboard-only navigation, lazy routes and large-text viewport retain reachable focus",
-      "tests_browser/cross-browser-keyboard.stress.mjs::firefox::cross-browser-keyboard.stress.mjs::malformed browser-local state cannot prevent a fresh management load",
-      "tests_browser/enhanced-endurance.stress.mjs::firefox::enhanced-endurance.stress.mjs::one mounted panel survives a long seeded route journey",
-      "tests_browser/frontend-resilience.spec.mjs::firefox::frontend-resilience.spec.mjs::failed Memory save keeps the editor and draft intact, then retries cleanly",
-      "tests_browser/frontend-resilience.spec.mjs::firefox::frontend-resilience.spec.mjs::server-rejected general configuration save remains dirty and retries without losing the draft",
-      "tests_browser/management-crud.spec.mjs::firefox::management-crud.spec.mjs::persistent memories support create, reload, edit, and delete",
-      "tests_browser/management-lazy-ownership.spec.mjs::firefox::management-lazy-ownership.spec.mjs::a cold lazy import failure reaches the section error and a fresh load recovers",
-      "tests_browser/management-lazy-ownership.spec.mjs::firefox::management-lazy-ownership.spec.mjs::search into a cold configuration route retains focus until its assets arrive",
-      "tests_browser/mount-offline-bfcache.stress.mjs::firefox::mount-offline-bfcache.stress.mjs::repeated mount cycles plus offline and browser restoration keep one healthy panel",
-      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::a staged Assistant edit cannot overwrite a genuine HA backup restore",
-      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::a stale Request Rule editor in another tab cannot overwrite a newer save",
-      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::backgrounded Memory tab rejects stale edits and delayed reads after a newer HA save",
-      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions",
-      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy",
-      "tests_browser/real-ha-multi-tab.stress.mjs::firefox::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
-      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
-      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
-      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit failure cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit success cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation failure cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
-      "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
-      "tests_browser/stale-response-ordering.spec.mjs::firefox::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
-    ],
-    "browser-webkit": [
-      "tests_browser/accessibility-layout.stress.mjs::webkit::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
-      "tests_browser/accessibility-layout.stress.mjs::webkit::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
-      "tests_browser/backend-reconnect.spec.mjs::webkit::backend-reconnect.spec.mjs::mounted management panel recovers after HA backend disconnect and reconnect",
-      "tests_browser/cross-browser-keyboard.stress.mjs::webkit::cross-browser-keyboard.stress.mjs::keyboard-only Memory journey creates, cancels, edits and deletes with usable focus",
-      "tests_browser/cross-browser-keyboard.stress.mjs::webkit::cross-browser-keyboard.stress.mjs::keyboard-only navigation, lazy routes and large-text viewport retain reachable focus",
-      "tests_browser/cross-browser-keyboard.stress.mjs::webkit::cross-browser-keyboard.stress.mjs::malformed browser-local state cannot prevent a fresh management load",
-      "tests_browser/enhanced-endurance.stress.mjs::webkit::enhanced-endurance.stress.mjs::one mounted panel survives a long seeded route journey",
-      "tests_browser/frontend-resilience.spec.mjs::webkit::frontend-resilience.spec.mjs::failed Memory save keeps the editor and draft intact, then retries cleanly",
-      "tests_browser/frontend-resilience.spec.mjs::webkit::frontend-resilience.spec.mjs::server-rejected general configuration save remains dirty and retries without losing the draft",
-      "tests_browser/management-crud.spec.mjs::webkit::management-crud.spec.mjs::persistent memories support create, reload, edit, and delete",
-      "tests_browser/management-lazy-ownership.spec.mjs::webkit::management-lazy-ownership.spec.mjs::a cold lazy import failure reaches the section error and a fresh load recovers",
-      "tests_browser/management-lazy-ownership.spec.mjs::webkit::management-lazy-ownership.spec.mjs::search into a cold configuration route retains focus until its assets arrive",
-      "tests_browser/mount-offline-bfcache.stress.mjs::webkit::mount-offline-bfcache.stress.mjs::repeated mount cycles plus offline and browser restoration keep one healthy panel",
-      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::a staged Assistant edit cannot overwrite a genuine HA backup restore",
-      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::a stale Request Rule editor in another tab cannot overwrite a newer save",
-      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::backgrounded Memory tab rejects stale edits and delayed reads after a newer HA save",
-      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions",
-      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy",
-      "tests_browser/real-ha-multi-tab.stress.mjs::webkit::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source",
-      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly native::native Composite rejection preserves the saved tool and editable recovery",
-      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly native::two assistants retain their own saved state through held completion and stale tab",
-      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit failure cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool commit success cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation failure cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
-      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
-      "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
-      "tests_browser/stale-response-ordering.spec.mjs::webkit::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
-    ],
-    "native-browser-chromium": [
-      "tests_browser/real-ha-compatibility.spec.mjs::chromium::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
-    ],
-    "native-browser-firefox": [
-      "tests_browser/real-ha-compatibility.spec.mjs::firefox::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
-    ],
-    "native-browser-webkit": [
-      "tests_browser/real-ha-compatibility.spec.mjs::webkit::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
-    ],
-    "native-browser-webkit-mobile": [
-      "tests_browser/real-ha-compatibility.spec.mjs::webkit-mobile::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"
-    ]
-  },
-  "fixture_only": {},
-  "allowances": {
-    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::a stale Request Rule editor in another tab cannot overwrite a newer save": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::a staged Assistant edit cannot overwrite a genuine HA backup restore": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Function Tool and Group editors preserve the newer genuine HA revisions": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Knowledge edit cannot overwrite a newer genuine HA source": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::backgrounded Memory tab rejects stale edits and delayed reads after a newer HA save": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-multi-tab.stress.mjs::chromium::real-ha-multi-tab.stress.mjs::stale Guest policy cannot weaken a newer genuine HA policy": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::dropped save keeps its draft and the authoritative HA state": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::expired transport and owner-to-restricted change never claim a successful save": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::slow reads and a dropped read converge on real HA state": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-network-resilience.stress.mjs::chromium::real-ha-network-resilience.stress.mjs::long-lived browser and fresh browser agree after seeded saves": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::slow genuine HA WebSocket save never reports success before the backend replies": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::revoked HA session while editing cannot commit a save": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-shell-resilience.stress.mjs::chromium::real-ha-shell-resilience.stress.mjs::genuine HA WebSocket drop during a save leaves the backend authoritative": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::old frontend shell kept open against new HA backend converges after hard refresh": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::new frontend with a stale published lazy chunk recovers on a fresh document": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::lazy chunk 404 reports a section error and refresh loads current assets": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::malformed browser-local cache clears through normal reload": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Fixture-only stress copy may skip; the same journey must pass in the genuine-HA invocation in this campaign.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    },
-    "tests_browser/request-rules-matching-preview.stress.mjs::chromium::request-rules-matching-preview.stress.mjs::nightly saved wording defaults change the real Safe Preview matcher result": {
-      "outcomes": [
-        "skipped"
-      ],
-      "requires_pass": true,
-      "reason": "Static fixture copy skips without a real backend; the saved-defaults journey must pass through the genuine HA management bridge.",
-      "review": "https://github.com/conorod1992/extended_openai_conversation/pull/957",
-      "expires": "2027-10-01"
-    }
-  },
-  "minimums": {
-    "runtime": {
-      "conversation_turns": 1,
-      "process_soak_windows": 5,
-      "continuity_owner_transitions": 16,
-      "continuity_wire_checks": 24,
-      "continuity_serialized_overlaps": 9
-    },
-    "functions": {
-      "actual_function_executions": 1,
-      "assist_safe_overlap": 2,
-      "assist_mixed_serial": 2,
-      "remote_resource_recovery_cases": 20,
-      "composite_rejected_trees": 4,
-      "composite_cancelled_exchanges": 1,
-      "sqlite_lock_waits": 3,
-      "sqlite_worker_settlements": 3,
-      "sqlite_healthy_recoveries": 3,
-      "assist_sibling_failure_cases": 2,
-      "assist_parent_cancel_cases": 2,
-      "compressed_remote_cases": 32,
-      "bash_pipe_tree_cases": 2,
-      "bash_pipe_settlements": 2,
-      "shared_http_pool_pressure_cases": 1,
-      "shared_http_waiter_recoveries": 1,
-      "budget_loading_replay_cases": 2,
-      "budget_atomic_cases": 1,
-      "budget_serial_prefix_cases": 1,
-      "completed_replay_rejections": 2,
-      "populated_api_transition_cases": 2,
-      "native_edit_settlement_cases": 1,
-      "native_file_settlement_cases": 3,
-      "schema_pattern_boundary_cases": 8,
-      "schema_contract_rejections": 6,
-      "schema_healthy_tool_recoveries": 8,
-      "schema_bounded_regex_exchanges": 12,
-      "rest_scoped_requests": 8,
-      "rest_overlapping_requests": 4,
-      "rest_transport_failure_cases": 12,
-      "rest_transport_recoveries": 12,
-      "rest_blocked_dependent_actions": 8,
-      "rest_received_response_controls": 4,
-      "late_external_edit_conflicts": 4,
-      "late_external_edit_recoveries": 4,
-      "normalized_schema_dispatch_cases": 12,
-      "normalized_schema_rejections": 10,
-      "normalized_schema_healthy_dispatches": 12,
-      "native_history_worker_settlements": 2,
-      "native_history_cancelled_recoveries": 1,
-      "native_automation_layout_cases": 4,
-      "native_automation_load_rejections": 2,
-      "native_disabled_automation_loads": 1
-    },
-    "request-rules": {
-      "ha_service_calls": 1,
-      "public_turns": 1,
-      "rule_publication_cases": 20
-    },
-    "guest-security": {
-      "public_turns": 1,
-      "private_context_probes": 1,
-      "guest_ambiguous_ack_cases": 4
-    },
-    "memory-knowledge": {
-      "public_turns": 1,
-      "embedding_association_cases": 2,
-      "embedding_cache_rechecks": 2,
-      "embedding_malformed_responses": 9,
-      "embedding_live_configuration_races": 1,
-      "embedding_reload_races": 2,
-      "embedding_healthy_recoveries": 12,
-      "pending_publication_failure_cases": 2,
-      "pending_publication_retry_checks": 2,
-      "pending_publication_actual_tool_calls": 4,
-      "retained_manager_recoveries": 4,
-      "compound_optional_manager_faults": 4
-    },
-    "process-chaos": {
-      "process_terminations": 1,
-      "delayed_backlog_restarts": 4,
-      "delayed_backlog_calls": 50,
-      "delayed_backlog_executions": 30,
-      "delayed_partial_termination_cases": 1,
-      "delayed_foreground_during_backlog": 6,
-      "delayed_retryable_pre_dispatch_failures": 12,
-      "filesystem_recovery_cases": 3,
-      "filesystem_recovery_kills": 5
-    },
-    "browser": {
-      "browser_creates": 1,
-      "browser_edits": 1,
-      "multi_tab_conflicts": 1,
-      "browser_retention_windows": 8,
-      "native_lifetime_journeys": 1,
-      "native_composite_rejections": 1,
-      "native_composite_recoveries": 1,
-      "native_assistant_states": 2,
-      "native_held_completions": 2,
-      "native_revision_conflicts": 1,
-      "native_abandoned_uploads": 1,
-      "native_upload_bytes": 1,
-      "native_transfer_reclaims": 1,
-      "native_retention_windows": 8,
-      "native_keyboard_commits": 1,
-      "native_semantic_scans": 82,
-      "native_error_semantic_scans": 20,
-      "native_editor_ownership_cases": 4,
-      "native_registry_recovery_cases": 1,
-      "native_registry_private_probes": 2,
-      "native_ownership_reload_checks": 5,
-      "native_registry_fetch_recoveries": 1
-    },
-    "browser-firefox": {
-      "multi_tab_conflicts": 1,
-      "native_lifetime_journeys": 1,
-      "native_composite_rejections": 1,
-      "native_composite_recoveries": 1,
-      "native_assistant_states": 2,
-      "native_held_completions": 2,
-      "native_revision_conflicts": 1,
-      "native_editor_ownership_cases": 4,
-      "native_registry_recovery_cases": 1,
-      "native_registry_private_probes": 2,
-      "native_ownership_reload_checks": 5,
-      "native_registry_fetch_recoveries": 1
-    },
-    "browser-webkit": {
-      "multi_tab_conflicts": 1,
-      "native_lifetime_journeys": 1,
-      "native_composite_rejections": 1,
-      "native_composite_recoveries": 1,
-      "native_assistant_states": 2,
-      "native_held_completions": 2,
-      "native_revision_conflicts": 1,
-      "native_editor_ownership_cases": 4,
-      "native_registry_recovery_cases": 1,
-      "native_registry_private_probes": 2,
-      "native_ownership_reload_checks": 5,
-      "native_registry_fetch_recoveries": 1
-    },
-    "voice-intercom": {
-      "voice_private_context_probes": 1,
-      "intercom_deliveries": 1,
-      "audio_deliveries": 2,
-      "concurrent_audio_journeys": 2,
-      "audio_interleavings": 1,
-      "targeted_tts_failures": 1,
-      "native_audio_recoveries": 1,
-      "intercom_timing_cases": 1,
-      "intercom_idle_flaps": 1,
-      "actual_expiry_callbacks": 4,
-      "delayed_playback_acknowledgements": 1,
-      "intercom_timing_recoveries": 1
-    },
-    "backup": {
-      "rollback_phases": 1,
-      "retention_restore_ownership_cases": 1,
-      "restore_pending_cases": 2,
-      "restore_journal_fault_cases": 5,
-      "restore_recovery_cold_cases": 1,
-      "rejected_recovery_operations": 37,
-      "process_fresh_boots": 5,
-      "native_restore_faults": 5,
-      "restore_manager_settlement_cases": 2
-    },
-    "backup-transfer": {
-      "backup_chunks_transferred": 1,
-      "transfer_previews": 1,
-      "coherent_setup_restore_exports": 1,
-      "filesystem_recovery_cases": 1,
-      "filesystem_recovery_kills": 3
-    },
-    "provider-resilience": {
-      "tls_verified_requests": 4,
-      "transport_tool_recovery_cases": 2
-    },
-    "large-installation": {
-      "concurrent_summary_cases": 2,
-      "summary_lifecycle_cases": 3,
-      "summary_replacement_recoveries": 3
-    },
-    "feature-crossroads": {
-      "distinct_matcher_pressure_cases": 1,
-      "regex_worker_settlements": 6,
-      "mixed_usage_summary_cases": 1,
-      "permission_cache_churn_cases": 1,
-      "restricted_context_probes": 11,
-      "permission_group_updates": 3,
-      "debug_export_privacy_cases": 1,
-      "catalog_ai_task_reset_rejections": 1,
-      "catalog_ai_task_resets": 1,
-      "catalog_ai_task_wire_checks": 3,
-      "skill_download_cancellation_cases": 4,
-      "skill_download_unowned_cases": 5
-    },
-    "persistence": {
-      "composite_ingestion_cases": 8,
-      "composite_ingestion_rejections": 6,
-      "mixed_maintenance_contention_cases": 1,
-      "cancelled_maintenance_waiters": 1,
-      "storage_failure_recoveries": 1,
-      "archive_first_intent_failure_cases": 2,
-      "archive_first_intent_disk_commits": 1,
-      "archive_intent_reload_checks": 2,
-      "pending_publication_failure_cases": 2,
-      "pending_publication_retry_checks": 2,
-      "pending_publication_actual_tool_calls": 4,
-      "restore_pending_cases": 2,
-      "restore_journal_fault_cases": 5,
-      "restore_recovery_cold_cases": 1,
-      "rejected_recovery_operations": 37,
-      "process_fresh_boots": 5,
-      "native_restore_faults": 5,
-      "restore_manager_settlement_cases": 2,
-      "delayed_same_manager_recoveries": 6,
-      "delayed_compound_storage_faults": 6,
-      "delayed_recovered_service_effects": 7,
-      "delayed_healthy_retry_effects": 6,
-      "delayed_indeterminate_replay_rejections": 1,
-      "retained_manager_recoveries": 4,
-      "compound_optional_manager_faults": 4
-    },
-    "diagnostics": {
-      "artifact_privacy_probes": 4
-    },
-    "long-lifetime": {
-      "process_soak_windows": 9,
-      "lifetime_elapsed_seconds": 1800,
-      "lifetime_idle_seconds": 1500,
-      "lifetime_retention_callbacks": 20,
-      "lifetime_expired_transfer_reclaims": 1,
-      "lifetime_reloads": 4,
-      "lifetime_final_healthy_requests": 1
-    },
-    "ai-task": {
-      "ai_task_image_continuations": 2,
-      "ai_task_image_isolation_checks": 2
-    },
-    "archive": {
-      "archive_first_intent_failure_cases": 2,
-      "archive_first_intent_disk_commits": 1,
-      "archive_intent_reload_checks": 2
-    },
-    "quiet-hours": {
-      "quiet_storage_failure_cases": 8,
-      "quiet_storage_retry_checks": 8,
-      "quiet_storage_restoration_checks": 8,
-      "quiet_pending_manual_override_checks": 2,
-      "quiet_repeated_hour_cases": 3,
-      "quiet_monotonic_utc_checks": 500,
-      "quiet_exact_transition_checks": 6,
-      "quiet_post_change_failure_cases": 4,
-      "quiet_durable_baseline_checks": 8,
-      "quiet_manual_failure_checks": 2,
-      "quiet_registry_rename_cases": 1,
-      "quiet_renamed_transition_checks": 3,
-      "quiet_registry_restart_checks": 1,
-      "quiet_saved_control_manual_changes": 6,
-      "quiet_prepared_recovery_cases": 12,
-      "quiet_independent_goal_preservations": 8,
-      "quiet_process_application_recoveries": 8,
-      "quiet_process_indeterminate_controls": 4,
-      "quiet_process_healthy_periods": 8,
-      "quiet_service_acknowledgement_recoveries": 2
-    },
-    "setup": {
-      "provider_endpoint_wire_cases": 4
-    }
-  },
   "selections": {
     "public-version-journeys": [
       "tests_real_ha/test_public_version_journeys.py"
