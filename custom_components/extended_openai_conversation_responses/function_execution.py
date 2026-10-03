@@ -19,6 +19,26 @@ from .exceptions import FunctionValidationInfrastructureError
 
 _LOGGER = logging.getLogger(__name__)
 
+_PROPAGATE_EXECUTION_ERRORS: ContextVar[bool] = ContextVar(
+    "extended_openai_propagate_function_execution_errors", default=False
+)
+
+
+@contextmanager
+def propagate_function_execution_errors() -> Iterator[None]:
+    """Keep execution failures separate from returned business data in scripts."""
+    token = _PROPAGATE_EXECUTION_ERRORS.set(True)
+    try:
+        yield
+    finally:
+        _PROPAGATE_EXECUTION_ERRORS.reset(token)
+
+
+def function_execution_errors_propagate() -> bool:
+    """Return whether this caller requires execution errors to remain exceptions."""
+    return _PROPAGATE_EXECUTION_ERRORS.get()
+
+
 _JSON_TYPES = {"array", "boolean", "integer", "null", "number", "object", "string"}
 _OBJECT_KEYWORDS = {
     "properties",

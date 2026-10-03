@@ -79,7 +79,11 @@ from .delayed_tools import (
 )
 from .exceptions import ParseArgumentsFailed, TokenLengthExceededError
 from .function_call_budget import FunctionCallBudget
-from .function_execution import async_execution_arguments, split_legacy_execution_delay
+from .function_execution import (
+    async_execution_arguments,
+    function_execution_errors_propagate,
+    split_legacy_execution_delay,
+)
 from .function_tool_recovery import (
     MalformedToolArguments,
     ToolRecoveryState,
@@ -1721,7 +1725,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 # Retain the scheduler's existing textual result contract.
                 result = str(result)
         except HomeAssistantError as err:
-            if delayed or strict_execution_failures_enabled():
+            if (
+                delayed
+                or strict_execution_failures_enabled()
+                or function_execution_errors_propagate()
+            ):
                 raise
             log_handled_failure(
                 _LOGGER, f"Function Tool {tool_input.tool_name} failed", err
