@@ -121,6 +121,10 @@ from .debug import (
 )
 from .entity import ExtendedOpenAIBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
+from .function_execution import (
+    function_execution_errors_propagate,
+    propagate_function_execution_errors,
+)
 from .function_groups import (
     FunctionGroupRuntime,
     FunctionGroupSession,
@@ -1350,30 +1354,18 @@ class ExtendedOpenAIAgentEntity(
     ) -> Any:
         """Execute a configured function through the model-tool security seam."""
         function_tool = configured_function_tool_for_execution(self, function_name)
-        result = await self._execute_function_tool(
-            function_tool,
-            llm.ToolInput(
-                id="request_rule",
-                tool_name=function_name,
-                tool_args=arguments,
-                external=True,
-            ),
-            llm_context,
-            self._get_exposed_entities(),
-        )
-        result_value = tool_result_data(result).get("result", "")
-        try:
-            outcome = json.loads(result_value) if isinstance(result_value, str) else {}
-        except json.JSONDecodeError:
-            outcome = {}
-        if outcome.get("status") == "denied" and outcome.get("reason") == "guest_mode":
-            raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
-        if (
-            outcome.get("status") == "error"
-            and outcome.get("reason") == "execution_failed"
-        ):
-            raise HomeAssistantError(EXECUTION_FAILED)
-        return result
+        with propagate_function_execution_errors():
+            return await self._execute_function_tool(
+                function_tool,
+                llm.ToolInput(
+                    id="request_rule",
+                    tool_name=function_name,
+                    tool_args=arguments,
+                    external=True,
+                ),
+                llm_context,
+                self._get_exposed_entities(),
+            )
 
     def _build_system_prompt(
         self,
@@ -2063,6 +2055,16 @@ class ExtendedOpenAIAgentEntity(
     def _tool_result(
         self, tool_input: llm.ToolInput, result: dict[str, Any]
     ) -> conversation.ToolResultContent:
+        # Only integration-owned outcomes use this helper. Configured Function
+        # return values remain business data, regardless of their field names.
+        if function_execution_errors_propagate():
+            if (
+                result.get("status") == "denied"
+                and result.get("reason") == "guest_mode"
+            ):
+                raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
+            if result.get("status") in {"error", "denied", "unavailable"}:
+                raise HomeAssistantError(EXECUTION_FAILED)
         return make_tool_result_content(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
