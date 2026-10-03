@@ -80,32 +80,50 @@ class TemporaryMemory:
     async def async_initialize(self) -> None:
         """Load retryably, then persist canonical ownership and the startup ceiling."""
         async with self._lock:
-            try:
-                if not self._initialized:
-                    data = await self._store.async_load()
-                    raw_records = (
-                        data.get("records", []) if isinstance(data, Mapping) else []
-                    )
-                    for raw in raw_records:
-                        try:
-                            record = _record_from_storage(raw)
-                            if _parse_expiry(record.expires_at) > dt_util.utcnow():
-                                self._records[record.memory_id] = record
-                            else:
-                                self.expired_pruned += 1
-                        except TypeError, ValueError:
-                            continue
-                    self._initialized = True
-                    if self.expired_pruned:
-                        await self._async_save_locked(reconcile_failure=False)
-            except Exception:
-                self._records.clear()
-                self.expired_pruned = 0
-                self._initialized = False
-                self._committed_state = None
-                raise
-            self._remember_committed_state()
+            await self._async_initialize_locked()
+
+    @property
+    def initialized(self) -> bool:
+        """Return whether the live generation is authoritative."""
+        return self._initialized
+
+    async def _async_initialize_locked(self) -> None:
+        """Recover authoritative storage before reading or replacing a generation."""
+        if self._initialized:
             await self._async_normalize_loaded_records_locked()
+            return
+        try:
+            if not self._initialized:
+                data = await self._store.async_load()
+                if data is not None and not isinstance(data, Mapping):
+                    raise ValueError("Temporary Memory store has invalid structure")
+                if isinstance(data, Mapping) and not isinstance(
+                    data.get("records", []), list
+                ):
+                    raise ValueError("Temporary Memory records have invalid structure")
+                raw_records = (
+                    data.get("records", []) if isinstance(data, Mapping) else []
+                )
+                for raw in raw_records:
+                    try:
+                        record = _record_from_storage(raw)
+                        if _parse_expiry(record.expires_at) > dt_util.utcnow():
+                            self._records[record.memory_id] = record
+                        else:
+                            self.expired_pruned += 1
+                    except TypeError, ValueError:
+                        continue
+                self._initialized = True
+                if self.expired_pruned:
+                    await self._async_save_locked(reconcile_failure=False)
+        except Exception:
+            self._records.clear()
+            self.expired_pruned = 0
+            self._initialized = False
+            self._committed_state = None
+            raise
+        self._remember_committed_state()
+        await self._async_normalize_loaded_records_locked()
 
     async def async_active(
         self, scope_id: str, owner_scope_id: str | None = None
@@ -115,6 +133,7 @@ class TemporaryMemory:
         if owner is None:
             return []
         async with self._lock:
+            await self._async_initialize_locked()
             expired = self._prune_expired_locked()
             result = self._active_snapshot_locked(scope_id, owner)
         if expired:
@@ -129,6 +148,7 @@ class TemporaryMemory:
         if owner is None:
             return []
         async with self._lock:
+            await self._async_initialize_locked()
             return self._active_snapshot_locked(scope_id, owner)
 
     def _active_snapshot_locked(
@@ -185,6 +205,7 @@ class TemporaryMemory:
         validate_memory_privacy(content, automatic=source == "automatic")
         expiry = _parse_future_expiry(expires_at)
         async with self._lock:
+            await self._async_initialize_locked()
             await self._async_prune_locked()
             now = dt_util.utcnow().isoformat()
             for current in self._records.values():
@@ -239,6 +260,7 @@ class TemporaryMemory:
         """Update/supersede a temporary fact owned by the current request."""
         owner_scope_id = _require_owner_scope_id(owner_scope_id)
         async with self._lock:
+            await self._async_initialize_locked()
             await self._async_prune_locked()
             current = self._owned(scope_id, memory_id, owner_scope_id)
             new_content = (
@@ -283,6 +305,7 @@ class TemporaryMemory:
         if not memory_ids or len(memory_ids) > MAX_DELETE_RECORDS:
             raise ValueError(f"memory_ids must contain 1 to {MAX_DELETE_RECORDS} IDs")
         async with self._lock:
+            await self._async_initialize_locked()
             deleted = 0
             for memory_id in set(memory_ids):
                 record = self._records.get(memory_id)
@@ -328,6 +351,7 @@ class TemporaryMemory:
     async def async_backup_data(self) -> dict[str, Any]:
         """Return active records with their original absolute expiry."""
         async with self._lock:
+            await self._async_initialize_locked()
             await self._async_prune_locked()
             return {"records": [asdict(record) for record in self._records.values()]}
 
@@ -408,6 +432,7 @@ class TemporaryMemory:
                 :MAX_ACTIVE_RECORDS
             ]
         async with self._lock:
+            await self._async_initialize_locked()
             self._records = {record.memory_id: record for record in normalized}
             await self._async_save_locked()
 
@@ -546,6 +571,7 @@ class TemporaryMemory:
     ) -> list[TemporaryMemoryRecord]:
         await self.async_initialize()
         async with self._lock:
+            await self._async_initialize_locked()
             await self._async_prune_locked()
             return self._records_for_owner(owner_scope_id)
 
@@ -621,6 +647,7 @@ class TemporaryMemory:
         async def persist() -> None:
             try:
                 async with self._lock:
+                    await self._async_initialize_locked()
                     await self._async_save_locked()
             except Exception:
                 # Expired records remain invisible by timestamp even if persistence fails;

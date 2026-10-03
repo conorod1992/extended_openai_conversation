@@ -1235,6 +1235,10 @@
     "tests_stress/test_os_storage_faults.py::test_usage_explicit_deletion_requires_real_durable_write[replace-13-prune]",
     "tests_stress/test_os_storage_faults.py::test_usage_restore_writer_failure_retains_recovery_evidence[daily]",
     "tests_stress/test_os_storage_faults.py::test_usage_restore_writer_failure_retains_recovery_evidence[details]",
+    "tests_stress/test_pending_retrieval_publication.py::test_retained_optional_manager_recovers_compound_storage_fault[before-temporary]",
+    "tests_stress/test_pending_retrieval_publication.py::test_retained_optional_manager_recovers_compound_storage_fault[before-knowledge]",
+    "tests_stress/test_pending_retrieval_publication.py::test_retained_optional_manager_recovers_compound_storage_fault[after-temporary]",
+    "tests_stress/test_pending_retrieval_publication.py::test_retained_optional_manager_recovers_compound_storage_fault[after-knowledge]",
     "tests_stress/test_pending_retrieval_publication.py::test_pending_failed_management_write_never_reaches_assist_provider[knowledge]",
     "tests_stress/test_pending_retrieval_publication.py::test_pending_failed_management_write_never_reaches_assist_provider[memory]",
     "tests_stress/test_persistence_forward_and_clock.py::test_future_backup_version_refuses_without_mutation",
@@ -1981,7 +1985,9 @@
       "embedding_healthy_recoveries": 12,
       "pending_publication_failure_cases": 2,
       "pending_publication_retry_checks": 2,
-      "pending_publication_actual_tool_calls": 4
+      "pending_publication_actual_tool_calls": 4,
+      "retained_manager_recoveries": 4,
+      "compound_optional_manager_faults": 4
     },
     "process-chaos": {
       "process_terminations": 1,
@@ -2124,7 +2130,9 @@
       "delayed_compound_storage_faults": 6,
       "delayed_recovered_service_effects": 7,
       "delayed_healthy_retry_effects": 6,
-      "delayed_indeterminate_replay_rejections": 1
+      "delayed_indeterminate_replay_rejections": 1,
+      "retained_manager_recoveries": 4,
+      "compound_optional_manager_faults": 4
     },
     "diagnostics": {
       "artifact_privacy_probes": 4

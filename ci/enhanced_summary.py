@@ -103,6 +103,8 @@ COUNT_METRICS = {
     "compressed_remote_cases",
     "debug_export_privacy_cases",
     "delayed_backlog_restarts",
+    "retained_manager_recoveries",
+    "compound_optional_manager_faults",
     "delayed_same_manager_recoveries",
     "delayed_compound_storage_faults",
     "delayed_recovered_service_effects",

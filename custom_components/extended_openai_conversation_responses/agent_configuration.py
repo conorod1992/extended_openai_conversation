@@ -87,6 +87,19 @@ def _set_subsystem_status(
         setter(subsystem, configured, error, healthy=healthy)
 
 
+def _manager_needs_recovery(entity: Any, attribute: str) -> bool:
+    """Separate a retained manager reference from its initialization state."""
+    manager = getattr(entity, attribute, None)
+    return manager is not None and getattr(manager, "initialized", True) is False
+
+
+def _runtime_needs_recovery(entity: Any) -> bool:
+    return any(
+        _manager_needs_recovery(entity, attribute)
+        for attribute in ("_temporary_memory", "_knowledge")
+    )
+
+
 async def async_ensure_optional_manager(
     entity: Any,
     *,
@@ -101,7 +114,9 @@ async def async_ensure_optional_manager(
     retain its retry-on-next-request behavior. Cancellation is intentionally not
     swallowed.
     """
-    if getattr(entity, attribute, None) is None:
+    if getattr(entity, attribute, None) is None or _manager_needs_recovery(
+        entity, attribute
+    ):
         try:
             manager = await loader(
                 entity.hass,
@@ -183,6 +198,7 @@ async def async_reconcile_runtime_configuration(
         not force
         and getattr(entity, _RUNTIME_CONFIG_DATA, None) is options
         and not getattr(entity, _RUNTIME_CONFIG_RETRY, False)
+        and not _runtime_needs_recovery(entity)
     ):
         return
 
@@ -209,6 +225,7 @@ async def async_reconcile_runtime_configuration(
             not force
             and getattr(entity, _RUNTIME_CONFIG_DATA, None) is options
             and not getattr(entity, _RUNTIME_CONFIG_RETRY, False)
+            and not _runtime_needs_recovery(entity)
         ):
             return
 
@@ -279,7 +296,10 @@ async def async_reconcile_runtime_configuration(
         knowledge_enabled = bool(
             options.get(CONF_KNOWLEDGE_ENABLED, DEFAULT_KNOWLEDGE_ENABLED)
         )
-        if knowledge_enabled and getattr(entity, "_knowledge", None) is None:
+        if knowledge_enabled and (
+            getattr(entity, "_knowledge", None) is None
+            or _manager_needs_recovery(entity, "_knowledge")
+        ):
             try:
                 entity._knowledge = await async_get_knowledge(
                     entity.hass, entry_id, subentry_id
@@ -291,7 +311,11 @@ async def async_reconcile_runtime_configuration(
                     "Unable to initialize Knowledge Library after live "
                     "configuration change"
                 )
-        if knowledge_enabled and getattr(entity, "_knowledge", None) is not None:
+        if (
+            knowledge_enabled
+            and getattr(entity, "_knowledge", None) is not None
+            and not _manager_needs_recovery(entity, "_knowledge")
+        ):
             _set_subsystem_status(entity, "knowledge", True, healthy=True)
         elif not knowledge_enabled:
             _set_subsystem_status(entity, "knowledge", False)

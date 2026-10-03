@@ -18,14 +18,14 @@
     "classification": "transactional_durable",
     "guarantee": "Temporary facts and active selections reconcile from validated persisted data after write failures, or become unavailable until reload.",
     "stores": [{"module": "temporary_memory.py", "constructor": "TemporaryMemoryStore", "count": 1}],
-    "evidence": ["tests/test_persistence_cancellation_hardening.py::test_failed_acknowledgement_reconciles_to_candidate_and_rebuilds_indexes", "tests_stress/test_os_storage_faults.py::test_temporary_memory_failure_does_not_publish_or_reload_new_fact"]
+    "evidence": ["tests/test_persistence_cancellation_hardening.py::test_failed_acknowledgement_reconciles_to_candidate_and_rebuilds_indexes", "tests_stress/test_os_storage_faults.py::test_temporary_memory_failure_does_not_publish_or_reload_new_fact", "tests_stress/test_pending_retrieval_publication.py::test_retained_optional_manager_recovers_compound_storage_fault"]
   },
   {
     "owner": "knowledge",
     "classification": "transactional_durable",
     "guarantee": "Readers wait for mutation settlement; synchronous availability uses committed sources. Library mutations reconcile sources and search indexes from validated persisted data after writer failure, or become unavailable until reload.",
     "stores": [{"module": "knowledge.py", "constructor": "KnowledgeStore", "count": 1}],
-    "evidence": ["tests/test_persistence_cancellation_hardening.py::test_failed_acknowledgement_reconciles_to_candidate_and_rebuilds_indexes", "tests_stress/test_os_storage_faults.py::test_knowledge_fsync_enospc_rolls_back_and_recovers", "tests_stress/test_pending_retrieval_publication.py::test_pending_failed_management_write_never_reaches_assist_provider"]
+    "evidence": ["tests/test_persistence_cancellation_hardening.py::test_failed_acknowledgement_reconciles_to_candidate_and_rebuilds_indexes", "tests_stress/test_os_storage_faults.py::test_knowledge_fsync_enospc_rolls_back_and_recovers", "tests_stress/test_pending_retrieval_publication.py::test_pending_failed_management_write_never_reaches_assist_provider", "tests_stress/test_pending_retrieval_publication.py::test_retained_optional_manager_recovers_compound_storage_fault"]
   },
   {
     "owner": "request_rules",
