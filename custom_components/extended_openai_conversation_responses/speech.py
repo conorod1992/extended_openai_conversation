@@ -38,6 +38,7 @@ _WWW_ADDRESS = re.compile(
 _FORMAT_MARKERS = ("**", "__", "~~")
 
 DEFAULT_STREAMING_BUFFER_LIMIT = 4096
+COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
 _FORMAT_PREFIX_LIMIT = 32
 
 
@@ -70,6 +71,7 @@ class StreamingSpeechSanitizer:
         self._line_start = True
         self._needs_separator = False
         self._last_output = ""
+        self._link_previous = ""
 
     @property
     def buffered_chars(self) -> int:
@@ -180,7 +182,9 @@ class StreamingSpeechSanitizer:
                     continue
 
             if self.urls and char.lower() in "hw":
-                remaining = text[index:].lower()
+                # Inspect only the longest scheme, rather than repeatedly copying
+                # and lowercasing the entire remaining answer.
+                remaining = text[index : index + 8].lower()
                 matching_prefix = next(
                     (
                         prefix
@@ -196,11 +200,7 @@ class StreamingSpeechSanitizer:
                 ):
                     index = self._hold_preceding_whitespace(output, index)
                     break
-                preceding = (
-                    text[index - 1]
-                    if index
-                    else (self._last_output[-1:] if matching_prefix == "www." else "")
-                )
+                preceding = text[index - 1] if index else self._link_previous
                 if matching_prefix is not None and not (
                     preceding.isalnum() or preceding == "@"
                 ):
@@ -223,17 +223,20 @@ class StreamingSpeechSanitizer:
                     index = self._suppress(output, end)
                     continue
 
-            if char.isspace() and not final and not text[index + 1 :]:
+            if char.isspace() and not final and index + 1 == len(text):
                 break
             self._emit(output, char)
             index += 1
 
+        if index:
+            self._link_previous = text[index - 1]
         self._buffer = text[index:]
         if not final and len(self._buffer) > self.max_buffer_chars:
             # A malformed construct or exceptionally long URL must not stall TTS.
             overflow = self._buffer
             self._buffer = ""
             self._emit(output, overflow)
+            self._link_previous = overflow[-1]
             _LOGGER.debug(
                 "Streaming speech sanitizer released malformed text at %d-char limit",
                 self.max_buffer_chars,
@@ -280,7 +283,7 @@ class StreamingSpeechSanitizer:
 
         while index < len(self._format_buffer):
             if self._line_start:
-                action, count = self._line_prefix(self._format_buffer[index:], final)
+                action, count = self._line_prefix(self._format_buffer, final, index)
                 if action == "incomplete":
                     break
                 if action == "strip":
@@ -332,11 +335,17 @@ class StreamingSpeechSanitizer:
                     index = end + 1
                     continue
             if pair in _FORMAT_MARKERS:
-                if len(pair) < 2 and not final:
+                if (
+                    pair == "__"
+                    and previous.isalnum()
+                    and index + 2 == len(self._format_buffer)
+                    and not final
+                ):
+                    # The next delta decides whether this is a word-internal
+                    # literal or a closing emphasis delimiter.
                     break
                 if pair != "__" or (
-                    index == 0
-                    or not self._format_buffer[index - 1].isalnum()
+                    not previous.isalnum()
                     or index + 2 == len(self._format_buffer)
                     or not self._format_buffer[index + 2].isalnum()
                 ):
@@ -364,8 +373,8 @@ class StreamingSpeechSanitizer:
         return "".join(output)
 
     @staticmethod
-    def _line_prefix(text: str, final: bool) -> tuple[str, int]:
-        whitespace = 0
+    def _line_prefix(text: str, final: bool, start: int = 0) -> tuple[str, int]:
+        whitespace = start
         while whitespace < len(text) and text[whitespace] in " \t":
             whitespace += 1
         if whitespace == len(text):
@@ -381,14 +390,14 @@ class StreamingSpeechSanitizer:
             if text[end].isspace():
                 while end < len(text) and text[end] in " \t":
                     end += 1
-                return "strip", end
+                return "strip", end - start
         elif marker in ">-+*":
             if end == len(text):
                 return ("none", 0) if final else ("incomplete", 0)
             if text[end].isspace():
                 while end < len(text) and text[end] in " \t":
                     end += 1
-                return "strip", end
+                return "strip", end - start
         elif marker.isdigit():
             while end < len(text) and text[end].isdigit():
                 end += 1
@@ -401,7 +410,7 @@ class StreamingSpeechSanitizer:
                 if text[end].isspace():
                     while end < len(text) and text[end] in " \t":
                         end += 1
-                    return "strip", end
+                    return "strip", end - start
         return "none", 0
 
 
@@ -415,6 +424,19 @@ def has_custom_speech_replacements(agent_config: Mapping[str, Any]) -> bool:
         CONF_SPEECH_REGEX_REPLACEMENTS, DEFAULT_SPEECH_REGEX_REPLACEMENTS
     )
     return isinstance(rules, list) and bool(rules)
+
+
+def needs_async_speech_cleanup(text: str, agent_config: Mapping[str, Any]) -> bool:
+    """Keep substantial completed cleanup and custom regex off the HA loop."""
+    return bool(
+        agent_config.get(
+            CONF_SPEECH_PROCESSING_ENABLED, DEFAULT_SPEECH_PROCESSING_ENABLED
+        )
+        and (
+            len(text) >= COMPLETED_SPEECH_EXECUTOR_THRESHOLD
+            or has_custom_speech_replacements(agent_config)
+        )
+    )
 
 
 def streaming_speech_processing_enabled(agent_config: Mapping[str, Any]) -> bool:

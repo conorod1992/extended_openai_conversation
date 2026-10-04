@@ -219,7 +219,11 @@ from .scope import (
 )
 from .skill_runtime_availability import effective_tool_runtime_scope
 from .skills import Skill, SkillManager
-from .speech import has_custom_speech_replacements, process_speech_text
+from .speech import (
+    has_custom_speech_replacements,
+    needs_async_speech_cleanup,
+    process_speech_text,
+)
 from .temporary_memory import (
     _ACTIVE_OWNER_SCOPE_ID,
     TemporaryMemory,
@@ -1161,7 +1165,7 @@ class ExtendedOpenAIAgentEntity(
         last_content = chat_log.content[-1]
         if isinstance(last_content, conversation.AssistantContent):
             original_text = last_content.content or ""
-            if has_custom_speech_replacements(self.subentry.data):
+            if needs_async_speech_cleanup(original_text, self.subentry.data):
                 deferred_speech.append((original_text, self.subentry.data))
                 speech_text = original_text
             else:
