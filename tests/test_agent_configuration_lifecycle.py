@@ -48,7 +48,9 @@ def startup(monkeypatch):
     monkeypatch.setattr(conversation.conversation, "async_set_agent", Mock())
     monkeypatch.setattr(conversation.SkillManager, "async_get_instance", AsyncMock())
     usage = SimpleNamespace(async_prune_details=AsyncMock())
-    persistent = PersistentMemory(SimpleNamespace(), "agent")
+    persistent = PersistentMemory(
+        SimpleNamespace(async_load=AsyncMock(return_value=None)), "agent"
+    )
     getters = {}
     for name, result in {
         "usage": usage,
