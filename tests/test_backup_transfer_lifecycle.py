@@ -119,7 +119,7 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
             },
         )
 
-    prepared = object()
+    prepared = SimpleNamespace(available_sections=frozenset({"memory"}))
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1")
     load_calls = 0
@@ -147,7 +147,7 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         assert actual_entry is entry
         assert actual_subentry is subentry
         assert actual_prepared is prepared
-        assert sections == ["memory"]
+        assert sections == frozenset({"memory"})
         assert current_snapshot is not None
         return object(), {"changes": 1, "selected_sections": ["memory"]}
 
@@ -166,6 +166,21 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         backup_transfer, "_resolve_agent", lambda *_args: (entry, subentry)
     )
     monkeypatch.setattr(transfer, "async_materialize_restore", materialize)
+    monkeypatch.setattr(
+        transfer,
+        "async_user_scope_mapping_plan",
+        AsyncMock(
+            return_value={
+                "required_source_user_ids": [],
+                "missing_source_user_ids": [],
+                "destination_users": [],
+                "resolved": {},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        transfer, "apply_user_scope_mappings", lambda value, *_args: value
+    )
     monkeypatch.setattr(transfer, "_current_snapshot", current_snapshot)
     monkeypatch.setattr(
         backup_transfer, "_snapshot_revision", lambda _value: "revision"
@@ -184,7 +199,9 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         {"session_id": session_id, "sections": ["memory"]},
     )
     assert inspection["prepared"] is True
-    assert inspection["preview"] == {"changes": 1, "selected_sections": ["memory"]}
+    assert inspection["preview"]["changes"] == 1
+    assert inspection["preview"]["selected_sections"] == ["memory"]
+    assert inspection["preview"]["user_scope_mapping"]["missing_source_user_ids"] == []
     assert isinstance(inspection["preview_token"], str)
     assert session_id in backup_transfer._imports(hass)
     assert os.path.exists(staged_path)
@@ -238,6 +255,9 @@ async def test_restore_failure_still_consumes_and_deletes_completed_upload(
 
     monkeypatch.setattr(backup_transfer, "_async_load_prepared_restore", load_prepared)
     monkeypatch.setattr(transfer, "async_restore_transfer", fail_restore)
+    monkeypatch.setattr(
+        transfer, "apply_user_scope_mappings", lambda value, *_args: value
+    )
     monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=object()))
     monkeypatch.setattr(
         backup_transfer, "_snapshot_revision", lambda _value: "revision"
@@ -248,6 +268,7 @@ async def test_restore_failure_still_consumes_and_deletes_completed_upload(
     session.preview_token = "preview"
     session.preview_revision = "revision"
     session.preview_sections = ("memory",)
+    session.preview_user_scope_mappings = ()
     backup_transfer._latest_previews(hass)[("entry-1", "agent-1")] = (
         session_id,
         "preview",
