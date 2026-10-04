@@ -25,6 +25,7 @@ RESERVED_FUNCTION_TOOL_NAMES = frozenset(
         FUNCTION_GROUP_LOADER_TOOL_NAME,
         "guest_mode_restrict",
         "set_continue_conversation",
+        "start_fresh_conversation",
     }
 )
 
