@@ -290,6 +290,7 @@ async def test_mixed_validity_function_tools_update_is_atomic_and_recovers(
         config={CONF_FUNCTION_TOOLS: [tool_a, tool_c]},
     )
     assert corrected["success"] is True
+    await hass.async_block_till_done()
     assert corrected["result"]["revision"] != before_revision
     assert corrected["result"]["config"][CONF_FUNCTION_TOOLS] == [tool_a, tool_c]
 

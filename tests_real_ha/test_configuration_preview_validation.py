@@ -109,3 +109,4 @@ async def test_invalid_system_prompt_save_is_rejected_without_changing_saved_dat
         },
     )
     assert agent.subentry.data["prompt"] == valid
+    await hass.async_block_till_done()
