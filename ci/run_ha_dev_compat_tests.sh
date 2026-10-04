@@ -5,6 +5,7 @@ TEST_PATHS=(
   tests/test_ai_task.py
   tests/test_ai_task_migration.py
   tests/test_ai_task_model_options.py
+  tests/test_ai_task_optional_compositions.py
   tests/test_ai_task_privacy.py
   tests/test_ai_task_web_search.py
   tests/test_broadcast_permissions.py

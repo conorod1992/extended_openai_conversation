@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from copy import deepcopy
+from dataclasses import dataclass, field
 from json import JSONDecodeError
 import logging
 from typing import TYPE_CHECKING, Any
@@ -20,6 +23,7 @@ from homeassistant.util.json import json_loads
 from .debug import record_current_provider_failure
 from .entity import (
     ExtendedOpenAIBaseLLMEntity,
+    _make_schema_nullable,
     _schema_explicitly_allows_null,
     _serialize_structured_output,
 )
@@ -29,24 +33,116 @@ from .provider_errors import log_provider_failure, request_reauthentication
 _LOGGER = logging.getLogger(__name__)
 
 
-def _omit_optional_nulls(data: Any, schema: dict[str, Any]) -> Any:
-    """Undo strict-output placeholders using the unmodified caller schema."""
-    if isinstance(data, dict):
-        properties = schema.get("properties", {})
-        required = schema.get("required", [])
-        return {
-            key: _omit_optional_nulls(value, properties.get(key, {}))
-            for key, value in data.items()
-            if not (
-                key in properties
-                and key not in required
-                and value is None
-                and not _schema_explicitly_allows_null(properties[key])
+@dataclass(slots=True)
+class _OptionalNullPlan:
+    """Retain caller field semantics once, including alternative branches."""
+
+    optional_nonnullable: frozenset[str]
+    properties: dict[str, _OptionalNullPlan]
+    items: _OptionalNullPlan | None
+    alternatives: list[_OptionalNullPlan] = field(default_factory=list)
+    validator: Any = None
+
+    def apply(self, data: Any) -> tuple[Any, int]:
+        """Return cleaned data and a count of removed placeholders."""
+        if self.validator is not None and self.validator.is_valid(data):
+            return data, 0
+        removed = 0
+        if isinstance(data, dict):
+            cleaned = {}
+            for key, value in data.items():
+                if value is None and key in self.optional_nonnullable:
+                    removed += 1
+                    continue
+                if key in self.properties:
+                    value, count = self.properties[key].apply(value)
+                    removed += count
+                cleaned[key] = value
+            data = cleaned
+        elif isinstance(data, list) and self.items is not None:
+            cleaned_items = []
+            for item in data:
+                value, count = self.items.apply(item)
+                cleaned_items.append(value)
+                removed += count
+            data = cleaned_items
+
+        if self.validator is None or self.validator.is_valid(data):
+            return data, removed
+        # Try alternatives independently. Applying every branch in succession
+        # would erase nulls legitimately accepted by a different branch.
+        candidates = []
+        for branch in self.alternatives:
+            candidate, count = branch.apply(data)
+            if self.validator.is_valid(candidate):
+                candidates.append((candidate, count))
+        if candidates:
+            candidate, count = min(candidates, key=lambda item: item[1])
+            return candidate, removed + count
+        # Leave invalid data for the authoritative caller validator to reject.
+        return data, removed
+
+
+def _caller_object_fields(
+    schema: dict[str, Any],
+) -> tuple[dict[str, Any], set[str]]:
+    """Combine intersected fields without making a required null removable."""
+    properties = dict(schema.get("properties", {}))
+    required = set(schema.get("required", []))
+    for branch in schema.get("allOf", []):
+        branch_properties, branch_required = _caller_object_fields(branch)
+        required.update(branch_required)
+        for key, value in branch_properties.items():
+            properties[key] = (
+                {"allOf": [properties[key], value]} if key in properties else value
             )
-        }
-    if isinstance(data, list) and isinstance(schema.get("items"), dict):
-        return [_omit_optional_nulls(item, schema["items"]) for item in data]
-    return data
+    return properties, required
+
+
+def _optional_null_plan(schema: dict[str, Any]) -> _OptionalNullPlan:
+    properties, required = _caller_object_fields(schema)
+    plan = _OptionalNullPlan(
+        optional_nonnullable=frozenset(
+            key
+            for key, value in properties.items()
+            if key not in required and not _schema_explicitly_allows_null(value)
+        ),
+        properties={
+            key: _optional_null_plan(value) for key, value in properties.items()
+        },
+        items=_optional_null_plan(schema["items"])
+        if isinstance(schema.get("items"), dict)
+        else None,
+    )
+    for keyword in ("anyOf", "oneOf"):
+        for branch in schema.get(keyword, []):
+            plan.alternatives.append(_optional_null_plan(branch))
+    if plan.alternatives or "allOf" in schema:
+        # Imported only for composed AI Task schemas, never ordinary tool calls.
+        from jsonschema.validators import validator_for
+
+        plan.validator = validator_for(schema)(schema)
+    return plan
+
+
+def _normalize_caller_nullable(schema: dict[str, Any]) -> None:
+    """Express OpenAPI nullable for branch validation without adding placeholders."""
+    if schema.pop("nullable", False):
+        _make_schema_nullable(schema)
+    for keyword in ("anyOf", "oneOf", "allOf"):
+        for branch in schema.get(keyword, []):
+            _normalize_caller_nullable(branch)
+    for value in schema.get("properties", {}).values():
+        _normalize_caller_nullable(value)
+    if isinstance(schema.get("items"), dict):
+        _normalize_caller_nullable(schema["items"])
+
+
+def _omit_optional_nulls(data: Any, schema: dict[str, Any]) -> Any:
+    """Undo placeholders with a plan reused for every object in array items."""
+    normalized = deepcopy(schema)
+    _normalize_caller_nullable(normalized)
+    return _optional_null_plan(normalized).apply(data)[0]
 
 
 def parse_ai_task_structured_response(
@@ -63,6 +159,11 @@ def parse_ai_task_structured_response(
         raise HomeAssistantError("Error with structured response") from err
     if original_schema is not None:
         data = _omit_optional_nulls(data, original_schema)
+    return _validate_structured_response(data, structure)
+
+
+def _validate_structured_response(data: Any, structure: vol.Schema | None) -> Any:
+    """Keep the caller's authoritative HA validation on the event loop."""
     if structure is not None:
         try:
             return structure(data)
@@ -175,9 +276,14 @@ class ExtendedOpenAITaskEntity(
                 data=text,
             )
 
-        data = parse_ai_task_structured_response(
-            text, task.structure, original_schema=original_schema
+        # JSON parsing and schema branch matching touch only this response and
+        # its schema snapshot. Large arrays must not stall HA's event loop.
+        data = await asyncio.to_thread(
+            parse_ai_task_structured_response,
+            text,
+            original_schema=original_schema,
         )
+        data = _validate_structured_response(data, task.structure)
 
         return ai_task.GenDataTaskResult(
             conversation_id=chat_log.conversation_id,
