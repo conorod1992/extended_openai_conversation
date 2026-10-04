@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "continuity-owner-overlap",
+      "source": "regression-family",
+      "failure_signature": "conversation-owner-isolation",
+      "environment": {"layer": "real_ha", "api_modes": ["chat_completions", "responses"]},
+      "operations": [
+        {"op": "start_conversation", "owner": "alpha", "device": "shared-device"},
+        {"op": "overlap_turn", "owner": "alpha"},
+        {"op": "resolve_device_owner", "owner": "beta"},
+        {"op": "start_conversation", "owner": "beta", "device": "shared-device"},
+        {"op": "assert_no_foreign_history", "owner": "beta"}
+      ]
+    },
+    {
+      "id": "storage-lost-ack-retry",
+      "source": "regression-family",
+      "failure_signature": "committed-generation-survives-lost-acknowledgement",
+      "environment": {"layer": "persistence"},
+      "operations": [
+        {"op": "populate_store", "generation": "A"},
+        {"op": "write", "generation": "B", "fault": "lost_ack"},
+        {"op": "readback", "fault": "unreadable"},
+        {"op": "retry", "storage": "healthy"},
+        {"op": "assert_preserved_records"}
+      ]
+    },
+    {
+      "id": "tool-action-invalid-final-output",
+      "source": "regression-family",
+      "failure_signature": "completed-action-not-replayed",
+      "environment": {"layer": "ai_task", "api_modes": ["chat_completions", "responses"]},
+      "operations": [
+        {"op": "request_tool"},
+        {"op": "execute_effect", "marker": "once"},
+        {"op": "return_invalid_structured_output"},
+        {"op": "assert_failure"},
+        {"op": "healthy_independent_task"},
+        {"op": "assert_effect_count", "count": 1}
+      ]
+    },
+    {
+      "id": "native-file-replacement-conflict",
+      "source": "regression-family",
+      "failure_signature": "external-edit-preserved",
+      "environment": {"layer": "functions"},
+      "operations": [
+        {"op": "read_fingerprint"},
+        {"op": "prepare_replacement"},
+        {"op": "external_edit"},
+        {"op": "replacement_boundary"},
+        {"op": "assert_conflict"},
+        {"op": "assert_external_bytes_preserved"},
+        {"op": "healthy_retry"}
+      ]
+    }
+  ]
+}

@@ -20,9 +20,9 @@ on:
         default: ""
         type: string
   schedule:
-    # Keep mutation testing off the PR critical path while exercising the
-    # established high-value campaigns once a week from the default branch.
-    - cron: "23 4 * * 0"
+    # Keep mutation testing off the PR critical path while exercising every
+    # established high-value campaign nightly from the default branch.
+    - cron: "43 2 * * *"
 
 permissions:
   contents: read
@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        campaign: ${{ fromJSON(github.event_name == 'schedule' && '["function-tools","guest-security","request-rules","function-groups"]' || format('["{0}"]', inputs.campaign)) }}
+        campaign: ${{ fromJSON(github.event_name == 'schedule' && '["function-tools","guest-security","ha-permissions","request-rules","function-groups"]' || format('["{0}"]', inputs.campaign)) }}
 
     steps:
       - name: Checkout repository

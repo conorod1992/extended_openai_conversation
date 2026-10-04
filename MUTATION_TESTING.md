@@ -38,7 +38,7 @@ The current mutation targets are deliberately limited to:
 - filtering model-visible entities for an authenticated user's Home Assistant READ permissions; and
 - requiring Home Assistant CONTROL permission for already-resolved entity targets.
 
-This is intentionally **not** a claim that every advanced Function Tool, HA LLM Tool, custom function, indirect target-resolution path, or other execution mechanism is universally constrained by these two routes. Those paths need their own explicit security contracts before mutation tests should make stronger assertions about them.
+This is intentionally **not** a claim that every advanced Function Tool, Home Assistant LLM Tool, custom function, indirect target-resolution path, or other execution mechanism is universally constrained by these two routes. Those paths need their own explicit security contracts before mutation tests should make stronger assertions about them.
 
 ### `request-rules`
 
@@ -120,7 +120,7 @@ The `mutants/` directory is Mutmut's generated working state and can be removed 
 
 ## CI
 
-The `Targeted mutation testing` workflow is intentionally `workflow_dispatch` only. It is not part of normal pull-request CI and does not run a stable/dev Home Assistant matrix.
+The `Targeted mutation testing` workflow is not part of normal pull-request CI and does not run a stable/dev Home Assistant matrix. It remains available through `workflow_dispatch`, and all five established campaigns also run nightly from the default branch.
 
 Run it from **Actions → Targeted mutation testing → Run workflow**, then choose one of:
 
