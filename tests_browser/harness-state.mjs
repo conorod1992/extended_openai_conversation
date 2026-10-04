@@ -113,7 +113,11 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     }
     if (key === "overview/primary") {
       return {
-        agent: clone(state.agent),
+        agent: {
+          ...clone(state.agent),
+          entry_id: message.entry_id || state.agent.entry_id,
+          subentry_id: message.subentry_id || state.agent.subentry_id,
+        },
         usage: {},
         conversations: {archive_enabled: true, archive_retention_days: 30},
         load_errors: [],

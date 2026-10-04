@@ -499,5 +499,7 @@ test("a completed mutation does not leave the agent picker or next agent blocked
   await expect.poll(() => panel.evaluate((host) => host._configDirty)).toBe(false);
 
   await expectOverviewLive(panel);
+  await expect(picker).toHaveValue("scale-agent-1");
+  expect(await panel.evaluate(host => host._selectedAgent().entry_id)).toBe("scale-entry-1");
   await expectHarnessClean(page, errors);
 });
