@@ -584,3 +584,35 @@ async def test_ai_task_flow_rejects_incompatible_request_before_persistence(hass
         assert set(entry.subentries) == existing_ids
     finally:
         await _unload_entry(hass, entry)
+
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+async def test_text_only_agent_diagnostic_accepts_provider_without_functions(hass, monkeypatch, api_mode):
+    from custom_components.extended_openai_conversation_responses.agent_test import async_test_agent
+    entry = _make_entry(conversation_data={
+        **agent_config_defaults(),
+        "chat_model": "custom-text-only-model",
+        "api_mode": api_mode,
+        "functions": "[]",
+        "max_function_calls_per_conversation": 0,
+        "memory_mode": "off",
+        "knowledge_enabled": False,
+        "archive_enabled": False,
+        "guest_mode_enabled": False,
+        "function_groups": [],
+    })
+    await _setup_entry(hass, entry)
+    async def text_provider(**kwargs):
+        assert "tools" not in kwargs
+        assert "tool_choice" not in kwargs
+        return SimpleNamespace(status="completed", usage=None)
+    create = AsyncMock(side_effect=text_provider)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)), responses=SimpleNamespace(create=create))
+    monkeypatch.setattr(entry, "runtime_data", client)
+    subentry = next(item for item in entry.subentries.values() if item.subentry_type == "conversation")
+    result = await async_test_agent(hass, entry, subentry)
+    checks = {check.name: check for check in result.checks}
+    assert result.status != "Failed"
+    assert checks["Model access"].status == "Passed"
+    assert checks["Function calling"].status == "Skipped"
+    create.assert_awaited_once()
+    await _unload_entry(hass, entry)

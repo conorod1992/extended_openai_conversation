@@ -46,6 +46,7 @@ from .provider_errors import (
     provider_user_message,
     request_reauthentication,
 )
+from .request import conversation_tools_required
 from .skill_availability import skill_loader_status
 from .skills import SkillManager
 from .usage import async_get_usage, extract_usage
@@ -292,6 +293,14 @@ async def async_test_agent(
     elif not web_search:
         checks.append(_check("Web Search", "Passed", "Disabled"))
 
+    function_tools_required = getattr(
+        subentry, "subentry_type", "conversation"
+    ) == "conversation" and conversation_tools_required(subentry.data)
+    if not function_tools_required:
+        checks.append(
+            _check("Function calling", "Skipped", "Not required by this agent")
+        )
+
     noop_tool = {
         "type": "function",
         "name": "configuration_test_noop",
@@ -306,36 +315,40 @@ async def async_test_agent(
     usage_manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
     try:
         if api_mode == API_MODE_RESPONSES:
-            tools: list[dict[str, Any]] = [noop_tool]
+            tools: list[dict[str, Any]] = [noop_tool] if function_tools_required else []
             if web_search and web_search_compatible:
                 tools.insert(0, {"type": "web_search", "search_context_size": "low"})
-            response = await client.responses.create(
-                model=model,
-                input=[{"role": "user", "content": "Reply OK."}],
-                max_output_tokens=16,
-                store=False,
-                tools=tools,
-                tool_choice="none",
-            )
+            response_kwargs: dict[str, Any] = {
+                "model": model,
+                "input": [{"role": "user", "content": "Reply OK."}],
+                "max_output_tokens": 16,
+                "store": False,
+            }
+            if tools:
+                response_kwargs.update(tools=tools, tool_choice="none")
+            response = await client.responses.create(**response_kwargs)
             ensure_successful_responses_result(response)
         else:
             kwargs: dict[str, Any] = {
                 "model": model,
                 "messages": [{"role": "user", "content": "Reply OK."}],
                 "stream": False,
-                "tools": [
-                    {
-                        "type": "function",
-                        "function": {
-                            key: value
-                            for key, value in noop_tool.items()
-                            if key != "type"
-                        },
-                    }
-                ],
-                "tool_choice": "none",
                 "max_completion_tokens": 16,
             }
+            if function_tools_required:
+                kwargs.update(
+                    tools=[
+                        {
+                            "type": "function",
+                            "function": {
+                                key: value
+                                for key, value in noop_tool.items()
+                                if key != "type"
+                            },
+                        }
+                    ],
+                    tool_choice="none",
+                )
             response = await client.chat.completions.create(**kwargs)
     except OpenAIError as err:
         is_authentication_failure = (
@@ -358,7 +371,10 @@ async def async_test_agent(
             authentication.status = "Failed"
             authentication.message = provider_user_message(err)
             checks.append(_check("Model access", "Failed", "Authentication rejected"))
-            checks.append(_check("Function calling", "Failed", "Probe was rejected"))
+            if function_tools_required:
+                checks.append(
+                    _check("Function calling", "Failed", "Probe was rejected")
+                )
         else:
             await usage_manager.async_record_request(
                 successful=False,
@@ -368,7 +384,10 @@ async def async_test_agent(
             )
             message = provider_user_message(err)
             checks.append(_check("Model access", "Failed", message))
-            checks.append(_check("Function calling", "Failed", "Probe was rejected"))
+            if function_tools_required:
+                checks.append(
+                    _check("Function calling", "Failed", "Probe was rejected")
+                )
             if web_search and web_search_compatible:
                 checks.append(_check("Web Search", "Failed", message))
     except Exception as err:
@@ -379,7 +398,8 @@ async def async_test_agent(
             api_mode=usage_api_mode,
         )
         checks.append(_check("Model access", "Failed", str(err)))
-        checks.append(_check("Function calling", "Failed", "Probe was rejected"))
+        if function_tools_required:
+            checks.append(_check("Function calling", "Failed", "Probe was rejected"))
         if web_search and web_search_compatible:
             checks.append(_check("Web Search", "Failed", str(err)))
     else:
@@ -393,7 +413,10 @@ async def async_test_agent(
         checks.append(
             _check("Model access", "Passed", f"Minimal {model} request succeeded")
         )
-        checks.append(_check("Function calling", "Passed", "Function schema accepted"))
+        if function_tools_required:
+            checks.append(
+                _check("Function calling", "Passed", "Function schema accepted")
+            )
         if web_search and web_search_compatible:
             checks.append(_check("Web Search", "Passed", "Hosted tool schema accepted"))
 
