@@ -25,7 +25,11 @@ from .const import (
 )
 from .debug import record_current_run_failure
 from .operational_errors import log_handled_failure
-from .strict_store import PropagatingWriteStore, RecoveryGuardedStore
+from .strict_store import (
+    PropagatingWriteStore,
+    RecoveryGuardedStore,
+    async_storage_lock,
+)
 
 STORAGE_VERSION = 2
 STORAGE_KEY_PREFIX = f"{DOMAIN}.usage"
@@ -349,7 +353,7 @@ class UsageManager:
 
     async def async_record_conversation(self) -> None:
         """Compatibility API; new conversation code uses ``async_run``."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self.totals.conversation_count += 1
             await self._async_save_aggregates()
 
@@ -392,6 +396,12 @@ class UsageManager:
     async def async_shutdown(self, _event: Any = None) -> None:
         """Cancel active request owners and durably flush their normal finalizers."""
         async with self._shutdown_lock:
+            if (
+                isinstance(self._storage, RecoveryGuardedStore)
+                and self._storage._recovery_gate is not None
+                and self._storage._recovery_gate.deleted
+            ):
+                return
             self._stopping = True
             tasks = set(self._active_runs.values()) - {asyncio.current_task()}
             for task in tasks:
@@ -439,7 +449,7 @@ class UsageManager:
         usage = usage_for_accounting(usage)
         usage = usage or RequestUsage()
         completed_at = dt_util.utcnow()
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self.totals.api_request_count += 1
             if successful:
                 self.totals.successful_request_count += 1
@@ -512,7 +522,7 @@ class UsageManager:
     async def _async_finalize_run(self, run: UsageRun) -> None:
         if not run.successful:
             record_current_run_failure(run.error_type or "RequestFailed")
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             if run.completed_at is None:
                 completed_at = dt_util.utcnow()
                 run.completed_at = completed_at.isoformat()
@@ -587,7 +597,7 @@ class UsageManager:
 
     async def async_prune_details(self, *, save: bool = True) -> dict[str, int]:
         """Apply retention transactionally, persisting survivors before publication."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             requests, runs, result = self._pruned_detail_state()
             if save:
                 await self._async_persist_detail_state(requests, runs)
@@ -601,7 +611,7 @@ class UsageManager:
         """Clear retained request/run detail only after the durable clear succeeds."""
         if not confirm:
             raise ValueError("Explicit confirmation is required")
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             result = {
                 "deleted_requests": len(self.requests),
                 "deleted_runs": len(self.runs),
@@ -748,7 +758,7 @@ class UsageManager:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return all persisted usage categories without in-flight run state."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             if not self._initialized:
                 raise RuntimeError("usage statistics have not been initialized")
             return {
@@ -813,7 +823,7 @@ class UsageManager:
         runs: list[UsageRun],
     ) -> None:
         """Replace usage accounting and reapply current retention policies."""
-        async with self._lock:
+        async with async_storage_lock(self._storage, self._lock):
             self.totals = totals
             self.daily = deepcopy(daily)
             self.requests = list(requests)

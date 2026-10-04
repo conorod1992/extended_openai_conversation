@@ -114,7 +114,11 @@ class PropagatingWriteStore(RecoveryGuardedStore):
 @asynccontextmanager
 async def async_storage_lock(storage: Any, lock: asyncio.Lock) -> AsyncIterator[None]:
     """Own manager settlement before taking its lock, including reconciliation."""
-    store = getattr(storage, "_store", None)
+    store = (
+        storage
+        if isinstance(storage, RecoveryGuardedStore)
+        else getattr(storage, "_store", None)
+    )
     if isinstance(store, RecoveryGuardedStore) and store._recovery_gate is not None:
         async with store._recovery_gate.shared(maintenance=True), lock:
             yield

@@ -29,6 +29,7 @@ class AgentMaintenanceGate:
         self._waiting_writers = 0
         self._writer_active = False
         self.recovery_required = False
+        self.deleted = False
         self._exclusive_owner: ContextVar[object | None] = ContextVar(
             f"extended_openai_maintenance_writer_{id(self)}", default=None
         )
@@ -37,6 +38,8 @@ class AgentMaintenanceGate:
 
     def require_available(self) -> None:
         """Reject indeterminate generations except inside owned recovery work."""
+        if self.deleted:
+            raise HomeAssistantError("This assistant has been deleted")
         if self.recovery_required and not (
             self._active_owner is not None
             and self._exclusive_owner.get() is self._active_owner

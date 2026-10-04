@@ -1009,7 +1009,7 @@ async def _restore_import(
             entry,
             subentry,
             prepared,
-            sections=data.get("sections"),
+            sections=data.get("sections", session.preview_sections),
             precondition=validate_preview,
         )
     finally:

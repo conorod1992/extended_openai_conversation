@@ -201,8 +201,12 @@ async def test_permanent_entry_removal_during_inflight_request_never_resurrects_
     # Exercise Home Assistant's permanent config-entry removal path rather than a
     # reload/unload. Removal must tear down registration and persistent ownership
     # while allowing the already-running Python object to unwind safely.
-    await hass.config_entries.async_remove(entry.entry_id)
-    await asyncio.wait_for(hass.async_block_till_done(), timeout=_WAIT_TIMEOUT)
+    removal = asyncio.create_task(hass.config_entries.async_remove(entry.entry_id))
+    async def wait_for_removal():
+        while hass.config_entries.async_get_entry(entry.entry_id) is not None:
+            await asyncio.sleep(0)
+    await asyncio.wait_for(wait_for_removal(), timeout=_WAIT_TIMEOUT)
+    assert not removal.done()
 
     assert hass.config_entries.async_get_entry(entry.entry_id) is None
     assert conversation.async_get_agent(hass, entry.entry_id) is None
@@ -216,6 +220,7 @@ async def test_permanent_entry_removal_during_inflight_request_never_resurrects_
     release.set()
     result = await asyncio.wait_for(old_request, timeout=_WAIT_TIMEOUT)
     assert _speech(result) == "old-generation:request crossing permanent removal"
+    await asyncio.wait_for(removal, timeout=_WAIT_TIMEOUT)
 
     # Completion of the stale generation must not re-register an agent or restore
     # registry ownership after Home Assistant has permanently deleted the entry.

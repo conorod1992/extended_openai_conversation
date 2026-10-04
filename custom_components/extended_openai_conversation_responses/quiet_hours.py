@@ -643,9 +643,11 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             control["baseline_context_id"] = context_id
 
     async def async_shutdown(self) -> None:
-        for unsubscribe in self._unsubscribers:
-            unsubscribe()
-        self._unsubscribers.clear()
+        async with self._lock:
+            for unsubscribe in self._unsubscribers:
+                unsubscribe()
+            self._unsubscribers.clear()
+            await self._async_restore_locked()
         entity_id = self._state_entity_id()
         self._remove_previous_publication(entity_id)
         self.hass.states.async_remove(entity_id)
@@ -692,6 +694,8 @@ def _register_quiet_hours_actions(hass: HomeAssistant) -> None:
 
 async def async_get_quiet_hours(hass: HomeAssistant) -> QuietHoursManager:
     """Return the initialized integration-global Quiet Hours manager."""
+    if hass.data.get(f"{DOMAIN}.removed"):
+        raise HomeAssistantError("Extended OpenAI has been removed")
     domain_data = hass.data.setdefault(DOMAIN, {})
     manager = domain_data.get(_RUNTIME_KEY)
     if not isinstance(manager, QuietHoursManager):

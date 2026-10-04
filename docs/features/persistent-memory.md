@@ -43,3 +43,9 @@ Open **Extended OpenAI → Data & Memory → Memories** to search/filter by text
 Storage uses Home Assistant's private versioned `.storage` API with a 10,000-record limit per agent. Existing stores and backups remain compatible: obsolete importance and confirmation fields are ignored and removed when saved. Full backup/restore round-trips the new metadata and accepts prior records; embeddings are regenerated instead of exported.
 
 Memory context is sent to the configured provider only when selected or returned by a tool. It is always framed as untrusted background data, never instructions or authorization. The storage layer rejects secrets, usable financial credentials, and automatic sensitive-personal facts. Persistent memory is not a secrets manager.
+
+### Deleting an assistant
+
+Deleting a conversation assistant permanently removes its private Memory and embedding cache, Temporary Memory, Knowledge, Archive, Usage, Guest Mode and Request Rule stores. Cleanup waits for current requests to settle, then blocks detached background writes from recreating deleted data. Removing an entire provider entry also removes orphan stores belonging to that entry. Export a backup first if you want to retain those records.
+
+Removing the final EOAI provider entry also stops Quiet Hours and Broadcast callbacks and queued deliveries. Quiet Hours restores the controls it still owns before shutdown. Normal unloading and reloading keep these integration-wide features running.
