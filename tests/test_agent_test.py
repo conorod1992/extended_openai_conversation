@@ -955,3 +955,37 @@ async def test_unexpected_probe_error_marks_compatible_web_search_failed(
             ),
         }
     ]
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+async def test_text_only_unknown_provider_is_probed_without_function_schema(api_mode):
+    hass, entry, subentry, client, usage = _objects({
+        CONF_CHAT_MODEL: "private-text-model",
+        CONF_API_MODE: api_mode,
+        "max_function_calls_per_conversation": 0,
+    })
+    async def text_only(**kwargs):
+        assert "tools" not in kwargs
+        assert "tool_choice" not in kwargs
+        return SimpleNamespace(status="completed", usage=None)
+    client.chat.completions.create = AsyncMock(side_effect=text_only)
+    client.responses = SimpleNamespace(create=AsyncMock(side_effect=text_only))
+    with patch.object(agent_test, "get_exposed_entities", return_value=[{}]), patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)):
+        result = await async_test_agent(hass, entry, subentry)
+    assert result.status == "Passed"
+    checks = {check.name: check for check in result.checks}
+    assert checks["Model access"].status == "Passed"
+    assert checks["Function calling"].status == "Skipped"
+    create = client.responses.create if api_mode == API_MODE_RESPONSES else client.chat.completions.create
+    create.assert_awaited_once()
+
+
+async def test_text_only_probe_failure_does_not_claim_function_failure():
+    hass, entry, subentry, client, usage = _objects({"max_function_calls_per_conversation": 0})
+    client.chat.completions.create.side_effect = OpenAIError("Text request failed")
+    with patch.object(agent_test, "get_exposed_entities", return_value=[{}]), patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)):
+        result = await async_test_agent(hass, entry, subentry)
+    assert result.status == "Failed"
+    checks = {check.name: check for check in result.checks}
+    assert checks["Model access"].status == "Failed"
+    assert checks["Function calling"].status == "Skipped"
