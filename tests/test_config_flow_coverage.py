@@ -470,7 +470,7 @@ async def test_ai_task_handler_covers_basic_and_advanced_lifecycle_paths() -> No
         _temp_data=None,
         _is_new=True,
         _get_entry=MagicMock(
-            return_value=SimpleNamespace(state=ConfigEntryState.NOT_LOADED)
+            return_value=SimpleNamespace(state=ConfigEntryState.NOT_LOADED, data={})
         ),
         _get_reconfigure_subentry=MagicMock(return_value=existing),
         async_abort=MagicMock(side_effect=_sync_result),

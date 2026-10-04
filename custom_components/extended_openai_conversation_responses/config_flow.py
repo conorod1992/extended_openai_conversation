@@ -633,6 +633,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
+        validation_error = ""
         # Abort if entry is not loaded
         if self._get_entry().state != ConfigEntryState.LOADED:
             return self.async_abort(reason="entry_not_loaded")
@@ -644,20 +646,30 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 self._temp_data = user_input
                 return await self.async_step_advanced()
 
-            # No advanced options, save directly
-            if self._is_new:
-                title = user_input.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
-                if CONF_NAME in user_input:
-                    del user_input[CONF_NAME]
-                return self.async_create_entry(
-                    title=title,
-                    data=user_input,
+            candidate = {**self.options, **user_input}
+            from .request import build_provider_request_snapshot
+
+            try:
+                build_provider_request_snapshot(
+                    candidate, self._get_entry().data, tools_required=False
                 )
-            return self.async_update_and_abort(
-                self._get_entry(),
-                self._get_reconfigure_subentry(),
-                data=user_input,
-            )
+            except HomeAssistantError as err:
+                errors["base"] = "invalid_request"
+                validation_error = str(err)
+                self.options.update(user_input)
+            else:
+                if self._is_new:
+                    title = candidate.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
+                    candidate.pop(CONF_NAME, None)
+                    return self.async_create_entry(
+                        title=title,
+                        data=candidate,
+                    )
+                return self.async_update_and_abort(
+                    self._get_entry(),
+                    self._get_reconfigure_subentry(),
+                    data=candidate,
+                )
 
         schema: dict = {}
 
@@ -699,6 +711,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
 
         return self.async_show_form(
             step_id="init",
+            errors=errors,
+            description_placeholders={"reason": validation_error},
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema(schema), self.options
             ),
@@ -708,6 +722,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Handle advanced model options from exact catalogue capabilities."""
+        errors: dict[str, str] = {}
+        validation_error = ""
         chat_model = str(
             (self._temp_data or {}).get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
         )
@@ -720,7 +736,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         )
 
         if user_input is not None:
-            final_data = {**(self._temp_data or {}), **user_input}
+            final_data = {**self.options, **(self._temp_data or {}), **user_input}
             configured_effort = final_data.get(CONF_REASONING_EFFORT)
             effective_effort = (
                 str(configured_effort)
@@ -733,18 +749,29 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 ):
                     final_data.pop(parameter, None)
 
-            if self._is_new:
-                title = final_data.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
-                final_data.pop(CONF_NAME, None)
-                return self.async_create_entry(
-                    title=title,
+            from .request import build_provider_request_snapshot
+
+            try:
+                build_provider_request_snapshot(
+                    final_data, self._get_entry().data, tools_required=False
+                )
+            except HomeAssistantError as err:
+                errors["base"] = "invalid_request"
+                validation_error = str(err)
+                self.options.update(final_data)
+            else:
+                if self._is_new:
+                    title = final_data.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
+                    final_data.pop(CONF_NAME, None)
+                    return self.async_create_entry(
+                        title=title,
+                        data=final_data,
+                    )
+                return self.async_update_and_abort(
+                    self._get_entry(),
+                    self._get_reconfigure_subentry(),
                     data=final_data,
                 )
-            return self.async_update_and_abort(
-                self._get_entry(),
-                self._get_reconfigure_subentry(),
-                data=final_data,
-            )
 
         schema: dict[Any, Any] = {}
         reasoning = metadata["reasoning"]
@@ -808,6 +835,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
 
         return self.async_show_form(
             step_id="advanced",
+            errors=errors,
+            description_placeholders={"reason": validation_error},
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema(schema), self.options
             ),

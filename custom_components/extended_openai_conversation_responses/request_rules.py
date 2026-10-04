@@ -2552,31 +2552,11 @@ def validate_routed_request_options(
     options: Mapping[str, Any], entry_data: Mapping[str, Any]
 ) -> None:
     """Validate the complete Conversation request selected by a route."""
-    from .const import (
-        CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-    )
-    from .request import build_provider_request_snapshot
+    from .request import build_provider_request_snapshot, conversation_tools_required
 
-    # Every ordinary conversation advertises its lifecycle Function. A zero
-    # execution budget suppresses it; loader/finalizer controls can still remain.
-    tools_required = (
-        bool(
-            int(
-                options.get(
-                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                )
-            )
-        )
-        or options.get("continue_conversation") == "conditional"
-        or any(
-            group.get("enabled", True) and group.get("loading_mode") == "on_demand"
-            for group in options.get("function_groups", [])
-            if isinstance(group, Mapping)
-        )
+    build_provider_request_snapshot(
+        options, entry_data, tools_required=conversation_tools_required(options)
     )
-    build_provider_request_snapshot(options, entry_data, tools_required=tools_required)
 
 
 def validate_rule_model_request(

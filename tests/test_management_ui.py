@@ -1531,7 +1531,7 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
         hass,
         "admin",
         True,
-        _residual_message("settings", "update", settings={"archive_enabled": True}),
+        _residual_message("settings", "update", settings={"archive_enabled": True}, revision=management_ui.persisted_config_projection(subentry).revision),
     )
     assert settings["settings"]["archive_enabled"] is True
     with pytest.raises(HomeAssistantError, match="Unknown unknown management action"):

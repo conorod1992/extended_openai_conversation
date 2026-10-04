@@ -235,7 +235,10 @@ class ModelCatalogManager:
         self, candidate: dict[str, Any]
     ) -> bool:
         """Check concrete saved agent and routing choices before publication."""
-        from .request import build_provider_request_snapshot
+        from .request import (
+            build_provider_request_snapshot,
+            conversation_tools_required,
+        )
 
         for entry in self.hass.config_entries.async_entries(DOMAIN):
             for subentry in entry.subentries.values():
@@ -247,6 +250,11 @@ class ModelCatalogManager:
                     build_provider_request_snapshot(
                         options,
                         getattr(entry, "data", {}),
+                        tools_required=(
+                            conversation_tools_required(options)
+                            if subentry.subentry_type == "conversation"
+                            else False
+                        ),
                         model_capabilities=catalog_model_metadata(candidate, model),
                     )
                 except Exception:
@@ -279,6 +287,7 @@ class ModelCatalogManager:
                         build_provider_request_snapshot(
                             effective,
                             getattr(entry, "data", {}),
+                            tools_required=conversation_tools_required(effective),
                             model_capabilities=catalog_model_metadata(
                                 candidate,
                                 str(effective[CONF_CHAT_MODEL]),
@@ -472,10 +481,13 @@ class ModelCatalogManager:
     async def async_reset(self) -> dict[str, Any]:
         """Return to bundled data until a checked update is explicitly applied."""
         async with self._lock:
-            if await self._bundled_reset_would_invalidate_saved_reasoning():
+            if (
+                await self._bundled_reset_would_invalidate_saved_reasoning()
+                or not await self._candidate_preserves_saved_requests(BUNDLED_CATALOG)
+            ):
                 self.last_error = (
                     "Model data reset was blocked because saved configuration or "
-                    "Request Rules use reasoning choices unavailable in bundled data."
+                    "Request Rules are incompatible with bundled data."
                 )
                 return self.status()
 
