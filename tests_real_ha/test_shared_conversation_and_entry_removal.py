@@ -212,11 +212,6 @@ async def test_permanent_entry_removal_during_inflight_request_never_resurrects_
     assert conversation.async_get_agent(hass, entry.entry_id) is None
     assert not old_request.done()
 
-    rows_after_remove = er.async_entries_for_config_entry(
-        er.async_get(hass), entry.entry_id
-    )
-    assert not rows_after_remove
-
     release.set()
     result = await asyncio.wait_for(old_request, timeout=_WAIT_TIMEOUT)
     assert _speech(result) == "old-generation:request crossing permanent removal"

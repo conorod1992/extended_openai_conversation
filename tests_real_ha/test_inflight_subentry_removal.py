@@ -180,6 +180,8 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
         while conversation.async_get_agent(hass, survivor_entity_id) is None:
             await asyncio.sleep(0)
         await _agent(hass, survivor_entity_id)._agent_ready.wait()
+        while entry.state is not ConfigEntryState.LOADED:
+            await asyncio.sleep(0)
 
     await asyncio.wait_for(wait_for_registration_removal(), timeout=_WAIT_TIMEOUT)
 

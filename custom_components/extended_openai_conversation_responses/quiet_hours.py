@@ -696,7 +696,7 @@ def _register_quiet_hours_actions(hass: HomeAssistant) -> None:
 
 async def async_get_quiet_hours(hass: HomeAssistant) -> QuietHoursManager:
     """Return the initialized integration-global Quiet Hours manager."""
-    if hass.data.get(f"{DOMAIN}.removed"):
+    if hass.data.get(f"{DOMAIN}.removed") is True:
         raise HomeAssistantError("Extended OpenAI has been removed")
     domain_data = hass.data.setdefault(DOMAIN, {})
     manager = domain_data.get(_RUNTIME_KEY)

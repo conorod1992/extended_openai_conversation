@@ -20,7 +20,7 @@ async def test_subentry_removal_purges_private_stores_then_last_entry_stops_glob
         store = Store(hass, 1, f"{DOMAIN}.{section}.{entry.entry_id}.{removed.subentry_id}{suffix}", private=True)
         await store.async_save({"private": "deletion test"})
         owned.append(Path(store.path))
-    sibling = Store(hass, 1, f"{DOMAIN}.memory.{entry.entry_id}.{remaining.subentry_id}.embeddings", private=True)
+    sibling = Store(hass, 1, f"{DOMAIN}.request_rules.{entry.entry_id}.{remaining.subentry_id}.sentinel", private=True)
     await sibling.async_save({"private": "keep sibling"})
     assert hass.config_entries.async_remove_subentry(entry, removed.subentry_id)
     await hass.async_block_till_done()

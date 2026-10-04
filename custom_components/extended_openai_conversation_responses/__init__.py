@@ -216,12 +216,6 @@ async def async_setup_entry(
     from .agent_deletion import KNOWN_AGENTS
     from .provider_errors import provider_authentication_snapshot
 
-    hass.data.pop(f"{DOMAIN}.removed", None)
-    await async_get_quiet_hours(hass)
-    await async_setup_intercom_services(hass)
-    hass.data.setdefault(KNOWN_AGENTS, {}).setdefault(entry.entry_id, set()).update(
-        entry.subentries
-    )
     authentication_snapshot = provider_authentication_snapshot(entry)
 
     try:
@@ -247,6 +241,13 @@ async def async_setup_entry(
             err,
         )
         raise ConfigEntryNotReady(provider_log_remediation(err)) from err
+
+    hass.data.pop(f"{DOMAIN}.removed", None)
+    await async_get_quiet_hours(hass)
+    await async_setup_intercom_services(hass)
+    hass.data.setdefault(KNOWN_AGENTS, {}).setdefault(entry.entry_id, set()).update(
+        entry.subentries
+    )
 
     debug_client = DebugOpenAIClientProxy(
         client, authentication_snapshot=authentication_snapshot

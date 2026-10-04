@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -395,30 +396,35 @@ class UsageManager:
 
     async def async_shutdown(self, _event: Any = None) -> None:
         """Cancel active request owners and durably flush their normal finalizers."""
-        async with self._shutdown_lock:
-            if (
-                isinstance(self._storage, RecoveryGuardedStore)
-                and self._storage._recovery_gate is not None
-                and self._storage._recovery_gate.deleted
-            ):
-                return
-            self._stopping = True
-            tasks = set(self._active_runs.values()) - {asyncio.current_task()}
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            if (
-                isinstance(self._storage, RecoveryGuardedStore)
-                and self._storage.recovery_pending
-            ):
-                _LOGGER.info(
-                    "Usage flush deferred while assistant restore recovery is pending"
-                )
-                return
-            await self._async_save_aggregates()
-            await self._async_save_details()
+        gate = (
+            self._storage._recovery_gate
+            if isinstance(self._storage, RecoveryGuardedStore)
+            else None
+        )
+        if gate is not None and gate.deleted:
+            return
+        try:
+            async with async_storage_lock(self._storage, self._shutdown_lock):
+                self._stopping = True
+                tasks = set(self._active_runs.values()) - {asyncio.current_task()}
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                if (
+                    isinstance(self._storage, RecoveryGuardedStore)
+                    and self._storage.recovery_pending
+                ):
+                    _LOGGER.info(
+                        "Usage flush deferred while assistant restore recovery is pending"
+                    )
+                    return
+                await self._async_save_aggregates()
+                await self._async_save_details()
+        except HomeAssistantError:
+            if gate is None or not gate.deleted:
+                raise
 
     def current_run(self) -> UsageRun | None:
         return self._current_run.get()

@@ -674,7 +674,7 @@ class IntercomManager:
 
 
 async def async_get_intercom(hass: HomeAssistant) -> IntercomManager:
-    if hass.data.get(f"{DOMAIN}.removed"):
+    if hass.data.get(f"{DOMAIN}.removed") is True:
         raise HomeAssistantError("Extended OpenAI has been removed")
     manager = hass.data.get(DATA_KEY)
     if manager is None:
