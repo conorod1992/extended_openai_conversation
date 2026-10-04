@@ -1170,14 +1170,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             "content": getattr(content, "content", "") or "",
                         }
                         messages.append(message)
-                    total_bytes = (
-                        await ExtendedOpenAIBaseLLMEntity._async_prepare_user_attachments(
-                            self,
-                            content,
-                            message,
-                            api_mode,
-                            total_bytes=total_bytes,
-                        )
+                    total_bytes = await ExtendedOpenAIBaseLLMEntity._async_prepare_user_attachments(
+                        self,
+                        content,
+                        message,
+                        api_mode,
+                        total_bytes=total_bytes,
                     )
 
     async def _async_prepare_user_attachments(

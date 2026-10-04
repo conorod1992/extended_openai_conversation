@@ -2042,9 +2042,7 @@ def _mask_script_templates(
         )
     if isinstance(value, Mapping):
         return {
-            item_key: _mask_script_templates(
-                item, key=str(item_key), parent_key=key
-            )
+            item_key: _mask_script_templates(item, key=str(item_key), parent_key=key)
             for item_key, item in value.items()
         }
     if isinstance(value, list):
