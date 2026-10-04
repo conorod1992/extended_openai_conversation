@@ -16,6 +16,7 @@ TEST_PATHS=(
   tests_real_ha/test_config_flow.py
   tests_real_ha/test_config_flow_edges.py
   tests_real_ha/test_config_flow_lifecycle_contracts.py
+  tests_real_ha/test_entry_point_contract_matrix.py
   tests_real_ha/test_entity_registry_customization.py
   tests_real_ha/test_entity_registry_disabled.py
   tests_real_ha/test_exposed_attribute_catalog_acceptance.py
