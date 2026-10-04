@@ -3,6 +3,7 @@
 import base64
 from copy import deepcopy
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -190,11 +191,12 @@ async def test_replay_rejection_leaves_next_turn_provider_history_complete(
             _text(mode, "Unrelated answer"),
         ],
     )
-    first = await _say(hass, agent, "Turn the light off")
+    conversation_id = uuid4().hex
+    first = await _say(hass, agent, "Turn the light off", conversation_id)
     assert first.response.error_code is not None
-    replay = await _say(hass, agent, "Retry that action", first.conversation_id)
+    replay = await _say(hass, agent, "Retry that action", conversation_id)
     assert replay.response.error_code is not None
-    final = await _say(hass, agent, "An unrelated question", first.conversation_id)
+    final = await _say(hass, agent, "An unrelated question", conversation_id)
     assert _speech(final) == "Unrelated answer"
     wire.assert_complete(4)
     assert len(effects) == 1
