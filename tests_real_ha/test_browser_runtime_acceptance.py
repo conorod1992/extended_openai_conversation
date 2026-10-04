@@ -94,6 +94,7 @@ async def test_browser_created_request_rule_survives_unload_reload_and_stays_liv
             CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
             CONF_CHAT_MODEL: "gpt-5.6",
             CONF_REASONING_EFFORT: "medium",
+            "max_function_calls_per_conversation": 0,
             CONF_FUNCTION_TOOLS: [],
             CONF_FUNCTION_GROUPS: [],
         },

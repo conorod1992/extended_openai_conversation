@@ -43,6 +43,7 @@ def _subentry(title: str) -> dict[str, Any]:
         "data": {
             CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
             CONF_CHAT_MODEL: _MODEL,
+            "reasoning_effort": "none",
         },
         "subentry_type": "conversation",
         "title": title,

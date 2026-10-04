@@ -32,6 +32,18 @@ def _attachment(path: object, mime_type: str | None = None) -> object:
     return SimpleNamespace(path=str(path), mime_type=mime_type)
 
 
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+async def test_earlier_turn_attachment_survives_text_only_followup(monkeypatch, tmp_path, api_mode) -> None:
+    photo = tmp_path / "photo.png"
+    photo.write_bytes(b"original image")
+    earlier = _FakeUserContent(attachments=[_attachment(photo)])
+    followup = _FakeUserContent()
+    messages = [{"role": "user", "content": "What is here?"}, {"role": "assistant", "content": "A photo."}, {"role": "user", "content": "What is in the corner?"}]
+    await _add_attachments(monkeypatch, [earlier, object(), followup], messages, api_mode)
+    assert isinstance(messages[0]["content"], list)
+    assert messages[-1]["content"] == "What is in the corner?"
+
+
 async def _add_attachments(
     monkeypatch: pytest.MonkeyPatch,
     chat_content: list[object],

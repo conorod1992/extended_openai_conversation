@@ -107,6 +107,7 @@ async def test_request_scoped_routing_is_serialized_and_does_not_leak(
             CONF_API_MODE: api_mode,
             CONF_CHAT_MODEL: _DEFAULT_MODEL,
             CONF_REASONING_EFFORT: _DEFAULT_REASONING,
+            "max_function_calls_per_conversation": 0,
             CONF_FUNCTION_TOOLS: [],
         },
     )

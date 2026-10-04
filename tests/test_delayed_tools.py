@@ -26,6 +26,7 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
     DelayedToolManager,
     _delay_as_timedelta,
     async_setup_delayed_tools,
+    tool_definition_fingerprint,
 )
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
@@ -65,6 +66,7 @@ def _record(*, status: str = "pending", retry_count: int = 0) -> DelayedToolCall
         device_id="device-1",
         status=status,
         retry_count=retry_count,
+        definition_fingerprint=tool_definition_fingerprint(_valid_tool()),
     )
 
 
@@ -418,6 +420,7 @@ def _coverage_record(
         device_id="device-1",
         status=status,
         retry_count=retry_count,
+        definition_fingerprint=tool_definition_fingerprint(_valid_tool()),
     )
 
 
@@ -427,6 +430,25 @@ def _valid_tool(*, function_type: str = "native") -> dict[str, Any]:
         "spec": {"name": "control_light"},
         "function": {"type": function_type, "name": "execute_service_single"},
     }
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_changed_or_unknown_scheduled_definition_never_executes(hass, monkeypatch, legacy) -> None:
+    manager = DelayedToolManager(hass)
+    record = _coverage_record(user_id=None)
+    if legacy:
+        record = replace(record, definition_fingerprint=None)
+    manager._records = {record.call_id: record}
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    hass.config_entries.async_get_entry.return_value = _live_entry()
+    changed = _valid_tool()
+    changed["function"]["name"] = "different_implementation"
+    monkeypatch.setattr("custom_components.extended_openai_conversation_responses.delayed_tools.configured_function_tools_from_data", lambda _data: [changed])
+    agent = SimpleNamespace(_execute_function_tool=AsyncMock())
+    monkeypatch.setattr(manager, "_resolve_agent", lambda *_args: agent)
+    await manager._async_execute_due(record.call_id)
+    agent._execute_function_tool.assert_not_awaited()
+    assert record.call_id not in manager._records
 
 
 def _live_entry() -> SimpleNamespace:
@@ -1009,7 +1031,7 @@ async def test_owned_executor_schedules_background_call_and_returns_receipt(
     result = await executor(entity, tool, tool_input, context, [])
 
     manager.async_schedule.assert_awaited_once_with(
-        entity, "control_light", arguments, context
+        entity, "control_light", arguments, context, function_tool=tool
     )
     assert tool_result_data(result) == {"result": "Scheduled"}
 

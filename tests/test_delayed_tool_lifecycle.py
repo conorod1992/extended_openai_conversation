@@ -163,7 +163,11 @@ async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> No
 
     original.assert_not_awaited()
     manager.async_schedule.assert_awaited_once_with(
-        entity, "control_light", arguments, None
+        entity,
+        "control_light",
+        arguments,
+        None,
+        function_tool=_tool(_legacy_delay_schema()),
     )
     assert tool_result_data(result) == {"result": "Scheduled"}
 

@@ -53,6 +53,7 @@ from .const import (
     CONF_SKIP_AUTHENTICATION,
     DEFAULT_API_MODE,
     DEFAULT_CONF_BASE_URL,
+    DEFAULT_CONF_FUNCTION_TOOLS,
     DOMAIN,
     GITHUB_REPO_NAME,
     GITHUB_REPO_OWNER,
@@ -268,7 +269,9 @@ async def async_set_function_tools_enabled(
         if entry is None:
             raise HomeAssistantError("Config entry not found")
         subentry = entry.subentries[subentry_id]
-        configured = validate_function_tools(subentry.data.get(CONF_FUNCTION_TOOLS, []))
+        configured = validate_function_tools(
+            subentry.data.get(CONF_FUNCTION_TOOLS) or DEFAULT_CONF_FUNCTION_TOOLS
+        )
         requested = list(dict.fromkeys(function_names))
         configured_names = {tool["spec"]["name"] for tool in configured}
         missing = [name for name in requested if name not in configured_names]
@@ -299,7 +302,9 @@ async def async_set_function_groups_enabled(
         if entry is None:
             raise HomeAssistantError("Config entry not found")
         subentry = entry.subentries[subentry_id]
-        configured = validate_function_tools(subentry.data.get(CONF_FUNCTION_TOOLS, []))
+        configured = validate_function_tools(
+            subentry.data.get(CONF_FUNCTION_TOOLS) or DEFAULT_CONF_FUNCTION_TOOLS
+        )
         groups = validate_function_groups(
             subentry.data.get(CONF_FUNCTION_GROUPS, []), configured
         )

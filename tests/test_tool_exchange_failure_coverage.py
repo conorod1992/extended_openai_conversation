@@ -29,9 +29,7 @@ def _harness(call_ids: tuple[str, ...] = ("a", "b")):
     pending = [_tool_call(call_id) for call_id in call_ids]
     tools = [_tool(call_id) for call_id in call_ids]
     pairs = list(zip(tools, pending, strict=True))
-    chat_log = SimpleNamespace(
-        async_add_assistant_content_without_tools=MagicMock()
-    )
+    chat_log = SimpleNamespace(async_add_assistant_content_without_tools=MagicMock())
     entity = SimpleNamespace(
         entity_id="conversation.test",
         hass=object(),
@@ -107,7 +105,7 @@ async def test_recovery_parallel_budget_failure_marks_exhausted_call(
     remaining: int | None,
     expected_failed_call_id: str,
 ) -> None:
-    """Parallel budget failure is attributed without crossing validation/dispatch."""
+    """Parallel budget failure is attributed after validation without dispatch."""
     pending, tools, pairs, chat_log, entity, budget = _harness()
     error = RuntimeError("budget exhausted")
     budget.remaining = remaining
@@ -120,10 +118,14 @@ async def test_recovery_parallel_budget_failure_marks_exhausted_call(
     monkeypatch.setattr(
         tool_exchange,
         "_resolve_current_tool",
-        MagicMock(side_effect=lambda _entity, tool_input, *_args: tools[0] if tool_input.id == "a" else tools[1]),
+        MagicMock(
+            side_effect=lambda _entity, tool_input, *_args: (
+                tools[0] if tool_input.id == "a" else tools[1]
+            )
+        ),
     )
     monkeypatch.setattr(tool_exchange, "append_unresolved_tool_results", unresolved)
-    validate = AsyncMock()
+    validate = AsyncMock(side_effect=pending)
     execute_parallel = AsyncMock()
     monkeypatch.setattr(tool_exchange, "_async_validate_recoverable_call", validate)
     monkeypatch.setattr(
@@ -150,7 +152,7 @@ async def test_recovery_parallel_budget_failure_marks_exhausted_call(
         failed_call_id=expected_failed_call_id,
         error=error,
     )
-    validate.assert_not_awaited()
+    assert validate.await_count == 2
     execute_parallel.assert_not_awaited()
     entity._execute_function_tool.assert_not_awaited()
 
@@ -177,7 +179,11 @@ async def test_recovery_parallel_fully_recovered_batch_skips_executor(
     monkeypatch.setattr(
         tool_exchange,
         "_resolve_current_tool",
-        MagicMock(side_effect=lambda _entity, tool_input, *_args: tools[0] if tool_input.id == "a" else tools[1]),
+        MagicMock(
+            side_effect=lambda _entity, tool_input, *_args: (
+                tools[0] if tool_input.id == "a" else tools[1]
+            )
+        ),
     )
     validate = AsyncMock(side_effect=failures)
     monkeypatch.setattr(tool_exchange, "_async_validate_recoverable_call", validate)
@@ -185,7 +191,9 @@ async def test_recovery_parallel_fully_recovered_batch_skips_executor(
         tool_exchange,
         "recovery_tool_result",
         MagicMock(
-            side_effect=lambda _agent_id, tool_input, _failure: f"recovery-{tool_input.id}"
+            side_effect=lambda _agent_id, tool_input, _failure: (
+                f"recovery-{tool_input.id}"
+            )
         ),
     )
     execute_parallel = AsyncMock()
@@ -233,7 +241,11 @@ async def test_parallel_executor_failure_closes_entire_batch(
     monkeypatch.setattr(
         tool_exchange,
         "_resolve_current_tool",
-        MagicMock(side_effect=lambda _entity, tool_input, *_args: tools[0] if tool_input.id == "a" else tools[1]),
+        MagicMock(
+            side_effect=lambda _entity, tool_input, *_args: (
+                tools[0] if tool_input.id == "a" else tools[1]
+            )
+        ),
     )
     monkeypatch.setattr(tool_exchange, "append_unresolved_tool_results", unresolved)
     if recovery_enabled:
@@ -288,7 +300,9 @@ async def test_recovery_parallel_mixed_outcomes_preserve_history_then_raise_firs
         tool_exchange,
         "_resolve_current_tool",
         MagicMock(
-            side_effect=lambda _entity, tool_input, *_args: tool_by_name[tool_input.tool_name]
+            side_effect=lambda _entity, tool_input, *_args: tool_by_name[
+                tool_input.tool_name
+            ]
         ),
     )
     monkeypatch.setattr(
@@ -357,7 +371,9 @@ async def test_legacy_parallel_multiple_failures_are_recorded_before_first_is_ra
         tool_exchange,
         "_resolve_current_tool",
         MagicMock(
-            side_effect=lambda _entity, tool_input, *_args: tool_by_name[tool_input.tool_name]
+            side_effect=lambda _entity, tool_input, *_args: tool_by_name[
+                tool_input.tool_name
+            ]
         ),
     )
     monkeypatch.setattr(tool_exchange, "append_unresolved_tool_results", unresolved)
