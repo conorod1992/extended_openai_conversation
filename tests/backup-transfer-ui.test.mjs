@@ -144,6 +144,8 @@ assert.deepEqual([...base64ToBytes(bytesToBase64(new Uint8Array([0, 1, 127, 128,
   const dialog = renderRestoreTransferDialog();
   assert.match(dialog, /restore-transfer-cancel/);
   assert.match(dialog, /restore-transfer-apply/);
+  assert.match(dialog, /restore-transfer-user-mappings/);
+  assert.match(dialog, /Map Home Assistant users/);
   assert.doesNotMatch(dialog, /id="restore-apply"/);
 }
 
