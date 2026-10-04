@@ -283,9 +283,12 @@ async def test_local_intent_bypasses_provider_and_records_continuity(
     try_local_intent.assert_awaited_once()
     assert try_local_intent.call_args.kwargs["guest_active"] is False
     entity._async_handle_message_with_ha_tools.assert_not_awaited()
-    entity._continuity.async_record_success.assert_awaited_once()
+    if successful:
+        entity._continuity.async_record_success.assert_awaited_once()
+    else:
+        entity._continuity.async_record_success.assert_not_awaited()
     payload = entity.hass.bus.async_fire.call_args.args[1]
-    assert payload["status"] == "local"
+    assert payload["status"] == ("local" if successful else "error")
     assert payload["handled_locally"] is True
 
 
@@ -747,7 +750,9 @@ async def test_fresh_conversation_request_resets_owned_state_after_response(
                 content="I will start fresh next time.",
             )
         )
-        return object()
+        return conversation.ConversationResult(
+            response=intent.IntentResponse(language="en"), conversation_id="conversation-1"
+        )
 
     entity._async_handle_message_with_ha_tools = AsyncMock(side_effect=schedule_reset)
 

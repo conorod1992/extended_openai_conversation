@@ -5,6 +5,9 @@ import asyncio
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 
+from custom_components.extended_openai_conversation_responses import (
+    conversation as conversation_owner,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
     CONF_FUNCTION_TOOLS,
@@ -12,6 +15,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.local_intents import (
     CONF_LOCAL_INTENTS_ENABLED,
+    LocalIntentResult,
 )
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
@@ -121,9 +125,13 @@ async def test_local_dispatch_has_one_accurate_run_and_completion(
         await asyncio.sleep(0.02)
         if kind == "raise":
             raise HomeAssistantError("Local failure")
-        return None if kind == "unmatched" else response
+        return (
+            None
+            if kind == "unmatched"
+            else LocalIntentResult(response=response, intent_name="AuditLocalIntent")
+        )
 
-    monkeypatch.setattr(conversation, "async_handle_intents", handle)
+    monkeypatch.setattr(conversation_owner, "async_try_handle_local_intent", handle)
     finished = []
     hass.bus.async_listen(EVENT_CONVERSATION_FINISHED, finished.append)
     result = await _authenticated_say(hass, agent, "test local handling")
