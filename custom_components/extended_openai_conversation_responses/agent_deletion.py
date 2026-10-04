@@ -120,6 +120,10 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                     manager._stopping = True
                 stores.extend(_owned_stores(manager))
             for store in stores:
+                # Cancel delayed/final writers on the actual owned handle before
+                # erasing its files, including HA's in-memory Store test adapter.
+                store._async_cleanup_delay_listener()
+                store._async_cleanup_final_write_listener()
                 await store.async_remove()
             names = await hass.async_add_executor_job(
                 _storage_names, hass, entry_id, subentry_id

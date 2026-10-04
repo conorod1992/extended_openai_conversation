@@ -436,7 +436,9 @@ async def _update_configuration(
     # configuration through the normal live-update path instead of starting an
     # unowned entry reload while exclusive recovery is still settling.
     if not configuration_supports_live_update(
-        subentry.data, prepared.config, title_changed=subentry.title != prepared.title
+        backup.recoverable_configuration_snapshot(subentry.data),
+        backup.recoverable_configuration_snapshot(prepared.config),
+        title_changed=subentry.title != prepared.title,
     ):
         hass.data.setdefault(f"{DOMAIN}.restore_reload_pending", set()).add(
             entry.entry_id

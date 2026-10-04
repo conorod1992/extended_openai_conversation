@@ -1,6 +1,9 @@
 """Real HA deletion removes private stores and global device effects."""
 from pathlib import Path
 
+# This regression verifies actual private files and native Store cleanup.
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
+
 from homeassistant.helpers.storage import Store
 
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
@@ -8,7 +11,7 @@ from custom_components.extended_openai_conversation_responses import intercom, q
 from tests_real_ha.test_live_subentry_removal import _entry, _setup_entry, _subentry_by_title
 
 
-async def test_subentry_removal_purges_private_stores_then_last_entry_stops_globals(hass):
+async def test_subentry_removal_purges_private_stores_then_last_entry_stops_globals(hass, real_store_io):
     entry = _entry()
     await _setup_entry(hass, entry)
     removed = _subentry_by_title(entry, "Conversation A")

@@ -304,3 +304,25 @@ async def test_usage_shutdown_keeps_maintenance_lease_across_both_flushes(
     details.assert_awaited_once()
     await manager.async_shutdown()
     details.assert_awaited_once()
+
+
+@pytest.mark.parametrize("change", [None, "model", "title"])
+async def test_restore_reload_decision_uses_effective_configuration(
+    hass, monkeypatch, change
+):
+    from custom_components.extended_openai_conversation_responses import backup
+
+    subentry = SimpleNamespace(
+        subentry_id="agent", title="Assistant", data={"memory_mode": "manual"}
+    )
+    entry = SimpleNamespace(entry_id="entry")
+    config = backup.recoverable_configuration_snapshot(subentry.data)
+    if change == "model":
+        config["chat_model"] = "gpt-4o"
+    title = "Restored Assistant" if change == "title" else "Assistant"
+    prepared = SimpleNamespace(config=config, title=title)
+    monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
+    await restore_recovery._update_configuration(hass, entry, subentry, prepared)
+    assert ("entry" in hass.data.get(f"{DOMAIN}.restore_reload_pending", set())) == (
+        change is not None
+    )
