@@ -187,6 +187,15 @@ export function startOverviewDetailReads(panel, {loadToken, cacheGeneration} = {
       if (value.usage) next.usage = value.usage;
       if (value.setup_health) {
         next.setup_health = mergeSetupHealthFacts(next.setup_health, value.setup_health);
+        if (kind === "setup_health" && value.setup_health.function_tools) {
+          // Health responses contain counts and repair details, but no loading
+          // flag. Clear the transient state retained by the fact merge.
+          next.setup_health.function_tools = {
+            ...next.setup_health.function_tools,
+            loading: false,
+            unavailable: false,
+          };
+        }
       }
       if (value.agent) Object.assign(panel._selectedAgent?.() || {}, value.agent);
     } else {
