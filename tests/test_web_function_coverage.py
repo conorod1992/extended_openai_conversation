@@ -47,7 +47,7 @@ def test_render_value_exposes_parsed_value_json() -> None:
     value_template = MagicMock()
     value_template.async_render.return_value = "21"
 
-    result = web.ScrapeFunction._render_value(
+    result = web._render_value(
         value_template,
         '{"temperature":21}',
         {"location": "Carlow"},
