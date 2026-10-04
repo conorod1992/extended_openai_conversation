@@ -401,7 +401,7 @@ class UsageManager:
             if isinstance(self._storage, RecoveryGuardedStore)
             else None
         )
-        if gate is not None and gate.deleted:
+        if gate is not None and (gate.deleted or gate.recovery_required):
             return
         try:
             async with async_storage_lock(self._storage, self._shutdown_lock):

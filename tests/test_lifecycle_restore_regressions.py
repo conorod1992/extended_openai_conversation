@@ -269,3 +269,38 @@ async def test_last_entry_cleanup_continues_after_quiet_hours_restore_failure(
     assert hass.services.async_remove.call_count == 3
     assert intercom.DATA_KEY not in hass.data
     assert "quiet_hours_manager" not in hass.data[DOMAIN]
+
+
+async def test_usage_shutdown_keeps_maintenance_lease_across_both_flushes(
+    hass, monkeypatch
+):
+    store = RecoveryGuardedStore(hass, 1, "test").bind_agent("entry", "agent")
+    manager = UsageManager(store)
+    gate = store._recovery_gate
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    deleted = asyncio.Event()
+
+    async def aggregates():
+        entered.set()
+        await release.wait()
+
+    details = AsyncMock()
+    monkeypatch.setattr(manager, "_async_save_aggregates", aggregates)
+    monkeypatch.setattr(manager, "_async_save_details", details)
+    shutdown = asyncio.create_task(manager.async_shutdown())
+    await entered.wait()
+
+    async def delete():
+        async with gate.exclusive():
+            gate.deleted = True
+            deleted.set()
+
+    deletion = asyncio.create_task(delete())
+    await asyncio.sleep(0)
+    assert not deleted.is_set()
+    release.set()
+    await asyncio.wait_for(asyncio.gather(shutdown, deletion), 1)
+    details.assert_awaited_once()
+    await manager.async_shutdown()
+    details.assert_awaited_once()
