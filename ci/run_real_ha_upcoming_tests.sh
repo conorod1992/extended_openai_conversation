@@ -33,6 +33,7 @@ TEST_PATHS=(
   tests_real_ha/test_native_target_disappearance.py
   tests_real_ha/test_native_unavailable_target.py
   tests_real_ha/test_partial_platform_setup_retry.py
+  tests_real_ha/test_provider_boundary_contracts.py
   tests_real_ha/test_runtime_reauthentication.py
   tests_real_ha/test_security_routing_boundaries.py
   tests_real_ha/test_state_transition_contracts.py
