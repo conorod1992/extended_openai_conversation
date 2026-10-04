@@ -420,6 +420,7 @@ def _serialize_response_item(item: Any) -> dict[str, Any]:
 
 def _convert_content_to_responses_param(
     chat_content: Iterable[conversation.Content],
+    prepared_user_content: Mapping[int, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert Home Assistant chat content to Responses API input items."""
     items: list[dict[str, Any]] = []
@@ -450,12 +451,16 @@ def _convert_content_to_responses_param(
             getattr(content, "attachments", None)
         )
         text_content = getattr(content, "content", None)
-        if (text_content or has_attachments) and native_type != "message":
+        if (
+            text_content or has_attachments or content.role == "user"
+        ) and native_type != "message":
             items.append(
                 {
                     "type": "message",
                     "role": content.role,
-                    "content": text_content or "",
+                    "content": (prepared_user_content or {}).get(
+                        id(content), text_content or ""
+                    ),
                 }
             )
 
@@ -557,8 +562,25 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # double-counting live conversation runs.
                     await self._usage.async_record_conversation()
             options = request_options or self.subentry.data
+            initial_tools = (
+                function_tools_factory()
+                if function_tools_factory is not None
+                else function_tools
+            )
+            max_function_calls = options.get(
+                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+            )
+            if int(max_function_calls) == 0:
+                initial_tools = [
+                    tool
+                    for tool in initial_tools
+                    if tool.get("function", {}).get("type") == "function_group_loader"
+                ]
             provider_snapshot = build_provider_request_snapshot(
-                options, getattr(self.entry, "data", {})
+                options,
+                getattr(self.entry, "data", {}),
+                tools_required=bool(initial_tools) or conditional_continue,
             )
             api_kwargs = dict(provider_snapshot.api_kwargs)
             model = str(api_kwargs["model"])
@@ -591,26 +613,19 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             # Attachment bytes belong to this request's originating user turn.
             # Tool continuation rebuilds the chat messages; reuse the prepared
             # content by turn identity rather than rereading or moving attachments.
-            attachment_owner = chat_log.content[-1] if chat_log.content else None
             await self._async_add_attachments(chat_log, messages, api_mode)
-            prepared_user_content: dict[int, Any] = {}
-            if (
-                api_mode != API_MODE_RESPONSES
-                and isinstance(attachment_owner, conversation.UserContent)
-                and attachment_owner.attachments
-            ):
-                originating_message = next(
+            prepared_user_content = {
+                id(content): message["content"]
+                for content, message in zip(
                     (
-                        message
-                        for message in reversed(messages)
-                        if message.get("role") == "user"
+                        item
+                        for item in chat_log.content
+                        if isinstance(item, conversation.UserContent)
                     ),
-                    None,
+                    (item for item in messages if item.get("role") == "user"),
+                    strict=True,
                 )
-                if originating_message is not None:
-                    prepared_user_content[id(attachment_owner)] = originating_message[
-                        "content"
-                    ]
+            }
 
             web_search_tool = (
                 provider_snapshot.provider_tools[0]
@@ -1103,8 +1118,37 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         messages: list[Any],
         api_mode: str,
     ) -> None:
-        """Attach images and PDFs from the latest user content to the request."""
-        last_content = chat_log.content[-1]
+        """Reconstruct attachments for every retained user turn."""
+        user_messages = iter(
+            message
+            for message in messages
+            if isinstance(message, dict) and message.get("role") == "user"
+        )
+        for content in chat_log.content:
+            if isinstance(content, conversation.UserContent):
+                message = next(user_messages, None)
+                if getattr(content, "attachments", None):
+                    if message is None:
+                        message = {
+                            **(
+                                {"type": "message"}
+                                if api_mode == API_MODE_RESPONSES
+                                else {}
+                            ),
+                            "role": "user",
+                            "content": getattr(content, "content", "") or "",
+                        }
+                        messages.append(message)
+                    await ExtendedOpenAIBaseLLMEntity._async_prepare_user_attachments(
+                        self, content, message, api_mode
+                    )
+
+    async def _async_prepare_user_attachments(
+        self, user_content: Any, message: dict[str, Any], api_mode: str
+    ) -> None:
+        """Read one turn's files once for the current provider invocation."""
+        messages = [message]
+        last_content = user_content
         if not isinstance(last_content, conversation.UserContent) or not getattr(
             last_content, "attachments", None
         ):
@@ -1698,6 +1742,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     str(spec.get("name", tool_input.tool_name)),
                     arguments,
                     llm_context,
+                    function_tool=function_tool,
                 )
                 return make_tool_result_content(
                     agent_id=self.entity_id,

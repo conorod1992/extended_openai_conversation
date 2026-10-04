@@ -11,6 +11,24 @@ from homeassistant.core import State
 from tests.helpers import prepare_function_tool_from_yaml
 
 
+async def test_composite_backend_failure_stops_dependent_child(hass, monkeypatch) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from homeassistant.exceptions import HomeAssistantError
+    from custom_components.extended_openai_conversation_responses.function_execution import backend_failure
+    from custom_components.extended_openai_conversation_responses import functions
+
+    async def fail(*_args):
+        return backend_failure("first action failed")
+
+    first = SimpleNamespace(execute=fail)
+    second = SimpleNamespace(execute=AsyncMock(return_value="Success"))
+    monkeypatch.setattr(functions, "get_function", lambda kind: first if kind == "first" else second)
+    with pytest.raises(HomeAssistantError, match="first action failed"):
+        await CompositeFunction().execute(hass, {"sequence": [{"type": "first"}, {"type": "second"}]}, {}, None, [])
+    second.execute.assert_not_awaited()
+
+
 class TestCompositeFunctionYaml:
     """Test CompositeFunction using yaml definitions."""
 

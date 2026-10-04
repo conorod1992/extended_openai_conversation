@@ -135,6 +135,65 @@ def _results(chat_log: conversation.ChatLog) -> list[conversation.ToolResultCont
     ]
 
 
+async def test_corrected_retry_can_execute_with_one_execution_slot(hass) -> None:
+    tool = _tool("action", parameters={"type": "object", "properties": {"required": {"type": "string"}}, "required": ["required"]})
+    chat_log = _chat_log(hass)
+    entity = _entity(hass)
+    state = ToolRecoveryState(enabled=True)
+    budget = FunctionCallBudget(1)
+    invalid = _call("invalid", "action")
+    _retain_calls(chat_log, [invalid])
+    await async_execute_tool_exchange(entity, chat_log, [invalid], [tool], budget, None, [], recovery_state=state)
+    corrected = _call("corrected", "action", {"required": "valid"})
+    _retain_calls(chat_log, [corrected])
+    entity._execute_function_tool.return_value = _result(entity, corrected)
+    await async_execute_tool_exchange(entity, chat_log, [corrected], [tool], budget, None, [], recovery_state=state)
+    entity._execute_function_tool.assert_awaited_once()
+    assert budget.used == 1
+
+
+async def test_replay_rejection_retains_matching_error_result(hass) -> None:
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import _signature
+    entity = _entity(hass)
+    chat_log = _chat_log(hass)
+    call = _call("new-id", "action")
+    entity._unacknowledged_tool_calls = {chat_log.conversation_id: {_signature(call)}}
+    _retain_calls(chat_log, [call])
+    with pytest.raises(HomeAssistantError, match="not acknowledged"):
+        await async_execute_tool_exchange(entity, chat_log, [call], [_tool("action")], FunctionCallBudget(1), None, [])
+    assert _results(chat_log)[0].tool_call_id == call.id
+    entity._execute_function_tool.assert_not_awaited()
+
+
+async def test_duplicate_id_rejection_removes_only_new_occurrence(hass) -> None:
+    entity = _entity(hass)
+    chat_log = _chat_log(hass)
+    original = _call("same-id", "action")
+    _retain_calls(chat_log, [original])
+    chat_log.async_add_assistant_content_without_tools(_result(entity, original))
+    duplicate = _call("same-id", "action")
+    _retain_calls(chat_log, [duplicate])
+    with pytest.raises(HomeAssistantError, match="completed tool call id"):
+        await async_execute_tool_exchange(entity, chat_log, [duplicate], [_tool("action")], FunctionCallBudget(1), None, [])
+    retained = [call for content in chat_log.content if isinstance(content, conversation.AssistantContent) for call in content.tool_calls or []]
+    assert retained == [original]
+    assert len(_results(chat_log)) == 1
+
+
+def test_skipped_calls_do_not_enter_replay_ledger(hass) -> None:
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import remember_unacknowledged_calls, was_unacknowledged_equivalent
+    from custom_components.extended_openai_conversation_responses.tool_exchange import append_unresolved_tool_results
+    entity = _entity(hass)
+    chat_log = _chat_log(hass)
+    existing = {id(content) for content in chat_log.content}
+    failed, skipped = _call("failed", "first"), _call("skipped", "second")
+    _retain_calls(chat_log, [failed, skipped])
+    append_unresolved_tool_results(chat_log, entity.entity_id, [failed, skipped], failed_call_id=failed.id, error=HomeAssistantError("failed"))
+    remember_unacknowledged_calls(entity, chat_log, existing)
+    assert was_unacknowledged_equivalent(entity, chat_log, failed)
+    assert not was_unacknowledged_equivalent(entity, chat_log, skipped)
+
+
 @pytest.mark.parametrize(
     ("parameters", "arguments", "expected_text"),
     [
@@ -206,7 +265,7 @@ async def test_pre_dispatch_argument_failures_are_recoverable(
     )
 
     entity._execute_function_tool.assert_not_awaited()
-    assert budget.used == 1
+    assert budget.used == 0
     assert state.used == 1
     result = tool_result_data(_results(chat_log)[0])["result"]
     assert result["reason"] == "correctable_tool_error"
@@ -247,7 +306,7 @@ async def test_disabled_recovery_preserves_previous_execution_path(hass) -> None
     assert tool_result_data(_results(chat_log)[0]) == {"result": {"status": "legacy"}}
 
 
-async def test_normal_function_budget_applies_before_recovery(hass) -> None:
+async def test_normal_function_budget_applies_before_execution(hass) -> None:
     tool = _tool(
         "action",
         parameters={
@@ -257,7 +316,7 @@ async def test_normal_function_budget_applies_before_recovery(hass) -> None:
             "additionalProperties": False,
         },
     )
-    call = _call("call-1", "action")
+    call = _call("call-1", "action", {"required": "valid"})
     chat_log = _chat_log(hass)
     _retain_calls(chat_log, [call])
     entity = _entity(hass)

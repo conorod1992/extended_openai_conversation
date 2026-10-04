@@ -8,7 +8,7 @@ from typing import Any
 from homeassistant.components import conversation
 from homeassistant.helpers import llm
 
-from .ha_tool_result_compat import is_tool_result_content
+from .ha_tool_result_compat import is_tool_result_content, tool_result_data
 
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
 
@@ -41,6 +41,7 @@ def remember_unacknowledged_calls(
         for content in new_content
         if is_tool_result_content(content)
         and isinstance((call_id := getattr(content, "tool_call_id", None)), str)
+        and not _was_skipped(content)
     }
     signatures = {
         _signature(tool_input)
@@ -58,6 +59,12 @@ def remember_unacknowledged_calls(
     ledger.setdefault(conversation_id, set()).update(signatures)
     while len(ledger) > _MAX_AMBIGUOUS_CONVERSATIONS:
         ledger.pop(next(iter(ledger)))
+
+
+def _was_skipped(content: Any) -> bool:
+    data = tool_result_data(content)
+    result = data.get("result") if isinstance(data, dict) else None
+    return isinstance(result, dict) and result.get("status") == "skipped"
 
 
 def was_unacknowledged_equivalent(

@@ -6,6 +6,8 @@ import asyncio
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
+import hashlib
+import json
 import logging
 from types import SimpleNamespace
 from typing import Any, cast
@@ -44,6 +46,17 @@ _EXECUTING = "executing"
 _DELAYED_EXECUTION_MARKER = "_extended_openai_delayed_execution"
 
 
+def tool_definition_fingerprint(tool: dict[str, Any]) -> str:
+    """Hash the persisted schema and implementation, excluding presentation/state."""
+    source = deepcopy(tool)
+    payload = {key: source[key] for key in ("spec", "function") if key in source}
+    return hashlib.sha256(
+        json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
+    ).hexdigest()
+
+
 @dataclass(slots=True, frozen=True)
 class DelayedToolCall:
     """Persisted delayed Function Tool invocation."""
@@ -59,6 +72,7 @@ class DelayedToolCall:
     device_id: str | None = None
     status: str = _PENDING
     retry_count: int = 0
+    definition_fingerprint: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the call for Home Assistant storage."""
@@ -96,6 +110,13 @@ class DelayedToolCall:
                 )
         user_id = raw.get("user_id")
         device_id = raw.get("device_id")
+        fingerprint = raw.get("definition_fingerprint")
+        if fingerprint is not None and (
+            not isinstance(fingerprint, str)
+            or len(fingerprint) != 64
+            or any(char not in "0123456789abcdef" for char in fingerprint)
+        ):
+            raise ValueError("stored delayed call has invalid definition_fingerprint")
         if user_id is not None and not isinstance(user_id, str):
             raise ValueError("stored delayed call has invalid user_id")
         if device_id is not None and not isinstance(device_id, str):
@@ -112,6 +133,7 @@ class DelayedToolCall:
             device_id=device_id,
             status=status,
             retry_count=retry_count,
+            definition_fingerprint=fingerprint,
         )
 
 
@@ -214,6 +236,8 @@ class DelayedToolManager:
         tool_name: str,
         arguments: dict[str, Any],
         llm_context: llm.LLMContext | None,
+        *,
+        function_tool: dict[str, Any] | None = None,
     ) -> DelayedToolCall:
         """Persist a delayed call before exposing it as scheduled."""
         if not self._setup_complete:
@@ -231,6 +255,9 @@ class DelayedToolManager:
             created_at=now.isoformat(),
             user_id=getattr(context, "user_id", None),
             device_id=getattr(llm_context, "device_id", None),
+            definition_fingerprint=tool_definition_fingerprint(function_tool)
+            if function_tool is not None
+            else None,
         )
         try:
             async with self._lock:
@@ -400,6 +427,16 @@ class DelayedToolManager:
                     return not await self._async_discard(
                         call_id, "originating user is no longer active"
                     )
+
+            if (
+                record.definition_fingerprint is None
+                or tool_definition_fingerprint(current_tool)
+                != record.definition_fingerprint
+            ):
+                return not await self._async_discard(
+                    call_id,
+                    "Function Tool definition changed or the scheduled definition is unknown",
+                )
 
             agent = self._resolve_agent(record.entry_id, record.subentry_id)
             if agent is None:

@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
 
+from ..function_execution import propagate_function_execution_errors
 from .base import Function
 
 MAX_COMPOSITE_DEPTH = 32
@@ -98,9 +99,14 @@ class CompositeFunction(Function):
 
         for next_function_config in sequence:
             next_function = get_function(next_function_config["type"])
-            result = await next_function.execute(
-                hass, next_function_config, new_arguments, llm_context, exposed_entities
-            )
+            with propagate_function_execution_errors():
+                result = await next_function.execute(
+                    hass,
+                    next_function_config,
+                    new_arguments,
+                    llm_context,
+                    exposed_entities,
+                )
 
             response_variable = next_function_config.get("response_variable")
             if response_variable:

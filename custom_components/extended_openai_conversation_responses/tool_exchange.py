@@ -325,24 +325,6 @@ async def _async_execute_with_recovery(
         parallel_batch = resolve_parallel_safe_batch(pending_tool_calls, current_tools)
 
     if parallel_batch is not None:
-        remaining = function_call_budget.remaining
-        try:
-            function_call_budget.claim_many(
-                tool_input.tool_name for _, tool_input in parallel_batch
-            )
-        except BaseException as err:
-            failed_index = (
-                0 if remaining is None else min(remaining, len(parallel_batch) - 1)
-            )
-            append_unresolved_tool_results(
-                chat_log,
-                entity.entity_id,
-                pending_tool_calls,
-                failed_call_id=parallel_batch[failed_index][1].id,
-                error=err,
-            )
-            raise
-
         prepared: list[tuple[dict[str, Any], llm.ToolInput]] = []
         recovery_results: dict[str, conversation.ToolResultContent] = {}
         validating_call: llm.ToolInput | None = None
@@ -384,6 +366,9 @@ async def _async_execute_with_recovery(
         ] = {}
         if prepared:
             try:
+                function_call_budget.claim_many(
+                    tool_input.tool_name for _, tool_input in prepared
+                )
                 outcomes = await async_execute_parallel_safe_batch_outcomes(
                     prepared,
                     lambda function_tool, tool_input: _execute_bound(
@@ -443,7 +428,6 @@ async def _async_execute_with_recovery(
                 request_tools_by_name,
                 function_tools_factory,
             )
-            function_call_budget.claim(tool_input.tool_name)
             outcome = await _async_validate_recoverable_call(
                 entity, function_tool, tool_input, recovery_state
             )
@@ -453,6 +437,7 @@ async def _async_execute_with_recovery(
                 ):
                     continue
                 raise outcome.original
+            function_call_budget.claim(tool_input.tool_name)
             tool_result_content = await _execute_bound(
                 entity,
                 function_tool,
@@ -512,15 +497,41 @@ async def async_execute_tool_exchange(
         and isinstance((call_id := getattr(content, "tool_call_id", None)), str)
     }
     if any(call.id in prior_results for call in pending_tool_calls):
-        raise HomeAssistantError("Provider repeated a completed tool call id")
+        # Remove the newly retained duplicate occurrence; the original call/result
+        # pair must remain intact and must not gain a second result with that ID.
+        for content in reversed(chat_log.content):
+            if (
+                isinstance(content, conversation.AssistantContent)
+                and content.tool_calls
+                and any(
+                    call is retained
+                    for call in pending_tool_calls
+                    for retained in content.tool_calls
+                )
+            ):
+                content.tool_calls[:] = [
+                    call for call in content.tool_calls if call.id not in prior_results
+                ]
+                if not content.tool_calls and not content.content:
+                    chat_log.content.remove(content)
+                break
+        error = HomeAssistantError("Provider repeated a completed tool call id")
+        append_unresolved_tool_results(
+            chat_log, entity.entity_id, pending_tool_calls, error=error
+        )
+        raise error
     if any(
         was_unacknowledged_equivalent(entity, chat_log, call)
         for call in pending_tool_calls
     ):
-        raise HomeAssistantError(
+        error = HomeAssistantError(
             "Provider repeated a tool call whose prior result was not acknowledged. "
             "Start a new conversation, or complete a turn without this tool before retrying"
         )
+        append_unresolved_tool_results(
+            chat_log, entity.entity_id, pending_tool_calls, error=error
+        )
+        raise error
     if recovery_state is not None and recovery_state.enabled:
         await _async_execute_with_recovery(
             entity,
