@@ -113,7 +113,7 @@ async def test_removed_service_stops_later_request_rule_action(hass, monkeypatch
 
     result = await _say(hass, agent, "run rule")
 
-    assert _speech(result) == "The second action stopped safely."
+    assert _speech(result, successful=False) == "The second action stopped safely."
     assert first_actions == ["first"]
     assert later_actions == []
 
@@ -254,7 +254,10 @@ async def test_function_capture_preserves_ha_variables_and_survives_reload(
             phrase="missing battery field",
         )
     )
-    assert _speech(await _say(hass, agent, "missing battery field")) == "Failed safely"
+    assert (
+        _speech(await _say(hass, agent, "missing battery field"), successful=False)
+        == "Failed safely"
+    )
     assert calls == ["kitchen:62", "kitchen:62"]
     assert function_calls.await_count == 3
     assert _ACTIVE_FUNCTION_RESULTS.get() is None
@@ -286,7 +289,10 @@ async def test_wait_timeout_stops_actions_and_next_request_works(hass, monkeypat
     await agent._request_rules.async_create(
         _local([_record_action("healthy")], phrase="healthy rule")
     )
-    assert _speech(await _say(hass, agent, "timeout rule")) == "Failed safely"
+    assert (
+        _speech(await _say(hass, agent, "timeout rule"), successful=False)
+        == "Failed safely"
+    )
     assert calls == []
     assert _speech(await _say(hass, agent, "healthy rule")) == "Done"
     assert calls == ["healthy"]
@@ -341,7 +347,10 @@ async def test_failing_ha_action_stops_without_replaying_previous_steps(
     await agent._request_rules.async_create(
         _local([_record_action("healthy")], phrase="healthy rule")
     )
-    assert _speech(await _say(hass, agent, "failing rule")) == "Failed safely"
+    assert (
+        _speech(await _say(hass, agent, "failing rule"), successful=False)
+        == "Failed safely"
+    )
     assert calls == ["before"]
     assert debug.summaries()[0]["successful"] is False
     assert debug.summaries()[0]["error_type"] == "RequestRuleExecutionFailed"
@@ -408,7 +417,10 @@ async def test_nested_function_results_agree_in_native_action_and_speech(
             phrase="missing rule",
         )
     )
-    assert _speech(await _say(hass, agent, "missing rule")) == "Failed safely"
+    assert (
+        _speech(await _say(hass, agent, "missing rule"), successful=False)
+        == "Failed safely"
+    )
     assert calls == [expected]
 
 
@@ -460,7 +472,7 @@ async def test_native_stop_enabled_decision_does_not_mask_later_abort(
     successful = stop_kind == "enabled" or (
         stop_kind != "error" and abort_kind == "nonfatal-wait"
     )
-    assert _speech(await _say(hass, agent, "run rule")) == (
+    assert _speech(await _say(hass, agent, "run rule"), successful=successful) == (
         "Done" if successful else "Failed safely"
     )
     continued = (
@@ -526,9 +538,9 @@ async def test_instrumented_stops_preserve_native_nested_scope(
         _local([container, _record_action("outside")])
     )
     result = await _say(hass, agent, "run rule")
-    assert _speech(result) == (
-        "Failed safely" if ending in {"disabled-fatal-wait", "error"} else "Done"
-    )
+    assert _speech(
+        result, successful=ending not in {"disabled-fatal-wait", "error"}
+    ) == ("Failed safely" if ending in {"disabled-fatal-wait", "error"} else "Done")
     assert calls == (
         ["inside", "outside"] if ending == "disabled-condition" else ["inside"]
     )
