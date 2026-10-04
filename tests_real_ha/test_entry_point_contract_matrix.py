@@ -11,6 +11,9 @@ from custom_components.extended_openai_conversation_responses import (
     intercom_services,
     local_intents,
 )
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    normalize_agent_config,
+)
 from custom_components.extended_openai_conversation_responses.function_execution import (
     propagate_function_execution_errors,
 )
@@ -36,6 +39,22 @@ from tests_real_ha.test_user_permission_acceptance import (
     _DENIED_ENTITY,
     _restricted_user,
 )
+
+
+async def _contract_agent(hass, **options):
+    return await _agent(
+        hass,
+        **normalize_agent_config(
+            {
+                "chat_model": "gpt-5.6",
+                "api_mode": "chat_completions",
+                "reasoning_effort": "none",
+                "functions": [],
+                **options,
+            }
+        ),
+    )
+
 
 WRITERS = ("save", "update", "import_preview", "import_current", "import_new")
 INVALID_REQUESTS = (
@@ -92,7 +111,7 @@ async def _write(command, route, changes, revision):
 async def test_invalid_request_cannot_publish_through_any_setup_writer(
     hass, route, changes
 ):
-    agent = await _agent(hass)
+    agent = await _contract_agent(hass)
     command = await _management(hass, agent)
     before = await command("get")
     entry = agent.entry
@@ -101,8 +120,12 @@ async def test_invalid_request_cannot_publish_through_any_setup_writer(
         for key, item in entry.subentries.items()
     }
     client = entry.runtime_data
-    with pytest.raises(HomeAssistantError):
-        await _write(command, route, changes, before["revision"])
+    if route == "save":
+        rejected = await _write(command, route, changes, before["revision"])
+        assert rejected["valid"] is False
+    else:
+        with pytest.raises(HomeAssistantError):
+            await _write(command, route, changes, before["revision"])
     await hass.async_block_till_done()
     assert {
         key: (item.title, dict(item.data)) for key, item in entry.subentries.items()
@@ -119,7 +142,7 @@ async def test_invalid_request_cannot_publish_through_any_setup_writer(
 async def test_setup_writers_agree_on_live_and_reload_boundaries(
     hass, route, changes, reloads
 ):
-    agent = await _agent(hass)
+    agent = await _contract_agent(hass)
     command = await _management(hass, agent)
     before = await command("get")
     await _write(command, route, changes, before["revision"])
@@ -398,11 +421,7 @@ async def test_ai_task_final_flow_paths_share_invalid_request_contract(
             assert flow["step_id"] == "advanced"
             flow = await hass.config_entries.subentries.async_configure(
                 flow["flow_id"],
-                {
-                    "temperature": 0.3,
-                    "top_p": 0.8,
-                    "shorten_tool_call_id": True,
-                },
+                {},
             )
         assert flow["type"] is FlowResultType.FORM
         assert flow["errors"] == {"base": "invalid_request"}
@@ -418,7 +437,7 @@ async def test_ai_task_final_flow_paths_share_invalid_request_contract(
 async def test_settings_projection_cannot_be_used_as_general_configuration_writer(
     hass, settings
 ):
-    agent = await _agent(hass)
+    agent = await _contract_agent(hass)
     owner = await hass.auth.async_create_user(
         "Settings owner", group_ids=["system-admin"]
     )
