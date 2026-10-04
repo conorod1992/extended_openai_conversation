@@ -218,13 +218,15 @@ def _configuration_options() -> dict[str, list[dict[str, Any]]]:
 
 
 @lru_cache(maxsize=64)
-def _cached_model_capabilities(model: str) -> dict[str, Any]:
-    """Model metadata depends only on the selected model, not the agent revision."""
+def _cached_model_capabilities(model: str, generation: int = 0) -> dict[str, Any]:
+    """Cache exact model capabilities within one active catalogue generation."""
     return model_capabilities(model)
 
 
 def _configuration_model_capabilities(model: str) -> dict[str, Any]:
-    return deepcopy(_cached_model_capabilities(model))
+    from .model_catalog import catalog_generation
+
+    return deepcopy(_cached_model_capabilities(model, catalog_generation()))
 
 
 def _elapsed_ms(start: float) -> float:
@@ -282,6 +284,8 @@ def _validated_model_request(
     """Use the live resolver only at a configuration mutation boundary."""
     relevant = {
         "chat_model",
+        "max_function_calls_per_conversation",
+        "continue_conversation",
         "api_mode",
         "reasoning_effort",
         "max_tokens",
@@ -299,10 +303,10 @@ def _validated_model_request(
             config.get(key) == current.get(key, defaults.get(key)) for key in relevant
         ):
             return config
-    from .request import build_provider_request_snapshot
+    from .request_rules import validate_routed_request_options
 
     try:
-        build_provider_request_snapshot(config, entry_data)
+        validate_routed_request_options(config, entry_data)
     except HomeAssistantError as err:
         raise AgentConfigError("api_mode", str(err)) from err
     return config
@@ -1446,7 +1450,16 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         refresh_local_handling = _local_handling_config_changed(
             subentry.data, normalized, updates
         )
-        update_live_subentry(hass, entry, subentry, data=normalized, title=saved_title)
+        if configuration_supports_live_update(
+            subentry.data, normalized, title_changed=saved_title != subentry.title
+        ):
+            update_live_subentry(
+                hass, entry, subentry, data=normalized, title=saved_title
+            )
+        else:
+            hass.config_entries.async_update_subentry(
+                entry, subentry, data=normalized, title=saved_title
+            )
         snapshot = agent_config_snapshot(normalized)
         result = {
             "title": saved_title,
@@ -1503,6 +1516,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         }
     if action == "import_preview":
         parsed = _parse_import_document(message.get("document"))
+        _validated_model_request(parsed["config"], entry.data)
         return {
             "valid": True,
             "title": parsed["title"],
@@ -1521,6 +1535,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     if action == "import":
         _require_admin(is_admin)
         parsed = _parse_import_document(message.get("document"))
+        _validated_model_request(parsed["config"], entry.data)
         mode = message.get("mode", "current")
         if mode == "current":
             if message.get("confirm") is not True:
@@ -2538,10 +2553,26 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
         if not isinstance(updates, dict):
             raise HomeAssistantError("settings must be an object")
         normalized = _validate_settings(updates)
-        update_live_subentry(
-            hass, entry, subentry, data={**subentry.data, **normalized}
+        if not isinstance(message.get("revision"), str):
+            raise HomeAssistantError(
+                "Configuration revision is required; reload the latest saved settings"
+            )
+        _require_agent_config_revision(subentry, message["revision"])
+        candidate = merge_agent_config(subentry.data, normalized)
+        _validated_model_request(candidate, entry.data, subentry.data)
+        live = configuration_supports_live_update(
+            subentry.data, candidate, title_changed=False
         )
-        return {"settings": settings_snapshot({**subentry.data, **normalized})}
+        if live:
+            update_live_subentry(hass, entry, subentry, data=candidate)
+        else:
+            hass.config_entries.async_update_subentry(entry, subentry, data=candidate)
+        return {
+            "settings": settings_snapshot(candidate),
+            "revision": saved_agent_config_revision(
+                subentry, candidate, subentry.title
+            ),
+        }
 
     return _unknown_management_action(request)
 
@@ -2740,7 +2771,10 @@ async def _async_management_request(
 
 
 def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
-    """Compatibility wrapper using the shared agent configuration contract."""
+    """Accept only fields in the public Settings projection."""
+    unknown = settings.keys() - settings_snapshot({}).keys()
+    if unknown:
+        raise HomeAssistantError("Unknown settings: " + ", ".join(sorted(unknown)))
     try:
         normalized = merge_agent_config({}, settings)
     except AgentConfigError as err:

@@ -56,3 +56,11 @@ order, invalid requests, previews and structural ownership. The genuine-HA Histo
 suite verifies identity across actual setup/reload and persisted Temporary Memory
 scope counts through the WebSocket API. Behavioral tests exercise these owners
 rather than reconstructing obsolete wrapper stacks.
+
+## Configuration mutation compatibility
+
+`configuration/update` uses the same reviewed live-update decision as Configuration Save. Title, model and other setup-owned changes trigger the parent reload.
+
+The legacy `settings/update` writer accepts only fields in `settings_snapshot`. It requires the current Configuration revision, validates the merged provider request, and uses the same live-update decision. Its response includes the new revision. Callers should obtain the current revision from `configuration/get` before writing.
+
+Lightweight setup import validates provider compatibility in both preview and persistence. AI Task native flows validate the final candidate before saving. Provider changes validate all existing Conversation and AI Task configurations and static Request Rule overrides before changing the parent entry.

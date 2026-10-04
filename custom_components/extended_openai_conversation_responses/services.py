@@ -500,6 +500,48 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 f"Provider configuration validation failed: {provider_user_message(err)}"
             ) from err
 
+        from .request import build_provider_request_snapshot
+        from .request_rules import (
+            async_get_request_rules,
+            validate_routed_request_options,
+            validate_rule_model_request,
+        )
+
+        children = dict(getattr(entry, "subentries", {}))
+        child_data = {key: dict(child.data) for key, child in children.items()}
+        rule_revisions = []
+        for child_id, child in children.items():
+            if child.subentry_type not in {"conversation", "ai_task_data"}:
+                continue
+            options = child_data[child_id]
+            try:
+                if child.subentry_type == "ai_task_data":
+                    build_provider_request_snapshot(
+                        options, new_data, tools_required=False
+                    )
+                else:
+                    validate_routed_request_options(options, new_data)
+                    rules = await async_get_request_rules(hass, entry_id, child_id)
+                    rule_revisions.append((rules, rules.revision()))
+                    for rule in rules.snapshot()["rules"]:
+                        if rule.get("enabled", True):
+                            validate_rule_model_request(rule, options, new_data)
+            except HomeAssistantError as err:
+                raise HomeAssistantError(
+                    f"Provider change is incompatible with agent {child.title}: {err}"
+                ) from err
+        if dict(getattr(entry, "subentries", {})) != children or any(
+            dict(child.data) != child_data[key] for key, child in children.items()
+        ):
+            raise HomeAssistantError(
+                "Agent configuration changed during provider validation; retry with the latest settings"
+            )
+
+        if any(rules.revision() != revision for rules, revision in rule_revisions):
+            raise HomeAssistantError(
+                "Request Rules changed during provider validation; retry with the latest settings"
+            )
+
         if dict(entry.data) != original_data:
             raise HomeAssistantError(
                 "Provider settings changed while this configuration was being "

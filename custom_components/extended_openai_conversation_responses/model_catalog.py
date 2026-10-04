@@ -472,6 +472,7 @@ _bundled_effective = {
     "models": list(BUNDLED_CATALOG.resolved.values()),
 }
 _active = _bundled_effective
+_catalog_generation = 0
 _active_by_id = BUNDLED_CATALOG.resolved
 
 
@@ -759,9 +760,15 @@ def validate_catalog_transition(
 
 
 def activate_catalog(catalog: dict[str, Any] | None) -> None:
-    global _active, _active_by_id
+    global _active, _active_by_id, _catalog_generation
     _active = _effective_catalog(catalog)
+    _catalog_generation += 1
     _active_by_id = {item["id"]: item for item in _active["models"]}
+
+
+def catalog_generation() -> int:
+    """Return the runtime generation of active capability metadata."""
+    return _catalog_generation
 
 
 def all_reasoning_efforts() -> list[str]:

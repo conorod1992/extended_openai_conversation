@@ -70,7 +70,7 @@ async def test_request_waits_for_readiness_and_failed_initialization_is_handled(
     assert len(wire.requests) == 1
 
 
-async def test_immediate_save_process_repeated_api_switches_keep_ready_agent(
+async def test_api_switch_reloads_then_processes_with_ready_agent(
     hass, monkeypatch
 ):
     agent = await _agent(hass)
@@ -82,8 +82,8 @@ async def test_immediate_save_process_repeated_api_switches_keep_ready_agent(
         else _chat_sse_text("Ready response")
         for mode in modes
     ]
-    wire = _install_wire(monkeypatch, agent, replies)
-    for mode in modes:
+    requests = []
+    for mode, reply in zip(modes, replies, strict=True):
         snapshot = await async_management_command(
             hass,
             owner.id,
@@ -108,9 +108,14 @@ async def test_immediate_save_process_repeated_api_switches_keep_ready_agent(
                 "config": {CONF_API_MODE: mode},
             },
         )
+        await hass.async_block_till_done()
+        previous_agent = agent
+        agent = conversation.async_get_agent(hass, agent.entry.entry_id)
+        assert agent is not previous_agent
+        wire = _install_wire(monkeypatch, agent, [reply])
         result = await conversation.async_converse(
             hass=hass,
-            text="Immediately after Save",
+            text="After configuration reload",
             conversation_id=None,
             context=Context(user_id=owner.id),
             language="en",
@@ -122,7 +127,8 @@ async def test_immediate_save_process_repeated_api_switches_keep_ready_agent(
         )
         await hass.async_block_till_done()
         assert conversation.async_get_agent(hass, agent.entry.entry_id) is agent
-    assert [request["path"] for request in wire.requests] == [
+        requests.extend(wire.requests)
+    assert [request["path"] for request in requests] == [
         "/v1/responses" if mode == API_MODE_RESPONSES else "/v1/chat/completions"
         for mode in modes
     ]

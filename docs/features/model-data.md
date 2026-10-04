@@ -8,7 +8,7 @@ In **Assistant → Model & responses → Model parameters**, administrators can 
 
 An hourly background timer checks whether 24 hours have elapsed since the last attempt. The first automatic check runs within an hour of integration setup; startup never waits for a network request. Attempt time is persisted, including after failures, to avoid repeated checks across restarts. Manual updates bypass the interval. Reset removes the downloaded override and ETag and postpones the next automatic check for 24 hours; it does not permanently disable updates.
 
-If downloaded model data has introduced a reasoning choice that is currently saved in an agent configuration or Request Rule but is unavailable in the bundled catalogue, reset is blocked and the downloaded data remains active. Change the affected saved setting/rule first, or install a newer integration whose bundled catalogue supports it. This prevents an administrative reset from making durable configuration invalid.
+If returning to bundled model data would invalidate a saved agent request or Request Rule, including API, tools, Web Search, output limits or reasoning choices, reset is blocked and the downloaded data remains active. Change the affected saved setting/rule first, or install a newer integration whose bundled catalogue supports it. This prevents an administrative reset from making durable configuration invalid.
 
 The fixed HTTPS source is this repository's `develop` branch:
 

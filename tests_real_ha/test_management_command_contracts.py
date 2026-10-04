@@ -290,6 +290,7 @@ async def test_mixed_validity_function_tools_update_is_atomic_and_recovers(
         config={CONF_FUNCTION_TOOLS: [tool_a, tool_c]},
     )
     assert corrected["success"] is True
+    await hass.async_block_till_done()
     assert corrected["result"]["revision"] != before_revision
     assert corrected["result"]["config"][CONF_FUNCTION_TOOLS] == [tool_a, tool_c]
 
@@ -340,6 +341,11 @@ async def test_settings_update_returns_snapshot_and_mutates_canonical_subentry(
     client = await _client(hass, hass_ws_client, user_id=ADMIN_ID, owner=True)
     subentry = _subentry(entry)
 
+    snapshot = await _raw_call(
+        client, entry_id=entry.entry_id, subentry_id=subentry.subentry_id,
+        section="configuration", action="get",
+    )
+    assert snapshot["success"] is True
     response = await _raw_call(
         client,
         entry_id=entry.entry_id,
@@ -347,6 +353,7 @@ async def test_settings_update_returns_snapshot_and_mutates_canonical_subentry(
         section="settings",
         action="update",
         settings={CONF_ARCHIVE_RETENTION_DAYS: 90},
+        revision=snapshot["result"]["revision"],
     )
 
     assert response["success"] is True
@@ -357,6 +364,7 @@ async def test_settings_update_returns_snapshot_and_mutates_canonical_subentry(
         current.subentries[subentry.subentry_id].data[CONF_ARCHIVE_RETENTION_DAYS] == 90
     )
 
+    await hass.async_block_till_done()
 
 @pytest.mark.asyncio
 async def test_dependency_runtime_error_is_translated_to_websocket_error(
