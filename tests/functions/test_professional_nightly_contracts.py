@@ -268,14 +268,49 @@ def test_failure_sequence_reducer_keeps_same_failure_signature():
         {"op": "cancel"},
         {"op": "noise-b"},
         {"op": "retry"},
+        {"op": "noise-c"},
     ]
 
+    expected_signature = "committed-write-cancel-retry"
+
+    def observed_failure(candidate):
+        initialized = committed = cancelled = False
+        for item in candidate:
+            operation = item["op"]
+            if operation == "setup":
+                initialized = True
+            elif operation == "write" and initialized:
+                committed = True
+            elif operation == "cancel" and committed:
+                cancelled = True
+            elif operation == "retry" and committed and cancelled:
+                return expected_signature
+        return None
+
     def reproduces(candidate):
-        names = [item["op"] for item in candidate]
-        return all(name in names for name in ("write", "cancel", "retry"))
+        return observed_failure(candidate) == expected_signature
 
     minimized = _minimize_sequence(sequence, reproduces)
-    assert [item["op"] for item in minimized] == ["write", "cancel", "retry"]
+    assert [item["op"] for item in minimized] == ["setup", "write", "cancel", "retry"]
+    assert observed_failure(sequence) == expected_signature
+    assert observed_failure(minimized) == expected_signature
+    assert (
+        observed_failure(
+            [
+                {"op": "setup"},
+                {"op": "write"},
+                {"op": "retry"},
+                {"op": "cancel"},
+            ]
+        )
+        is None
+    )
+    assert (
+        observed_failure([item for item in minimized if item["op"] != "write"]) is None
+    )
+    assert (
+        observed_failure([item for item in minimized if item["op"] != "setup"]) is None
+    )
 
 
 def test_saved_reproduction_envelope_is_seed_independent_and_serializable():

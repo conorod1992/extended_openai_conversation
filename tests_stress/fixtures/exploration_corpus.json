@@ -1,10 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "cases": [
     {
       "id": "continuity-owner-overlap",
       "source": "regression-family",
       "failure_signature": "conversation-owner-isolation",
+      "expected_outcome": "protected",
       "environment": {"layer": "real_ha", "api_modes": ["chat_completions", "responses"]},
       "operations": [
         {"op": "start_conversation", "owner": "alpha", "device": "shared-device"},
@@ -18,6 +19,7 @@
       "id": "storage-lost-ack-retry",
       "source": "regression-family",
       "failure_signature": "committed-generation-survives-lost-acknowledgement",
+      "expected_outcome": "protected",
       "environment": {"layer": "persistence"},
       "operations": [
         {"op": "populate_store", "generation": "A"},
@@ -31,6 +33,7 @@
       "id": "tool-action-invalid-final-output",
       "source": "regression-family",
       "failure_signature": "completed-action-not-replayed",
+      "expected_outcome": "protected",
       "environment": {"layer": "ai_task", "api_modes": ["chat_completions", "responses"]},
       "operations": [
         {"op": "request_tool"},
@@ -45,6 +48,7 @@
       "id": "native-file-replacement-conflict",
       "source": "regression-family",
       "failure_signature": "external-edit-preserved",
+      "expected_outcome": "protected",
       "environment": {"layer": "functions"},
       "operations": [
         {"op": "read_fingerprint"},
