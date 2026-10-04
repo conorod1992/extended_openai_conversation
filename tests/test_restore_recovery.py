@@ -375,6 +375,7 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(
         continuity,
         function_groups,
         request_rules,
+        sensor as sensor_module,
         usage,
     )
 
@@ -413,6 +414,8 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(
         object(),
     )
     monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_args: agent)
+    rebind_sensors = MagicMock(return_value=4)
+    monkeypatch.setattr(sensor_module, "rebind_usage_sensors", rebind_sensors)
 
     restore_recovery.reset_restored_runtime(hass, *key, managers)
 
@@ -428,6 +431,9 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(
     assert group_runtime._last_request == {}
     assert key not in hass.data[usage._VOLATILE_USAGE_MANAGERS]
     assert agent._usage is durable_usage
+    rebind_sensors.assert_called_once_with(
+        hass, "agent-new", fallback_usage, durable_usage
+    )
 
 
 class _VerifierStore:
