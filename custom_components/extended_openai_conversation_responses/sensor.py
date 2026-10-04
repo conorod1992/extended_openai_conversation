@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 
+from homeassistant.components import sensor as sensor_component
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import EntityCategory
@@ -119,6 +121,8 @@ class UsageSensor(SensorEntity):
     def __init__(self, subentry: ConfigSubentry, usage: UsageManager) -> None:
         """Initialize the diagnostic sensor."""
         self._usage = usage
+        self._subentry_id = subentry.subentry_id
+        self._usage_listener_remove: Callable[[], None] | None = None
         self._attr_unique_id = f"{subentry.subentry_id}_usage"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, subentry.subentry_id)},
@@ -138,10 +142,34 @@ class UsageSensor(SensorEntity):
         """Expose the distinct conversation, request, and token counters."""
         return self._usage.as_dict()
 
+    def _remove_usage_listener(self) -> None:
+        """Remove the current manager listener without changing entity lifetime."""
+        remove = self._usage_listener_remove
+        self._usage_listener_remove = None
+        if remove is not None:
+            remove()
+
+    def rebind_usage(self, usage: UsageManager) -> bool:
+        """Move this live sensor to a replacement authoritative Usage manager."""
+        if usage is self._usage:
+            return False
+        subscribed = self._usage_listener_remove is not None
+        self._remove_usage_listener()
+        self._usage = usage
+        if subscribed:
+            self._usage_listener_remove = usage.async_add_listener(
+                self.async_write_ha_state
+            )
+            self.async_write_ha_state()
+        return True
+
     async def async_added_to_hass(self) -> None:
         """Subscribe to persisted usage updates."""
         await super().async_added_to_hass()
-        self.async_on_remove(self._usage.async_add_listener(self.async_write_ha_state))
+        self._usage_listener_remove = self._usage.async_add_listener(
+            self.async_write_ha_state
+        )
+        self.async_on_remove(self._remove_usage_listener)
 
 
 class _PeriodUsageSensor(UsageSensor):
@@ -251,3 +279,23 @@ class LastResponseUsageSensor(UsageSensor):
             "success": run.successful,
             "error_type": run.error_type,
         }
+
+
+def rebind_usage_sensors(
+    hass: HomeAssistant,
+    subentry_id: str,
+    old_usage: UsageManager,
+    new_usage: UsageManager,
+) -> int:
+    """Rebind loaded Usage sensors after volatile-to-durable recovery."""
+    component = hass.data.get(sensor_component.DATA_COMPONENT)
+    rebound = 0
+    for entity in getattr(component, "entities", ()):
+        if (
+            isinstance(entity, UsageSensor)
+            and entity._subentry_id == subentry_id
+            and entity._usage is old_usage
+            and entity.rebind_usage(new_usage)
+        ):
+            rebound += 1
+    return rebound
