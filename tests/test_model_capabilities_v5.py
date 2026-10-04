@@ -14,6 +14,7 @@ from custom_components.extended_openai_conversation_responses.model_capabilities
 )
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
+    conversation_tools_required,
 )
 from homeassistant.exceptions import HomeAssistantError
 
@@ -53,6 +54,48 @@ def test_mini_web_search_condition_and_auto():
         )
     with pytest.raises(ModelCapabilityError, match="Web Search"):
         validate_api_path("gpt-5-mini", "responses", effort="minimal", web_search=True)
+
+
+def test_conversation_tool_requirement_tracks_budget_finalizer_and_loader():
+    assert not conversation_tools_required(
+        {
+            "max_function_calls_per_conversation": 0,
+            "function_groups": [],
+            "continue_conversation": "off",
+        }
+    )
+    assert conversation_tools_required(
+        {
+            "max_function_calls_per_conversation": 1,
+            "function_groups": [],
+            "continue_conversation": "off",
+        }
+    )
+    assert conversation_tools_required(
+        {
+            "max_function_calls_per_conversation": 0,
+            "function_groups": [],
+            "continue_conversation": "conditional",
+        }
+    )
+    assert conversation_tools_required(
+        {
+            "max_function_calls_per_conversation": 0,
+            "function_groups": [
+                {"enabled": True, "loading_mode": "on_demand"}
+            ],
+            "continue_conversation": "off",
+        }
+    )
+    assert not conversation_tools_required(
+        {
+            "max_function_calls_per_conversation": 0,
+            "function_groups": [
+                {"enabled": False, "loading_mode": "on_demand"}
+            ],
+            "continue_conversation": "off",
+        }
+    )
 
 
 def test_request_snapshot_rejects_invalid_choices_before_provider_call():
