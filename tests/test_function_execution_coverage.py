@@ -678,7 +678,7 @@ def test_type_validation_rejects_bad_declarations_and_preserves_union_errors() -
         ),
         pytest.raises(HomeAssistantError, match="schema is invalid"),
     ):
-        _validate_type("value", "text", ["string"])
+        _validate_type("value", "123", ["integer", "null"])
 
     with pytest.raises(HomeAssistantError, match="schema is invalid"):
         _validate_expected_type("value", "text", "invalid")

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -149,6 +150,9 @@ class SkillManager:
         self._user_skills_dir: Path | None = None
         self._filesystem_lock = asyncio.Lock()
         self._initialized = False
+        self._rendered_directories: ContextVar[set[Path] | None] = ContextVar(
+            "skill_rendered_directories", default=None
+        )
 
     @classmethod
     def get_loaded_instance(cls) -> SkillManager | None:
@@ -446,6 +450,26 @@ class SkillManager:
     def get_skill(self, name: str) -> Skill | None:
         """Get one Skill from the current atomic catalogue snapshot."""
         return self._skills.get(name)
+
+    @contextmanager
+    def capture_rendered_directories(self) -> Iterator[set[Path]]:
+        """Capture actual helper lookups in one rendering, isolated per task."""
+        directories: set[Path] = set()
+        token = self._rendered_directories.set(directories)
+        try:
+            yield directories
+        finally:
+            self._rendered_directories.reset(token)
+
+    def get_skill_directory(self, name: str) -> Path:
+        """Resolve the helper's actual name, recording only its loaded directory."""
+        skill = self.get_skill(name)
+        if skill is None:
+            raise ValueError(f"Skill not found: {name}")
+        directory = skill.path.parent
+        if (captured := self._rendered_directories.get()) is not None:
+            captured.add(directory)
+        return directory
 
     def get_all_skills(self) -> list[Skill]:
         """Get all Skills from the current atomic catalogue snapshot."""

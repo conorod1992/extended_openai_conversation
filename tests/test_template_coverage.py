@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import template as template_module
+from custom_components.extended_openai_conversation_responses import (
+    template as template_module,
+)
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 
 
@@ -138,7 +140,7 @@ def test_working_directory_preserves_absolute_default(monkeypatch) -> None:
     ("skill_manager", "message"),
     [
         (None, "SkillManager not initialized"),
-        (SimpleNamespace(get_skill=lambda _name: None), "Skill not found: missing"),
+        (template_module.SkillManager(_hass()), "Skill not found: missing"),
     ],
 )
 def test_skill_directory_reports_unavailable_skill_state(

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.functions import file as file_fn
+from custom_components.extended_openai_conversation_responses.functions import (
+    file as file_fn,
+)
 
 
 def test_read_text_bounded_detects_growth_after_stat(tmp_path, monkeypatch) -> None:
@@ -100,66 +101,15 @@ def test_atomic_replace_if_unchanged_rejects_deleted_or_changed_path(tmp_path) -
         file_fn._atomic_replace_text_if_unchanged(path, "new", expected)
 
 
-class _Template:
-    def __init__(self, source: str, rendered: str) -> None:
-        self.template = source
-        self._rendered = rendered
-
-    def async_render(self, _arguments, parse_result=False):
-        return self._rendered
-
-
-class _SkillManager:
-    def __init__(self, skill=None) -> None:
-        self._skill = skill
-
-    @asynccontextmanager
-    async def async_skill_read(self):
-        yield
-
-    def get_skill(self, _name):
-        return self._skill
-
-
-async def test_skill_read_reports_missing_manager_and_skill(hass, monkeypatch) -> None:
-    function = file_fn.ReadFileFunction()
-    config = {"path": _Template("{{ extended_openai.skill_dir }}", "unused")}
-
-    monkeypatch.setattr(file_fn.SkillManager, "get_loaded_instance", lambda: None)
-    assert await function.execute(hass, config, {"name": "demo"}, None, None) == {
-        "error": "Skill not found: demo"
-    }
-
-    monkeypatch.setattr(
-        file_fn.SkillManager,
-        "get_loaded_instance",
-        lambda: _SkillManager(None),
+async def test_skill_read_reports_missing_manager(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses.template import (
+        ExtendedOpenAITemplateManager,
     )
-    assert await function.execute(hass, config, {"name": "demo"}, None, None) == {
-        "error": "Skill not found: demo"
-    }
+    from homeassistant.helpers.template import Template
 
-
-async def test_skill_read_uses_skill_parent_as_only_allowed_directory(
-    hass, tmp_path, monkeypatch
-) -> None:
-    skill_path = tmp_path / "skills" / "demo.md"
-    skill_path.parent.mkdir()
-    skill_path.write_text("skill body", encoding="utf-8")
-    skill = SimpleNamespace(path=skill_path)
     function = file_fn.ReadFileFunction()
-    config = {
-        "path": _Template(
-            "{{ extended_openai.skill_dir }}/demo.md",
-            str(skill_path),
-        )
-    }
-    monkeypatch.setattr(
-        file_fn.SkillManager,
-        "get_loaded_instance",
-        lambda: _SkillManager(skill),
-    )
-
-    result = await function.execute(hass, config, {"name": "demo"}, None, None)
-
-    assert result == {"content": "skill body", "size": len("skill body")}
+    monkeypatch.setattr(file_fn.SkillManager, "_instance", None)
+    monkeypatch.setitem(hass.data["template.environment"].globals, "extended_openai", ExtendedOpenAITemplateManager(hass)._extended_openai)
+    config = {"path": Template("{{ extended_openai.skill_dir('demo') }}/SKILL.md", hass)}
+    result = await function.execute(hass, config, {}, None, None)
+    assert "SkillManager not initialized" in result["error"]

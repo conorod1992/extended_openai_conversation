@@ -129,10 +129,7 @@ class ExtendedOpenAITemplateManager:
         manager = SkillManager._instance
         if manager is None:
             raise ValueError("SkillManager not initialized")
-        skill = manager.get_skill(name)
-        if skill is None:
-            raise ValueError(f"Skill not found: {name}")
-        return str(skill.path.parent)
+        return str(manager.get_skill_directory(name))
 
     async def async_setup(self) -> None:
         """Set up the template functions."""

@@ -24,6 +24,8 @@ TEST_PATHS=(
   tests/test_exposed_attributes.py
   tests/test_exposed_entities.py
   tests/test_exposed_entity_attributes.py
+  tests/test_function_union_fidelity.py
+  tests/test_skill_file_template_fidelity.py
   tests/test_frontend_asset_registration.py
   tests/test_ha_actions.py
   tests/test_ha_actions_coverage.py
