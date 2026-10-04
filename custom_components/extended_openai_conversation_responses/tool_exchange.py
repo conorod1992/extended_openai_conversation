@@ -365,10 +365,23 @@ async def _async_execute_with_recovery(
             str, conversation.ToolResultContent | BaseException
         ] = {}
         if prepared:
+            remaining = function_call_budget.remaining
             try:
                 function_call_budget.claim_many(
                     tool_input.tool_name for _, tool_input in prepared
                 )
+            except BaseException as err:
+                append_unresolved_tool_results(
+                    chat_log,
+                    entity.entity_id,
+                    pending_tool_calls,
+                    failed_call_id=prepared[
+                        0 if remaining is None else min(remaining, len(prepared) - 1)
+                    ][1].id,
+                    error=err,
+                )
+                raise
+            try:
                 outcomes = await async_execute_parallel_safe_batch_outcomes(
                     prepared,
                     lambda function_tool, tool_input: _execute_bound(
@@ -512,7 +525,7 @@ async def async_execute_tool_exchange(
                 content.tool_calls[:] = [
                     call for call in content.tool_calls if call.id not in prior_results
                 ]
-                if not content.tool_calls and not content.content:
+                if not content.tool_calls and not getattr(content, "content", None):
                     chat_log.content.remove(content)
                 break
         error = HomeAssistantError("Provider repeated a completed tool call id")

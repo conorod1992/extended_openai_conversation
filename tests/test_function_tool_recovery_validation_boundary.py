@@ -72,9 +72,7 @@ def _chat_log(hass: Any, call: llm.ToolInput) -> conversation.ChatLog:
     return _chat_log_for_calls(hass, [call])
 
 
-def _chat_log_for_calls(
-    hass: Any, calls: list[llm.ToolInput]
-) -> conversation.ChatLog:
+def _chat_log_for_calls(hass: Any, calls: list[llm.ToolInput]) -> conversation.ChatLog:
     chat_log = conversation.ChatLog(hass, "validation-boundary")
     chat_log.content[0] = conversation.SystemContent(content="Be helpful")
     chat_log.async_add_assistant_content_without_tools(
@@ -110,7 +108,9 @@ async def test_regex_validation_infrastructure_failure_is_not_recoverable(
     async def unavailable(_hass: Any, _checks: Any) -> list[bool]:
         raise HomeAssistantError("regex worker unavailable")
 
-    monkeypatch.setattr(regex_execution, "async_search_configured_patterns", unavailable)
+    monkeypatch.setattr(
+        regex_execution, "async_search_configured_patterns", unavailable
+    )
 
     tool = _tool()
     call = _call("on")
@@ -138,7 +138,9 @@ async def test_regex_validation_infrastructure_failure_is_not_recoverable(
     results = _results(chat_log)
     assert len(results) == 1
     assert tool_result_data(results[0])["result"]["status"] == "error"
-    assert tool_result_data(results[0])["result"].get("reason") != "correctable_tool_error"
+    assert (
+        tool_result_data(results[0])["result"].get("reason") != "correctable_tool_error"
+    )
 
 
 @pytest.mark.parametrize("failure_index", [0, 1, 2])
@@ -188,7 +190,7 @@ async def test_parallel_validation_infrastructure_failure_closes_all_calls(
 
     entity._execute_function_tool.assert_not_awaited()
     assert state.used == 0
-    assert budget.used == 3
+    assert budget.used == 0
     results = _results(chat_log)
     assert [result.tool_call_id for result in results] == [
         "call-1",
@@ -209,7 +211,9 @@ async def test_disabled_validation_preserves_original_infrastructure_error(
     async def unavailable(_hass: Any, _checks: Any) -> list[bool]:
         raise HomeAssistantError("regex worker unavailable")
 
-    monkeypatch.setattr(regex_execution, "async_search_configured_patterns", unavailable)
+    monkeypatch.setattr(
+        regex_execution, "async_search_configured_patterns", unavailable
+    )
 
     with pytest.raises(HomeAssistantError, match="regex worker unavailable") as caught:
         await async_validate_function_arguments(
@@ -221,7 +225,9 @@ async def test_disabled_validation_preserves_original_infrastructure_error(
     assert type(caught.value) is HomeAssistantError
 
 
-async def test_non_mapping_arguments_fail_before_regex_worker(hass, monkeypatch) -> None:
+async def test_non_mapping_arguments_fail_before_regex_worker(
+    hass, monkeypatch
+) -> None:
     """Invalid top-level argument shape is rejected before regex infrastructure runs."""
     regex_worker = AsyncMock(side_effect=AssertionError("regex worker must not run"))
     monkeypatch.setattr(

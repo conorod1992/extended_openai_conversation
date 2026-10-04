@@ -181,7 +181,7 @@ async def test_consumed_rule_commits_local_exchange_and_continues_to_provider(
 
 
 async def test_request_only_route_reaches_transport_without_leaking(hass, monkeypatch):
-    agent = await _agent(hass)
+    agent = await _agent(hass, max_function_calls_per_conversation=0)
     await agent._request_rules.async_create(
         _rule(
             "model_routing",

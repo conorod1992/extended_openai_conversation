@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-
-from homeassistant.auth.permissions.const import POLICY_CONTROL
-from homeassistant.core import Context
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import llm
-from homeassistant.util import dt as dt_util
 
 from custom_components.extended_openai_conversation_responses import delayed_tools
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
@@ -21,6 +16,10 @@ from custom_components.extended_openai_conversation_responses.ha_permissions imp
     get_active_ha_context,
     set_active_ha_context,
 )
+from homeassistant.auth.permissions.const import POLICY_CONTROL
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import llm
+from homeassistant.util import dt as dt_util
 
 
 def _recovered_record() -> DelayedToolCall:
@@ -63,6 +62,11 @@ async def test_recovered_due_call_rebinds_originating_user_permissions(
         "spec": {"name": "control_light"},
         "function": {"type": "native", "name": "execute_service_single"},
     }
+    record = replace(
+        record,
+        definition_fingerprint=delayed_tools.tool_definition_fingerprint(current_tool),
+    )
+    manager._records[record.call_id] = record
     monkeypatch.setattr(
         delayed_tools,
         "configured_function_tools_from_data",
@@ -80,7 +84,9 @@ async def test_recovered_due_call_rebinds_originating_user_permissions(
             return [all_exposed[0]]
         return all_exposed
 
-    monkeypatch.setattr(delayed_tools, "get_exposed_entities", exposed_for_current_caller)
+    monkeypatch.setattr(
+        delayed_tools, "get_exposed_entities", exposed_for_current_caller
+    )
 
     side_effect = AsyncMock()
     observed_exposure: list[dict[str, str]] = []

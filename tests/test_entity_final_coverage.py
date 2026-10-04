@@ -34,7 +34,7 @@ class _ChatLog:
     """Minimal chat log needed by the provider loop."""
 
     def __init__(self, emitted_content) -> None:
-        self.content = [SimpleNamespace(content="system")]
+        self.content = [SimpleNamespace(role="system", content="system")]
         self._emitted_content = list(emitted_content)
         self.added_without_tools = []
         self.unresponded_tool_results = False
@@ -83,7 +83,7 @@ def provider_loop_entity(monkeypatch):
     monkeypatch.setattr(
         entity_module,
         "build_provider_request_snapshot",
-        lambda _options, _entry_data: SimpleNamespace(
+        lambda _options, _entry_data, **_kwargs: SimpleNamespace(
             api_kwargs={"model": "test-model"},
             api_mode="chat_completions",
             provider_tools=[],
@@ -96,12 +96,18 @@ def provider_loop_entity(monkeypatch):
         "current_snapshot",
         lambda: SimpleNamespace(prompt_for=lambda _tools: ""),
     )
-    monkeypatch.setattr(entity_module, "bind_tool_recovery_state", lambda *_args: nullcontext())
+    monkeypatch.setattr(
+        entity_module, "bind_tool_recovery_state", lambda *_args: nullcontext()
+    )
     monkeypatch.setattr(
         entity_module, "async_streaming_speech_cleanup", lambda *_args: nullcontext()
     )
-    monkeypatch.setattr(entity_module, "assert_provider_loop_completed", lambda *_args: None)
-    monkeypatch.setattr(entity_module.conversation, "AssistantContent", _AssistantContent)
+    monkeypatch.setattr(
+        entity_module, "assert_provider_loop_completed", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        entity_module.conversation, "AssistantContent", _AssistantContent
+    )
     monkeypatch.setattr(entity_module, "async_execute_tool_exchange", AsyncMock())
     return instance
 
@@ -130,7 +136,9 @@ async def test_successful_request_usage_failure_appends_unresolved_results(
     chat_log = _ChatLog([_AssistantContent([call])])
     provider_loop_entity._usage = _UsageFailure()
     append_unresolved = Mock()
-    monkeypatch.setattr(entity_module, "append_unresolved_tool_results", append_unresolved)
+    monkeypatch.setattr(
+        entity_module, "append_unresolved_tool_results", append_unresolved
+    )
 
     with pytest.raises(RuntimeError, match="usage write failed"):
         await provider_loop_entity._async_handle_chat_log(
@@ -180,7 +188,9 @@ async def test_function_group_loader_failure_appends_unresolved_results(
     call = _loader_call()
     chat_log = _ChatLog([_AssistantContent([call])])
     append_unresolved = Mock()
-    monkeypatch.setattr(entity_module, "append_unresolved_tool_results", append_unresolved)
+    monkeypatch.setattr(
+        entity_module, "append_unresolved_tool_results", append_unresolved
+    )
 
     def failing_loader(_groups):
         raise RuntimeError("loader failed")
@@ -201,7 +211,9 @@ async def test_function_group_loader_failure_appends_unresolved_results(
 
 
 @pytest.mark.asyncio
-async def test_ha_tool_without_user_id_skips_auth_lookup_and_executes(monkeypatch) -> None:
+async def test_ha_tool_without_user_id_skips_auth_lookup_and_executes(
+    monkeypatch,
+) -> None:
     """An HA tool can execute when the LLM context has no authenticated user id."""
     instance = object.__new__(ExtendedOpenAIBaseLLMEntity)
     instance._attr_entity_id = "conversation.entity-final-coverage"

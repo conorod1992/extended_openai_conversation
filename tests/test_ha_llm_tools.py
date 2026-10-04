@@ -671,6 +671,7 @@ async def test_real_provider_exchange_executes_ha_tool_once_and_removes_budgeted
         ]
     entity = _entity(hass, [], limit=1)
     entity.subentry.data["api_mode"] = mode
+    entity.subentry.data["chat_model"] = "gpt-4o"
     sent = []
 
     async def create(**kwargs):
@@ -841,9 +842,7 @@ async def test_selected_api_skips_unreferenced_registered_api(hass):
     selected_api.contexts.clear()
     unrelated.contexts.clear()
 
-    snapshot = await ha_llm_tools.async_discover(
-        hass, context(), [selected_reference]
-    )
+    snapshot = await ha_llm_tools.async_discover(hass, context(), [selected_reference])
 
     assert len(snapshot.tools) == 1
     assert next(iter(snapshot.tools.values())).reference["api_id"] == "selected"
@@ -908,7 +907,9 @@ async def test_discovery_without_component_module_still_supports_custom_api(
     api = register(hass, TestAPI(hass))
     real_import = builtins.__import__
 
-    def import_without_component_llm(name, globals=None, locals=None, fromlist=(), level=0):
+    def import_without_component_llm(
+        name, globals=None, locals=None, fromlist=(), level=0
+    ):
         if name == "homeassistant.components" and "llm" in fromlist:
             raise ImportError("component unavailable")
         return real_import(name, globals, locals, fromlist, level)
@@ -1017,7 +1018,9 @@ def test_prompt_for_live_tool_without_source_prompt_still_adds_alias() -> None:
         prompt="",
         spec={},
     )
-    snapshot = ha_llm_tools.ToolSnapshot(tools={ha_llm_tools.reference_key(reference): live})
+    snapshot = ha_llm_tools.ToolSnapshot(
+        tools={ha_llm_tools.reference_key(reference): live}
+    )
 
     rendered = snapshot.prompt_for(
         [

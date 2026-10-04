@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
-
-from homeassistant.core import Context
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.util import dt as dt_util
 
 from custom_components.extended_openai_conversation_responses import (
     delayed_tools,
@@ -41,6 +38,9 @@ from custom_components.extended_openai_conversation_responses.safety_hardening i
     _normalized_statistics_arguments,
     _validate_history_request,
 )
+from homeassistant.core import Context
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 
 def _delayed_record() -> DelayedToolCall:
@@ -80,6 +80,11 @@ async def test_recovered_delayed_tool_binds_persisted_user_for_complete_executio
         "spec": {"name": record.tool_name},
         "function": {"type": "native", "name": "get_history"},
     }
+    record = replace(
+        record,
+        definition_fingerprint=delayed_tools.tool_definition_fingerprint(current_tool),
+    )
+    manager._records[record.call_id] = record
     monkeypatch.setattr(
         delayed_tools,
         "configured_function_tools_from_data",

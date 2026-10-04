@@ -66,7 +66,7 @@ async def test_explicit_continue_to_ai_conversation_route_persists_for_next_turn
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Equals + Continue-to-AI reaches the provider and retains conversation scope."""
-    agent = await _conversation_agent(hass)
+    agent = await _conversation_agent(hass, max_function_calls_per_conversation=0)
     await agent._request_rules.async_create(_routing_rule())
     sent = _provider(monkeypatch, agent, ["Deep route active.", "Still deep."])
 
