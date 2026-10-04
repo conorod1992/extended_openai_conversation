@@ -7,6 +7,7 @@ const frontend = (name) => new URL(
 );
 
 const pagination = await import(frontend("management-history-pagination.js"));
+const {loadConversationPage} = pagination;
 assert.equal(pagination.LIST_PAGE_LIMIT, 50);
 assert.equal(pagination.SEARCH_PAGE_LIMIT, 20);
 assert.equal(pagination.TURN_PAGE_LIMIT, 20);
@@ -75,3 +76,75 @@ assert.match(management, /require_management_permission\(is_admin, message\)/);
 assert.match(permissions, /section == "usage" and action != "summary"/);
 assert.doesNotMatch(management, /wrap_management_history_bounds|install_management_history_bounds/);
 assert.doesNotMatch(permissions, /wrap_management_permissions/);
+
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return {promise, resolve, reject};
+}
+
+function historyPanel() {
+  const calls = [];
+  return {
+    _agentId: "agent-1",
+    _scopeId: "shared",
+    _eocHistoryMode: "search",
+    _eocHistoryQuery: "solar",
+    _contentData: {sessions: {}},
+    _viewKey: () => "data-memory/conversations",
+    _call(_section, action, extra) {
+      const request = deferred();
+      calls.push({action, extra, request});
+      return request.promise;
+    },
+    _render() {},
+    _toast() {},
+    calls,
+  };
+}
+
+{
+  const panel = historyPanel();
+  const first = loadConversationPage(panel, 0);
+  panel._eocHistoryQuery = "boiler";
+  const second = loadConversationPage(panel, 0);
+  assert.equal(panel.calls.length, 2, "new searches must not be dropped while one is pending");
+  assert.equal(panel.calls[0].extra.query, "solar");
+  assert.equal(panel.calls[1].extra.query, "boiler");
+
+  panel.calls[1].request.resolve({
+    results: [{session_id: "boiler-result", timestamp: "2026-10-05T00:00:00+00:00"}],
+    offset: 0, returned: 1, total: 1, has_more: false,
+  });
+  await second;
+  panel.calls[0].request.resolve({
+    results: [{session_id: "solar-result", timestamp: "2026-10-04T23:00:00+00:00"}],
+    offset: 0, returned: 1, total: 1, has_more: false,
+  });
+  await first;
+
+  assert.equal(panel._eocHistoryQuery, "boiler");
+  assert.equal(panel._contentData.sessions.sessions[0].session_id, "boiler-result",
+    "a stale search response must not replace the latest query results");
+}
+
+{
+  const panel = historyPanel();
+  const originalTarget = panel._contentData;
+  const pending = loadConversationPage(panel, 0);
+  panel._scopeId = "user:new";
+  panel._contentData = {
+    sessions: {sessions: [{session_id: "new-scope"}]},
+  };
+  panel.calls[0].request.resolve({
+    results: [{session_id: "old-scope", timestamp: "2026-10-04T23:00:00+00:00"}],
+    offset: 0, returned: 1, total: 1, has_more: false,
+  });
+  await pending;
+
+  assert.notEqual(panel._contentData, originalTarget);
+  assert.equal(panel._contentData.sessions.sessions[0].session_id, "new-scope",
+    "a late response from the previous scope must not overwrite the new scope");
+}
