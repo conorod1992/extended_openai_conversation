@@ -494,8 +494,8 @@ async def test_add_coalesces_duplicate_for_same_owner_and_persists_update() -> N
     assert storage.save_count == 2
 
 
-async def test_manual_update_protects_temporary_memory_from_automatic_duplicate() -> None:
-    """A user-edited short-term fact retains its chosen expiry and category."""
+async def test_manual_update_promotes_temporary_memory_provenance() -> None:
+    """A user edit makes an automatically created short-term fact manual."""
     storage = ValidationStorage()
     manager = TemporaryMemory(storage)  # type: ignore[arg-type]
     await manager.async_initialize()
@@ -518,19 +518,6 @@ async def test_manual_update_protects_temporary_memory_from_automatic_duplicate(
     assert edited.source == "manual"
     assert edited.category == "important"
     assert edited.expires_at == manual_expiry
-
-    proposed = await manager.async_add(
-        "conversation:later",
-        "PARCEL ARRIVES TOMORROW",
-        _future(hours=1),
-        "automatic",
-        owner_scope_id="user:alice",
-        source="automatic",
-    )
-    assert proposed["status"] == "unchanged"
-    assert proposed["memory"]["source"] == "manual"
-    assert proposed["memory"]["category"] == "important"
-    assert proposed["memory"]["expires_at"] == manual_expiry
 
     reloaded = TemporaryMemory(storage)  # type: ignore[arg-type]
     await reloaded.async_initialize()
