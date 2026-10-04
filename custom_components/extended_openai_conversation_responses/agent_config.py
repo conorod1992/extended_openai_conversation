@@ -1106,6 +1106,7 @@ def merge_agent_config(
     *,
     validated_functions: tuple[list[dict[str, Any]], list[dict[str, Any]] | None]
     | None = None,
+    function_tools_as_list: bool = False,
 ) -> dict[str, Any]:
     """Validate updates against the final merged configuration.
 
@@ -1128,7 +1129,9 @@ def merge_agent_config(
         # perfectly valid switch to a non-reasoning model unsavable.
         known.pop(CONF_REASONING_EFFORT, None)
     normalized = normalize_agent_config(
-        {**known, **updates}, validated_functions=validated_functions
+        {**known, **updates},
+        validated_functions=validated_functions,
+        function_tools_as_list=function_tools_as_list,
     )
     return {
         **{

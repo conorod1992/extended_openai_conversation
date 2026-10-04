@@ -654,21 +654,62 @@ def persist_valid_function_configuration(
     revision_check_ms = (perf_counter() - started) * 1000
     phase = perf_counter()
     updates: dict[str, Any] = {
-        CONF_FUNCTION_TOOLS: tools,
-        CONF_FUNCTION_GROUPS: groups,
+        CONF_FUNCTION_TOOLS: deepcopy(tools),
+        CONF_FUNCTION_GROUPS: deepcopy(groups),
     }
     if extra_updates:
         updates.update(extra_updates)
+    projection = persisted_config_projection(subentry)
+    snapshot = projection.snapshot
+    reuse_tools = (
+        snapshot is not None
+        and updates[CONF_FUNCTION_TOOLS] == snapshot[CONF_FUNCTION_TOOLS]
+    )
+    validated_functions = None
+    if reuse_tools:
+        assert snapshot is not None
+        updates.pop(CONF_FUNCTION_TOOLS)
+        validated_functions = (
+            snapshot[CONF_FUNCTION_TOOLS],
+            snapshot[CONF_FUNCTION_GROUPS]
+            if updates[CONF_FUNCTION_GROUPS] == snapshot[CONF_FUNCTION_GROUPS]
+            else None,
+        )
+    candidate = _strict_merge_agent_config(
+        subentry.data,
+        updates,
+        validated_functions=validated_functions,
+        function_tools_as_list=True,
+    )
+    # Keep the final validated objects for the response. Only persistence needs
+    # YAML; unchanged tools retain their exact stored representation.
+    response_snapshot = deepcopy(candidate)
+    if reuse_tools:
+        if CONF_FUNCTION_TOOLS in subentry.data:
+            candidate[CONF_FUNCTION_TOOLS] = deepcopy(
+                subentry.data[CONF_FUNCTION_TOOLS]
+            )
+        else:
+            candidate.pop(CONF_FUNCTION_TOOLS, None)
+    else:
+        candidate[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+            candidate[CONF_FUNCTION_TOOLS], sort_keys=False, allow_unicode=True
+        )
     normalized = preserve_legacy_guest_policy(
         subentry.data,
-        _strict_merge_agent_config(subentry.data, updates),
+        candidate,
     )
     normalization_ms = (perf_counter() - phase) * 1000
     phase = perf_counter()
     update_live_subentry(hass, entry, subentry, data=normalized)
     subentry_update_ms = (perf_counter() - phase) * 1000
     phase = perf_counter()
-    snapshot = agent_config_snapshot(normalized)
+    from .management_loading_performance import _snapshot_normalized_configuration
+
+    response_data = dict(normalized)
+    response_data[CONF_FUNCTION_TOOLS] = response_snapshot[CONF_FUNCTION_TOOLS]
+    response_data[CONF_FUNCTION_GROUPS] = response_snapshot[CONF_FUNCTION_GROUPS]
+    snapshot = _snapshot_normalized_configuration(response_data, validated=True)
     revision = saved_agent_config_revision(subentry, normalized, subentry.title)
     seed_persisted_config_projection(entry, subentry, snapshot, revision)
     projection_ms = (perf_counter() - phase) * 1000

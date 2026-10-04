@@ -116,6 +116,7 @@ from .management_function_quarantine import (
     _tolerant_agent_test as async_test_agent,
     _tolerant_persist_function_configuration,
     management_function_tools,
+    merge_unchanged_function_configuration,
 )
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,  # noqa: F401 - test seam
@@ -973,13 +974,13 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         if set(updates) - guest_fields:
             raise HomeAssistantError("Guest policy contains unknown fields")
         updates[CONF_GUEST_POLICY_VERSION] = GUEST_POLICY_VERSION
-        normalized = merge_agent_config(subentry.data, updates)
+        normalized, snapshot = merge_unchanged_function_configuration(subentry, updates)
         update_live_subentry(hass, entry, subentry, data=normalized)
-        configured_tools = configured_function_tools_from_data(normalized)
+        revision = saved_agent_config_revision(subentry, normalized, subentry.title)
+        seed_persisted_config_projection(entry, subentry, snapshot, revision)
+        configured_tools = snapshot[CONF_FUNCTION_TOOLS]
         return {
-            "revision": saved_agent_config_revision(
-                subentry, normalized, subentry.title
-            ),
+            "revision": revision,
             "config": guest_policy_editor_snapshot(hass, normalized, configured_tools),
         }
     if action == "update":
@@ -2401,8 +2402,8 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         enabled = message.get("enabled")
         if not isinstance(enabled, bool):
             raise HomeAssistantError("enabled must be a boolean")
-        normalized = merge_agent_config(
-            request.subentry.data, {CONF_KNOWLEDGE_ENABLED: enabled}
+        normalized, snapshot = merge_unchanged_function_configuration(
+            request.subentry, {CONF_KNOWLEDGE_ENABLED: enabled}
         )
         persisted = preserve_legacy_guest_policy(
             dict(request.subentry.data), deepcopy(normalized)
@@ -2410,10 +2411,20 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         update_live_subentry(
             request.hass, request.entry, request.subentry, data=persisted
         )
+        revision = saved_agent_config_revision(
+            request.subentry, persisted, request.subentry.title
+        )
+        from .management_loading_performance import _snapshot_normalized_configuration
+
+        response_data = dict(persisted)
+        response_data[CONF_FUNCTION_TOOLS] = snapshot[CONF_FUNCTION_TOOLS]
+        response_data[CONF_FUNCTION_GROUPS] = snapshot[CONF_FUNCTION_GROUPS]
+        snapshot = _snapshot_normalized_configuration(response_data, validated=True)
+        seed_persisted_config_projection(
+            request.entry, request.subentry, snapshot, revision
+        )
         return {
-            "revision": saved_agent_config_revision(
-                request.subentry, persisted, request.subentry.title
-            ),
+            "revision": revision,
             "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
             "feature_status": management_feature_status(
                 persisted, knowledge_source_count=library.total_source_count

@@ -33,7 +33,9 @@ from .management_function_repair import (
     function_tools_issue,
     isolated_function_tools,
     persist_valid_function_configuration,
+    persisted_config_projection,
     repair_revision,
+    repair_state_for_projection,
     safe_function_configuration as _safe_function_configuration,
 )
 
@@ -111,6 +113,46 @@ def _management_merge_agent_config(
         else:
             normalized.pop(key, None)
     return normalized
+
+
+def merge_unchanged_function_configuration(
+    subentry: Any, updates: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate unrelated edits and retain exact persisted Function inputs."""
+    if set(updates) & {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS}:
+        raise HomeAssistantError(
+            "Unchanged-function merge cannot change Functions or Groups"
+        )
+    projection = persisted_config_projection(subentry)
+    snapshot = projection.snapshot
+    repair_state = None
+    if snapshot is None and _ALLOW_QUARANTINED_TOOLS.get():
+        repair_state, _ = repair_state_for_projection(projection)
+    validated_functions = (
+        (snapshot[CONF_FUNCTION_TOOLS], snapshot[CONF_FUNCTION_GROUPS])
+        if snapshot is not None
+        else (repair_state.valid, repair_state.groups)
+        if repair_state is not None
+        else None
+    )
+    candidate = _STRICT_MERGE_AGENT_CONFIG(
+        subentry.data,
+        updates,
+        validated_functions=validated_functions,
+        function_tools_as_list=True,
+    )
+    persisted = deepcopy(candidate)
+    if validated_functions is not None:
+        for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
+            if key in subentry.data:
+                persisted[key] = deepcopy(subentry.data[key])
+            else:
+                persisted.pop(key, None)
+    elif CONF_FUNCTION_TOOLS in subentry.data:
+        persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+            candidate[CONF_FUNCTION_TOOLS], sort_keys=False, allow_unicode=True
+        )
+    return persisted, candidate
 
 
 def _restore_quarantined_group_members(
