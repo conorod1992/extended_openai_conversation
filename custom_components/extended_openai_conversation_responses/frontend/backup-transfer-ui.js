@@ -12,6 +12,7 @@ const APPLY_ID = "restore-transfer-apply";
 const EXPORT_MODE_ID = "transfer-export-mode";
 const CUSTOM_OPTIONS_ID = "transfer-custom-options";
 const RESTORE_SECTIONS_ID = "restore-transfer-sections";
+const RESTORE_USER_MAPPINGS_ID = "restore-transfer-user-mappings";
 const RESTORE_STATUS_ID = "restore-transfer-status";
 const IMPORT_PREVIEW_DEBOUNCE_MS = 150;
 
@@ -198,7 +199,7 @@ export function renderRestoreTransferDialog(panel) {
   const dirtyWarning = panel?._configDirty
     ? '<p class="inline-error">Your unsaved configuration changes will be discarded if configuration is one of the restored sections.</p>'
     : "";
-  return `<dialog id="restore-dialog" class="editor-dialog" aria-labelledby="restore-dialog-title"><div class="dialog-header"><h2 id="restore-dialog-title">Import / Restore</h2></div><div class="dialog-body">${restoreScopeMarkup(panel)}<div><strong id="restore-backup-name"></strong><p id="restore-backup-meta" class="meta"></p></div><ul id="restore-summary" class="restore-summary"></ul><fieldset class="setting-group"><legend><strong>Sections to replace</strong></legend><p class="help">Only sections contained in this file are shown. Unselected destination sections remain unchanged.</p><div id="${RESTORE_SECTIONS_ID}" class="group-function-choices"></div></fieldset><div id="${RESTORE_STATUS_ID}" class="validation" role="status" aria-live="polite"></div><div class="notice"><strong>Replacement, not merge</strong><p>Every selected section replaces that section on the current agent. The combined target is validated first, including Request Rule references to Function Tools. A final confirmation is required before applying it.</p></div>${dirtyWarning}</div><div class="dialog-actions"><button type="button" class="secondary" id="${CANCEL_ID}">Cancel</button><button type="button" class="danger" id="${APPLY_ID}" disabled>Restore selected sections</button></div></dialog>`;
+  return `<dialog id="restore-dialog" class="editor-dialog" aria-labelledby="restore-dialog-title"><div class="dialog-header"><h2 id="restore-dialog-title">Import / Restore</h2></div><div class="dialog-body">${restoreScopeMarkup(panel)}<div><strong id="restore-backup-name"></strong><p id="restore-backup-meta" class="meta"></p></div><ul id="restore-summary" class="restore-summary"></ul><fieldset class="setting-group"><legend><strong>Sections to replace</strong></legend><p class="help">Only sections contained in this file are shown. Unselected destination sections remain unchanged.</p><div id="${RESTORE_SECTIONS_ID}" class="group-function-choices"></div></fieldset><fieldset class="setting-group" id="${RESTORE_USER_MAPPINGS_ID}" hidden><legend><strong>Map Home Assistant users</strong></legend><p class="help">This backup contains personal data owned by users that do not exist on this Home Assistant installation. Choose the destination owner for each source user before restoring.</p><div data-user-scope-mapping-list></div></fieldset><div id="${RESTORE_STATUS_ID}" class="validation" role="status" aria-live="polite"></div><div class="notice"><strong>Replacement, not merge</strong><p>Every selected section replaces that section on the current agent. The combined target is validated first, including Request Rule references to Function Tools. A final confirmation is required before applying it.</p></div>${dirtyWarning}</div><div class="dialog-actions"><button type="button" class="secondary" id="${CANCEL_ID}">Cancel</button><button type="button" class="danger" id="${APPLY_ID}" disabled>Restore selected sections</button></div></dialog>`;
 }
 
 function selectedValues(root, selector) {
@@ -240,6 +241,61 @@ function updateSensitiveStatus(panel, preview) {
   }
 }
 
+function selectedUserScopeMappings(root) {
+  const result = {};
+  const host = root?.querySelector?.(`#${RESTORE_USER_MAPPINGS_ID}`);
+  host?.querySelectorAll?.("[data-user-scope-source]").forEach((control) => {
+    const source = control.dataset.userScopeSource;
+    if (source && control.value) result[source] = control.value;
+  });
+  return result;
+}
+
+function updateUserScopeMappingUI(panel, preview) {
+  const root = panel.shadowRoot;
+  const fieldset = root?.querySelector(`#${RESTORE_USER_MAPPINGS_ID}`);
+  const list = fieldset?.querySelector("[data-user-scope-mapping-list]");
+  if (!fieldset || !list) return 0;
+  const plan = preview?.user_scope_mapping || {};
+  const required = Array.isArray(plan.required_source_user_ids) ? plan.required_source_user_ids : [];
+  if (!required.length) {
+    fieldset.hidden = true;
+    list.innerHTML = "";
+    return 0;
+  }
+  const previous = selectedUserScopeMappings(root);
+  const resolved = plan.resolved && typeof plan.resolved === "object" ? plan.resolved : {};
+  const users = Array.isArray(plan.destination_users) ? plan.destination_users : [];
+  fieldset.hidden = false;
+  list.innerHTML = required.map((source) => {
+    const selected = resolved[source] || previous[source] || "";
+    const options = users.map((user) => {
+      const id = String(user?.user_id || "");
+      const label = String(user?.name || id);
+      return `<option value="${panel._e(id)}" ${id === selected ? "selected" : ""}>${panel._e(label)}</option>`;
+    }).join("");
+    return `<label class="setting"><span class="setting-copy"><strong>Source user ${panel._e(source)}</strong><small>Choose who should own this restored personal data.</small></span><select data-user-scope-source="${panel._e(source)}"><option value="">Choose a destination user…</option>${options}</select></label>`;
+  }).join("");
+  list.querySelectorAll("[data-user-scope-source]").forEach((control) => {
+    control.addEventListener("change", () => void refreshImportPreview(panel));
+  });
+  return Array.isArray(plan.missing_source_user_ids) ? plan.missing_source_user_ids.length : required.filter((source) => !(resolved[source] || previous[source])).length;
+}
+
+function updateRestorePreviewStatus(panel, preview) {
+  const missingUsers = updateUserScopeMappingUI(panel, preview);
+  const status = panel.shadowRoot?.querySelector(`#${RESTORE_STATUS_ID}`);
+  if (missingUsers) {
+    if (status) {
+      status.className = "validation error";
+      status.textContent = `Map ${missingUsers} source Home Assistant user${missingUsers === 1 ? "" : "s"} before restoring.`;
+    }
+    return missingUsers;
+  }
+  updateSensitiveStatus(panel, preview);
+  return 0;
+}
+
 function previewWork(panel) {
   return panel._backupTransferPreviewWork ||= {timer: null, inFlight: false, latest: null};
 }
@@ -268,12 +324,12 @@ function sendLatestImportPreview(panel) {
     const status = panel.shadowRoot?.querySelector(`#${RESTORE_STATUS_ID}`);
     const apply = panel.shadowRoot?.querySelector(`#${APPLY_ID}`);
     try {
-      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.sessionId, sections: request.sections});
+      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.sessionId, sections: request.sections, user_scope_mappings: request.userScopeMappings});
       if (panel._transferPreviewToken !== request.token || panel._backupTransferSession !== request.sessionId) return;
       panel._backupTransferPreview = result.preview;
       panel._backupTransferPreviewToken = result.preview_token;
-      updateSensitiveStatus(panel, result.preview);
-      if (apply) apply.disabled = false;
+      const missingUsers = updateRestorePreviewStatus(panel, result.preview);
+      if (apply) apply.disabled = result.preview_token === null || missingUsers > 0;
     } catch (err) {
       if (panel._transferPreviewToken !== request.token || panel._backupTransferSession !== request.sessionId) return;
       panel._backupTransferPreview = null;
@@ -308,7 +364,7 @@ export function refreshImportPreview(panel) {
     status.textContent = "Validating selected sections…";
   }
   const work = previewWork(panel);
-  work.latest = {sessionId, sections, token};
+  work.latest = {sessionId, sections, token, userScopeMappings: selectedUserScopeMappings(root)};
   work.timer = setTimeout(() => {
     work.timer = null;
     sendLatestImportPreview(panel);
@@ -373,8 +429,8 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
       const sectionRoot = root.querySelector(`#${RESTORE_SECTIONS_ID}`);
       sectionRoot.innerHTML = sectionChoices(panel, {className: "transfer-restore-section", available: result.available_sections});
       sectionRoot.querySelectorAll(".transfer-restore-section").forEach((input) => input.addEventListener("change", () => void refreshImportPreview(panel)));
-      updateSensitiveStatus(panel, result.preview);
-      apply.disabled = false;
+      const missingUsers = updateRestorePreviewStatus(panel, result.preview);
+      apply.disabled = result.preview_token === null || missingUsers > 0;
       root.querySelector("#restore-dialog").showModal();
     } catch (err) {
       panel._backupTransferSession = null;
