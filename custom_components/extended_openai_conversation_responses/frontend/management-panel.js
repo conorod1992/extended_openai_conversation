@@ -1820,12 +1820,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const agentId = this._agentId;
       const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
       const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
-      const end = root.querySelector("#guest-end")?.value;
+      const endInput = root.querySelector("#guest-end");
+      const end = endInput?.value;
       try {
+        if (!indefinite && (!end || !endInput.checkValidity())) {
+          throw new Error("Choose an end time or select Remain active indefinitely.");
+        }
         const result = await this._call("guest_mode", "update", {
           ...(start ? {active_from: start} : {}),
           ...(!indefinite && end ? {active_until: end} : {}),
-          indefinite: indefinite || !end,
+          indefinite,
         });
         await this._refreshGuestModeMutation(agentId, result);
         this._toast("Guest Mode updated");

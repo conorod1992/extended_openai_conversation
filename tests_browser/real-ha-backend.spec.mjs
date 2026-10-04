@@ -565,3 +565,49 @@ test("real browser full backup restores cross-feature state through genuine HA",
   await expectContractCalls(page, "backup");
   await expectHarnessClean(page, pageErrors);
 });
+
+for (const now of [false, true]) {
+  test(`Guest Mode ${now ? "activation" : "interval update"} respects the explicit end choice through genuine HA`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(realFixtureUrl("capabilities/guest-mode"));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator("#guest-now")).toBeVisible();
+    await panel.evaluate(host => host._call("guest_mode", "disable"));
+    await page.reload();
+    await expect(panel.locator("#guest-now")).toBeVisible();
+    const updates = () => page.evaluate(() => window.browserHarness.calls.filter(
+      call => call.section === "guest_mode" && call.action === "update",
+    ));
+    const before = await updates();
+    const original = await panel.evaluate(host => host._call("guest_mode", "get"));
+    const button = panel.locator(now ? "#guest-now" : "#guest-update");
+    await panel.locator("#guest-indefinite").uncheck();
+    await panel.locator("#guest-end").fill("");
+    await button.click();
+    await expect(panel.locator("#toast")).toContainText("Choose an end time");
+    expect(await updates()).toEqual(before);
+    const unchanged = await panel.evaluate(host => host._call("guest_mode", "get"));
+    expect(unchanged.status).toEqual(original.status);
+    await expect(panel.locator("#guest-indefinite")).not.toBeChecked();
+
+    const end = new Date(Date.now() + 86_400_000).toISOString().slice(0, 16);
+    await panel.locator("#guest-end").fill(end);
+    await button.click();
+    await expect(panel.locator("#toast")).toHaveText("Guest Mode updated");
+    const finite = (await updates()).at(-1);
+    expect(finite.indefinite).toBe(false);
+    expect(finite.active_until).toBe(end);
+    const finiteStatus = await panel.evaluate(host => host._call("guest_mode", "get"));
+    expect(finiteStatus.status.indefinite).toBe(false);
+    expect(finiteStatus.status.active_until).toBeTruthy();
+
+    await panel.locator("#guest-indefinite").check();
+    await button.click();
+    await expect.poll(async () => (await updates()).at(-1)?.indefinite).toBe(true);
+    const indefiniteStatus = await panel.evaluate(host => host._call("guest_mode", "get"));
+    expect(indefiniteStatus.status.indefinite).toBe(true);
+    expect(indefiniteStatus.status.active_until).toBeNull();
+    await panel.evaluate(host => host._call("guest_mode", "disable"));
+    await expectHarnessClean(page, errors);
+  });
+}

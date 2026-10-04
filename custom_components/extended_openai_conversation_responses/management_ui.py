@@ -2355,8 +2355,8 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
         target = scope_id
         if "target_scope_id" in message:
             target = _selected_scope(user_id, is_admin, message["target_scope_id"])
-            await _require_existing_user_destination(hass, target)
             if target != scope_id:
+                await _require_existing_user_destination(hass, target)
                 if not (
                     (
                         scope_id.startswith("user:")
