@@ -2303,7 +2303,10 @@
       "tls_verified_requests": 4,
       "transport_tool_recovery_cases": 2,
       "explicit_stream_close_cases": 1,
-      "natural_stream_exhaustion_close_negatives": 1
+      "natural_stream_exhaustion_close_negatives": 1,
+      "interleaved_exact_usage_rounds": 4,
+      "interleaved_exact_usage_negative_controls": 4,
+      "interleaved_exact_usage_api_modes": 2
     },
     "large-installation": {
       "concurrent_summary_cases": 2,
