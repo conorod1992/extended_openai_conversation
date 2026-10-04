@@ -1231,16 +1231,20 @@ def _search_archive_snapshot(
             normalized_combined = _normalize(combined)
             tokens = _tokens(combined)
             overlap = len(query_tokens & tokens)
+            literal_match = bool(
+                normalized_query
+                and f" {normalized_query} " in f" {normalized_combined} "
+            )
             if query_tokens:
-                if not overlap and normalized_query not in normalized_combined:
+                if not overlap and not literal_match:
                     continue
-            elif not normalized_query or normalized_query not in normalized_combined:
+            elif not literal_match:
                 # Queries reduced entirely to punctuation have no searchable
-                # content. Stop-word-only queries remain valid literal searches,
-                # but must not turn into a match-all archive query.
+                # content. Stop-word-only queries remain valid whole-word/phrase
+                # searches, but must not turn into a match-all archive query.
                 continue
             score = overlap / max(1, len(query_tokens))
-            if normalized_query and normalized_query in normalized_combined:
+            if literal_match:
                 score += 2
             ranked.append((score, turn.timestamp, session, turn))
     ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
