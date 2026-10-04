@@ -13,6 +13,7 @@ from .agent_maintenance import (
     get_agent_maintenance_gate,
 )
 from .const import DOMAIN
+from .strict_store import PropagatingWriteStore
 
 KNOWN_AGENTS = f"{DOMAIN}.known_agents"
 _SECTIONS = (
@@ -124,7 +125,7 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                 _storage_names, hass, entry_id, subentry_id
             )
             for name in names:
-                await Store(hass, 1, name).async_remove()
+                await PropagatingWriteStore(hass, 1, name).async_remove()
             for suffix in _MANAGER_KEYS:
                 hass.data.get(f"{DOMAIN}.{suffix}", {}).pop(key, None)
             clear_retirement_failure(hass, entry_id=entry_id, subentry_id=subentry_id)
