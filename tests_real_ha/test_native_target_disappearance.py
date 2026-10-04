@@ -93,8 +93,10 @@ def _tool_result_from_chat_request(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("recovery_enabled", [False, True])
 async def test_native_service_target_disappears_before_dispatch_and_next_turn_recovers(
     hass: HomeAssistant,
+    recovery_enabled: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A target removed after tool selection fails cleanly without poisoning later use."""
@@ -103,9 +105,7 @@ async def test_native_service_target_disappears_before_dispatch_and_next_turn_re
     def entity_still_exists(value: Any) -> Any:
         entity_ids = value if isinstance(value, list) else [value]
         missing = [
-            entity_id
-            for entity_id in entity_ids
-            if hass.states.get(entity_id) is None
+            entity_id for entity_id in entity_ids if hass.states.get(entity_id) is None
         ]
         if missing:
             raise HomeAssistantError(
@@ -140,7 +140,7 @@ async def test_native_service_target_disappears_before_dispatch_and_next_turn_re
         conversation_options={
             CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
             CONF_CHAT_MODEL: "gpt-5.6",
-            CONF_FUNCTION_TOOL_ERROR_RECOVERY: True,
+            CONF_FUNCTION_TOOL_ERROR_RECOVERY: recovery_enabled,
             CONF_FUNCTION_TOOLS: [_native_execute_service_tool()],
         },
     )
@@ -186,19 +186,24 @@ async def test_native_service_target_disappears_before_dispatch_and_next_turn_re
     allow_dispatch.set()
 
     failed = await asyncio.wait_for(failing_task, timeout=_WAIT_TIMEOUT)
-    assert _speech(failed) == "The target disappeared before I could control it."
-    assert service_calls == []
-    assert len(failing_wire.requests) == 2
+    if recovery_enabled:
+        assert failed.response.error_code is not None
+        assert len(failing_wire.requests) == 1
+        assert agent._usage.runs[0].successful is False
+    else:
+        assert _speech(failed) == "The target disappeared before I could control it."
+        assert service_calls == []
+        assert len(failing_wire.requests) == 2
 
-    failed_tool_result = _tool_result_from_chat_request(
-        failing_wire.requests[1]["body"], "call-native-target-disappears"
-    )
-    assert "result" in failed_tool_result
-    assert len(failed_tool_result["result"]) == 1
-    error = failed_tool_result["result"][0]
-    assert "error" in error
-    assert "no longer exists" in error["error"]
-    assert _ENTITY_ID in error["error"]
+        failed_tool_result = _tool_result_from_chat_request(
+            failing_wire.requests[1]["body"], "call-native-target-disappears"
+        )
+        assert "result" in failed_tool_result
+        assert len(failed_tool_result["result"]) == 1
+        error = failed_tool_result["result"][0]
+        assert "error" in error
+        assert "no longer exists" in error["error"]
+        assert _ENTITY_ID in error["error"]
 
     # Restore the same real target and prove a completely separate public Assist
     # turn can execute the same native tool successfully after the runtime failure.

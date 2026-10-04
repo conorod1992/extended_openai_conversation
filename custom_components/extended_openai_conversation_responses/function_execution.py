@@ -16,6 +16,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
 from .exceptions import FunctionValidationInfrastructureError
+from .function_tool_recovery import strict_execution_failures_enabled
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +38,15 @@ def propagate_function_execution_errors() -> Iterator[None]:
 def function_execution_errors_propagate() -> bool:
     """Return whether this caller requires execution errors to remain exceptions."""
     return _PROPAGATE_EXECUTION_ERRORS.get()
+
+
+def backend_failure(message: str, cause: Exception | None = None) -> dict[str, str]:
+    """Report a backend-owned failure without interpreting returned business data."""
+    if function_execution_errors_propagate() or strict_execution_failures_enabled():
+        if isinstance(cause, HomeAssistantError):
+            raise cause
+        raise HomeAssistantError(message) from cause
+    return {"error": message}
 
 
 _JSON_TYPES = {"array", "boolean", "integer", "null", "number", "object", "string"}

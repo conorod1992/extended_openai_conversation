@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from openai import OpenAIError
 
-from homeassistant.components.conversation import ConversationResult
+from homeassistant.components.conversation import AssistantContent, ConversationResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent
 
@@ -37,6 +37,7 @@ def _conversation_error_result(
     logger: logging.Logger | None = None,
     provider_log_message: str = "OpenAI request preparation failed",
     conversation_id: Any = _USE_INPUT_CONVERSATION_ID,
+    handled_locally: bool = False,
 ) -> ConversationResult:
     """Build the same Assist error result for failures before or during provider prep."""
     if isinstance(err, httpx.RequestError):
@@ -79,8 +80,16 @@ def _conversation_error_result(
 
     response = intent.IntentResponse(language=user_input.language)
     response.async_set_error(intent.IntentResponseErrorCode.UNKNOWN, message)
+    if handled_locally:
+        chat_log.content.append(
+            AssistantContent(agent_id=entity.entity_id, content=message)
+        )
     entity._fire_conversation_finished(
-        user_input, chat_log, status="error", error_type=type(err).__name__
+        user_input,
+        chat_log,
+        status="error",
+        error_type=type(err).__name__,
+        **({"handled_locally": True} if handled_locally else {}),
     )
     return ConversationResult(
         response=response,

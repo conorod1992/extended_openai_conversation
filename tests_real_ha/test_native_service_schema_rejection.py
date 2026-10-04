@@ -90,8 +90,10 @@ def _tool_result_from_chat_request(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("recovery_enabled", [False, True])
 async def test_live_service_schema_rejection_is_model_visible_and_next_turn_recovers(
     hass: HomeAssistant,
+    recovery_enabled: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """HA schema rejection causes no action and does not poison later tool use."""
@@ -134,7 +136,7 @@ async def test_live_service_schema_rejection_is_model_visible_and_next_turn_reco
         conversation_options={
             CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
             CONF_CHAT_MODEL: "gpt-5.6",
-            CONF_FUNCTION_TOOL_ERROR_RECOVERY: True,
+            CONF_FUNCTION_TOOL_ERROR_RECOVERY: recovery_enabled,
             CONF_FUNCTION_TOOLS: [_native_execute_service_tool()],
         },
     )
@@ -161,22 +163,27 @@ async def test_live_service_schema_rejection_is_model_visible_and_next_turn_reco
         "Set the schema boundary target to turbo mode",
     )
 
-    assert _speech(failed) == "Home Assistant rejected that service value."
-    assert calls == []
-    failed_state = hass.states.get(_ENTITY_ID)
-    assert failed_state is not None
-    assert failed_state.state == "idle"
-    assert len(failing_wire.requests) == 2
+    if recovery_enabled:
+        assert failed.response.error_code is not None
+        assert len(failing_wire.requests) == 1
+        assert agent._usage.runs[0].successful is False
+    else:
+        assert _speech(failed) == "Home Assistant rejected that service value."
+        assert calls == []
+        failed_state = hass.states.get(_ENTITY_ID)
+        assert failed_state is not None
+        assert failed_state.state == "idle"
+        assert len(failing_wire.requests) == 2
 
-    failed_tool_result = _tool_result_from_chat_request(
-        failing_wire.requests[1]["body"], "call-live-schema-reject"
-    )
-    assert "result" in failed_tool_result
-    assert len(failed_tool_result["result"]) == 1
-    failed_service = failed_tool_result["result"][0]
-    assert "error" in failed_service
-    assert "value must be one of" in failed_service["error"]
-    assert "mode" in failed_service["error"]
+        failed_tool_result = _tool_result_from_chat_request(
+            failing_wire.requests[1]["body"], "call-live-schema-reject"
+        )
+        assert "result" in failed_tool_result
+        assert len(failed_tool_result["result"]) == 1
+        failed_service = failed_tool_result["result"][0]
+        assert "error" in failed_service
+        assert "value must be one of" in failed_service["error"]
+        assert "mode" in failed_service["error"]
 
     # A valid value against the exact same live HA schema must succeed on a new
     # conversation turn through the same loaded agent. This proves the validation

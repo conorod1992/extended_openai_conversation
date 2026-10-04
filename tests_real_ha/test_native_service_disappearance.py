@@ -89,8 +89,10 @@ def _tool_result_from_chat_request(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("recovery_enabled", [False, True])
 async def test_native_service_disappears_before_dispatch_and_next_turn_recovers(
     hass: HomeAssistant,
+    recovery_enabled: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A removed service fails cleanly after validation and is usable again later."""
@@ -117,7 +119,7 @@ async def test_native_service_disappears_before_dispatch_and_next_turn_recovers(
         conversation_options={
             CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
             CONF_CHAT_MODEL: "gpt-5.6",
-            CONF_FUNCTION_TOOL_ERROR_RECOVERY: True,
+            CONF_FUNCTION_TOOL_ERROR_RECOVERY: recovery_enabled,
             CONF_FUNCTION_TOOLS: [_native_execute_service_tool()],
         },
     )
@@ -163,23 +165,30 @@ async def test_native_service_disappears_before_dispatch_and_next_turn_recovers(
         "Use the disappearing Home Assistant service",
     )
 
-    assert _speech(failed) == "The Home Assistant service disappeared before dispatch."
-    assert service_calls == []
-    assert not hass.services.has_service(_DOMAIN, _SERVICE)
-    assert len(failing_wire.requests) == 2
+    if recovery_enabled:
+        assert failed.response.error_code is not None
+        assert len(failing_wire.requests) == 1
+        assert agent._usage.runs[0].successful is False
+    else:
+        assert (
+            _speech(failed) == "The Home Assistant service disappeared before dispatch."
+        )
+        assert service_calls == []
+        assert not hass.services.has_service(_DOMAIN, _SERVICE)
+        assert len(failing_wire.requests) == 2
 
-    failed_tool_result = _tool_result_from_chat_request(
-        failing_wire.requests[1]["body"],
-        "call-native-service-disappears",
-    )
-    assert "result" in failed_tool_result
-    assert len(failed_tool_result["result"]) == 1
-    failure = failed_tool_result["result"][0]
-    assert "error" in failure
-    error_text = failure["error"].casefold()
-    assert error_text == "service_not_found" or (
-        _SERVICE in error_text and "not found" in error_text
-    )
+        failed_tool_result = _tool_result_from_chat_request(
+            failing_wire.requests[1]["body"],
+            "call-native-service-disappears",
+        )
+        assert "result" in failed_tool_result
+        assert len(failed_tool_result["result"]) == 1
+        failure = failed_tool_result["result"][0]
+        assert "error" in failure
+        error_text = failure["error"].casefold()
+        assert error_text == "service_not_found" or (
+            _SERVICE in error_text and "not found" in error_text
+        )
 
     # Restore the exact same real HA service and prove the same loaded agent/tool
     # succeeds on a completely separate public Conversation turn.

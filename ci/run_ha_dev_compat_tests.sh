@@ -9,6 +9,7 @@ TEST_PATHS=(
   tests/test_ai_task_privacy.py
   tests/test_ai_task_web_search.py
   tests/test_archive_privacy_calendar.py
+  tests/test_backend_failure_context.py
   tests/test_broadcast_permissions.py
   tests/test_config_flow_coverage.py
   tests/test_configuration_lifecycle_hardening.py

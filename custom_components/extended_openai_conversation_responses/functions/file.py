@@ -24,6 +24,7 @@ from ..const import (
     DOMAIN,
     FILE_READ_SIZE_LIMIT,
 )
+from ..function_execution import backend_failure
 from ..operational_errors import log_handled_failure
 from ..skills import SkillManager
 from .base import Function
@@ -267,14 +268,14 @@ class ReadFileFunction(FileFunction):
         try:
             target_path = self._resolve_path(hass, path_str, allow_dirs)
             if not target_path.exists():
-                return {"error": f"File not found: {path_str}"}
+                return backend_failure(f"File not found: {path_str}")
             if not target_path.is_file():
-                return {"error": f"Not a file: {path_str}"}
+                return backend_failure(f"Not a file: {path_str}")
             file_size = target_path.stat().st_size
             content = await hass.async_add_executor_job(_read_text_bounded, target_path)
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool file read failed", err)
-            return {"error": str(err)}
+            return backend_failure(str(err), err)
         return {"content": content, "size": file_size}
 
     async def execute(
@@ -296,11 +297,11 @@ class ReadFileFunction(FileFunction):
             manager = SkillManager.get_loaded_instance()
             skill_name = arguments.get("name")
             if manager is None:
-                return {"error": f"Skill not found: {skill_name}"}
+                return backend_failure(f"Skill not found: {skill_name}")
             async with manager.async_skill_read():
                 skill = manager.get_skill(str(skill_name))
                 if skill is None:
-                    return {"error": f"Skill not found: {skill_name}"}
+                    return backend_failure(f"Skill not found: {skill_name}")
                 path_str = path_template.async_render(arguments, parse_result=False)
                 return await self._async_read(
                     hass, path_str, [str(skill.path.parent.resolve())]
@@ -358,7 +359,7 @@ class WriteFileFunction(FileFunction):
 
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool file write failed", err)
-            return {"error": str(err)}
+            return backend_failure(str(err), err)
 
         return {
             "success": True,
@@ -405,24 +406,26 @@ class EditFileFunction(FileFunction):
             target_path = self._resolve_path(hass, path_str, allow_dirs)
             async with _get_edit_lock(hass, target_path):
                 if not target_path.exists():
-                    return {"error": f"File not found: {path_str}"}
+                    return backend_failure(f"File not found: {path_str}")
 
                 if not target_path.is_file():
-                    return {"error": f"Not a file: {path_str}"}
+                    return backend_failure(f"Not a file: {path_str}")
 
                 content, fingerprint = await hass.async_add_executor_job(
                     _read_text_bounded_snapshot, target_path
                 )
 
                 if old_text not in content:
-                    return {"error": f"Text not found in file: {old_text[:50]}..."}
+                    return backend_failure(
+                        f"Text not found in file: {old_text[:50]}..."
+                    )
 
                 occurrence_count = content.count(old_text)
                 if occurrence_count > 1:
-                    return {
-                        "error": f"Text appears {occurrence_count} times in file. "
+                    return backend_failure(
+                        f"Text appears {occurrence_count} times in file. "
                         "Please provide more specific text to ensure single replacement."
-                    }
+                    )
 
                 new_content = content.replace(old_text, new_text, 1)
                 await _async_settle_native_edit(
@@ -436,7 +439,7 @@ class EditFileFunction(FileFunction):
 
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool file edit failed", err)
-            return {"error": str(err)}
+            return backend_failure(str(err), err)
 
         return {
             "success": True,

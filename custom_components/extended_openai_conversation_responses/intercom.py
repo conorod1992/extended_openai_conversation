@@ -563,9 +563,11 @@ class IntercomManager:
             ),
         }
 
-    def resolve_named_target(self, name: str) -> dict[str, Any] | None:
+    def resolve_named_target(
+        self, name: str, *, catalog: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
         wanted = re.sub(r"\s+", " ", name.strip().casefold())
-        catalog = self.catalog()
+        catalog = self.catalog() if catalog is None else catalog
         whole_home_aliases = {
             "everyone",
             "everywhere",
@@ -583,6 +585,7 @@ class IntercomManager:
             "floors": "floor_ids",
             "labels": "label_ids",
         }
+        matches: list[tuple[str, dict[str, Any]]] = []
         for group, target_field in singular.items():
             for item in catalog[group]:
                 names = [str(item["name"]), *(item.get("aliases") or [])]
@@ -595,11 +598,48 @@ class IntercomManager:
                     f"the {candidate}" for candidate in normalized_names
                 }
                 if wanted in accepted:
-                    return {
-                        target_field: [item["id"]],
-                        "name": item["name"],
-                    }
-        return None
+                    matches.append((target_field, item))
+        if not matches:
+            return None
+        if len(matches) > 1:
+            # Build memberships once, rather than resolving every alias against
+            # every satellite. Compare destinations before excluding the origin.
+            destinations: dict[tuple[str, str], set[str]] = {}
+            entities = er.async_get(self.hass)
+            devices = dr.async_get(self.hass)
+            areas = ar.async_get(self.hass)
+            for satellite in catalog["satellites"]:
+                entity_id = satellite["id"]
+                memberships = [("entity_ids", entity_id)]
+                area_id = satellite.get("area_id")
+                device_id = satellite.get("device_id")
+                entity = entities.async_get(entity_id)
+                device = devices.async_get(device_id) if device_id else None
+                area = areas.async_get_area(area_id) if area_id else None
+                labels = set(entity.labels) if entity else set()
+                if device_id:
+                    memberships.append(("device_ids", device_id))
+                if device:
+                    labels.update(device.labels)
+                if area_id:
+                    memberships.append(("area_ids", area_id))
+                if area:
+                    labels.update(area.labels)
+                    if area.floor_id:
+                        memberships.append(("floor_ids", area.floor_id))
+                memberships.extend(("label_ids", label_id) for label_id in labels)
+                for membership in memberships:
+                    destinations.setdefault(membership, set()).add(entity_id)
+            effective = {
+                frozenset(destinations.get((field, item["id"]), ()))
+                for field, item in matches
+            }
+            if len(effective) != 1 or not next(iter(effective)):
+                raise HomeAssistantError(
+                    f"Ambiguous Broadcast destination: {name}. Choose a more specific name or alias."
+                )
+        target_field, item = matches[0]
+        return {target_field: [item["id"]], "name": item["name"]}
 
 
 async def async_get_intercom(hass: HomeAssistant) -> IntercomManager:
@@ -656,9 +696,6 @@ def parse_targeted_broadcast(
         "all speakers",
     ]
     for candidate in sorted(set(candidates), key=len, reverse=True):
-        target = manager.resolve_named_target(candidate)
-        if target is None:
-            continue
         prefix = re.escape(candidate)
         payload_match = re.match(
             rf"^(?:the )?{prefix}(?:\s+(?:that|saying|message)\s+|[:,]\s*|\s+)(?P<message>.+)$",
@@ -666,6 +703,9 @@ def parse_targeted_broadcast(
             flags=re.IGNORECASE,
         )
         if payload_match:
+            target = manager.resolve_named_target(candidate, catalog=catalog)
+            if target is None:
+                continue
             payload = payload_match.group("message").strip()
             target.pop("name", None)
             return target, payload
