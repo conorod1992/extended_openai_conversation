@@ -92,8 +92,10 @@ def _tool_result_from_chat_request(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("recovery_enabled", [False, True])
 async def test_native_target_becomes_unavailable_before_dispatch_then_recovers(
     hass: HomeAssistant,
+    recovery_enabled: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An existing unavailable target fails at HA's service boundary and can recover."""
@@ -136,7 +138,7 @@ async def test_native_target_becomes_unavailable_before_dispatch_then_recovers(
         conversation_options={
             CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
             CONF_CHAT_MODEL: "gpt-5.6",
-            CONF_FUNCTION_TOOL_ERROR_RECOVERY: True,
+            CONF_FUNCTION_TOOL_ERROR_RECOVERY: recovery_enabled,
             CONF_FUNCTION_TOOLS: [_native_execute_service_tool()],
         },
     )
@@ -187,19 +189,24 @@ async def test_native_target_becomes_unavailable_before_dispatch_then_recovers(
     allow_dispatch.set()
 
     failed = await asyncio.wait_for(failing_task, timeout=_WAIT_TIMEOUT)
-    assert _speech(failed) == "The target is currently unavailable."
-    assert service_calls == []
-    assert len(failing_wire.requests) == 2
+    if recovery_enabled:
+        assert failed.response.error_code is not None
+        assert len(failing_wire.requests) == 1
+        assert agent._usage.runs[0].successful is False
+    else:
+        assert _speech(failed) == "The target is currently unavailable."
+        assert service_calls == []
+        assert len(failing_wire.requests) == 2
 
-    failed_tool_result = _tool_result_from_chat_request(
-        failing_wire.requests[1]["body"], "call-native-target-unavailable"
-    )
-    assert "result" in failed_tool_result
-    assert len(failed_tool_result["result"]) == 1
-    error = failed_tool_result["result"][0]
-    assert "error" in error
-    assert "unavailable" in error["error"].lower()
-    assert _ENTITY_ID in error["error"]
+        failed_tool_result = _tool_result_from_chat_request(
+            failing_wire.requests[1]["body"], "call-native-target-unavailable"
+        )
+        assert "result" in failed_tool_result
+        assert len(failed_tool_result["result"]) == 1
+        error = failed_tool_result["result"][0]
+        assert "error" in error
+        assert "unavailable" in error["error"].lower()
+        assert _ENTITY_ID in error["error"]
 
     # This distinguishes the case from target disappearance: HA still owns a live
     # State object and the exposure/configured-tool boundaries remain unchanged.

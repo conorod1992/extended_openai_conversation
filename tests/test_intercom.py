@@ -30,7 +30,7 @@ def test_targeted_parser_resolves_named_destination(monkeypatch) -> None:
         "floors": [],
         "labels": [],
     }
-    manager.resolve_named_target = lambda name: (
+    manager.resolve_named_target = lambda name, **kwargs: (
         {"area_ids": ["kitchen"], "name": "Kitchen"}
         if name.casefold() == "kitchen"
         else None
@@ -53,7 +53,7 @@ def test_targeted_parser_checks_aliases(monkeypatch) -> None:
         "floors": [],
         "labels": [],
     }
-    manager.resolve_named_target = lambda name: (
+    manager.resolve_named_target = lambda name, **kwargs: (
         {"area_ids": ["kitchen"], "name": "Kitchen"}
         if name.casefold() == "cooking area"
         else None
@@ -69,7 +69,7 @@ def test_targeted_parser_supports_whole_home(monkeypatch) -> None:
     manager.catalog = lambda: {
         "satellites": [], "devices": [], "areas": [], "floors": [], "labels": []
     }
-    manager.resolve_named_target = lambda name: (
+    manager.resolve_named_target = lambda name, **kwargs: (
         {"whole_home": True, "name": name}
         if name.casefold() == "everyone"
         else None
