@@ -1707,7 +1707,9 @@
     "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[chat_completions-False]",
     "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[chat_completions-True]",
     "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[responses-False]",
-    "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[responses-True]"
+    "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[responses-True]",
+    "tests_stress/test_execution_contract.py::test_narrowed_live_selector_does_not_shrink_reviewed_obligation",
+    "tests_stress/test_execution_contract.py::test_explicit_reviewed_partial_selection_remains_valid"
   ],
   "browser": {
     "browser": [
@@ -2402,8 +2404,146 @@
     }
   },
   "selections": {
-    "public-version-journeys": [
-      "tests_real_ha/test_public_version_journeys.py"
+    "ai-task": [
+      "tests_real_ha/test_ai_task_lifecycle.py",
+      "tests_real_ha/test_ai_task_provider_wire.py",
+      "tests_real_ha/test_ai_task_runtime.py",
+      "tests_stress/test_ai_task_continuity.py",
+      "tests_stress/test_ai_task_mixed_campaign.py"
+    ],
+    "archive": [
+      "tests/test_conversation_archive.py",
+      "tests_stress/test_archive_living_campaign.py"
+    ],
+    "backup": [
+      "tests_stress/test_backup_fault_matrix.py",
+      "tests_stress/test_backup_inventory.py",
+      "tests_stress/test_backup_live_overlap.py",
+      "tests_stress/test_historical_backup.py",
+      "tests_stress/test_restore_background_ownership.py::test_installed_retention_waits_for_restored_policy",
+      "tests_stress/test_restore_recovery_process.py",
+      "tests_stress/test_restore_recovery_safety.py"
+    ],
+    "backup-transfer": [
+      "tests_stress/test_backup_transfer.py",
+      "tests_stress/test_backup_transfer_preview_races.py",
+      "tests_stress/test_filesystem_process_recovery.py::test_booted_filesystem_recovers_after_hard_kill[transfer]",
+      "tests_stress/test_restore_background_ownership.py::test_websocket_setup_export_is_coherent_across_restore"
+    ],
+    "browser": [
+      "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_talks_to_real_management_websocket",
+      "tests_real_ha/test_browser_golden_acceptance.py",
+      "tests_stress/test_browser_backend_resilience.py",
+      "tests_stress/test_browser_management_contract.py",
+      "tests_stress/test_browser_multi_tab.py",
+      "tests_stress/test_management_ws_contract.py"
+    ],
+    "browser-firefox": [
+      "tests_stress/test_browser_backend_resilience.py::test_native_editor_ownership_and_satellite_registry_recovery",
+      "tests_stress/test_browser_backend_resilience.py::test_native_shell_lifetime_and_assistant_isolation",
+      "tests_stress/test_browser_multi_tab.py"
+    ],
+    "browser-webkit": [
+      "tests_stress/test_browser_backend_resilience.py::test_native_editor_ownership_and_satellite_registry_recovery",
+      "tests_stress/test_browser_backend_resilience.py::test_native_shell_lifetime_and_assistant_isolation",
+      "tests_stress/test_browser_multi_tab.py"
+    ],
+    "chaos": [
+      "tests_stress/test_cross_feature_chaos.py"
+    ],
+    "diagnostics": [
+      "tests_stress/test_diagnostics_failure_probe.py"
+    ],
+    "feature-crossroads": [
+      "tests/test_model_catalog_transitions.py",
+      "tests/test_skill_availability.py",
+      "tests/test_skill_filesystem_concurrency.py",
+      "tests/test_usage_accounting_recovery.py",
+      "tests_real_ha/test_assist_streaming_speech_processing.py",
+      "tests_real_ha/test_entity_attribute_runtime_integrity.py",
+      "tests_real_ha/test_entity_registry_customization.py",
+      "tests_real_ha/test_local_intent_exclusions.py",
+      "tests_real_ha/test_model_catalog_live_refresh.py",
+      "tests_real_ha/test_populated_feature_assist_journey.py",
+      "tests_real_ha/test_usage_accounting_failure_recovery.py",
+      "tests_stress/test_evidence_manifest.py",
+      "tests_stress/test_exposure_churn_endurance.py",
+      "tests_stress/test_generated_valid_transitions.py",
+      "tests_stress/test_local_intent_mixed_campaign.py",
+      "tests_stress/test_model_catalog_refresh_endurance.py",
+      "tests_stress/test_skill_download_cancellation.py",
+      "tests_stress/test_skill_lifecycle_campaign.py",
+      "tests_stress/test_streaming_speech_endurance.py",
+      "tests_stress/test_usage_retention_endurance.py",
+      "tests_stress/test_valid_configuration_transitions.py"
+    ],
+    "functions": [
+      "tests/functions",
+      "tests/test_function_execution_coverage.py",
+      "tests/test_resource_io_hardening.py::test_compressed_response_integrity_and_accepted_body_boundary",
+      "tests_real_ha/test_delayed_tool_due_reauthorization.py",
+      "tests_real_ha/test_live_config_mutation_semantics.py",
+      "tests_real_ha/test_management_backend_acceptance.py::test_consecutive_live_management_writes_do_not_reload_or_block_overview",
+      "tests_real_ha/test_native_automation_acceptance.py",
+      "tests_real_ha/test_native_recorder_acceptance.py",
+      "tests_real_ha/test_native_service_disappearance.py",
+      "tests_real_ha/test_provider_wire_e2e.py",
+      "tests_real_ha/test_public_version_journeys.py::test_public_script_function_cleanup_abort_and_repeat",
+      "tests_real_ha/test_script_function_outcomes.py",
+      "tests_real_ha/test_target_registry_mutation_race.py",
+      "tests_stress/test_active_ha_request_mutations.py",
+      "tests_stress/test_delayed_mutation_matrix.py",
+      "tests_stress/test_file_edit_native_cancellation.py",
+      "tests_stress/test_function_groups_state_machine.py",
+      "tests_stress/test_function_provider_wire.py",
+      "tests_stress/test_function_provider_wire_remaining.py",
+      "tests_stress/test_identity_generation_races.py",
+      "tests_stress/test_native_broadcast_authorization.py",
+      "tests_stress/test_native_history_automation_lifecycle.py",
+      "tests_stress/test_request_rules_provider_wire.py::test_function_execution_failure_stops_rule_independently_of_capture"
+    ],
+    "guest-security": [
+      "tests_real_ha/test_management_authorization_matrix.py",
+      "tests_real_ha/test_security_routing_boundaries.py",
+      "tests_stress/test_guest_functions_matrix.py",
+      "tests_stress/test_guest_mode_acknowledgement.py",
+      "tests_stress/test_guest_provider_wire.py",
+      "tests_stress/test_request_rule_guest_transitions.py"
+    ],
+    "large-installation": [
+      "tests_stress/test_archive_living_campaign.py",
+      "tests_stress/test_extreme_context_matrix.py",
+      "tests_stress/test_generated_state_lifecycle.py",
+      "tests_stress/test_generated_valid_states.py",
+      "tests_stress/test_large_installation.py",
+      "tests_stress/test_memory_knowledge_scale.py",
+      "tests_stress/test_provider_wire_privacy.py",
+      "tests_stress/test_responses_scale_fairness.py::test_populated_scale_executes_responses_retrieval_and_tool_wire"
+    ],
+    "lifecycle": [
+      "tests_real_ha/test_config_flow_lifecycle_contracts.py",
+      "tests_real_ha/test_multi_entry_lifecycle.py",
+      "tests_real_ha/test_partial_platform_setup_retry.py",
+      "tests_stress/test_active_removal_races.py",
+      "tests_stress/test_active_unload_races.py",
+      "tests_stress/test_complete_user_journeys.py",
+      "tests_stress/test_installed_lifecycle.py",
+      "tests_stress/test_lifecycle_matrix.py",
+      "tests_stress/test_management_replay_safety.py"
+    ],
+    "lifecycle-matrix": [
+      "tests_real_ha/test_public_version_journeys.py",
+      "tests_stress/test_lifecycle_matrix.py"
+    ],
+    "long-lifetime": [
+      "tests_stress/test_process_resource_soak.py",
+      "tests_stress/test_responses_scale_fairness.py::test_mixed_background_pressure_preserves_lightweight_progress"
+    ],
+    "memory-knowledge": [
+      "tests_stress/test_memory_knowledge_scale.py",
+      "tests_stress/test_pending_retrieval_publication.py",
+      "tests_stress/test_provider_wire_privacy.py",
+      "tests_stress/test_temporary_memory_scale.py"
     ],
     "minimum-ha-features": [
       "tests_real_ha/test_assist_voice_identity_precedence.py::test_genuine_assist_prefers_registry_device_voice_identity_when_both_ids_exist",
@@ -2431,6 +2571,109 @@
     ],
     "native-browser-webkit-mobile": [
       "tests_real_ha/test_browser_compatibility_acceptance.py::test_compact_native_frontend_version_contract"
+    ],
+    "persistence": [
+      "tests_real_ha/test_corrupt_subsystem_store_startup_isolation.py",
+      "tests_real_ha/test_delayed_tool_process_restart.py",
+      "tests_real_ha/test_pending_store_write_shutdown_recovery.py",
+      "tests_real_ha/test_persistent_memory_shutdown_recovery.py",
+      "tests_real_ha/test_release_upgrade_acceptance.py",
+      "tests_real_ha/test_store_write_process_crash.py",
+      "tests_stress/test_acknowledgement_loss.py",
+      "tests_stress/test_archive_living_campaign.py::test_archive_first_intent_failure_cannot_be_erased_by_session_publication",
+      "tests_stress/test_backup_fault_matrix.py",
+      "tests_stress/test_management_transaction_matrix.py",
+      "tests_stress/test_os_storage_faults.py",
+      "tests_stress/test_pending_retrieval_publication.py",
+      "tests_stress/test_persistence_forward_and_clock.py",
+      "tests_stress/test_published_downgrade_boundary.py",
+      "tests_stress/test_restore_recovery_process.py",
+      "tests_stress/test_restore_recovery_safety.py",
+      "tests_stress/test_store_structure_recovery.py"
+    ],
+    "process-chaos": [
+      "tests_real_ha/test_active_request_shutdown_recovery.py",
+      "tests_real_ha/test_delayed_tool_process_restart.py",
+      "tests_real_ha/test_immediate_tool_process_crash.py",
+      "tests_real_ha/test_restore_transaction_process_crash.py",
+      "tests_real_ha/test_store_write_process_crash.py",
+      "tests_stress/test_backup_inventory.py",
+      "tests_stress/test_delayed_backlog.py",
+      "tests_stress/test_filesystem_process_recovery.py"
+    ],
+    "provider-resilience": [
+      "tests/test_openai_sdk_catalog_matrix.py",
+      "tests/test_openai_sdk_error_matrix.py",
+      "tests/test_openai_sdk_malformed_wire.py",
+      "tests/test_openai_sdk_multicall_wire.py",
+      "tests/test_openai_sdk_wire.py",
+      "tests_real_ha/test_cancel_after_side_effect.py",
+      "tests_real_ha/test_degraded_diagnostics.py",
+      "tests_real_ha/test_provider_failure_recovery.py",
+      "tests_real_ha/test_provider_wire_truncated_tool_stream.py",
+      "tests_real_ha/test_usage_accounting_failure_recovery.py",
+      "tests_stress/test_active_provider_stream_cancellation.py",
+      "tests_stress/test_cancellation_resource_lifetime.py",
+      "tests_stress/test_model_lifecycle_acceptance.py",
+      "tests_stress/test_provider_concurrent_backpressure.py",
+      "tests_stress/test_provider_dependency_degradation.py",
+      "tests_stress/test_provider_event_sequences.py",
+      "tests_stress/test_provider_fault_matrix.py",
+      "tests_stress/test_provider_fault_phases.py",
+      "tests_stress/test_provider_protocol_acceptance.py",
+      "tests_stress/test_provider_real_connection_pool.py",
+      "tests_stress/test_provider_valid_chunking.py"
+    ],
+    "public-version-journeys": [
+      "tests_real_ha/test_public_version_journeys.py"
+    ],
+    "quiet-hours": [
+      "tests_real_ha/test_quiet_hours_resilience.py",
+      "tests_real_ha/test_quiet_hours_scheduling.py",
+      "tests_stress/test_quiet_hours_edges.py",
+      "tests_stress/test_quiet_hours_multi_satellite.py",
+      "tests_stress/test_quiet_hours_ownership_time.py"
+    ],
+    "request-rules": [
+      "tests_real_ha/test_request_rules_script_semantics.py",
+      "tests_stress/test_generated_request_rule_action_contracts.py",
+      "tests_stress/test_request_rule_publication.py",
+      "tests_stress/test_request_rules_matrix.py",
+      "tests_stress/test_request_rules_provider_wire.py"
+    ],
+    "runtime": [
+      "tests_real_ha/test_management_backend_acceptance.py::test_configuration_transfer_survives_reload",
+      "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
+      "tests_real_ha/test_provider_serialization_invariants.py",
+      "tests_real_ha/test_runtime_recovery_journey.py",
+      "tests_stress/test_backup_inventory.py",
+      "tests_stress/test_conversation_id_collision.py",
+      "tests_stress/test_evidence_manifest.py",
+      "tests_stress/test_execution_contract.py",
+      "tests_stress/test_frontend_interaction_inventory.py",
+      "tests_stress/test_frontend_route_inventory.py",
+      "tests_stress/test_management_action_inventory.py",
+      "tests_stress/test_nightly_inventory.py",
+      "tests_stress/test_process_resource_soak.py",
+      "tests_stress/test_public_service_inventory.py",
+      "tests_stress/test_runtime_soak.py"
+    ],
+    "setup": [
+      "tests_real_ha/test_config_flow.py",
+      "tests_real_ha/test_config_flow_edges.py",
+      "tests_real_ha/test_config_flow_lifecycle_contracts.py",
+      "tests_real_ha/test_packaged_release.py",
+      "tests_stress/test_backup_inventory.py",
+      "tests_stress/test_provider_endpoint_selection.py",
+      "tests_stress/test_reauth_active_traffic.py"
+    ],
+    "voice-intercom": [
+      "tests_real_ha/test_assist_origin_context.py",
+      "tests_real_ha/test_assist_voice_identity_precedence.py",
+      "tests_real_ha/test_intercom_voice_acceptance.py",
+      "tests_stress/test_intercom_endurance_campaign.py",
+      "tests_stress/test_native_audio_delivery.py",
+      "tests_stress/test_voice_household_campaign.py"
     ]
   }
 }

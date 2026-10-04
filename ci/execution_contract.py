@@ -61,9 +61,10 @@ def selected(node, selector):
 
 
 def expected_cases(contract, campaign):
-    selectors = contract.get("selections", {}).get(
-        campaign, python_selections().get(campaign, [])
-    )
+    # The reviewed selector catalog is the independent obligation boundary.
+    # Never infer it from the live workflow: narrowing a workflow selector must
+    # leave the already-reviewed required cases intact.
+    selectors = contract.get("selections", {}).get(campaign, [])
     python = {
         node for node in contract["pytest"] if any(selected(node, p) for p in selectors)
     }

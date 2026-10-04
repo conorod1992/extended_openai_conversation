@@ -22,6 +22,7 @@ def contract():
     return {
         "pytest": [NODE],
         "browser": {"runtime": [BROWSER]},
+        "selections": {"runtime": [NODE]},
         "minimums": {"runtime": {"actual_tool_executions": 1}},
     }
 
@@ -94,6 +95,10 @@ def test_selected_cases_and_new_test_functions_require_review():
     import ast
 
     policy = json.loads(CONTRACT.read_text())
+    assert all(
+        sorted(policy["selections"].get(campaign, [])) == sorted(selectors)
+        for campaign, selectors in python_selections().items()
+    )
     known = {node.split("[", 1)[0] for node in policy["pytest"]}
     root = Path(__file__).resolve().parents[1]
     for campaign, paths in python_selections().items():
@@ -118,6 +123,47 @@ def test_selected_cases_and_new_test_functions_require_review():
                         assert identity in known, (
                             f"New selected test needs execution-contract review: {identity}"
                         )
+
+
+def test_narrowed_live_selector_does_not_shrink_reviewed_obligation():
+    policy = contract()
+    first = "tests_stress/test_runtime_soak.py::test_probe"
+    second = "tests_stress/test_runtime_soak.py::test_other_probe"
+    policy["pytest"] = [first, second]
+    policy["selections"] = {"runtime": ["tests_stress/test_runtime_soak.py"]}
+
+    # A live workflow narrowed to one test node remains an execution detail;
+    # the independently reviewed file obligation still contains both tests.
+    assert expected_cases(policy, "runtime") == {first, second}
+    item = {
+        "campaign": "runtime",
+        "measured_totals": {"actual_tool_executions": 1},
+        "execution_cases": [
+            {"nodeid": first, "collected": True, "executed": True, "outcome": "passed"}
+        ],
+    }
+    assert any(second in error and "absent" in error for error in check_execution(item, policy))
+
+
+def test_explicit_reviewed_partial_selection_remains_valid():
+    policy = contract()
+    first = "tests_stress/test_runtime_soak.py::test_probe"
+    second = "tests_stress/test_runtime_soak.py::test_other_probe"
+    policy["pytest"] = [first, second]
+    policy["selections"] = {"runtime": [first]}
+    assert expected_cases(policy, "runtime") == {first}
+    item = {
+        "campaign": "runtime",
+        "measured_totals": {"actual_tool_executions": 1},
+        "execution_cases": [
+            {"nodeid": first, "collected": True, "executed": True, "outcome": "passed"}
+        ],
+    }
+    assert check_execution(item, policy) == []
+    item["execution_cases"].append(
+        {"nodeid": second, "collected": True, "executed": True, "outcome": "passed"}
+    )
+    assert any("not reviewed" in error for error in check_execution(item, policy))
 
 
 def test_real_pytest_ledger_records_collection_skips_xfail_and_teardown(tmp_path):
