@@ -1313,6 +1313,41 @@ def test_native_script_constructs_and_templates_validate() -> None:
     assert validated["slots"] == [{"name": "level"}]
 
 
+def test_native_dynamic_duration_and_iteration_templates_validate() -> None:
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {"delay": {"seconds": "{{ 2 }}"}},
+        {
+            "wait_template": "{{ is_state('binary_sensor.ready', 'on') }}",
+            "timeout": "{{ 5 }}",
+            "continue_on_timeout": True,
+        },
+        {
+            "repeat": {
+                "for_each": "{{ ['light.kitchen', 'light.hall'] }}",
+                "sequence": [
+                    {
+                        "action": "light.turn_off",
+                        "target": {"entity_id": "{{ repeat.item }}"},
+                    }
+                ],
+            }
+        },
+    ]
+
+    validated = validate_rule(rule)
+
+    assert validated["action"]["actions"] == rule["action"]["actions"]
+
+
+def test_native_malformed_dynamic_duration_template_is_rejected() -> None:
+    rule = local_rule()
+    rule["action"]["actions"] = [{"delay": {"seconds": "{{ broken"}}]
+
+    with pytest.raises(ValueError, match="invalid Home Assistant action sequence"):
+        validate_rule(rule)
+
+
 def test_native_script_variable_is_not_a_captured_request_slot() -> None:
     rule = local_rule()
     rule["action"]["actions"] = [
