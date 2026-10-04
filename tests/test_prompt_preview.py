@@ -589,6 +589,7 @@ async def test_effective_request_preview_allows_text_only_route_at_zero_budget(
             CONF_WEB_SEARCH: False,
             CONF_FUNCTION_TOOLS: "[]",
             CONF_FUNCTION_GROUPS: [],
+            CONF_EXPOSED_ENTITIES_ENABLED: False,
             CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 0,
         }
     )
@@ -621,6 +622,7 @@ async def test_effective_request_preview_rejects_text_only_route_when_finalizer_
             CONF_WEB_SEARCH: False,
             CONF_FUNCTION_TOOLS: "[]",
             CONF_FUNCTION_GROUPS: [],
+            CONF_EXPOSED_ENTITIES_ENABLED: False,
             CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 0,
             CONF_CONTINUE_CONVERSATION: CONTINUE_CONVERSATION_CONDITIONAL,
         }
