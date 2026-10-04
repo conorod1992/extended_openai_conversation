@@ -601,6 +601,7 @@ for (const now of [false, true]) {
     expect(finiteStatus.status.indefinite).toBe(false);
     expect(finiteStatus.status.active_until).toBeTruthy();
 
+    await panel.locator("#guest-end").fill("");
     await panel.locator("#guest-indefinite").check();
     await button.click();
     await expect.poll(async () => (await updates()).at(-1)?.indefinite).toBe(true);
