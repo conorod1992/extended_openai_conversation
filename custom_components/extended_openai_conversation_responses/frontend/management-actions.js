@@ -1,4 +1,5 @@
 import {same} from "./unsaved-state.js";
+import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
@@ -75,6 +76,11 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
   const submitted = clone(panel._draft), submittedTitle = panel._draftTitle;
+  const owner = {agentId:panel._agentId, entryId:panel._selectedAgent().entry_id,
+    view:panel._viewKey?.(), main:panel.shadowRoot.querySelector("main"),
+    route:panel._eocRenderedRoute, markup:panel._eocMainMarkup, model:submitted.chat_model,
+    voiceMappings:clone(submitted.voice_device_mappings || {}), voicePolicy:submitted.voice_scope_policy,
+    voiceDefaultActive:submitted.voice_scope_policy === "default_user" || (submitted.voice_scope_policy === "device_mapping" && submitted.voice_unmapped_policy === "default_user")};
   panel._syncConfigDirty?.();
   const dirty = panel._eocDirtyConfigKeys || new Set();
   const changed = Object.fromEntries([...dirty].filter(key => key !== "__title" && Object.hasOwn(submitted, key)).map(key => [key, submitted[key]]));
@@ -86,6 +92,7 @@ async function saveConfiguration(panel, button) {
       ...(dirty.has("__title") ? {title: submittedTitle} : {}),
       revision: panel._configData?.revision,
     }, submitted, submittedTitle);
+    if (panel._agentId !== owner.agentId || panel._selectedAgent?.()?.entry_id !== owner.entryId) return;
     showErrors(panel, result.errors || {});
     if (!result.valid) {
       panel._toast("Fix the highlighted configuration errors", true);
@@ -103,6 +110,7 @@ async function saveConfiguration(panel, button) {
     if (agent) Object.assign(panel._selectedAgent(), agent);
     panel._syncConfigDirty();
     panel._toast("Changes saved");
+    reconcileSavedConfiguration(panel, owner);
     panel._render();
   } catch (err) {
     panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);

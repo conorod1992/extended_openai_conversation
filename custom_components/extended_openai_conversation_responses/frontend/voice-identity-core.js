@@ -51,7 +51,7 @@ export function renderVoiceIdentityCore(panel) {
     <div data-voice-mapping-feature ${mapping ? 'style="min-height:96px"' : ""}>${mapping ? '<section class="voice-mappings-card"><h3>Voice device assignments</h3><p class="help">Loading saved assignments…</p></section>' : ""}</div>`;
 }
 
-function updatePolicy(panel) {
+export function updatePolicy(panel) {
   const root = panel.shadowRoot;
   const policy = root.querySelector('[data-config="voice_scope_policy"]')?.value || "unretained";
   const fallback = root.querySelector('[data-config="voice_unmapped_policy"]')?.value || "unretained";
@@ -82,7 +82,7 @@ function updatePolicy(panel) {
 
 async function hydrateMapping(panel) {
   const target = panel.shadowRoot?.querySelector("[data-voice-mapping-feature]");
-  if (!target || target.dataset.loading || target.dataset.ready) return;
+  if (!target || Object.hasOwn(target.dataset, "loading") || Object.hasOwn(target.dataset, "ready")) return;
   target.dataset.loading = "";
   if (!target.firstElementChild) {
     target.style.minHeight = "96px";
@@ -103,7 +103,7 @@ async function hydrateMapping(panel) {
       if (help) help.textContent = `Unable to load device assignments: ${error.message || String(error)}`;
     }
   } finally {
-    if (!target.dataset.ready) delete target.dataset.loading;
+    if (!Object.hasOwn(target.dataset, "ready")) delete target.dataset.loading;
   }
 }
 

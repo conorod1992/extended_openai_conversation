@@ -868,7 +868,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         }
         return primary_result
 
-    if action == "details":
+    if action in {"details", "policy"}:
         started = perf_counter()
 
         phase = perf_counter()
@@ -903,6 +903,12 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             "exposed_entities_ms": exposed_entities_ms,
             "policy_ms": policy_ms,
         }
+
+        if action == "policy":
+            return {
+                **details_result,
+                "revision": persisted_config_projection(subentry).revision,
+            }
 
         if is_admin:
             phase = perf_counter()

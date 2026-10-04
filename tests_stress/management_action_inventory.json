@@ -273,6 +273,7 @@
         "details",
         "disable",
         "get",
+        "policy",
         "save_policy",
         "update"
       ],
@@ -284,6 +285,7 @@
         "details": "read_only",
         "disable": "durable_mutation",
         "get": "read_only",
+        "policy": "read_only",
         "save_policy": "durable_mutation",
         "update": "durable_mutation"
       },
@@ -291,6 +293,7 @@
         "details": "authenticated_read",
         "disable": "admin_only",
         "get": "authenticated_read",
+        "policy": "authenticated_read",
         "save_policy": "admin_only",
         "update": "admin_only"
       },
@@ -298,6 +301,7 @@
         "details": "tests/test_management_loading_performance.py::test_guest_mode_details_reuses_one_exposed_entity_projection",
         "disable": "tests/test_management_ui.py::test_guest_backup_and_service_dispatch_edges",
         "get": "tests/test_management_loading_performance.py::test_guest_mode_primary_get_skips_heavy_catalogues",
+        "policy": "tests/test_guest_policy_projection.py::test_policy_projection_avoids_catalogue_loading",
         "save_policy": "tests/test_management_ui.py::test_guest_policy_save_rejects_stale_revision_and_returns_new_baseline",
         "update": "tests/test_management_ui.py::test_guest_backup_and_service_dispatch_edges"
       },
