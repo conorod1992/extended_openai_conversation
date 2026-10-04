@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import re
@@ -22,7 +22,11 @@ from .agent_config import (
     configured_function_tools_from_data,
     validate_agent_title,
 )
-from .const import AGENT_CONFIG_EXPORT_VERSION
+from .const import (
+    AGENT_CONFIG_EXPORT_VERSION,
+    CONF_VOICE_DEFAULT_USER_ID,
+    CONF_VOICE_DEVICE_MAPPINGS,
+)
 from .conversation_archive import (
     ArchiveSession,
     ArchiveTurn,
@@ -32,7 +36,7 @@ from .conversation_archive import (
 from .function_dependency_integrity import async_validate_request_rule_functions
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
-from .memory import MemoryRecord, PersistentMemory, async_get_memory
+from .memory import ANONYMOUS_USER_ID, MemoryRecord, PersistentMemory, async_get_memory
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import (
     LITERAL_TEXT_KEY,
@@ -195,6 +199,194 @@ def validate_section_selection(
             "Unknown transfer section: " + ", ".join(sorted(unknown))
         )
     return selected
+
+
+def _portable_user_id(value: Any, *, prefixed_only: bool = False) -> str | None:
+    """Return one user ID carried by portable retained-data ownership."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    prefixed = candidate.startswith("user:")
+    if prefixed:
+        candidate = candidate.removeprefix("user:")
+    elif prefixed_only:
+        return None
+    if not candidate or value in {
+        ANONYMOUS_USER_ID,
+        "shared:household",
+        "shared",
+        "unretained",
+    }:
+        return None
+    return candidate
+
+
+def transfer_user_scope_ids(
+    prepared: PreparedTransfer, selected: Iterable[str]
+) -> frozenset[str]:
+    """Return source-installation HA users referenced by selected portable sections."""
+    selected_set = frozenset(selected)
+    user_ids: set[str] = set()
+
+    if SECTION_PERSISTENT_MEMORY in selected_set:
+        for record in prepared.memories or ():
+            if user_id := _portable_user_id(record.user_id):
+                user_ids.add(user_id)
+
+    if SECTION_TEMPORARY_MEMORY in selected_set:
+        for temporary_record in prepared.temporary_memories or ():
+            if user_id := _portable_user_id(
+                temporary_record.owner_scope_id, prefixed_only=True
+            ):
+                user_ids.add(user_id)
+
+    if SECTION_CONVERSATION_ARCHIVE in selected_set:
+        for session in prepared.archive_sessions or ():
+            if user_id := _portable_user_id(session.scope_id, prefixed_only=True):
+                user_ids.add(user_id)
+
+    if SECTION_CONFIGURATION in selected_set and prepared.config is not None:
+        if user_id := _portable_user_id(
+            prepared.config.get(CONF_VOICE_DEFAULT_USER_ID)
+        ):
+            user_ids.add(user_id)
+        mappings = prepared.config.get(CONF_VOICE_DEVICE_MAPPINGS, {})
+        if isinstance(mappings, Mapping):
+            for owner in mappings.values():
+                if user_id := _portable_user_id(owner, prefixed_only=True):
+                    user_ids.add(user_id)
+
+    return frozenset(user_ids)
+
+
+async def async_user_scope_mapping_plan(
+    hass: HomeAssistant,
+    prepared: PreparedTransfer,
+    selected: Iterable[str],
+    supplied: Any = None,
+) -> dict[str, Any]:
+    """Resolve portable source-user ownership against destination HA users."""
+    source_ids = transfer_user_scope_ids(prepared, selected)
+    users = await hass.auth.async_get_users()
+    destinations = {
+        str(user.id): str(user.name or user.id)
+        for user in users
+        if getattr(user, "id", None) is not None
+    }
+    supplied = {} if supplied is None else supplied
+    if not isinstance(supplied, Mapping) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in supplied.items()
+    ):
+        raise backup.BackupError("User ownership mappings must be an object")
+
+    required = sorted(source_ids - destinations.keys())
+    resolved = {user_id: user_id for user_id in source_ids if user_id in destinations}
+    for source_id, destination_id in supplied.items():
+        if source_id not in required:
+            continue
+        if destination_id not in destinations:
+            raise backup.BackupError(
+                f"Mapped Home Assistant user does not exist: {destination_id}"
+            )
+        resolved[source_id] = destination_id
+
+    missing = [source_id for source_id in required if source_id not in resolved]
+    return {
+        "required_source_user_ids": required,
+        "missing_source_user_ids": missing,
+        "destination_users": [
+            {"user_id": user_id, "name": name}
+            for user_id, name in sorted(
+                destinations.items(), key=lambda item: (item[1].casefold(), item[0])
+            )
+        ],
+        "resolved": {source_id: resolved[source_id] for source_id in sorted(resolved)},
+    }
+
+
+def _map_owner_value(value: Any, mapping: Mapping[str, str]) -> Any:
+    """Map one retained owner while preserving its stored prefix convention."""
+    source_id = _portable_user_id(value)
+    if source_id is None or source_id not in mapping:
+        return value
+    destination = mapping[source_id]
+    return (
+        f"user:{destination}"
+        if isinstance(value, str) and value.startswith("user:")
+        else destination
+    )
+
+
+def _map_configuration_users(value: Any, mapping: Mapping[str, str]) -> Any:
+    if not isinstance(value, Mapping):
+        return value
+    result = deepcopy(dict(value))
+    default_user = result.get(CONF_VOICE_DEFAULT_USER_ID)
+    if default_user is not None:
+        result[CONF_VOICE_DEFAULT_USER_ID] = _map_owner_value(default_user, mapping)
+    device_mappings = result.get(CONF_VOICE_DEVICE_MAPPINGS)
+    if isinstance(device_mappings, Mapping):
+        result[CONF_VOICE_DEVICE_MAPPINGS] = {
+            str(device_id): _map_owner_value(owner, mapping)
+            for device_id, owner in device_mappings.items()
+        }
+    return result
+
+
+def apply_user_scope_mappings(
+    prepared: PreparedTransfer,
+    selected: Iterable[str],
+    mapping: Mapping[str, str],
+) -> PreparedTransfer:
+    """Apply explicit cross-install user ownership mappings to selected sections."""
+    selected_set = frozenset(selected)
+    mapped = deepcopy(prepared)
+
+    if SECTION_CONFIGURATION in selected_set:
+        mapped.config = _map_configuration_users(mapped.config, mapping)
+        mapped.raw_configuration = _map_configuration_users(
+            mapped.raw_configuration, mapping
+        )
+
+    if SECTION_PERSISTENT_MEMORY in selected_set and mapped.memories is not None:
+        mapped.memories = [
+            replace(record, user_id=str(_map_owner_value(record.user_id, mapping)))
+            for record in mapped.memories
+        ]
+
+    if (
+        SECTION_TEMPORARY_MEMORY in selected_set
+        and mapped.temporary_memories is not None
+    ):
+        records: list[TemporaryMemoryRecord] = []
+        for record in mapped.temporary_memories:
+            owner = _map_owner_value(record.owner_scope_id, mapping)
+            scope_id = record.scope_id
+            if isinstance(scope_id, str) and scope_id.startswith("user:"):
+                scope_id = str(_map_owner_value(scope_id, mapping))
+            records.append(
+                replace(
+                    record,
+                    owner_scope_id=str(owner) if owner is not None else None,
+                    scope_id=scope_id,
+                )
+            )
+        mapped.temporary_memories = records
+
+    if (
+        SECTION_CONVERSATION_ARCHIVE in selected_set
+        and mapped.archive_sessions is not None
+    ):
+        mapped.archive_sessions = [
+            replace(
+                session,
+                scope_id=str(_map_owner_value(session.scope_id, mapping)),
+            )
+            for session in mapped.archive_sessions
+        ]
+
+    return mapped
 
 
 def _safe_title(title: str) -> str:
