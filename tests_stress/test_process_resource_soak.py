@@ -166,6 +166,7 @@ async def _booted_soak(config_dir, seed, scale):
     agent_module = importlib.import_module(f"custom_components.{DOMAIN}.conversation")
     transfers = importlib.import_module(f"custom_components.{DOMAIN}.backup_transfer")
     long_lifetime = os.environ.get("STRESS_CAMPAIGN") == "long-lifetime"
+    uninterrupted = os.environ.get("EOAI_UNINTERRUPTED_SOAK") == "1"
     lifetime_started = monotonic()
     retention_callbacks = 0
     idle_seconds = 0.0
@@ -386,7 +387,7 @@ async def _booted_soak(config_dir, seed, scale):
                         idle_seconds += monotonic() - idle_began
                 # Reload/failed transport/cancellation recovery exercise real client
                 # and background lifetimes, rather than counting logical managers.
-                if window in ((1, 3, 5, 7) if long_lifetime else (1, 3)):
+                if not uninterrupted and window in ((1, 3, 5, 7) if long_lifetime else (1, 3)):
                     assert await hass.config_entries.async_reload(entry.entry_id)
                     config_entry_reloads += 1
                     await hass.async_block_till_done()
@@ -432,6 +433,7 @@ async def _booted_soak(config_dir, seed, scale):
                             "windows": windows,
                             "provider_requests": provider_requests,
                             "config_entry_reloads": config_entry_reloads,
+                            "uninterrupted_runtime": uninterrupted,
                             "elapsed_seconds": monotonic() - lifetime_started,
                             "idle_seconds": idle_seconds,
                             "retention_callbacks": retention_callbacks,
@@ -451,7 +453,7 @@ async def _booted_soak(config_dir, seed, scale):
                 assert monotonic() - lifetime_started >= 1800
                 assert idle_seconds >= 1500
                 assert retention_callbacks >= 20
-                assert config_entry_reloads == 4
+                assert config_entry_reloads == (0 if uninterrupted else 4)
                 assert expired_transfer_reclaims == 1
             report = json.loads((config_dir / _REPORT).read_text(encoding="utf-8"))
             report["final_healthy_requests"] = 1
@@ -530,3 +532,62 @@ if __name__ == "__main__" and os.environ.get(_CHILD) == "1":
             int(os.environ["EOAI_SOAK_SCALE"]),
         )
     )
+
+
+@pytest.mark.skipif(
+    os.environ.get("STRESS_CAMPAIGN") != "long-lifetime",
+    reason="uninterrupted companion is long-lifetime nightly only",
+)
+def test_booted_process_uninterrupted_runtime_survives_populated_lifetime(
+    socket_enabled,
+    tmp_path,
+    unused_tcp_port,
+    stress_seed,
+    stress_scale,
+    stress_trace,
+):
+    """Companion soak keeps one runtime identity with no config-entry reloads."""
+    config_dir = tmp_path / "booted-resource-soak-uninterrupted"
+    destination = config_dir / "custom_components" / DOMAIN
+    destination.parent.mkdir(parents=True)
+    source = Path(__file__).resolve().parents[1] / "custom_components" / DOMAIN
+    shutil.copytree(
+        source, destination, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+    )
+    (config_dir / "configuration.yaml").write_text(
+        f"homeassistant:\n  name: Process Resource Soak Uninterrupted\n"
+        f"recorder:\nhttp:\n  server_host: 127.0.0.1\n"
+        f"  server_port: {unused_tcp_port}\n",
+        encoding="utf-8",
+    )
+    result = run_python_child(
+        __file__,
+        cwd=config_dir,
+        extra_env={
+            _CHILD: "1",
+            "EOAI_SOAK_SEED": str(stress_seed ^ 0x51504B),
+            "EOAI_SOAK_SCALE": str(stress_scale),
+            "EOAI_UNINTERRUPTED_SOAK": "1",
+        },
+        timeout=2400,
+    )
+    report_path = config_dir / _REPORT
+    report = json.loads(report_path.read_text()) if report_path.exists() else {}
+    record(
+        stress_trace,
+        "summary",
+        journey="booted_process_uninterrupted_soak",
+        uninterrupted_lifetime_windows=len(report.get("windows", [])),
+        uninterrupted_lifetime_reloads=report.get("config_entry_reloads", -1),
+        uninterrupted_lifetime_final_healthy_requests=report.get(
+            "final_healthy_requests", 0
+        ),
+        metrics=report,
+    )
+    assert result.returncode == 0, (
+        f"uninterrupted booted process soak failed\n{result.stdout}\n{result.stderr}"
+    )
+    assert report.get("uninterrupted_runtime") is True
+    assert report.get("config_entry_reloads") == 0
+    assert report.get("final_healthy_requests") == 1
+    _assert_resource_windows(report["windows"])
