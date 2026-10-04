@@ -96,7 +96,10 @@ from .ha_llm_tools import (
 )
 from .helpers import get_exposed_entities
 from .knowledge import async_get_knowledge, knowledge_source_as_dict
-from .live_subentry_updates import update_live_subentry
+from .live_subentry_updates import (
+    configuration_supports_live_update,
+    update_live_subentry,
+)
 from .local_intents import (
     CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
     CONF_LOCAL_INTENT_EXCLUSIONS,
@@ -1133,13 +1136,18 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     )
     timings["persistence_preparation_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
-    hass.config_entries.async_update_subentry(
-        entry,
-        subentry,
-        data=persisted,
-        **({"title": saved_title} if isinstance(title, str) else {}),
+    live_update = configuration_supports_live_update(
+        subentry.data, persisted, title_changed=saved_title != subentry.title
     )
+    title_update = {"title": saved_title} if isinstance(title, str) else {}
+    if live_update:
+        update_live_subentry(hass, entry, subentry, data=persisted, **title_update)
+    else:
+        hass.config_entries.async_update_subentry(
+            entry, subentry, data=persisted, **title_update
+        )
     timings["subentry_update_ms"] = _elapsed_ms(phase)
+    timings["live_runtime_update"] = live_update
 
     # merge_agent_config validated both fields before persistence. Decode the
     # normalized YAML for the editor without repeating schema validation.
