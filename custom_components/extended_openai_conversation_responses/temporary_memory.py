@@ -265,8 +265,11 @@ class TemporaryMemory:
         category: str | None,
         *,
         owner_scope_id: str | None = None,
+        source: str | None = None,
     ) -> TemporaryMemoryRecord:
         """Update/supersede a temporary fact owned by the current request."""
+        if source is not None and source not in {"automatic", "manual"}:
+            raise ValueError("source must be automatic or manual")
         owner_scope_id = _require_owner_scope_id(owner_scope_id)
         async with async_storage_lock(self, self._lock):
             await self._async_initialize_locked()
@@ -277,8 +280,9 @@ class TemporaryMemory:
                 if content is not None
                 else current.content
             )
+            effective_source = source or current.source
             validate_memory_privacy(
-                new_content, automatic=current.source == "automatic"
+                new_content, automatic=effective_source == "automatic"
             )
             new_expiry = (
                 _parse_future_expiry(expires_at).isoformat()
@@ -292,7 +296,7 @@ class TemporaryMemory:
                 _clean(category, MAX_CATEGORY_LENGTH, "category")
                 if category is not None
                 else current.category,
-                current.source,
+                effective_source,
                 new_expiry,
                 current.created_at,
                 dt_util.utcnow().isoformat(),
@@ -600,6 +604,7 @@ class TemporaryMemory:
             expires_at,
             category,
             owner_scope_id=owner,
+            source="manual",
         )
 
     async def async_delete_owned(
