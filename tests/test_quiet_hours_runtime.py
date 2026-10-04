@@ -1121,6 +1121,7 @@ async def test_update_config_rolls_back_then_succeeds() -> None:
     with pytest.raises(RuntimeError, match="disk failed"):
         await manager.async_update_config({"enabled": True, "max_volume": 0.1})
     assert manager.config == previous
+    manager._async_restore_locked.assert_not_awaited()
     manager._reschedule.assert_not_called()
 
     manager._async_save_locked = AsyncMock()
@@ -1235,7 +1236,7 @@ async def test_apply_controls_claim_only_needed_values_and_release_on_failure() 
     assert controls == {}
 
 
-async def test_restore_respects_manual_changes_and_clears_failed_ownership() -> None:
+async def test_restore_respects_manual_changes_and_retains_failed_ownership() -> None:
     hass = _hass(
         {
             "media_player.owned": _state(
@@ -1295,7 +1296,8 @@ async def test_restore_respects_manual_changes_and_clears_failed_ownership() -> 
     }
     manager._async_set_volume = AsyncMock(side_effect=RuntimeError("offline"))
     await manager._async_restore_locked()
-    assert manager._active is None
+    assert manager._active["controls"]["media_player.owned"]["original_value"] == 0.7
+    assert manager._active["controls"]["media_player.owned"]["restoration_pending"] is True
 
 
 async def test_service_save_shutdown_and_callbacks() -> None:

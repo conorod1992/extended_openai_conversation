@@ -211,3 +211,48 @@ async def test_real_ha_quiet_hours_discovers_applies_survives_restart_and_restor
     assert final_state is not None
     assert final_state.state == "off"
     assert final_state.attributes["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_unavailable_quiet_hours_controls_restore_after_return(hass):
+    _satellite, media, wake = _install_satellite_entities(hass)
+    _install_control_services(hass)
+    start, end = _active_window()
+    manager = await async_get_quiet_hours(hass)
+    await manager.async_update_config({"enabled": True, "start": start, "end": end, "max_volume": 0.2, "wake_sound": "off"})
+    hass.states.async_set(media, "unavailable", {"volume_level": 0.2})
+    hass.states.async_set(wake, "unavailable")
+    await manager.async_set_enabled(False)
+    assert set(manager.active["controls"]) == {media, wake}
+    assert all(item["restoration_pending"] for item in manager.active["controls"].values())
+    hass.states.async_set(media, "idle", {"volume_level": 0.2})
+    hass.states.async_set(wake, "off")
+    await manager.async_reconcile()
+    assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.6)
+    assert hass.states.get(wake).state == "on"
+    assert manager.active is None
+    assert not manager._unsubscribers
+    await manager.async_shutdown()
+    await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_failed_quiet_hours_settings_save_preserves_actual_device_policy(hass, monkeypatch):
+    from copy import deepcopy
+    from unittest.mock import AsyncMock
+    _satellite, media, wake = _install_satellite_entities(hass)
+    _install_control_services(hass)
+    start, end = _active_window()
+    manager = await async_get_quiet_hours(hass)
+    await manager.async_update_config({"enabled": True, "start": start, "end": end, "max_volume": 0.2, "wake_sound": "off"})
+    baseline = deepcopy(manager.active)
+    with monkeypatch.context() as failure:
+        failure.setattr(manager._store, "async_save", AsyncMock(side_effect=OSError("settings save failed")))
+        with pytest.raises(OSError, match="settings save failed"):
+            await manager.async_set_enabled(False)
+    assert manager.config.enabled
+    assert manager.active == baseline
+    assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.2)
+    assert hass.states.get(wake).state == "off"
+    await manager.async_shutdown()
+    await hass.async_block_till_done()

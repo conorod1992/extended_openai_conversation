@@ -239,6 +239,12 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             self._publish_state(period)
             if period is None:
                 await self._async_restore_locked()
+                if (
+                    not self._config.enabled
+                    and self._active is None
+                    and self._unsubscribers
+                ):
+                    self._reschedule()
                 return
 
             period_id = period.start.isoformat()
@@ -247,6 +253,16 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 and self._active.get("period_started_at") != period_id
             ):
                 await self._async_restore_locked()
+                if self._active is not None:
+                    self._active.update(
+                        {
+                            "period_started_at": period_id,
+                            "period_ends_at": period.end.isoformat(),
+                            "applied_at": now.isoformat(),
+                        }
+                    )
+                    await self._async_save_locked()
+            await self._async_retry_pending_restores_locked()
 
             if self._active is None:
                 self._active = {
@@ -518,19 +534,23 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             "media_player", "volume_set", entity_id, {"volume_level": volume_level}
         )
 
-    async def _async_restore_locked(self) -> None:
+    async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
         if self._active is not None:
             controls = self._active.get("controls", {})
             for entity_id, control in list(controls.items()):
+                if pending_only and not control.get("restoration_pending"):
+                    continue
                 if control.get("application_state") != "prepared":
                     continue
                 state = self.hass.states.get(entity_id)
                 context_id = control.get("application_context_id")
-                if not context_id or state is None or state.context.id != context_id:
+                if state is None or state.state in {"unavailable", "unknown"}:
+                    continue
+                if not context_id or state.context.id != context_id:
                     # Ending a period must not restore a value merely because an
                     # unacknowledged intent happens to match an independent effect.
                     controls.pop(entity_id)
-        await super()._async_restore_locked()
+        await super()._async_restore_locked(pending_only=pending_only)
 
     async def _async_set_switch(self, entity_id: str, enabled: bool) -> None:
         await self._async_call_control_service(

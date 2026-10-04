@@ -45,3 +45,9 @@ These actions simply turn the saved daily schedule on or off; they do not create
 - Quiet Hours does not overwrite a newer user or automation volume change merely to restore an older value.
 - A satellite discovered later can be picked up without recreating the schedule.
 - LEDs and other vendor-specific night-mode settings are intentionally left to ordinary Home Assistant automations using the Quiet Hours entity.
+
+### Retrying restoration
+
+If a controlled speaker or wake-sound switch is unavailable when Quiet Hours ends, its original value remains stored. EOAI retries restoration on discovery ticks, including while the schedule is disabled, and keeps the baseline across Home Assistant restarts. A confirmed independent device change releases ownership without overwriting that change.
+
+Saving a changed policy succeeds before EOAI restores or changes devices. A failed settings save leaves the existing policy and device values in place.
