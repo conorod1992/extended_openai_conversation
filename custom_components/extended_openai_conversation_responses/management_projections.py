@@ -52,13 +52,20 @@ async def async_scope_catalog_projection(
     conversation_counts = conversation_counts or {}
     temporary_memory_counts = temporary_memory_counts or {}
 
-    def scope_item(scope_id: str, scope_type: str, display_name: str) -> dict[str, Any]:
+    def scope_item(
+        scope_id: str,
+        scope_type: str,
+        display_name: str,
+        *,
+        orphaned: bool = False,
+    ) -> dict[str, Any]:
         owner = _memory_scope(scope_id)
         return {
             "scope_id": scope_id,
             "scope_type": scope_type,
             "display_name": display_name,
             "is_current_user": scope_id == f"user:{user_id}",
+            "orphaned": orphaned,
             "memory_count": memory_counts.get(owner, 0),
             "conversation_count": conversation_counts.get(scope_id, 0),
             "temporary_memory_count": temporary_memory_counts.get(scope_id, 0),
@@ -73,9 +80,30 @@ async def async_scope_catalog_projection(
         ]
 
     users = await hass.auth.async_get_users()
+    current_user_ids = {str(user.id) for user in users}
     scopes = [
         scope_item(f"user:{user.id}", "user", user.name or user.id) for user in users
     ]
+
+    retained_user_ids: set[str] = set()
+    for owner in memory_counts:
+        if owner in {ANONYMOUS_USER_ID, SHARED_HOUSEHOLD_SCOPE_ID}:
+            continue
+        retained_user_ids.add(owner.removeprefix("user:"))
+    for scope_id in (*conversation_counts, *temporary_memory_counts):
+        if scope_id.startswith("user:") and len(scope_id) > len("user:"):
+            retained_user_ids.add(scope_id.removeprefix("user:"))
+
+    for orphaned_user_id in sorted(retained_user_ids - current_user_ids):
+        scopes.append(
+            scope_item(
+                f"user:{orphaned_user_id}",
+                "user",
+                f"Deleted or unavailable user ({orphaned_user_id})",
+                orphaned=True,
+            )
+        )
+
     scopes.append(scope_item(SHARED_HOUSEHOLD_SCOPE_ID, "shared", "Shared household"))
     legacy = scope_item(ANONYMOUS_USER_ID, "anonymous_legacy", "Legacy anonymous")
     if legacy["memory_count"] or legacy["conversation_count"]:
