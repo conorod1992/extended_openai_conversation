@@ -58,8 +58,8 @@ async def _say(hass, agent, text, conversation_id=None, *, device_id=None):
     )
 
 
-def _speech(result):
-    assert result.response.error_code is None
+def _speech(result, *, successful=True):
+    assert (result.response.error_code is None) == successful
     return result.response.as_dict()["speech"]["plain"]["speech"]
 
 
@@ -339,6 +339,6 @@ async def test_guest_rule_preflights_whole_sequence_and_returns_generic_denial(
     await agent._guest_mode.async_update_trusted(indefinite=True)
 
     guest = await _say(hass, agent, "good night")
-    assert _speech(guest) == GUEST_MODE_UNAVAILABLE
+    assert _speech(guest, successful=False) == GUEST_MODE_UNAVAILABLE
     assert calls == []  # Even the permitted first action must not execute.
     assert sent == []
