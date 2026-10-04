@@ -407,6 +407,16 @@ class PersistentMemory:
             if key is None:
                 duplicate = self._find_duplicate(user_id, content)
                 if duplicate:
+                    if duplicate.source == "implicit" and source == "explicit":
+                        timestamp = dt_util.utcnow().isoformat()
+                        changes = {"source": "explicit"}
+                        _set_updated_at_if_substantive(duplicate, changes, timestamp)
+                        duplicate = self._replace_record(duplicate, **changes)
+                        await self._async_save_locked()
+                        return {
+                            "status": "updated",
+                            "memory": memory_as_dict(duplicate),
+                        }
                     return {"status": "duplicate", "memory": memory_as_dict(duplicate)}
             if len(self._memories) >= MAX_MEMORIES_PER_AGENT:
                 raise ValueError(
@@ -798,8 +808,12 @@ class PersistentMemory:
         target_user_id: str | None = None,
         clear_fields: Sequence[str] | None = None,
         expected_revision: str | None = None,
+        *,
+        source: str | None = None,
     ) -> MemoryRecord:
         """Update a memory owned by one user scope."""
+        if source is not None and source not in {"explicit", "implicit"}:
+            raise ValueError("source must be explicit or implicit")
         if expected_revision is not None and (
             not isinstance(expected_revision, str)
             or not re.fullmatch(r"[0-9a-f]{64}", expected_revision)
@@ -845,7 +859,8 @@ class PersistentMemory:
             new_category = (
                 _clean_category(category) if category is not None else current.category
             )
-            _validate_privacy(new_content, current.source)
+            effective_source = source or current.source
+            _validate_privacy(new_content, effective_source)
             new_key = (
                 None
                 if "key" in clear
@@ -858,6 +873,7 @@ class PersistentMemory:
                 "user_id": target_user_id,
                 "content": new_content,
                 "category": new_category,
+                "source": effective_source,
                 "subject": (
                     None
                     if "subject" in clear
