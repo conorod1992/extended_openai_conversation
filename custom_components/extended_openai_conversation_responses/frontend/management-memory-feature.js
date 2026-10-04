@@ -43,7 +43,7 @@ export function populateMemoryMetadata(panel, memory) {
     const temporary = type.value === "temporary";
     const selectedOwner = owner.value;
     const available = temporary ? (panel._data?.scopes || []).filter(scope =>
-      ["user", "shared"].includes(scope.scope_type) && (panel._data?.is_admin || scope.scope_id === panel._scopeId)) : scopes;
+      ["user", "shared"].includes(scope.scope_type) && !scope.orphaned && (panel._data?.is_admin || scope.scope_id === panel._scopeId)) : scopes;
     owner.innerHTML = available.map(scope => `<option value="${panel._e(scope.scope_id)}">${panel._e(scope.display_name)}</option>`).join("");
     if (available.some(scope => scope.scope_id === selectedOwner)) owner.value = selectedOwner;
     else owner.value = available.find(scope => scope.is_current_user)?.scope_id || available[0]?.scope_id || "";
