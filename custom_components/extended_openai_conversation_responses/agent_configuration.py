@@ -96,7 +96,7 @@ def _manager_needs_recovery(entity: Any, attribute: str) -> bool:
 def _runtime_needs_recovery(entity: Any) -> bool:
     return any(
         _manager_needs_recovery(entity, attribute)
-        for attribute in ("_temporary_memory", "_knowledge")
+        for attribute in ("_memory", "_temporary_memory", "_knowledge")
     )
 
 

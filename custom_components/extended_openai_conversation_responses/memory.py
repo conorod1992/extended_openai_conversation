@@ -288,6 +288,11 @@ class PersistentMemory:
         self._initialized = False
         self._committed_state: _MemoryMutationSnapshot | None = None
 
+    @property
+    def initialized(self) -> bool:
+        """Return whether authoritative stored facts are ready for use."""
+        return self._initialized
+
     async def async_initialize(self) -> None:
         """Load, validate, and self-heal memory data once."""
         async with async_storage_lock(self._storage, self._lock):

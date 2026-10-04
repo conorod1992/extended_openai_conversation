@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
+from homeassistant.util import dt as dt_util
 
 from . import ExtendedOpenAIConfigEntry
 from .const import (
@@ -232,6 +233,11 @@ class UsageTodaySensor(_PeriodUsageSensor):
     def _summary(self) -> dict:
         return self._usage.today_summary()
 
+    @property
+    def last_reset(self) -> datetime:
+        """Identify the local accounting day, including across restarts."""
+        return dt_util.start_of_local_day()
+
 
 class UsageMonthSensor(_PeriodUsageSensor):
     """Tokens derived from daily aggregates for the current local month."""
@@ -244,6 +250,11 @@ class UsageMonthSensor(_PeriodUsageSensor):
 
     def _summary(self) -> dict:
         return self._usage.month_summary()
+
+    @property
+    def last_reset(self) -> datetime:
+        """Identify the local accounting month with its own UTC offset."""
+        return dt_util.start_of_local_day().replace(day=1)
 
 
 class LastResponseUsageSensor(UsageSensor):
