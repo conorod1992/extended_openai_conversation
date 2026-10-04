@@ -57,3 +57,8 @@ def test_text_only_capability_and_attachment_oracle(responses):
     body["tools"] = [{"type": "function"}]
     with pytest.raises(AssertionError, match="unsupported"):
         validate_request(path, body, supports_tools=False)
+    if responses:
+        validate_request(path, body, function_apis=("responses",))
+    else:
+        with pytest.raises(AssertionError, match="selected API"):
+            validate_request(path, body, function_apis=("responses",))

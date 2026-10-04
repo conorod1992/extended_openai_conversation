@@ -23,6 +23,7 @@ class Mutation:
     anchor: str
     replacement: str
     test: str
+    failure_point: str
 
 
 MUTATIONS = (
@@ -32,6 +33,7 @@ MUTATIONS = (
         "await async_require_control_permission(hass, entity_ids, context=context)",
         "pass  # sensitivity: omit caller authorization",
         MATRIX + "test_action_routes_share_actual_user_control_boundary[False-native]",
+        "with pytest.raises(HomeAssistantError):",
     ),
     Mutation(
         "request-validation",
@@ -40,6 +42,7 @@ MUTATIONS = (
         "pass  # sensitivity: skip effective request validation",
         MATRIX
         + "test_invalid_request_cannot_publish_through_any_setup_writer[hosted-search-api-update]",
+        "with pytest.raises(HomeAssistantError):",
     ),
     Mutation(
         "failure-result",
@@ -48,6 +51,7 @@ MUTATIONS = (
         '"successful": True,',
         MATRIX
         + "test_failure_semantics_survive_every_conversation_doorway[provider-process]",
+        'assert result["successful"] is False',
     ),
     Mutation(
         "restoration",
@@ -55,6 +59,7 @@ MUTATIONS = (
         "current = _current_volume(self.hass, entity_id)\n                        if current is None:\n                            continue",
         "current = _current_volume(self.hass, entity_id)\n                        if current is None:\n                            controls.pop(entity_id)\n                            continue",
         "tests_real_ha/test_quiet_hours_acceptance.py::test_unavailable_quiet_hours_controls_restore_after_return",
+        'assert set(manager.active["controls"]) == {media, wake}',
     ),
 )
 
@@ -66,7 +71,7 @@ def mutate(source: str, mutation: Mutation) -> str:
     return source.replace(mutation.anchor, mutation.replacement, 1)
 
 
-def classify(exit_code: int, report: Path) -> str:
+def classify(exit_code: int, report: Path, failure_point: str | None = None) -> str:
     """Import/fixture/collection errors and timeouts never count as a kill."""
     if not report.exists():
         return "invalid"
@@ -81,6 +86,11 @@ def classify(exit_code: int, report: Path) -> str:
     if exit_code == 0 and failure is None:
         return "survived"
     if exit_code == 1 and failure is not None:
+        if failure_point is not None and not any(
+            line.lstrip().startswith(">") and failure_point in line
+            for line in (failure.text or "").splitlines()
+        ):
+            return "invalid"
         message = failure.get("message", "")
         # pytest assertion failures and "DID NOT RAISE" are expected outcomes.
         if (
@@ -92,7 +102,13 @@ def classify(exit_code: int, report: Path) -> str:
     return "invalid"
 
 
-def run_case(snapshot: Path, output: Path, test: str, label: str) -> str:
+def run_case(
+    snapshot: Path,
+    output: Path,
+    test: str,
+    label: str,
+    failure_point: str | None = None,
+) -> str:
     report = output / f"{label}.xml"
     with (output / f"{label}.log").open("w", encoding="utf-8") as log:
         try:
@@ -101,6 +117,7 @@ def run_case(snapshot: Path, output: Path, test: str, label: str) -> str:
                     sys.executable,
                     "-m",
                     "pytest",
+                    "--tb=long",
                     test,
                     "-q",
                     "--timeout=60",
@@ -116,7 +133,7 @@ def run_case(snapshot: Path, output: Path, test: str, label: str) -> str:
             )
         except subprocess.TimeoutExpired:
             return "invalid"
-    return classify(result.returncode, report)
+    return classify(result.returncode, report, failure_point)
 
 
 def campaign(repo: Path, output: Path) -> bool:
@@ -148,7 +165,11 @@ def campaign(repo: Path, output: Path) -> bool:
                         mutate(original.decode("utf-8"), mutation), encoding="utf-8"
                     )
                     outcome = run_case(
-                        snapshot, output, mutation.test, mutation.name + "-mutated"
+                        snapshot,
+                        output,
+                        mutation.test,
+                        mutation.name + "-mutated",
+                        mutation.failure_point,
                     )
             finally:
                 path.write_bytes(original)

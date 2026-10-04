@@ -83,6 +83,10 @@ jobs:
           PY
           pip install "mutmut==3.7.0"
 
+      - name: Install transitive dependencies for genuine HA contract tests
+        if: matrix.campaign == 'contract-sensitivity'
+        run: python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+
       - name: Run baseline and targeted mutation campaign
         if: matrix.campaign != 'contract-sensitivity'
         env:

@@ -3,11 +3,22 @@
 import json
 
 
-def validate_request(path, body, *, supports_tools=True, attachments=()):
+def validate_request(
+    path,
+    body,
+    *,
+    supports_tools=True,
+    function_apis=("responses", "chat_completions"),
+    attachments=(),
+):
     """Reject unsupported tools, incomplete exchanges and missing file bytes."""
     responses = path.endswith("/responses")
     assert responses or path.endswith("/chat/completions"), path
     assert supports_tools or not body.get("tools"), "unsupported Function Tools"
+    if body.get("tools"):
+        assert ("responses" if responses else "chat_completions") in function_apis, (
+            "Functions unsupported on selected API"
+        )
     items = body["input" if responses else "messages"]
     pending, seen = set(), set()
     for item in items:

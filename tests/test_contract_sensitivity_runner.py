@@ -30,6 +30,16 @@ def test_only_real_assertion_failures_count_as_kills(
     assert classify(exit_code, report) == expected
 
 
+def test_assertion_from_unrelated_setup_cannot_count_as_contract_kill(tmp_path):
+    report = tmp_path / "report.xml"
+    report.write_text(
+        '<testsuites><testsuite><testcase><failure message="assert False">&gt; assert setup_succeeded</failure></testcase></testsuite></testsuites>',
+        encoding="utf-8",
+    )
+    assert classify(1, report, "assert setup_succeeded") == "killed"
+    assert classify(1, report, 'assert result["successful"] is False') == "invalid"
+
+
 @pytest.mark.parametrize("mutation", MUTATIONS, ids=lambda item: item.name)
 def test_mutation_anchor_is_unique_and_checked_against_current_source(mutation):
     from pathlib import Path

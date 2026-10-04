@@ -58,7 +58,10 @@ async def test_effective_tools_respect_model_api_capability_at_the_wire(
             hass, api_mode=mode, chat_model="gpt-6.1-sol", reasoning_effort="low"
         )
         wire = install_strict_provider(
-            monkeypatch, agent, [_text("responses", "Compatible route")]
+            monkeypatch,
+            agent,
+            [_text("responses", "Compatible route")],
+            function_apis=("responses",),
         )
         result = await _say(hass, agent, "Use the configured request route")
         if mode == "chat_completions":
@@ -84,6 +87,7 @@ async def test_effective_tools_respect_model_api_capability_at_the_wire(
             monkeypatch,
             SimpleNamespace(_client=entry.runtime_data),
             [_text("responses", "Compatible route")],
+            function_apis=("responses",),
         )
 
         async def task():
