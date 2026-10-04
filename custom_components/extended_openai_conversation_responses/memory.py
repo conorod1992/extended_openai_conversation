@@ -1023,16 +1023,16 @@ class PersistentMemory:
             await self._async_save_locked()
 
     def _find_duplicate(self, user_id: str, content: str) -> MemoryRecord | None:
+        """Deduplicate only order-preserving normalized equality.
+
+        Word overlap identifies related facts in _find_related_candidate; it
+        cannot establish equivalence (preferences, negation and numbers matter).
+        """
         normalized = _normalize(content)
-        content_tokens = _cached_memory_tokens(content)
         for memory in self._memories.values():
             if memory.user_id != user_id:
                 continue
             if _normalize(memory.content) == normalized:
-                return memory
-            existing_tokens = _cached_memory_tokens(memory.content)
-            union = content_tokens | existing_tokens
-            if union and len(content_tokens & existing_tokens) / len(union) >= 0.85:
                 return memory
         return None
 
