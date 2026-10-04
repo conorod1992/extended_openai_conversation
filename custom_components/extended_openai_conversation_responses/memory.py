@@ -467,6 +467,13 @@ class PersistentMemory:
                 memory_id := self._key_index.get((user_id, cleaned_key))
             ):
                 current = self._memories[memory_id]
+                if current.source == "explicit" and source == "implicit":
+                    if current.content != content:
+                        return {
+                            "status": "needs_resolution",
+                            "candidate": memory_as_dict(current),
+                        }
+                    return {"status": "unchanged", "memory": memory_as_dict(current)}
                 changes: dict[str, Any] = {
                     "content": content,
                     "category": category,
@@ -488,6 +495,11 @@ class PersistentMemory:
             if not keyed_identity:
                 duplicate = self._find_duplicate(user_id, content)
                 if duplicate:
+                    if duplicate.source == "explicit" and source == "implicit":
+                        return {
+                            "status": "unchanged",
+                            "memory": memory_as_dict(duplicate),
+                        }
                     changes = {
                         "category": category,
                         "source": "explicit"

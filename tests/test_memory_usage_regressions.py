@@ -83,3 +83,24 @@ async def test_failed_clear_does_not_notify_or_remove_latest_run():
         await manager.async_clear_details(confirm=True)
     assert not latest
     assert manager.latest_run is run
+
+
+async def test_implicit_keyed_write_cannot_replace_an_explicit_fact():
+    memory = await _memory()
+    confirmed = await memory.async_upsert("user", "I prefer tea", "preference", "explicit", key="preference.drink")
+    inferred = await memory.async_upsert("user", "I prefer coffee", "preference", "implicit", key="preference.drink")
+    assert inferred["status"] == "needs_resolution"
+    assert inferred["candidate"] == confirmed["memory"]
+    retained = await memory.async_search("user", "tea")
+    assert [record.content for record in retained] == ["I prefer tea"]
+    assert retained[0].source == "explicit"
+
+
+@pytest.mark.parametrize("keyed", [True, False])
+async def test_implicit_duplicate_cannot_reclassify_confirmed_fact(keyed):
+    memory = await _memory()
+    extra = {"key": "preference.drink"} if keyed else {}
+    confirmed = await memory.async_upsert("user", "I prefer tea", "preference", "explicit", **extra)
+    inferred = await memory.async_upsert("user", "I prefer tea", "other", "implicit", subject="inferred", **extra)
+    assert inferred["status"] == "unchanged"
+    assert inferred["memory"] == confirmed["memory"]
