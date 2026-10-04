@@ -22,6 +22,7 @@ from custom_components.extended_openai_conversation_responses.sensor import (
     UsageSensor,
     UsageTodaySensor,
     async_setup_entry,
+    rebind_usage_sensors,
 )
 
 
@@ -258,6 +259,26 @@ async def test_usage_sensor_rebind_moves_listener_and_refreshes_state(
     assert sensor._usage is new_usage
     write_state.assert_called_once_with()
     assert sensor.rebind_usage(new_usage) is False
+
+
+def test_rebind_usage_sensors_targets_only_matching_loaded_usage_entities() -> None:
+    old_usage = FakeUsage()
+    new_usage = FakeUsage()
+    matching = UsageSensor(_subentry("agent-1"), old_usage)
+    other_agent = UsageSensor(_subentry("agent-2"), old_usage)
+    already_durable = UsageSensor(_subentry("agent-1"), new_usage)
+    hass = SimpleNamespace(
+        data={
+            sensor_module.sensor_component.DATA_COMPONENT: SimpleNamespace(
+                entities=[matching, other_agent, already_durable, object()]
+            )
+        }
+    )
+
+    assert rebind_usage_sensors(hass, "agent-1", old_usage, new_usage) == 1
+    assert matching._usage is new_usage
+    assert other_agent._usage is old_usage
+    assert already_durable._usage is new_usage
 
 
 def test_period_sensors_use_distinct_summaries_and_attributes() -> None:
