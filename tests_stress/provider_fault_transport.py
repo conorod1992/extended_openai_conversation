@@ -81,24 +81,33 @@ class GatedSSEStream(httpx.AsyncByteStream):
         self.gate_after = gate_after
         self.delivered = asyncio.Event()
         self.release = asyncio.Event()
-        self.closed = asyncio.Event()
+        self.iteration_finished = asyncio.Event()
+        self.close_started = asyncio.Event()
+        self.close_finished = asyncio.Event()
+        self.close_calls = 0
         self.yielded = 0
 
     async def __aiter__(self):
-        try:
-            for chunk in self.chunks:
-                if self.gate_after is not None and self.yielded == self.gate_after:
-                    self.delivered.set()
-                    await self.release.wait()
-                self.yielded += 1
-                yield chunk
-            self.delivered.set()
-        finally:
-            self.closed.set()
+        for chunk in self.chunks:
+            if self.gate_after is not None and self.yielded == self.gate_after:
+                self.delivered.set()
+                await self.release.wait()
+            self.yielded += 1
+            yield chunk
+        self.delivered.set()
+        self.iteration_finished.set()
 
     async def aclose(self) -> None:
-        self.closed.set()
+        self.close_calls += 1
+        self.close_started.set()
         self.release.set()
+        self.close_finished.set()
+
+    def assert_explicit_close_completed(self) -> None:
+        """Assert that HTTPX explicitly closed this stream, not just exhausted it."""
+        assert self.close_finished.is_set() and self.close_calls > 0, (
+            "provider stream did not complete explicit aclose()"
+        )
 
 
 class ProviderFaultTransport:
