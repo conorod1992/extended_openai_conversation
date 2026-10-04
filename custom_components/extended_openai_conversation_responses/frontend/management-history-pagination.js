@@ -30,31 +30,49 @@ function conversationResult(panel) {
   return panel._contentData || panel._result || {};
 }
 
-function setSessionResult(panel, response, mode) {
-  const target = conversationResult(panel);
+function setSessionResult(target, response, mode) {
   target.sessions = mode === "search"
     ? {...response, sessions: searchSessionRows(response)}
     : response;
 }
 
 async function loadConversationPage(panel, offset) {
-  if (panel._eocHistoryPagePending) return;
+  const token = (panel._eocHistoryLoadToken || 0) + 1;
+  panel._eocHistoryLoadToken = token;
   panel._eocHistoryPagePending = true;
+  const mode = panel._eocHistoryMode === "search" ? "search" : "list";
+  const query = mode === "search" ? (panel._eocHistoryQuery || "") : "";
+  const scopeId = panel._scopeId;
+  const agentId = panel._agentId;
+  const target = conversationResult(panel);
+  const stillCurrent = () => panel._eocHistoryLoadToken === token
+    && panel._agentId === agentId
+    && panel._scopeId === scopeId
+    && panel._viewKey?.() === CONVERSATIONS_VIEW
+    && conversationResult(panel) === target
+    && panel._eocHistoryMode === mode
+    && (mode !== "search" || (panel._eocHistoryQuery || "") === query);
   try {
-    const mode = panel._eocHistoryMode === "search" ? "search" : "list";
     const extra = {
-      scope_id: panel._scopeId,
+      scope_id: scopeId,
       offset: integer(offset),
       limit: mode === "search" ? SEARCH_PAGE_LIMIT : LIST_PAGE_LIMIT,
     };
-    if (mode === "search") extra.query = panel._eocHistoryQuery || "";
+    if (mode === "search") extra.query = query;
     const response = await panel._call("conversations", mode, extra);
-    setSessionResult(panel, response, mode);
+    if (!stillCurrent()) return false;
+    setSessionResult(target, response, mode);
+    return true;
   } catch (err) {
-    panel._toast(`Unable to load conversation history: ${err.message || String(err)}`, true);
+    if (stillCurrent()) {
+      panel._toast(`Unable to load conversation history: ${err.message || String(err)}`, true);
+    }
+    return false;
   } finally {
-    panel._eocHistoryPagePending = false;
-    panel._render();
+    if (panel._eocHistoryLoadToken === token) {
+      panel._eocHistoryPagePending = false;
+      panel._render();
+    }
   }
 }
 
@@ -213,6 +231,8 @@ export {
   TURN_PAGE_LIMIT,
   pageLabel,
   searchSessionRows,
+  loadConversationPage,
+  searchArchive,
 };
 
 function activeConversationMarkup(panel, result) {
