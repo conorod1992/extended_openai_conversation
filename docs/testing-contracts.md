@@ -19,3 +19,15 @@ Feature regressions remain useful, but this layer compares production entry poin
 Native Conversation creation accepts only a name; detailed configuration goes through Management. Settings deliberately accepts a restricted subset. Full disaster-recovery restore is not setup import and has its own preservation/recovery contract.
 
 The fast catalogue/provider matrix runs in ordinary unit CI. Genuine HA matrices are discovered by Real HA Acceptance on PRs and nightly runs. Existing oldest/stable/dev public journeys continue to check version compatibility. The matrices replace external provider transport or delivery, never the authorization or request validator they aim to verify.
+
+## Stateful and concurrency layer
+
+`tests/test_stateful_contract_sequences.py` runs fixed seeds on every PR. Its independent memory oracle checks content, provenance, stable identity, owner isolation and ranked pagination after each operation and after cold-manager reload. Failures include the seed and complete operation trace.
+
+`tests_real_ha/test_state_transition_contracts.py` repeats a short sequence with actual HA atomic files. Its Quiet Hours journey combines a save outage, unavailable controls, successful disable, manager teardown/recreation and returning devices; it checks both restoration and preservation of an independent device change.
+
+Six deterministic maintenance cases cross Usage/Temporary Memory with restore/delete/cancelled restore. Events expose exact gate admission and exclusive attempts; the tests retain actual manager and guarded Store code and replace only native disk I/O. They assert bounded completion, committed pruning, released ownership, deletion tombstones and sibling progress. No sleeps are used to manufacture the interleaving.
+
+Delayed execution combines missing-agent retry, durable record reconstruction and definition edits. Request Rule repair tests distinguish failed writes from committed disable/change/delete operations.
+
+The nightly `memory-knowledge` campaign adds 300 operations (1,200 at heavy intensity) with the existing recorded stress seed and evidence ledger. The new case is part of the mandatory execution contract, so dropping its workflow selector fails certification. Existing selective restore, metadata refresh, same-title deletion/recreation, in-flight removal and child-process crash/restart tests remain in the genuine HA lifecycle suites; this layer supplements rather than duplicates those expensive scenarios.
