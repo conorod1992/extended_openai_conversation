@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta, tzinfo
 import logging
 import re
 from typing import Any, Protocol
@@ -76,6 +76,7 @@ class ArchiveSession:
     title: str
     turn_count: int
     retention_state: str
+    last_activity_at: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -259,7 +260,7 @@ class ConversationArchive:
             may_retain = _scope_retention_allowed(scope, shared_archive_enabled)
             if current is not None:
                 expired = (
-                    _parse_time(current.last_message_at)
+                    _parse_time(current.last_activity_at or current.last_message_at)
                     + timedelta(minutes=max(1, inactivity_minutes))
                     < now
                 )
@@ -271,6 +272,13 @@ class ConversationArchive:
                     and current.retention_state != "closed"
                     and (may_retain or current.retention_state != "retained")
                 ):
+                    current = replace(current, last_activity_at=now.isoformat())
+                    if current.retention_state == "private":
+                        # Persist only content-free metadata; private activity never
+                        # rewrites transcript partitions or retains message text.
+                        await self._async_publish_session_locked(session_key, current)
+                    else:
+                        self._sessions[current.session_id] = current
                     return current
 
             timestamp = now.isoformat()
@@ -284,6 +292,7 @@ class ConversationArchive:
                 source_device_id=scope.device_id,
                 started_at=timestamp,
                 last_message_at=timestamp,
+                last_activity_at=timestamp,
                 title="",
                 turn_count=0,
                 retention_state="retained" if may_retain else "unretained",
@@ -322,6 +331,7 @@ class ConversationArchive:
                 **{
                     **asdict(session),
                     "last_message_at": timestamp,
+                    "last_activity_at": timestamp,
                     "title": session.title or _title(user_text),
                     "turn_count": session.turn_count + 1,
                 }
@@ -349,6 +359,7 @@ class ConversationArchive:
                     "title": "",
                     "turn_count": 0,
                     "retention_state": "private",
+                    "last_activity_at": dt_util.utcnow().isoformat(),
                 }
             )
             await self._async_commit_state_locked(
@@ -386,6 +397,7 @@ class ConversationArchive:
                 source_device_id=scope.device_id,
                 started_at=timestamp,
                 last_message_at=timestamp,
+                last_activity_at=timestamp,
                 title="",
                 turn_count=0,
                 retention_state=(
@@ -428,6 +440,7 @@ class ConversationArchive:
             end_date,
             limit,
             offset,
+            dt_util.DEFAULT_TIME_ZONE,
         )
 
     async def async_get(
@@ -576,12 +589,9 @@ class ConversationArchive:
         """Delete sessions whose last retained turn is inside an exact date range."""
         if not confirm:
             raise ValueError("Explicit confirmation is required")
-        if (
-            not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date)
-            or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_date)
-            or start_date > end_date
-        ):
+        if not isinstance(start_date, str) or not isinstance(end_date, str):
             raise ValueError("a valid start_date and end_date are required")
+        start, end = _local_date_bounds(start_date, end_date, dt_util.DEFAULT_TIME_ZONE)
         async with self._lock:
             self._ensure_initialized()
             targets = {
@@ -589,7 +599,7 @@ class ConversationArchive:
                 for session in self._sessions.values()
                 if session.scope_id == scope_id
                 and session.retention_state == "retained"
-                and start_date <= session.last_message_at[:10] <= end_date
+                and start <= _parse_time(session.last_message_at) < end
             }
             if not targets:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
@@ -602,7 +612,12 @@ class ConversationArchive:
             targets = {
                 session.session_id
                 for session in self._sessions.values()
-                if _parse_time(session.last_message_at) < cutoff
+                if _parse_time(
+                    (session.last_activity_at or session.last_message_at)
+                    if session.retention_state == "private"
+                    else session.last_message_at
+                )
+                < cutoff
             }
             if not targets:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
@@ -707,6 +722,7 @@ class ConversationArchive:
             optional_values = (
                 session.home_assistant_conversation_id,
                 session.source_device_id,
+                session.last_activity_at,
             )
             if not all(isinstance(value, str) for value in string_values) or not all(
                 value is None or isinstance(value, str) for value in optional_values
@@ -725,6 +741,11 @@ class ConversationArchive:
                 == datetime.min.replace(tzinfo=dt_util.UTC)
                 or _parse_time(session.last_message_at)
                 == datetime.min.replace(tzinfo=dt_util.UTC)
+                or (
+                    session.last_activity_at is not None
+                    and _parse_time(session.last_activity_at)
+                    == datetime.min.replace(tzinfo=dt_util.UTC)
+                )
             ):
                 raise ValueError("archive session metadata is invalid")
             session_ids.add(session.session_id)
@@ -1045,7 +1066,7 @@ def archive_tools() -> list[dict[str, Any]]:
     return [
         _tool(
             "conversation_search",
-            "Search prior retained discussions only when the user refers to them.",
+            "Search prior retained discussions only when the user refers to them. Dates use Home Assistant's configured time zone.",
             {
                 "query": {"type": "string", "minLength": 1},
                 "start_date": {"type": "string"},
@@ -1104,7 +1125,7 @@ def archive_tools() -> list[dict[str, Any]]:
         ),
         _tool(
             "conversation_delete_date_range",
-            "Bulk-delete retained sessions in an exact date range after user confirmation.",
+            "Bulk-delete sessions by their last retained turn, using dates in Home Assistant's configured time zone, after user confirmation.",
             {
                 "start_date": {"type": "string"},
                 "end_date": {"type": "string"},
@@ -1138,6 +1159,35 @@ def _tool(
     }
 
 
+def _local_date_bounds(
+    start_date: str | None, end_date: str | None, time_zone: tzinfo
+) -> tuple[datetime, datetime]:
+    """Interpret calendar dates in HA's zone, including variable-length DST days."""
+    try:
+        for value in (start_date, end_date):
+            if value is not None and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is None:
+                raise ValueError
+        first = date.fromisoformat(start_date) if start_date else None
+        last = date.fromisoformat(end_date) if end_date else None
+        if first and last and first > last:
+            raise ValueError
+        start = (
+            datetime.combine(first, time.min, time_zone).astimezone(dt_util.UTC)
+            if first
+            else datetime.min.replace(tzinfo=dt_util.UTC)
+        )
+        end = (
+            datetime.combine(last + timedelta(days=1), time.min, time_zone).astimezone(
+                dt_util.UTC
+            )
+            if last
+            else datetime.max.replace(tzinfo=dt_util.UTC)
+        )
+    except (TypeError, ValueError, OverflowError) as err:
+        raise ValueError("a valid start_date and end_date are required") from err
+    return start, end
+
+
 def _search_archive_snapshot(
     snapshot: tuple[tuple[ArchiveSession, tuple[ArchiveTurn, ...]], ...],
     query: str,
@@ -1145,17 +1195,19 @@ def _search_archive_snapshot(
     end_date: str | None,
     limit: int,
     offset: int,
+    time_zone: tzinfo | None = None,
 ) -> dict[str, Any]:
     """Rank one immutable Archive snapshot outside the event loop."""
     query_tokens = _tokens(query)
     normalized_query = _normalize(query)
+    time_zone = time_zone or dt_util.DEFAULT_TIME_ZONE
+    start, end = _local_date_bounds(start_date, end_date, time_zone)
     ranked: list[tuple[float, str, ArchiveSession, ArchiveTurn]] = []
     for session, turns in snapshot:
         for turn in turns:
-            date = turn.timestamp[:10]
-            if start_date and date < start_date:
-                continue
-            if end_date and date > end_date:
+            if (start_date or end_date) and not (
+                start <= _parse_time(turn.timestamp) < end
+            ):
                 continue
             combined = f"{turn.user_text} {turn.assistant_text}"
             normalized_combined = _normalize(combined)
@@ -1178,7 +1230,10 @@ def _search_archive_snapshot(
             {
                 "session_id": session.session_id,
                 "turn_id": turn.turn_id,
-                "date": turn.timestamp[:10],
+                "date": _parse_time(turn.timestamp)
+                .astimezone(time_zone)
+                .date()
+                .isoformat(),
                 "timestamp": turn.timestamp,
                 "title": session.title,
                 "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
