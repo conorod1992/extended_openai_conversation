@@ -494,6 +494,39 @@ async def test_add_coalesces_duplicate_for_same_owner_and_persists_update() -> N
     assert storage.save_count == 2
 
 
+async def test_manual_update_promotes_temporary_memory_provenance() -> None:
+    """A user edit makes an automatically created short-term fact manual."""
+    storage = ValidationStorage()
+    manager = TemporaryMemory(storage)  # type: ignore[arg-type]
+    await manager.async_initialize()
+    created = await manager.async_add(
+        "conversation:first",
+        "Parcel arrives tomorrow",
+        _future(hours=2),
+        "delivery",
+        owner_scope_id="user:alice",
+    )
+    manual_expiry = _future(hours=8)
+
+    edited = await manager.async_update_owned(
+        "user:alice",
+        created["memory"]["memory_id"],
+        None,
+        manual_expiry,
+        "important",
+    )
+    assert edited.source == "manual"
+    assert edited.category == "important"
+    assert edited.expires_at == manual_expiry
+
+    reloaded = TemporaryMemory(storage)  # type: ignore[arg-type]
+    await reloaded.async_initialize()
+    [record] = await reloaded.async_list_owned("user:alice")
+    assert record.source == "manual"
+    assert record.category == "important"
+    assert record.expires_at == manual_expiry
+
+
 def test_injection_budget_skips_large_later_record_but_keeps_smaller_one() -> None:
     records = [
         _model_record("first", "a" * (MAX_INJECT_CHARACTERS - 5), updated_offset=3),

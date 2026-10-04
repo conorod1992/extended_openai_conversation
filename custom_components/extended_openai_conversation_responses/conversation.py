@@ -2493,6 +2493,7 @@ class ExtendedOpenAIAgentEntity(
                 category,
                 **metadata,
                 clear_fields=clear_fields,
+                source="explicit",
             )
             return {
                 "status": "updated",

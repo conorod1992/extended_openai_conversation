@@ -159,6 +159,65 @@ async def test_duplicate_prevention() -> None:
     assert len(await memory.async_list("user-1")) == 1
 
 
+async def test_explicit_duplicate_promotes_implicit_memory_provenance() -> None:
+    """Explicitly confirming an inferred fact makes it authoritative."""
+    storage = FakeStorage()
+    memory = await _memory(storage)
+    inferred = await memory.async_add(
+        "user-1", "User prefers tea.", "preferences", "implicit"
+    )
+
+    confirmed = await memory.async_add(
+        "user-1", "User prefers tea", "preferences", "explicit"
+    )
+
+    assert confirmed["status"] == "updated"
+    assert confirmed["memory"]["memory_id"] == inferred["memory"]["memory_id"]
+    assert confirmed["memory"]["source"] == "explicit"
+    reloaded = await _memory(storage)
+    [record] = await reloaded.async_list("user-1")
+    assert record.source == "explicit"
+
+
+async def test_explicit_update_blocks_later_implicit_key_replacement() -> None:
+    """A manual correction cannot be silently replaced by later inference."""
+    storage = FakeStorage()
+    memory = await _memory(storage)
+    inferred = await memory.async_upsert(
+        "user-1",
+        "User prefers 22C.",
+        "preferences",
+        "implicit",
+        key="preferred_temperature",
+    )
+    memory_id = inferred["memory"]["memory_id"]
+
+    corrected = await memory.async_update(
+        "user-1",
+        memory_id,
+        "User prefers 20C.",
+        "preferences",
+        source="explicit",
+    )
+    assert corrected.source == "explicit"
+
+    conflict = await memory.async_upsert(
+        "user-1",
+        "User prefers 22C.",
+        "preferences",
+        "implicit",
+        key="preferred_temperature",
+    )
+    assert conflict["status"] == "needs_resolution"
+    assert conflict["candidate"]["memory_id"] == memory_id
+    assert conflict["candidate"]["content"] == "User prefers 20C."
+
+    reloaded = await _memory(storage)
+    [record] = await reloaded.async_list("user-1")
+    assert record.content == "User prefers 20C."
+    assert record.source == "explicit"
+
+
 async def test_semantic_duplicate_boundary_is_model_mediated() -> None:
     """Paraphrases without high token overlap remain separate storage records."""
     memory = await _memory()
