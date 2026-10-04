@@ -262,7 +262,7 @@ def _safe_iso(value: Any) -> datetime | None:
 
 def _current_volume(hass: HomeAssistant, entity_id: str) -> float | None:
     state = hass.states.get(entity_id)
-    if state is None:
+    if state is None or getattr(state, "state", None) in {"unknown", "unavailable"}:
         return None
     value = state.attributes.get("volume_level")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -486,7 +486,6 @@ class QuietHoursManager:
     async def async_update_config(self, value: Any) -> dict[str, Any]:
         candidate = _config_from_data(value)
         async with self._lock:
-            await self._async_restore_locked()
             previous = self._config
             self._config = candidate
             try:
@@ -494,6 +493,7 @@ class QuietHoursManager:
             except BaseException:
                 self._config = previous
                 raise
+            await self._async_restore_locked()
             self._reschedule()
         await self.async_reconcile()
         return self.snapshot()
@@ -511,6 +511,12 @@ class QuietHoursManager:
             self._publish_state(period)
             if period is None:
                 await self._async_restore_locked()
+                if (
+                    not self._config.enabled
+                    and self._active is None
+                    and self._unsubscribers
+                ):
+                    self._reschedule()
                 return
 
             period_id = period.start.isoformat()
@@ -521,6 +527,16 @@ class QuietHoursManager:
                 # If HA was unavailable across the old end boundary, first give back
                 # controls that still carry our old values, then begin the new period.
                 await self._async_restore_locked()
+                if self._active is not None:
+                    self._active.update(
+                        {
+                            "period_started_at": period_id,
+                            "period_ends_at": period.end.isoformat(),
+                            "applied_at": now.isoformat(),
+                        }
+                    )
+                    await self._async_save_locked()
+            await self._async_retry_pending_restores_locked()
 
             if self._active is None:
                 self._active = {
@@ -622,17 +638,23 @@ class QuietHoursManager:
             controls.pop(entity_id, None)
             await self._async_save_locked()
 
-    async def _async_restore_locked(self) -> None:
+    async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
         if self._active is None:
             return
         controls = self._active.get("controls", {})
-        if isinstance(controls, Mapping):
+        if not isinstance(controls, dict):
+            controls = {}
+        if isinstance(controls, dict):
             for entity_id, raw in list(controls.items()):
-                if not isinstance(entity_id, str) or not isinstance(raw, Mapping):
+                if not isinstance(entity_id, str) or not isinstance(raw, dict):
+                    controls.pop(entity_id)
+                    continue
+                if pending_only and not raw.get("restoration_pending"):
                     continue
                 kind = raw.get("kind")
                 original = raw.get("original_value")
                 quiet = raw.get("quiet_value")
+                raw["restoration_pending"] = True
                 try:
                     if (
                         kind == "volume"
@@ -642,7 +664,9 @@ class QuietHoursManager:
                         and not isinstance(quiet, bool)
                     ):
                         current = _current_volume(self.hass, entity_id)
-                        if current is not None and math.isclose(
+                        if current is None:
+                            continue
+                        if math.isclose(
                             current, float(quiet), abs_tol=_VOLUME_TOLERANCE
                         ):
                             await self._async_set_volume(entity_id, float(original))
@@ -652,13 +676,34 @@ class QuietHoursManager:
                         and isinstance(quiet, bool)
                     ):
                         current_switch = _current_switch(self.hass, entity_id)
+                        if current_switch is None:
+                            continue
                         if current_switch is quiet:
                             await self._async_set_switch(entity_id, original)
+                    # A confirmed independent value releases ownership too.
+                    controls.pop(entity_id)
+                    if pending_only:
+                        observed = self._active.get("observed_controls", [])
+                        if entity_id in observed:
+                            observed.remove(entity_id)
                 except Exception as err:
-                    # Do not keep claiming ownership after a failed restoration.
-                    self._log_control_failure("restore", entity_id, str(kind), err)
-        self._active = None
+                    self._log_control_failure(
+                        "restore", entity_id, str(kind), err, ownership="retained"
+                    )
+        if not pending_only:
+            if controls:
+                self._active["observed_controls"] = list(controls)
+                self._active["pending_controls"] = {}
+            else:
+                self._active = None
         await self._async_save_locked()
+
+    async def _async_retry_pending_restores_locked(self) -> None:
+        if any(
+            control.get("restoration_pending")
+            for control in (self._active or {}).get("controls", {}).values()
+        ):
+            await self._async_restore_locked(pending_only=True)
 
     async def _async_set_volume(self, entity_id: str, volume_level: float) -> None:
         await self.hass.services.async_call(
@@ -736,6 +781,8 @@ class QuietHoursManager:
                     "original_value": original,
                     "quiet_value": quiet,
                 }
+            if entity_id in controls and raw.get("restoration_pending") is True:
+                controls[entity_id]["restoration_pending"] = True
         return {
             "period_started_at": started.isoformat(),
             "period_ends_at": ended.isoformat(),
@@ -768,8 +815,15 @@ class QuietHoursManager:
         # callbacks are unnecessary.
         if not self._config.enabled:
             self._publish_state(None)
-            return
-        for value in (self._config.start, self._config.end):
+            if not any(
+                control.get("restoration_pending")
+                for control in (self._active or {}).get("controls", {}).values()
+                if isinstance(control, dict)
+            ):
+                return
+        for value in (
+            (self._config.start, self._config.end) if self._config.enabled else ()
+        ):
             clock = _parse_clock(value)
             self._unsubscribers.append(
                 async_track_time_change(
