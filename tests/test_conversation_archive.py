@@ -1173,6 +1173,43 @@ def test_search_snapshot_filters_dates_ranks_phrase_and_paginates() -> None:
     assert first["results"][0]["turn_id"] != second["results"][0]["turn_id"]
 
 
+def test_search_snapshot_does_not_turn_zero_token_queries_into_match_all() -> None:
+    session = _session(turn_count=3)
+    turns = (
+        _turn(
+            turn_id="contains-stop-word",
+            timestamp="2026-09-01T10:00:00+00:00",
+            user_text="The kitchen light is on",
+            assistant_text="Confirmed",
+        ),
+        _turn(
+            turn_id="unrelated",
+            timestamp="2026-09-02T10:00:00+00:00",
+            user_text="Weather forecast",
+            assistant_text="Sunny",
+        ),
+        _turn(
+            turn_id="newest-unrelated",
+            timestamp="2026-09-03T10:00:00+00:00",
+            user_text="Oscar went for a walk",
+            assistant_text="Noted",
+        ),
+    )
+
+    stop_word = _search_archive_snapshot(
+        ((session, turns),), "the", None, None, 10, 0
+    )
+    punctuation = _search_archive_snapshot(
+        ((session, turns),), "!!!", None, None, 10, 0
+    )
+
+    assert [item["turn_id"] for item in stop_word["results"]] == [
+        "contains-stop-word"
+    ]
+    assert punctuation["results"] == []
+    assert punctuation["has_more"] is False
+
+
 def test_text_search_and_time_helpers_cover_edge_forms() -> None:
     assert _clean_text("  hello  ") == "hello"
     assert _clean_text("x" * (MAX_TEXT_LENGTH + 4)) == "x" * MAX_TEXT_LENGTH
