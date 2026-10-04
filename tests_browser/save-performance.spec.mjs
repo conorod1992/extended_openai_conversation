@@ -132,3 +132,18 @@ for (const structural of [false, true]) {
     await expectHarnessClean(page, errors);
   });
 }
+
+test("configuration reconciliation falls back when live control identity changed", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  const tokens = panel.locator('[data-config="max_tokens"]');
+  await expect(tokens).toBeVisible();
+  await tokens.fill("777");
+  await tokens.evaluate(node => { window.changedIdentityControl = node; node.id = "unexpected-control"; });
+  await panel.locator("#save-config").click();
+  await expect.poll(() => panel.evaluate(host => host._configurationSaving)).toBe(false);
+  await expect(tokens).toHaveValue("777");
+  expect(await tokens.evaluate(node => node === window.changedIdentityControl)).toBe(false);
+  await expectHarnessClean(page, errors);
+});

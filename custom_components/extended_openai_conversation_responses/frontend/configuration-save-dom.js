@@ -43,6 +43,9 @@ export function reconcileSavedConfiguration(panel, owner) {
     }
     if (old.nodeType === Node.ELEMENT_NODE) {
       if (old.tagName !== next.tagName || old.tagName !== live.tagName) return false;
+      for (const name of ["id", "data-config", "type", "name"]) {
+        if (old.hasAttribute(name) && old.getAttribute(name) !== live.getAttribute(name)) return false;
+      }
       for (const name of new Set([...old.getAttributeNames(), ...next.getAttributeNames()])) {
         if (old.getAttribute(name) === next.getAttribute(name)) continue;
         if (!mutableAttributes.has(name)) return false;
