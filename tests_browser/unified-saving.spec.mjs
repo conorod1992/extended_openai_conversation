@@ -219,6 +219,7 @@ test("an Assistant edit during a pending save remains dirty, and stale saves pre
 
 test("Guest activation remains immediate, coalesces requests, and preserves policy edits", async ({page}) => {
   await page.goto(fixtureUrl("capabilities/guest-mode")); const panel = panelFor(page);
+  await panel.locator("#guest-indefinite").check();
   await panel.locator("#guest-controls-enabled").evaluate((input) => input.closest("details").open = true);
   await panel.locator("#guest-controls-enabled").check();
   await page.evaluate(() => {

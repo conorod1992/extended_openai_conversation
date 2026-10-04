@@ -24,6 +24,7 @@ TEST_PATHS=(
   tests_real_ha/test_ha_llm_tool_acceptance.py
   tests_real_ha/test_intercom_voice_acceptance.py
   tests_real_ha/test_management_backend_acceptance.py
+  tests_real_ha/test_deleted_user_memory_edit.py
   tests_real_ha/test_native_indirect_mixed_exposure.py
   tests_real_ha/test_native_indirect_target_resolution.py
   tests_real_ha/test_native_multi_indirect_target_union.py

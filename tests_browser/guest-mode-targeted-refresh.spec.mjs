@@ -68,6 +68,7 @@ test("Guest Mode schedule mutations refresh only the selected agent and route", 
   await page.goto(fixtureUrl("capabilities/guest-mode"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name:"Guest Mode", exact:true})).toBeVisible();
+  await panel.locator("#guest-indefinite").check();
 
   const result = await panel.evaluate(async (host) => {
     const original = host._hass.callWS;
@@ -178,6 +179,7 @@ test("late Guest Mode refresh does not replace a newer route", async ({page}) =>
   await page.goto(fixtureUrl("capabilities/guest-mode"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name:"Guest Mode", exact:true})).toBeVisible();
+  await panel.locator("#guest-indefinite").check();
 
   const result = await panel.evaluate(async (host) => {
     const original = host._hass.callWS;
