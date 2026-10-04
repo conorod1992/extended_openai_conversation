@@ -703,6 +703,29 @@ def _json_equal(left: Any, right: Any) -> bool:
     return type(left) is type(right) and left == right
 
 
+def _json_hash(value: Any) -> int:
+    """Bucket JSON values consistently with _json_equal; collisions are allowed."""
+    if isinstance(value, bool):
+        return hash(("boolean", value))
+    if isinstance(value, (int, float)):
+        # Python hashes equivalent ints/floats alike, including signed zero.
+        return hash(("number", value))
+    if isinstance(value, Mapping):
+        return hash(
+            (
+                "object",
+                frozenset((key, _json_hash(item)) for key, item in value.items()),
+            )
+        )
+    if isinstance(value, list):
+        return hash(("array", tuple(_json_hash(item) for item in value)))
+    if isinstance(value, str):
+        return hash((type(value), value))
+    # Untyped schemas can receive non-JSON Python values from internal callers.
+    # Keep their existing exact equality behavior, even if they are unhashable.
+    return hash(type(value))
+
+
 def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
     """Recursively validate one JSON-schema value."""
     expected = schema.get("type")
@@ -733,11 +756,14 @@ def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
                 for index, item in enumerate(value)
             ]
         if schema.get("uniqueItems") is True:
-            for index, item in enumerate(value):
-                if any(_json_equal(item, previous) for previous in value[:index]):
+            buckets: dict[int, list[Any]] = {}
+            for item in value:
+                bucket = buckets.setdefault(_json_hash(item), [])
+                if any(_json_equal(item, previous) for previous in bucket):
                     raise HomeAssistantError(
                         f"Function input `{name or 'input'}` must contain unique items"
                     )
+                bucket.append(item)
         elif "uniqueItems" in schema and schema.get("uniqueItems") is not False:
             raise _schema_error("uniqueItems must be boolean")
     elif "string" in expected_types and isinstance(value, str):
