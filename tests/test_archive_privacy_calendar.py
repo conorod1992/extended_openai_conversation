@@ -77,6 +77,51 @@ async def test_private_activity_survives_multiple_timeouts_and_restart(monkeypat
     assert (await begin()).retention_state == "retained"
 
 
+async def test_slow_private_turn_refreshes_activity_at_completion(monkeypatch):
+    now = datetime.fromisoformat("2026-10-03T12:00:00+00:00")
+    monkeypatch.setattr(module.dt_util, "utcnow", lambda: now)
+    storage = FakeArchiveStorage()
+    archive = ConversationArchive(storage, "agent")
+    await archive.async_initialize()
+    scope = user_scope("alice", source="test")
+
+    async def begin():
+        return await archive.async_begin_session(
+            "key",
+            scope,
+            "conversation",
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=1,
+        )
+
+    session = await begin()
+    await archive.async_make_private(session.session_id)
+    now += timedelta(seconds=10)
+    await begin()
+    now += timedelta(seconds=90)
+    writes = storage.partition_save_count
+    assert (
+        await archive.async_record_turn(
+            session.session_id,
+            run_id=None,
+            user_text="slow private secret",
+            assistant_text="reply",
+            successful=True,
+        )
+        is None
+    )
+    now += timedelta(seconds=10)
+    assert (await begin()).session_id == session.session_id
+    restarted = ConversationArchive(storage, "agent")
+    await restarted.async_initialize()
+    archive = restarted
+    assert (await begin()).session_id == session.session_id
+    assert archive.active_session("key").retention_state == "private"
+    assert storage.partition_save_count == writes
+    assert "slow private secret" not in repr(storage.metadata)
+
+
 @pytest.mark.parametrize(
     "zone,day,hours",
     [
