@@ -145,7 +145,7 @@ async def test_storage_survives_manager_reinitialization() -> None:
 
 
 async def test_duplicate_prevention() -> None:
-    """Exact and highly similar facts do not create duplicate records."""
+    """Normalized equality prevents duplicate records without inferring meaning."""
     memory = await _memory()
     first = await memory.async_add(
         "user-1", "Oscar is the user's dog.", "pets", "explicit"

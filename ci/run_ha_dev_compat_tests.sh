@@ -37,6 +37,7 @@ TEST_PATHS=(
   tests/test_identity.py
   tests/test_intercom.py
   tests/test_intercom_runtime_contracts.py
+  tests/test_memory_conservative_duplicates.py
   tests/test_native_action_execution_bounds.py
   tests/test_native_function_execution_budget.py
   tests/test_native_function_schema_contracts.py

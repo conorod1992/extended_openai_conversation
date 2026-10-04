@@ -314,9 +314,19 @@ class ConversationArchive:
         assistant_text = _clean_text(assistant_text)
         async with self._lock:
             session = self._sessions.get(session_id)
-            if session is None or session.retention_state != "retained":
+            if session is None:
                 return None
             timestamp = dt_util.utcnow().isoformat()
+            if session.retention_state == "private":
+                # A slow turn is active until completion too. Persist activity
+                # without retaining content or changing the active binding.
+                if timestamp != session.last_activity_at or self._pending_partitions:
+                    await self._async_publish_session_locked(
+                        None, replace(session, last_activity_at=timestamp)
+                    )
+                return None
+            if session.retention_state != "retained":
+                return None
             turn = ArchiveTurn(
                 turn_id=uuid4().hex,
                 session_id=session_id,
@@ -834,16 +844,21 @@ class ConversationArchive:
         return session
 
     async def _async_publish_session_locked(
-        self, session_key: str, session: ArchiveSession
+        self, session_key: str | None, session: ArchiveSession
     ) -> None:
-        """Publish a new active session, persisting only durable archive state."""
+        """Publish session metadata and an optional active binding."""
         self._ensure_initialized()
         if session.retention_state == "unretained" and not self._pending_partitions:
             self._sessions[session.session_id] = session
-            self._active[session_key] = session.session_id
+            if session_key is not None:
+                self._active[session_key] = session.session_id
             return
         sessions = {**self._sessions, session.session_id: session}
-        active = {**self._active, session_key: session.session_id}
+        active = (
+            {**self._active, session_key: session.session_id}
+            if session_key is not None
+            else self._active
+        )
         pending = (
             {
                 partition: self._partition_payload_locked(partition)
@@ -860,7 +875,8 @@ class ConversationArchive:
             )
         )
         self._sessions[session.session_id] = session
-        self._active[session_key] = session.session_id
+        if session_key is not None:
+            self._active[session_key] = session.session_id
 
     @staticmethod
     def _metadata_payload_for_state(

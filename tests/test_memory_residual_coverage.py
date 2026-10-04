@@ -287,7 +287,12 @@ def test_duplicate_related_and_index_edge_paths() -> None:
     manager._index(first)
     manager._index(second)
 
-    assert manager._find_duplicate("alice", "Cavachon Oscar") == first
+    assert manager._find_duplicate("alice", "Cavachon Oscar") is None
+    assert manager._find_duplicate("alice", "Oscar is a Cavachon!") == first
+    assert (
+        manager._find_related_candidate("alice", "Cavachon Oscar", None, None)
+        == first
+    )
     assert (
         manager._find_related_candidate(
             "alice", "Oscar is a Labrador.", "Oscar", "pet.oscar.color"
