@@ -315,6 +315,7 @@ async def archive_list_page(
         scope_id,
         safe_offset,
         safe_limit,
+        dt_util.DEFAULT_TIME_ZONE,
     )
 
 
@@ -327,12 +328,11 @@ def _archive_search_sync(
     end_date: str | None,
     offset: int,
     limit: int,
+    time_zone: Any,
 ) -> dict[str, Any]:
     query_tokens = _tokens(query)
     normalized_query = _normalize(query)
-    start, end = _local_date_bounds(
-        start_date, end_date, dt_util.DEFAULT_TIME_ZONE
-    )
+    start, end = _local_date_bounds(start_date, end_date, time_zone)
     keep = offset + limit
     heap: list[tuple[float, str, str, str, Any, Any]] = []
     total = 0
@@ -347,13 +347,17 @@ def _archive_search_sync(
             normalized_combined = _normalize(combined)
             tokens = _tokens(combined)
             overlap = len(query_tokens & tokens)
+            literal_match = bool(
+                normalized_query
+                and f" {normalized_query} " in f" {normalized_combined} "
+            )
             if query_tokens:
-                if not overlap and normalized_query not in normalized_combined:
+                if not overlap and not literal_match:
                     continue
-            elif not normalized_query or normalized_query not in normalized_combined:
+            elif not literal_match:
                 continue
             score = overlap / max(1, len(query_tokens))
-            if normalized_query and normalized_query in normalized_combined:
+            if literal_match:
                 score += 2
             total += 1
             candidate = (
@@ -375,7 +379,7 @@ def _archive_search_sync(
             "session_id": session.session_id,
             "turn_id": turn.turn_id,
             "date": _parse_time(turn.timestamp)
-            .astimezone(dt_util.DEFAULT_TIME_ZONE)
+            .astimezone(time_zone)
             .date()
             .isoformat(),
             "timestamp": turn.timestamp,
