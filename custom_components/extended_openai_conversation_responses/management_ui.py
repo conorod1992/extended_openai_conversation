@@ -1710,10 +1710,20 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
     if action == "validate_current":
         return {"valid": True, "errors": {}}
     if action == "save":
-        tool_candidate = message.get("tool")
-        if not isinstance(tool_candidate, dict):
-            raise HomeAssistantError("tool must be an object")
-        saved_tool = validate_function_tools([tool_candidate])[0]
+        if "yaml" in message:
+            if "tool" in message:
+                raise HomeAssistantError("Provide either yaml or tool, not both")
+            validation = _validation_result(
+                lambda: validate_single_function_tool(message.get("yaml"))
+            )
+            if not validation["valid"]:
+                return validation
+            saved_tool = validation["config"]
+        else:
+            tool_candidate = message.get("tool")
+            if not isinstance(tool_candidate, dict):
+                raise HomeAssistantError("tool must be an object")
+            saved_tool = validate_function_tools([tool_candidate])[0]
         original_name = message.get("original_name")
         if original_name is not None and not isinstance(original_name, str):
             raise HomeAssistantError("original_name must be a string")

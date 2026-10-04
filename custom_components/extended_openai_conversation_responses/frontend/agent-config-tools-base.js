@@ -1145,12 +1145,15 @@ export function bindTools(panel) {
     const operation = toolEditorOperation(panel);
     panel._setSaving(button, true);
     try {
-      const tool = await validateDialogTool(panel, operation);
-      if (!tool || !operation.isCurrent()) return;
-      const result = await panel._call("tools", "save", {tool, ...operation.destination,
+      const result = await panel._call("tools", "save", {yaml: operation.yaml, ...operation.destination,
         ...(operation.revision !== undefined ? {revision: operation.revision} : {}),
         ...(operation.originalName ? {original_name: operation.originalName} : {})});
       if (!operation.isCurrent()) return;
+      if (result.valid === false) {
+        root.querySelector("#tool-error").className = "validation invalid";
+        root.querySelector("#tool-error").textContent = `Function configuration is invalid: ${toolErrorText(result.errors)}`;
+        return;
+      }
       synchronizePersistedFunctions(panel, result);
       root.querySelector("#tool-dialog").close();
       panel._toast("Changes saved");

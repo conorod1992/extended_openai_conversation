@@ -34,7 +34,7 @@
     {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_export", "keys": ["selection", "group_id", "rule_ids"], "equals": {"selection": "all", "group_id": null, "rule_ids": null}},
     {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_review", "keys": ["pack"]},
     {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_import", "keys": ["pack", "revision", "review_token", "confirm"]},
-    {"journey": "functions", "section": "tools", "action": "save", "keys": ["tool", "revision"], "optional_keys": ["original_name"]},
+    {"journey": "functions", "section": "tools", "action": "save", "keys": ["yaml", "revision"], "optional_keys": ["original_name"]},
     {"journey": "functions", "section": "tools", "action": "save_group", "keys": ["group", "revision"], "optional_keys": ["original_id"]},
     {"journey": "functions", "section": "tools", "action": "set_enabled", "keys": ["name", "enabled", "revision"], "min_calls": 2},
     {"journey": "functions", "section": "tools", "action": "delete_group", "keys": ["group_id", "confirm", "revision"]},

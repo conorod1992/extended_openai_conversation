@@ -43,7 +43,7 @@ function harness() {
         return load.promise;
       }
       if (action === "validate_yaml") return {valid: true, config: {spec: {name: "example", description: params.yaml}}, name: "example", type: "native"};
-      if (action === "save") return {functions: [params.tool], function_groups: [], revision: "rev-b"};
+      if (action === "save") return {functions: [{spec: {name: "example", description: params.yaml}}], function_groups: [], revision: "rev-b"};
       throw new Error(`Unexpected ${section}/${action}`);
     },
   };
@@ -77,7 +77,9 @@ function harness() {
   assert.equal(c["tool-save"].disabled, false);
   c["tool-yaml"].value = "edited YAML";
   await c["tool-save"].emit("click");
-  assert.equal(calls.find((call) => call.action === "save").params.tool.spec.description, "edited YAML");
+  assert.equal(calls.find((call) => call.action === "save").params.yaml, "edited YAML");
+  assert.equal(calls.filter((call) => call.action === "save").length, 1);
+  assert.equal(calls.filter((call) => call.action === "validate_yaml").length, 0);
   assert.equal(c["tool-dialog"].open, false);
 }
 
@@ -168,7 +170,8 @@ for (const change of ["removed", "replaced", "reopened"]) {
   assert.equal(c["tool-save"].disabled, false);
 }
 // A Save completion belongs to its originating editor, even when the same DOM is reused.
-for (const phase of ["validate_yaml", "save"]) for (const fails of [false, true]) {
+for (const fails of [false, true]) {
+  const phase = "save";
   const {panel, controls: c, edit, calls, nextLoad} = harness();
   const hydrate = nextLoad("serialize");
   const opened = edit.emit("click");
@@ -184,11 +187,11 @@ for (const phase of ["validate_yaml", "save"]) for (const fails of [false, true]
   };
   const saving = c["tool-save"].emit("click");
   const submitted = await entered.promise;
-  if (phase === "validate_yaml") assert.equal(submitted.yaml, "Alpha renamed implementation");
-  else {
-    assert.equal(submitted.original_name, "example");
-    assert.equal(submitted.revision, "rev-a");
-  }
+  assert.equal(c["tool-dialog"].open, true, "keep the dialog open until persistence completes");
+  assert.equal(c["tool-save"].disabled, true);
+  assert.equal(submitted.yaml, "Alpha renamed implementation");
+  assert.equal(submitted.original_name, "example");
+  assert.equal(submitted.revision, "rev-a");
   await c["tool-cancel"].emit("click");
   panel._draft.functions.push({spec:{name:"beta", description:"Beta original"}, function:{type:"template"}});
   const betaHydrate = nextLoad("serialize");
@@ -205,12 +208,12 @@ for (const phase of ["validate_yaml", "save"]) for (const fails of [false, true]
   assert.equal(c["tool-yaml"].value, "Beta unsaved draft");
   assert.equal(c["tool-error"].textContent, status);
   assert.equal(c["tool-save"].disabled, true);
-  assert.equal(calls.filter(call => call.action === "save").length, phase === "save" ? 1 : 0);
+  assert.equal(calls.filter(call => call.action === "save").length, 1);
   assert.ok(!calls.some(call => call.action === "save" && call.params.original_name === "beta"));
   assert.equal(panel._draft.functions[1].spec.name, "beta", "stale result cannot publish a different collection");
 }
 
-// A selected assistant cannot be replaced while validation is outstanding.
+// A save is scoped to its originating assistant even if the agent changes.
 {
   const {panel, controls: c, edit, calls, nextLoad} = harness();
   panel._selectedAgent = () => ({entry_id:"entry-alpha", subentry_id:panel._agentId});
@@ -221,7 +224,7 @@ for (const phase of ["validate_yaml", "save"]) for (const fails of [false, true]
   const entered = deferred(), release = deferred(), originalCall = panel._call.bind(panel);
   panel._call = async (section, action, params) => {
     const result = await originalCall(section, action, params);
-    if (action === "validate_yaml") {entered.resolve(params); await release.promise;}
+    if (action === "save") {entered.resolve(params); await release.promise;}
     return result;
   };
   const saving = c["tool-save"].emit("click");
@@ -232,7 +235,28 @@ for (const phase of ["validate_yaml", "save"]) for (const fails of [false, true]
   c["tool-error"].textContent = "Beta status";
   release.resolve();
   await saving;
-  assert.equal(calls.filter(call => call.action === "save").length, 0);
+  assert.equal(calls.filter(call => call.action === "save").length, 1);
   assert.equal(c["tool-error"].textContent, "Beta status");
+}
+// Invalid YAML keeps the dialog open; Validate remains a separate action.
+{
+  const {panel, controls: c, edit, nextLoad, calls} = harness();
+  const hydrate = nextLoad("serialize"), opened = edit.emit("click");
+  (await hydrate).resolve({yaml:"Invalid YAML"});
+  await opened;
+  const originalCall = panel._call.bind(panel);
+  let notifications = 0;
+  panel._toast = () => { notifications++; };
+  panel._call = (section, action, params) => action === "save"
+    ? Promise.resolve({valid:false, errors:{yaml:"invalid syntax"}})
+    : originalCall(section, action, params);
+  await c["tool-save"].emit("click");
+  assert.equal(c["tool-dialog"].open, true);
+  assert.equal(c["tool-yaml"].value, "Invalid YAML");
+  assert.match(c["tool-error"].textContent, /yaml: invalid syntax/);
+  assert.equal(c["tool-save"].disabled, false);
+  assert.equal(notifications, 0);
+  await c["tool-validate"].emit("click");
+  assert.equal(calls.at(-1).action, "validate_yaml");
 }
 console.log("Function Tool editor hydration, stale sessions, failure and save tests passed");

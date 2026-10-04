@@ -67,7 +67,7 @@ async def test_native_yaml_validate_save_readback_atomic_rejection_and_recovery(
         entry=entry,
         section="tools",
         action="save",
-        tool=created_validation["config"],
+        yaml=created_yaml,
     )
     await hass.async_block_till_done()
 
@@ -101,7 +101,7 @@ async def test_native_yaml_validate_save_readback_atomic_rejection_and_recovery(
         entry=entry,
         section="tools",
         action="save",
-        tool=edited_validation["config"],
+        yaml=edited_yaml,
         original_name="native_yaml_acceptance",
     )
     await hass.async_block_till_done()
@@ -133,6 +133,15 @@ function:
     )
     assert invalid_validation["valid"] is False
     assert invalid_validation["errors"]
+    invalid_save = await _management_call(
+        client,
+        entry=entry,
+        section="tools",
+        action="save",
+        yaml=invalid_yaml,
+        original_name="native_yaml_acceptance",
+    )
+    assert invalid_save == invalid_validation
 
     after_invalid = await _management_call(
         client, entry=entry, section="configuration", action="get"
@@ -155,7 +164,7 @@ function:
         entry=entry,
         section="tools",
         action="save",
-        tool=recovered_validation["config"],
+        yaml=recovered_yaml,
         original_name="native_yaml_acceptance",
     )
     await hass.async_block_till_done()

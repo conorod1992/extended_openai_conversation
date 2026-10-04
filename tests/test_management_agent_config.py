@@ -456,7 +456,10 @@ async def test_function_tool_yaml_management_operations(hass) -> None:
     assert execute_service["yaml"].startswith("spec:\n")
 
 
-async def test_function_mutations_patch_latest_persisted_fields_only(hass) -> None:
+@pytest.mark.parametrize("from_yaml", [False, True])
+async def test_function_mutations_patch_latest_persisted_fields_only(
+    hass, from_yaml
+) -> None:
     entry, subentry = _setup_entry(hass)
     original = {
         "spec": {
@@ -497,7 +500,12 @@ async def test_function_mutations_patch_latest_persisted_fields_only(hass) -> No
         hass,
         "admin",
         True,
-        {**base, "action": "save", "tool": renamed, "original_name": "original"},
+        {
+            **base,
+            "action": "save",
+            "original_name": "original",
+            **({"yaml": yaml.safe_dump(renamed)} if from_yaml else {"tool": renamed}),
+        },
     )
     saved = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
     assert saved["prompt"] == "latest persisted prompt"
@@ -515,7 +523,15 @@ async def test_function_mutations_patch_latest_persisted_fields_only(hass) -> No
         hass,
         "admin",
         True,
-        {**base, "action": "save", "tool": created_tool},
+        {
+            **base,
+            "action": "save",
+            **(
+                {"yaml": yaml.safe_dump(created_tool)}
+                if from_yaml
+                else {"tool": created_tool}
+            ),
+        },
     )
     assert [tool["spec"]["name"] for tool in created["functions"]] == [
         "renamed",
@@ -615,7 +631,32 @@ async def test_invalid_direct_function_mutation_persists_nothing(hass) -> None:
     hass.config_entries.async_update_subentry.assert_not_called()
 
 
-async def test_function_tool_yaml_operations_require_admin(hass) -> None:
+@pytest.mark.parametrize(
+    "invalid_yaml", ["spec: [", "spec: {}\nfunction: {}", "- spec: {}"]
+)
+async def test_save_yaml_returns_validation_errors_without_persisting(
+    hass, invalid_yaml
+) -> None:
+    _setup_entry(hass)
+    message = {
+        "section": "tools",
+        "entry_id": "entry-1",
+        "subentry_id": "agent-1",
+        "yaml": invalid_yaml,
+    }
+    validation = await async_management_command(
+        hass, "admin", True, {**message, "action": "validate_yaml"}
+    )
+    saved = await async_management_command(
+        hass, "admin", True, {**message, "action": "save"}
+    )
+    assert saved == validation
+    assert saved["valid"] is False
+    hass.config_entries.async_update_subentry.assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["starter", "save"])
+async def test_function_tool_yaml_operations_require_admin(hass, action) -> None:
     _setup_entry(hass)
     with pytest.raises(HomeAssistantError, match="Administrator"):
         await async_management_command(
@@ -624,7 +665,8 @@ async def test_function_tool_yaml_operations_require_admin(hass) -> None:
             False,
             {
                 "section": "tools",
-                "action": "starter",
+                "action": action,
+                "yaml": "spec: [",
                 "entry_id": "entry-1",
                 "subentry_id": "agent-1",
             },

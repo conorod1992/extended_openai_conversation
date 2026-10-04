@@ -51,9 +51,12 @@ test("Function Tool editing waits for delayed YAML and persists the user's edit"
   await panel.locator("#tool-save").click();
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
   const sentYaml = await page.evaluate(() => window.browserHarness.calls
-    .filter((call) => call.section === "tools" && call.action === "validate_yaml")
+    .filter((call) => call.section === "tools" && call.action === "save")
     .at(-1)?.yaml);
   expect(sentYaml).toBe(editedYaml);
+  const calls = await page.evaluate(() => window.browserHarness.calls.filter((call) => call.section === "tools"));
+  expect(calls.filter((call) => call.action === "save")).toHaveLength(1);
+  expect(calls.filter((call) => call.action === "validate_yaml")).toHaveLength(0);
   // The harness rewrites the URL to the application route; re-enter its fixture
   // while retaining the mock backend persisted in localStorage.
   await page.goto(fixtureUrl("capabilities/functions"));
@@ -80,9 +83,12 @@ test("cancelled editor loads cannot overwrite a reopened dialog", async ({page})
   await panel.locator("#tool-save").click();
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
   const sentYaml = await page.evaluate(() => window.browserHarness.calls
-    .filter((call) => call.section === "tools" && call.action === "validate_yaml")
+    .filter((call) => call.section === "tools" && call.action === "save")
     .at(-1)?.yaml);
   expect(sentYaml).toBe(editedYaml);
+  const calls = await page.evaluate(() => window.browserHarness.calls.filter((call) => call.section === "tools"));
+  expect(calls.filter((call) => call.action === "save")).toHaveLength(1);
+  expect(calls.filter((call) => call.action === "validate_yaml")).toHaveLength(0);
   // The harness rewrites the URL to the application route; re-enter its fixture
   // while retaining the mock backend persisted in localStorage.
   await page.goto(fixtureUrl("capabilities/functions"));

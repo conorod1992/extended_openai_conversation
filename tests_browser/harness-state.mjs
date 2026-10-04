@@ -331,10 +331,12 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     if (key === "tools/serialize") return {yaml: state.toolYamls[message.tool?.spec?.name] || ""};
     if (key === "tools/validate_yaml") return parseTool(message.yaml);
     if (key === "tools/save") {
-      requireFields([["tool", "object"], ["revision", "string"]]);
+      requireFields([["yaml" in message ? "yaml" : "tool", "yaml" in message ? "string" : "object"], ["revision", "string"]]);
+      const validation = "yaml" in message ? parseTool(message.yaml) : null;
+      if (validation?.valid === false) return validation;
       if (message.revision !== state.configuration.revision) throw new Error("Configuration changed in another tab. Reload the latest saved settings before saving.");
-      
-      const tool = clone(message.tool), list = state.configuration.config.functions || [], original = message.original_name;
+
+      const tool = clone(validation?.config || message.tool), list = state.configuration.config.functions || [], original = message.original_name;
       const i = list.findIndex((t) => t.spec?.name === (original || tool.spec?.name)); if (i >= 0) list[i] = tool; else list.push(tool);
       const name = tool.spec?.name;
       if (name && pendingToolYamls.has(name)) state.toolYamls[name] = pendingToolYamls.get(name);
