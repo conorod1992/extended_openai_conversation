@@ -628,12 +628,16 @@ async def test_consecutive_live_management_writes_do_not_reload_or_block_overvie
         revision=guest["revision"],
         config=guest["config"],
     )
+    settings_current = await _management_call(
+        client, entry=entry, section="settings", action="get"
+    )
     settings_saved = await _management_call(
         client,
         entry=entry,
         section="settings",
         action="update",
         settings={},
+        revision=settings_current["revision"],
     )
 
     overview = await _management_call(

@@ -41,6 +41,10 @@ async def test_full_editor_draft_model_switch_previews_and_sends_without_reasoni
         "api_mode": "chat_completions",
     }
     await command("update", config=draft, revision=snapshot["revision"])
+    await hass.async_block_till_done()
+    previous_agent = agent
+    agent = conversation.async_get_agent(hass, agent.entry.entry_id)
+    assert agent is not previous_agent
     assert "reasoning_effort" not in agent.subentry.data
     # The browser can still carry the old model's value even after a sparse Save.
     preview = await command("request_preview", config=draft)
