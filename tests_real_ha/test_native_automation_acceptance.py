@@ -299,3 +299,118 @@ async def test_cancelled_native_automation_retains_ownership_until_settled(
     hass.bus.async_fire("audit_newer")
     await hass.async_block_till_done()
     assert effects == ["newer"]
+
+
+async def test_native_script_consumes_real_eoai_process_service_response(
+    hass, monkeypatch
+):
+    """A native HA script can consume EOAI's registered response service end to end."""
+    from custom_components.extended_openai_conversation_responses.const import (
+        API_MODE_CHAT_COMPLETIONS,
+        CONF_API_MODE,
+        CONF_CHAT_MODEL,
+        DOMAIN,
+        SERVICE_PROCESS,
+    )
+    from homeassistant.helpers import entity_registry as er
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _install_wire,
+    )
+
+    entry = _make_entry(
+        "Native Process Service",
+        include_ai_task=False,
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_CHAT_MODEL: "gpt-5.6",
+            "reasoning_effort": "none",
+        },
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert agent is not None and agent.entity_id is not None
+
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [_chat_sse_text("SERVICE_AUTOMATION_RESULT")],
+    )
+    effects = []
+
+    async def record(call):
+        effects.append(
+            (
+                call.data["response"],
+                call.data["conversation_id"],
+                call.context.user_id,
+            )
+        )
+
+    hass.services.async_register(
+        "acceptance_probe",
+        "record_response",
+        record,
+        schema=vol.Schema(
+            {
+                vol.Required("response"): str,
+                vol.Required("conversation_id"): str,
+            }
+        ),
+    )
+    owner = MockUser(id="native-process-service-owner", is_owner=True)
+    owner.add_to_hass(hass)
+
+    assert await async_setup_component(
+        hass,
+        "script",
+        {
+            "script": {
+                "eoai_process_response_journey": {
+                    "sequence": [
+                        {
+                            "action": f"{DOMAIN}.{SERVICE_PROCESS}",
+                            "data": {
+                                "text": "SERVICE_AUTOMATION_MARKER",
+                                "agent_id": agent.entity_id,
+                                "language": "en-IE",
+                            },
+                            "response_variable": "eoai_result",
+                        },
+                        {
+                            "action": "acceptance_probe.record_response",
+                            "data": {
+                                "response": "{{ eoai_result.response }}",
+                                "conversation_id": "{{ eoai_result.conversation_id }}",
+                            },
+                        },
+                    ]
+                }
+            }
+        },
+    )
+    await hass.services.async_call(
+        "script",
+        "eoai_process_response_journey",
+        blocking=True,
+        context=Context(user_id=owner.id),
+    )
+    await hass.async_block_till_done()
+
+    assert len(effects) == 1
+    assert effects[0][0] == "SERVICE_AUTOMATION_RESULT"
+    assert effects[0][1]
+    assert effects[0][2] == owner.id
+    assert len(wire.requests) == 1
+    body = wire.requests[0]["body"]
+    assert "SERVICE_AUTOMATION_MARKER" in str(body)
+    assert (
+        len(
+            [
+                row
+                for row in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+                if row.domain == "conversation"
+            ]
+        )
+        == 1
+    )
