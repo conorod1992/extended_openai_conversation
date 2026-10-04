@@ -121,6 +121,184 @@ def _tool_names(data: Any) -> list[str]:
     return names
 
 
+def _chat_sse_tool_call(call_id: str, name: str, arguments: dict[str, Any]) -> bytes:
+    chunk = {
+        "id": "chatcmpl-upgrade-tool",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "gpt-5.6",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(arguments, separators=(",", ":")),
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+    return f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode()
+
+
+def _chat_sse_text(text: str) -> bytes:
+    chunk = {
+        "id": "chatcmpl-upgrade-text",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "gpt-5.6",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+    return f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode()
+
+
+def _unwrap_sdk_client(agent: Any) -> Any:
+    client = agent._client
+    while hasattr(client, "_delegate"):
+        client = client._delegate
+    return client
+
+
+async def _exercise_populated_provider_journey(
+    hass: Any, entry_id: str, state: dict[str, Any], expected: str
+) -> None:
+    """Prove migrated release-owned data and tools through the real SDK wire."""
+    import httpx
+    from homeassistant.components import conversation
+    from homeassistant.core import Context
+
+    agent = conversation.async_get_agent(hass, entry_id)
+    assert agent is not None
+    requests: list[dict[str, Any]] = []
+    replies = [
+        _chat_sse_tool_call(
+            "upgrade-memory",
+            "memory_search",
+            {"query": "release memory marker", "scope": "personal", "limit": 5},
+        ),
+        _chat_sse_tool_call(
+            "upgrade-knowledge",
+            "knowledge_search",
+            {"query": "release knowledge marker", "limit": 5},
+        ),
+        _chat_sse_tool_call("upgrade-function", "upgrade_marker", {}),
+        _chat_sse_text(expected),
+    ]
+
+    async def send(request: Any, *args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        body = json.loads(request.content)
+        requests.append(body)
+        index = len(requests) - 1
+        assert index < len(replies), "Unexpected provider request during upgrade journey"
+        if index == 0:
+            names = {
+                item["function"]["name"]
+                for item in body.get("tools", [])
+                if isinstance(item, dict) and isinstance(item.get("function"), dict)
+            }
+            assert {"memory_search", "knowledge_search", "upgrade_marker"} <= names
+        elif index == 1:
+            assert state["memory_marker"] in json.dumps(body)
+        elif index == 2:
+            assert state["knowledge_marker"] in json.dumps(body)
+        elif index == 3:
+            serialized = json.dumps(body)
+            assert "UPGRADE_TOOL_RESULT" in serialized
+            assert state["memory_marker"] in serialized
+            assert state["knowledge_marker"] in serialized
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=replies[index],
+            request=request,
+        )
+
+    sdk = _unwrap_sdk_client(agent)
+    original_send = sdk._client.send
+    sdk._client.send = send
+    try:
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Use the release memory, release knowledge, and upgrade marker tool.",
+            conversation_id=None,
+            context=Context(user_id=state["owner_id"]),
+            language="en",
+            agent_id=entry_id,
+        )
+    finally:
+        sdk._client.send = original_send
+
+    assert result.response.error_code is None
+    assert result.response.as_dict()["speech"]["plain"]["speech"] == expected
+    assert len(requests) == 4
+
+
+async def _assert_populated_release_state(
+    hass: Any, entry_id: str, state: dict[str, Any]
+) -> None:
+    """Read the exact release-created durable records through candidate managers."""
+    from homeassistant.components import conversation
+    from custom_components.extended_openai_conversation_responses.knowledge import (
+        async_get_knowledge,
+    )
+    from custom_components.extended_openai_conversation_responses.memory import (
+        async_get_memory,
+    )
+
+    agent = conversation.async_get_agent(hass, entry_id)
+    assert agent is not None
+    memory = await async_get_memory(hass, entry_id, state["subentry_id"])
+    memories = await memory.async_list(state["owner_id"], limit=100)
+    assert any(item.content == state["memory_marker"] for item in memories)
+    knowledge = await async_get_knowledge(hass, entry_id, state["subentry_id"])
+    source = await knowledge.async_get(state["knowledge_source_id"])
+    assert source.content == state["knowledge_marker"]
+    rules = agent._request_rules.snapshot()["rules"]
+    assert any(
+        rule["name"] == "Release upgrade local rule"
+        and rule["action"]["success_response"] == state["request_rule_marker"]
+        for rule in rules
+    )
+
+
+async def _exercise_release_rule(
+    hass: Any, entry_id: str, state: dict[str, Any]
+) -> None:
+    from homeassistant.components import conversation
+    from homeassistant.core import Context
+
+    result = await conversation.async_converse(
+        hass=hass,
+        text="release upgrade local rule",
+        conversation_id=None,
+        context=Context(user_id=state["owner_id"]),
+        language="en",
+        agent_id=entry_id,
+    )
+    assert result.response.error_code is None
+    assert (
+        result.response.as_dict()["speech"]["plain"]["speech"]
+        == state["request_rule_marker"]
+    )
+
+
 async def _exercise_public_conversation(
     hass: Any, entry_id: str, expected: str
 ) -> None:
@@ -211,13 +389,58 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     custom_values: dict[str, Any] = {}
     for name, value in (
         ("CONF_CHAT_MODEL", "gpt-5.6"),
-        ("CONF_REASONING_EFFORT", "medium"),
+        # gpt-5.6 Chat Completions only supports function calling with
+        # reasoning_effort=none in the current capability catalogue. Keep the
+        # release-created state valid on both sides of the upgrade boundary.
+        ("CONF_REASONING_EFFORT", "none"),
         ("CONF_TEMPERATURE", 0.42),
     ):
         key = getattr(const, name, None)
         if isinstance(key, str) and key in data:
             data[key] = value
             custom_values[key] = value
+
+    # Enable durable features that are present in the published release and add
+    # one harmless user-defined Function Tool using only stable configuration shapes.
+    for constant, value in (
+        ("CONF_API_MODE", "chat_completions"),
+        ("CONF_MEMORY_MODE", "manual"),
+        ("CONF_MEMORY_AUTO_RETRIEVE_LIMIT", 3),
+        ("CONF_KNOWLEDGE_ENABLED", True),
+    ):
+        key = getattr(const, constant, None)
+        if isinstance(key, str):
+            data[key] = value
+            custom_values[key] = value
+
+    function_tools_key = getattr(const, "CONF_FUNCTION_TOOLS", "function_tools")
+    raw_tools = data.get(function_tools_key, [])
+    tools = yaml.safe_load(raw_tools) if isinstance(raw_tools, str) else list(raw_tools or [])
+    tools.append(
+        {
+            "spec": {
+                "name": "upgrade_marker",
+                "description": "Return a durable upgrade acceptance marker.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            },
+            "function": {
+                "type": "template",
+                "value_template": "UPGRADE_TOOL_RESULT",
+            },
+            "enabled": True,
+        }
+    )
+    # Persist the release's canonical storage representation. 6.8.3 stores
+    # Function Tools as YAML text even though frontend snapshots expose a list.
+    # Writing a raw list directly into the subentry bypasses that normalization
+    # and creates an artificial migration shape no real user save would produce.
+    data[function_tools_key] = yaml.safe_dump(
+        tools, sort_keys=False, allow_unicode=True
+    )
 
     hass.config_entries.async_update_subentry(
         entry,
@@ -233,6 +456,42 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     assert entry.state is ConfigEntryState.LOADED
     subentry = _conversation_subentry(entry)
     assert subentry.title == "Upgrade Acceptance Agent"
+    agent = importlib.import_module("homeassistant.components.conversation").async_get_agent(
+        hass, entry.entry_id
+    )
+    assert agent is not None
+    owner = await hass.auth.async_create_user("Release upgrade owner")
+    memory_marker = "RELEASE_MEMORY_MARKER release memory marker"
+    knowledge_marker = "RELEASE_KNOWLEDGE_MARKER release knowledge marker"
+    assert agent._memory is not None
+    await agent._memory.async_add(
+        owner.id, memory_marker, "upgrade", "explicit", key="upgrade.release.memory"
+    )
+    assert agent._knowledge is not None
+    # Use the oldest supported published-release call shape. Newer candidates
+    # default enabled=True, while 6.8.3 predates the explicit enabled argument.
+    source = await agent._knowledge.async_create(
+        "Release upgrade reference",
+        "Created by the published release",
+        knowledge_marker,
+    )
+    await agent._request_rules.async_create(
+        {
+            "name": "Release upgrade local rule",
+            "enabled": True,
+            "phrases": ["release upgrade local rule"],
+            "match_type": "equals",
+            "action_type": "local_action",
+            "action": {
+                # 6.8.3 already required at least one native HA Script action.
+                # A tiny delay is side-effect free while exercising persisted
+                # local-action semantics across the release boundary.
+                "actions": [{"delay": {"milliseconds": 1}}],
+                "success_response": "RELEASE_RULE_MARKER",
+                "failure_response": "RELEASE_RULE_FAILED",
+            },
+        }
+    )
     await _exercise_public_conversation(
         hass, entry.entry_id, "Published release state is healthy."
     )
@@ -245,6 +504,11 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
         "title": subentry.title,
         "custom_values": custom_values,
         "function_tool_names": _tool_names(subentry.data.get(function_tools_key)),
+        "owner_id": owner.id,
+        "memory_marker": memory_marker,
+        "knowledge_marker": knowledge_marker,
+        "knowledge_source_id": source.source_id,
+        "request_rule_marker": "RELEASE_RULE_MARKER",
         "released_runtime": {
             "homeassistant": version("homeassistant"),
             "openai": version("openai"),
@@ -282,17 +546,27 @@ async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
     candidate_tool_names = set(_tool_names(subentry.data.get(function_tools_key)))
     assert set(state["function_tool_names"]).issubset(candidate_tool_names)
 
-    await _exercise_public_conversation(
-        hass, entry.entry_id, "Candidate migrated release state successfully."
+    await _assert_populated_release_state(hass, entry.entry_id, state)
+    await _exercise_release_rule(hass, entry.entry_id, state)
+    await _exercise_populated_provider_journey(
+        hass, entry.entry_id, state, "Candidate migrated release state successfully."
     )
 
     # Save through Home Assistant's supported config-subentry mutation boundary,
     # then reload the entry so the candidate must consume its own post-migration state.
-    edited = dict(subentry.data)
-    reasoning_key = getattr(const, "CONF_REASONING_EFFORT", None)
-    if isinstance(reasoning_key, str) and reasoning_key in edited:
-        edited[reasoning_key] = "high"
-        state["post_upgrade_reasoning"] = {"key": reasoning_key, "value": "high"}
+    # Save through the candidate's production configuration normalizer before
+    # crossing the HA persistence boundary. A raw dict copy can retain legacy
+    # coupled fields in a representation that runtime accepts in-process but a
+    # genuine candidate save would canonicalize before the next cold start.
+    agent_config = importlib.import_module(
+        f"custom_components.{DOMAIN}.agent_config"
+    )
+    max_tokens_key = getattr(const, "CONF_MAX_TOKENS", None)
+    updates: dict[str, Any] = {}
+    if isinstance(max_tokens_key, str):
+        updates[max_tokens_key] = 640
+        state["post_upgrade_edit"] = {"key": max_tokens_key, "value": 640}
+    edited = agent_config.merge_agent_config(dict(subentry.data), updates)
 
     hass.config_entries.async_update_subentry(
         entry,
@@ -308,8 +582,10 @@ async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
     reloaded = _conversation_subentry(entry)
     assert reloaded.subentry_id == state["subentry_id"]
     assert reloaded.title == "Upgrade Acceptance Agent - Candidate Saved"
-    await _exercise_public_conversation(
-        hass, entry.entry_id, "Candidate save and reload are healthy."
+    await _assert_populated_release_state(hass, entry.entry_id, state)
+    await _exercise_release_rule(hass, entry.entry_id, state)
+    await _exercise_populated_provider_journey(
+        hass, entry.entry_id, state, "Candidate save and reload are healthy."
     )
 
     state["candidate_title"] = reloaded.title
@@ -343,12 +619,16 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     subentry = _conversation_subentry(entry)
     assert subentry.subentry_id == state["subentry_id"]
     assert subentry.title == state["candidate_title"]
-    reasoning = state.get("post_upgrade_reasoning")
-    if reasoning:
-        assert subentry.data.get(reasoning["key"]) == reasoning["value"]
+    post_upgrade_edit = state.get("post_upgrade_edit")
+    if post_upgrade_edit:
+        assert (
+            subentry.data.get(post_upgrade_edit["key"]) == post_upgrade_edit["value"]
+        )
 
-    await _exercise_public_conversation(
-        hass, entry.entry_id, "Migrated candidate state survived a cold restart."
+    await _assert_populated_release_state(hass, entry.entry_id, state)
+    await _exercise_release_rule(hass, entry.entry_id, state)
+    await _exercise_populated_provider_journey(
+        hass, entry.entry_id, state, "Migrated candidate state survived a cold restart."
     )
 
     # A backup made *after* migration must recover from subsequent user changes.
@@ -368,8 +648,10 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     assert (
         backup.export_configuration_snapshot(restored.data) == saved["agent"]["config"]
     )
-    await _exercise_public_conversation(
-        hass, entry.entry_id, "Migrated candidate backup restored successfully."
+    await _assert_populated_release_state(hass, entry.entry_id, state)
+    await _exercise_release_rule(hass, entry.entry_id, state)
+    await _exercise_populated_provider_journey(
+        hass, entry.entry_id, state, "Migrated candidate backup restored successfully."
     )
 
 
