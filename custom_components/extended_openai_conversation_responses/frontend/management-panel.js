@@ -19,7 +19,7 @@ import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAss
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
 import {clone, same} from "./unsaved-state.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
-import {bindOverview, renderOverview, enhanceOverviewHealthClarity} from "./overview-page.js";
+import {bindOverview, renderOverview, enhanceOverviewHealthClarity, startOverviewDetailReads} from "./overview-page.js";
 import {formatUsageNumber} from "./usage-format.js";
 import {
   bindStateSafety,
@@ -1089,13 +1089,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const usageDetailGeneration = this._usageDetailGeneration || 0;
       let guestDetailsSecondary = null;
       if (view === "overview") {
+        const overviewAgentId = this._agentId;
         this._markColdLifecycle("overview-summary-start");
-        const summary = await consumeIntentRead(this, view, "overview", "summary");
+        const primary = await consumeIntentRead(this, view, "overview", "primary");
         this._markColdLifecycle("overview-summary-complete");
-        if (loadToken !== this._loadToken) return;
-        const {agent, ...overview} = summary;
+        if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+            || overviewAgentId !== this._agentId) return;
+        const {agent, ...overview} = primary;
         if (agent) Object.assign(this._selectedAgent(), agent);
-        result = overview;
+        result = showCached
+          ? {...overview, usage: {...(cache.result.usage || {}), ...(overview.usage || {})}}
+          : overview;
       } else if (view === "usage-maintenance/usage") {
         const summaryPromise = cache.fresh && cache.result?.summary
           ? Promise.resolve(cache.result.summary) : this._call("usage", "summary");
@@ -1231,8 +1235,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (usagePrimaryComplete && result?.summary && result?.days && !cache.fresh) {
           writeSectionCache(this, cacheKey, {summary: result.summary, days: result.days});
         }
-      } else writeSectionCache(this, cacheKey, result);
+      } else if (view !== "overview") writeSectionCache(this, cacheKey, result);
       this._error = null;
+      if (view === "overview") {
+        void startOverviewDetailReads(this, {loadToken, cacheGeneration});
+      }
       if (guestDetailsSecondary) {
         void guestDetailsSecondary.then((settled) => {
           if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration

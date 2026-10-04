@@ -177,6 +177,9 @@ export function startOverviewDetailReads(panel, {loadToken, cacheGeneration} = {
   const patch = (kind, settled) => {
     if (panel._eocOverviewDetailState !== state
         || panel._agentId !== agentId
+        || panel._selectedAgent?.()?.entry_id !== entryId
+        || panel._viewKey?.() !== "overview"
+        || panel._loadToken !== token
         || panel._cacheGeneration !== generation) return;
     const loading = {...(state.result.loading || {}), [kind]: false};
     const errors = (state.result.load_errors || []).filter((issue) => issue.key !== kind);

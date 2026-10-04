@@ -196,7 +196,7 @@ export function warmRouteAsset(view) {
 }
 
 const INTENT_READS = new Map([
-  ["overview", ["overview", "summary"]],
+  ["overview", ["overview", "primary"]],
   ["data-memory/knowledge", ["knowledge", "list"]],
   ["capabilities/request-rules", ["request_rules", "list"]],
   ["usage-maintenance/retention", ["configuration", "retention_get"]],
