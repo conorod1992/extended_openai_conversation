@@ -8,7 +8,7 @@ export const DECISION_GUIDANCE_STYLES = `
     .eoc-live-request-test>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;font-weight:650}
     .eoc-live-request-body{padding-top:14px}
     .eoc-live-request-result{margin-top:12px;white-space:pre-wrap;line-height:1.45}
-    .eoc-live-label{display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border-radius:999px;border:1px solid var(--error-color);color:var(--error-color);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+    .eoc-live-label{display:inline-flex;align-items:center;min-height:22px;padding:2px 8px;border-radius:999px;border:1px solid var(--error-color);color:var(--eoc-error-text);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
   `;
 
 export function assistantScopeLabel(agent) {

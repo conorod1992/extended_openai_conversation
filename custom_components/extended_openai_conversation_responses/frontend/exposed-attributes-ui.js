@@ -166,6 +166,19 @@ function bindEntityPicker(panel, entities) {
     picker.includeEntities = entityIds;
     if (panel?._hass) picker.hass = panel._hass;
     picker.value = panel?._exposedAttributeEntityId || undefined;
+    // HA's collapsed field displays a Material list item containing the chooser
+    // button. Give that displayed item its list parent without changing the
+    // native button, popup options, or selection events.
+    void (async () => {
+      await picker.updateComplete;
+      const generic = picker.shadowRoot?.querySelector("ha-generic-picker");
+      await generic?.updateComplete;
+      const field = generic?.shadowRoot?.querySelector("ha-picker-field");
+      if (picker.isConnected && field) {
+        field.setAttribute("role", "list");
+        field.setAttribute("aria-label", "Entity selection");
+      }
+    })();
   };
 
   if (globalThis.customElements?.get?.("ha-entity-picker")) activateNative();
