@@ -27,7 +27,7 @@ def _sources(count=100):
 
 
 @pytest.mark.parametrize("restore", [False, True])
-async def test_bulk_index_heartbeat_and_search_parity(restore):
+async def test_bulk_index_heartbeat_and_search_parity(restore, monkeypatch):
     sources = _sources()
     storage = FakeStorage(
         {"sources": [asdict(source) for source in sources]} if not restore else None
@@ -37,21 +37,37 @@ async def test_bulk_index_heartbeat_and_search_parity(restore):
         await library.async_initialize()
     ticks = []
     running = True
+    building = threading.Event()
+    worker_threads = []
+    original = knowledge._build_index
+
+    def observe_build(snapshot):
+        worker_threads.append(threading.get_ident())
+        building.set()
+        try:
+            return original(snapshot)
+        finally:
+            building.clear()
+
+    monkeypatch.setattr(knowledge, "_build_index", observe_build)
 
     async def heartbeat():
         while running:
-            ticks.append(asyncio.get_running_loop().time())
+            if building.is_set():
+                ticks.append(asyncio.get_running_loop().time())
             await asyncio.sleep(0.005)
 
     task = asyncio.create_task(heartbeat())
     await asyncio.sleep(0)
     try:
-        before = len(ticks)
         if restore:
             await library.async_replace_backup(sources)
         else:
             await library.async_initialize()
-        assert len(ticks) - before >= 3
+        # Count only callbacks during construction, not callbacks after the
+        # index finished or during storage writes. No machine-specific rate.
+        assert ticks
+        assert all(worker != threading.get_ident() for worker in worker_threads)
     finally:
         running = False
         await task
