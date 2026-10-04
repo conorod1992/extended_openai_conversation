@@ -51,7 +51,7 @@ from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
 from .model_catalog import BUNDLED_CATALOG
 from .model_catalog_manager import DATA_MANAGER
-from .request import build_provider_request_snapshot
+from .request import build_provider_request_snapshot, conversation_tools_required
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
 
@@ -107,7 +107,11 @@ async def async_get_config_entry_diagnostics(
             ),
         }
         try:
-            snapshot = build_provider_request_snapshot(subentry.data, parent_data)
+            snapshot = build_provider_request_snapshot(
+                subentry.data,
+                parent_data,
+                tools_required=conversation_tools_required(subentry.data),
+            )
             diagnostics["effective_api_mode"] = snapshot.api_mode
             diagnostics["provider_request_flags"] = {
                 "streaming": bool(snapshot.api_kwargs.get("stream")),
