@@ -3,6 +3,7 @@
 import asyncio
 import builtins
 from copy import deepcopy
+from dataclasses import dataclass
 import json
 import sys
 from types import ModuleType, SimpleNamespace
@@ -36,6 +37,9 @@ from custom_components.extended_openai_conversation_responses.function_call_budg
 from custom_components.extended_openai_conversation_responses.function_groups import (
     assemble_function_tools,
 )
+from custom_components.extended_openai_conversation_responses.function_tool_recovery import (
+    ToolRecoveryState,
+)
 from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
     ToolSnapshot,
     async_discover,
@@ -46,7 +50,10 @@ from custom_components.extended_openai_conversation_responses.ha_llm_tools impor
     validate_reference,
 )
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    HAToolResultError,
+    execution_tool_result,
     tool_result_data,
+    unwrap_tool_result,
 )
 from custom_components.extended_openai_conversation_responses.parallel_tool_execution import (
     is_parallel_safe_integration_tool,
@@ -1026,3 +1033,118 @@ def test_prompt_for_live_tool_without_source_prompt_still_adds_alias() -> None:
         "HA tool names in this request (source name = callable name):\n"
         "Example API: turn_on = ha_local_name"
     )
+
+
+@pytest.fixture
+def result_type(monkeypatch):
+    # On legacy HA, inject only the newer upstream value type so the same
+    # execution contract is exercised with the legacy chat-log constructor.
+    if hasattr(llm, "ToolResult"):
+        return llm.ToolResult
+
+    @dataclass
+    class NewResult:
+        data: dict
+        error: bool = False
+
+    monkeypatch.setattr(llm, "ToolResult", NewResult, raising=False)
+    return NewResult
+
+
+@pytest.mark.parametrize("flag", [False, True])
+async def test_equal_payloads_distinguished_only_by_upstream_flag(
+    hass, result_type, flag
+):
+    payload = {"message": "Device unavailable"}
+
+    class FlaggedTool(Echo):
+        async def async_call(self, hass, tool_input, llm_context):
+            self.calls.append(tool_input)
+            return result_type(data=payload, error=flag)
+
+    tool = FlaggedTool()
+    api = TestAPI(hass, tools=[tool])
+    ctx = context()
+    snapshot, tools = caller_api_tools(await api.async_get_api_instance(ctx))
+    entity = object.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.hass = hass
+    entity.entity_id = "conversation.metadata"
+    hass.auth.async_get_user.return_value = SimpleNamespace(is_active=True)
+    call = llm.ToolInput(
+        id="metadata",
+        tool_name=tools[0]["spec"]["name"],
+        tool_args={"value": "hello"},
+        external=True,
+    )
+    with tool_snapshot_scope(snapshot):
+        result = await entity._execute_function_tool(tools[0], call, ctx, [])
+    assert len(tool.calls) == 1
+    data = tool_result_data(result)["result"]
+    if flag:
+        assert data["status"] == "error"
+        assert data["data"] == payload
+    else:
+        assert data == payload
+    if hasattr(result, "result"):
+        assert result.result.error is flag
+
+
+async def test_strict_failure_retains_metadata_in_chat_log(hass, result_type):
+    payload = {"message": "unavailable"}
+
+    class FlaggedTool(Echo):
+        async def async_call(self, hass, tool_input, llm_context):
+            self.calls.append(tool_input)
+            return result_type(data=payload, error=True)
+
+    tool = FlaggedTool()
+    ctx = context()
+    snapshot, tools = caller_api_tools(
+        await TestAPI(hass, tools=[tool]).async_get_api_instance(ctx)
+    )
+    entity = object.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.hass = hass
+    entity.entity_id = "conversation.metadata"
+    hass.auth.async_get_user.return_value = SimpleNamespace(is_active=True)
+    call = llm.ToolInput(
+        id="strict",
+        tool_name=tools[0]["spec"]["name"],
+        tool_args={"value": "hello"},
+        external=True,
+    )
+    chat_log = conversation.ChatLog(hass, "strict-metadata")
+    chat_log.async_add_assistant_content_without_tools(
+        conversation.AssistantContent(agent_id="agent", tool_calls=[call])
+    )
+    with (
+        tool_snapshot_scope(snapshot),
+        pytest.raises(HAToolResultError),
+    ):
+        await async_execute_tool_exchange(
+            entity,
+            chat_log,
+            [call],
+            tools,
+            FunctionCallBudget(2),
+            ctx,
+            [],
+            recovery_state=ToolRecoveryState(enabled=True),
+        )
+    assert len(tool.calls) == 1
+    result = chat_log.content[-1]
+    assert tool_result_data(result)["result"]["status"] == "error"
+    assert tool_result_data(result)["result"]["data"] == payload
+    if hasattr(result, "result"):
+        assert result.result.error is True
+
+
+def test_historical_data_accessors_do_not_raise_for_flagged_values(result_type):
+    payload = {"message": "unavailable"}
+    wrapped = result_type(data=payload, error=True)
+    assert unwrap_tool_result(wrapped) is payload
+    assert tool_result_data(SimpleNamespace(result=wrapped)) is payload
+
+
+def test_legacy_dictionary_results_are_not_inferred_as_failures():
+    payload = {"error": "ordinary returned field", "status": "ordinary returned field"}
+    assert execution_tool_result(payload) is payload

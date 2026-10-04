@@ -6,11 +6,17 @@ from inspect import signature
 from typing import Any, cast
 
 from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
 
 def make_tool_result_content(
-    *, agent_id: str, tool_call_id: str, tool_name: str, tool_result: dict[str, Any]
+    *,
+    agent_id: str,
+    tool_call_id: str,
+    tool_name: str,
+    tool_result: dict[str, Any],
+    error: bool = False,
 ) -> conversation.ToolResultContent:
     """Build ToolResultContent across old and new Home Assistant APIs."""
     kwargs: dict[str, Any] = {
@@ -21,10 +27,28 @@ def make_tool_result_content(
     parameters = signature(conversation.ToolResultContent).parameters
     if "result" in parameters:
         tool_result_type = cast(Any, llm).ToolResult
-        kwargs["result"] = tool_result_type(data=tool_result)
+        kwargs["result"] = tool_result_type(data=tool_result, error=error)
     else:
         kwargs["tool_result"] = tool_result
     return conversation.ToolResultContent(**kwargs)
+
+
+class HAToolResultError(HomeAssistantError):
+    """An upstream failure, with data retained for the tool's result boundary."""
+
+    def __init__(self, data: Any) -> None:
+        super().__init__("HA tool reported an execution failure")
+        self.data = data
+
+
+def execution_tool_result(value: Any) -> Any:
+    """Translate failure metadata only at dispatch, before unwrapping data."""
+    tool_result_type = getattr(llm, "ToolResult", None)
+    if tool_result_type is not None and isinstance(value, tool_result_type):
+        if getattr(value, "error", False):
+            raise HAToolResultError(value.data)
+        return value.data
+    return value
 
 
 def unwrap_tool_result(value: Any) -> Any:

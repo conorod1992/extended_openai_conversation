@@ -87,6 +87,79 @@ class _SourceFeatures:
     normalized_metadata: str
 
 
+@dataclass(slots=True)
+class _KnowledgeIndex:
+    """A privately built index, published on the event loop as one generation."""
+
+    chunks: dict[tuple[str, int], _Chunk]
+    source_features: dict[str, _SourceFeatures]
+    token_index: dict[str, set[tuple[str, int]]]
+
+
+def _index_source(source: KnowledgeSource, index: _KnowledgeIndex) -> None:
+    if not source.enabled:
+        return
+    title_tokens = frozenset(_tokens(source.title))
+    description_tokens = frozenset(_tokens(source.description))
+    metadata_tokens = title_tokens | description_tokens
+    normalized_title = _normalize(source.title)
+    normalized_description = _normalize(source.description)
+    index.source_features[source.source_id] = _SourceFeatures(
+        title_tokens=title_tokens,
+        description_tokens=description_tokens,
+        metadata_tokens=metadata_tokens,
+        normalized_title=normalized_title,
+        normalized_description=normalized_description,
+        normalized_metadata=" ".join(
+            filter(None, (normalized_title, normalized_description))
+        ),
+    )
+    for chunk_id, (start, text) in enumerate(_split_chunks(source.content)):
+        chunk = _Chunk(
+            source_id=source.source_id,
+            chunk_id=chunk_id,
+            start=start,
+            text=text,
+            normalized_text=_normalize(text),
+            tokens=frozenset(_tokens(text) | metadata_tokens),
+        )
+        key = (source.source_id, chunk_id)
+        index.chunks[key] = chunk
+        for token in chunk.tokens:
+            index.token_index[token].add(key)
+
+
+def _build_index(sources: tuple[KnowledgeSource, ...]) -> _KnowledgeIndex:
+    """Build only worker-owned dictionaries from immutable sources."""
+    index = _KnowledgeIndex({}, {}, defaultdict(set))
+    for source in sources:
+        _index_source(source, index)
+    return index
+
+
+def _load_index(
+    raw_sources: list[Any],
+) -> tuple[dict[str, KnowledgeSource], _KnowledgeIndex]:
+    """Validate persisted sources and build their index outside the event loop."""
+    sources: dict[str, KnowledgeSource] = {}
+    for raw in raw_sources:
+        if len(sources) >= MAX_SOURCES_PER_AGENT:
+            _LOGGER.warning(
+                "Ignoring Knowledge Library records beyond the per-agent limit"
+            )
+            break
+        try:
+            source = _source_from_stored(raw)
+        except KeyError, TypeError, ValueError:
+            _LOGGER.warning("Ignoring malformed Knowledge Library record")
+            continue
+        if source.source_id in sources:
+            _LOGGER.warning("Ignoring duplicate Knowledge Library source ID")
+            continue
+        sources[source.source_id] = source
+    return sources, _build_index(tuple(sources.values()))
+
+
 class KnowledgeStorage(Protocol):
     """Persistence boundary for future alternative knowledge backends."""
 
@@ -167,24 +240,9 @@ class KnowledgeLibrary:
                 raw_sources = (
                     data.get("sources", []) if isinstance(data, Mapping) else []
                 )
-                for raw in raw_sources:
-                    if len(self._sources) >= MAX_SOURCES_PER_AGENT:
-                        _LOGGER.warning(
-                            "Ignoring Knowledge Library records beyond the per-agent limit"
-                        )
-                        break
-                    try:
-                        source = _source_from_stored(raw)
-                    except KeyError, TypeError, ValueError:
-                        _LOGGER.warning("Ignoring malformed Knowledge Library record")
-                        continue
-                    if source.source_id in self._sources:
-                        _LOGGER.warning(
-                            "Ignoring duplicate Knowledge Library source ID"
-                        )
-                        continue
-                    self._sources[source.source_id] = source
-                    self._index(source)
+                sources, index = await asyncio.to_thread(_load_index, raw_sources)
+                self._sources = sources
+                self._publish_index(index)
                 self._remember_committed_state()
                 self._initialized = True
             except BaseException:
@@ -544,12 +602,11 @@ class KnowledgeLibrary:
         """Replace source material and rebuild the derived lexical index."""
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
-            self._sources = {source.source_id: source for source in sources}
-            self._chunks.clear()
-            self._source_features.clear()
-            self._token_index.clear()
-            for source in sources:
-                self._index(source)
+            snapshot = tuple(sources)
+            index = await asyncio.to_thread(_build_index, snapshot)
+            # Cancellation during construction cannot mutate published state.
+            self._sources = {source.source_id: source for source in snapshot}
+            self._publish_index(index)
             await self._async_save_locked()
 
     def _source(self, source_id: str) -> KnowledgeSource:
@@ -566,36 +623,16 @@ class KnowledgeLibrary:
         return source
 
     def _index(self, source: KnowledgeSource) -> None:
-        if not source.enabled:
-            return
-        title_tokens = frozenset(_tokens(source.title))
-        description_tokens = frozenset(_tokens(source.description))
-        metadata_tokens = title_tokens | description_tokens
-        normalized_title = _normalize(source.title)
-        normalized_description = _normalize(source.description)
-        self._source_features[source.source_id] = _SourceFeatures(
-            title_tokens=title_tokens,
-            description_tokens=description_tokens,
-            metadata_tokens=metadata_tokens,
-            normalized_title=normalized_title,
-            normalized_description=normalized_description,
-            normalized_metadata=" ".join(
-                filter(None, (normalized_title, normalized_description))
-            ),
+        _index_source(
+            source,
+            _KnowledgeIndex(self._chunks, self._source_features, self._token_index),
         )
-        for chunk_id, (start, text) in enumerate(_split_chunks(source.content)):
-            chunk = _Chunk(
-                source_id=source.source_id,
-                chunk_id=chunk_id,
-                start=start,
-                text=text,
-                normalized_text=_normalize(text),
-                tokens=frozenset(_tokens(text) | metadata_tokens),
-            )
-            key = (source.source_id, chunk_id)
-            self._chunks[key] = chunk
-            for token in chunk.tokens:
-                self._token_index[token].add(key)
+
+    def _publish_index(self, index: _KnowledgeIndex) -> None:
+        """Swap completed structures synchronously while the library lock is held."""
+        self._chunks = index.chunks
+        self._source_features = index.source_features
+        self._token_index = index.token_index
 
     def _unindex(self, source_id: str) -> None:
         self._source_features.pop(source_id, None)
@@ -612,11 +649,13 @@ class KnowledgeLibrary:
 
     async def _async_save_locked(self) -> None:
         """Settle writes and rebuild the lexical index from persisted sources."""
+        # The reconciler reloads authoritative disk state using the worker
+        # builder. Never fall back to a synchronous complete-index rebuild.
         await _async_settle_transactional_save(
             self._storage.async_save(
                 {"sources": [asdict(source) for source in self._sources.values()]}
             ),
-            self._restore_committed_state,
+            self._invalidate_after_unreadable_store,
             self._remember_committed_state,
             self._async_reconcile_failed_save,
             self._invalidate_after_unreadable_store,
@@ -626,11 +665,13 @@ class KnowledgeLibrary:
         """Reload validated sources and reconstruct every search index."""
         disk_state = KnowledgeLibrary(self._storage)
         await disk_state.async_initialize()
-        self._sources = dict(disk_state._sources)
-        self._chunks = dict(disk_state._chunks)
-        self._source_features = dict(disk_state._source_features)
-        self._token_index = defaultdict(
-            set, {token: set(keys) for token, keys in disk_state._token_index.items()}
+        self._sources = disk_state._sources
+        self._publish_index(
+            _KnowledgeIndex(
+                disk_state._chunks,
+                disk_state._source_features,
+                disk_state._token_index,
+            )
         )
         self._initialized = True
         self._remember_committed_state()
@@ -653,17 +694,6 @@ class KnowledgeLibrary:
     def _remember_committed_state(self) -> None:
         self._committed_state = {"sources": dict(self._sources)}
         self._committed_chunk_count = len(self._chunks)
-
-    def _restore_committed_state(self) -> None:
-        snapshot = self._committed_state
-        if snapshot is None:
-            return
-        self._sources = dict(snapshot["sources"])
-        self._chunks.clear()
-        self._source_features.clear()
-        self._token_index = defaultdict(set)
-        for source in self._sources.values():
-            self._index(source)
 
     def _ensure_initialized(self) -> None:
         store = getattr(self._storage, "_store", None)

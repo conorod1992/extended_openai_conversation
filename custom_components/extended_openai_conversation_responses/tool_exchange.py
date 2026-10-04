@@ -27,7 +27,11 @@ from .function_tool_resolution import (
     latest_function_tool_for_execution,
 )
 from .ha_llm_tools import is_ha_tool
-from .ha_tool_result_compat import is_tool_result_content, make_tool_result_content
+from .ha_tool_result_compat import (
+    HAToolResultError,
+    is_tool_result_content,
+    make_tool_result_content,
+)
 from .parallel_tool_execution import (
     async_execute_parallel_safe_batch_outcomes,
     resolve_parallel_safe_batch,
@@ -135,6 +139,8 @@ def append_unresolved_tool_results(
         result: dict[str, Any]
         if tool_call.id == actual_failed_id:
             result = {"status": "error", "error": failure_text}
+            if isinstance(error, HAToolResultError):
+                result["data"] = error.data
         else:
             result = {
                 "status": "skipped",
@@ -149,6 +155,7 @@ def append_unresolved_tool_results(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.tool_name,
                 tool_result={"result": result},
+                error=True,
             )
         )
 
