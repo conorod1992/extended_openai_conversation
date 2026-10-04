@@ -15,6 +15,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.helpers.template import Template
 
@@ -290,24 +291,36 @@ class ReadFileFunction(FileFunction):
         path_template = function_config.get("path")
         template_source = str(getattr(path_template, "template", ""))
 
-        # The canonical load_skill path is a view of the managed Skill catalogue.
-        # Hold the same boundary used for publish/remove from Skill lookup through
-        # the bounded file read, so a request sees either the old or new Skill.
-        if "extended_openai.skill_dir" in template_source:
-            manager = SkillManager.get_loaded_instance()
-            skill_name = arguments.get("name")
-            if manager is None:
-                return backend_failure(f"Skill not found: {skill_name}")
+        # Skill templates render under the publish/remove boundary. Capture the
+        # actual helper lookups, rather than assuming a particular argument name.
+        # Ordinary file templates retain their existing fast path.
+        manager = (
+            SkillManager.get_loaded_instance()
+            if "skill_dir" in template_source
+            else None
+        )
+        if manager is not None:
             async with manager.async_skill_read():
-                skill = manager.get_skill(str(skill_name))
-                if skill is None:
-                    return backend_failure(f"Skill not found: {skill_name}")
+                try:
+                    with manager.capture_rendered_directories() as directories:
+                        path_str = path_template.async_render(
+                            arguments, parse_result=False
+                        )
+                except HomeAssistantError as err:
+                    return backend_failure(str(err), err)
+                if directories:
+                    return await self._async_read(
+                        hass, path_str, [str(path) for path in directories]
+                    )
+            # A literal or comment mentioning the helper grants no Skill access.
+        else:
+            try:
                 path_str = path_template.async_render(arguments, parse_result=False)
-                return await self._async_read(
-                    hass, path_str, [str(skill.path.parent.resolve())]
-                )
+            except HomeAssistantError as err:
+                if "skill_dir" not in template_source:
+                    raise
+                return backend_failure(str(err), err)
 
-        path_str = path_template.async_render(arguments, parse_result=False)
         allow_dirs = self._render_allow_dirs(
             hass,
             function_config.get("allow_dir", []),

@@ -565,6 +565,27 @@ def _validate_expected_type(name: str, value: Any, expected: str) -> Any:
     return value
 
 
+def _matches_json_type(value: Any, expected: str) -> bool:
+    """Check original JSON types without applying compatibility conversions."""
+    if expected == "null":
+        return value is None
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        return (isinstance(value, int) and not isinstance(value, bool)) or (
+            isinstance(value, float) and math.isfinite(value) and value.is_integer()
+        )
+    if expected == "number":
+        return (isinstance(value, int) and not isinstance(value, bool)) or (
+            isinstance(value, float) and math.isfinite(value)
+        )
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "array":
+        return isinstance(value, list)
+    return isinstance(value, Mapping)
+
+
 def _validate_type(name: str, value: Any, expected: Any) -> Any:
     """Validate a JSON-schema type declaration, including nullable unions."""
     if expected is None:
@@ -580,6 +601,8 @@ def _validate_type(name: str, value: Any, expected: Any) -> Any:
     ):
         raise _schema_error("type must be a JSON type or non-empty list of JSON types")
 
+    if any(_matches_json_type(value, candidate) for candidate in expected):
+        return value
     for candidate in expected:
         try:
             return _validate_expected_type(name, value, candidate)
