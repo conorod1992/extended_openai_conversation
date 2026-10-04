@@ -60,6 +60,8 @@ function harness() {
   const {controls: c, edit, calls, nextLoad} = harness();
   const requested = nextLoad("serialize");
   const opened = edit.emit("click");
+  assert.equal(calls.filter((call) => call.action === "serialize").length, 1,
+    "request YAML immediately while the editor module import is still pending");
   assert.equal(c["tool-dialog"].open, true);
   assert.equal(c["tool-yaml"].readOnly, true);
   assert.equal(c["tool-yaml"].parentElement.inert, true, "native editor descendants must also be inert");

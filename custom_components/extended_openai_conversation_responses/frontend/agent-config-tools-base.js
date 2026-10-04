@@ -902,20 +902,19 @@ export async function openTool(panel, index = null, initialTool = null) {
   panel._toolInitialYaml = null;
   dialog.showModal();
   try {
-    const nativeYaml = await import("./agent-config-native-yaml.js");
+    const [nativeYaml, [response, catalog]] = await Promise.all([
+      import("./agent-config-native-yaml.js"),
+      tool
+        ? panel._call("tools", "serialize", {tool}).then((response) => [response, null])
+        : Promise.all([
+          panel._call("tools", "starter"),
+          panel._call("tools", "built_in_catalog", {tools: panel._draft.functions || []}),
+        ]),
+    ]);
     if (!isCurrent()) return;
     nativeYaml.bindNativeToolYaml(panel);
     editor = getToolYamlEditor(panel);
-    let response;
-    if (tool) {
-      response = await panel._call("tools", "serialize", {tool});
-    } else {
-      const [starter, catalog] = await Promise.all([
-        panel._call("tools", "starter"),
-        panel._call("tools", "built_in_catalog", {tools: panel._draft.functions || []}),
-      ]);
-      if (!isCurrent()) return;
-      response = starter;
+    if (catalog) {
       panel._builtInFunctions = catalog.functions || [];
       const selector = root.querySelector("#built-in-function");
       selector.innerHTML = '<option value="">Insert Built-in Function…</option>' + panel._builtInFunctions.map((preset) => `<option value="${panel._e(preset.implementation)}" ${preset.already_configured ? "disabled" : ""}>${panel._e(preset.label)}${preset.already_configured ? " — Already configured" : ""}</option>`).join("");

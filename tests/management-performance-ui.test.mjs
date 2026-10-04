@@ -858,6 +858,40 @@ const configResult = (projection, title = "A") => ({
   assert.equal(listQueries, 2, "collection changes rebuild the search representation");
 }
 
+// Rule boundaries are looked up once even at the supported large-list limit.
+{
+  let boundaryQueries = 0;
+  const cards = Array.from({length:500}, (_, index) => ({
+    dataset:{ruleKey:String(index)}, hidden:false, draggable:false,
+    buttons:["up", "top", "down", "bottom"].map((direction) => ({dataset:{direction}, disabled:false})),
+    querySelectorAll() { return this.buttons; },
+  }));
+  const list = {
+    querySelectorAll:() => cards,
+    querySelector(selector) {
+      if (selector === "[data-rule-key]") { boundaryQueries++; return cards[0]; }
+      if (selector === "[data-rule-key]:last-of-type") { boundaryQueries++; return cards.at(-1); }
+      return null;
+    },
+  };
+  cards.forEach((card) => { card.parentElement = list; });
+  const search = {value:""};
+  const root = {
+    querySelector:(selector) => selector === ".rule-list" ? list : selector === "#rule-search" ? search : null,
+    querySelectorAll:() => cards,
+  };
+  const panel = {_viewKey:() => "capabilities/request-rules", _result:{rules:cards.map((_, index) => ({id:String(index), name:"Rule"}))}};
+  applyRequestRuleSearch(panel, root);
+  assert.equal(boundaryQueries, 2);
+  assert.deepEqual(cards[0].buttons.map((button) => button.disabled), [true, true, false, false]);
+  assert.deepEqual(cards.at(-1).buttons.map((button) => button.disabled), [false, false, true, true]);
+  assert.ok(cards.slice(1, -1).every((card) => card.draggable && card.buttons.every((button) => !button.disabled)));
+  search.value = "Rule";
+  applyRequestRuleSearch(panel, root);
+  assert.equal(boundaryQueries, 2, "filtered lists do not need boundary queries");
+  assert.ok(cards.every((card) => !card.draggable && card.buttons.every((button) => button.disabled)));
+}
+
 // A large delivery history must resolve satellite names with bounded work.
 // Reading each satellite ID for every delivery would make this quadratic.
 {

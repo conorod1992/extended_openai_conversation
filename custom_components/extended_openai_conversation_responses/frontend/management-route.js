@@ -305,7 +305,24 @@ export function applyRequestRuleSearch(panel, root = panel?.shadowRoot) {
   }
 
   const canReorder = !normalized && (panel._ruleGroupFilter || "all") === "all";
-  root.querySelectorAll?.("[data-rule-key]").forEach((card) => { card.draggable = canReorder; card.querySelectorAll(".rule-move").forEach((button) => { button.disabled = !canReorder || button.dataset.direction === "up" && card === card.parentElement.querySelector("[data-rule-key]") || button.dataset.direction === "top" && card === card.parentElement.querySelector("[data-rule-key]") || button.dataset.direction === "down" && card === card.parentElement.querySelector("[data-rule-key]:last-of-type") || button.dataset.direction === "bottom" && card === card.parentElement.querySelector("[data-rule-key]:last-of-type"); }); });
+  const boundaries = new Map();
+  root.querySelectorAll?.("[data-rule-key]").forEach((card) => {
+    if (card.draggable !== canReorder) card.draggable = canReorder;
+    if (canReorder && !boundaries.has(card.parentElement)) {
+      boundaries.set(card.parentElement, {
+        first: card.parentElement.querySelector("[data-rule-key]"),
+        last: card.parentElement.querySelector("[data-rule-key]:last-of-type"),
+      });
+    }
+    const boundary = boundaries.get(card.parentElement);
+    card.querySelectorAll(".rule-move").forEach((button) => {
+      const direction = button.dataset.direction;
+      const disabled = !canReorder
+        || (direction === "up" || direction === "top") && card === boundary.first
+        || (direction === "down" || direction === "bottom") && card === boundary.last;
+      if (button.disabled !== disabled) button.disabled = disabled;
+    });
+  });
   const helper=root.querySelector(".rule-filter-help");if(helper)helper.hidden=canReorder;
 
   const list = root.querySelector(".rule-list");
