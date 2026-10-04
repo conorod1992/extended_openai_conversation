@@ -153,18 +153,20 @@ async def test_knowledge_partial_index_failure_resets_before_retry(monkeypatch):
     seed = await _create_manager("knowledge", store)
     await _mutate("knowledge", seed, "first")
     manager = knowledge.KnowledgeLibrary(store)
-    index = manager._index
-    monkeypatch.setattr(
-        manager,
-        "_index",
-        lambda source: (_ for _ in ()).throw(RuntimeError("index failed")),
-    )
+    index = knowledge._index_source
+
+    def fail_after_partial_index(source, derived_index):
+        index(source, derived_index)
+        raise RuntimeError("index failed")
+
+    monkeypatch.setattr(knowledge, "_index_source", fail_after_partial_index)
     with pytest.raises(RuntimeError, match="index failed"):
         await manager.async_initialize()
     assert manager._sources == manager._chunks == manager._token_index == {}
+    assert manager._source_features == {}
     assert not manager._initialized
     assert manager._committed_state is None
-    monkeypatch.setattr(manager, "_index", index)
+    monkeypatch.setattr(knowledge, "_index_source", index)
     await manager.async_initialize()
     assert _snapshot("knowledge", manager) == _snapshot("knowledge", seed)
 
