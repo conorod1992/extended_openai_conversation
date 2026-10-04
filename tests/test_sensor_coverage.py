@@ -22,6 +22,7 @@ from custom_components.extended_openai_conversation_responses.sensor import (
     UsageSensor,
     UsageTodaySensor,
     async_setup_entry,
+    rebind_usage_sensors,
 )
 
 
@@ -59,7 +60,12 @@ class FakeUsage:
 
     def async_add_listener(self, listener):
         self.listeners.append(listener)
-        return Mock(name="remove_usage_listener")
+
+        def remove():
+            if listener in self.listeners:
+                self.listeners.remove(listener)
+
+        return remove
 
 
 class FakeGuestMode:
@@ -227,6 +233,52 @@ async def test_usage_sensor_exposes_totals_attributes_and_registers_listener(
     assert len(usage.listeners) == 1
     assert usage.listeners[0].__self__ is sensor
     assert usage.listeners[0].__name__ == "async_write_ha_state"
+
+
+async def test_usage_sensor_rebind_moves_listener_and_refreshes_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sensor_module.SensorEntity, "async_added_to_hass", _noop_added_to_hass
+    )
+    old_usage = FakeUsage()
+    new_usage = FakeUsage()
+    new_usage.totals.total_tokens = 999
+    sensor = UsageSensor(_subentry(), old_usage)
+    write_state = Mock()
+    monkeypatch.setattr(sensor, "async_write_ha_state", write_state)
+
+    await sensor.async_added_to_hass()
+    assert len(old_usage.listeners) == 1
+    assert new_usage.listeners == []
+
+    assert sensor.rebind_usage(new_usage) is True
+
+    assert old_usage.listeners == []
+    assert len(new_usage.listeners) == 1
+    assert sensor._usage is new_usage
+    write_state.assert_called_once_with()
+    assert sensor.rebind_usage(new_usage) is False
+
+
+def test_rebind_usage_sensors_targets_only_matching_loaded_usage_entities() -> None:
+    old_usage = FakeUsage()
+    new_usage = FakeUsage()
+    matching = UsageSensor(_subentry("agent-1"), old_usage)
+    other_agent = UsageSensor(_subentry("agent-2"), old_usage)
+    already_durable = UsageSensor(_subentry("agent-1"), new_usage)
+    hass = SimpleNamespace(
+        data={
+            sensor_module.sensor_component.DATA_COMPONENT: SimpleNamespace(
+                entities=[matching, other_agent, already_durable, object()]
+            )
+        }
+    )
+
+    assert rebind_usage_sensors(hass, "agent-1", old_usage, new_usage) == 1
+    assert matching._usage is new_usage
+    assert other_agent._usage is old_usage
+    assert already_durable._usage is new_usage
 
 
 def test_period_sensors_use_distinct_summaries_and_attributes() -> None:

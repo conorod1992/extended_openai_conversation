@@ -90,9 +90,10 @@ async def test_period_usage_sensor_refreshes_at_local_midnight(
     assert tracked["hass"] is hass
     assert (tracked["hour"], tracked["minute"], tracked["second"]) == (0, 0, 0)
     assert on_remove.call_args_list == [
-        call(usage.remove_listener),
+        call(entity._remove_usage_listener),
         call(remove_midnight_listener),
     ]
+    assert entity._usage_listener_remove is usage.remove_listener
 
     action = tracked["action"]
     assert callable(action)
