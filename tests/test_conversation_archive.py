@@ -700,7 +700,8 @@ async def test_begin_session_expires_old_active_session() -> None:
         inactivity_minutes=30,
     )
     archive._sessions[first.session_id] = replace(
-        first, last_message_at="2000-01-01T00:00:00+00:00"
+        first, last_message_at="2000-01-01T00:00:00+00:00",
+        last_activity_at="2000-01-01T00:00:00+00:00"
     )
 
     second = await archive.async_begin_session(
