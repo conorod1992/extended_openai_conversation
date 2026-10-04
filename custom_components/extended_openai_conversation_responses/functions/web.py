@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from compression.zstd import ZstdDecompressor, ZstdError
 from contextlib import suppress
+from http import HTTPStatus
 import logging
 from typing import Any, cast
 import zlib
@@ -39,6 +41,74 @@ from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
 
+# Brotli rounds its output buffer to allocation blocks. Keeping each request
+# below its first 32 KiB block bounds the overflow allocation to one small block.
+_DECODE_CHUNK_BYTES = 16 * 1024
+
+
+def _response_limit_error(max_bytes: int) -> HomeAssistantError:
+    return HomeAssistantError(
+        f"Remote response exceeds the configured safety limit of {max_bytes} bytes"
+    )
+
+
+def _decode_brotli(body: bytes, max_bytes: int) -> bytes:
+    """Drain bounded output and require a complete Brotli stream."""
+    from aiohttp import compression_utils
+
+    if not compression_utils.HAS_BROTLI:
+        raise HomeAssistantError("Brotli response decoding is unavailable")
+    brotli = compression_utils.brotli
+    decoder = brotli.Decompressor()
+    if not hasattr(decoder, "can_accept_more_data"):
+        raise HomeAssistantError("Brotli response decoding requires a bounded codec")
+    decoded = bytearray()
+    pending = body
+    try:
+        while True:
+            part = decoder.process(
+                pending, min(_DECODE_CHUNK_BYTES, max_bytes + 1 - len(decoded))
+            )
+            pending = b""
+            if len(part) > max_bytes - len(decoded):
+                raise _response_limit_error(max_bytes)
+            decoded.extend(part)
+            if decoder.is_finished():
+                return bytes(decoded)
+            # Consuming all compressed input does not mean buffered output is
+            # exhausted. Drain with empty input until completion or no progress.
+            if not part:
+                raise aiohttp.ClientPayloadError("Incomplete compressed response")
+    except brotli.error as err:
+        raise aiohttp.ClientPayloadError("Malformed compressed response") from err
+
+
+def _decode_zstd(body: bytes, max_bytes: int) -> bytes:
+    """Bound each output allocation and validate all concatenated frames."""
+    if not body:
+        raise aiohttp.ClientPayloadError("Empty compressed response")
+    decoded = bytearray()
+    try:
+        while body:
+            decoder = ZstdDecompressor()
+            pending = body
+            while True:
+                part = decoder.decompress(
+                    pending, min(_DECODE_CHUNK_BYTES, max_bytes + 1 - len(decoded))
+                )
+                pending = b""
+                if len(part) > max_bytes - len(decoded):
+                    raise _response_limit_error(max_bytes)
+                decoded.extend(part)
+                if decoder.eof:
+                    body = decoder.unused_data
+                    break
+                if decoder.needs_input:
+                    raise aiohttp.ClientPayloadError("Incomplete compressed response")
+    except ZstdError as err:
+        raise aiohttp.ClientPayloadError("Malformed compressed response") from err
+    return bytes(decoded)
+
 
 def _decode_compressed_body(body: bytes, encoding: str, max_bytes: int) -> bytes:
     """Bound accepted decoded content and reject incomplete gzip/deflate streams."""
@@ -64,16 +134,10 @@ def _decode_compressed_body(body: bytes, encoding: str, max_bytes: int) -> bytes
                 raise aiohttp.ClientPayloadError("Incomplete compressed response")
             body = decoder.unused_data
         result = bytes(decoded)
-    elif encoding in {"br", "zstd"}:
-        # Keep optional codecs supported by the installed aiohttp runtime.
-        from aiohttp import compression_utils
-
-        codec = (
-            compression_utils.BrotliDecompressor
-            if encoding == "br"
-            else compression_utils.ZSTDDecompressor
-        )
-        result = codec().decompress_sync(body)
+    elif encoding == "br":
+        return _decode_brotli(body, max_bytes)
+    elif encoding == "zstd":
+        return _decode_zstd(body, max_bytes)
     else:
         return body
     if len(result) > max_bytes:
@@ -96,6 +160,16 @@ class _BoundedResponse:
 
     async def read(self) -> bytes:
         """Read at most the configured response-body limit."""
+        if not 200 <= self._response.status < 300:
+            status = self._response.status
+            # Use only a standard reason, never the URL, headers or remote body.
+            # Raising here keeps the underlying request's __aexit__ in charge
+            # of cleanup, including when HA catches a transport exception.
+            try:
+                reason = HTTPStatus(status).phrase
+            except ValueError:
+                reason = "Unsuccessful response"
+            raise HomeAssistantError(f"REST request failed: HTTP {status} {reason}")
         if self._body is not None:
             return self._body
 
@@ -131,6 +205,14 @@ class _BoundedResponse:
         selected_encoding = encoding or self._response.charset or "utf-8"
         try:
             return body.decode(selected_encoding, errors=errors)
+        except UnicodeDecodeError as err:
+            if encoding is None:
+                # RestData retries the same cached body with its configured
+                # encoding when the server's advertised charset is incorrect.
+                raise
+            raise HomeAssistantError(
+                "Remote response cannot be decoded with the configured encoding"
+            ) from err
         except (UnicodeError, LookupError) as err:
             raise HomeAssistantError(
                 "Remote response cannot be decoded with the configured encoding"
@@ -221,6 +303,18 @@ def get_rest_data(
     return rest_data
 
 
+def _render_value(
+    value_template: Template, value: Any, arguments: dict[str, Any]
+) -> Any:
+    """Expose value/value_json while propagating HA template errors."""
+    variables = {**arguments, "value": value}
+    with suppress(*JSON_DECODE_EXCEPTIONS):
+        variables["value_json"] = json_loads(value)
+    # HA's async_render_with_possible_json_value silently returns a fallback
+    # on Jinja errors. Tools must surface them through the normal executor.
+    return value_template.async_render(variables, parse_result=False)
+
+
 class RestFunction(Function):
     """REST tool for HTTP API calls."""
 
@@ -255,9 +349,7 @@ class RestFunction(Function):
         value_template = function_config.get(CONF_VALUE_TEMPLATE)
 
         if value is not None and value_template is not None:
-            value = value_template.async_render_with_possible_json_value(
-                value, None, arguments
-            )
+            value = _render_value(value_template, value, arguments)
 
         return value
 
@@ -315,7 +407,7 @@ class ScrapeFunction(Function):
         value_template = function_config.get(CONF_VALUE_TEMPLATE)
 
         if value_template is not None:
-            result = self._render_value(value_template, result, new_arguments)
+            result = _render_value(value_template, result, new_arguments)
 
         return result
 
@@ -334,21 +426,9 @@ class ScrapeFunction(Function):
         value_template = sensor_config.get(CONF_VALUE_TEMPLATE)
 
         if value_template is not None:
-            value = self._render_value(value_template, value, arguments)
+            value = _render_value(value_template, value, arguments)
 
         return value
-
-    @staticmethod
-    def _render_value(
-        value_template: Template, value: Any, arguments: dict[str, Any]
-    ) -> Any:
-        """Expose value/value_json while propagating HA template errors."""
-        variables = {**arguments, "value": value}
-        with suppress(*JSON_DECODE_EXCEPTIONS):
-            variables["value_json"] = json_loads(value)
-        # HA's async_render_with_possible_json_value silently returns a fallback
-        # on Jinja errors. Tools must surface them through the normal executor.
-        return value_template.async_render(variables, parse_result=False)
 
     def _extract_value(
         self,
