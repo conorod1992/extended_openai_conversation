@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from custom_components.extended_openai_conversation_responses.agent_configuration import MemoryEmbeddingProvider
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_module,
     diagnostics as diagnostics_module,
