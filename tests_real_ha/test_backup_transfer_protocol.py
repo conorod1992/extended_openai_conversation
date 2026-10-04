@@ -319,6 +319,9 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
     registered = conversation.async_get_agent(hass, entry.entry_id)
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
     original_config = agent_config_snapshot(subentry.data)
+    admin = MockUser(
+        id="custom-backup-admin", name="Custom Backup Admin", is_owner=True
+    )
     owner = admin.id
     original = await memory.async_add(
         owner,
@@ -328,9 +331,6 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
     )
     original_id = original["memory"]["memory_id"]
 
-    admin = MockUser(
-        id="custom-backup-admin", name="Custom Backup Admin", is_owner=True
-    )
     admin_client = await hass_ws_client(hass, await _user_token(hass, admin))
     archive, metadata = await _download_archive(
         admin_client,
