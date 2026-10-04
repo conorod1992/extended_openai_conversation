@@ -210,7 +210,7 @@ def test_generated_nested_container_contracts_preserve_values_and_constraints():
 
 
 def test_high_order_feature_witness_keeps_expected_request_boundary():
-    """A reviewed 5-way interaction protects against pairwise-generator blind spots."""
+    """Configuration smoke check; populated interaction is covered by real Assist."""
     config = agent_config.normalize_agent_config(
         {
             "chat_model": "gpt-5.6",
@@ -237,30 +237,6 @@ def test_high_order_feature_witness_keeps_expected_request_boundary():
     assert snapshot.api_mode == "responses"
     assert snapshot.api_kwargs["model"] == "gpt-5.6"
     assert snapshot.api_kwargs["store"] is False
-
-
-def _assert_effect_ledger(actual: dict, expected: dict) -> None:
-    """Independent semantic oracle used by stress journeys and canary tests."""
-    assert actual == expected
-
-
-def test_semantic_oracle_rejects_deliberately_wrong_effects():
-    expected = {
-        "provider_requests": 2,
-        "service_effects": [("light", "turn_off", "light.kitchen")],
-        "owner": "user-alpha",
-        "result": {"ok": True, "count": 0},
-    }
-    _assert_effect_ledger(deepcopy(expected), expected)
-    mutations = [
-        {**expected, "provider_requests": 1},
-        {**expected, "service_effects": []},
-        {**expected, "owner": "user-beta"},
-        {**expected, "result": {"ok": True, "count": 1}},
-    ]
-    for mutation in mutations:
-        with pytest.raises(AssertionError):
-            _assert_effect_ledger(mutation, expected)
 
 
 def _minimize_sequence(sequence, reproduces):

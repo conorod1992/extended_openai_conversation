@@ -701,6 +701,8 @@
     "tests_real_ha/test_pending_store_write_shutdown_recovery.py::test_shutdown_during_pending_store_write_recovers_complete_generation[before_commit]",
     "tests_real_ha/test_persistent_memory_shutdown_recovery.py::test_graceful_shutdown_during_persistent_memory_write_recovers_cleanly[after_commit]",
     "tests_real_ha/test_persistent_memory_shutdown_recovery.py::test_graceful_shutdown_during_persistent_memory_write_recovers_cleanly[before_commit]",
+    "tests_real_ha/test_populated_feature_assist_journey.py::test_populated_assist_feature_effects_and_real_oracle_canaries[chat_completions]",
+    "tests_real_ha/test_populated_feature_assist_journey.py::test_populated_assist_feature_effects_and_real_oracle_canaries[responses]",
     "tests_real_ha/test_provider_failure_recovery.py::test_provider_failure_recovers_on_next_turn_same_loaded_agent[chat_completions-data: {\"id\": \"chatcmpl-provider-wire-2\", \"object\": \"chat.completion.chunk\", \"created\": 0, \"model\": \"gpt-5.6\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"The provider recovered successfully.\"}, \"finish_reason\": \"stop\"}]}\\n\\ndata: [DONE]\\n\\n-/v1/chat/completions]",
     "tests_real_ha/test_provider_failure_recovery.py::test_provider_failure_recovers_on_next_turn_same_loaded_agent[responses-data: {\"type\": \"response.output_item.added\", \"output_index\": 0, \"item\": {\"id\": \"msg-provider-wire\", \"type\": \"message\", \"role\": \"assistant\", \"status\": \"in_progress\", \"content\": []}, \"sequence_number\": 0}\\n\\ndata: {\"type\": \"response.output_text.delta\", \"content_index\": 0, \"delta\": \"The provider recovered successfully.\", \"item_id\": \"msg-provider-wire\", \"logprobs\": [], \"output_index\": 0, \"sequence_number\": 1}\\n\\ndata: {\"type\": \"response.output_item.done\", \"output_index\": 0, \"item\": {\"id\": \"msg-provider-wire\", \"type\": \"message\", \"role\": \"assistant\", \"status\": \"completed\", \"content\": [{\"type\": \"output_text\", \"text\": \"The provider recovered successfully.\", \"annotations\": [], \"logprobs\": []}]}, \"sequence_number\": 2}\\n\\ndata: {\"type\": \"response.completed\", \"response\": {\"id\": \"resp-provider-wire-2\", \"object\": \"response\", \"created_at\": 0, \"status\": \"completed\", \"error\": null, \"incomplete_details\": null, \"instructions\": null, \"max_output_tokens\": 500, \"model\": \"gpt-5.6\", \"output\": [{\"id\": \"msg-provider-wire\", \"type\": \"message\", \"role\": \"assistant\", \"status\": \"completed\", \"content\": [{\"type\": \"output_text\", \"text\": \"The provider recovered successfully.\", \"annotations\": [], \"logprobs\": []}]}], \"parallel_tool_calls\": true, \"previous_response_id\": null, \"reasoning\": {\"effort\": \"medium\", \"summary\": null}, \"store\": false, \"temperature\": null, \"text\": {\"format\": {\"type\": \"text\"}}, \"tool_choice\": \"auto\", \"tools\": [], \"top_p\": null, \"truncation\": \"disabled\", \"usage\": null}, \"sequence_number\": 3}\\n\\n-/v1/responses]",
     "tests_real_ha/test_provider_serialization_invariants.py::test_model_parameter_controls_reach_raw_provider_wire[chat_completions]",
@@ -1682,8 +1684,6 @@
     "tests/functions/test_professional_nightly_contracts.py::test_reviewed_invalid_configuration_neighbours_fail_closed[memory-retrieve-limit]",
     "tests/functions/test_professional_nightly_contracts.py::test_saved_reproduction_envelope_is_seed_independent_and_serializable",
     "tests/functions/test_professional_nightly_contracts.py::test_seeded_supported_schema_contracts_match_independent_oracle",
-    "tests/functions/test_professional_nightly_contracts.py::test_semantic_oracle_rejects_deliberately_wrong_effects",
-    "tests_real_ha/test_native_recorder_acceptance.py::test_native_history_reads_real_recorder_and_serializes_tool_result",
     "tests_stress/test_generated_request_rule_action_contracts.py::test_generated_request_rule_action_sequences_keep_request_local_variables",
     "tests_stress/test_generated_request_rule_action_contracts.py::test_generated_request_rule_failure_isolated_from_healthy_siblings",
     "tests_real_ha/test_native_automation_acceptance.py::test_native_script_consumes_real_eoai_process_service_response",
@@ -1695,7 +1695,19 @@
     "tests_stress/test_browser_backend_resilience.py::test_professional_genuine_browser_transfer_controls_and_locale",
     "tests_stress/test_process_resource_soak.py::test_booted_process_uninterrupted_runtime_survives_populated_lifetime",
     "tests_stress/test_responses_scale_fairness.py::test_mixed_background_pressure_preserves_lightweight_progress",
-    "tests_stress/test_responses_scale_fairness.py::test_populated_scale_executes_responses_retrieval_and_tool_wire"
+    "tests_stress/test_responses_scale_fairness.py::test_populated_scale_executes_responses_retrieval_and_tool_wire",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_optional_structured_output_round_trips_provider_contract[False-chat_completions]",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_optional_structured_output_round_trips_provider_contract[False-responses]",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_optional_structured_output_round_trips_provider_contract[True-chat_completions]",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_optional_structured_output_round_trips_provider_contract[True-responses]",
+    "tests_stress/test_acknowledgement_loss.py::test_compound_memory_write_schedules_converge_retained_runtime_and_disk[cancel-after-commit-then-retry]",
+    "tests_stress/test_acknowledgement_loss.py::test_compound_memory_write_schedules_converge_retained_runtime_and_disk[fail-after-commit-then-retry]",
+    "tests_stress/test_acknowledgement_loss.py::test_compound_memory_write_schedules_converge_retained_runtime_and_disk[fail-before-cancel-waiter-then-recover]",
+    "tests_stress/test_acknowledgement_loss.py::test_compound_memory_write_schedules_converge_retained_runtime_and_disk[fail-before-then-retry]",
+    "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[chat_completions-False]",
+    "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[chat_completions-True]",
+    "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[responses-False]",
+    "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[responses-True]"
   ],
   "browser": {
     "browser": [
@@ -2306,7 +2318,9 @@
       "catalog_ai_task_resets": 1,
       "catalog_ai_task_wire_checks": 3,
       "skill_download_cancellation_cases": 4,
-      "skill_download_unowned_cases": 5
+      "skill_download_unowned_cases": 5,
+      "populated_feature_journeys": 4,
+      "semantic_oracle_rejections": 28
     },
     "persistence": {
       "composite_ingestion_cases": 8,
