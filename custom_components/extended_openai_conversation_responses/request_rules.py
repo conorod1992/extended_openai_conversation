@@ -211,7 +211,7 @@ class _MatchCursor:
         self.sentence_text: PreparedSentenceText | None = None
         self.budget = MatchBudget()
         self.seen: set[str] = set()
-        self.last_matched_order: int | None = None
+        self.last_accepted_order: int | None = None
         self.fuzzy_matches: list[RuleMatch] | None = None
 
     def _candidate(self, settings: dict[str, Any]) -> str:
@@ -241,7 +241,6 @@ class _MatchCursor:
                 )
                 if slots is not None:
                     self.seen.add(rule["id"])
-                    self.last_matched_order = rule["order"]
                     return RuleMatch(rule, compiled.original, False, 100.0, slots)
             elif _deterministic_match(
                 self._candidate(settings),
@@ -249,7 +248,6 @@ class _MatchCursor:
                 rule["match_type"],
             ):
                 self.seen.add(rule["id"])
-                self.last_matched_order = rule["order"]
                 return RuleMatch(rule, compiled.original, False, 100.0)
         if self.fuzzy_matches is None:
             ranked: dict[str, tuple[tuple[float, int, int], RuleMatch]] = {}
@@ -278,13 +276,13 @@ class _MatchCursor:
             ]
         if not self.fuzzy_matches:
             return None
-        if self.last_matched_order is None:
+        if self.last_accepted_order is None:
             result = self.fuzzy_matches.pop(0)
         else:
             later = (
                 match
                 for match in self.fuzzy_matches
-                if match.rule["order"] > self.last_matched_order
+                if match.rule["order"] > self.last_accepted_order
             )
             later_result = min(
                 later, key=lambda match: match.rule["order"], default=None
@@ -293,8 +291,11 @@ class _MatchCursor:
                 return None
             result = later_result
             self.fuzzy_matches.remove(result)
-        self.last_matched_order = result.rule["order"]
         return result
+
+    def accept(self, match: RuleMatch) -> None:
+        """Advance continuation ordering only after a candidate is eligible."""
+        self.last_accepted_order = match.rule["order"]
 
 
 class RequestRuleStore(PropagatingWriteStore):
@@ -959,6 +960,7 @@ class RequestRules:
             if match is None:
                 return
             if await self._async_conditions_pass(hass, match):
+                cursor.accept(match)
                 yield match
             else:
                 skipped.append(
