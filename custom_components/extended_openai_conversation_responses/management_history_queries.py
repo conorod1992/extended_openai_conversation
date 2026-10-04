@@ -10,8 +10,15 @@ from heapq import heappush, heapreplace
 from typing import Any
 
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
-from .conversation_archive import _excerpt, _normalize, _tokens
+from .conversation_archive import (
+    _excerpt,
+    _local_date_bounds,
+    _normalize,
+    _parse_time,
+    _tokens,
+)
 from .management_result_limits import (
     MANAGEMENT_ARCHIVE_LIST_PAGE_MAX,
     MANAGEMENT_ARCHIVE_SEARCH_PAGE_MAX,
@@ -323,6 +330,9 @@ def _archive_search_sync(
 ) -> dict[str, Any]:
     query_tokens = _tokens(query)
     normalized_query = _normalize(query)
+    start, end = _local_date_bounds(
+        start_date, end_date, dt_util.DEFAULT_TIME_ZONE
+    )
     keep = offset + limit
     heap: list[tuple[float, str, str, str, Any, Any]] = []
     total = 0
@@ -330,20 +340,17 @@ def _archive_search_sync(
         if session.scope_id != scope_id or session.retention_state != "retained":
             continue
         for turn in turns_by_session.get(session.session_id, ()):
-            date = turn.timestamp[:10]
-            if start_date and date < start_date:
-                continue
-            if end_date and date > end_date:
+            timestamp = _parse_time(turn.timestamp)
+            if (start_date or end_date) and not (start <= timestamp < end):
                 continue
             combined = f"{turn.user_text} {turn.assistant_text}"
             normalized_combined = _normalize(combined)
             tokens = _tokens(combined)
             overlap = len(query_tokens & tokens)
-            if (
-                query_tokens
-                and not overlap
-                and normalized_query not in normalized_combined
-            ):
+            if query_tokens:
+                if not overlap and normalized_query not in normalized_combined:
+                    continue
+            elif not normalized_query or normalized_query not in normalized_combined:
                 continue
             score = overlap / max(1, len(query_tokens))
             if normalized_query and normalized_query in normalized_combined:
@@ -367,7 +374,10 @@ def _archive_search_sync(
         {
             "session_id": session.session_id,
             "turn_id": turn.turn_id,
-            "date": turn.timestamp[:10],
+            "date": _parse_time(turn.timestamp)
+            .astimezone(dt_util.DEFAULT_TIME_ZONE)
+            .date()
+            .isoformat(),
             "timestamp": turn.timestamp,
             "title": session.title,
             "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
