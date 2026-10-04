@@ -494,6 +494,52 @@ async def test_add_coalesces_duplicate_for_same_owner_and_persists_update() -> N
     assert storage.save_count == 2
 
 
+async def test_manual_update_protects_temporary_memory_from_automatic_duplicate() -> None:
+    """A user-edited short-term fact retains its chosen expiry and category."""
+    storage = ValidationStorage()
+    manager = TemporaryMemory(storage)  # type: ignore[arg-type]
+    await manager.async_initialize()
+    created = await manager.async_add(
+        "conversation:first",
+        "Parcel arrives tomorrow",
+        _future(hours=2),
+        "delivery",
+        owner_scope_id="user:alice",
+    )
+    manual_expiry = _future(hours=8)
+
+    edited = await manager.async_update_owned(
+        "user:alice",
+        created["memory"]["memory_id"],
+        None,
+        manual_expiry,
+        "important",
+    )
+    assert edited.source == "manual"
+    assert edited.category == "important"
+    assert edited.expires_at == manual_expiry
+
+    proposed = await manager.async_add(
+        "conversation:later",
+        "PARCEL ARRIVES TOMORROW",
+        _future(hours=1),
+        "automatic",
+        owner_scope_id="user:alice",
+        source="automatic",
+    )
+    assert proposed["status"] == "unchanged"
+    assert proposed["memory"]["source"] == "manual"
+    assert proposed["memory"]["category"] == "important"
+    assert proposed["memory"]["expires_at"] == manual_expiry
+
+    reloaded = TemporaryMemory(storage)  # type: ignore[arg-type]
+    await reloaded.async_initialize()
+    [record] = await reloaded.async_list_owned("user:alice")
+    assert record.source == "manual"
+    assert record.category == "important"
+    assert record.expires_at == manual_expiry
+
+
 def test_injection_budget_skips_large_later_record_but_keeps_smaller_one() -> None:
     records = [
         _model_record("first", "a" * (MAX_INJECT_CHARACTERS - 5), updated_offset=3),
