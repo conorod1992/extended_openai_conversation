@@ -12,11 +12,16 @@ from custom_components.extended_openai_conversation_responses.agent_test import 
 from custom_components.extended_openai_conversation_responses.const import (
     DEFAULT_CONF_FUNCTION_TOOLS,
 )
+from custom_components.extended_openai_conversation_responses.live_subentry_updates import (
+    update_live_subentry,
+)
 from homeassistant.components import ai_task, conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.chat_session import async_get_chat_session
 from tests_real_ha.strict_provider import install_strict_provider
 from tests_real_ha.test_ai_task_provider_wire import _task_entity
+from tests_real_ha.test_ai_task_runtime import CallerAPI, ContextProbeTool
 from tests_real_ha.test_cross_feature_acceptance import _say, _speech
 from tests_real_ha.test_entry_point_contract_matrix import _contract_agent
 from tests_real_ha.test_provider_wire_e2e import (
@@ -38,6 +43,67 @@ ARGUMENTS = {
         }
     ]
 }
+
+
+@pytest.mark.parametrize("route", ["conversation", "caller_ai_task"])
+@pytest.mark.parametrize("mode", ["auto", "responses", "chat_completions"])
+async def test_effective_tools_respect_model_api_capability_at_the_wire(
+    hass, monkeypatch, route, mode
+):
+    # Independent fixture contract: this model supports text on both APIs,
+    # Functions on Responses only. Conversation adds its lifecycle tool;
+    # AI Task obtains tools exclusively from the caller, not stored options.
+    if route == "conversation":
+        agent = await _contract_agent(
+            hass, api_mode=mode, chat_model="gpt-6.1-sol", reasoning_effort="low"
+        )
+        wire = install_strict_provider(
+            monkeypatch, agent, [_text("responses", "Compatible route")]
+        )
+        result = await _say(hass, agent, "Use the configured request route")
+        if mode == "chat_completions":
+            assert result.response.error_code is not None
+        else:
+            assert _speech(result) == "Compatible route"
+    else:
+        entry, entity_id = await _task_entity(hass, mode)
+        subentry = next(iter(entry.subentries.values()))
+        update_live_subentry(
+            hass,
+            entry,
+            subentry,
+            data={
+                **subentry.data,
+                "chat_model": "gpt-6.1-sol",
+                "reasoning_effort": "low",
+            },
+        )
+        caller = CallerAPI(hass=hass, id="strict-route", name="Strict route")
+        caller.tools = [ContextProbeTool()]
+        wire = install_strict_provider(
+            monkeypatch,
+            SimpleNamespace(_client=entry.runtime_data),
+            [_text("responses", "Compatible route")],
+        )
+
+        async def task():
+            return await ai_task.async_generate_data(
+                hass,
+                task_name="Route contract",
+                entity_id=entity_id,
+                instructions="Use caller tools",
+                llm_api=caller,
+            )
+
+        if mode == "chat_completions":
+            with pytest.raises(HomeAssistantError):
+                await task()
+        else:
+            assert (await task()).data == "Compatible route"
+    wire.assert_complete(0 if mode == "chat_completions" else 1)
+    if mode != "chat_completions":
+        assert wire.requests[0]["path"] == "/v1/responses"
+        assert wire.requests[0]["body"]["tools"]
 
 
 def _text(mode, value):
