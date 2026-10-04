@@ -219,7 +219,7 @@ async def test_valid_sse_chunk_boundaries_preserve_assist_meaning(
                 assert json.loads(call["function"]["arguments"]) == _TOOL_ARGUMENTS
             assert service_calls[-1].data["entity_id"] == ["light.provider_wire"]
     assert len(streams) == len(patterns) * (2 if with_tool else 1)
-    assert all(stream.closed.is_set() for stream in streams)
+    assert all(stream.iteration_finished.is_set() for stream in streams)
     assert agent._usage.totals.conversation_count == len(patterns)
     assert agent._usage.totals.failed_request_count == 0
     archived = [turn for turns in agent._archive._turns.values() for turn in turns]

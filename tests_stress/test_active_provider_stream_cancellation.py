@@ -161,7 +161,7 @@ async def test_consumer_cancellation_closes_active_provider_stream(
         active.cancel()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(active, timeout=10)
-        await asyncio.wait_for(gated.closed.wait(), timeout=10)
+        await asyncio.wait_for(gated.close_finished.wait(), timeout=10)
     finally:
         gated.release.set()
         if not active.done():
@@ -184,11 +184,29 @@ async def test_consumer_cancellation_closes_active_provider_stream(
     await hass.async_block_till_done()
     gc.collect()
     assert _resource_footprint(hass) == before
-    assert all(stream.closed.is_set() for stream in streams)
+    for stream in streams:
+        stream.assert_explicit_close_completed()
     record(
         stress_trace,
         "active_stream_cancel",
         mode=mode,
         phase=phase,
         requests=len(requests),
+        explicit_stream_close_cases=1,
     )
+
+
+@pytest.mark.asyncio
+async def test_natural_stream_exhaustion_is_not_explicit_close(
+    stress_trace: list[dict],
+) -> None:
+    """The cleanup assertion rejects natural iteration completion by itself."""
+    stream = GatedSSEStream([b"one", b"two"])
+    assert [chunk async for chunk in stream] == [b"one", b"two"]
+    assert stream.iteration_finished.is_set()
+    assert not stream.close_finished.is_set()
+    with pytest.raises(AssertionError, match="explicit aclose"):
+        stream.assert_explicit_close_completed()
+    await stream.aclose()
+    stream.assert_explicit_close_completed()
+    record(stress_trace, "summary", natural_stream_exhaustion_close_negatives=1)

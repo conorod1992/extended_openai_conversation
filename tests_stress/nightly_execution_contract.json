@@ -1709,7 +1709,8 @@
     "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[responses-False]",
     "tests_stress/test_execution_contract.py::test_optional_ai_task_wire_round_trips_are_mandatory[responses-True]",
     "tests_stress/test_execution_contract.py::test_narrowed_live_selector_does_not_shrink_reviewed_obligation",
-    "tests_stress/test_execution_contract.py::test_explicit_reviewed_partial_selection_remains_valid"
+    "tests_stress/test_execution_contract.py::test_explicit_reviewed_partial_selection_remains_valid",
+    "tests_stress/test_active_provider_stream_cancellation.py::test_natural_stream_exhaustion_is_not_explicit_close"
   ],
   "browser": {
     "browser": [
@@ -2300,7 +2301,9 @@
     },
     "provider-resilience": {
       "tls_verified_requests": 4,
-      "transport_tool_recovery_cases": 2
+      "transport_tool_recovery_cases": 2,
+      "explicit_stream_close_cases": 1,
+      "natural_stream_exhaustion_close_negatives": 1
     },
     "large-installation": {
       "concurrent_summary_cases": 2,
@@ -2322,7 +2325,12 @@
       "skill_download_cancellation_cases": 4,
       "skill_download_unowned_cases": 5,
       "populated_feature_journeys": 4,
-      "semantic_oracle_rejections": 28
+      "semantic_oracle_rejections": 28,
+      "interrupted_active_speech_listener_cancel": 1,
+      "interrupted_active_speech_listener_unload": 1,
+      "explicit_stream_close_cancel": 1,
+      "explicit_stream_close_unload": 1,
+      "clean_recovery_requests": 2
     },
     "persistence": {
       "composite_ingestion_cases": 8,
