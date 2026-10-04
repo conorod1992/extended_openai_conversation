@@ -218,6 +218,7 @@ async def test_ui_backend_memory_crud_uses_authenticated_user_scope() -> None:
         target_user_id="user-7",
         clear_fields=None,
         expected_revision=None,
+        source="explicit",
     )
     memory.async_delete.assert_awaited_once_with("user-7", ["memory-1"])
 

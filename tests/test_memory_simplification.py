@@ -144,7 +144,8 @@ async def test_temporary_add_manual_privacy_ownership_and_fresh_manager(monkeypa
 
 
 async def test_automatic_creation_keeps_source_privacy_and_duplicate_behavior():
-    manager = TemporaryMemory(Storage())
+    storage = Storage()
+    manager = TemporaryMemory(storage)
     await manager.async_initialize()
     first = await manager.async_add("conversation:one", "Delivery is due today", "2026-09-02T12:00:00Z", owner_scope_id="user:alice")
     second = await manager.async_add("conversation:two", "Delivery is due today", "2026-09-03T12:00:00Z", owner_scope_id="user:alice")
@@ -154,8 +155,16 @@ async def test_automatic_creation_keeps_source_privacy_and_duplicate_behavior():
     assert len(await manager.async_list_owned("user:alice")) == 1
     with pytest.raises(ValueError, match="explicit"):
         await manager.async_add("conversation:one", "Health condition is asthma", "2026-09-02T12:00:00Z", owner_scope_id="user:alice")
+    # Internal automatic updates still require explicit consent for sensitive facts.
     with pytest.raises(ValueError, match="explicit"):
-        await manager.async_update_owned("user:alice", first["memory"]["memory_id"], "Health condition is asthma", None, None)
+        await manager.async_update("conversation:one", first["memory"]["memory_id"], "Health condition is asthma", None, None, owner_scope_id="user:alice")
+    # An authenticated user's edit is that explicit consent and promotes provenance.
+    updated = await manager.async_update_owned("user:alice", first["memory"]["memory_id"], "Health condition is asthma", None, None)
+    assert updated.source == "manual"
+    assert updated.content == "Health condition is asthma"
+    fresh = TemporaryMemory(storage)
+    await fresh.async_initialize()
+    assert (await fresh.async_list_owned("user:alice"))[0].source == "manual"
 
 
 @pytest.mark.parametrize("manual", [False, True])
