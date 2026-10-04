@@ -1886,11 +1886,14 @@
       "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection",
       "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::Guest save acknowledgement survives a failed refresh and edits in flight through genuine HA",
       "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::combined Request Rules settings remain current across warm and expired navigation through genuine HA",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-GB › Usage sends HA-local dates and renders the same instant in HA time",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-IE › Usage sends HA-local dates and renders the same instant in HA time",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-US › Usage sends HA-local dates and renders the same instant in HA time",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / fr-FR › Usage sends HA-local dates and renders the same instant in HA time",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Kiritimati / HA Dublin wall clock › Quiet Hours saves a wall-clock time without browser timezone conversion"
+      "tests_browser/real-ha-professional-browser.spec.mjs::chromium::real-ha-professional-browser.spec.mjs::production-sized backup crosses real browser and HA websocket in multiple chunks",
+      "tests_browser/real-ha-professional-browser.spec.mjs::chromium::real-ha-professional-browser.spec.mjs::genuine native controls survive repeated mounts without duplicate saved writes",
+      "tests_browser/real-ha-professional-browser.spec.mjs::chromium::real-ha-professional-browser.spec.mjs::browser timezone and locale do not rewrite HA wall-clock settings",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-GB::Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-IE::Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-US::Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / fr-FR::Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Kiritimati / HA Dublin wall clock::Quiet Hours saves a wall-clock time without browser timezone conversion"
     ],
     "browser-firefox": [
       "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",

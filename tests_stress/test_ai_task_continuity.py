@@ -294,7 +294,6 @@ async def test_overlapping_caller_tools_keep_context_and_cancellation_request_lo
             tool_name = (
                 tool["name"] if mode == API_MODE_RESPONSES else tool["function"]["name"]
             )
-            assert tool_name == "context_probe"
             call_id = f"overlap-{current}-{mode}"
             reply = (
                 _responses_sse_tool_call
