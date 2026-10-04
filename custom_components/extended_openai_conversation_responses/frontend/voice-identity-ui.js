@@ -116,24 +116,32 @@ function setWarning(element,message="") {
   element.hidden = !message;
 }
 
-async function entityRegistry(panel, selection = false) {
+async function entityRegistry(panel) {
   // Share concurrent hydration requests, never a completed snapshot.
   // Native HA pickers can stay mounted across entity/device registry changes.
-  if (selection || !panel.__voiceEntityRegistryPromise) {
+  if (!panel.__voiceEntityRegistryPromise) {
     const hass = panelHass(panel);
     const request = hass?.callWS
       ? Promise.resolve().then(() => hass.callWS({type:"config/entity_registry/list"}))
           .then(entries => Array.isArray(entries) ? entries : []).catch(() => [])
       : Promise.resolve([]);
-    // A selection must start after that interaction, even when hydration is
-    // still waiting for an older registry snapshot.
-    if (selection) return request;
     const tracked = request.finally(() => {
       if (panel.__voiceEntityRegistryPromise === tracked) panel.__voiceEntityRegistryPromise = null;
     });
     panel.__voiceEntityRegistryPromise = tracked;
   }
   return panel.__voiceEntityRegistryPromise;
+}
+
+async function selectedEntityRegistryEntry(panel, entityId) {
+  // Resolve the current association after each selection, independently of
+  // hydration, without transferring the entire entity registry again.
+  const hass = panelHass(panel);
+  try {
+    return await hass?.callWS?.({type:"config/entity_registry/get", entity_id:entityId});
+  } catch {
+    return null;
+  }
 }
 
 function configureUserPicker(panel,picker,value) {
@@ -258,10 +266,10 @@ async function bindSatellitePicker(panel,row) {
       syncMappings(panel);
       return;
     }
-    const registry = await entityRegistry(panel,true);
+    const entry = await selectedEntityRegistryEntry(panel,selectedEntity);
     if (!row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice"
         || picker.__voiceSelection !== selection) return;
-    const deviceId = deviceIdForSatellite(registry,selectedEntity);
+    const deviceId = entry?.entity_id === selectedEntity ? String(entry.device_id || "") : "";
     if (!deviceId) {
       row.dataset.voiceLookup = "unresolved";
       setWarning(warning,"That Assist satellite is not linked to a Home Assistant device, so it cannot be used for a device assignment.");

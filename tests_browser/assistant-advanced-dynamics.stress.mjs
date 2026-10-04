@@ -265,6 +265,8 @@ test("nightly voice mappings follow policy dependencies and persist", async ({pa
     const callWS = host.hass.callWS.bind(host.hass);
     host.hass.callWS = message => message.type === "config/entity_registry/list"
       ? Promise.resolve([{entity_id:"assist_satellite.kitchen", device_id:"device-kitchen"}])
+      : message.type === "config/entity_registry/get" && message.entity_id === "assist_satellite.kitchen"
+      ? Promise.resolve({entity_id:"assist_satellite.kitchen", device_id:"device-kitchen"})
       : callWS(message);
     host._render();
   });

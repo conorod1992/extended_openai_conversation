@@ -6,9 +6,9 @@ from copy import deepcopy
 import re
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from hypothesis import given, settings, strategies as st
 from jsonschema import Draft202012Validator
+import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     function_execution as execution,
@@ -48,6 +48,11 @@ from homeassistant.exceptions import HomeAssistantError
         ({"type": "boolean"}, ["false", "true"], True),
         ({"type": "integer"}, [1, 1], False),
         ({}, [{"a": 1, "b": 2}, {"b": 2, "a": 1}], False),
+        ({}, [[1, 2], [2, 1]], True),
+        ({}, [{"a": [1, False]}, {"a": [1.0, False]}], False),
+        ({}, [-0.0, 0], False),
+        ({}, [2**53 + 1, float(2**53)], True),
+        ({}, [None, "null", "1", 1], True),
     ],
     ids=[
         "integer-coercion",
@@ -62,6 +67,11 @@ from homeassistant.exceptions import HomeAssistantError
         "healthy-booleans",
         "direct-duplicate",
         "object-key-order",
+        "array-order",
+        "nested-numeric-equivalence",
+        "signed-zero",
+        "large-integer-precision",
+        "scalar-types",
     ],
 )
 def test_unique_items_checks_normalized_json_values(items_schema, raw, valid):
@@ -75,6 +85,70 @@ def test_unique_items_checks_normalized_json_values(items_schema, raw, valid):
         with pytest.raises(HomeAssistantError, match="unique items"):
             validate_function_arguments(spec, {"values": raw})
     assert raw == before
+
+
+@pytest.mark.parametrize("size", [512, 2048])
+@pytest.mark.parametrize("kind", ["numbers", "objects", "arrays"])
+@pytest.mark.parametrize("late_duplicate", [False, True])
+def test_large_unique_arrays_bound_validation_work(
+    monkeypatch, size, kind, late_duplicate
+):
+    """Distinct and late-duplicate inputs must avoid pairwise work as they grow."""
+    values = [
+        {"entity_id": f"light.item_{index}", "enabled": True}
+        if kind == "objects"
+        else [index, False]
+        if kind == "arrays"
+        else index
+        for index in range(size)
+    ]
+    if late_duplicate:
+        values.append(deepcopy(values[0]))
+    hashes = comparisons = 0
+    original_hash, original_equal = execution._json_hash, execution._json_equal
+
+    def counted_hash(value):
+        nonlocal hashes
+        hashes += 1
+        return original_hash(value)
+
+    def counted_equal(left, right):
+        nonlocal comparisons
+        comparisons += 1
+        return original_equal(left, right)
+
+    monkeypatch.setattr(execution, "_json_hash", counted_hash)
+    monkeypatch.setattr(execution, "_json_equal", counted_equal)
+    spec = {
+        "parameters": {"properties": {"values": {"type": "array", "uniqueItems": True}}}
+    }
+    if late_duplicate:
+        with pytest.raises(HomeAssistantError, match="unique items"):
+            validate_function_arguments(spec, {"values": values})
+    else:
+        assert validate_function_arguments(spec, {"values": values}) == {
+            "values": values
+        }
+    assert hashes <= 3 * len(values)
+    assert comparisons <= 4 * len(values)
+
+
+def test_unique_items_resolves_hash_collisions_with_exact_json_equality(monkeypatch):
+    """A hash collision must neither reject distinct values nor hide duplicates."""
+    monkeypatch.setattr(execution, "_json_hash", lambda _: 0)
+    schema = {"type": "array", "uniqueItems": True}
+    values = [True, 1, False, 0, {"a": [1, 2]}, {"a": [2, 1]}]
+    assert execution._validate_value("values", values, schema) == values
+    with pytest.raises(HomeAssistantError, match="unique items"):
+        execution._validate_value("values", [*values, {"a": [1.0, 2]}], schema)
+
+
+def test_unique_items_preserves_untyped_python_value_equality():
+    schema = {"type": "array", "uniqueItems": True}
+    values = [{1, 2}, {2, 3}, None]
+    assert execution._validate_value("values", values, schema) == values
+    with pytest.raises(HomeAssistantError, match="unique items"):
+        execution._validate_value("values", [*values, {2, 1}], schema)
 
 
 @pytest.mark.parametrize("keyword", ["enum", "const"])
@@ -108,7 +182,7 @@ def test_enum_and_const_use_json_equality(keyword, value, literal, valid):
         normalized = validate_function_arguments(spec, {"value": value})
         Draft202012Validator(spec["parameters"]).validate(normalized)
     else:
-        with pytest.raises(HomeAssistantError, match="choices|required value"):
+        with pytest.raises(HomeAssistantError, match=r"choices|required value"):
             validate_function_arguments(spec, {"value": value})
 
 

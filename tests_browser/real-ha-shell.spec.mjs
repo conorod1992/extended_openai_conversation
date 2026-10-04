@@ -174,12 +174,13 @@ test.describe("nightly ownership", () => {
     const panel = await openColdHaRoute(context, page, "assistant/basics");
     await panel.evaluate(host => {
       const original = host.hass.callWS.bind(host.hass);
-      window.__registryLists = 0; window.__registryFailures = 0;
+      window.__registryLists = 0; window.__registryGets = []; window.__registryFailures = 0;
       host.hass.callWS = async message => {
         if (message.type === "config/entity_registry/list") {
           window.__registryLists++;
           if (window.__registryLists === 1) {window.__registryFailures++; throw new Error("Controlled registry outage");}
         }
+        if (message.type === "config/entity_registry/get") window.__registryGets.push(message.entity_id);
         return original(message);
       };
       host._navigate("assistant", "voice");
@@ -195,7 +196,7 @@ test.describe("nightly ownership", () => {
     await expect(picker).toHaveJSProperty("value", "assist_satellite.ownership_kitchen");
     await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_NEW_DEVICE);
     await expect(row.locator(".voice-satellite-warning")).toBeHidden();
-    expect(await page.evaluate(() => window.__registryLists)).toBeGreaterThan(1);
+    expect(await page.evaluate(() => window.__registryGets)).toContain("assist_satellite.ownership_kitchen");
     await nativeEvidence("retry", {native_registry_fetch_recoveries:1});
   });
 });
