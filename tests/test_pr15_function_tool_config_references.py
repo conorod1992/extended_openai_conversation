@@ -85,7 +85,9 @@ def _function_rule(function_name: str) -> dict:
 
 def _setup_entry(hass, *, tool_name: str = "old_tool"):
     data = agent_config_defaults()
-    data[CONF_FUNCTION_TOOLS] = yaml.safe_dump([_native_tool(tool_name)], sort_keys=False)
+    data[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+        [_native_tool(tool_name)], sort_keys=False
+    )
     data[CONF_FUNCTION_GROUPS] = [
         {
             "id": "group",
@@ -174,7 +176,9 @@ def test_function_tool_name_and_spec_contract_are_validated() -> None:
         validate_function_tools([tool])
 
 
-def test_function_tool_schema_accepts_annotations_but_rejects_malformed_supported_keywords() -> None:
+def test_function_tool_schema_accepts_annotations_but_rejects_malformed_supported_keywords() -> (
+    None
+):
     annotated = {
         "type": "object",
         "properties": {"email": {"type": "string", "format": "email"}},
@@ -220,9 +224,10 @@ def test_function_tool_schema_accepts_locally_supported_nested_contract() -> Non
         "required": ["items"],
         "additionalProperties": False,
     }
-    assert validate_function_tools([_native_tool(parameters=parameters)])[0][
-        "spec"
-    ] == _native_tool(parameters=parameters)["spec"]
+    assert (
+        validate_function_tools([_native_tool(parameters=parameters)])[0]["spec"]
+        == _native_tool(parameters=parameters)["spec"]
+    )
 
 
 def test_unknown_native_implementation_is_rejected() -> None:
@@ -284,8 +289,9 @@ async def test_request_rules_report_and_rename_exact_function_references() -> No
     store.async_save.assert_awaited_once()
 
 
+@pytest.mark.parametrize("from_yaml", [False, True])
 async def test_tool_rename_updates_group_guest_and_request_rule_references(
-    hass, monkeypatch
+    hass, monkeypatch, from_yaml
 ) -> None:
     entry, subentry = _setup_entry(hass)
     rules = _FakeRules("old_tool")
@@ -304,7 +310,11 @@ async def test_tool_rename_updates_group_guest_and_request_rule_references(
             "entry_id": entry.entry_id,
             "subentry_id": subentry.subentry_id,
             "original_name": "old_tool",
-            "tool": _native_tool("new_tool"),
+            **(
+                {"yaml": yaml.safe_dump(_native_tool("new_tool"))}
+                if from_yaml
+                else {"tool": _native_tool("new_tool")}
+            ),
         },
     )
 
