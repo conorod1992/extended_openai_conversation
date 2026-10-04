@@ -592,14 +592,17 @@ for (const now of [false, true]) {
 
     const end = new Date(Date.now() + 86_400_000).toISOString().slice(0, 16);
     await panel.locator("#guest-end").fill(end);
+    const expectedEnd = await panel.locator("#guest-end").evaluate(
+      input => new Date(input.value).toISOString(),
+    );
     await button.click();
     await expect(panel.locator("#toast")).toHaveText("Guest Mode updated");
     const finite = (await updates()).at(-1);
     expect(finite.indefinite).toBe(false);
-    expect(finite.active_until).toBe(end);
+    expect(finite.active_until).toBe(expectedEnd);
     const finiteStatus = await panel.evaluate(host => host._call("guest_mode", "get"));
     expect(finiteStatus.status.indefinite).toBe(false);
-    expect(finiteStatus.status.active_until).toBeTruthy();
+    expect(new Date(finiteStatus.status.active_until).toISOString()).toBe(expectedEnd);
 
     await panel.locator("#guest-end").fill("");
     await panel.locator("#guest-indefinite").check();
