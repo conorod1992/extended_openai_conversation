@@ -607,6 +607,8 @@
     "tests_real_ha/test_assist_origin_context.py::test_voice_user_mapping_keeps_physical_room_for_local_light_command[device-room-fallback]",
     "tests_real_ha/test_assist_origin_context.py::test_voice_user_mapping_keeps_physical_room_for_local_light_command[satellite-room]",
     "tests_real_ha/test_assist_streaming_speech_processing.py::test_actual_assist_stream_sanitizes_split_provider_deltas",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_assist_progressive_speech_preserves_split_literal_identifiers",
+    "tests_real_ha/test_assist_streaming_speech_processing.py::test_long_assist_answer_keeps_ha_progressing_during_final_cleanup",
     "tests_real_ha/test_assist_voice_identity_precedence.py::test_genuine_assist_prefers_registry_device_voice_identity_when_both_ids_exist",
     "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_loads_inside_real_home_assistant_shell",
     "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_talks_to_real_management_websocket",

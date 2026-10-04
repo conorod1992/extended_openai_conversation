@@ -10,11 +10,13 @@ from custom_components.extended_openai_conversation_responses.conversation impor
     ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.speech import (
+    COMPLETED_SPEECH_EXECUTOR_THRESHOLD,
     DEFAULT_STREAMING_BUFFER_LIMIT,
     StreamingSpeechSanitizer,
     _SpeechDeltaListener,
     async_streaming_speech_cleanup,
     has_custom_speech_replacements,
+    needs_async_speech_cleanup,
     process_speech_text,
     streaming_speech_processing_enabled,
 )
@@ -34,6 +36,37 @@ def _config(**updates):
 def _stream(chunks: list[str], **kwargs) -> str:
     sanitizer = StreamingSpeechSanitizer(**kwargs)
     return "".join([*(sanitizer.feed(chunk) for chunk in chunks), sanitizer.finish()])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "sensor.kitchen__temperature",
+        "mailboxhttps://example.com",
+        "mailboxhttp://example.com",
+        "mailboxwww.example.com",
+        "mail@www.example.com",
+        "sensor.café__temperature",
+        "ordinary_under_scores",
+    ],
+)
+def test_literal_speech_is_invariant_at_every_provider_split(text):
+    assert process_speech_text(text, _config()) == text
+    for split in range(1, len(text)):
+        assert _stream([text[:split], text[split:]]) == text, split
+    assert _stream(list(text)) == text
+
+
+def test_completed_cleanup_worker_threshold_and_disabled_processing():
+    limit = COMPLETED_SPEECH_EXECUTOR_THRESHOLD
+    assert not needs_async_speech_cleanup("x" * (limit - 1), _config())
+    assert needs_async_speech_cleanup("x" * limit, _config())
+    assert not needs_async_speech_cleanup(
+        "x" * limit, _config(speech_processing_enabled=False)
+    )
+    assert needs_async_speech_cleanup(
+        "short", _config(speech_regex_replacements=[{"pattern": "x", "replacement": "y"}])
+    )
 
 
 def test_markdown_citation_and_bare_urls_are_removed_without_mutating_original() -> (

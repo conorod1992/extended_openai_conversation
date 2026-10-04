@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 import json
+import threading
 from typing import Any
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -21,7 +22,6 @@ from custom_components.extended_openai_conversation_responses.const import (
 from homeassistant.components import conversation
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
-
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_provider_wire_e2e import _install_wire
 
@@ -79,6 +79,92 @@ async def _speech_agent(hass: HomeAssistant) -> Any:
     assert agent.entity_id.startswith("conversation.")
     assert agent._attr_supports_streaming is True  # noqa: SLF001
     return agent
+
+
+async def test_assist_progressive_speech_preserves_split_literal_identifiers(
+    hass, hass_ws_client, monkeypatch
+):
+    """Real Assist listeners retain literals split inside Markdown/URL prefixes."""
+    agent = await _speech_agent(hass)
+    assert await async_setup_component(hass, "assist_pipeline", {})
+    parts = ["sensor.kitchen", "_", "_", "temperature mailbox", "ht", "tps://example.com"]
+    expected = "sensor.kitchen__temperature mailboxhttps://example.com"
+    wire = _install_wire(monkeypatch, agent, [_chat_sse_deltas(parts)])
+    events = await _run_assist(
+        await hass_ws_client(hass),
+        pipeline_id=agent.entity_id,
+        conversation_id="literal-speech-boundaries",
+    )
+    assert _progressive_text(events) == expected
+    assert _final_speech(events) == expected
+    assert len(wire.requests) == 1
+
+
+async def test_long_assist_answer_keeps_ha_progressing_during_final_cleanup(
+    hass, hass_ws_client, monkeypatch
+):
+    """Actual completed cleanup runs outside the loop; HA can act before it ends."""
+    from custom_components.extended_openai_conversation_responses import (
+        regex_execution,
+        speech,
+    )
+
+    agent = await _speech_agent(hass)
+    assert await async_setup_component(hass, "assist_pipeline", {})
+    raw = "**hello** world sensor.kitchen__temperature mailboxhttps://example.com " * 512
+    expected = "hello world sensor.kitchen__temperature mailboxhttps://example.com " * 512
+    parts = [raw[index : index + 256] for index in range(0, len(raw), 256)]
+    wire = _install_wire(monkeypatch, agent, [_chat_sse_deltas(parts)])
+    started, release, finished = (threading.Event() for _ in range(3))
+    loop_thread = threading.get_ident()
+    cleanup = speech._built_in_cleanup
+
+    def observed_cleanup(text, **kwargs):
+        assert threading.get_ident() != loop_thread, "completed cleanup blocked HA"
+        assert text == raw
+        started.set()
+        # A deterministic checkpoint in the real cleanup path. No result is
+        # mocked: HA must independently advance before the sanitizer can finish.
+        assert release.wait(5), "HA did not progress during completed cleanup"
+        result = cleanup(text, **kwargs)
+        finished.set()
+        return result
+
+    monkeypatch.setattr(regex_execution, "_built_in_cleanup", observed_cleanup)
+    monkeypatch.setattr(speech, "_built_in_cleanup", observed_cleanup)
+
+    async def advance(call):
+        hass.states.async_set("sensor.speech_cleanup_witness", "advanced")
+
+    hass.services.async_register("test", "speech_cleanup_progress", advance)
+    client = await hass_ws_client(hass)
+    run = asyncio.create_task(
+        _run_assist(
+            client, pipeline_id=agent.entity_id, conversation_id="long-cleanup"
+        )
+    )
+    try:
+        async with asyncio.timeout(5):
+            while not started.is_set():
+                if run.done():
+                    await run
+                    raise AssertionError("completed cleanup never started")
+                await asyncio.sleep(0.001)
+        assert not finished.is_set()
+        await hass.services.async_call("test", "speech_cleanup_progress", {}, blocking=True)
+        assert hass.states.get("sensor.speech_cleanup_witness").state == "advanced"
+        assert not finished.is_set()
+        release.set()
+        events = await run
+        assert finished.is_set()
+        assert _progressive_text(events).strip() == expected.strip()
+        assert _final_speech(events) == expected.strip()
+        assert len(wire.requests) == 1
+    finally:
+        release.set()
+        if not run.done():
+            run.cancel()
+        await asyncio.gather(run, return_exceptions=True)
 
 
 async def _run_assist(
