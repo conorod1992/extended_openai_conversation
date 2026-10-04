@@ -214,7 +214,7 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     request_settings = next(
         section for section in empty["sections"] if section["key"] == "request_settings"
     )
-    assert "tool_choice" not in request_settings["content"]
+    assert '"tool_choice":"auto"' in request_settings["content"]
 
 
 @pytest.mark.asyncio
