@@ -547,3 +547,40 @@ async def test_options_flow_management_and_agent_test_round_trip(
         assert result["type"] is FlowResultType.MENU
     finally:
         await _unload_entry(hass, entry)
+
+@pytest.mark.parametrize("advanced", [False, True])
+@pytest.mark.parametrize("invalid", ["web_search", "output_limit"])
+async def test_ai_task_flow_rejects_incompatible_request_before_persistence(hass, advanced, invalid):
+    """Both final flow paths validate the full provider request before saving."""
+    entry = _make_entry()
+    await _setup_entry(hass, entry)
+    try:
+        existing_ids = set(entry.subentries)
+        result = await hass.config_entries.subentries.async_init(
+            (entry.entry_id, "ai_task_data"), context={"source": SOURCE_USER}
+        )
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"],
+            {
+                CONF_NAME: "Invalid Task",
+                CONF_CHAT_MODEL: "gpt-4o",
+                CONF_API_MODE: "chat_completions",
+                CONF_MAX_TOKENS: 20000 if invalid == "output_limit" else 500,
+                CONF_WEB_SEARCH: invalid == "web_search",
+                CONF_ADVANCED_OPTIONS: advanced,
+            },
+        )
+        if advanced:
+            assert result["type"] is FlowResultType.FORM
+            assert result["step_id"] == "advanced"
+            result = await hass.config_entries.subentries.async_configure(
+                result["flow_id"],
+                {CONF_TOP_P: 0.8, CONF_TEMPERATURE: 0.3, CONF_SHORTEN_TOOL_CALL_ID: True},
+            )
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == ("advanced" if advanced else "init")
+        assert result["errors"] == {"base": "invalid_request"}
+        assert result["description_placeholders"]["reason"]
+        assert set(entry.subentries) == existing_ids
+    finally:
+        await _unload_entry(hass, entry)
