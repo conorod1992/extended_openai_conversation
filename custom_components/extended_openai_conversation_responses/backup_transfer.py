@@ -86,6 +86,7 @@ class ImportSession:
     preview_token: str | None = None
     preview_revision: str | None = None
     preview_sections: tuple[str, ...] | None = None
+    preview_user_scope_mappings: tuple[tuple[str, str], ...] | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -116,13 +117,9 @@ def _snapshot_revision(value: backup.PreparedRestore) -> str:
 
 
 def _forget_preview(hass: HomeAssistant, session: ImportSession) -> None:
-    if session.preview_token is None:
-        return
     key = (session.entry_id, session.subentry_id)
-    if _latest_previews(hass).get(key) == (
-        session.session_id,
-        session.preview_token,
-    ):
+    current = _latest_previews(hass).get(key)
+    if current is not None and current[0] == session.session_id:
         _latest_previews(hass).pop(key, None)
 
 
@@ -906,29 +903,70 @@ async def _inspect_import(
             hass, session.path, session.kind, subentry_id
         )
         entry, subentry = _resolve_agent(hass, entry_id, subentry_id)
-        current = await transfer._current_snapshot(hass, entry, subentry)
-        _target, preview = await transfer.async_materialize_restore(
-            hass,
-            entry,
-            subentry,
-            prepared,
-            sections=data.get("sections"),
-            current_snapshot=current,
+        selected = transfer.validate_section_selection(
+            data.get("sections"),
+            allowed=prepared.available_sections,
+            default=prepared.available_sections,
         )
-        token = uuid4().hex
-        async with _registry_lock(hass):
-            if _imports(hass).get(session.session_id) is not session:
-                raise backup.BackupError(
-                    "The backup upload has expired or was cancelled"
-                )
-            session.preview_token = token
-            session.preview_revision = _snapshot_revision(current)
-            session.preview_sections = tuple(preview["selected_sections"])
-            session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
-            _latest_previews(hass)[(entry_id, subentry_id)] = (
-                session.session_id,
-                token,
+        mapping_plan = await transfer.async_user_scope_mapping_plan(
+            hass,
+            prepared,
+            selected,
+            data.get("user_scope_mappings"),
+        )
+        current = await transfer._current_snapshot(hass, entry, subentry)
+
+        if mapping_plan["missing_source_user_ids"]:
+            preview = {
+                **prepared.summary(),
+                "selected_sections": [
+                    section for section in transfer.SECTION_ORDER if section in selected
+                ],
+                "user_scope_mapping": mapping_plan,
+            }
+            async with _registry_lock(hass):
+                if _imports(hass).get(session.session_id) is not session:
+                    raise backup.BackupError(
+                        "The backup upload has expired or was cancelled"
+                    )
+                _forget_preview(hass, session)
+                session.preview_token = None
+                session.preview_revision = None
+                session.preview_sections = tuple(preview["selected_sections"])
+                session.preview_user_scope_mappings = None
+                session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+            token = None
+        else:
+            mapped = transfer.apply_user_scope_mappings(
+                prepared, selected, mapping_plan["resolved"]
             )
+            _target, preview = await transfer.async_materialize_restore(
+                hass,
+                entry,
+                subentry,
+                mapped,
+                sections=selected,
+                current_snapshot=current,
+            )
+            preview["user_scope_mapping"] = mapping_plan
+            token = uuid4().hex
+            async with _registry_lock(hass):
+                if _imports(hass).get(session.session_id) is not session:
+                    raise backup.BackupError(
+                        "The backup upload has expired or was cancelled"
+                    )
+                _forget_preview(hass, session)
+                session.preview_token = token
+                session.preview_revision = _snapshot_revision(current)
+                session.preview_sections = tuple(preview["selected_sections"])
+                session.preview_user_scope_mappings = tuple(
+                    sorted(mapping_plan["resolved"].items())
+                )
+                session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+                _latest_previews(hass)[(entry_id, subentry_id)] = (
+                    session.session_id,
+                    token,
+                )
     return {
         **transfer.inspection_for_frontend(prepared),
         "preview": preview,
@@ -970,6 +1008,11 @@ async def _restore_import(
             raise backup.BackupError("The backup upload has expired or was cancelled")
         prepared = await _async_load_prepared_restore(
             hass, session.path, session.kind, subentry.subentry_id
+        )
+        selected_sections = tuple(session.preview_sections or ())
+        resolved_user_mappings = dict(session.preview_user_scope_mappings or ())
+        prepared = transfer.apply_user_scope_mappings(
+            prepared, selected_sections, resolved_user_mappings
         )
 
     async def validate_preview() -> None:
