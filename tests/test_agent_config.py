@@ -660,6 +660,17 @@ def test_validate_function_tools_normalizes_reference_errors(
         )
 
 
+def test_validate_function_tools_reserves_conversation_reset_name() -> None:
+    """Reject a configured tool that collides with the runtime lifecycle tool."""
+    with pytest.raises(
+        agent_config.AgentConfigError,
+        match=r"reserved integration tool name: start_fresh_conversation",
+    ):
+        agent_config.validate_function_tools(
+            [_coverage_native_tool("start_fresh_conversation")]
+        )
+
+
 def test_validate_function_groups_reserves_loader_for_on_demand_groups() -> None:
     """Prevent a configured tool from colliding with the on-demand loader tool."""
     tools = [{"spec": {"name": agent_config.FUNCTION_GROUP_LOADER_TOOL_NAME}}]
