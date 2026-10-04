@@ -116,7 +116,7 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     monkeypatch.setattr(
         management_request_preview,
         "build_provider_request_snapshot",
-        lambda *_args: SimpleNamespace(
+        lambda *_args, **_kwargs: SimpleNamespace(
             api_mode="responses", api_kwargs={}, provider_tools=[]
         ),
     )
