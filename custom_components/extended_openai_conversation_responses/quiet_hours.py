@@ -647,10 +647,12 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             for unsubscribe in self._unsubscribers:
                 unsubscribe()
             self._unsubscribers.clear()
-            await self._async_restore_locked()
-        entity_id = self._state_entity_id()
-        self._remove_previous_publication(entity_id)
-        self.hass.states.async_remove(entity_id)
+            try:
+                await self._async_restore_locked()
+            finally:
+                entity_id = self._state_entity_id()
+                self._remove_previous_publication(entity_id)
+                self.hass.states.async_remove(entity_id)
 
 
 async def _async_require_admin(hass: HomeAssistant, call: ServiceCall) -> None:

@@ -327,19 +327,27 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         return
     hass.data[f"{DOMAIN}.removed"] = True
     quiet_hours = hass.data.get(DOMAIN, {}).get("quiet_hours_manager")
-    if quiet_hours is not None:
-        await quiet_hours.async_shutdown()
-        hass.data[DOMAIN].pop("quiet_hours_manager", None)
-    intercom = hass.data.get(DATA_KEY)
-    if intercom is not None:
-        await intercom.async_shutdown()
-        hass.data.pop(DATA_KEY, None)
-    for service in (
-        SERVICE_BROADCAST,
-        SERVICE_ENABLE_QUIET_HOURS,
-        SERVICE_DISABLE_QUIET_HOURS,
-    ):
-        hass.services.async_remove(DOMAIN, service)
+    try:
+        if quiet_hours is not None:
+            try:
+                await quiet_hours.async_shutdown()
+            finally:
+                hass.data[DOMAIN].pop("quiet_hours_manager", None)
+    finally:
+        try:
+            intercom = hass.data.get(DATA_KEY)
+            if intercom is not None:
+                try:
+                    await intercom.async_shutdown()
+                finally:
+                    hass.data.pop(DATA_KEY, None)
+        finally:
+            for service in (
+                SERVICE_BROADCAST,
+                SERVICE_ENABLE_QUIET_HOURS,
+                SERVICE_DISABLE_QUIET_HOURS,
+            ):
+                hass.services.async_remove(DOMAIN, service)
 
 
 def _migrate_saved_default_prompt(data: dict) -> bool:

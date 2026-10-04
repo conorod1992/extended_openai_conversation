@@ -182,7 +182,10 @@ async def test_ai_task_is_included_in_model_lifecycle_sync(hass, monkeypatch):
     assert log.call_args.kwargs["subentry_id"] == "task"
 
 
-async def test_omitted_restore_sections_reuses_preview_selection(hass, monkeypatch):
+@pytest.mark.parametrize("sections", [{}, {"sections": None}])
+async def test_omitted_restore_sections_reuses_preview_selection(
+    hass, monkeypatch, sections
+):
     from custom_components.extended_openai_conversation_responses import (
         backup_transfer,
         transfer,
@@ -224,7 +227,7 @@ async def test_omitted_restore_sections_reuses_preview_selection(hass, monkeypat
         hass,
         SimpleNamespace(entry_id="entry"),
         SimpleNamespace(subentry_id="agent"),
-        {"session_id": "session", "preview_token": "token"},
+        {"session_id": "session", "preview_token": "token", **sections},
     )
     assert result["status"] == "restored"
 
@@ -246,3 +249,23 @@ async def test_broadcast_shutdown_cancels_drains_and_timers(hass):
     assert not manager._drain_tasks
     with pytest.raises(HomeAssistantError):
         await manager.async_send("should not send", whole_home=True)
+
+
+async def test_last_entry_cleanup_continues_after_quiet_hours_restore_failure(
+    hass, monkeypatch
+):
+    entry = SimpleNamespace(entry_id="entry", subentries={})
+    monkeypatch.setattr(agent_deletion, "async_delete_entry_data", AsyncMock())
+    hass.config_entries.async_entries.return_value = []
+    qh = SimpleNamespace(
+        async_shutdown=AsyncMock(side_effect=HomeAssistantError("save failed"))
+    )
+    broadcast = SimpleNamespace(async_shutdown=AsyncMock())
+    hass.data[DOMAIN] = {"quiet_hours_manager": qh}
+    hass.data[intercom.DATA_KEY] = broadcast
+    with pytest.raises(HomeAssistantError, match="save failed"):
+        await integration.async_remove_entry(hass, entry)
+    broadcast.async_shutdown.assert_awaited_once()
+    assert hass.services.async_remove.call_count == 3
+    assert intercom.DATA_KEY not in hass.data
+    assert "quiet_hours_manager" not in hass.data[DOMAIN]

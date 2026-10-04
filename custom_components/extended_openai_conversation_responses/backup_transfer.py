@@ -1009,7 +1009,9 @@ async def _restore_import(
             entry,
             subentry,
             prepared,
-            sections=data.get("sections", session.preview_sections),
+            sections=data.get("sections")
+            if data.get("sections") is not None
+            else session.preview_sections,
             precondition=validate_preview,
         )
     finally:
