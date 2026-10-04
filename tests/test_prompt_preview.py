@@ -24,6 +24,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
+    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MEMORY_MODE,
     CONF_PROMPT,
     CONF_TEMPORARY_MEMORY,
@@ -573,6 +574,78 @@ async def test_preview_render_failure_is_controlled(hass, monkeypatch) -> None:
             SimpleNamespace(entry_id="entry-1"),
             SimpleNamespace(subentry_id="agent-1"),
             agent_config_defaults(),
+            "admin",
+        )
+
+
+async def test_effective_request_preview_allows_text_only_route_at_zero_budget(
+    hass, monkeypatch
+) -> None:
+    options = agent_config_defaults()
+    options.update(
+        {
+            CONF_CHAT_MODEL: "gpt-6.1-sol",
+            CONF_API_MODE: "chat_completions",
+            CONF_WEB_SEARCH: False,
+            CONF_FUNCTION_TOOLS: "[]",
+            CONF_FUNCTION_GROUPS: [],
+            CONF_EXPOSED_ENTITIES_ENABLED: False,
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 0,
+        }
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
+        lambda _hass: [],
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.render_effective_prompt",
+        lambda *_args, **_kwargs: SimpleNamespace(text="BASE", sections=[]),
+    )
+
+    result = await async_preview_effective_request(
+        hass,
+        SimpleNamespace(entry_id="entry-1", data={}),
+        SimpleNamespace(subentry_id="agent-1"),
+        options,
+        "admin",
+    )
+
+    sections = {section["key"]: section for section in result["sections"]}
+    assert '"api_mode":"chat_completions"' in sections["request_settings"]["content"]
+    assert "start_fresh_conversation" not in sections["integration_tools"]["content"]
+
+
+async def test_effective_request_preview_rejects_text_only_route_when_finalizer_needs_tools(
+    hass, monkeypatch
+) -> None:
+    options = agent_config_defaults()
+    options.update(
+        {
+            CONF_CHAT_MODEL: "gpt-6.1-sol",
+            CONF_API_MODE: "chat_completions",
+            CONF_WEB_SEARCH: False,
+            CONF_FUNCTION_TOOLS: "[]",
+            CONF_FUNCTION_GROUPS: [],
+            CONF_EXPOSED_ENTITIES_ENABLED: False,
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 0,
+            CONF_CONTINUE_CONVERSATION: CONTINUE_CONVERSATION_CONDITIONAL,
+        }
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
+        lambda _hass: [],
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.render_effective_prompt",
+        lambda *_args, **_kwargs: SimpleNamespace(text="BASE", sections=[]),
+    )
+
+    with pytest.raises(HomeAssistantError, match="function/tool calling"):
+        await async_preview_effective_request(
+            hass,
+            SimpleNamespace(entry_id="entry-1", data={}),
+            SimpleNamespace(subentry_id="agent-1"),
+            options,
             "admin",
         )
 

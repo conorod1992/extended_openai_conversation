@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from custom_components.extended_openai_conversation_responses.agent_configuration import MemoryEmbeddingProvider
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_module,
     diagnostics as diagnostics_module,
@@ -12,13 +14,16 @@ from custom_components.extended_openai_conversation_responses import (
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_RETENTION_DAYS,
+    CONF_CONTINUE_CONVERSATION,
     CONF_KNOWLEDGE_ENABLED,
+    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MEMORY_EMBEDDING_MODEL,
     CONF_MEMORY_MODE,
     CONF_MEMORY_RETRIEVAL_MODE,
     CONF_TEMPORARY_MEMORY,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
+    CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_CONF_FUNCTION_TOOLS,
     MEMORY_MODE_MANUAL,
     MEMORY_RETRIEVAL_HYBRID,
@@ -547,6 +552,41 @@ def _patch_healthy_collectors(monkeypatch):
     monkeypatch.setattr(diagnostics_module, "async_get_archive", collectors.archive)
     monkeypatch.setattr(diagnostics_module, "async_get_usage", collectors.usage)
     return collectors
+
+
+@pytest.mark.parametrize(
+    ("data", "expected_tools"),
+    [
+        ({CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 0}, False),
+        (
+            {
+                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 0,
+                CONF_CONTINUE_CONVERSATION: CONTINUE_CONVERSATION_CONDITIONAL,
+            },
+            True,
+        ),
+        ({CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: 1}, True),
+    ],
+)
+async def test_diagnostics_routes_with_conversation_tool_requirement(
+    hass, monkeypatch, data, expected_tools
+) -> None:
+    _patch_healthy_collectors(monkeypatch)
+    snapshot = SimpleNamespace(
+        api_mode="responses",
+        api_kwargs={"stream": True, "max_output_tokens": 100},
+        structured_outputs=True,
+    )
+    build = MagicMock(return_value=snapshot)
+    monkeypatch.setattr(
+        diagnostics_module, "build_provider_request_snapshot", build
+    )
+
+    await async_get_config_entry_diagnostics(
+        hass, _entry(_conversation_subentry(data=data))
+    )
+
+    assert build.call_args.kwargs["tools_required"] is expected_tools
 
 
 async def test_diagnostics_ignores_non_conversation_subentries(hass) -> None:
