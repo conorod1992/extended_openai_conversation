@@ -573,7 +573,7 @@ for (const now of [false, true]) {
     const panel = page.locator("extended-openai-management-panel");
     await expect(panel.locator("#guest-now")).toBeVisible();
     await panel.evaluate(host => host._call("guest_mode", "disable"));
-    await page.reload();
+    await page.goto(realFixtureUrl("capabilities/guest-mode"));
     await expect(panel.locator("#guest-now")).toBeVisible();
     const updates = () => page.evaluate(() => window.browserHarness.calls.filter(
       call => call.section === "guest_mode" && call.action === "update",
