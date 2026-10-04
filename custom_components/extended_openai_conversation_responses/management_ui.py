@@ -2405,6 +2405,7 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
             target_user_id=_memory_scope(target),
             expected_revision=message.get("expected_revision"),
             clear_fields=message.get("clear_fields"),
+            source="explicit",
         )
         return {
             "status": "updated",
