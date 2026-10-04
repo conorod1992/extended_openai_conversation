@@ -123,7 +123,7 @@ async def test_async_add_attachments_enforces_count_limit_across_retained_turns(
         HomeAssistantError,
         match=rf"At most {entity.MAX_ATTACHMENT_COUNT} attachments can be sent",
     ):
-        hass = await _add_attachments(
+        await _add_attachments(
             monkeypatch,
             [earlier, object(), later],
             messages,
