@@ -343,7 +343,7 @@ async def test_targeted_broadcast_queues_resolved_target_with_origin_context(
     async def async_send(message: str, **kwargs: Any) -> None:
         calls.append((message, kwargs))
 
-    manager = SimpleNamespace(enabled=True, async_send=async_send)
+    manager = SimpleNamespace(enabled=True, async_send=async_send, resolve_targets=lambda **_: ["assist_satellite.kitchen"])
 
     async def fake_get_manager(_hass):
         return manager
@@ -364,6 +364,7 @@ async def test_targeted_broadcast_queues_resolved_target_with_origin_context(
             Any,
             SimpleNamespace(
                 text="Broadcast to kitchen that dinner is ready",
+                context=SimpleNamespace(user_id=None),
                 language="en-IE",
                 satellite_id="assist_satellite.hall",
                 device_id="device-1",

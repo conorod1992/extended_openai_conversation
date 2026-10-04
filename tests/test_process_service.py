@@ -94,7 +94,14 @@ async def test_process_action_calls_agent_pipeline_and_returns_response(monkeypa
         context=Context(user_id="owner"),
     )
     result = await handler(call)
+    expected_response = intent.IntentResponse(language="en-GB")
+    expected_response.async_set_speech("Processed normally")
     assert result == {
+        "successful": True,
+        "error_code": None,
+        "error_message": None,
+        "continue_conversation": False,
+        "intent_response": expected_response.as_dict(),
         "response": "Processed normally",
         "conversation_id": "existing-id",
         "handled_locally": True,
@@ -225,7 +232,14 @@ async def test_process_action_uses_single_default_agent_and_returns_rule_metadat
         )
     )
 
+    expected_response = intent.IntentResponse(language="fr")
+    expected_response.async_set_speech("Rule handled")
     assert result == {
+        "successful": True,
+        "error_code": None,
+        "error_message": None,
+        "continue_conversation": False,
+        "intent_response": expected_response.as_dict(),
         "response": "Rule handled",
         "conversation_id": "generated-id",
         "handled_locally": True,

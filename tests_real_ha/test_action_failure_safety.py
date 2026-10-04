@@ -17,6 +17,7 @@ from custom_components.extended_openai_conversation_responses.local_intents impo
     CONF_LOCAL_INTENTS_ENABLED,
     LocalIntentResult,
 )
+from homeassistant.auth.const import GROUP_ID_ADMIN
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context
@@ -92,9 +93,14 @@ async def test_origin_only_targeted_broadcast_is_handled_failure(hass, monkeypat
     assert turns[0].successful is False
 
 
-async def _authenticated_say(hass, agent, text):
-    user = MockUser(id="action-user", name="Action User")
-    user.add_to_hass(hass)
+async def _authenticated_say(hass, agent, text, *, is_admin=False):
+    if is_admin:
+        user = await hass.auth.async_create_user(
+            "Action Admin", group_ids=[GROUP_ID_ADMIN]
+        )
+    else:
+        user = MockUser(id="action-user", name="Action User")
+        user.add_to_hass(hass)
     return await conversation.async_converse(
         hass=hass,
         text=text,
@@ -241,7 +247,10 @@ async def test_real_rule_stops_after_backend_failure(
             phrase="run audit",
         )
     )
-    result = await _authenticated_say(hass, agent, "run audit")
+    # The probe is a global service with no entity target, so its caller must
+    # be allowed to authorize targetless actions. Restricted Script callers
+    # are exercised separately by the user-permission acceptance tests.
+    result = await _authenticated_say(hass, agent, "run audit", is_admin=True)
     assert _speech(result, successful=backend == "business") == (
         "Done" if backend == "business" else "Failed"
     )

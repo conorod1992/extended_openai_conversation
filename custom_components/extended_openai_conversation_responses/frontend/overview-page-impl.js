@@ -123,6 +123,7 @@ export function bindOverview(panel, broadcastPromise) {
     .then((module) => module.bindBroadcast(panel, broadcastPromise))
     .catch((err) => {
       if (panel._viewKey?.() !== "overview") return;
+      const host = panel.shadowRoot.querySelector("#broadcast-card");
       if (host) host.innerHTML = `<div class="error" role="alert">Unable to load Broadcast: ${panel._e(err.message || String(err))}</div>`;
     });
 }

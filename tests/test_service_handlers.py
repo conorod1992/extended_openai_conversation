@@ -930,6 +930,11 @@ async def test_process_auto_selection_skips_stale_and_unrelated_registry_entries
 
     assert result == {
         "response": "Hello from the valid agent",
+        "successful": True,
+        "error_code": None,
+        "error_message": None,
+        "continue_conversation": False,
+        "intent_response": {},
         "conversation_id": "conversation-1",
         "handled_locally": False,
     }
