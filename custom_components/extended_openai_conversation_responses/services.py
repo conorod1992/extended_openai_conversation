@@ -74,7 +74,8 @@ from .const import (
 )
 from .guest_mode import async_get_guest_mode
 from .ha_tool_result_compat import tool_result_data
-from .helpers import get_api_mode, get_authenticated_client, get_token_param_for_model
+from .helpers import get_api_mode, get_authenticated_client
+from .model_capabilities import ModelCapabilityError, normalize_output_token_limit
 from .live_subentry_updates import update_live_subentry
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 from .provider_errors import (
@@ -362,6 +363,15 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         try:
             model = call.data["model"]
             api_mode = get_api_mode(call.data[CONF_API_MODE], model)
+            try:
+                token_limit = normalize_output_token_limit(
+                    model, api_mode, call.data["max_tokens"]
+                )
+            except ModelCapabilityError as err:
+                raise HomeAssistantError(str(err)) from err
+            if token_limit is None:
+                raise HomeAssistantError("Output token limit is required")
+            token_param, token_value = token_limit
             image_params = await hass.async_add_executor_job(
                 prepare_image_params, hass, call.data["images"]
             )
@@ -398,7 +408,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 response = await client.responses.create(
                     model=model,
                     input=messages,
-                    max_output_tokens=call.data["max_tokens"],
+                    **{token_param: token_value},
                     store=False,
                 )
                 ensure_successful_responses_result(response)
@@ -421,12 +431,10 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                     api_mode,
                     len(image_params),
                 )
-                token_param = get_token_param_for_model(model)
-                token_kwargs = {token_param: call.data["max_tokens"]}
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    **token_kwargs,
+                    **{token_param: token_value},
                 )
             response_dict: dict = response.model_dump()
             _LOGGER.debug("Image query completed using %s", model)
