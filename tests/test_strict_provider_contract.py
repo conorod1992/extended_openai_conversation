@@ -7,6 +7,11 @@ import pytest
 from tests.strict_provider_contract import validate_request
 
 
+def test_chat_oracle_rejects_role_only_assistant():
+    with pytest.raises(AssertionError, match="neither content nor calls"):
+        validate_request("/v1/chat/completions", {"messages": [{"role": "assistant"}]})
+
+
 def _exchange(responses):
     if responses:
         return "/v1/responses", [

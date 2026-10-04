@@ -26,6 +26,9 @@ def validate_request(
         if responses and kind == "function_call":
             calls = [item["call_id"]]
         elif not responses and kind == "assistant":
+            assert (
+                "content" in item or item.get("tool_calls") or item.get("function_call")
+            ), "assistant has neither content nor calls"
             assert not pending, "assistant interrupted unresolved exchange"
             calls = [call["id"] for call in item.get("tool_calls", [])]
         else:

@@ -352,6 +352,10 @@ def _convert_content_to_param(
                 }
             )
         elif content.role == "assistant":
+            # Responses reasoning/hosted-tool records have no Chat representation.
+            # Keep their native items in retained history for future Responses turns.
+            if not content.content and not content.tool_calls:
+                continue
             msg: ChatCompletionAssistantMessageParam = {"role": "assistant"}
             if content.content:
                 msg["content"] = content.content
@@ -684,6 +688,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if chat_log.content
                 else ""
             )
+            # Responses omits an empty primary prompt. Track its serialized slot
+            # separately from summary system messages and user/attachment items.
+            primary_system_item_present = api_mode != API_MODE_RESPONSES or bool(
+                base_system_prompt
+            )
             ha_prompt_applied = False
             draft_content_ids: set[int] = set()
             observed_input_tokens = 0
@@ -777,13 +786,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                     # Keep attachments/history intact while updating the system item in
                     # both provider formats. This is the actual diagnostic input too.
-                    messages[0] = (
+                    primary_items = (
                         _convert_content_to_responses_param([chat_log.content[0]])
                         if api_mode == API_MODE_RESPONSES
                         else _convert_content_to_param(
                             [chat_log.content[0]], shorten_tool_call_id
                         )
-                    )[0]
+                    )
+                    if primary_system_item_present:
+                        if primary_items:
+                            messages[0] = primary_items[0]
+                        else:
+                            messages.pop(0)
+                    elif primary_items:
+                        messages.insert(0, primary_items[0])
+                    primary_system_item_present = bool(primary_items)
 
                 _LOGGER.info(
                     "Sending provider request for %s using %s with %d input items",
