@@ -315,7 +315,6 @@ async def archive_list_page(
         scope_id,
         safe_offset,
         safe_limit,
-        dt_util.DEFAULT_TIME_ZONE,
     )
 
 
@@ -427,6 +426,7 @@ async def archive_search_page(
         end_date,
         safe_offset,
         safe_limit,
+        dt_util.DEFAULT_TIME_ZONE,
     )
 
 
