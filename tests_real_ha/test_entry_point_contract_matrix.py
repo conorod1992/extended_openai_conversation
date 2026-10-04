@@ -120,13 +120,17 @@ async def test_invalid_request_cannot_publish_through_any_setup_writer(
         for key, item in entry.subentries.items()
     }
     client = entry.runtime_data
-    if route == "save":
-        rejected = await _write(command, route, changes, before["revision"])
-        assert rejected["valid"] is False
-    else:
-        with pytest.raises(HomeAssistantError):
-            await _write(command, route, changes, before["revision"])
-    await hass.async_block_till_done()
+    try:
+        if route == "save":
+            rejected = await _write(command, route, changes, before["revision"])
+            assert rejected["valid"] is False
+        else:
+            with pytest.raises(HomeAssistantError):
+                await _write(command, route, changes, before["revision"])
+    finally:
+        # A deliberately broken writer can start a reload before rejection.
+        # Finish its tasks even when an assertion fails (mutation sensitivity).
+        await hass.async_block_till_done()
     assert {
         key: (item.title, dict(item.data)) for key, item in entry.subentries.items()
     } == original
