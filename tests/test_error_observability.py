@@ -315,7 +315,11 @@ async def test_quiet_hours_apply_and_restore_failures_retain_context(
         }
     }
     await manager._async_restore_locked()
-    assert manager._active is None
+    assert manager._active["controls"][entity_id] == {
+        "kind": kind, "original_value": original, "quiet_value": quiet,
+        "restoration_pending": True,
+    }
+    assert "ownership=retained" in caplog.text
     assert "operation=apply" in caplog.text and "operation=restore" in caplog.text
     assert f"control={kind}" in caplog.text and "RuntimeError" in caplog.text
     assert SECRET not in caplog.text
