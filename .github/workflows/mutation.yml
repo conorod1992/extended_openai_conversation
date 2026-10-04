@@ -14,6 +14,7 @@ on:
           - ha-permissions
           - request-rules
           - function-groups
+          - contract-sensitivity
       target:
         description: Optional Mutmut target override
         required: false
@@ -39,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        campaign: ${{ fromJSON(github.event_name == 'schedule' && '["function-tools","guest-security","ha-permissions","request-rules","function-groups"]' || format('["{0}"]', inputs.campaign)) }}
+        campaign: ${{ fromJSON(github.event_name == 'schedule' && '["function-tools","guest-security","ha-permissions","request-rules","function-groups","contract-sensitivity"]' || format('["{0}"]', inputs.campaign)) }}
 
     steps:
       - name: Checkout repository
@@ -82,7 +83,12 @@ jobs:
           PY
           pip install "mutmut==3.7.0"
 
+      - name: Install transitive dependencies for genuine HA contract tests
+        if: matrix.campaign == 'contract-sensitivity'
+        run: python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+
       - name: Run baseline and targeted mutation campaign
+        if: matrix.campaign != 'contract-sensitivity'
         env:
           CAMPAIGN: ${{ matrix.campaign }}
           TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
@@ -91,8 +97,21 @@ jobs:
           python scripts/run_mutation_campaign.py "$CAMPAIGN" --target "$TARGET" \
             2>&1 | tee "mutation-${CAMPAIGN}.log"
 
+      - name: Prove critical contract test sensitivity
+        if: matrix.campaign == 'contract-sensitivity'
+        run: python scripts/run_contract_sensitivity.py
+
+      - name: Upload contract sensitivity evidence
+        if: always() && matrix.campaign == 'contract-sensitivity'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: contract-sensitivity-evidence
+          path: contract-sensitivity-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload mutation diagnostics
-        if: always()
+        if: always() && matrix.campaign != 'contract-sensitivity'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mutation-${{ matrix.campaign }}-diagnostics

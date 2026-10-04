@@ -219,21 +219,23 @@ async def test_unavailable_quiet_hours_controls_restore_after_return(hass):
     _install_control_services(hass)
     start, end = _active_window()
     manager = await async_get_quiet_hours(hass)
-    await manager.async_update_config({"enabled": True, "start": start, "end": end, "max_volume": 0.2, "wake_sound": "off"})
-    hass.states.async_set(media, "unavailable", {"volume_level": 0.2})
-    hass.states.async_set(wake, "unavailable")
-    await manager.async_set_enabled(False)
-    assert set(manager.active["controls"]) == {media, wake}
-    assert all(item["restoration_pending"] for item in manager.active["controls"].values())
-    hass.states.async_set(media, "idle", {"volume_level": 0.2})
-    hass.states.async_set(wake, "off")
-    await manager.async_reconcile()
-    assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.6)
-    assert hass.states.get(wake).state == "on"
-    assert manager.active is None
-    assert not manager._unsubscribers
-    await manager.async_shutdown()
-    await hass.async_block_till_done()
+    try:
+        await manager.async_update_config({"enabled": True, "start": start, "end": end, "max_volume": 0.2, "wake_sound": "off"})
+        hass.states.async_set(media, "unavailable", {"volume_level": 0.2})
+        hass.states.async_set(wake, "unavailable")
+        await manager.async_set_enabled(False)
+        assert set(manager.active["controls"]) == {media, wake}
+        assert all(item["restoration_pending"] for item in manager.active["controls"].values())
+        hass.states.async_set(media, "idle", {"volume_level": 0.2})
+        hass.states.async_set(wake, "off")
+        await manager.async_reconcile()
+        assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.6)
+        assert hass.states.get(wake).state == "on"
+        assert manager.active is None
+        assert not manager._unsubscribers
+    finally:
+        await manager.async_shutdown()
+        await hass.async_block_till_done()
 
 
 @pytest.mark.asyncio
