@@ -35,7 +35,7 @@ from tests_real_ha.test_entry_point_contract_matrix import _contract_agent
 async def test_period_rollover_keeps_recorder_sum_and_allows_corrections(
     hass, freezer, period, boundary, reload_across_boundary
 ):
-    hass.config.set_time_zone("Europe/Dublin")
+    await hass.config.async_set_time_zone("Europe/Dublin")
     boundary = dt_util.parse_datetime(boundary)
     start = boundary - timedelta(minutes=20)
     freezer.move_to(start)
