@@ -342,7 +342,7 @@ async def test_settings_update_returns_snapshot_and_mutates_canonical_subentry(
 
     snapshot = await _raw_call(
         client, entry_id=entry.entry_id, subentry_id=subentry.subentry_id,
-        section="settings", action="get",
+        section="configuration", action="get",
     )
     assert snapshot["success"] is True
     response = await _raw_call(
