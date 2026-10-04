@@ -64,8 +64,8 @@ def test_convert_content_to_param_covers_roles_tools_and_shortened_ids() -> None
     assert len(messages) == 4
 
 
-def test_convert_content_to_param_keeps_unshortened_ids_and_empty_assistant() -> None:
-    """Default conversion keeps provider IDs and permits content-free assistants."""
+def test_chat_conversion_keeps_ids_and_skips_empty_assistant() -> None:
+    """Default conversion keeps provider IDs and omits unsupported empty records."""
     messages = entity._convert_content_to_param(
         [
             SimpleNamespace(
@@ -82,7 +82,6 @@ def test_convert_content_to_param_keeps_unshortened_ids_and_empty_assistant() ->
     )
 
     assert messages == [
-        {"role": "assistant"},
         {
             "role": "tool",
             "tool_call_id": "provider-call-id",
@@ -231,6 +230,9 @@ def test_convert_content_to_responses_param_ignores_empty_non_native_content(
     monkeypatch.setattr(entity.conversation, "UserContent", FakeUserContent)
     monkeypatch.setattr(entity.conversation, "AssistantContent", FakeAssistantContent)
 
-    assert entity._convert_content_to_responses_param(
-        [FakeUserContent(), FakeAssistantContent()]
-    ) == []
+    assert (
+        entity._convert_content_to_responses_param(
+            [FakeUserContent(), FakeAssistantContent()]
+        )
+        == []
+    )
