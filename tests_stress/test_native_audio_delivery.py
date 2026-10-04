@@ -22,7 +22,7 @@ from pytest_homeassistant_custom_component.common import (
     mock_platform,
 )
 
-from homeassistant.components import stt
+from homeassistant.components import conversation, stt
 from homeassistant.components.assist_pipeline.pipeline import KEY_ASSIST_PIPELINE
 from homeassistant.components.assist_satellite.entity import (
     AssistSatelliteConfiguration,
@@ -698,9 +698,7 @@ async def test_responses_native_audio_executes_tool_once_and_next_voice_turn_is_
             ),
             15,
         )
-        assert not [
-            event for event in satellite.events if event.type.value == "error"
-        ]
+        assert not [event for event in satellite.events if event.type.value == "error"]
 
     await run_once()
     assert effects == [("light", "turn_off", {"entity_id": [entity_id]})]
@@ -722,8 +720,16 @@ async def test_responses_native_audio_executes_tool_once_and_next_voice_turn_is_
     assert effects == [("light", "turn_off", {"entity_id": [entity_id]})]
     assert tts.messages == ["Voice action complete", "Follow-up voice healthy"]
     assert len(wire.requests) == 3
-    follow_up = json.dumps(wire.requests[2]["body"])
-    assert "responses-audio-action" not in follow_up
+    follow_up = wire.requests[2]["body"]["input"]
+    historical_calls = [
+        item for item in continuation["input"] if item.get("type") == "function_call"
+    ]
+    follow_up_calls = [
+        item for item in follow_up if item.get("type") == "function_call"
+    ]
+    assert len(historical_calls) == len(follow_up_calls) == 1
+    assert follow_up_calls == historical_calls
+    assert follow_up_calls[0]["call_id"] == "responses-audio-action"
     assert satellite.state == AssistSatelliteState.RESPONDING
     satellite.tts_response_finished()
     assert satellite.state == AssistSatelliteState.IDLE

@@ -16,7 +16,10 @@ from unittest.mock import AsyncMock, patch
 
 import yaml
 
-from tests_real_ha.process_harness import run_python_child
+from tests_real_ha.process_harness import (
+    ensure_staged_custom_components_package,
+    run_python_child,
+)
 
 DOMAIN = "extended_openai_conversation_responses"
 _CHILD_PHASE = "DELAYED_TOOL_PROCESS_PHASE"
@@ -80,6 +83,7 @@ def _assert_source_component(config_dir: Path) -> None:
 def _stage_component(source: Path, destination: Path) -> None:
     """Stage the integration while excluding unrelated heavyweight HA dependencies."""
     shutil.copytree(source, destination)
+    ensure_staged_custom_components_package(destination.parent.parent)
     manifest_path = destination / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     # This subprocess regression is specifically about delayed-tool persistence across

@@ -761,7 +761,6 @@ def test_optional_ai_task_wire_round_trips_are_mandatory(nested, mode):
     assert node not in policy.get("allowances", {})
 
 
-
 def test_native_request_rule_semantics_are_mandatory():
     policy = json.loads(CONTRACT.read_text())
     cases = expected_cases(policy, "request-rules")
@@ -774,7 +773,6 @@ def test_native_request_rule_semantics_are_mandatory():
         nodes = [node for node in cases if node.startswith(prefix + name + "[")]
         assert len(nodes) == count
         assert not set(nodes) & policy.get("allowances", {}).keys()
-
 
 
 def test_frontend_acknowledged_saves_are_mandatory():
@@ -826,3 +824,22 @@ def test_native_history_and_automation_lifecycles_are_mandatory():
     assert minimums["native_automation_layout_cases"] == 4
     assert minimums["native_automation_load_rejections"] == 2
     assert minimums["native_disabled_automation_loads"] == 1
+
+
+def test_uninterrupted_process_soak_is_only_selected_for_long_lifetime():
+    policy = json.loads(CONTRACT.read_text())
+    node = (
+        "tests_stress/test_process_resource_soak.py::"
+        "test_booted_process_uninterrupted_runtime_survives_populated_lifetime"
+    )
+    assert node not in expected_cases(policy, "runtime")
+    assert node in expected_cases(policy, "long-lifetime")
+
+
+def test_staged_process_import_regression_is_mandatory():
+    policy = json.loads(CONTRACT.read_text())
+    node = (
+        "tests_stress/test_process_harness_contract.py::"
+        "test_staged_components_are_a_regular_package"
+    )
+    assert node in expected_cases(policy, "lifecycle")

@@ -294,7 +294,9 @@ def _kill(config, kind):
         process = subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve())],
             cwd=config,
-            env=child_process_env(__file__, _env(config, "crash", kind)),
+            env=child_process_env(
+                __file__, _env(config, "crash", kind), working_directory=config
+            ),
             stdout=output,
             stderr=subprocess.STDOUT,
         )
