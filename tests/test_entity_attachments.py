@@ -103,6 +103,78 @@ async def test_async_add_attachments_enforces_count_limit(
 
 
 @pytest.mark.asyncio
+async def test_async_add_attachments_enforces_count_limit_across_retained_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The request-wide attachment count cannot be bypassed via conversation history."""
+    earlier = _FakeUserContent(
+        attachments=[_attachment("unused")] * 6
+    )
+    later = _FakeUserContent(
+        attachments=[_attachment("unused")] * 5
+    )
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": "second"},
+    ]
+
+    with pytest.raises(
+        HomeAssistantError,
+        match=rf"At most {entity.MAX_ATTACHMENT_COUNT} attachments can be sent",
+    ):
+        hass = await _add_attachments(
+            monkeypatch,
+            [earlier, object(), later],
+            messages,
+            "chat_completions",
+        )
+
+    assert messages[0]["content"] == "first"
+    assert messages[-1]["content"] == "second"
+
+
+@pytest.mark.asyncio
+async def test_async_add_attachments_carries_byte_budget_across_retained_turns(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A later historical attachment sees bytes already consumed by earlier turns."""
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    first.write_bytes(b"x")
+    second.write_bytes(b"x")
+    totals: list[int] = []
+
+    def bounded_read(path, total_bytes=0):
+        totals.append(total_bytes)
+        if total_bytes + 6 > 10:
+            raise HomeAssistantError("combined request limit")
+        return b"x" * 6
+
+    monkeypatch.setattr(entity, "read_bounded_local_file", bounded_read)
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": "second"},
+    ]
+
+    with pytest.raises(HomeAssistantError, match="combined request limit"):
+        await _add_attachments(
+            monkeypatch,
+            [
+                _FakeUserContent(attachments=[_attachment(first, "image/png")]),
+                object(),
+                _FakeUserContent(attachments=[_attachment(second, "image/png")]),
+            ],
+            messages,
+            "chat_completions",
+        )
+
+    assert totals == [0, 6]
+
+
+@pytest.mark.asyncio
 async def test_async_add_attachments_builds_responses_image_and_pdf(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
