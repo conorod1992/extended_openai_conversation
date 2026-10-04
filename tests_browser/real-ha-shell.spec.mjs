@@ -62,11 +62,11 @@ test.describe("nightly ownership", () => {
           return result;
         };
       }, {phase, yaml, alpha});
-      await panel.locator("#tool-save").click();
+      await panel.locator(phase === "validation" ? "#tool-validate" : "#tool-save").click();
       await expect.poll(() => page.evaluate(() => Boolean(window.__ownedHeld))).toBe(true);
       const held = await page.evaluate(() => window.__ownedHeld);
       if (phase === "validation") { expect(held.message.yaml).toBe(yaml); expect(held.result.valid).toBe(true); }
-      else { expect(held.message.tool.function.value_template).toBe("ALPHA_SUBMITTED_IMPLEMENTATION"); expect(held.result.functions.some(t => t.spec.name === renamed)).toBe(true); }
+      else { expect(JSON.parse(held.message.yaml).function.value_template).toBe("ALPHA_SUBMITTED_IMPLEMENTATION"); expect(held.result.functions.some(t => t.spec.name === renamed)).toBe(true); }
       await panel.locator("#tool-cancel").click();
       await panel.locator(`[data-tool-key="${beta}"] .edit-tool`).click();
       const betaYaml = JSON.stringify(tool(beta, "BETA_UNSAVED_DRAFT"));
@@ -902,7 +902,7 @@ test("long native Function YAML scrolls inside the editor while dialog actions s
   await expect(dialog).toHaveJSProperty("open", false);
 });
 
-test("genuine HA YAML keyboard edits validate before one persisted save", async ({context, page}) => {
+test("genuine HA YAML keyboard saves reject invalid YAML before persisting the correction", async ({context, page}) => {
   await authenticate(context);
   let panel = await openFunctionsFromOverview(page);
   await panel.evaluate((element) => {
@@ -939,7 +939,11 @@ test("genuine HA YAML keyboard edits validate before one persisted save", async 
   await expect(dialog).toHaveJSProperty("open", true);
   await expect(panel.locator("#tool-error")).toHaveClass(/invalid/);
   await expect(panel.locator(".tool-card").filter({hasText: "real_shell_keyboard_tool"})).toHaveCount(0);
-  expect(await page.evaluate(() => window.__keyboardToolSaves)).toHaveLength(0);
+  const rejectedSaves = await page.evaluate(() => window.__keyboardToolSaves);
+  expect(rejectedSaves).toHaveLength(1);
+  expect(rejectedSaves[0].yaml).toBe(yaml("[unterminated"));
+  const persistedAfterRejection = await panel.evaluate((element) => element._call("configuration", "get"));
+  expect(persistedAfterRejection.config.functions.some((tool) => tool.spec?.name === "real_shell_keyboard_tool")).toBe(false);
 
   await replaceThroughKeyboard(yaml("Final corrected keyboard edit"));
   await expect(panel.locator("#tool-error")).toContainText("YAML changed");
@@ -948,7 +952,10 @@ test("genuine HA YAML keyboard edits validate before one persisted save", async 
   let card = panel.locator(".tool-card").filter({hasText: "real_shell_keyboard_tool"});
   await expect(card).toContainText("Final corrected keyboard edit");
   await expect(card).not.toContainText("First valid keyboard edit");
-  expect(await page.evaluate(() => window.__keyboardToolSaves)).toHaveLength(1);
+  const saves = await page.evaluate(() => window.__keyboardToolSaves);
+  expect(saves).toHaveLength(2);
+  expect(saves[1].yaml).toBe(yaml("Final corrected keyboard edit"));
+  expect(saves[1]).not.toHaveProperty("tool");
 
   panel = await openFunctionsFromOverview(page);
   card = panel.locator(".tool-card").filter({hasText: "real_shell_keyboard_tool"});

@@ -106,7 +106,7 @@ test("malformed Function Tool YAML stays editable and cannot mutate persisted to
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
   const malformed = "spec:\n  description: Missing name on purpose\nfunction:\n  type: script\n  sequence: []\n";
   await panel.locator("#tool-yaml").fill(malformed);
-  await returnNextManagementResult(page, "tools", "validate_yaml", {
+  await returnNextManagementResult(page, "tools", "save", {
     valid: false,
     errors: {"functions[0].spec.name": "is required"},
   });
