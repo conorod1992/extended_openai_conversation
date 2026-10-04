@@ -84,7 +84,8 @@ async def test_live_save_preserves_real_runtime_and_next_provider_request(
     )
     assert _speech(result) == "Saved settings applied"
     for key, value in settings.items():
-        assert wire.requests[0]["body"][key] == value
+        wire_key = "max_completion_tokens" if key == "max_tokens" else key
+        assert wire.requests[0]["body"][wire_key] == value
         assert readback["config"][key] == value
     authenticate.assert_not_awaited()
 
@@ -120,8 +121,50 @@ async def test_setup_owned_changes_still_reload_the_real_agent(hass, changes):
     assert replacement is not None and replacement is not agent
     assert replacement.entry.runtime_data is not agent._client
     if "title" in changes:
-        assert replacement.name == changes["title"]
+        assert replacement.device_info["name"] == changes["title"]
     else:
         assert (
             replacement.subentry.data["chat_model"] == changes["config"]["chat_model"]
         )
+        assert replacement.device_info["model"] == changes["config"]["chat_model"]
+
+
+async def test_entry_credential_update_after_live_save_still_reauthenticates(
+    hass, monkeypatch
+):
+    agent = await _live_agent(hass)
+    entry = agent.entry
+    owner = await hass.auth.async_create_user(
+        "Credential owner", group_ids=["system-admin"]
+    )
+    base = {
+        "section": "configuration",
+        "entry_id": entry.entry_id,
+        "subentry_id": agent.subentry.subentry_id,
+    }
+    before = await async_management_command(
+        hass, owner.id, True, {**base, "action": "get"}
+    )
+    authenticate = AsyncMock(wraps=integration.get_authenticated_client)
+    monkeypatch.setattr(integration, "get_authenticated_client", authenticate)
+    saved = await async_management_command(
+        hass,
+        owner.id,
+        True,
+        {
+            **base,
+            "action": "save",
+            "revision": before["revision"],
+            "config": {"max_tokens": 777},
+        },
+    )
+    assert saved["valid"] and saved["_performance"]["live_runtime_update"]
+    await hass.async_block_till_done()
+    authenticate.assert_not_awaited()
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, "api_key": "sk-changed-acceptance-only"}
+    )
+    await hass.async_block_till_done()
+    authenticate.assert_awaited_once()
+    replacement = conversation.async_get_agent(hass, entry.entry_id)
+    assert replacement is not None and replacement is not agent
