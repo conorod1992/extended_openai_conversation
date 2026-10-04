@@ -241,3 +241,8 @@ See [AI Task](features/ai-task.md).
 ## Refreshing model data
 
 Model capability metadata can be refreshed independently of the integration. Use **Update model data** or **Use bundled model data** under Model parameters. See [Model data catalogue](features/model-data.md) for the automatic update cadence, fallback, and storage details.
+
+
+### Agent diagnostics for text-only configurations
+
+The agent test sends a minimal text request. It includes a no-op Function schema only when the agent requires Function Calling, with tool execution disabled. Text-only configurations omit Function schemas and report Function Calling as **Skipped — Not required by this agent**. A failed text probe does not report a Function Calling failure.
