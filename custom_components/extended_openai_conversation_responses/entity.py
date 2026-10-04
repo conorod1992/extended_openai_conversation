@@ -1135,6 +1135,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         api_mode: str,
     ) -> None:
         """Reconstruct attachments for every retained user turn."""
+        attachment_count = sum(
+            len(getattr(content, "attachments", None) or [])
+            for content in chat_log.content
+            if isinstance(content, conversation.UserContent)
+        )
+        if attachment_count > MAX_ATTACHMENT_COUNT:
+            raise HomeAssistantError(
+                f"At most {MAX_ATTACHMENT_COUNT} attachments can be sent in one request"
+            )
+        total_bytes = 0
         user_messages = iter(
             message
             for message in messages
@@ -1160,20 +1170,29 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             "content": getattr(content, "content", "") or "",
                         }
                         messages.append(message)
-                    await ExtendedOpenAIBaseLLMEntity._async_prepare_user_attachments(
-                        self, content, message, api_mode
+                    total_bytes = await ExtendedOpenAIBaseLLMEntity._async_prepare_user_attachments(
+                        self,
+                        content,
+                        message,
+                        api_mode,
+                        total_bytes=total_bytes,
                     )
 
     async def _async_prepare_user_attachments(
-        self, user_content: Any, message: dict[str, Any], api_mode: str
-    ) -> None:
-        """Read one turn's files once for the current provider invocation."""
+        self,
+        user_content: Any,
+        message: dict[str, Any],
+        api_mode: str,
+        *,
+        total_bytes: int = 0,
+    ) -> int:
+        """Read one turn's files once while enforcing the whole-request byte budget."""
         messages = [message]
         last_content = user_content
         if not isinstance(last_content, conversation.UserContent) or not getattr(
             last_content, "attachments", None
         ):
-            return
+            return total_bytes
 
         attachment_items = list(last_content.attachments or [])
         if len(attachment_items) > MAX_ATTACHMENT_COUNT:
@@ -1181,9 +1200,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 f"At most {MAX_ATTACHMENT_COUNT} attachments can be sent in one request"
             )
 
-        def prepare_attachments() -> list[dict[str, Any]]:
+        def prepare_attachments() -> tuple[list[dict[str, Any]], int]:
             prepared: list[dict[str, Any]] = []
-            total_bytes = 0
+            prepared_bytes = total_bytes
             for attachment in attachment_items:
                 path = Path(attachment.path)
                 if not path.exists():
@@ -1191,8 +1210,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if not path.is_file():
                     raise HomeAssistantError(f"`{path}` is not a file")
 
-                content = read_bounded_local_file(path, total_bytes)
-                total_bytes += len(content)
+                content = read_bounded_local_file(path, prepared_bytes)
+                prepared_bytes += len(content)
 
                 mime_type = attachment.mime_type or mimetypes.guess_type(path)[0]
                 if not mime_type:
@@ -1232,9 +1251,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         "supports image and PDF attachments. "
                         f"Unsupported attachment `{path}` ({mime_type})."
                     )
-            return prepared
+            return prepared, prepared_bytes
 
-        attachments = await self.hass.async_add_executor_job(prepare_attachments)
+        attachments, total_bytes = await self.hass.async_add_executor_job(
+            prepare_attachments
+        )
         last_message = next(
             (
                 message
@@ -1269,6 +1290,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 *([{"type": "text", "text": text_content}] if text_content else []),
                 *attachments,
             ]
+        return total_bytes
 
     async def _transform_chat_stream(
         self,
