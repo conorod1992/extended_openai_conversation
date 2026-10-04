@@ -890,7 +890,20 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             plain = speech.get("plain", {})
             if isinstance(plain, Mapping):
                 response_text = str(plain.get("speech", ""))
+        error_code = getattr(result.response, "error_code", None)
+        structured = (
+            result.response.as_dict()
+            if callable(getattr(result.response, "as_dict", None))
+            else {}
+        )
         response: dict[str, Any] = {
+            "successful": error_code is None,
+            "error_code": getattr(error_code, "value", error_code),
+            "error_message": response_text if error_code is not None else None,
+            "continue_conversation": bool(
+                getattr(result, "continue_conversation", False)
+            ),
+            "intent_response": structured,
             "response": response_text,
             "conversation_id": result.conversation_id,
             "handled_locally": bool(metadata.get("handled_locally")),

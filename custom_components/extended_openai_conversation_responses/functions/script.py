@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import logging
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.components.script import config as script_config
 from homeassistant.core import HomeAssistant
@@ -12,10 +12,76 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm, trace
 from homeassistant.helpers.script import Script, async_validate_actions_config
 
+from .. import ha_actions
 from ..const import DOMAIN
 from .base import Function, copy_runtime_function_config
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class _AuthorizedScriptServices:
+    """Apply EOAI policy only to calls made by this Script and its nested runners."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        function: Function,
+        exposed_entities: list[dict[str, Any]],
+    ) -> None:
+        self._hass = hass
+        self._function = function
+        self._exposed_entities = exposed_entities
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._hass.services, name)
+
+    async def async_call(
+        self,
+        domain: str,
+        service: str,
+        service_data: Any = None,
+        blocking: bool = False,
+        context: Any = None,
+        target: Any = None,
+        return_response: bool = False,
+    ) -> Any:
+        targets = await ha_actions.async_authorize_ha_action(
+            self._hass,
+            domain,
+            service,
+            data=service_data,
+            target=target,
+            context=context,
+        )
+        self._function.validate_entity_ids(
+            self._hass, sorted(targets), self._exposed_entities
+        )
+        # Preserve HA's response variables, blocking and cancellation semantics.
+        return await self._hass.services.async_call(
+            domain,
+            service,
+            service_data,
+            blocking=blocking,
+            context=context,
+            target=target,
+            return_response=return_response,
+        )
+
+
+class _AuthorizedScriptHass:
+    """A Script-local view of HA; no global service method is patched."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        function: Function,
+        exposed_entities: list[dict[str, Any]],
+    ) -> None:
+        self._hass = hass
+        self.services = _AuthorizedScriptServices(hass, function, exposed_entities)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._hass, name)
 
 
 class ScriptFunction(Function):
@@ -41,7 +107,7 @@ class ScriptFunction(Function):
             copy_runtime_function_config(function_config["sequence"]),
         )
         script = Script(
-            hass,
+            cast(HomeAssistant, _AuthorizedScriptHass(hass, self, exposed_entities)),
             sequence,
             DOMAIN,
             DOMAIN,

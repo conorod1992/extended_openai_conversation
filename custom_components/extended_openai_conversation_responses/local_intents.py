@@ -107,9 +107,19 @@ async def _async_try_targeted_broadcast(
     if parsed is None:
         return None
     target, message = parsed
+    from .intercom_permissions import async_authorized_broadcast_targets
+
+    targets = await async_authorized_broadcast_targets(
+        hass,
+        manager,
+        context=user_input.context,
+        **target,
+        origin_entity_id=getattr(user_input, "satellite_id", None),
+        origin_device_id=getattr(user_input, "device_id", None),
+    )
     await manager.async_send(
         message,
-        **target,
+        entity_ids=targets,
         origin_entity_id=getattr(user_input, "satellite_id", None),
         origin_device_id=getattr(user_input, "device_id", None),
         source="local_voice",

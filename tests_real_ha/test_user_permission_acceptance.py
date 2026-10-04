@@ -216,3 +216,62 @@ async def test_restricted_user_cannot_bypass_ha_entity_or_management_permissions
 
     assert response["success"] is False
     assert "Administrator permission is required" in str(response)
+
+async def test_script_function_enforces_control_in_nested_rendered_actions(hass):
+    """The real Script runner applies caller permission before every nested call."""
+    from types import SimpleNamespace
+    import pytest
+    from homeassistant.exceptions import HomeAssistantError
+    from custom_components.extended_openai_conversation_responses.functions.script import ScriptFunction
+
+    user = _restricted_user()
+    user.add_to_hass(hass)
+    hass.states.async_set(_ALLOWED_ENTITY, "on")
+    hass.states.async_set(_DENIED_ENTITY, "on")
+    calls = []
+    async def turn_off(call):
+        calls.append((call.data["entity_id"], call.context.user_id))
+    hass.services.async_register("light", "turn_off", turn_off)
+    function = ScriptFunction()
+    config = function.validate_schema({"type": "script", "sequence": [
+        {"choose": [{"conditions": "{{ true }}", "sequence": [
+            {"repeat": {"count": 1, "sequence": [
+                {"action": "light.turn_off", "target": {"entity_id": "{{ allowed }}"}},
+                {"action": "light.turn_off", "target": {"entity_id": "{{ denied }}"}},
+            ]}}
+        ]}]}
+    ]})
+    with pytest.raises(HomeAssistantError):
+        await function.execute(hass, config, {"allowed": _ALLOWED_ENTITY, "denied": _DENIED_ENTITY},
+            SimpleNamespace(context=Context(user_id=user.id)),
+            [{"entity_id": _ALLOWED_ENTITY}, {"entity_id": _DENIED_ENTITY}])
+    assert len(calls) == 1
+    assert _ALLOWED_ENTITY in calls[0][0]
+    assert calls[0][1] == user.id
+    await hass.async_block_till_done()
+
+
+async def test_script_function_preserves_service_response_and_checks_exposure(hass):
+    from types import SimpleNamespace
+    import pytest
+    from homeassistant.core import SupportsResponse
+    from homeassistant.exceptions import HomeAssistantError
+    from custom_components.extended_openai_conversation_responses.functions.script import ScriptFunction
+
+    hass.states.async_set(_ALLOWED_ENTITY, "on")
+    calls = []
+    async def lookup(call):
+        calls.append(call.data["entity_id"])
+        return {"value": "returned response"}
+    hass.services.async_register("light", "lookup", lookup, supports_response=SupportsResponse.ONLY)
+    function = ScriptFunction()
+    config = function.validate_schema({"type": "script", "sequence": [
+        {"action": "light.lookup", "target": {"entity_id": _ALLOWED_ENTITY}, "response_variable": "answer"},
+        {"variables": {"_function_result": "{{ answer.value }}"}},
+    ]})
+    result = await function.execute(hass, config, {}, SimpleNamespace(context=Context()), [{"entity_id": _ALLOWED_ENTITY}])
+    assert result == "returned response"
+    with pytest.raises(HomeAssistantError):
+        await function.execute(hass, config, {}, SimpleNamespace(context=Context()), [])
+    assert len(calls) == 1
+    await hass.async_block_till_done()

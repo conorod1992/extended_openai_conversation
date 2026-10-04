@@ -22,7 +22,7 @@ Use native functions when the integration already provides the operation you nee
 
 ## `script`
 
-A script function executes a Home Assistant action sequence and can interpolate model-provided arguments.
+A script function executes a Home Assistant action sequence and can interpolate model-provided arguments. Its service calls, including inline nested sequences, check the authenticated caller's CONTROL permission and EOAI entity exposure before dispatch. Home Assistant service response variables remain available.
 
 Example: add an item to Home Assistant's shopping list.
 

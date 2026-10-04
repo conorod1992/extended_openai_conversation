@@ -67,6 +67,31 @@ async def async_call_ha_action(
     Request Rules pass through this backend-enforced policy seam.
     """
     context = context or get_active_ha_context()
+    await async_authorize_ha_action(
+        hass, domain, service, data=data, target=target, context=context
+    )
+    return await _async_call_ha_action_unchecked(
+        hass,
+        domain,
+        service,
+        data=data,
+        target=target,
+        blocking=blocking,
+        context=context,
+    )
+
+
+async def async_authorize_ha_action(
+    hass: HomeAssistant,
+    domain: str,
+    service: str,
+    *,
+    data: Mapping[str, Any] | None = None,
+    target: Mapping[str, Any] | None = None,
+    context: Context | None = None,
+) -> set[str]:
+    """Authorize the exact dispatch without replacing native service responses."""
+    context = context or get_active_ha_context()
     entity_ids = _resolve_target_entity_ids(hass, data, target)
     target_identity = _target_identity(hass, entity_ids)
     service_identity = _service_identity(hass, domain, service)
@@ -95,15 +120,7 @@ async def async_call_ha_action(
     if revalidator := _ACTIVE_ACTION_TARGET_REVALIDATOR.get():
         revalidator(hass, entity_ids)
 
-    return await _async_call_ha_action_unchecked(
-        hass,
-        domain,
-        service,
-        data=data,
-        target=target,
-        blocking=blocking,
-        context=context,
-    )
+    return entity_ids
 
 
 async def _async_call_ha_action_unchecked(

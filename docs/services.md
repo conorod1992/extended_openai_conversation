@@ -30,6 +30,8 @@ response_variable: result
 
 The action also accepts `conversation_id`, `device_id`, `satellite_id`, and `language` where relevant. `agent_id` can be omitted when only one integration agent is available.
 
+The response retains `response`, `conversation_id`, and local-handling metadata. It also returns `successful`, `error_code`, `error_message`, `continue_conversation`, and the structured `intent_response`. Automations can check `successful` before using the answer and honor `continue_conversation` for follow-up turns.
+
 ## Update provider settings
 
 `change_config` accepts the config entry and any connection fields to update, such as `api_key`, `base_url`, `api_version`, `organization`, `skip_authentication`, or `api_provider`. The updated connection is validated before it is saved; failed validation leaves the existing settings in place. Prefer selecting the config entry from the action UI rather than copying an ID.

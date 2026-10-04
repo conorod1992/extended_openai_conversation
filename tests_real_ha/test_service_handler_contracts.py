@@ -79,6 +79,11 @@ async def test_process_service_success_preserves_direct_request_contract(
 
     assert response == {
         "response": "Kitchen light is on",
+        "successful": True,
+        "error_code": None,
+        "error_message": None,
+        "continue_conversation": False,
+        "intent_response": {},
         "conversation_id": "conversation-next",
         "handled_locally": True,
         "matched_rule": "light-state",
@@ -322,3 +327,24 @@ async def test_guest_mode_services_dispatch_registered_actions(
     )
     assert disabled == {"enabled": False}
     manager.async_disable_trusted.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_process_service_preserves_assist_failure_and_followup(hass, monkeypatch):
+    from homeassistant.components.conversation import ConversationResult
+    from homeassistant.helpers.intent import IntentResponse, IntentResponseErrorCode
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    entity_id = _conversation_entity_id(hass, entry)
+    intent = IntentResponse(language="en")
+    intent.async_set_error(IntentResponseErrorCode.UNKNOWN, "Provider request failed")
+    result = ConversationResult(response=intent, conversation_id="failed-turn", continue_conversation=True)
+    agent = SimpleNamespace(entity_id=entity_id, async_process_direct=AsyncMock(return_value=(result, {"handled_locally": False})))
+    monkeypatch.setattr(services.conversation, "async_get_agent", lambda *_: agent)
+    response = await _response_service_call(hass, SERVICE_PROCESS, {"text": "Hello", "agent_id": entity_id})
+    assert response["successful"] is False
+    assert response["error_code"] == "unknown"
+    assert response["error_message"] == "Provider request failed"
+    assert response["continue_conversation"] is True
+    assert response["intent_response"] == intent.as_dict()
+    await hass.async_block_till_done()

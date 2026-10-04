@@ -187,3 +187,17 @@ async def test_broadcast_service_preserves_caller_context_for_authorization(
         source="service",
         ttl_seconds=120,
     )
+
+
+async def test_local_targeted_broadcast_uses_authenticated_permission_boundary(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import local_intents
+    manager = SimpleNamespace(enabled=True, resolve_targets=MagicMock(return_value=["assist_satellite.denied"]), async_send=AsyncMock())
+    monkeypatch.setattr(local_intents, "async_get_intercom", AsyncMock(return_value=manager))
+    monkeypatch.setattr(local_intents, "parse_targeted_broadcast", lambda *_: ({"entity_ids": ["assist_satellite.denied"]}, "Hello"))
+    require = AsyncMock(side_effect=HomeAssistantError("Permission denied"))
+    monkeypatch.setattr(intercom_permissions, "async_require_control_permission", require)
+    context = Context(user_id="restricted")
+    with pytest.raises(HomeAssistantError, match="Permission denied"):
+        await local_intents._async_try_targeted_broadcast(hass, SimpleNamespace(text="Broadcast to kitchen that hello", context=context))
+    require.assert_awaited_once_with(hass, ["assist_satellite.denied"], context=context)
+    manager.async_send.assert_not_awaited()
