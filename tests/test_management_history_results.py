@@ -622,14 +622,7 @@ async def test_management_archive_search_zero_token_queries_do_not_match_all() -
 
 
 @pytest.mark.asyncio
-async def test_management_archive_search_uses_home_assistant_local_calendar_dates(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        management_history_queries.dt_util,
-        "DEFAULT_TIME_ZONE",
-        ZoneInfo("Europe/Dublin"),
-    )
+async def test_management_archive_search_uses_home_assistant_local_calendar_dates() -> None:
     archive = ConversationArchive(_Storage(), "agent")
     await archive.async_initialize()
     session = _edge_session(100, turn_count=2)
@@ -660,13 +653,18 @@ async def test_management_archive_search_uses_home_assistant_local_calendar_date
         },
     )
 
-    result = await archive_search_page(
+    result = await management_history_queries._async_archive_query(
         archive,
+        management_history_queries._archive_search_sync,
+        archive._sessions,
+        archive._turns,
         "user:alice",
         "alpha",
-        start_date="2026-06-02",
-        end_date="2026-06-02",
-        limit=10,
+        "2026-06-02",
+        "2026-06-02",
+        0,
+        10,
+        ZoneInfo("Europe/Dublin"),
     )
 
     assert [item["turn_id"] for item in result["results"]] == ["local-june-2"]
