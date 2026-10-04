@@ -1697,7 +1697,8 @@
     "tests_stress/test_ai_task_continuity.py::test_overlapping_caller_tools_keep_context_and_cancellation_request_local[responses]",
     "tests_stress/test_native_audio_delivery.py::test_responses_native_audio_executes_tool_once_and_next_voice_turn_is_healthy",
     "tests_stress/test_provider_endpoint_selection.py::test_provider_family_keeps_tool_continuation_on_selected_sdk_wire[https://compatible.example/v1-openai-False-/v1/chat/completions]",
-    "tests_stress/test_provider_endpoint_selection.py::test_provider_family_keeps_tool_continuation_on_selected_sdk_wire[https://example.openai.azure.com-openai-True-/openai/deployments/gpt-5.6/chat/completions]"
+    "tests_stress/test_provider_endpoint_selection.py::test_provider_family_keeps_tool_continuation_on_selected_sdk_wire[https://example.openai.azure.com-openai-True-/openai/deployments/gpt-5.6/chat/completions]",
+    "tests_stress/test_browser_backend_resilience.py::test_professional_genuine_browser_transfer_controls_and_locale"
   ],
   "browser": {
     "browser": [
@@ -1866,7 +1867,12 @@
       "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage history windows load lazily, cache selections, page all history, and keep charts responsive",
       "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection",
       "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::Guest save acknowledgement survives a failed refresh and edits in flight through genuine HA",
-      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::combined Request Rules settings remain current across warm and expired navigation through genuine HA"
+      "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::combined Request Rules settings remain current across warm and expired navigation through genuine HA",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-GB \u203a Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-IE \u203a Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-US \u203a Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / fr-FR \u203a Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Kiritimati / HA Dublin wall clock \u203a Quiet Hours saves a wall-clock time without browser timezone conversion"
     ],
     "browser-firefox": [
       "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
@@ -2216,7 +2222,10 @@
       "native_registry_recovery_cases": 1,
       "native_registry_private_probes": 2,
       "native_ownership_reload_checks": 5,
-      "native_registry_fetch_recoveries": 1
+      "native_registry_fetch_recoveries": 1,
+      "production_backup_browser_journeys": 1,
+      "native_control_endurance_journeys": 1,
+      "genuine_locale_timezone_journeys": 1
     },
     "browser-firefox": {
       "multi_tab_conflicts": 1,

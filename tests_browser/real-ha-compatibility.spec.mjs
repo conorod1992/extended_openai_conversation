@@ -82,10 +82,19 @@ test("HA native components and actual Assist path remain compatible", async ({co
   await expect(panel.locator("#eoc-rule-live-result")).toContainText("Compatibility Assist response");
   await expect(panel.locator("#eoc-rule-live-run")).toBeEnabled();
   if (testInfo.project.name === "webkit-mobile") {
+    const mobile = await page.evaluate(() => ({
+      touch: navigator.maxTouchPoints,
+      coarse: matchMedia("(pointer: coarse)").matches,
+      width: innerWidth,
+      height: innerHeight,
+    }));
+    expect(mobile.touch).toBeGreaterThan(0);
+    expect(mobile.coarse).toBe(true);
+    expect(mobile.width).toBeLessThan(mobile.height);
     await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
     await panel.locator("#transfer-export-mode").selectOption("full");
     const downloaded = page.waitForEvent("download");
-    await panel.locator("#create-backup-transfer").click();
+    await panel.locator("#create-backup-transfer").tap();
     const download = await downloaded;
     expect(await download.failure()).toBeNull();
     const path = await download.path();
@@ -105,5 +114,24 @@ test("HA native components and actual Assist path remain compatible", async ({co
     expect(geometry.dialogScroll, JSON.stringify(geometry)).toBeLessThanOrEqual(geometry.dialogWidth + 1);
     expect(geometry.left).toBeGreaterThanOrEqual(0);
     expect(geometry.right).toBeLessThanOrEqual(geometry.viewport + 1);
+
+    // Rotate the same touch context and prove dialog actions remain reachable.
+    await page.setViewportSize({width: 844, height: 390});
+    const landscape = await panel.evaluate(host => {
+      const dialog = host.shadowRoot.querySelector("#restore-dialog");
+      const apply = host.shadowRoot.querySelector("#restore-transfer-apply");
+      const box = dialog.getBoundingClientRect();
+      const action = apply.getBoundingClientRect();
+      return {
+        left:box.left, right:box.right, viewport:innerWidth,
+        actionTop:action.top, actionBottom:action.bottom, viewportHeight:innerHeight,
+      };
+    });
+    expect(landscape.left).toBeGreaterThanOrEqual(0);
+    expect(landscape.right).toBeLessThanOrEqual(landscape.viewport + 1);
+    expect(landscape.actionTop).toBeGreaterThanOrEqual(0);
+    expect(landscape.actionBottom).toBeLessThanOrEqual(landscape.viewportHeight + 1);
+    await panel.locator("#restore-transfer-cancel").tap();
+    await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
   }
 });
