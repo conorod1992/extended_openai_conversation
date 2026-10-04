@@ -242,7 +242,9 @@ async def test_real_rule_stops_after_backend_failure(
         )
     )
     result = await _authenticated_say(hass, agent, "run audit")
-    assert _speech(result) == ("Done" if backend == "business" else "Failed")
+    assert _speech(result, successful=backend == "business") == (
+        "Done" if backend == "business" else "Failed"
+    )
     assert effects == (
         ["before", "inside_after", "after"]
         if composite and backend == "business"

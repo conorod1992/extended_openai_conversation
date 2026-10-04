@@ -158,6 +158,8 @@ def record_retirement_failure(
     )
 
     message = retirement_message(lifecycle)
+    if configured_model is not None and configured_model != model:
+        message = f"Request Rule selected retired model {model}. Update or disable the rule's model override in Request Rules."
     if first:
         log_provider_failure(
             logger or _LOGGER,
@@ -217,6 +219,27 @@ def log_deprecation_once(
     )
 
 
+def _override_model_is_still_configured(
+    hass: Any, entry: Any, subentry: Any, model: str
+) -> bool:
+    """Keep rule-selected retirement failures only while a route can select them."""
+    from .request_rules import _MANAGERS, SLOT_REFERENCE
+
+    manager = hass.data.get(_MANAGERS, {}).get((entry.entry_id, subentry.subentry_id))
+    if manager is None or not manager._initialized:
+        return True  # Reconcile after rules have been loaded, never guess from absence.
+    return any(
+        rule.get("enabled", True)
+        and rule.get("action_type") == "model_routing"
+        and not rule["action"].get("reset")
+        and (
+            rule["action"].get("model") == model
+            or bool(SLOT_REFERENCE.search(rule["action"].get("model") or ""))
+        )
+        for rule in manager.snapshot()["rules"]
+    )
+
+
 def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
     """Refresh one entry's deprecation logging and stale retirement Repairs."""
     active_subentries: set[str] = set()
@@ -245,6 +268,12 @@ def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
                 failures[key] = failure
         if isinstance(failure, dict) and (
             failure.get("configured_model", failure.get("model")) != lifecycle["model"]
+            or (
+                failure.get("model") != lifecycle["model"]
+                and not _override_model_is_still_configured(
+                    hass, entry, subentry, str(failure.get("model", ""))
+                )
+            )
             or lifecycle_snapshot(str(failure.get("model", "")))["status"]
             != "deprecated"
             or not lifecycle_snapshot(str(failure.get("model", "")))["shutdown_reached"]

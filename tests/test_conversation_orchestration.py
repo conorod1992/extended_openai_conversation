@@ -67,7 +67,7 @@ class _UsageRecorder:
 def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
     entity = object.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = SimpleNamespace(data={}, bus=SimpleNamespace(async_fire=MagicMock()))
-    entity.entry = SimpleNamespace(entry_id="entry")
+    entity.entry = SimpleNamespace(entry_id="entry", data={})
     entity.subentry = SimpleNamespace(subentry_id="agent", data={})
     entity._attr_entity_id = "conversation.agent"
     entity._continuity = SimpleNamespace(async_record_success=AsyncMock())
@@ -179,7 +179,10 @@ async def test_consumed_request_rule_bypasses_local_intent_and_provider(
     entity._async_handle_message_with_ha_tools.assert_not_awaited()
     assert entity._continuity.async_record_success.await_count == int(successful)
     payload = entity.hass.bus.async_fire.call_args.args[1]
-    assert payload["status"] == "local"
+    assert payload["status"] == ("local" if successful else "error")
+    assert result.response.error_code == (
+        None if successful else intent.IntentResponseErrorCode.UNKNOWN
+    )
     assert payload["handled_locally"] is True
 
 
@@ -751,7 +754,8 @@ async def test_fresh_conversation_request_resets_owned_state_after_response(
             )
         )
         return conversation.ConversationResult(
-            response=intent.IntentResponse(language="en"), conversation_id="conversation-1"
+            response=intent.IntentResponse(language="en"),
+            conversation_id="conversation-1",
         )
 
     entity._async_handle_message_with_ha_tools = AsyncMock(side_effect=schedule_reset)

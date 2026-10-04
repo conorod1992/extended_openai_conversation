@@ -407,7 +407,7 @@
   "issues": {
     "retired_model": {
       "title": "Extended OpenAI assistant uses a retired model",
-      "description": "The assistant **{assistant}** is configured to use **{model}**. OpenAI scheduled this model for shutdown on **{shutdown_at}**, and the provider has now rejected it as unavailable. Select a different model in Extended OpenAI Conversation."
+      "description": "The assistant **{assistant}** requested **{model}**. OpenAI scheduled this model for shutdown on **{shutdown_at}**, and the provider has now rejected it as unavailable. Review Model & responses and Request Rule model overrides in Extended OpenAI Conversation."
     }
   }
 }
