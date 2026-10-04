@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from pathlib import Path
@@ -229,7 +230,6 @@ async def test_overlapping_caller_tools_keep_context_and_cancellation_request_lo
     mode: str,
 ) -> None:
     """Two overlapping tasks with the same tool name must never share bindings."""
-    from homeassistant.helpers import llm
     import voluptuous as vol
 
     entry, entity_id = await _task_entity(hass, mode)
@@ -279,7 +279,10 @@ async def test_overlapping_caller_tools_keep_context_and_cancellation_request_lo
         current = owner(body)
         requests.append((current, body))
         continuation = (
-            any(item.get("type") == "function_call_output" for item in body.get("input", []))
+            any(
+                item.get("type") == "function_call_output"
+                for item in body.get("input", [])
+            )
             if mode == API_MODE_RESPONSES
             else any(item.get("role") == "tool" for item in body.get("messages", []))
         )
@@ -289,9 +292,7 @@ async def test_overlapping_caller_tools_keep_context_and_cancellation_request_lo
             await asyncio.wait_for(admitted[other].wait(), 5)
             tool = body["tools"][0]
             tool_name = (
-                tool["name"]
-                if mode == API_MODE_RESPONSES
-                else tool["function"]["name"]
+                tool["name"] if mode == API_MODE_RESPONSES else tool["function"]["name"]
             )
             assert tool_name == "context_probe"
             call_id = f"overlap-{current}-{mode}"

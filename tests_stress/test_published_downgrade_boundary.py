@@ -80,7 +80,9 @@ async def test_current_export_is_rejected_by_published_older_release(
     result = subprocess.run(
         [sys.executable, str(Path(__file__).resolve())],
         env=child_process_env(
-            __file__, {_CHILD: "1", _COMPONENT: component, _DOCUMENT: str(document)}
+            __file__,
+            {_CHILD: "1", _COMPONENT: component, _DOCUMENT: str(document)},
+            working_directory=tmp_path,
         ),
         cwd=tmp_path,
         text=True,

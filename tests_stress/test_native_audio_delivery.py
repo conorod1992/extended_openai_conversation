@@ -22,7 +22,7 @@ from pytest_homeassistant_custom_component.common import (
     mock_platform,
 )
 
-from homeassistant.components import stt
+from homeassistant.components import conversation, stt
 from homeassistant.components.assist_pipeline.pipeline import KEY_ASSIST_PIPELINE
 from homeassistant.components.assist_satellite.entity import (
     AssistSatelliteConfiguration,
@@ -698,9 +698,7 @@ async def test_responses_native_audio_executes_tool_once_and_next_voice_turn_is_
             ),
             15,
         )
-        assert not [
-            event for event in satellite.events if event.type.value == "error"
-        ]
+        assert not [event for event in satellite.events if event.type.value == "error"]
 
     await run_once()
     assert effects == [("light", "turn_off", {"entity_id": [entity_id]})]

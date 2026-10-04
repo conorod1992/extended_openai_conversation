@@ -11,6 +11,7 @@ import subprocess
 import sys
 from unittest.mock import AsyncMock, patch
 
+from tests_real_ha.process_harness import ensure_staged_custom_components_package
 from tests_real_ha.test_packaged_process_restart import (
     DOMAIN,
     _assert_packaged_module,
@@ -76,8 +77,13 @@ async def _installed_cycle(config_dir: Path, cycle: int) -> None:
         await hass.async_block_till_done()
         assert await hass.config_entries.async_reload(entry.entry_id)
         await hass.async_block_till_done()
-        assert next(iter(entry.subentries.values())).title == f"Durable installed cycle {cycle}"
-        await _exercise_conversation(hass, entry.entry_id, f"Installed cycle {cycle} works.")
+        assert (
+            next(iter(entry.subentries.values())).title
+            == f"Durable installed cycle {cycle}"
+        )
+        await _exercise_conversation(
+            hass, entry.entry_id, f"Installed cycle {cycle} works."
+        )
 
         assert await hass.config_entries.async_remove(entry.entry_id)
         await hass.async_block_till_done()
@@ -107,9 +113,15 @@ def test_clean_installed_payload_repeated_removal_and_reinstall(
             destination,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
+        ensure_staged_custom_components_package(config_dir)
         assert (destination / "manifest.json").is_file()
         env = os.environ.copy()
         env[_PHASE] = str(cycle)
+        existing_pythonpath = env.get("PYTHONPATH")
+        import_roots = [str(config_dir.resolve()), str(repo_root.resolve())]
+        if existing_pythonpath:
+            import_roots.extend(existing_pythonpath.split(os.pathsep))
+        env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(import_roots))
         result = subprocess.run(
             [sys.executable, str(Path(__file__).resolve())],
             cwd=config_dir,

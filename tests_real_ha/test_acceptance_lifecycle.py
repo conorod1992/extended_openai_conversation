@@ -64,6 +64,7 @@ def _make_entry(
     local_intents: bool = False,
     conversation_options: dict | None = None,
     base_url: str | None = None,
+    data: dict | None = None,
 ) -> MockConfigEntry:
     """Create a current-version entry that cannot make an authentication request."""
     conversation_data = dict(conversation_options or {})
@@ -86,16 +87,18 @@ def _make_entry(
             )
         )
 
+    entry_data = {
+        CONF_API_KEY: "sk-acceptance-test",
+        # The acceptance suite exercises the real HA and integration lifecycle,
+        # but must never need an external OpenAI request merely to load an entry.
+        CONF_SKIP_AUTHENTICATION: True,
+        **({CONF_BASE_URL: base_url} if base_url else {}),
+    }
+    entry_data.update(data or {})
     return MockConfigEntry(
         domain=DOMAIN,
         title=title,
-        data={
-            CONF_API_KEY: "sk-acceptance-test",
-            # The acceptance suite exercises the real HA and integration lifecycle,
-            # but must never need an external OpenAI request merely to load an entry.
-            CONF_SKIP_AUTHENTICATION: True,
-            **({CONF_BASE_URL: base_url} if base_url else {}),
-        },
+        data=entry_data,
         version=CONFIG_ENTRY_VERSION,
         subentries_data=subentries,
     )
@@ -264,9 +267,7 @@ async def test_real_ha_unload_reload_cleans_and_recreates_runtime(
     template_manager_before = hass.data[DOMAIN][DATA_TEMPLATE_MANAGER]
 
     assert conversation.async_get_agent(hass, entry.entry_id) is not None
-    manager_before = conversation.async_get_agent(
-        hass, entry.entry_id
-    )._request_rules
+    manager_before = conversation.async_get_agent(hass, entry.entry_id)._request_rules
     assert hass.states.get(guest_mode_entity_id) is not None
 
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -298,7 +299,6 @@ async def test_real_ha_unload_reload_cleans_and_recreates_runtime(
     assert {
         row.entity_id for row in _registry_entries(hass, entry)
     } == entity_ids_before
-
 
 
 @pytest.mark.asyncio
@@ -388,7 +388,9 @@ async def test_real_ha_stale_native_tool_schema_migrates_and_survives_reload(
 
     configured_tools = configured_function_tools_from_data(agent.subentry.data)
     configured_tool = next(
-        tool for tool in configured_tools if tool["spec"]["name"] == "legacy_service_action"
+        tool
+        for tool in configured_tools
+        if tool["spec"]["name"] == "legacy_service_action"
     )
     assert configured_tool["spec"]["strict"] is False
     assert configured_tool["spec"]["parameters"] == parameters

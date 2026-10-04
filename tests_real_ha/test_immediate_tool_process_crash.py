@@ -15,7 +15,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import pytest
 import yaml
 
 from tests_real_ha.process_harness import child_process_env
@@ -97,7 +96,7 @@ def _read_effects(config_dir: Path) -> list[dict[str, Any]]:
 
 async def _ensure_entry(hass: Any) -> Any:
     """Create the integration once, then reuse the persisted entry after restart."""
-    from homeassistant.config_entries import ConfigEntryState, SOURCE_USER
+    from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
     from homeassistant.const import CONF_API_KEY, CONF_NAME
     from homeassistant.data_entry_flow import FlowResultType
 
@@ -222,7 +221,7 @@ async def _crash_phase(config_dir: Path) -> None:
                     for item in subentries
                 ):
                     break
-            except (FileNotFoundError, json.JSONDecodeError, KeyError, StopIteration):
+            except FileNotFoundError, json.JSONDecodeError, KeyError, StopIteration:
                 pass
             await asyncio.sleep(0.05)
 
@@ -292,6 +291,7 @@ def _child_env(config_dir: Path, phase: str) -> dict[str, str]:
             _CHILD_PHASE: phase,
             _CONFIG_DIR_ENV: str(config_dir),
         },
+        working_directory=config_dir,
     )
 
 

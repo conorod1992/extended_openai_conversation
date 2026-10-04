@@ -78,6 +78,17 @@ def _semantic(snapshot: dict) -> dict:
     return {key: value for key, value in snapshot.items() if key != "created_at"}
 
 
+def _nested_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for nested in value.values():
+            yield from _nested_strings(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _nested_strings(nested)
+
+
 @pytest.mark.asyncio
 async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
     hass: HomeAssistant,
@@ -87,6 +98,9 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
     stress_scale: int,
     stress_trace: list[dict],
 ) -> None:
+    assert "Temporary chaos marker 20" not in set(
+        _nested_strings({"content": "Temporary chaos marker 203"})
+    )
     rng = random.Random(stress_seed ^ 0xC4A05)
     control_group = Group(
         id="chaos-light-control",
@@ -432,21 +446,26 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
             replies.append(_chat_sse_text("chaos healthy"))
             wire = _install_wire(monkeypatch, current, replies)
             original_send = wire.send
+            wire_validation_errors = []
 
             async def validate_send(request, *args, **kwargs):
-                body = json.loads(request.content)
-                _assert_valid_outgoing_history(body, "chat_completions")
-                assert body["model"] == "gpt-5.6"
-                assert body["max_completion_tokens"] == expected.max_tokens
-                serialized = json.dumps(body)
-                for owner, values in expected.memories.items():
-                    if owner != user or expected.guest_active:
-                        for content in values.values():
-                            assert content not in serialized
-                for owner, values in expected.temporary.items():
-                    if owner != user or expected.guest_active:
-                        for content in values.values():
-                            assert content not in serialized
+                try:
+                    body = json.loads(request.content)
+                    _assert_valid_outgoing_history(body, "chat_completions")
+                    assert body["model"] == "gpt-5.6"
+                    assert body["max_completion_tokens"] == expected.max_tokens
+                    request_strings = set(_nested_strings(body))
+                    for owner, values in expected.memories.items():
+                        if owner != user or expected.guest_active:
+                            for content in values.values():
+                                assert content not in request_strings
+                    for owner, values in expected.temporary.items():
+                        if owner != user or expected.guest_active:
+                            for content in values.values():
+                                assert content not in request_strings
+                except AssertionError as err:
+                    wire_validation_errors.append(str(err))
+                    raise
                 return await original_send(request, *args, **kwargs)
 
             monkeypatch.setattr(_raw_client(current)._client, "send", validate_send)
@@ -459,7 +478,7 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
                 language="en",
                 agent_id=entry.entry_id,
             )
-            assert result.response.error_code is None
+            assert result.response.error_code is None, wire_validation_errors
             assert (
                 result.response.as_dict()["speech"]["plain"]["speech"]
                 == "chaos healthy"

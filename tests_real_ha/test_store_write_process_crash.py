@@ -118,7 +118,9 @@ async def _child(config_dir: Path, phase: str, kind: str) -> None:
 
 def _env(config_dir: Path, phase: str, kind: str) -> dict[str, str]:
     return child_process_env(
-        __file__, {_PHASE: phase, _KIND: kind, _CONFIG: str(config_dir)}
+        __file__,
+        {_PHASE: phase, _KIND: kind, _CONFIG: str(config_dir)},
+        working_directory=config_dir,
     )
 
 

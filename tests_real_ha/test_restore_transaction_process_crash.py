@@ -299,7 +299,9 @@ def _configuration(name: str) -> str:
 
 def _env(config_dir: Path, phase: str, cut: str) -> dict[str, str]:
     return child_process_env(
-        __file__, {_PHASE: phase, _CUT: cut, _CONFIG: str(config_dir)}
+        __file__,
+        {_PHASE: phase, _CUT: cut, _CONFIG: str(config_dir)},
+        working_directory=config_dir,
     )
 
 

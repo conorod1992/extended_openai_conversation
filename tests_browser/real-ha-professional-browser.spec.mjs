@@ -97,7 +97,7 @@ test("genuine native controls survive repeated mounts without duplicate backend 
       await panel.evaluate(host => host._navigate("capabilities", "functions"));
       await expect(panel.locator('[data-tool-key="professional_native_tool"]')).toBeVisible();
 
-      if (session && index >= 8 && index % 4 === 0) {
+      if (session && index >= 8 && index % 2 === 0) {
         samples.push({window:index, ...await sampleRetainedRuntime(session)});
       }
     }

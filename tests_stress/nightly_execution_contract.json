@@ -1712,7 +1712,11 @@
     "tests_stress/test_execution_contract.py::test_explicit_reviewed_partial_selection_remains_valid",
     "tests_stress/test_active_provider_stream_cancellation.py::test_natural_stream_exhaustion_is_not_explicit_close",
     "tests/functions/test_exploration_corpus_contract.py::test_unknown_or_invalid_corpus_operations_fail_closed",
-    "tests_stress/test_exploration_corpus_replay.py::test_saved_exploration_corpus_cases_replay_to_reviewed_outcomes"
+    "tests_stress/test_exploration_corpus_replay.py::test_saved_exploration_corpus_cases_replay_to_reviewed_outcomes",
+    "tests_stress/test_execution_contract.py::test_uninterrupted_process_soak_is_only_selected_for_long_lifetime",
+    "tests_stress/test_process_harness_contract.py::test_child_imports_staged_config_before_repository_source",
+    "tests_stress/test_execution_contract.py::test_staged_process_import_regression_is_mandatory",
+    "tests_stress/test_process_harness_contract.py::test_staged_components_are_a_regular_package"
   ],
   "browser": {
     "browser": [
@@ -1882,11 +1886,11 @@
       "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection",
       "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::Guest save acknowledgement survives a failed refresh and edits in flight through genuine HA",
       "tests_browser/real-ha-nightly-management.spec.mjs::chromium::real-ha-nightly-management.spec.mjs::combined Request Rules settings remain current across warm and expired navigation through genuine HA",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-GB \u203a Usage sends HA-local dates and renders the same instant in HA time",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-IE \u203a Usage sends HA-local dates and renders the same instant in HA time",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-US \u203a Usage sends HA-local dates and renders the same instant in HA time",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / fr-FR \u203a Usage sends HA-local dates and renders the same instant in HA time",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Kiritimati / HA Dublin wall clock \u203a Quiet Hours saves a wall-clock time without browser timezone conversion"
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-GB › Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-IE › Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-US › Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / fr-FR › Usage sends HA-local dates and renders the same instant in HA time",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Kiritimati / HA Dublin wall clock › Quiet Hours saves a wall-clock time without browser timezone conversion"
     ],
     "browser-firefox": [
       "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
@@ -2544,7 +2548,8 @@
       "tests_stress/test_complete_user_journeys.py",
       "tests_stress/test_installed_lifecycle.py",
       "tests_stress/test_lifecycle_matrix.py",
-      "tests_stress/test_management_replay_safety.py"
+      "tests_stress/test_management_replay_safety.py",
+      "tests_stress/test_process_harness_contract.py"
     ],
     "lifecycle-matrix": [
       "tests_real_ha/test_public_version_journeys.py",
@@ -2669,9 +2674,16 @@
       "tests_stress/test_frontend_route_inventory.py",
       "tests_stress/test_management_action_inventory.py",
       "tests_stress/test_nightly_inventory.py",
-      "tests_stress/test_process_resource_soak.py",
       "tests_stress/test_public_service_inventory.py",
-      "tests_stress/test_runtime_soak.py"
+      "tests_stress/test_runtime_soak.py",
+      "tests_stress/test_process_resource_soak.py::test_booted_process_resources_and_latency_survive_mixed_traffic",
+      "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[assist]",
+      "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[descriptors]",
+      "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[executor_pending]",
+      "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[loop_lag]",
+      "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[management]",
+      "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[rss_bytes]",
+      "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[storage_bytes]"
     ],
     "setup": [
       "tests_real_ha/test_config_flow.py",
