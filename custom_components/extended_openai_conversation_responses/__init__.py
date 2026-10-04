@@ -213,6 +213,7 @@ async def async_setup_entry(
 ) -> bool:
     """Set up Extended OpenAI Conversation (Responses) from a config entry."""
 
+    from .agent_deletion import KNOWN_AGENTS
     from .provider_errors import provider_authentication_snapshot
 
     authentication_snapshot = provider_authentication_snapshot(entry)
@@ -240,6 +241,13 @@ async def async_setup_entry(
             err,
         )
         raise ConfigEntryNotReady(provider_log_remediation(err)) from err
+
+    hass.data.pop(f"{DOMAIN}.removed", None)
+    await async_get_quiet_hours(hass)
+    await async_setup_intercom_services(hass)
+    hass.data.setdefault(KNOWN_AGENTS, {}).setdefault(entry.entry_id, set()).update(
+        entry.subentries
+    )
 
     debug_client = DebugOpenAIClientProxy(
         client, authentication_snapshot=authentication_snapshot
@@ -294,14 +302,53 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
+    from .agent_deletion import async_delete_removed_subentries
+
     sync_entry_model_lifecycle(hass, entry)
     if is_live_subentry_update():
         # Live management writes replace subentry.data in place. Conversation,
         # AI Task and sensor runtimes already consume that live object, while each
         # request boundary reconciles optional managers. Reloading here needlessly
         # reauthenticates the provider and rebuilds every platform.
+        await async_delete_removed_subentries(hass, entry)
         return
     await hass.config_entries.async_reload(entry.entry_id)
+    await async_delete_removed_subentries(hass, entry)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Erase private agent data and stop global effects after the final removal."""
+    from .agent_deletion import async_delete_entry_data
+    from .intercom import DATA_KEY
+    from .intercom_services import SERVICE_BROADCAST
+    from .quiet_hours import SERVICE_DISABLE_QUIET_HOURS, SERVICE_ENABLE_QUIET_HOURS
+
+    await async_delete_entry_data(hass, entry)
+    if hass.config_entries.async_entries(DOMAIN):
+        return
+    hass.data[f"{DOMAIN}.removed"] = True
+    quiet_hours = hass.data.get(DOMAIN, {}).get("quiet_hours_manager")
+    try:
+        if quiet_hours is not None:
+            try:
+                await quiet_hours.async_shutdown()
+            finally:
+                hass.data[DOMAIN].pop("quiet_hours_manager", None)
+    finally:
+        try:
+            intercom = hass.data.get(DATA_KEY)
+            if intercom is not None:
+                try:
+                    await intercom.async_shutdown()
+                finally:
+                    hass.data.pop(DATA_KEY, None)
+        finally:
+            for service in (
+                SERVICE_BROADCAST,
+                SERVICE_ENABLE_QUIET_HOURS,
+                SERVICE_DISABLE_QUIET_HOURS,
+            ):
+                hass.services.async_remove(DOMAIN, service)
 
 
 def _migrate_saved_default_prompt(data: dict) -> bool:

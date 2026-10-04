@@ -244,7 +244,7 @@ def sync_entry_model_lifecycle(hass: Any, entry: Any) -> None:
     """Refresh one entry's deprecation logging and stale retirement Repairs."""
     active_subentries: set[str] = set()
     for subentry in entry.subentries.values():
-        if subentry.subentry_type != "conversation":
+        if subentry.subentry_type not in {"conversation", "ai_task_data"}:
             continue
         active_subentries.add(subentry.subentry_id)
         lifecycle = configured_lifecycle(subentry)

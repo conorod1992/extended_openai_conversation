@@ -295,6 +295,7 @@ jobs:
               "test_lifecycle_concurrency.py",
               "test_live_config_mutation_semantics.py",
               "test_live_subentry_removal.py",
+              "test_agent_private_data_deletion.py",
               "test_multi_entry_lifecycle.py",
               "test_persisted_startup_migration.py",
               "test_persistence_state_round_trips.py",
@@ -395,6 +396,7 @@ jobs:
             tests_real_ha/test_lifecycle_concurrency.py
             tests_real_ha/test_live_config_mutation_semantics.py
             tests_real_ha/test_live_subentry_removal.py
+            tests_real_ha/test_agent_private_data_deletion.py
             tests_real_ha/test_multi_entry_lifecycle.py
             tests_real_ha/test_persisted_startup_migration.py
             tests_real_ha/test_persistence_state_round_trips.py

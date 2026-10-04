@@ -79,6 +79,8 @@ def _hass(*entries):
 
 
 def _stub_setup(monkeypatch):
+    monkeypatch.setattr(integration, "async_get_quiet_hours", AsyncMock())
+    monkeypatch.setattr(integration, "async_setup_intercom_services", AsyncMock())
     monkeypatch.setattr(model_lifecycle.ir, "async_get", lambda _hass: SimpleNamespace(async_get_issue=lambda *_args: None))
     monkeypatch.setattr(
         integration, "get_authenticated_client", AsyncMock(return_value=object())

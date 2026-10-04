@@ -577,8 +577,9 @@ def test_schedule_drain_creates_only_one_task_per_entity(hass) -> None:
     manager = IntercomManager(hass)
     created: list[Any] = []
 
-    def create_task(coro: Any) -> None:
+    def create_task(coro: Any) -> Mock:
         created.append(coro)
+        return Mock()
 
     hass.async_create_task = create_task
 

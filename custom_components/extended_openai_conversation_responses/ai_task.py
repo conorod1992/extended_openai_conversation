@@ -256,10 +256,17 @@ class ExtendedOpenAITaskEntity(
                     structure_schema=original_schema,
                 )
         except OpenAIError as err:
+            from .model_lifecycle import record_entity_retirement_failure
+
+            record_entity_retirement_failure(self, err, logger=_LOGGER)
             request_reauthentication(self.hass, getattr(self, "entry", None), err)
             record_current_provider_failure(err)
             log_provider_failure(_LOGGER, "OpenAI AI Task request failed", err)
             raise
+
+        from .model_lifecycle import clear_entity_retirement_failure
+
+        clear_entity_retirement_failure(self)
 
         # Extract response
         if not isinstance(chat_log.content[-1], conversation.AssistantContent):

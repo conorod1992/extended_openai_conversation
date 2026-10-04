@@ -282,20 +282,16 @@ async def test_same_title_recreation_gets_fresh_storage_and_runtime_identity(
         "active_function_group_sessions"
     ] == 0
 
-    # The old generation remains intact through our retained references. This guards
-    # against recreation "cleaning" state by mutating the old manager instead of
-    # creating a genuinely independent subentry generation.
-    assert [
-        record.content
-        for record in await old_memory.async_search(_USER_ID, "amber cipher")
-    ] == [_MEMORY_MARKER]
-    assert [
-        record.content
-        for record in await old_temporary.async_active(
-            owner_scope, owner_scope_id=owner_scope
-        )
-    ] == [_TEMPORARY_MARKER]
-    assert (await old_archive.async_search(scope.scope_id, "violet-orbit"))["results"]
+    # Retained objects from the deleted generation cannot read or recreate its
+    # private data. The replacement is a genuinely independent identity.
+    from homeassistant.exceptions import HomeAssistantError
+    import pytest
+    with pytest.raises(HomeAssistantError, match="deleted"):
+        await old_memory.async_search(_USER_ID, "amber cipher")
+    with pytest.raises(HomeAssistantError, match="deleted"):
+        await old_temporary.async_active(owner_scope, owner_scope_id=owner_scope)
+    with pytest.raises(HomeAssistantError, match="deleted"):
+        await old_archive.async_search(scope.scope_id, "violet-orbit")
     assert old_usage.totals.api_request_count == 1
 
     # Finally cross the public Assist/provider seam. Old Memory/Temporary Memory must

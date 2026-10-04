@@ -111,6 +111,9 @@ class IntercomManager:
             hass, STORAGE_VERSION, STORAGE_KEY
         )
         self._enabled = False
+        self._closed = False
+        self._drain_tasks: set[asyncio.Task[Any]] = set()
+        self._expiry_unsubscribers: set[Any] = set()
         self._loaded = False
         self._state_lock = asyncio.Lock()
         self._refresh_state_listener()
@@ -153,6 +156,28 @@ class IntercomManager:
                     if not queue:
                         self._queues.pop(entity_id, None)
 
+    async def async_shutdown(self) -> None:
+        """Stop listeners, timers and every queued delivery without changing settings."""
+        self._closed = True
+        self._enabled = False
+        if self._unsub_state is not None:
+            self._unsub_state()
+            self._unsub_state = None
+        for unsubscribe in self._expiry_unsubscribers:
+            unsubscribe()
+        self._expiry_unsubscribers.clear()
+        for entity_id, queue in self._queues.items():
+            for item in queue:
+                item.deliveries[entity_id].set("expired", "integration_removed")
+        self._queues.clear()
+        tasks = tuple(self._drain_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._drain_tasks.clear()
+        self._draining.clear()
+
     def _satellite_entity_ids(self) -> list[str]:
         return [
             state.entity_id for state in self.hass.states.async_all("assist_satellite")
@@ -160,6 +185,8 @@ class IntercomManager:
 
     @callback
     def _refresh_state_listener(self) -> None:
+        if self._closed:
+            return
         entity_ids = set(self._satellite_entity_ids())
         if entity_ids == self._tracked_entities:
             return
@@ -328,17 +355,21 @@ class IntercomManager:
 
         @callback
         def expire_message(_now: datetime) -> None:
+            self._expiry_unsubscribers.discard(unsubscribe)
             self._expire(item.id)
 
-        async_call_later(self.hass, bounded_ttl, expire_message)
+        unsubscribe = async_call_later(self.hass, bounded_ttl, expire_message)
+        self._expiry_unsubscribers.add(unsubscribe)
         return item.as_dict()
 
     @callback
     def _schedule_drain(self, entity_id: str) -> None:
-        if entity_id in self._draining:
+        if self._closed or entity_id in self._draining:
             return
         self._draining.add(entity_id)
-        self.hass.async_create_task(self._async_drain(entity_id))
+        task = self.hass.async_create_task(self._async_drain(entity_id))
+        self._drain_tasks.add(task)
+        task.add_done_callback(self._drain_tasks.discard)
 
     async def _async_drain(self, entity_id: str) -> None:
         try:
@@ -643,6 +674,8 @@ class IntercomManager:
 
 
 async def async_get_intercom(hass: HomeAssistant) -> IntercomManager:
+    if hass.data.get(f"{DOMAIN}.removed") is True:
+        raise HomeAssistantError("Extended OpenAI has been removed")
     manager = hass.data.get(DATA_KEY)
     if manager is None:
         manager = IntercomManager(hass)

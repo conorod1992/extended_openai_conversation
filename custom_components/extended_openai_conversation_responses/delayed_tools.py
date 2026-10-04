@@ -271,6 +271,28 @@ class DelayedToolManager:
                 self._arm(record.call_id)
         return record
 
+    async def async_remove_agent(self, entry_id: str, subentry_id: str) -> None:
+        """Erase scheduled arguments belonging to a deleted assistant."""
+        async with self._lock:
+            removed = {
+                call_id
+                for call_id, record in self._records.items()
+                if record.entry_id == entry_id and record.subentry_id == subentry_id
+            }
+            if not removed:
+                return
+            await self._async_save_records_transactionally(
+                {
+                    call_id: record
+                    for call_id, record in self._records.items()
+                    if call_id not in removed
+                }
+            )
+            for call_id in removed:
+                task = self._tasks.pop(call_id, None)
+                if task is not None:
+                    task.cancel()
+
     async def _async_reconcile_failed_save(self) -> None:
         """Reload validated calls after a failed write acknowledgement."""
         raw_data = await self._store.async_load() or {}

@@ -1057,6 +1057,8 @@ class ConversationArchive:
         self._initialized = False
 
     def _ensure_initialized(self) -> None:
+        if isinstance(self._storage, HomeAssistantArchiveStorage):
+            self._storage._metadata.require_available()
         if not self._initialized:
             raise RuntimeError("conversation archive has not been initialized")
 

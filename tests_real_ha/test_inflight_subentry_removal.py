@@ -174,7 +174,16 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
     assert hass.config_entries.async_remove_subentry(
         entry, removed_subentry.subentry_id
     )
-    await asyncio.wait_for(hass.async_block_till_done(), timeout=_WAIT_TIMEOUT)
+    async def wait_for_registration_removal():
+        while conversation.async_get_agent(hass, removed_entity_id) is not None:
+            await asyncio.sleep(0)
+        while conversation.async_get_agent(hass, survivor_entity_id) is None:
+            await asyncio.sleep(0)
+        await _agent(hass, survivor_entity_id)._agent_ready.wait()
+        while entry.state is not ConfigEntryState.LOADED:
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_registration_removal(), timeout=_WAIT_TIMEOUT)
 
     assert entry.state is ConfigEntryState.LOADED
     assert removed_subentry.subentry_id not in entry.subentries
@@ -224,6 +233,7 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
     release.set()
     removed_result = await asyncio.wait_for(removed_request, timeout=_WAIT_TIMEOUT)
     assert _speech(removed_result) == _REMOVED_RESPONSE_TEXT
+    await asyncio.wait_for(hass.async_block_till_done(), timeout=_WAIT_TIMEOUT)
 
     assert removed_subentry.subentry_id not in entry.subentries
     final_rows = _conversation_rows(hass, entry)

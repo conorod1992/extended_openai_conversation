@@ -992,7 +992,10 @@ async def async_restore_transfer(
         _async_run_exclusive_operation,
         get_agent_maintenance_gate,
     )
-    from .restore_recovery import async_restore_backup_recoverably
+    from .restore_recovery import (
+        async_finish_restore_reload,
+        async_restore_backup_recoverably,
+    )
 
     async def restore_exclusively_owned() -> dict[str, Any]:
         if precondition is not None:
@@ -1007,7 +1010,9 @@ async def async_restore_transfer(
         return {**result, "transfer": preview}
 
     gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
-    return await _async_run_exclusive_operation(gate, restore_exclusively_owned)
+    result = await _async_run_exclusive_operation(gate, restore_exclusively_owned)
+    await async_finish_restore_reload(hass, entry, subentry)
+    return result
 
 
 def inspection_for_frontend(prepared: PreparedTransfer) -> dict[str, Any]:

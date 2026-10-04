@@ -22,7 +22,10 @@ from .agent_maintenance import (
     get_agent_maintenance_gate,
 )
 from .const import DOMAIN, SUBSYSTEM_STATUS_KEY
-from .live_subentry_updates import update_live_subentry
+from .live_subentry_updates import (
+    configuration_supports_live_update,
+    update_live_subentry,
+)
 from .operational_errors import log_handled_failure
 
 _LOGGER = logging.getLogger(__name__)
@@ -432,6 +435,14 @@ async def _update_configuration(
     # The owned restore already resets live subsystem runtimes. Apply its
     # configuration through the normal live-update path instead of starting an
     # unowned entry reload while exclusive recovery is still settling.
+    if not configuration_supports_live_update(
+        backup.recoverable_configuration_snapshot(subentry.data),
+        backup.recoverable_configuration_snapshot(prepared.config),
+        title_changed=subentry.title != prepared.title,
+    ):
+        hass.data.setdefault(f"{DOMAIN}.restore_reload_pending", set()).add(
+            entry.entry_id
+        )
     update_live_subentry(
         hass, entry, subentry, data=prepared.config, title=prepared.title
     )
@@ -650,13 +661,15 @@ async def async_restore_backup_recoverably(
     hass: HomeAssistant, entry: Any, subentry: Any, value: Any
 ) -> dict[str, Any]:
     """Restore with exclusive ownership and quarantine any unresolved journal."""
-    return await _async_recovery_operation(
+    result = await _async_recovery_operation(
         hass,
         entry,
         subentry,
         lambda: _async_restore_backup_recoverably(hass, entry, subentry, value),
         quarantine_on_entry=False,
     )
+    await async_finish_restore_reload(hass, entry, subentry)
+    return result
 
 
 async def async_recover_pending_restore(
@@ -685,3 +698,24 @@ async def async_recover_pending_restores(hass: HomeAssistant) -> None:
                     entry.entry_id,
                     subentry.subentry_id,
                 )
+
+
+async def async_finish_restore_reload(
+    hass: HomeAssistant, entry: Any, subentry: Any
+) -> None:
+    """Refresh setup-owned metadata only after the outer restore lease is released."""
+    gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
+    pending = hass.data.get(f"{DOMAIN}.restore_reload_pending", set())
+    if gate.owns_exclusive() or entry.entry_id not in pending:
+        return
+    from homeassistant.config_entries import ConfigEntryState
+
+    if getattr(
+        entry, "state", None
+    ) is ConfigEntryState.LOADED and not await hass.config_entries.async_reload(
+        entry.entry_id
+    ):
+        raise HomeAssistantError(
+            "Restore completed, but reloading the assistant failed"
+        )
+    pending.discard(entry.entry_id)
