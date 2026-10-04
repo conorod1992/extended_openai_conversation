@@ -92,8 +92,8 @@ async def test_origin_only_targeted_broadcast_is_handled_failure(hass, monkeypat
     assert turns[0].successful is False
 
 
-async def _authenticated_say(hass, agent, text):
-    user = MockUser(id="action-user", name="Action User")
+async def _authenticated_say(hass, agent, text, *, is_admin=False):
+    user = MockUser(id="action-user", name="Action User", is_admin=is_admin)
     user.add_to_hass(hass)
     return await conversation.async_converse(
         hass=hass,
@@ -241,7 +241,10 @@ async def test_real_rule_stops_after_backend_failure(
             phrase="run audit",
         )
     )
-    result = await _authenticated_say(hass, agent, "run audit")
+    # The probe is a global service with no entity target, so its caller must
+    # be allowed to authorize targetless actions. Restricted Script callers
+    # are exercised separately by the user-permission acceptance tests.
+    result = await _authenticated_say(hass, agent, "run audit", is_admin=True)
     assert _speech(result, successful=backend == "business") == (
         "Done" if backend == "business" else "Failed"
     )
