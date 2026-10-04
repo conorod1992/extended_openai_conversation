@@ -690,6 +690,12 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         prepared = await hass.async_add_executor_job(
             validate_rule_pack, message.get("pack")
         )
+        from .request_rules import validate_rule_model_request
+
+        for candidate in prepared["rules"]:
+            validate_rule_model_request(
+                candidate, subentry.data, getattr(request.entry, "data", {})
+            )
         tools = configured_function_tools_from_data(subentry.data)
         review = await _review_rule_pack(hass, prepared, rules, tools)
         if action == "rule_pack_review":
@@ -761,6 +767,11 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             if hasattr(subentry, "data")
             else [],
         )
+        from .request_rules import validate_rule_model_request
+
+        validate_rule_model_request(
+            candidate, subentry.data, getattr(request.entry, "data", {})
+        )
         rule = await rules.async_create(
             candidate, expected_revision=message.get("revision")
         )
@@ -780,6 +791,11 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             configured_function_tools_from_data(subentry.data)
             if hasattr(subentry, "data")
             else [],
+        )
+        from .request_rules import validate_rule_model_request
+
+        validate_rule_model_request(
+            candidate, subentry.data, getattr(request.entry, "data", {})
         )
         rule = await rules.async_update(
             rule_id, candidate, expected_revision=message.get("revision")

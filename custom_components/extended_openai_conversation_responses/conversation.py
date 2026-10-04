@@ -895,6 +895,8 @@ class ExtendedOpenAIAgentEntity(
                             ),
                             context=user_input.context,
                             live_guest_policy=self._effective_guest_policy,
+                            request_options=self.subentry.data,
+                            entry_data=self.entry.data,
                         )
                         if self._request_rules is not None
                         and self._request_rule_runtime is not None
@@ -1229,10 +1231,18 @@ class ExtendedOpenAIAgentEntity(
             conversation.AssistantContent(agent_id=self.entity_id, content=response)
         )
         self._fire_conversation_finished(
-            user_input, chat_log, status="local", handled_locally=True
+            user_input,
+            chat_log,
+            status="local" if successful else "error",
+            handled_locally=True,
         )
         intent_response = intent.IntentResponse(language=user_input.language)
-        intent_response.async_set_speech(response)
+        if successful:
+            intent_response.async_set_speech(response)
+        else:
+            intent_response.async_set_error(
+                intent.IntentResponseErrorCode.UNKNOWN, response
+            )
         return ConversationResult(
             response=intent_response,
             conversation_id=chat_log.conversation_id,

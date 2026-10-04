@@ -341,8 +341,11 @@ def _normalize_legacy_consumed_request_scope(value: Any) -> tuple[Any, bool]:
 class RequestRules:
     """Concurrency-safe persisted rules with precomputed matcher state."""
 
-    def __init__(self, store: RequestRuleStore) -> None:
+    def __init__(
+        self, store: RequestRuleStore, on_change: Callable[[], None] | None = None
+    ) -> None:
         self._store = store
+        self._on_change = on_change
         self._rules: list[dict[str, Any]] = []
         self._opaque_fields: dict[str, Any] = {}
         self._committed_opaque_fields: dict[str, Any] = {}
@@ -1175,6 +1178,8 @@ class RequestRules:
             self._async_reconcile_failed_save if reconcile_failure else None,
             self._invalidate_after_unreadable_store,
         )
+        if self._on_change is not None:
+            self._on_change()
 
     async def _async_reconcile_failed_save(self) -> None:
         """Adopt the validated Store state when a failed acknowledgement followed rename."""
@@ -2015,6 +2020,10 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
 def _mask_script_templates(value: Any, *, key: str | None = None) -> Any:
     """Permit context-free schema validation while preserving stored templates."""
     if isinstance(value, str) and ("{{" in value or "{%" in value or "{#" in value):
+        if key == "target":
+            return {"entity_id": "light.request_rule_template"}
+        if key == "entity_id":
+            return "light.request_rule_template"
         return (
             "homeassistant.update_entity"
             if key in {"action", "service"}
@@ -2026,7 +2035,7 @@ def _mask_script_templates(value: Any, *, key: str | None = None) -> Any:
             for item_key, item in value.items()
         }
     if isinstance(value, list):
-        return [_mask_script_templates(item) for item in value]
+        return [_mask_script_templates(item, key=key) for item in value]
     return value
 
 
@@ -2272,16 +2281,18 @@ def resolve_result_values(
         )
         if exact and exact.group(1).split(".")[0] in results:
             return lookup(exact.group(1))
-        rendered = RESULT_REFERENCE.sub(
-            lambda match: str(lookup(match.group(0)[1:-1])), value
-        )
-        return SLOT_REFERENCE.sub(
-            lambda match: (
-                str(results[match.group(1)])
-                if match.group(1) in results
-                else slots[match.group(1)]
-            ),
-            rendered,
+
+        def replace_reference(match: re.Match[str]) -> str:
+            token = match.group(0)[1:-1]
+            if "." in token:
+                return str(lookup(token))
+            return str(results[token]) if token in results else slots[token]
+
+        # Scan only authored references: substituted tool data is opaque text.
+        return re.sub(
+            f"(?:{RESULT_REFERENCE.pattern})|(?:{SLOT_REFERENCE.pattern})",
+            replace_reference,
+            value,
         )
     if isinstance(value, Mapping):
         return {
@@ -2537,6 +2548,59 @@ def _ensure_action_guard_service(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, _GUARD_SERVICE, guard)
 
 
+def validate_routed_request_options(
+    options: Mapping[str, Any], entry_data: Mapping[str, Any]
+) -> None:
+    """Validate the complete Conversation request selected by a route."""
+    from .const import (
+        CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+        DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+    )
+    from .request import build_provider_request_snapshot
+
+    # Every ordinary conversation advertises its lifecycle Function. A zero
+    # execution budget suppresses it; loader/finalizer controls can still remain.
+    tools_required = (
+        bool(
+            int(
+                options.get(
+                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                )
+            )
+        )
+        or options.get("continue_conversation") == "conditional"
+        or any(
+            group.get("enabled", True) and group.get("loading_mode") == "on_demand"
+            for group in options.get("function_groups", [])
+            if isinstance(group, Mapping)
+        )
+    )
+    build_provider_request_snapshot(options, entry_data, tools_required=tools_required)
+
+
+def validate_rule_model_request(
+    rule: Mapping[str, Any], options: Mapping[str, Any], entry_data: Mapping[str, Any]
+) -> None:
+    """Reject statically invalid routes at every Request Rule write boundary."""
+    if rule.get("action_type") != "model_routing":
+        return
+    action = rule["action"]
+    if action.get("reset"):
+        return
+    values = {
+        CONF_CHAT_MODEL: action.get("model"),
+        CONF_REASONING_EFFORT: action.get("reasoning_effort"),
+    }
+    if any(
+        isinstance(value, str) and SLOT_REFERENCE.search(value)
+        for value in values.values()
+    ):
+        return  # Captures are validated once resolved, before storing runtime state.
+    candidate = {**options, **{key: value for key, value in values.items() if value}}
+    validate_routed_request_options(candidate, entry_data)
+
+
 def _resolved_routing_value(value: str, slots: Mapping[str, str], field: str) -> str:
     """Resolve one deterministic captured routing value and reject empty results."""
     resolved = resolve_slot_values(value, slots)
@@ -2600,6 +2664,8 @@ async def async_evaluate_rule(
     function_executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
     context: Context | None = None,
     live_guest_policy: Callable[[], GuestCapabilityPolicy] | None = None,
+    request_options: Mapping[str, Any] | None = None,
+    entry_data: Mapping[str, Any] | None = None,
 ) -> RuleEvaluation | None:
     """Apply each eligible rule once, stopping on handoff or failure."""
     matching_generation = rules._generation if isinstance(rules, RequestRules) else None
@@ -2652,6 +2718,8 @@ async def async_evaluate_rule(
             require_matching_revision=require_matching_revision,
             commit_execution_snapshot=commit_execution_snapshot,
             live_guest_policy=live_guest_policy,
+            request_options=request_options,
+            entry_data=entry_data,
         )
         require_matching_revision()
         return evaluation
@@ -2677,6 +2745,8 @@ async def async_evaluate_rule(
                 require_matching_revision=require_matching_revision,
                 commit_execution_snapshot=commit_execution_snapshot,
                 live_guest_policy=live_guest_policy,
+                request_options=request_options,
+                entry_data=entry_data,
             )
             require_matching_revision()
             action = match.rule["action"]
@@ -2742,6 +2812,8 @@ async def _async_evaluate_matched_rule(
     require_matching_revision: Callable[[], None] | None = None,
     commit_execution_snapshot: Callable[[], None] | None = None,
     live_guest_policy: Callable[[], GuestCapabilityPolicy] | None = None,
+    request_options: Mapping[str, Any] | None = None,
+    entry_data: Mapping[str, Any] | None = None,
 ) -> RuleEvaluation:
     """Execute one already matched and condition-eligible rule."""
     rule = match.rule
@@ -2991,6 +3063,10 @@ async def _async_evaluate_matched_rule(
     combined_effort = combined_override.get(CONF_REASONING_EFFORT)
     if combined_effort and (not effort or combined_model != selected_model):
         _validate_effective_reasoning(combined_model, combined_effort)
+    if request_options is not None:
+        validate_routed_request_options(
+            {**request_options, **combined_override}, entry_data or {}
+        )
     if action["scope"] == "conversation":
         runtime.set(session_id, override, timeout_minutes)
         request_override = None
@@ -3142,16 +3218,27 @@ async def async_get_request_rules(
     """
     managers = hass.data.setdefault(_MANAGERS, {})
     key = (entry_id, subentry_id)
+
+    def reconcile_lifecycle() -> None:
+        from .model_lifecycle import sync_entry_model_lifecycle
+
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is not None:
+            sync_entry_model_lifecycle(hass, entry)
+
     if key not in managers:
         managers[key] = RequestRules(
             RequestRuleStore(
                 hass,
                 STORAGE_VERSION,
                 f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
-            ).bind_agent(entry_id, subentry_id)
+            ).bind_agent(entry_id, subentry_id),
+            on_change=reconcile_lifecycle,
         )
     manager = cast(RequestRules, managers[key])
     await manager.async_initialize()
+    if manager._initialized:
+        reconcile_lifecycle()
     return manager
 
 
