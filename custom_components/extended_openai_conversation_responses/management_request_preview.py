@@ -13,6 +13,7 @@ from .const import (
     CONF_CONVERSATION_CONTINUITY,
     CONF_FUNCTION_GROUPS,
     CONF_KNOWLEDGE_ENABLED,
+    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_SKILLS,
     CONF_TEMPORARY_MEMORY,
@@ -20,6 +21,7 @@ from .const import (
     DEFAULT_CONTINUE_CONVERSATION,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_FUNCTION_GROUPS,
+    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
@@ -40,6 +42,7 @@ from .memory import memory_enabled
 from .prompt import render_effective_prompt
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
+    START_FRESH_CONVERSATION_TOOL,
     assemble_integration_function_tools,
     build_provider_request_snapshot,
     canonical_json,
@@ -209,7 +212,6 @@ async def async_preview_effective_request(
             options, availability_tools, skill_manager, availability_groups
         ):
             grouped = assemble_function_tools(configured_tools, groups, set())
-        provider = build_provider_request_snapshot(options, getattr(entry, "data", {}))
         custom_tools = [
             tool
             for tool in grouped.tools
@@ -239,9 +241,25 @@ async def async_preview_effective_request(
             options.get(CONF_CONTINUE_CONVERSATION, DEFAULT_CONTINUE_CONVERSATION)
             == CONTINUE_CONVERSATION_CONDITIONAL
         )
+        max_function_calls = int(
+            options.get(
+                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+            )
+        )
+        if max_function_calls == 0:
+            custom_tools = []
+            integration_tools = []
+        else:
+            integration_tools.append(START_FRESH_CONVERSATION_TOOL)
         if conditional_continue:
             integration_tools.append(CONTINUE_CONVERSATION_TOOL)
 
+        provider = build_provider_request_snapshot(
+            options,
+            getattr(entry, "data", {}),
+            tools_required=bool(custom_tools or loader_tools or integration_tools),
+        )
         formatted_custom = format_function_tools(custom_tools, provider.api_mode)
         formatted_loader = format_function_tools(loader_tools, provider.api_mode)
         formatted_integration = format_function_tools(
