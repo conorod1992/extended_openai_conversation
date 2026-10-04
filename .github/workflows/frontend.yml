@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   packages: read
 
 concurrency:
@@ -81,6 +81,9 @@ jobs:
       - name: Check production bundle regression ceilings
         run: python ci/check_frontend_bundle.py
 
+      - name: Verify tracked production frontend bundle
+        run: git diff --exit-code -- custom_components/extended_openai_conversation_responses/frontend/dist/
+
       - name: Upload production frontend bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -88,27 +91,6 @@ jobs:
           path: custom_components/extended_openai_conversation_responses/frontend/dist/
           if-no-files-found: error
           retention-days: 7
-
-      - name: Commit regenerated production frontend bundle
-        if: github.event_name == 'pull_request' && github.head_ref == 'fix/retained-data-ownership'
-        run: |
-          cp -a custom_components/extended_openai_conversation_responses/frontend/dist /tmp/eoc-built-dist
-          git reset --hard
-          git clean -fd custom_components/extended_openai_conversation_responses/frontend/dist/
-          git fetch origin "${GITHUB_HEAD_REF}"
-          git checkout -B "${GITHUB_HEAD_REF}" "origin/${GITHUB_HEAD_REF}"
-          rm -rf custom_components/extended_openai_conversation_responses/frontend/dist
-          cp -a /tmp/eoc-built-dist custom_components/extended_openai_conversation_responses/frontend/dist
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add custom_components/extended_openai_conversation_responses/frontend/dist/
-          if ! git diff --cached --quiet; then
-            git commit -m "Regenerate production frontend bundle"
-            git push origin HEAD:${GITHUB_HEAD_REF}
-          fi
-
-      - name: Verify tracked production frontend bundle
-        run: git diff --exit-code -- custom_components/extended_openai_conversation_responses/frontend/dist/
 
   browser-smoke:
     name: Browser smoke (Chromium / ${{ matrix.shard }} of 3)
