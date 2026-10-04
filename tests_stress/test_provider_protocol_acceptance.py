@@ -15,6 +15,7 @@ from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
     _responses_sse_text,
 )
+from tests_stress.conftest import record
 
 
 def _events(body):
@@ -55,6 +56,29 @@ def _assert_valid_outgoing_history(body, api_mode):
         elif message.get("role") == "user":
             assert not pending
     assert not pending
+
+
+_USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cached_input_tokens",
+    "reasoning_tokens",
+)
+
+
+def _assert_exact_usage_accounting(requests, run, totals, expected):
+    """Match each provider round, then independently reconcile run aggregates."""
+    observed = [
+        {field: getattr(request, field) for field in _USAGE_FIELDS}
+        for request in requests
+    ]
+    assert observed == expected
+    aggregate = {
+        field: sum(item[field] for item in expected) for field in _USAGE_FIELDS
+    }
+    assert {field: getattr(run, field) for field in _USAGE_FIELDS} == aggregate
+    assert {field: getattr(totals, field) for field in _USAGE_FIELDS} == aggregate
 
 
 @pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
@@ -206,7 +230,7 @@ async def test_malformed_tool_round_recovers_with_valid_same_conversation_histor
 
 @pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
 async def test_interleaved_fragmented_tools_and_trailing_usage_keep_exact_effects(
-    hass, monkeypatch, api_mode
+    hass, monkeypatch, api_mode, stress_trace
 ):
     from homeassistant.components import conversation
     from homeassistant.components.homeassistant.exposed_entities import (
@@ -272,6 +296,8 @@ async def test_interleaved_fragmented_tools_and_trailing_usage_keep_exact_effect
                     "prompt_tokens": 17,
                     "completion_tokens": 9,
                     "total_tokens": 26,
+                    "prompt_tokens_details": {"cached_tokens": 2},
+                    "completion_tokens_details": {"reasoning_tokens": 3},
                 },
             }
         )
@@ -337,15 +363,51 @@ async def test_interleaved_fragmented_tools_and_trailing_usage_keep_exact_effect
         events.append(
             {
                 "type": "response.usage",
-                "usage": {"input_tokens": 17, "output_tokens": 9, "total_tokens": 26},
+                "usage": {
+                    "input_tokens": 17,
+                    "output_tokens": 9,
+                    "total_tokens": 26,
+                    "input_tokens_details": {"cached_tokens": 2},
+                    "output_tokens_details": {"reasoning_tokens": 3},
+                },
             }
         )
-    replies = [
-        _stream(events),
-        _responses_sse_text("Both complete")
-        if api_mode == API_MODE_RESPONSES
-        else _chat_sse_text("Both complete"),
-    ]
+    if api_mode == API_MODE_RESPONSES:
+        answer_events = _events(_responses_sse_text("Both complete"))
+        answer_events.append(
+            {
+                "type": "response.usage",
+                "usage": {
+                    "input_tokens": 23,
+                    "output_tokens": 5,
+                    "total_tokens": 28,
+                    "input_tokens_details": {"cached_tokens": 7},
+                    "output_tokens_details": {"reasoning_tokens": 4},
+                },
+                "sequence_number": len(answer_events),
+            }
+        )
+        answer_body = _stream(answer_events)
+    else:
+        answer_events = _events(_chat_sse_text("Both complete"))
+        answer_events.append(
+            {
+                "id": "chatcmpl-interleaved-answer-usage",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "gpt-5.6",
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 23,
+                    "completion_tokens": 5,
+                    "total_tokens": 28,
+                    "prompt_tokens_details": {"cached_tokens": 7},
+                    "completion_tokens_details": {"reasoning_tokens": 4},
+                },
+            }
+        )
+        answer_body = _stream(answer_events) + b"data: [DONE]\n\n"
+    replies = [_stream(events), answer_body]
     requests = []
 
     async def send(request, *args, **kwargs):
@@ -385,4 +447,52 @@ async def test_interleaved_fragmented_tools_and_trailing_usage_keep_exact_effect
         if item.get("type") == "function_call":
             observed[item["call_id"]] = json.loads(item["arguments"])
     assert observed == dict(calls)
-    assert agent._usage.runs[-1].input_tokens >= 17
+    run = agent._usage.runs[-1]
+    requests_for_run = [
+        request for request in agent._usage.requests if request.run_id == run.run_id
+    ]
+    assert len(requests_for_run) == 2
+    assert run.request_count == run.successful_request_count == 2
+    assert agent._usage.totals.api_request_count == 2
+    assert agent._usage.totals.successful_request_count == 2
+    assert [request.request_stage for request in requests_for_run] == [
+        "initial",
+        "after_tool",
+    ]
+    expected_usage = [
+        {
+            "input_tokens": 17,
+            "output_tokens": 9,
+            "total_tokens": 26,
+            "cached_input_tokens": 2,
+            "reasoning_tokens": 3,
+        },
+        {
+            "input_tokens": 23,
+            "output_tokens": 5,
+            "total_tokens": 28,
+            "cached_input_tokens": 7,
+            "reasoning_tokens": 4,
+        },
+    ]
+    _assert_exact_usage_accounting(
+        requests_for_run, run, agent._usage.totals, expected_usage
+    )
+    with pytest.raises(AssertionError):
+        _assert_exact_usage_accounting(
+            requests_for_run[:1], run, agent._usage.totals, expected_usage
+        )
+    with pytest.raises(AssertionError):
+        _assert_exact_usage_accounting(
+            [*requests_for_run, requests_for_run[0]],
+            run,
+            agent._usage.totals,
+            expected_usage,
+        )
+    record(
+        stress_trace,
+        "summary",
+        interleaved_exact_usage_rounds=2,
+        interleaved_exact_usage_negative_controls=2,
+        interleaved_exact_usage_api_modes=1,
+    )
