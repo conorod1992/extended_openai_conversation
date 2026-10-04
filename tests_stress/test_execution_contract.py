@@ -142,7 +142,9 @@ def test_narrowed_live_selector_does_not_shrink_reviewed_obligation():
             {"nodeid": first, "collected": True, "executed": True, "outcome": "passed"}
         ],
     }
-    assert any(second in error and "absent" in error for error in check_execution(item, policy))
+    assert any(
+        second in error and "absent" in error for error in check_execution(item, policy)
+    )
 
 
 def test_explicit_reviewed_partial_selection_remains_valid():
@@ -679,6 +681,22 @@ def test_critical_campaign_counts_reach_certification_summary(tmp_path, monkeypa
     import sys
 
     policy = json.loads(CONTRACT.read_text())
+    summary_tree = ast.parse((ROOT / "ci/enhanced_summary.py").read_text())
+    count_node = next(
+        node
+        for node in summary_tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "COUNT_METRICS"
+            for target in node.targets
+        )
+    )
+    collected_metrics = set(ast.literal_eval(count_node.value))
+    separately_collected = {"browser_retention_windows"}
+    reviewed_metrics = {
+        metric for campaign in policy["minimums"].values() for metric in campaign
+    }
+    assert reviewed_metrics <= collected_metrics | separately_collected
     expected = {}
     for campaign in ("functions", "large-installation", "process-chaos"):
         expected.update(policy["minimums"][campaign])
