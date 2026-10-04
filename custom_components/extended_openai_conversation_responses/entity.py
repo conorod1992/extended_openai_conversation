@@ -96,6 +96,7 @@ from .function_tool_recovery import (
 from .functions import get_function
 from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, reference_key
 from .ha_tool_result_compat import (
+    HAToolResultError,
     is_tool_result_content,
     make_tool_result_content,
     tool_result_data,
@@ -1704,6 +1705,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     tool_name=tool_input.tool_name,
                     tool_result={"result": "Scheduled"},
                 )
+        execution_error = False
         try:
             if is_ha_tool(function_tool):
                 if llm_context is None:
@@ -1763,12 +1765,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 _LOGGER, f"Function Tool {tool_input.tool_name} failed", err
             )
             result = {"status": "error", "error": str(err)}
+            execution_error = True
+            if isinstance(err, HAToolResultError):
+                result["data"] = _normalize_function_result(err.data)
 
         return make_tool_result_content(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
             tool_result={"result": _normalize_function_result(result)},
+            error=execution_error,
         )
 
     def _provider_tool_allowed(self, tool_type: str) -> bool:

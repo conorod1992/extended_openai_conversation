@@ -26,7 +26,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
-from .ha_tool_result_compat import unwrap_tool_result
+from .ha_tool_result_compat import execution_tool_result
 
 _LOGGER = logging.getLogger(__name__)
 TOOL_TYPE = "ha_llm"
@@ -157,7 +157,7 @@ class LiveTool:
         result = await self.instance.async_call_tool(
             llm.ToolInput(tool_name=self.tool.name, tool_args=args, id=tool_input.id)
         )
-        return unwrap_tool_result(result)
+        return execution_tool_result(result)
 
 
 @dataclass(slots=True)
