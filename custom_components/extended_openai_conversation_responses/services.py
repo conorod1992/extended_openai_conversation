@@ -731,6 +731,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                     query,
                     call.data.get("category"),
                     call.data["limit"],
+                    offset=call.data["offset"],
                 )
             else:
                 records = await memory.async_list(
