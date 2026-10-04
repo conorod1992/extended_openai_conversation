@@ -151,3 +151,18 @@ for (const change of ["agent", "navigation", "generation", "revision"]) {
     assert.equal(scope.refreshWarning, null);
   });
 }
+
+test("a late Guest save cannot canonicalize another agent's identical draft", async () => {
+  let release;
+  const panel = {_agentId:"a", _viewKey:() => "capabilities/guest-mode", _result:{config:{enabled:false, count:0}, revision:"v1"},
+    _call:async () => new Promise(resolve => { release = resolve; })};
+  initializePageDraft(panel); const scope = currentPageScope(panel);
+  scope.read().enabled = true; const pending = scope.save();
+  panel._agentId = "b";
+  panel._guestDraft = {enabled:true, count:0};
+  panel._result = {config:panel._guestDraft, revision:"b1"};
+  const current = panel._result;
+  release({config:{enabled:true, count:5}, revision:"v2"}); await pending;
+  assert.deepEqual(panel._guestDraft, {enabled:true, count:0});
+  assert.equal(panel._result, current);
+});

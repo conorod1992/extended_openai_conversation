@@ -51,8 +51,11 @@ export function initializePageDraft(panel) {
   const field = view === GUEST ? "_guestDraft" : view === QUIET ? "_quietHoursDraft" : "_rulesSettingsDraft";
   const baseline = view === RULES ? settings(result) : result.config || {};
   panel[field] = clone(baseline);
+  const ownerAgent = panel._agentId, ownerEntry = panel._selectedAgent?.()?.entry_id;
   const scope = draftScope({
-    baseline, read: () => panel[field], write: (value) => { panel[field] = value; },
+    baseline, read: () => panel[field], write: (value) => {
+      if (panel._agentId === ownerAgent && panel._selectedAgent?.()?.entry_id === ownerEntry) panel[field] = value;
+    },
     owns: (destination) => destination === view,
     destinations: () => [view],
     save: async (submitted, current) => {
