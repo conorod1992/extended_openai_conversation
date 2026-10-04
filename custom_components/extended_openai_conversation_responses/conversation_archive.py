@@ -1231,11 +1231,13 @@ def _search_archive_snapshot(
             normalized_combined = _normalize(combined)
             tokens = _tokens(combined)
             overlap = len(query_tokens & tokens)
-            if (
-                query_tokens
-                and not overlap
-                and normalized_query not in normalized_combined
-            ):
+            if query_tokens:
+                if not overlap and normalized_query not in normalized_combined:
+                    continue
+            elif not normalized_query or normalized_query not in normalized_combined:
+                # Queries reduced entirely to punctuation have no searchable
+                # content. Stop-word-only queries remain valid literal searches,
+                # but must not turn into a match-all archive query.
                 continue
             score = overlap / max(1, len(query_tokens))
             if normalized_query and normalized_query in normalized_combined:
