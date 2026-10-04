@@ -97,6 +97,7 @@ async def test_live_save_preserves_real_runtime_and_next_provider_request(
 async def test_setup_owned_changes_still_reload_the_real_agent(hass, changes):
     agent = await _live_agent(hass)
     entry = agent.entry
+    old_client = entry.runtime_data
     owner = await hass.auth.async_create_user(
         "Reload configuration owner", group_ids=["system-admin"]
     )
@@ -119,7 +120,7 @@ async def test_setup_owned_changes_still_reload_the_real_agent(hass, changes):
     await hass.async_block_till_done()
     replacement = conversation.async_get_agent(hass, entry.entry_id)
     assert replacement is not None and replacement is not agent
-    assert replacement.entry.runtime_data is not agent._client
+    assert replacement.entry.runtime_data is not old_client
     if "title" in changes:
         assert replacement.device_info["name"] == changes["title"]
     else:
