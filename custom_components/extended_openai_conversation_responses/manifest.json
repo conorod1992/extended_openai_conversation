@@ -24,6 +24,7 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/conorod1992/extended_openai_conversation/issues",
   "requirements": [
+    "jsonschema==4.26.0",
     "openai>=2.21.0,<=3.10.0",
     "voluptuous-openapi==0.4.1"
   ],
