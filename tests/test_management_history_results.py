@@ -6,6 +6,7 @@ import asyncio
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from threading import Event
+from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,6 +14,9 @@ import pytest
 
 from homeassistant.exceptions import HomeAssistantError
 
+from custom_components.extended_openai_conversation_responses import (
+    management_history_queries,
+)
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ArchiveSession,
     ArchiveTurn,
@@ -585,6 +589,89 @@ async def test_archive_search_applies_access_date_and_text_filters_with_bounded_
     )
     assert outside["results"] == []
     assert outside["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_management_archive_search_zero_token_queries_do_not_match_all() -> None:
+    archive = ConversationArchive(_Storage(), "agent")
+    await archive.async_initialize()
+    session = _edge_session(100, turn_count=3)
+    archive._sessions = {session.session_id: session}
+    archive._turns = defaultdict(
+        list,
+        {
+            session.session_id: [
+                _edge_turn(session.session_id, 1, "the kitchen"),
+                _edge_turn(session.session_id, 2, "weather forecast"),
+                _edge_turn(session.session_id, 3, "Oscar walk"),
+            ]
+        },
+    )
+
+    stop_word = await archive_search_page(
+        archive, "user:alice", "the", limit=10
+    )
+    punctuation = await archive_search_page(
+        archive, "user:alice", "!!!", limit=10
+    )
+
+    assert [item["turn_id"] for item in stop_word["results"]] == ["turn-1"]
+    assert stop_word["total"] == 1
+    assert punctuation["results"] == []
+    assert punctuation["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_management_archive_search_uses_home_assistant_local_calendar_dates(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        management_history_queries.dt_util,
+        "DEFAULT_TIME_ZONE",
+        ZoneInfo("Europe/Dublin"),
+    )
+    archive = ConversationArchive(_Storage(), "agent")
+    await archive.async_initialize()
+    session = _edge_session(100, turn_count=2)
+    archive._sessions = {session.session_id: session}
+    archive._turns = defaultdict(
+        list,
+        {
+            session.session_id: [
+                ArchiveTurn(
+                    turn_id="local-june-2",
+                    session_id=session.session_id,
+                    run_id=None,
+                    timestamp="2026-06-01T23:30:00+00:00",
+                    user_text="alpha first",
+                    assistant_text="alpha reply",
+                    successful=True,
+                ),
+                ArchiveTurn(
+                    turn_id="local-june-3",
+                    session_id=session.session_id,
+                    run_id=None,
+                    timestamp="2026-06-02T23:30:00+00:00",
+                    user_text="alpha second",
+                    assistant_text="alpha reply",
+                    successful=True,
+                ),
+            ]
+        },
+    )
+
+    result = await archive_search_page(
+        archive,
+        "user:alice",
+        "alpha",
+        start_date="2026-06-02",
+        end_date="2026-06-02",
+        limit=10,
+    )
+
+    assert [item["turn_id"] for item in result["results"]] == ["local-june-2"]
+    assert result["results"][0]["date"] == "2026-06-02"
+    assert result["total"] == 1
 
 
 @pytest.mark.asyncio
