@@ -25,6 +25,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     SERVICE_RELOAD_SKILLS,
 )
 from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
+from custom_components.extended_openai_conversation_responses.model_capabilities import (
+    ModelCapabilityError,
+)
 from custom_components.extended_openai_conversation_responses.services import (
     SERVICE_ENABLE_FUNCTION_GROUPS,
     async_set_function_groups_enabled,
@@ -170,8 +173,13 @@ async def test_query_image_builds_provider_request_for_each_api_mode(
         lambda _requested, _model: api_mode,
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.services.get_token_param_for_model",
-        lambda _model: "max_tokens",
+        "custom_components.extended_openai_conversation_responses.services.normalize_output_token_limit",
+        lambda _model, mode, value: (
+            "max_output_tokens"
+            if mode == API_MODE_RESPONSES
+            else "max_completion_tokens",
+            value,
+        ),
     )
     ensure_success = MagicMock()
     monkeypatch.setattr(
@@ -214,8 +222,47 @@ async def test_query_image_builds_provider_request_for_each_api_mode(
             "type": "image_url",
             "image_url": {"url": "https://example.test/image.png"},
         }
-        assert kwargs["max_tokens"] == 123
+        assert kwargs["max_completion_tokens"] == 123
         responses_create.assert_not_awaited()
+
+
+async def test_query_image_rejects_output_limit_before_provider_call(
+    hass, monkeypatch
+) -> None:
+    responses_create = AsyncMock()
+    entry = SimpleNamespace(
+        domain=DOMAIN,
+        runtime_data=SimpleNamespace(
+            responses=SimpleNamespace(create=responses_create),
+            chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock())),
+        ),
+    )
+    hass.config_entries.async_get_entry.return_value = entry
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.services.get_api_mode",
+        lambda _requested, _model: API_MODE_RESPONSES,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.services.normalize_output_token_limit",
+        MagicMock(side_effect=ModelCapabilityError("limit exceeds model maximum")),
+    )
+    handlers = await _handlers(hass)
+
+    with pytest.raises(HomeAssistantError, match="limit exceeds model maximum"):
+        await handlers[SERVICE_QUERY_IMAGE](
+            _call(
+                {
+                    "config_entry": "entry",
+                    "model": "gpt-test",
+                    CONF_API_MODE: API_MODE_RESPONSES,
+                    "prompt": "What is shown?",
+                    "images": [{"url": "https://example.test/image.png"}],
+                    "max_tokens": 1001,
+                }
+            )
+        )
+
+    responses_create.assert_not_awaited()
 
 
 async def test_query_image_translates_provider_error_and_requests_reauthentication(
