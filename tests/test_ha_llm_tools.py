@@ -1151,3 +1151,37 @@ def test_historical_data_accessors_do_not_raise_for_flagged_values(result_type):
 def test_legacy_dictionary_results_are_not_inferred_as_failures():
     payload = {"error": "ordinary returned field", "status": "ordinary returned field"}
     assert execution_tool_result(payload) is payload
+
+
+async def test_caller_tools_are_rejected_before_unsupported_route_is_sent(hass):
+    """Route validation sees caller tools even when stored options contain none."""
+    from homeassistant.exceptions import HomeAssistantError
+    from tests.test_tool_exchange_protocol import (
+        _chat_log,
+        _entity,
+        _final_stream,
+        _tool,
+    )
+
+    entity = _entity(hass, [_final_stream()])
+    entity.subentry.data.update(
+        {"chat_model": "gpt-6.1-sol", "api_mode": "chat_completions"}
+    )
+    with pytest.raises(HomeAssistantError, match="function/tool calling"):
+        await entity._async_handle_chat_log(_chat_log(hass), [_tool("caller")], [])
+    entity._client.responses.create.assert_not_awaited()
+
+
+async def test_zero_budget_route_ignores_ordinary_effective_tools(hass):
+    """Suppressed tools do not reject an otherwise valid text-only route."""
+    from tests.test_tool_exchange_protocol import (
+        _chat_log,
+        _entity,
+        _final_stream,
+        _tool,
+    )
+
+    entity = _entity(hass, [_final_stream()], limit=0)
+    entity.subentry.data.update({"chat_model": "gpt-6.1-sol", "api_mode": "responses"})
+    await entity._async_handle_chat_log(_chat_log(hass), [_tool("suppressed")], [])
+    assert "tools" not in entity._client.responses.create.call_args.kwargs

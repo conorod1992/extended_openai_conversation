@@ -867,9 +867,7 @@ async def test_download_skill_rejects_failed_file_download_and_cleans_staging(
         ),
         "download:skill": _Response(503),
     }
-    handler, manager = await _download_handler(
-        hass, monkeypatch, tmp_path, responses
-    )
+    handler, manager = await _download_handler(hass, monkeypatch, tmp_path, responses)
 
     with pytest.raises(HomeAssistantError, match="Failed to download"):
         await handler(_call({"skill_name": "demo"}))
@@ -936,3 +934,28 @@ async def test_process_auto_selection_skips_stale_and_unrelated_registry_entries
         "handled_locally": False,
     }
     agent.async_process_direct.assert_awaited_once()
+
+
+async def test_function_enable_action_materializes_runtime_defaults(hass, monkeypatch):
+    """Legacy agents can manage the same default Functions runtime exposes."""
+    subentry = SimpleNamespace(
+        subentry_id="agent", subentry_type="conversation", data={}
+    )
+    entry = SimpleNamespace(domain=DOMAIN, subentries={"agent": subentry})
+    hass.config_entries.async_get_entry.return_value = entry
+    monkeypatch.setattr(
+        services.er,
+        "async_get",
+        lambda _hass: SimpleNamespace(async_get=lambda _reference: None),
+    )
+    await async_set_function_tools_enabled(
+        hass, "entry", "agent", ["execute_services"], False
+    )
+    persisted = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    tools = services.validate_function_tools(persisted["functions"])
+    assert (
+        next(tool for tool in tools if tool["spec"]["name"] == "execute_services")[
+            "enabled"
+        ]
+        is False
+    )
