@@ -263,6 +263,7 @@ async def test_concurrent_reconciliation_initializes_once_and_retries_after_canc
     async def get_memory(*_args):
         entered.set()
         await release.wait()
+        await startup.memory.async_initialize()
         return startup.memory
 
     getter = AsyncMock(side_effect=get_memory)
