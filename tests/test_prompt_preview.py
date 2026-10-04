@@ -597,6 +597,10 @@ async def test_effective_request_preview_allows_text_only_route_at_zero_budget(
         "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
         lambda _hass: [],
     )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.render_effective_prompt",
+        lambda *_args, **_kwargs: SimpleNamespace(text="BASE", sections=[]),
+    )
 
     result = await async_preview_effective_request(
         hass,
@@ -630,6 +634,10 @@ async def test_effective_request_preview_rejects_text_only_route_when_finalizer_
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.management_request_preview.get_exposed_entities",
         lambda _hass: [],
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_request_preview.render_effective_prompt",
+        lambda *_args, **_kwargs: SimpleNamespace(text="BASE", sections=[]),
     )
 
     with pytest.raises(HomeAssistantError, match="function/tool calling"):
