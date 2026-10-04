@@ -2017,9 +2017,20 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
         raise ValueError("Failure response cannot reference Function results")
 
 
-def _mask_script_templates(value: Any, *, key: str | None = None) -> Any:
+def _mask_script_templates(
+    value: Any, *, key: str | None = None, parent_key: str | None = None
+) -> Any:
     """Permit context-free schema validation while preserving stored templates."""
     if isinstance(value, str) and ("{{" in value or "{%" in value or "{#" in value):
+        # Home Assistant's script schema natively accepts templates for dynamic
+        # durations/timeouts and repeat iteration sources. Keep those templates
+        # intact so type-aware validation sees a template instead of an arbitrary
+        # placeholder string that is invalid for the field.
+        if key in {"delay", "timeout", "for_each"} or parent_key in {
+            "delay",
+            "timeout",
+        }:
+            return value
         if key == "target":
             return {"entity_id": "light.request_rule_template"}
         if key == "entity_id":
@@ -2031,11 +2042,16 @@ def _mask_script_templates(value: Any, *, key: str | None = None) -> Any:
         )
     if isinstance(value, Mapping):
         return {
-            item_key: _mask_script_templates(item, key=str(item_key))
+            item_key: _mask_script_templates(
+                item, key=str(item_key), parent_key=key
+            )
             for item_key, item in value.items()
         }
     if isinstance(value, list):
-        return [_mask_script_templates(item, key=key) for item in value]
+        return [
+            _mask_script_templates(item, key=key, parent_key=parent_key)
+            for item in value
+        ]
     return value
 
 
