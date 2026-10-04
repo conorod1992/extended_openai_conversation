@@ -668,7 +668,7 @@ async def test_memory_list_supports_browse_and_search(hass, monkeypatch) -> None
     assert listed["memories"][0]["memory_id"] == "listed"
     assert found["memories"][0]["memory_id"] == "found"
     memory.async_list.assert_awaited_once_with("alice", "preference", 10, 5)
-    memory.async_search.assert_awaited_once_with("alice", "tea", None, 3)
+    memory.async_search.assert_awaited_once_with("alice", "tea", None, 3, offset=0)
     get_memory.assert_awaited_with(hass, "entry", "agent")
 
 

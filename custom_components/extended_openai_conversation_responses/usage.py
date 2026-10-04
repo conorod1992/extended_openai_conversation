@@ -611,7 +611,8 @@ class UsageManager:
             self.runs = runs
             self._last_prune_date = dt_util.utcnow().date().isoformat()
             self._next_prune_retry = 0.0
-            return result
+        self._notify()
+        return result
 
     async def async_clear_details(self, *, confirm: bool) -> dict[str, int]:
         """Clear retained request/run detail only after the durable clear succeeds."""
@@ -625,7 +626,8 @@ class UsageManager:
             await self._async_persist_detail_state([], [])
             self.requests = []
             self.runs = []
-            return result
+        self._notify()
+        return result
 
     async def _async_prune_usage_if_due(self) -> None:
         """Schedule bounded daily retention maintenance outside the response path."""
@@ -838,7 +840,6 @@ class UsageManager:
             if self._detail_storage is not None:
                 await self._async_save_details()
         await self.async_prune_details()
-        self._notify()
 
     @staticmethod
     def _add_tokens(target: Any, usage: RequestUsage) -> None:

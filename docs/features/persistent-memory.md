@@ -49,3 +49,5 @@ Memory context is sent to the configured provider only when selected or returned
 Deleting a conversation assistant permanently removes its private Memory and embedding cache, Temporary Memory, Knowledge, Archive, Usage, Guest Mode and Request Rule stores. Cleanup waits for current requests to settle, then blocks detached background writes from recreating deleted data. Removing an entire provider entry also removes orphan stores belonging to that entry. Export a backup first if you want to retain those records.
 
 Removing the final EOAI provider entry also stops Quiet Hours and Broadcast callbacks and queued deliveries. Quiet Hours restores the controls it still owns before shutdown. Normal unloading and reloading keep these integration-wide features running.
+
+Upserting an existing memory with `source: explicit` promotes its provenance to explicit confirmation. A later implicit write cannot downgrade that provenance; implicit writes still pass their own sensitive-data checks. Search pagination applies `offset` after ranking, so successive pages return different results.

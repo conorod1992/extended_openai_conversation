@@ -471,6 +471,7 @@ class PersistentMemory:
                     "content": content,
                     "category": category,
                     "key": cleaned_key,
+                    "source": "explicit" if current.source == "explicit" else source,
                 }
                 if cleaned_subject is not _UNSET:
                     changes["subject"] = cleaned_subject
@@ -489,6 +490,9 @@ class PersistentMemory:
                 if duplicate:
                     changes = {
                         "category": category,
+                        "source": "explicit"
+                        if duplicate.source == "explicit"
+                        else source,
                     }
                     if cleaned_subject is not _UNSET:
                         changes["subject"] = cleaned_subject
@@ -548,11 +552,13 @@ class PersistentMemory:
         *,
         query_embedding: list[float] | None = None,
         hybrid: bool = False,
+        offset: int = 0,
     ) -> list[MemoryRecord]:
         """Return deterministic BM25-style lexical or hybrid results."""
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+            offset = max(0, offset)
             scope_ids = (
                 (user_id,)
                 if isinstance(user_id, str)
@@ -618,7 +624,7 @@ class PersistentMemory:
                     continue
                 ranked.append((relevance, memory.memory_id, memory))
             ranked.sort(key=lambda item: (-item[0], item[1]))
-            return [memory for _, _, memory in ranked[:limit]]
+            return [memory for _, _, memory in ranked[offset : offset + limit]]
 
     async def async_prepare_hybrid(
         self, scope_ids: Sequence[str], query: str
