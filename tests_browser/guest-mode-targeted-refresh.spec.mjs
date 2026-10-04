@@ -231,8 +231,8 @@ test("saving Guest exclusions refreshes visible derived counts without reloading
         config = structuredClone(message.config);
         return {revision:`${message.revision}x`, config};
       }
-      if (message.section === "guest_mode" && message.action === "details") {
-        window.guestProjectionCalls.push("details");
+      if (message.section === "guest_mode" && message.action === "policy") {
+        window.guestProjectionCalls.push("policy");
         const excluded = (config.guest_excluded_domains || []).length + (config.guest_excluded_entities || []).length;
         return {policy:{readable_entity_count:7-excluded, controllable_entity_count:7-excluded, configured_tool_count:0}, knowledge_sources:[], functions:[], function_groups:[], domains:["camera"]};
       }
@@ -250,18 +250,18 @@ test("saving Guest exclusions refreshes visible derived counts without reloading
   await panel.locator(".save-bar #save-page").click();
   await expect(visibleCount()).toContainText("6");
   expect(await page.evaluate(() => browserHarness.calls.filter(call => call.action === "agents").length)).toBe(agentReads);
-  expect(await page.evaluate(() => guestProjectionCalls)).toEqual(["save_policy", "details"]);
+  expect(await page.evaluate(() => guestProjectionCalls)).toEqual(["save_policy", "policy"]);
 
   await exclusions.evaluate(node => { node.value = []; node.dispatchEvent(new CustomEvent("value-changed", {detail:{value:[]}, bubbles:true})); });
   await panel.locator(".save-bar #save-page").click();
   await expect(visibleCount()).toContainText("7");
-  expect(await page.evaluate(() => guestProjectionCalls)).toEqual(["save_policy", "details", "save_policy", "details"]);
+  expect(await page.evaluate(() => guestProjectionCalls)).toEqual(["save_policy", "policy", "save_policy", "policy"]);
 
   const entities = panel.locator('ha-selector[data-guest-key="guest_excluded_entities"]');
   await entities.evaluate(node => { node.value = ["light.kitchen"]; node.dispatchEvent(new CustomEvent("value-changed", {detail:{value:["light.kitchen"]}, bubbles:true})); });
   await expect(panel.locator(".save-bar #save-page")).toBeEnabled();
   await panel.locator(".save-bar #save-page").click();
   await expect(visibleCount()).toContainText("6");
-  expect(await page.evaluate(() => guestProjectionCalls)).toEqual(["save_policy", "details", "save_policy", "details", "save_policy", "details"]);
+  expect(await page.evaluate(() => guestProjectionCalls)).toEqual(["save_policy", "policy", "save_policy", "policy", "save_policy", "policy"]);
   await expectHarnessClean(page, errors);
 });
