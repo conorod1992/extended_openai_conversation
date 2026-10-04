@@ -57,42 +57,69 @@ export function initializePageDraft(panel) {
     destinations: () => [view],
     save: async (submitted, current) => {
       if (view === RULES) return saveRuleSettings(panel, submitted, current);
-      const agentId = panel._agentId;
+      const agentId = panel._agentId, entryId = panel._selectedAgent?.()?.entry_id;
       const saved = await panel._call(view === GUEST ? "guest_mode" : "quiet_hours", view === GUEST ? "save_policy" : "update", {
         config: submitted, ...(current.revision ? {revision: current.revision} : {}),
       });
       const savedResult = {...(current.result || result), ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
-      if (panel._agentId === agentId) panel._result = {...panel._result, ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
+      if (panel._agentId === agentId && panel._selectedAgent?.()?.entry_id === entryId) panel._result = {...panel._result, ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
       // The mutation acknowledgement owns the baseline and revision. A later
       // capability read must neither undo that commit nor discard newer edits.
       current.result = savedResult;
       current.revision = saved.revision;
       current.baseline = clone(saved.config);
-      if (same(current.read(), submitted)) current.write(clone(saved.config));
+      if (panel._agentId === agentId && panel._selectedAgent?.()?.entry_id === entryId && same(current.read(), submitted)) current.write(clone(saved.config));
       current.refreshWarning = null;
       if (view === GUEST) {
-        panel._guestMigrationReview = false;
-        panel._guestStartingFresh = false;
-        try {
-          const details = await panel._call("guest_mode", "details");
-          if (panel._agentId === agentId && panel._viewKey?.() === GUEST && details?.policy) {
-            panel._result = {...panel._result, policy: details.policy};
-            const metrics = panel.shadowRoot?.querySelector(".metric-grid");
-            if (metrics) metrics.innerHTML = [
-              panel._metric("Guest-visible entities", details.policy.readable_entity_count ?? "—"),
-              panel._metric("Guest-controllable entities", details.policy.controllable_entity_count ?? "—"),
-              panel._metric("Guest functions", details.policy.configured_tool_count ?? "—"),
-            ].join("");
-          }
-        } catch (err) {
-          current.refreshWarning = `Guest capability details could not be refreshed: ${err.message || String(err)}`;
+        if (panel._agentId === agentId && panel._selectedAgent?.()?.entry_id === entryId) {
+          panel._guestMigrationReview = false;
+          panel._guestStartingFresh = false;
         }
+        const token = panel._loadToken;
+        current.refreshSavedPolicy = () => refreshSavedGuestPolicy(panel, current, {agentId, entryId, token, generation:panel._cacheGeneration, revision:saved.revision});
       }
       return saved.config;
     },
   });
   Object.assign(scope, {agent: panel._agentId, result, revision: result.revision});
   state.register(view, scope);
+}
+
+function refreshSavedGuestPolicy(panel, scope, owner) {
+  const state = {};
+  panel._eocGuestPolicyRefresh = state;
+  const metrics = panel.shadowRoot?.querySelector(".metric-grid");
+  const current = () => panel._eocGuestPolicyRefresh === state
+    && panel._agentId === owner.agentId && panel._selectedAgent?.()?.entry_id === owner.entryId
+    && panel._loadToken === owner.token && panel._cacheGeneration === owner.generation && panel._viewKey?.() === GUEST
+    && pageCoordinator(panel).scopes.get(GUEST) === scope && scope.revision === owner.revision;
+  if (!current()) return;
+  const paint = (policy) => {
+    if (!metrics) return;
+    metrics.innerHTML = [
+      panel._metric("Guest-visible entities", policy?.readable_entity_count ?? "Refreshing…"),
+      panel._metric("Guest-controllable entities", policy?.controllable_entity_count ?? "Refreshing…"),
+      panel._metric("Guest functions", policy?.configured_tool_count ?? "Refreshing…"),
+    ].join("");
+  };
+  metrics?.setAttribute("aria-busy", "true");
+  paint(null);
+  scope.refreshPromise = panel._call("guest_mode", "policy").then((details) => {
+    if (!current()) return;
+    if (details?.revision && details.revision !== owner.revision) throw new Error("Policy changed; reload the latest saved metrics");
+    panel._result = {...panel._result, policy:details.policy};
+    paint(details.policy);
+  }).catch((err) => {
+    if (!current()) return;
+    scope.refreshWarning = `Saved policy metrics could not be refreshed: ${err.message || String(err)}`;
+    if (metrics) metrics.innerHTML = panel._metric("Saved policy metrics", "Unavailable");
+    panel._toast?.(`Changes saved. ${scope.refreshWarning}`, true);
+  }).finally(() => {
+    if (panel._eocGuestPolicyRefresh !== state || panel.shadowRoot?.querySelector(".metric-grid") !== metrics
+        || panel._agentId !== owner.agentId || panel._selectedAgent?.()?.entry_id !== owner.entryId || panel._viewKey?.() !== GUEST) return;
+    metrics?.removeAttribute("aria-busy");
+    if (!current() && metrics) metrics.innerHTML = panel._metric("Saved policy metrics", "Needs refresh");
+  });
 }
 
 async function saveRuleSettings(panel, submitted, scope) {
@@ -249,7 +276,10 @@ export async function savePageChanges(panel) {
     // control, details state, selection, and scroll position then remain native.
     // Fall back only if a future backend normalization changes editor structure.
     if (!syncSavedPageDom(panel)) panel._render();
-    panel._toast(scope.refreshWarning ? `Changes saved. ${scope.refreshWarning}` : "Changes saved");
+    panel._toast("Changes saved");
+    const refresh = scope.refreshSavedPolicy;
+    scope.refreshSavedPolicy = null;
+    refresh?.();
     return true;
   } catch (err) {
     panel._toast(`Unable to save changes: ${err.message || String(err)}`, true);

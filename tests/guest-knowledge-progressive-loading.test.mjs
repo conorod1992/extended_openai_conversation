@@ -37,7 +37,7 @@ assert.equal((knowledgeHtml.match(/id="knowledge-status"/g) || []).length, 1);
 assert.equal((knowledgeHtml.match(/Add a source to make Knowledge available/g) || []).length, 1);
 assert.match(knowledgeSource, /\$\{knowledgeAvailabilityMarkup\(panel\)\}/);
 
-assert.match(backendSource, /if action == "details":/);
+assert.match(backendSource, /if action in \{"details", "policy"\}:/);
 assert.match(panelSource, /_call\("guest_mode", "details"\)/);
 assert.match(panelSource, /loading: \{\.\.\.\(result\.loading \|\| \{\}\), details: true\}/);
 assert.match(panelSource, /Guest Mode capabilities/);

@@ -25,7 +25,7 @@ for (const view of ["capabilities/guest-mode", "capabilities/quiet-hours"]) {
     let fail = true;
     const panel = {_agentId: "a", _viewKey: () => view, _result: {config: {enabled: false}, revision: "v1"},
       _call: async (_section, action, payload) => {
-        if (view === "capabilities/guest-mode" && action === "details") return {policy: {readable_entity_count: 1, controllable_entity_count: 1, configured_tool_count: 0}};
+        if (view === "capabilities/guest-mode" && action === "policy") return {policy: {readable_entity_count: 1, controllable_entity_count: 1, configured_tool_count: 0}};
         assert.equal(payload.revision, "v1"); if (fail) throw Error("offline"); return {config: {enabled: true}, revision: "v2"};
       }};
     initializePageDraft(panel); const scope = currentPageScope(panel);
@@ -95,7 +95,7 @@ for (const refreshFails of [false, true]) {
       const calls = [];
       const panel = {_agentId:"a", _viewKey:() => "capabilities/guest-mode", _result:{config:{enabled:false, count:0}, revision},
         _call:async (_section, action, payload) => {
-          if (action === "details") {
+          if (action === "policy") {
             await new Promise(resolve => { refresh = resolve; });
             if (failDetails) throw Error("Secondary read offline");
             return {policy:{readable_entity_count:1}};
@@ -110,21 +110,44 @@ for (const refreshFails of [false, true]) {
       const pending = scope.save();
       if (newerEdit) scope.read().count = 2;
       commit();
+      assert.equal(await pending, true, "persistence completes before metrics refresh");
+      scope.refreshSavedPolicy();
       while (!refresh) await Promise.resolve();
       assert.equal(scope.revision, "v2", "adopt acknowledgement before refresh completes");
       assert.deepEqual(scope.baseline, {enabled:true, count:0});
       assert.equal(scope.read().count, newerEdit ? 2 : 0);
       assert.equal(scope.dirty(), newerEdit);
-      refresh(); assert.equal(await pending, true);
+      refresh(); await scope.refreshPromise;
       assert.equal(Boolean(scope.refreshWarning), refreshFails);
       assert.equal(scope.dirty(), newerEdit);
       scope.read().enabled = false; failDetails = false; refresh = null;
       const second = scope.save(); commit();
+      assert.equal(await second, true); scope.refreshSavedPolicy();
       while (!refresh) await Promise.resolve();
-      refresh(); assert.equal(await second, true);
+      refresh(); await scope.refreshPromise;
       assert.deepEqual(calls, ["v1", "v2"]);
       assert.equal(scope.revision, "v3"); assert.equal(scope.dirty(), false);
       assert.equal(scope.refreshWarning, null);
     });
   }
+}
+
+for (const change of ["agent", "navigation", "generation", "revision"]) {
+  test(`late Guest metrics cannot overwrite newer ${change}`, async () => {
+    let release, view = "capabilities/guest-mode";
+    const panel = {_agentId:"a", _viewKey:() => view, _result:{config:{enabled:false}, revision:"v1"},
+      _call:async (_section, action, payload) => action === "policy"
+        ? new Promise(resolve => { release = resolve; })
+        : {config:payload.config, revision:"v2"}};
+    initializePageDraft(panel); const scope = currentPageScope(panel);
+    scope.read().enabled = true; await scope.save(); scope.refreshSavedPolicy();
+    if (change === "agent") panel._agentId = "b";
+    if (change === "navigation") view = "overview";
+    if (change === "generation") panel._cacheGeneration = 99;
+    if (change === "revision") scope.revision = "v3";
+    const current = panel._result;
+    release({policy:{readable_entity_count:999}}); await scope.refreshPromise;
+    assert.equal(panel._result, current);
+    assert.equal(scope.refreshWarning, null);
+  });
 }

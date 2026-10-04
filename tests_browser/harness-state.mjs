@@ -215,6 +215,7 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     }
     if (key === "scopes/catalog") return {scopes: clone(state.scopes)};
     if (key === "guest_mode/get") return clone(state.guest);
+    if (key === "guest_mode/policy") return {revision:state.guest.revision, policy:{guest_active:false, readable_entity_count:0, controllable_entity_count:0, configured_tool_count:0}};
     if (key === "guest_mode/details") return {
       policy: {guest_active:false, readable_entity_count:0, controllable_entity_count:0, configured_tool_count:0},
       knowledge_sources: [],
