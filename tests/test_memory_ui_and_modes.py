@@ -133,6 +133,9 @@ def _hass_and_agent():
         subentries={"agent-1": subentry},
     )
     hass = MagicMock()
+    hass.auth.async_get_user = AsyncMock(
+        side_effect=lambda user_id: SimpleNamespace(id=user_id)
+    )
     hass.config_entries.async_get_entry.return_value = entry
     hass.config_entries.async_entries.return_value = [entry]
     return hass, entry, subentry
