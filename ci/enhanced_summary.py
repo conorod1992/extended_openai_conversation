@@ -9,6 +9,8 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "populated_feature_journeys",
+    "semantic_oracle_rejections",
     "filesystem_recovery_cases",
     "filesystem_recovery_kills",
     "provider_endpoint_wire_cases",
