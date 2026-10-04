@@ -267,6 +267,24 @@ def _memory_scope(scope_id: str) -> str:
     return scope_id.removeprefix("user:") if scope_id.startswith("user:") else scope_id
 
 
+async def _require_existing_user_destination(
+    hass: HomeAssistant, scope_id: str
+) -> None:
+    """Reject new ownership assignments to users no longer present in Home Assistant."""
+    if not scope_id.startswith("user:"):
+        return
+    auth = getattr(hass, "auth", None)
+    get_user = getattr(auth, "async_get_user", None)
+    if not callable(get_user):
+        return
+    user_id = scope_id.removeprefix("user:")
+    if not user_id or await get_user(user_id) is None:
+        raise HomeAssistantError(
+            "The selected Home Assistant user no longer exists. Choose a current "
+            "user or the Shared household scope."
+        )
+
+
 def _validation_result(callback) -> dict[str, Any]:
     """Run configuration validation and return frontend-friendly errors."""
     try:
@@ -2239,6 +2257,7 @@ async def _async_temporary_memories_command(
             raise HomeAssistantError(
                 "Short-term memories require a Personal or Shared owner"
             )
+        await _require_existing_user_destination(hass, target)
         content = message.get("content")
         category = message.get("category", "general")
         expires_at = message.get("expires_at")
@@ -2336,6 +2355,7 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
         target = scope_id
         if "target_scope_id" in message:
             target = _selected_scope(user_id, is_admin, message["target_scope_id"])
+            await _require_existing_user_destination(hass, target)
             if target != scope_id:
                 if not (
                     (
@@ -2359,6 +2379,7 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
                 ):
                     raise HomeAssistantError("Shared household memory is disabled")
         if action == "add":
+            await _require_existing_user_destination(hass, target)
             added = await memory.async_add(
                 _memory_scope(target),
                 str(message.get("content", "")),
@@ -2403,6 +2424,7 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
     if action == "reassign_legacy":
         _require_admin(is_admin)
         target = _selected_scope(user_id, True, message.get("target_scope_id"))
+        await _require_existing_user_destination(hass, target)
         memory_ids = message.get("memory_ids")
         if not isinstance(memory_ids, list) or not all(
             isinstance(value, str) for value in memory_ids

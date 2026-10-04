@@ -213,6 +213,15 @@ class TemporaryMemory:
                     _matches_owner(current, scope_id, owner_scope_id)
                     and current.content.casefold() == content.casefold()
                 ):
+                    # Explicitly created short-term memories are authoritative.
+                    # A later proactive model write may coalesce with them, but it
+                    # must not silently downgrade their provenance or replace the
+                    # user's chosen category/expiry.
+                    if current.source == "manual" and source == "automatic":
+                        return {
+                            "status": "unchanged",
+                            "memory": temporary_memory_as_dict(current),
+                        }
                     updated = TemporaryMemoryRecord(
                         current.memory_id,
                         current.scope_id,

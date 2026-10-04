@@ -408,6 +408,65 @@ async def test_initialize_skips_malformed_records_and_keeps_valid_data() -> None
     assert [item.memory_id for item in manager._records.values()] == ["memory-1"]
 
 
+async def test_automatic_duplicate_does_not_overwrite_manual_record() -> None:
+    storage = ValidationStorage()
+    manager = TemporaryMemory(storage)  # type: ignore[arg-type]
+    await manager.async_initialize()
+    created = await manager.async_add(
+        "user:alice",
+        "Parcel arrives tomorrow",
+        _future(hours=4),
+        "delivery",
+        owner_scope_id="user:alice",
+        source="manual",
+    )
+
+    automatic = await manager.async_add(
+        "conversation:first",
+        "PARCEL ARRIVES TOMORROW",
+        _future(hours=1),
+        "general",
+        owner_scope_id="user:alice",
+        source="automatic",
+    )
+
+    assert automatic["status"] == "unchanged"
+    assert automatic["memory"]["memory_id"] == created["memory"]["memory_id"]
+    assert automatic["memory"]["source"] == "manual"
+    assert automatic["memory"]["category"] == "delivery"
+    assert automatic["memory"]["expires_at"] == created["memory"]["expires_at"]
+    assert storage.save_count == 1
+
+
+async def test_manual_duplicate_promotes_automatic_record() -> None:
+    storage = ValidationStorage()
+    manager = TemporaryMemory(storage)  # type: ignore[arg-type]
+    await manager.async_initialize()
+    created = await manager.async_add(
+        "conversation:first",
+        "Parcel arrives tomorrow",
+        _future(hours=1),
+        "general",
+        owner_scope_id="user:alice",
+        source="automatic",
+    )
+
+    manual = await manager.async_add(
+        "user:alice",
+        "PARCEL ARRIVES TOMORROW",
+        _future(hours=4),
+        "delivery",
+        owner_scope_id="user:alice",
+        source="manual",
+    )
+
+    assert manual["status"] == "updated"
+    assert manual["memory"]["memory_id"] == created["memory"]["memory_id"]
+    assert manual["memory"]["source"] == "manual"
+    assert manual["memory"]["category"] == "delivery"
+    assert storage.save_count == 2
+
+
 async def test_add_coalesces_duplicate_for_same_owner_and_persists_update() -> None:
     storage = ValidationStorage()
     manager = TemporaryMemory(storage)  # type: ignore[arg-type]
