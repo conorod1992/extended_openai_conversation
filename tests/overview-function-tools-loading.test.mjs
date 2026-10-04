@@ -48,4 +48,27 @@ for (const [health, expected] of cases) {
   await reads;
 }
 
+// Old detail responses must not mutate agents, visible results or caches.
+for (const change of ["navigation", "new load", "agent", "entry", "generation", "replacement"]) {
+  const {panel, pending} = panelFor({loading:true});
+  panel._sectionCache = new Map();
+  panel._eocSectionCacheTimes = new Map();
+  panel._sectionCacheKey = () => "overview";
+  const selected = panel._selectedAgent();
+  const reads = startOverviewDetailReads(panel);
+  if (change === "navigation") panel._viewKey = () => "assistant/basics";
+  if (change === "new load") panel._loadToken++;
+  if (change === "agent") panel._agentId = "agent-b";
+  if (change === "entry") selected.entry_id = "entry-b";
+  if (change === "generation") panel._cacheGeneration++;
+  if (change === "replacement") panel._eocOverviewDetailState = {};
+  const current = {marker:"newer view"};
+  panel._result = current;
+  for (const read of pending.values()) read.resolve({agent:{memory_count:999}, usage:{today:{total_tokens:999}}});
+  await reads;
+  assert.equal(panel._result, current, `${change}: stale results cannot overwrite the view`);
+  assert.equal(selected.memory_count, undefined, `${change}: stale agent projections are ignored`);
+  assert.equal(panel._sectionCache.size, 0, `${change}: stale results cannot populate cache`);
+}
+
 console.log("Overview Function Tools loading regressions passed.");

@@ -117,7 +117,7 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
         usage: {},
         conversations: {archive_enabled: true, archive_retention_days: 30},
         load_errors: [],
-        loading: {usage: true, memory: true, knowledge: true, guest_mode: true},
+        loading: {usage: true, memory: true, knowledge: true, guest_mode: true, setup_health: true},
         setup_health: {
           provider_runtime: {client_loaded: true, provider: state.agent.provider, model: state.agent.model},
           function_tools: {usable_count: state.agent.function_count || 0, invalid_count: 0},
@@ -145,6 +145,12 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       }
       if (message.kind === "guest_mode") {
         return {kind: "guest_mode", agent: {guest_mode: {state: "inactive", currently_active: false}}};
+      }
+      if (message.kind === "setup_health") {
+        return {kind:"setup_health", setup_health:{
+          function_tools:{usable_count:state.agent.function_count || 0, invalid_count:0},
+          exposed_entity_count:2, exposed_entity_count_loading:false,
+        }};
       }
       throw new Error(`Unsupported EOAI management overview detail kind: ${JSON.stringify(message.kind)}`);
     }

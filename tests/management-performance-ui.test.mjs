@@ -57,14 +57,17 @@ const initialScopes = [{scope_id:"user:current", scope_type:"user", display_name
   const panel = panelFor("assistant", "basics");
   let resolveRead;
   let reads = 0;
-  panel._call = () => { reads++; return new Promise((resolve) => { resolveRead = resolve; }); };
+  panel._call = (section, action) => {
+    assert.deepEqual([section, action], ["overview", "primary"]);
+    reads++; return new Promise((resolve) => { resolveRead = resolve; });
+  };
   const prefetched = prefetchIntentRead(panel, "overview");
-  const consumed = consumeIntentRead(panel, "overview", "overview", "summary");
+  const consumed = consumeIntentRead(panel, "overview", "overview", "primary");
   assert.equal(reads, 1, "navigation consumes its in-flight read");
   resolveRead({usage:{today:{total_tokens:7}}});
   assert.deepEqual(await consumed, await prefetched);
   panel._agentId = "agent-b";
-  const next = consumeIntentRead(panel, "overview", "overview", "summary");
+  const next = consumeIntentRead(panel, "overview", "overview", "primary");
   assert.equal(reads, 2, "a different agent cannot consume the previous read");
   resolveRead({usage:{today:{total_tokens:9}}});
   await next;
@@ -917,6 +920,39 @@ const configResult = (projection, title = "A") => ({
   assert.match(host.innerHTML, /Satellite 299/);
   assert.ok(idReads <= size * 3, `broadcast history performed ${idReads} satellite ID reads for ${size} deliveries`);
 }
+// Normal navigation publishes primary data without waiting for any secondary manager.
+for (const failedKind of ["usage", "memory", "knowledge", "guest_mode", "setup_health"]) {
+  const panel = panelFor("overview", null);
+  const key = panel._sectionCacheKey();
+  const pending = new Map();
+  const primary = {conversations:{archive_enabled:true}, usage:{}, loading:{usage:true, memory:true, knowledge:true, guest_mode:true, setup_health:true}};
+  panel._hass = {callWS:(message) => {
+    if (message.section !== "overview") return Promise.resolve({});
+    if (message.action === "primary") return Promise.resolve(primary);
+    assert.equal(message.action, "detail", "normal navigation never requests the combined summary");
+    return new Promise((resolve, reject) => pending.set(message.kind, {resolve, reject}));
+  }};
+  await panel._loadSection();
+  assert.equal(panel._busy, false, "primary is usable while every detail is pending");
+  assert.equal(panel._result.conversations.archive_enabled, true);
+  assert.equal(pending.size, 5);
+  assert.equal(panel._sectionCache.has(key), false, "incomplete primary must not become a fresh cached Overview");
+  for (const [kind, read] of pending) {
+    if (kind === failedKind) continue;
+    read.resolve(kind === "usage" ? {usage:{today:{total_tokens:7}}} : {});
+    await Promise.resolve();
+    assert.equal(panel._result.loading[kind], false, "completed details appear independently");
+    assert.equal(panel._result.loading[failedKind], true);
+  }
+  assert.equal(panel._sectionCache.has(key), false);
+  pending.get(failedKind).reject(new Error(`${failedKind} unavailable`));
+  await Promise.resolve();
+  assert.equal(panel._busy, false);
+  assert.equal(panel._error, null);
+  assert.deepEqual(panel._result.load_errors.map(issue => issue.key), [failedKind]);
+  assert.equal(panel._sectionCache.get(key), panel._result, "cache is published after every detail settles");
+}
+
 // Exercise cache ownership through the actual host, with no performance installer.
 {
   const panel = panelFor("overview", null);
@@ -924,7 +960,8 @@ const configResult = (projection, title = "A") => ({
   let resolveRefresh;
   let reads = 0;
   panel._hass = {callWS: (message) => {
-    if (message.section !== "overview") return Promise.resolve({});
+    if (message.section !== "overview" || message.action === "detail") return Promise.resolve({});
+    assert.equal(message.action, "primary");
     reads++;
     return reads === 1
       ? Promise.resolve({usage:{today:{total_tokens:3}}})
@@ -933,7 +970,7 @@ const configResult = (projection, title = "A") => ({
   await panel._loadSection();
   assert.equal(panel._sectionCache.get(key).usage.today.total_tokens, 3);
   await panel._loadSection();
-  assert.equal(reads, 1, "a recent Overview return reuses its summary");
+  assert.equal(reads, 1, "a recent Overview return reuses its completed result");
   panel._eocSectionCacheTimes.set(key, Date.now() - 31_000);
   const refresh = panel._loadSection();
   await Promise.resolve();

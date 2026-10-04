@@ -163,7 +163,7 @@ test("direct non-admin URLs cannot load administrator configuration", async ({pa
   await expectHarnessClean(page, pageErrors);
 });
 
-test("keeps the Overview usable when its summary reports a partial backend failure", async ({page}) => {
+test("keeps the Overview usable when an independent detail fails", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("overview", "&partial=1"));
 
@@ -173,9 +173,43 @@ test("keeps the Overview usable when its summary reports a partial backend failu
   await expect(panel.getByText("5,678 this month", {exact: false})).toBeVisible();
 
   const overviewRequests = await page.evaluate(() => window.browserHarness.calls.filter(
-    (call) => call.section === "overview" && call.action === "summary",
+    (call) => call.section === "overview" && call.action === "primary",
   ));
   expect(overviewRequests).toHaveLength(1);
 
   await expectHarnessClean(page, pageErrors);
 });
+
+for (const bundled of [false, true]) {
+  test(`normal Overview navigation remains usable while Knowledge is pending (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("guide", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator(".guide-search")).toBeVisible();
+    await page.evaluate(() => {
+      const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+      window.overviewDetailPending = false;
+      browserHarness.hass.callWS = async (message) => {
+        if (message.section === "overview" && message.action === "detail" && message.kind === "knowledge") {
+          window.overviewDetailPending = true;
+          await new Promise(resolve => { window.releaseOverviewKnowledge = resolve; });
+        }
+        return original(message);
+      };
+    });
+    await panel.locator('.top-nav button[data-page="overview"]').click();
+    await expect.poll(() => page.evaluate(() => window.overviewDetailPending)).toBe(true);
+    await expect(panel.locator(".dashboard-grid")).toBeVisible();
+    await expect(panel.getByText("1,234 tokens today", {exact:false})).toBeVisible();
+    await expect(panel.locator("#agent")).toBeEnabled();
+    await expect.poll(() => panel.evaluate(host => host._busy)).toBe(false);
+    expect(await panel.evaluate(host => host._result.loading.knowledge)).toBe(true);
+    await page.evaluate(() => window.releaseOverviewKnowledge());
+    await expect.poll(() => panel.evaluate(host => host._result.loading.knowledge)).toBe(false);
+    const reads = await page.evaluate(() => browserHarness.calls.filter(call => call.section === "overview"));
+    expect(reads.filter(call => call.action === "primary")).toHaveLength(1);
+    expect(reads.filter(call => call.action === "summary")).toHaveLength(0);
+    expect(reads.filter(call => call.action === "detail")).toHaveLength(5);
+    await expectHarnessClean(page, errors);
+  });
+}

@@ -345,7 +345,7 @@ test("Overview navigation reuses a strong-intent read without reading on hover",
   await overview.hover();
   await page.waitForTimeout(150);
   const reads = () => page.evaluate(() => window.browserHarness.calls.filter(
-    (call) => call.section === "overview" && call.action === "summary",
+    (call) => call.section === "overview" && call.action === "primary",
   ).length);
   expect(await reads()).toBe(0);
   await overview.click();
