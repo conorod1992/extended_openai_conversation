@@ -505,19 +505,32 @@ async def _side_by_side_child(config_dir: Path) -> None:
         original_conversation_id = next(
             row.entity_id for row in original_rows if row.domain == conversation.DOMAIN
         )
+        fork_agent = conversation.async_get_agent(hass, fork_conversation_id)
+        assert fork_agent is not None
+
+        async def fork_service_answer(log: Any, **kwargs: Any) -> None:
+            del kwargs
+            log.async_add_assistant_content_without_tools(
+                conversation.AssistantContent(
+                    agent_id=fork_agent.entity_id,
+                    content="FORK_SERVICE_ROUTE_MARKER",
+                )
+            )
+
+        fork_agent._async_handle_chat_log = fork_service_answer
         response = await hass.services.async_call(
             DOMAIN,
             SERVICE_PROCESS,
-            {"text": "what time is it", "agent_id": fork_conversation_id},
+            {"text": "route through the fork", "agent_id": fork_conversation_id},
             blocking=True,
             return_response=True,
         )
-        assert response["handled_locally"] is True
+        assert response["response"] == "FORK_SERVICE_ROUTE_MARKER"
         with pytest.raises(HomeAssistantError):
             await hass.services.async_call(
                 DOMAIN,
                 SERVICE_PROCESS,
-                {"text": "what time is it", "agent_id": original_conversation_id},
+                {"text": "must not cross domains", "agent_id": original_conversation_id},
                 blocking=True,
                 return_response=True,
             )
@@ -543,8 +556,6 @@ async def _side_by_side_child(config_dir: Path) -> None:
         assert "extended-openai" in hass.data[DATA_PANELS]
         fork_panel = hass.data[DATA_PANELS]["extended-openai"]
 
-        fork_agent = conversation.async_get_agent(hass, fork_conversation_id)
-        assert fork_agent is not None
         assert await hass.config_entries.async_unload(original.entry_id)
         await hass.async_block_till_done()
         assert original.state is ConfigEntryState.NOT_LOADED
