@@ -338,8 +338,10 @@ def _run(config: Path, phase: str, endpoint: str = ""):
 
 def test_native_home_assistant_backup_restores_populated_eoai_to_fresh_installation(
     tmp_path: Path,
+    socket_enabled,
 ) -> None:
     """Create with HA's backup manager and restore through HA's startup restorer."""
+    del socket_enabled
     source_component = (
         Path(__file__).resolve().parents[1] / "custom_components" / DOMAIN
     )
@@ -368,7 +370,9 @@ def test_native_home_assistant_backup_restores_populated_eoai_to_fresh_installat
 
         restored_config = tmp_path / "restored-config"
         restored_config.mkdir()
-        copied_backup = restored_config / "native-ha-backup.tar"
+        backup_dir = restored_config / "backups"
+        backup_dir.mkdir()
+        copied_backup = backup_dir / "native-ha-backup.tar"
         shutil.copy2(backup, copied_backup)
         (restored_config / ".HA_RESTORE").write_text(
             json.dumps(
