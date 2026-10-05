@@ -72,7 +72,7 @@ async function assertPersistedCorpus(panel, middle) {
   await expect(panel.locator('[data-tool-key="cross_engine_tool"]')).toContainText("Cross-engine persisted tool");
   await panel.locator('[data-tool-key="cross_engine_tool"] .edit-tool').click();
   await expect.poll(() => panel.locator("#tool-yaml-native").evaluate(element => element.yaml)).toContain("cross-engine-v2");
-  await panel.locator("#tool-dialog .dialog-actions .close-editor").click().catch(()=>{});
+  await panel.locator("#tool-cancel").click();
   await panel.evaluate(host => host._navigate("capabilities", "request-rules"));
   await expect(panel.locator(".request-rule-card").filter({hasText:"Cross-engine local rule"})).toBeVisible();
   await panel.evaluate(host => host._navigate("data-memory", "memories"));
