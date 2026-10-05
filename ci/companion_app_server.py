@@ -119,8 +119,8 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
     owner = await hass.auth.async_create_user(
         "EOAI Companion Acceptance",
         group_ids=[GROUP_ID_ADMIN],
-        is_owner=True,
     )
+    assert owner.is_owner
     credentials = await provider.async_get_or_create_credentials({"username": USERNAME})
     await hass.auth.async_link_user(owner, credentials)
 
