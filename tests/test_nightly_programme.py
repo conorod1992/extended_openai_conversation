@@ -1,9 +1,13 @@
 """Sensitivity witnesses for programme-level candidate/environment governance."""
 
 from copy import deepcopy
+import hashlib
+import json
+import sys
 
 import pytest
 
+from ci import enhanced_evidence
 from ci.compatibility_evidence import check_ha_environment
 from ci.enhanced_evidence import environment_fingerprint
 from ci.nightly_programme import programme_errors
@@ -39,3 +43,19 @@ def test_version_guard_checks_execution_ledger_as_well_as_job_summary(field, val
     ledger["environment_fingerprint"] = environment_fingerprint(ledger["environment"])
     summary["execution_runs"] = [ledger]
     assert check_ha_environment(summary, version="2026.9.4", plugin_version="reviewed")
+
+
+def test_prebuilt_wheel_source_requires_consistent_recorded_build_identity(tmp_path, monkeypatch):
+    source = tmp_path / "ha-core-sha"
+    identity = tmp_path / "environment.identity.json"
+    source.write_text(SHA)
+    monkeypatch.setattr(enhanced_evidence, "_version", lambda _: "2026.10.0.dev0")
+    built = {"extra": [f"ha_core_sha={SHA}"], "installed_python_packages": ["homeassistant==2026.10.0.dev0"], "python_version": sys.version.split()[0]}
+    digest = hashlib.sha256(json.dumps(built, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    identity.write_text(json.dumps(built | {"sha256": digest}))
+    assert enhanced_evidence.prebuilt_ha_source(identity, source) == SHA
+    source.write_text("a" * 40)
+    assert enhanced_evidence.prebuilt_ha_source(identity, source) is None
+    source.write_text(SHA)
+    identity.write_text(json.dumps(built | {"sha256": "wrong"}))
+    assert enhanced_evidence.prebuilt_ha_source(identity, source) is None
