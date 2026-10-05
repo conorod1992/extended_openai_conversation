@@ -2050,7 +2050,12 @@
     "tests_stress/test_private_content_destinations.py::test_application_oracle_detects_disclosure_before_upload_redaction[unrelated_store]",
     "tests_stress/test_private_content_destinations.py::test_authorized_retention_does_not_allow_credentials_or_unrelated_destinations",
     "tests_stress/test_private_content_destinations.py::test_populated_journey_respects_raw_application_destinations[chat_completions]",
-    "tests_stress/test_private_content_destinations.py::test_populated_journey_respects_raw_application_destinations[responses]"
+    "tests_stress/test_private_content_destinations.py::test_populated_journey_respects_raw_application_destinations[responses]",
+    "tests_stress/test_generated_editor_journey.py::test_generated_programmes_survive_native_edit_and_process_restart[chat_completions]",
+    "tests_stress/test_generated_editor_journey.py::test_generated_programmes_survive_native_edit_and_process_restart[responses]",
+    "tests_stress/test_generated_editor_journey.py::test_programme_oracle_rejects_dropped_falsy_or_unicode_values",
+    "tests_stress/test_generated_editor_journey.py::test_utf8_rest_limits_count_bytes_separately_from_schema_characters[False]",
+    "tests_stress/test_generated_editor_journey.py::test_utf8_rest_limits_count_bytes_separately_from_schema_characters[True]"
   ],
   "browser": {
     "browser": [
@@ -2288,7 +2293,8 @@
       "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly non-admin Usage omits detail clearing and retention controls",
       "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly run details show failed provider requests, recover from errors, and ignore closed or switched dialogs",
       "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage history windows load lazily, cache selections, page all history, and keep charts responsive",
-      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection"
+      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection",
+      "tests_browser/real-ha-generated-programmes.spec.mjs::chromium::real-ha-generated-programmes.spec.mjs::generated multilingual programmes retain semantics through native editor round trips"
     ],
     "browser-firefox": [
       "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
@@ -2648,7 +2654,12 @@
       "native_registry_fetch_recoveries": 1,
       "production_backup_browser_journeys": 1,
       "native_control_endurance_journeys": 1,
-      "genuine_locale_timezone_journeys": 1
+      "genuine_locale_timezone_journeys": 1,
+      "generated_editor_programmes": 32,
+      "multilingual_public_journeys": 16,
+      "generated_editor_restarts": 2,
+      "unicode_character_boundary_cases": 16,
+      "unicode_byte_boundary_cases": 2
     },
     "browser-firefox": {
       "multi_tab_conflicts": 1,
@@ -2885,6 +2896,7 @@
       "tests_stress/test_browser_backend_resilience.py",
       "tests_stress/test_browser_management_contract.py",
       "tests_stress/test_browser_multi_tab.py",
+      "tests_stress/test_generated_editor_journey.py",
       "tests_stress/test_management_ws_contract.py"
     ],
     "browser-firefox": [
