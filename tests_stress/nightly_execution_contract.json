@@ -2038,7 +2038,9 @@
     "tests_stress/test_downstream_delivery_ownership.py::test_recipient_guard_rejects_missing_active_backpressure[not_paused]",
     "tests_stress/test_downstream_delivery_ownership.py::test_recipient_guard_rejects_missing_active_backpressure[unbounded]",
     "tests_stress/test_downstream_delivery_ownership.py::test_slow_native_audio_recipient_preserves_foreground_progress[abandon]",
-    "tests_stress/test_downstream_delivery_ownership.py::test_slow_native_audio_recipient_preserves_foreground_progress[slow]"
+    "tests_stress/test_downstream_delivery_ownership.py::test_slow_native_audio_recipient_preserves_foreground_progress[slow]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_slow_actual_assist_websocket_has_bounded_native_backlog[abandon]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_slow_actual_assist_websocket_has_bounded_native_backlog[resume]"
   ],
   "browser": {
     "browser": [
@@ -2677,8 +2679,9 @@
       "delayed_playback_acknowledgements": 1,
       "intercom_timing_recoveries": 1,
       "downstream_audio_cases": 2,
-      "downstream_bounded_samples": 2,
-      "shared_satellite_ownership_cases": 3
+      "downstream_bounded_samples": 4,
+      "shared_satellite_ownership_cases": 3,
+      "downstream_websocket_cases": 2
     },
     "backup": {
       "rollback_phases": 1,

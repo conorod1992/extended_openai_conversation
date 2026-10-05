@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import hashlib
 import io
 import json
+import socket
 from urllib.parse import urlsplit
 import wave
 
@@ -29,9 +30,14 @@ from homeassistant.components.media_player import (
     MediaPlayerEntityFeature,
     MediaPlayerState,
 )
+from homeassistant.components.websocket_api.const import MAX_PENDING_MSG
 from homeassistant.core import Context
 from tests_real_ha.test_acceptance_lifecycle import _setup_entry
-from tests_real_ha.test_assist_streaming_speech_processing import _chat_sse_deltas
+from tests_real_ha.test_assist_streaming_speech_processing import (
+    _chat_sse_deltas,
+    _final_speech,
+    _progressive_text,
+)
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
     _management_call,
@@ -46,7 +52,11 @@ from tests_stress.test_native_audio_delivery import (
 )
 from tests_stress.test_provider_real_connection_pool import _say
 from tests_stress.test_runtime_soak import _resource_footprint
-from tests_stress.test_shared_runtime_request_lifetimes import _endpoint, _entry
+from tests_stress.test_shared_runtime_request_lifetimes import (
+    _await_frames,
+    _endpoint,
+    _entry,
+)
 
 
 class _VolumeOutput(MediaPlayerEntity):
@@ -289,6 +299,190 @@ async def test_slow_native_audio_recipient_preserves_foreground_progress(
     finally:
         if response is not None:
             response.close()
+        await runner.cleanup()
+
+
+def _native_ws_handler(client):
+    address = client._writer.transport.get_extra_info("sockname")
+    handlers = []
+    for task in asyncio.all_tasks():
+        for frame in _await_frames(task):
+            candidate = frame.f_locals.get("self")
+            if (
+                type(candidate).__name__ == "WebSocketHandler"
+                and candidate._request.transport.get_extra_info("peername") == address
+            ):
+                handlers.append(candidate)
+    assert handlers, "The selected native WebSocket handler was not observed"
+    assert all(handler is handlers[0] for handler in handlers)
+    return handlers[0]
+
+
+def _ws_backlog(handler):
+    if not hasattr(handler, "_message_queue"):
+        queue = handler._to_write
+        return queue.qsize(), sum(len(item) for item in queue._queue)
+    queue = handler._message_queue
+    if queue is None:
+        assert handler._closing and handler._writer_task is None
+        return 0, 0
+    return len(queue), sum(len(item) for item in queue)
+
+
+@pytest.mark.parametrize("recipient", ["resume", "abandon"])
+async def test_slow_actual_assist_websocket_has_bounded_native_backlog(
+    hass,
+    hass_ws_client,
+    socket_enabled,
+    stress_trace,
+    recipient,
+):
+    """Constrain actual recipient TCP flow, keeping HA's real writer and queue."""
+    del socket_enabled
+    MockUser(id="real-pool-owner", is_owner=True).add_to_hass(hass)
+    produce, produced, finish = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    prefix = "Audible prefix. "
+    parts = [f"Chunk {index:02d} " + "bounded speech " * 512 for index in range(64)]
+    transports = []
+
+    async def provider(request):
+        body = json.dumps(await request.json())
+        if "Slow downstream socket" not in body:
+            return web.Response(
+                body=_chat_sse_text("Independent healthy"),
+                content_type="text/event-stream",
+            )
+        transports.append(request.transport)
+        response = web.StreamResponse(headers={"content-type": "text/event-stream"})
+        await response.prepare(request)
+        await response.write(
+            _chat_sse_deltas([prefix, "unused"]).split(b"\n\n")[0] + b"\n\n"
+        )
+        await produce.wait()
+        for part in parts:
+            await response.write(
+                _chat_sse_deltas([part, "unused"]).split(b"\n\n")[0] + b"\n\n"
+            )
+            await asyncio.sleep(0)
+        produced.set()
+        await finish.wait()
+        if not transports[0].is_closing():
+            await response.write(_chat_sse_deltas([""]))
+        return response
+
+    runner, url = await _endpoint(provider)
+    client = handler = None
+    try:
+        entry, _, _, _, _, _ = await _audio_runtime(hass, url)
+        client = await hass_ws_client(hass)
+        handler = _native_ws_handler(client)
+        transport = client._writer.transport
+        transport.get_extra_info("socket").setsockopt(
+            socket.SOL_SOCKET, socket.SO_RCVBUF, 4096
+        )
+        server_transport = handler._request.transport
+        server_transport.get_extra_info("socket").setsockopt(
+            socket.SOL_SOCKET, socket.SO_SNDBUF, 8192
+        )
+        await client.send_json_auto_id(
+            {
+                "type": "assist_pipeline/run",
+                "start_stage": "intent",
+                "end_stage": "intent",
+                "input": {"text": "Slow downstream socket"},
+                "device_id": "slow-downstream-device",
+            }
+        )
+        result = await client.receive_json()
+        assert result["success"] is True
+        events = []
+        async with asyncio.timeout(10):
+            while _progressive_text(events) != prefix:
+                message = await client.receive_json()
+                events.append(message["event"])
+        # This is external network flow control on the real recipient socket;
+        # no production send method, writer, provider client or queue is replaced.
+        transport.pause_reading()
+        produce.set()
+        await asyncio.wait_for(produced.wait(), 10)
+        async with asyncio.timeout(10):
+            while not (
+                _ws_backlog(handler)[0]
+                and server_transport.get_write_buffer_size()
+                > server_transport.get_write_buffer_limits()[1]
+            ):
+                await asyncio.sleep(0)
+        pending, retained = _ws_backlog(handler)
+        assert 0 < pending <= len(parts) + 10 < MAX_PENDING_MSG
+        assert 0 < retained <= sum(len(part.encode()) for part in parts) + 65536
+        assert (
+            server_transport.get_write_buffer_size()
+            <= sum(len(part.encode()) for part in parts) + 65536
+        )
+        assert not handler._writer_task.done()
+        writer = handler._writer_task
+        connection = handler._connection
+        admin = await _admin_client(hass, hass_ws_client)
+        snapshot = await asyncio.wait_for(
+            _management_call(admin, entry=entry, section="configuration", action="get"),
+            5,
+        )
+        assert snapshot["title"]
+        assert (
+            _speech(
+                await asyncio.wait_for(
+                    _say(hass, entry.entry_id, "Healthy while WebSocket stalled"), 5
+                )
+            )
+            == "Independent healthy"
+        )
+        observation = {
+            "pending_messages": pending,
+            "retained_message_bytes": retained,
+            "socket_write_bytes": server_transport.get_write_buffer_size(),
+            "resources": _resource_footprint(hass),
+        }
+        if recipient == "abandon":
+            transport.abort()
+            async with asyncio.timeout(10):
+                while not transports[0].is_closing():
+                    await asyncio.sleep(0)
+        else:
+            transport.resume_reading()
+            finish.set()
+            async with asyncio.timeout(15):
+                while not any(event["type"] == "run-end" for event in events):
+                    message = await client.receive_json()
+                    events.append(message["event"])
+            expected = prefix + "".join(parts)
+            assert _progressive_text(events) == _final_speech(events) == expected
+        transport.resume_reading()
+        await client.close()
+        await asyncio.wait_for(asyncio.gather(writer, return_exceptions=True), 10)
+        assert writer.done() and _ws_backlog(handler)[0] == 0
+        assert not connection.subscriptions
+        assert (
+            _speech(await _say(hass, entry.entry_id, "Healthy after WebSocket"))
+            == "Independent healthy"
+        )
+        record(
+            stress_trace,
+            "summary",
+            downstream_websocket_cases=1,
+            downstream_bounded_samples=1,
+            pre_gc_resource_samples=2,
+            genuine_management_websocket_commands=1,
+            recipient=recipient,
+            native_backlog=observation,
+            provider_requests=3,
+            public_turns=3,
+        )
+    finally:
+        produce.set()
+        finish.set()
+        if client is not None:
+            client._writer.transport.resume_reading()
+            await client.close()
         await runner.cleanup()
 
 
