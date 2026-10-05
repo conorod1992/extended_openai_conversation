@@ -106,10 +106,12 @@ appId: io.homeassistant.companion.android
 - tapOn:
     text: "Companion acceptance assistant"
     below: "Agent name"
-- longPressOn:
-    text: "Companion acceptance assistant"
-    below: "Agent name"
-- tapOn: "Select all"
+# A tap places the caret in the middle of the WebView text field. Move it past
+# the full initial title before backspacing, without relying on selection menus.
+- repeat:
+    times: 32
+    commands:
+      - pressKey: "Remote Dpad Right"
 - eraseText: 100
 - inputText: "Companion app saved title"
 - hideKeyboard
