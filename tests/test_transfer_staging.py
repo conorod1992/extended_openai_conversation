@@ -22,11 +22,14 @@ def test_live_owner_and_unmarked_data_survive_reconciliation(tmp_path):
     unknown = root / f"owner-{'a' * 32}"
     unknown.mkdir()
     (unknown / "sentinel").write_text("UNMARKED")
+    empty_unmarked = root / f"owner-{'b' * 32}"
+    empty_unmarked.mkdir()
     (root / "unrelated-sentinel").write_text("KEEP")
     try:
         second = _initialize_owner(root)
         assert payload.read_bytes() == b"LIVE-OWNER"
         assert (unknown / "sentinel").read_text() == "UNMARKED"
+        assert not empty_unmarked.exists()
         assert (root / "unrelated-sentinel").read_text() == "KEEP"
         assert first.directory != second.directory
     finally:
@@ -120,6 +123,10 @@ async def test_shared_allocation_survives_waiter_cancellation(tmp_path, monkeypa
         release.set()
         await asyncio.gather(first, second, return_exceptions=True)
         await staging.async_close_transfer_staging(hass)
+
+
+async def test_close_without_an_allocated_owner_is_safe(tmp_path) -> None:
+    await staging.async_close_transfer_staging(_hass(tmp_path))
 
 
 async def test_failed_shared_attempt_with_cancelled_waiters_is_retryable(tmp_path, monkeypatch):

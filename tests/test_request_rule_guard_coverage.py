@@ -244,6 +244,8 @@ def test_bounded_function_result_preserves_all_json_scalar_values() -> None:
         ({1: "non-text key"}, "object keys must be text"),
         ({"value": object()}, "must contain JSON values"),
         ("x" * (request_rules.MAX_RESULT_BYTES + 1), "too large"),
+        ({"x" * (request_rules.MAX_RESULT_BYTES + 1): None}, "too large"),
+        ({"": "x" * (request_rules.MAX_RESULT_BYTES - 2)}, "too large"),
         ([None] * request_rules.MAX_SCRIPT_NODES, "too many values"),
     ],
 )
