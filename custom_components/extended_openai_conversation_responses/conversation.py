@@ -1126,11 +1126,13 @@ class ExtendedOpenAIAgentEntity(
             runtime_reconciled=_ACTIVE_RUNTIME_RECONCILED.get(),
         )
         temporary_memories = await self._async_retrieve_temporary_memories()
-        retrieved_memories = await self._async_revalidate_retrieved_memories(
-            llm_context, retrieved_memories
+        retrieved_memories = (
+            await ExtendedOpenAIAgentEntity._async_revalidate_retrieved_memories(
+                self, llm_context, retrieved_memories
+            )
         )
-        temporary_memories = self._revalidate_temporary_memory_expiry(
-            temporary_memories
+        temporary_memories = ExtendedOpenAIAgentEntity._revalidate_temporary_memory_expiry(
+            self, temporary_memories
         )
 
         # Build custom prompt with exposed entities
@@ -2314,7 +2316,9 @@ class ExtendedOpenAIAgentEntity(
             results = await self._knowledge.async_search(
                 query, sorted(allowed_ids) if allowed_ids else None, limit
             )
-            results = await self._knowledge.async_revalidate_search_results(results)
+            results = await KnowledgeLibrary.async_revalidate_search_results(
+                self._knowledge, results
+            )
             filter_requested = bool(source_ids)
             return knowledge_search_payload(
                 {
