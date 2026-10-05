@@ -610,6 +610,16 @@ jobs:
           tests_stress/test_browser_backend_resilience.py::test_native_editor_ownership_and_satellite_registry_recovery
           -v -s --asyncio-mode=auto --timeout=600
           --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
+      - name: Install Chromium handoff peer
+        run: npx playwright install --with-deps chromium
+      - name: Run same-backend cross-engine persistence handoff
+        env:
+          RUN_REAL_HA_CROSS_BROWSER_HANDOFF: "1"
+        run: >-
+          python ci/run_sanitized.py stress-artifacts/browser-cross-engine-handoff.log --
+          pytest tests_real_ha/test_browser_cross_engine_handoff_acceptance.py
+          -v -s --asyncio-mode=auto --timeout=600
+          --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
       - name: Summarize engine evidence
         if: always()
         env:
