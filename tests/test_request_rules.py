@@ -2183,6 +2183,27 @@ async def test_conversation_overrides_compose_across_separate_rules() -> None:
     }
 
 
+async def test_conversation_reset_clears_prior_request_reset_during_rule_cascade() -> None:
+    request_reset = routing_rule(scope="request", reset=True)
+    request_reset["continue_matching"] = True
+    request_reset["action"]["continue_to_ai"] = False
+    conversation_reset = routing_rule(scope="conversation", reset=True)
+    conversation_reset["action"]["continue_to_ai"] = False
+    rules = await manager(request_reset, conversation_reset)
+
+    result = await async_evaluate_rule(
+        SimpleNamespace(),
+        rules,
+        RequestRuleRuntime(),
+        "think carefully about this",
+        "session",
+    )
+
+    assert result is not None
+    assert result.match.rule["action"]["scope"] == "conversation"
+    assert result.request_override is None
+
+
 async def test_invalid_conversation_update_is_atomic() -> None:
     runtime = RequestRuleRuntime()
     runtime.set("one", {CONF_CHAT_MODEL: "gpt-5", CONF_REASONING_EFFORT: "high"})

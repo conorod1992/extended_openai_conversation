@@ -17,6 +17,9 @@ from custom_components.extended_openai_conversation_responses.ha_actions import 
 from homeassistant.core import Context, State
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 
+_REAL_TARGET_IDENTITY = ha_actions._target_identity
+_REAL_SERVICE_IDENTITY = ha_actions._service_identity
+
 
 def _state(entity_id: str, value: str, **attributes) -> State:
     return State(entity_id, value, attributes)
@@ -558,6 +561,7 @@ def test_target_identity_comparison_uses_object_generation() -> None:
 def test_target_identity_captures_entity_device_and_runtime_generations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(ha_actions, "_target_identity", _REAL_TARGET_IDENTITY)
     entry = SimpleNamespace(device_id="device-1")
     device = object()
     state = object()
@@ -577,6 +581,7 @@ def test_target_identity_captures_entity_device_and_runtime_generations(
 def test_target_identity_skips_registry_reads_for_empty_targets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(ha_actions, "_target_identity", _REAL_TARGET_IDENTITY)
     registry_lookup = MagicMock(side_effect=AssertionError("unexpected registry read"))
     monkeypatch.setattr(ha_actions.er, "async_get", registry_lookup)
 
@@ -584,7 +589,10 @@ def test_target_identity_skips_registry_reads_for_empty_targets(
     registry_lookup.assert_not_called()
 
 
-def test_service_identity_returns_current_service_owner() -> None:
+def test_service_identity_returns_current_service_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ha_actions, "_service_identity", _REAL_SERVICE_IDENTITY)
     owner = object()
     hass = SimpleNamespace(
         services=SimpleNamespace(
