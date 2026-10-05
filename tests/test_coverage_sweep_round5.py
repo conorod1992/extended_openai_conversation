@@ -330,3 +330,175 @@ def test_knowledge_chunk_split_single_short_chunk() -> None:
 
     assert knowledge._split_chunks("short text") == [(0, "short text")]
     assert knowledge._split_chunks("") == []
+
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_manager_load_invalid_saved_state_falls_back(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_catalog_manager as manager_module,
+    )
+
+    manager = manager_module.ModelCatalogManager(hass)
+    manager.store = SimpleNamespace(
+        async_load=AsyncMock(
+            return_value={
+                "catalog": None,
+                "available_catalog": None,
+                "last_checked": -1,
+                "etag": None,
+                "incompatible_catalog": None,
+            }
+        )
+    )
+    activate = Mock()
+    log = Mock()
+    monkeypatch.setattr(manager_module, "activate_catalog", activate)
+    monkeypatch.setattr(manager_module, "log_handled_failure", log)
+
+    await manager.async_load()
+
+    assert manager.catalog is None
+    assert manager.available_catalog is None
+    assert manager.last_checked == 0.0
+    assert manager.last_error == "Stored model data could not be loaded; using bundled data."
+    activate.assert_called_once_with(None)
+    log.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_manager_apply_without_available_update(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_catalog_manager as manager_module,
+    )
+
+    manager = manager_module.ModelCatalogManager(hass)
+
+    status = await manager.async_apply_update()
+
+    assert status["update_available"] is False
+    assert status["last_error"] == "No model data update is available."
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_manager_failed_check_keeps_current_state_when_save_fails(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_catalog_manager as manager_module,
+    )
+
+    manager = manager_module.ModelCatalogManager(hass)
+    manager.catalog = None
+    manager.available_catalog = None
+    manager.etag = "etag"
+    manager.incompatible_catalog = {"schema_version": 99, "catalog_version": 100}
+    manager._save = AsyncMock(side_effect=OSError("disk full"))
+    log = Mock()
+    monkeypatch.setattr(manager_module, "log_handled_failure", log)
+
+    error = manager_module._TransientCatalogUpdateError(503)
+    await manager._record_failed_check(123.0, transient=True, error=error)
+
+    assert manager.last_checked == 123.0
+    assert manager.last_error == "Model data check failed; the current catalogue was kept."
+    assert log.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_manager_reset_blocked_by_saved_configuration(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_catalog_manager as manager_module,
+    )
+
+    manager = manager_module.ModelCatalogManager(hass)
+    monkeypatch.setattr(
+        manager,
+        "_bundled_reset_would_invalidate_saved_reasoning",
+        AsyncMock(return_value=True),
+    )
+    preserves = AsyncMock(return_value=True)
+    monkeypatch.setattr(manager, "_candidate_preserves_saved_requests", preserves)
+
+    status = await manager.async_reset()
+
+    assert "reset was blocked" in status["last_error"]
+    preserves.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_manager_reset_keeps_newer_active_as_available(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_catalog_manager as manager_module,
+    )
+
+    manager = manager_module.ModelCatalogManager(hass)
+    newer = deepcopy(manager_module.BUNDLED_CATALOG)
+    newer["catalog_version"] = manager_module.BUNDLED_CATALOG["catalog_version"] + 1
+    manager.catalog = newer
+    manager.available_catalog = None
+    manager.etag = "new-etag"
+    manager.last_checked = 100.0
+    manager._save = AsyncMock()
+    monkeypatch.setattr(
+        manager,
+        "_bundled_reset_would_invalidate_saved_reasoning",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        manager,
+        "_candidate_preserves_saved_requests",
+        AsyncMock(return_value=True),
+    )
+    activate = Mock()
+    sync = Mock()
+    monkeypatch.setattr(manager_module, "activate_catalog", activate)
+    monkeypatch.setattr(manager_module, "sync_all_model_lifecycles", sync)
+
+    status = await manager.async_reset()
+
+    assert status["source"] == "bundled"
+    assert status["update_available"] is True
+    assert manager.available_catalog is newer
+    assert manager.etag == "new-etag"
+    activate.assert_called_once_with(None)
+    sync.assert_called_once_with(hass)
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_candidate_rejects_invalid_saved_agent_request(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_catalog_manager as manager_module,
+    )
+
+    subentry = SimpleNamespace(
+        subentry_id="agent",
+        subentry_type="ai_task_data",
+        data={manager_module.CONF_CHAT_MODEL: manager_module.DEFAULT_CHAT_MODEL},
+    )
+    entry = SimpleNamespace(
+        entry_id="entry",
+        data={},
+        subentries={"agent": subentry},
+    )
+    hass.config_entries.async_entries = Mock(return_value=[entry])
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request.build_provider_request_snapshot",
+        Mock(side_effect=HomeAssistantError("invalid saved request")),
+    )
+    manager = manager_module.ModelCatalogManager(hass)
+
+    assert (
+        await manager._candidate_preserves_saved_requests(
+            manager_module.BUNDLED_CATALOG
+        )
+        is False
+    )
