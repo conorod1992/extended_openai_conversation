@@ -1783,3 +1783,150 @@ async def test_restore_import_requires_preview_token(hass) -> None:
             subentry,
             {"session_id": session_id},
         )
+
+
+
+def test_local_handling_snapshot_falls_back_for_lightweight_hass(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import local_intents
+
+    monkeypatch.setattr(
+        local_intents,
+        "registered_intent_catalog",
+        Mock(side_effect=TypeError("not a real HA registry key")),
+    )
+
+    result = local_intents.local_handling_snapshot(
+        SimpleNamespace(),
+        "entry",
+        "agent",
+        configured_exclusions=["HassTurnOn", "", "HassTurnOn", 123],
+    )
+
+    assert result["intents"] == [
+        {
+            "intent": "HassTurnOn",
+            "label": local_intents._friendly_intent_name("HassTurnOn"),
+            "available": False,
+        }
+    ]
+    assert result["pipeline_conflicts"] == []
+
+
+def test_prompt_entity_name_handles_invalid_and_mechanically_duplicated_names() -> None:
+    from custom_components.extended_openai_conversation_responses import prompt
+
+    assert prompt._entity_prompt_name({"name": 123}) == "123"
+    assert (
+        prompt._entity_prompt_name(
+            {"entity_id": "light.kitchen_light", "name": "Kitchen Light"}
+        )
+        == ""
+    )
+    assert (
+        prompt._entity_prompt_name(
+            {"entity_id": "light.kitchen", "name": "Main Kitchen"}
+        )
+        == "Main Kitchen"
+    )
+
+
+def test_model_tool_result_compaction_rewrites_pretty_json(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_tool_results,
+    )
+
+    result = object()
+    data = {"result": '{\n  "ok": true,\n  "items": [1, 2]\n}'}
+    monkeypatch.setattr(
+        model_tool_results,
+        "tool_result_data",
+        Mock(return_value=data),
+    )
+
+    assert model_tool_results._compact_json_result_content(result) is result
+    assert data["result"] == '{"ok":true,"items":[1,2]}'
+
+
+@pytest.mark.asyncio
+async def test_recovery_guarded_store_remove_with_gate_settles_under_maintenance(
+    monkeypatch,
+) -> None:
+    from homeassistant.helpers.storage import Store
+
+    entered: list[str] = []
+
+    class Gate:
+        @asynccontextmanager
+        async def shared(self, *, maintenance: bool):
+            assert maintenance is True
+            entered.append("gate")
+            try:
+                yield
+            finally:
+                entered.append("exit")
+
+    native_remove = AsyncMock()
+    monkeypatch.setattr(Store, "async_remove", native_remove)
+    store = RecoveryGuardedStore.__new__(RecoveryGuardedStore)
+    store._recovery_gate = Gate()
+
+    await store.async_remove()
+
+    native_remove.assert_awaited_once_with()
+    assert entered == ["gate", "exit"]
+
+
+def test_period_usage_sensor_abstract_summary_branch() -> None:
+    from custom_components.extended_openai_conversation_responses import sensor
+
+    subentry = SimpleNamespace(
+        subentry_id="agent",
+        title="Jarvis",
+        data={},
+    )
+    usage = SimpleNamespace()
+
+    period = sensor._PeriodUsageSensor(subentry, usage)
+
+    with pytest.raises(NotImplementedError):
+        period._summary()
+
+
+def test_usage_period_sensor_summary_and_last_reset_branches(monkeypatch) -> None:
+    from datetime import datetime, UTC
+
+    from custom_components.extended_openai_conversation_responses import sensor
+
+    summary = {
+        "total_tokens": 10,
+        "input_tokens": 4,
+        "output_tokens": 6,
+        "cached_input_tokens": 1,
+        "reasoning_tokens": 2,
+        "run_count": 3,
+        "api_request_count": 4,
+        "failed_request_count": 1,
+        "average_tokens_per_completed_run": 5,
+    }
+    usage = SimpleNamespace(
+        today_summary=Mock(return_value=summary),
+        month_summary=Mock(return_value=summary),
+    )
+    subentry = SimpleNamespace(
+        subentry_id="agent",
+        title="Jarvis",
+        data={},
+    )
+    day_start = datetime(2026, 10, 5, tzinfo=UTC)
+    monkeypatch.setattr(sensor.dt_util, "start_of_local_day", Mock(return_value=day_start))
+
+    today = sensor.UsageTodaySensor(subentry, usage)
+    month = sensor.UsageMonthSensor(subentry, usage)
+
+    assert today.native_value == 10
+    assert today.last_reset == day_start
+    assert month.native_value == 10
+    assert month.last_reset == day_start.replace(day=1)
+    assert today.extra_state_attributes["failures"] == 1
+    usage.today_summary.assert_called()
+    usage.month_summary.assert_called()
