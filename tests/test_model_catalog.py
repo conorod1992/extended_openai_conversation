@@ -687,3 +687,38 @@ async def test_websocket_actions_return_complete_catalog_payload(
     else:
         manager.async_check.assert_awaited_once_with(force=True)
         manager.async_reset.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "method", "error_code"),
+    [
+        ("check", "async_check", "model_catalog_check_failed"),
+        ("apply", "async_apply_update", "model_catalog_apply_failed"),
+        ("reset", "async_reset", "model_catalog_reset_failed"),
+    ],
+)
+async def test_websocket_catalog_actions_return_operation_errors(
+    hass, action: str, method: str, error_code: str
+) -> None:
+    manager = SimpleNamespace(
+        **{
+            method: AsyncMock(return_value={"last_error": "operation failed"}),
+        }
+    )
+    hass.data[runtime.DATA_MANAGER] = manager
+    connection = SimpleNamespace(send_error=Mock(), send_result=Mock())
+
+    await _websocket_handler()(
+        hass,
+        connection,
+        {"id": 43, "action": action, "model": "gpt-test"},
+    )
+
+    getattr(manager, method).assert_awaited_once_with(
+        **({"force": True} if action == "check" else {})
+    )
+    connection.send_error.assert_called_once_with(
+        43, error_code, "operation failed"
+    )
+    connection.send_result.assert_not_called()
