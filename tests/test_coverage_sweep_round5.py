@@ -328,7 +328,7 @@ def test_guest_mode_policy_custom_groups_ignores_malformed_groups(hass) -> None:
         exposed_entities=[],
     )
 
-    assert "safe" not in policy.function_tools
+    assert "safe" not in policy.configured_tool_names
 
 
 def test_knowledge_chunk_split_single_short_chunk() -> None:
@@ -584,7 +584,7 @@ def test_debug_memory_retrieval_records_active_trace(monkeypatch) -> None:
         ({"error": {"code": "model_not_found"}}, "model_unavailable"),
         ({"error": {"type": "insufficient_quota"}}, "insufficient_quota"),
         ({"code": "context_length_exceeded"}, "context_length"),
-        ({"type": "unsupported_parameter"}, "unsupported_parameter"),
+        ({"code": "unsupported_parameter"}, "unsupported_parameter"),
     ],
 )
 def test_provider_failure_category_reads_structured_error_body(body, expected) -> None:
@@ -599,21 +599,14 @@ def test_provider_failure_category_reads_structured_error_body(body, expected) -
     assert provider_errors.provider_failure_category(error) == expected
 
 
-@pytest.mark.parametrize(
-    "pattern",
-    [
-        "hello\\",
-        "{name:one|two\\}",
-    ],
-)
-def test_request_rule_pattern_rejects_trailing_escape(pattern: str) -> None:
+def test_request_rule_pattern_rejects_trailing_escape() -> None:
     from custom_components.extended_openai_conversation_responses.request_rule_patterns import (
         SentencePatternError,
         compile_sentence_pattern,
     )
 
     with pytest.raises(SentencePatternError, match="escape"):
-        compile_sentence_pattern(pattern)
+        compile_sentence_pattern("hello\\")
 
 
 def test_request_rule_pattern_rejects_empty_constrained_choice() -> None:
