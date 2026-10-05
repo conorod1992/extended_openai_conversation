@@ -26,8 +26,9 @@ from custom_components.extended_openai_conversation_responses.provider_credentia
     async_replace_api_key,
 )
 from homeassistant.components import conversation
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_API_KEY
+from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
+from homeassistant.const import CONF_API_KEY, CONF_NAME
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.core import Context, HomeAssistant
 from tests_real_ha.test_config_flow import _make_entry, _setup_entry
 from tests_real_ha.test_cross_feature_acceptance import _agent
@@ -258,4 +259,73 @@ async def test_private_storage_unreadable_at_boot_recovers_without_overwriting_s
         unreadable_boots=1,
         writes_during_inaccessible_boot=saves,
         repaired_boots=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_first_time_config_flow_reaches_loaded_agent_and_first_assist_request(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    stress_trace: list[dict],
+) -> None:
+    """A genuinely created first installation must load and answer its first turn."""
+    from custom_components.extended_openai_conversation_responses.const import (
+        DEFAULT_CONF_BASE_URL,
+        DOMAIN,
+    )
+
+    authenticated = AsyncMock(return_value=object())
+    with (
+        patch(
+            "custom_components.extended_openai_conversation_responses.config_flow.get_authenticated_client",
+            authenticated,
+        ),
+        patch(
+            "custom_components.extended_openai_conversation_responses.get_authenticated_client",
+            authenticated,
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_NAME: "First Setup Journey",
+                CONF_API_KEY: "first-setup-key",
+                CONF_BASE_URL: DEFAULT_CONF_BASE_URL,
+                CONF_SKIP_AUTHENTICATION: True,
+                CONF_API_PROVIDER: "openai",
+            },
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        entries = [
+            entry
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.title == "First Setup Journey"
+        ]
+        assert len(entries) == 1
+        entry = entries[0]
+        if entry.state is not ConfigEntryState.LOADED:
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert {sub.subentry_type for sub in entry.subentries.values()} == {
+        "conversation",
+        "ai_task_data",
+    }
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert agent is not None
+    wire = _install_wire(monkeypatch, agent, [_chat_sse_text("first setup answered")])
+    result = await _converse(hass, agent, "hello from a new installation")
+    assert _speech(result) == "first setup answered"
+    assert len(wire.requests) == 1
+    record(
+        stress_trace,
+        "summary",
+        layer="HA config flow + loaded integration + SDK wire",
+        first_install_journeys=1,
+        default_subentries=2,
+        first_assist_requests=1,
     )
