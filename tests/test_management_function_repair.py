@@ -108,6 +108,40 @@ def test_function_tools_issue_isolates_malformed_yaml() -> None:
     assert issue is not None
 
 
+def test_function_tools_issue_rejects_collection_level_duplicate_names() -> None:
+    defaults = agent_config_defaults()
+    tools = yaml.safe_load(defaults[CONF_FUNCTION_TOOLS])
+    assert isinstance(tools, list) and tools
+
+    configured, issue = function_tools_issue(
+        {CONF_FUNCTION_TOOLS: [tools[0], deepcopy(tools[0])]}
+    )
+
+    assert configured == []
+    assert issue is not None and "duplicate tool name" in issue
+
+
+def test_function_group_repair_helpers_preserve_unrelated_groups() -> None:
+    groups = [
+        {"name": "lights", "functions": ["turn_on", "turn_off"]},
+        {"name": "empty", "functions": []},
+        "legacy-malformed-group",
+    ]
+
+    renamed = repair._replace_group_function_name(groups, "turn_on", "lights_on")
+    assert renamed[0]["functions"] == ["lights_on", "turn_off"]
+    assert groups[0]["functions"] == ["turn_on", "turn_off"]
+    assert repair._replace_group_function_name(groups, None, "new") == groups
+    assert repair._replace_group_function_name(groups, "same", "same") == groups
+    assert repair._replace_group_function_name(None, "old", "new") is None
+
+    removed = repair._remove_group_function_name(groups, "turn_off")
+    assert removed[0]["functions"] == ["turn_on"]
+    assert groups[0]["functions"] == ["turn_on", "turn_off"]
+    assert repair._remove_group_function_name(groups, None) == groups
+    assert repair._remove_group_function_name(None, "turn_off") is None
+
+
 def test_isolated_function_tools_keeps_valid_siblings() -> None:
     """Per-tool repair isolates a bad tool without presenting valid siblings as broken."""
     data, _mixed, valid_tool = _mixed_legacy_tool_data()
