@@ -1,0 +1,37 @@
+name: Nightly programme certification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact candidate commit to certify
+        type: string
+        required: true
+      ha_version:
+        description: Resolved stable HA version for this programme
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+      - name: Verify required nightly runs and evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          HA_VERSION: ${{ inputs.ha_version }}
+        run: python -m ci.nightly_programme --candidate "$CANDIDATE_SHA" --ha-version "$HA_VERSION" --output nightly-programme.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: nightly-programme-${{ inputs.candidate_sha }}
+          path: nightly-programme.json
+          if-no-files-found: error

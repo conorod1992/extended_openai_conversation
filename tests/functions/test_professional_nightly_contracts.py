@@ -21,6 +21,8 @@ from custom_components.extended_openai_conversation_responses.function_execution
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
+from homeassistant.exceptions import HomeAssistantError
+from tests.functions.reproduction_reducer import minimize_reproduction
 
 
 def _spec(schema: dict) -> dict:
@@ -204,8 +206,8 @@ def test_generated_nested_container_contracts_preserve_values_and_constraints():
         {**raw, "settings": {"count": 2, "enabled": False, "extra": 1}},
         {**raw, "literal": {"pattern": "wrong", "nested": {"type": "literal"}}},
     ]
-    for bad in bad_cases:
-        with pytest.raises(Exception):
+    for bad, message in zip(bad_cases, ["labels.*unique", "settings.count.*at most 5", "Unknown function input: settings.extra", "literal.*required value"], strict=True):
+        with pytest.raises(HomeAssistantError, match=message):
             validate_function_arguments(_spec(schema), bad)
 
 
@@ -239,78 +241,33 @@ def test_high_order_feature_witness_keeps_expected_request_boundary():
     assert snapshot.api_kwargs["store"] is False
 
 
-def _minimize_sequence(sequence, reproduces):
-    """Simple deterministic ddmin-style reducer for persistent nightly repros."""
-    current = list(sequence)
-    granularity = 2
-    while len(current) >= 2:
-        chunk = max(1, len(current) // granularity)
-        reduced = False
-        for start in range(0, len(current), chunk):
-            candidate = current[:start] + current[start + chunk :]
-            if candidate and reproduces(candidate):
-                current = candidate
-                granularity = max(2, granularity - 1)
-                reduced = True
-                break
-        if not reduced:
-            if granularity >= len(current):
-                break
-            granularity = min(len(current), granularity * 2)
-    return current
-
-
-def test_failure_sequence_reducer_keeps_same_failure_signature():
+async def test_failure_sequence_reducer_keeps_same_failure_signature():
     sequence = [
-        {"op": "setup"},
-        {"op": "noise-a"},
-        {"op": "write"},
-        {"op": "cancel"},
-        {"op": "noise-b"},
-        {"op": "retry"},
-        {"op": "noise-c"},
+        {"op": "argument", "value": 2, "schedule": "before-validation"},
+        {"op": "argument", "value": False, "schedule": "before-validation"},
+        {"op": "argument", "value": 3, "schedule": "after-failure"},
     ]
+    schema = {"type": "object", "properties": {"count": {"type": "integer"}}}
+    expected_signature = "Function input `count` must be integer"
 
-    expected_signature = "committed-write-cancel-retry"
-
-    def observed_failure(candidate):
-        initialized = committed = cancelled = False
+    async def observed_failure(candidate):
         for item in candidate:
-            operation = item["op"]
-            if operation == "setup":
-                initialized = True
-            elif operation == "write" and initialized:
-                committed = True
-            elif operation == "cancel" and committed:
-                cancelled = True
-            elif operation == "retry" and committed and cancelled:
-                return expected_signature
+            try:
+                validate_function_arguments(_spec(schema), {"count": item["value"]})
+            except HomeAssistantError as error:
+                return str(error)
         return None
 
-    def reproduces(candidate):
-        return observed_failure(candidate) == expected_signature
-
-    minimized = _minimize_sequence(sequence, reproduces)
-    assert [item["op"] for item in minimized] == ["setup", "write", "cancel", "retry"]
-    assert observed_failure(sequence) == expected_signature
-    assert observed_failure(minimized) == expected_signature
-    assert (
-        observed_failure(
-            [
-                {"op": "setup"},
-                {"op": "write"},
-                {"op": "retry"},
-                {"op": "cancel"},
-            ]
-        )
-        is None
-    )
-    assert (
-        observed_failure([item for item in minimized if item["op"] != "write"]) is None
-    )
-    assert (
-        observed_failure([item for item in minimized if item["op"] != "setup"]) is None
-    )
+    result = await minimize_reproduction(sequence, observed_failure, expected_signature)
+    minimized = result["operations"]
+    assert minimized == [sequence[1]]
+    assert json.loads(json.dumps(minimized)) == minimized
+    assert await observed_failure(sequence) == expected_signature
+    assert await observed_failure(minimized) == expected_signature
+    assert await observed_failure([sequence[0], sequence[2]]) is None
+    assert result["reduction_attempts"]
+    with pytest.raises(ValueError, match="intended failure"):
+        await minimize_reproduction(sequence, observed_failure, "different failure")
 
 
 def test_saved_reproduction_envelope_is_seed_independent_and_serializable():

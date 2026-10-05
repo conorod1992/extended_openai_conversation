@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import re
 
+import yaml
+
 from ci.enhanced_evidence import evidence_filename
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +49,22 @@ def test_every_real_ha_test_is_selected_or_explicitly_excluded() -> None:
     selected = _workflow_test_paths("tests_real_ha")
     payload = json.loads(EXCLUSIONS.read_text(encoding="utf-8"))
     excluded = set(payload["excluded"])
+    alternatives = payload["alternative_evidence"]
+    assert set(alternatives) == excluded
+    for path, evidence in alternatives.items():
+        assert evidence["reason"].strip(), path
+        jobs = yaml.safe_load((ROOT / ".github/workflows" / evidence["workflow"]).read_text(encoding="utf-8"))["jobs"]
+        job = jobs[evidence["job"]]
+        commands = "\n".join(step.get("run", "") for step in job["steps"])
+        if "matrix.test-paths" in commands:
+            commands += json.dumps(job["strategy"]["matrix"])
+        assert evidence["selector"] in commands, path
+        if evidence["selector"] == "tests_real_ha/":
+            # Directory evidence must actually select this file. Explicit specialist
+            # ignores require a dedicated alternative rather than a vague CI claim.
+            assert f"--ignore={path}" not in commands, path
+        else:
+            assert evidence["selector"] == path
     partial = payload.get("partial_selected", {})
     workflow = WORKFLOW.read_text(encoding="utf-8")
     for path, classification in partial.items():

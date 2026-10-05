@@ -56,3 +56,26 @@ An image digest is recorded when supplied by the environment. Playwright ledgers
 record Node and Playwright versions. Canonical environment fingerprints accompany
 these compact records; installation URLs, local paths and full dependency dumps
 are omitted. Unknown checkout identity cannot fall back to invocation metadata.
+
+The saved exploration corpus compares production EOAI continuity, actual HA Store
+I/O, native file replacement and public AI Task service effects with independent
+expected-state models. The models alone never constitute runtime evidence. Replays
+retain their operation order; the AI Task trace records actual wire/service events.
+A sensitivity witness removes the file conflict boundary and must fail the replay.
+
+`reviewed_valid_coverage.json` freezes the feasible configuration obligation set and
+the exclusion-reason counts, independently of the generator's chosen covering set.
+The guard rejects disappeared obligations and changed exclusions. To review an
+intentional change, run `python -m ci.review_valid_coverage` and inspect the change
+before updating the snapshot; this command does not approve a new baseline.
+
+The Nightly programme certification workflow accepts an exact candidate SHA and
+resolved stable HA version. It requires successful runs of the reviewed required
+workflow inventory on that SHA, rechecks Enhanced execution certificates, the
+supported SDK lanes, migration-boundary upgrade lanes and native browser evidence.
+Stable evidence must match the supplied HA version, the oldest lane must match the
+repository floor, and dev evidence must share an immutable HA Core snapshot.
+Missing or expired artifacts fail certification. Different SDK/upgrade matrix
+points keep their own reviewed identities rather than sharing one fingerprint.
+The resulting `nightly-programme.json` lists run URLs, identities and rejection
+reasons. Run it after the required jobs complete; it does not trigger absent runs.
