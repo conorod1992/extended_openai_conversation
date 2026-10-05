@@ -1,11 +1,15 @@
 """Focused tests for the start-fresh conversation lifecycle."""
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import (
+    conversation as conversation_module,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     CONVERSATION_CONTINUITY_HA_DEFAULT,
     CONVERSATION_CONTINUITY_USER,
@@ -30,8 +34,25 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     get_request_rule_runtime,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
-from homeassistant.components import conversation
+from homeassistant.components import conversation, intent
 from homeassistant.exceptions import HomeAssistantError
+
+
+async def test_failed_agent_initialization_returns_retryable_assist_error() -> None:
+    """Requests queued during startup fail safely after initialization fails."""
+    agent = object.__new__(conversation_module.ExtendedOpenAIAgentEntity)
+    agent._agent_ready = asyncio.Event()
+    agent._agent_ready.set()
+    agent._agent_initialization_failed = True
+    user_input = SimpleNamespace(
+        language="en", conversation_id="conversation-1", text="hello"
+    )
+
+    result = await agent._async_process(user_input)
+
+    assert result.conversation_id == "conversation-1"
+    assert result.response.error_code is intent.IntentResponseErrorCode.UNKNOWN
+    assert "not ready to process requests" in result.response.speech["plain"]["speech"]
 
 
 def test_reset_request_is_scoped_to_current_execution_context() -> None:
