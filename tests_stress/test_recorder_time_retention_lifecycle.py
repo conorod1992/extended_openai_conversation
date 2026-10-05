@@ -272,3 +272,112 @@ async def test_native_history_against_external_recorder_database(
         external_recorder_backend=backend,
         external_recorder_history_queries=1,
     )
+
+
+@pytest.mark.asyncio
+async def test_archive_prune_invalidates_open_detail_without_phantom_reappearance(
+    hass: HomeAssistant,
+    freezer,
+    stress_trace: list[dict],
+) -> None:
+    """A session viewed before retention runs disappears authoritatively afterwards."""
+    freezer.move_to("2026-10-05T12:00:00+00:00")
+    agent = await _contract_agent(hass, memory_mode="off")
+    archive = await async_get_archive(
+        hass, agent.entry.entry_id, agent.subentry.subentry_id
+    )
+    session = await archive.async_begin_session(
+        "retention-open-detail",
+        user_scope("retention-owner", source="test"),
+        "retention-conversation",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    assert session is not None
+    await archive.async_record_turn(
+        session.session_id,
+        run_id="retention-run",
+        user_text="retention viewed marker",
+        assistant_text="retention viewed reply",
+        successful=True,
+    )
+    viewed = await archive.async_get(
+        "user:retention-owner", session.session_id, 0, 20
+    )
+    assert viewed["turns"][0]["user_text"] == "retention viewed marker"
+
+    # Advance beyond retention while the caller still holds its already-rendered copy.
+    freezer.move_to("2026-11-20T12:00:00+00:00")
+    pruned = await archive.async_prune(30)
+    assert pruned == {"deleted_sessions": 1, "deleted_turns": 1}
+    assert (
+        await archive.async_list_sessions("user:retention-owner")
+    )["sessions"] == []
+    with pytest.raises(ValueError):
+        await archive.async_get("user:retention-owner", session.session_id, 0, 20)
+
+    # A detached previously viewed payload remains only a caller snapshot; it cannot
+    # make the deleted session visible again in any authoritative query.
+    assert viewed["session"]["session_id"] == session.session_id
+    assert (
+        await archive.async_search(
+            "user:retention-owner", "retention viewed marker"
+        )
+    )["results"] == []
+    record(
+        stress_trace,
+        "summary",
+        archive_open_detail_prunes=1,
+        stale_archive_snapshots_detached=1,
+        phantom_archive_records=0,
+    )
+
+
+def test_request_debug_clear_invalidates_current_detail_and_export_source(
+    hass: HomeAssistant,
+    stress_trace: list[dict],
+) -> None:
+    """Clearing diagnostics while a detail is viewed leaves no live/exportable record."""
+    from custom_components.extended_openai_conversation_responses.debug import (
+        get_debug_manager,
+    )
+    from custom_components.extended_openai_conversation_responses.debug_management_projection import (
+        debug_trace_page,
+    )
+
+    manager = get_debug_manager(hass, "debug-entry", "debug-agent")
+    manager.configure(enabled=True, limit=5)
+    trace = manager.begin(
+        entry_id="debug-entry",
+        subentry_id="debug-agent",
+        user_input={"text": "currently viewed debug marker"},
+        incoming_conversation_id="debug-conversation",
+    )
+    manager.finish(trace, successful=True, result={"speech": "debug result"})
+
+    viewed = debug_trace_page(
+        manager, trace.debug_id, provider_offset=0, provider_limit=20
+    )
+    assert viewed is not None
+    assert viewed["debug_id"] == trace.debug_id
+    assert manager.clear() == 1
+    assert manager.get(trace.debug_id) is None
+    assert (
+        debug_trace_page(
+            manager, trace.debug_id, provider_offset=0, provider_limit=20
+        )
+        is None
+    )
+    assert manager.summaries() == []
+
+    # The browser may still hold already-rendered JSON, but a new get/export source
+    # is gone immediately and cannot resurrect the cleared run.
+    assert viewed["debug_id"] == trace.debug_id
+    record(
+        stress_trace,
+        "summary",
+        debug_open_detail_clears=1,
+        stale_debug_snapshots_detached=1,
+        exportable_cleared_debug_records=0,
+    )
