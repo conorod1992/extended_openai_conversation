@@ -1167,6 +1167,17 @@ async def test_groups_preserve_global_order_and_revision() -> None:
     assert rules.match("good night").rule["name"] == "Two"
 
 
+async def test_group_updates_reject_non_list_and_unknown_rule_group() -> None:
+    rules = await manager(local_rule("Grouped"))
+    with pytest.raises(ValueError, match="groups must be a list"):
+        await rules.async_set_groups(None)
+
+    changed = rules.snapshot()["rules"][0]
+    changed["group_id"] = "missing"
+    with pytest.raises(ValueError, match="group does not exist"):
+        await rules.async_update(changed["id"], changed)
+
+
 async def test_group_creation_assigns_stable_backend_id() -> None:
     rules = await manager(local_rule())
     created = await rules.async_set_groups(
