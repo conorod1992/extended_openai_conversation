@@ -258,6 +258,14 @@ def check_accessibility(item, sha, policy):
 def main():
     policy = json.loads(POLICY.read_text(encoding="utf-8"))
     directory = Path(sys.argv[1])
+    required = [directory / f"{label}.json" for label in ("baseline", "current")]
+    required.append(directory / "accessibility.json")
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise SystemExit(
+            "Overnight frontend evidence is incomplete; missing required file(s):\n"
+            + "\n".join(missing)
+        )
     errors = []
     for label, sha in (
         ("baseline", os.environ["BASELINE_SHA"]),
