@@ -413,6 +413,31 @@ def test_replay_guard_ignores_unscoped_or_empty_ledger_entries(monkeypatch) -> N
     assert entity._unacknowledged_tool_calls == {"conversation": {"pending"}}
 
 
+def test_replay_guard_bounds_ambiguous_conversation_ledger(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+        _MAX_AMBIGUOUS_CONVERSATIONS,
+        remember_unacknowledged_calls,
+    )
+
+    _patch_content_types(monkeypatch)
+    entity = SimpleNamespace()
+    for index in range(_MAX_AMBIGUOUS_CONVERSATIONS + 1):
+        call_id = f"call-{index}"
+        log = FakeChatLog(
+            [
+                FakeAssistantContent([_call(call_id)]),
+                FakeToolResultContent("agent", call_id, "demo", {"result": "ok"}),
+            ]
+        )
+        log.conversation_id = f"conversation-{index}"
+        remember_unacknowledged_calls(entity, log, set())
+
+    ledger = entity._unacknowledged_tool_calls
+    assert len(ledger) == _MAX_AMBIGUOUS_CONVERSATIONS
+    assert "conversation-0" not in ledger
+    assert f"conversation-{_MAX_AMBIGUOUS_CONVERSATIONS}" in ledger
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("call_id", ["", "x" * 1025, "bad\nline"])
 async def test_invalid_provider_call_id_never_executes(monkeypatch, call_id) -> None:

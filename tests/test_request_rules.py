@@ -2185,9 +2185,11 @@ async def test_conversation_overrides_compose_across_separate_rules() -> None:
 
 async def test_conversation_reset_clears_prior_request_reset_during_rule_cascade() -> None:
     request_reset = routing_rule(scope="request", reset=True)
+    request_reset["order"] = 0
     request_reset["continue_matching"] = True
     request_reset["action"]["continue_to_ai"] = False
     conversation_reset = routing_rule(scope="conversation", reset=True)
+    conversation_reset["order"] = 1
     conversation_reset["action"]["continue_to_ai"] = False
     rules = await manager(request_reset, conversation_reset)
 
