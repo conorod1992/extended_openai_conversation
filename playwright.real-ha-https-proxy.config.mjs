@@ -17,5 +17,5 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },
-  projects: [{name:"chromium-https-proxy", use:{...devices["Desktop Chrome"]}}],
+  projects: [{name:"chromium-https-proxy", use:{...devices["Desktop Chrome"], ignoreHTTPSErrors:true}}],
 });
