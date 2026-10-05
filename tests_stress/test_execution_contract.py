@@ -794,7 +794,7 @@ def test_normalized_function_constraints_are_mandatory():
     policy = json.loads(CONTRACT.read_text())
     cases = expected_cases(policy, "functions")
     for name, count in {
-        "test_unique_items_checks_normalized_json_values": 12,
+        "test_unique_items_checks_normalized_json_values": 17,
         "test_enum_and_const_use_json_equality": 16,
         "test_successful_normalization_satisfies_reference_schema": 1,
         "test_normalized_arguments_guard_public_function_dispatch": 12,

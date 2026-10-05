@@ -234,4 +234,5 @@ async def test_valid_sse_chunk_boundaries_preserve_assist_meaning(
         mode=mode,
         tool=with_tool,
         patterns=list(patterns),
+        explicit_stream_close_cases=len(streams),
     )
