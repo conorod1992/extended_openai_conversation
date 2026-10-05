@@ -209,7 +209,7 @@ async def test_private_storage_unreadable_at_boot_recovers_without_overwriting_s
 ) -> None:
     entry = _make_entry(
         "Private storage recovery",
-        conversation_data={CONF_MEMORY_MODE: "manual"},
+        conversation_data={CONF_MEMORY_MODE: MEMORY_MODE_MANUAL},
     )
     await _setup_entry(hass, entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
