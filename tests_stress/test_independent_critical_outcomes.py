@@ -8,6 +8,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import backup
 from custom_components.extended_openai_conversation_responses.const import (
+    CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_MODE,
     MEMORY_MODE_MANUAL,
 )
@@ -208,6 +209,81 @@ async def test_restored_rule_is_durable_and_executable_after_reload(hass):
     result = await _say(hass, reloaded, "restored rule witness")
     assert _speech(result) == "Restored rule response"
     assert effects == ["RESTORED RULE EFFECT"]
+
+
+async def test_failed_restore_keeps_current_rule_behavior_after_reload(hass, monkeypatch):
+    """A failed restore must not partially publish the target rule set."""
+    agent = await _agent(hass, **{CONF_KNOWLEDGE_ENABLED: True})
+    effects = []
+
+    async def record(call):
+        effects.append(call.data["message"])
+
+    hass.services.async_register("independent_probe", "record", record)
+    target_rule = await agent._request_rules.async_create(
+        _local(
+            [
+                {
+                    "action": "independent_probe.record",
+                    "data": {"message": "TARGET RULE EFFECT"},
+                }
+            ],
+            phrase="restore failure witness",
+            success="Target rule response",
+        )
+    )
+    await agent._knowledge.async_create(
+        "Target restore witness", "target", "TARGET KNOWLEDGE"
+    )
+    target = await backup.async_collect_backup_snapshot(
+        hass, agent.entry, agent.subentry
+    )
+
+    assert await agent._request_rules.async_delete(target_rule["id"])
+    for row in await agent._knowledge.async_list():
+        assert await agent._knowledge.async_delete(row["source_id"])
+    await agent._request_rules.async_create(
+        _local(
+            [
+                {
+                    "action": "independent_probe.record",
+                    "data": {"message": "CURRENT RULE EFFECT"},
+                }
+            ],
+            phrase="restore failure witness",
+            success="Current rule response",
+        )
+    )
+
+    original = agent._knowledge.async_replace_backup
+    calls = 0
+
+    async def fail_once(records):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("independent restore failure")
+        return await original(records)
+
+    monkeypatch.setattr(agent._knowledge, "async_replace_backup", fail_once)
+    with pytest.raises(backup.BackupError, match="previous agent state was recovered"):
+        await backup.async_restore_backup(
+            hass, agent.entry, agent.subentry, deepcopy(target)
+        )
+    assert calls == 2
+    await hass.async_block_till_done()
+
+    live = await _say(hass, agent, "restore failure witness")
+    assert _speech(live) == "Current rule response"
+    assert effects == ["CURRENT RULE EFFECT"]
+
+    assert await hass.config_entries.async_reload(agent.entry.entry_id)
+    await hass.async_block_till_done()
+    reloaded = conversation.async_get_agent(hass, agent.entry.entry_id)
+    assert reloaded is not None
+    after_reload = await _say(hass, reloaded, "restore failure witness")
+    assert _speech(after_reload) == "Current rule response"
+    assert effects == ["CURRENT RULE EFFECT", "CURRENT RULE EFFECT"]
 
 
 @pytest.mark.parametrize(
