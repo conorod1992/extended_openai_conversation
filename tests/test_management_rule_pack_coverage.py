@@ -234,3 +234,215 @@ async def test_rule_condition_validation_checks_each_condition(
     await management_ui._validate_request_rule_conditions(hass, rule)
 
     assert validator.await_count == 2
+
+
+def _management_request(hass, action, **fields):
+    subentry = SimpleNamespace(data={})
+    entry = SimpleNamespace(data={})
+    return management_ui._ManagementRequest(
+        hass=hass,
+        user_id="admin",
+        is_admin=True,
+        message={
+            "action": action,
+            **fields,
+        },
+        entry_id="entry",
+        subentry_id="agent",
+        entry=entry,
+        subentry=subentry,
+    )
+
+
+@pytest.mark.asyncio
+async def test_management_rule_pack_review_registers_token(
+    hass, monkeypatch
+) -> None:
+    rules = SimpleNamespace()
+    prepared = {"rules": [], "groups": []}
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_request_rules",
+        AsyncMock(return_value=rules),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "validate_rule_pack",
+        lambda _pack: prepared,
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "configured_function_tools_from_data",
+        lambda _data: [],
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "_review_rule_pack",
+        AsyncMock(
+            return_value={
+                "count": 0,
+                "rules": [],
+                "revision": "revision-1",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "_register_rule_pack_review",
+        lambda *_args: "review-token",
+    )
+
+    result = await management_ui.async_request_rules_command(
+        _management_request(
+            hass,
+            "rule_pack_review",
+            pack={"format": "ignored-by-stub"},
+        )
+    )
+
+    assert result["review_token"] == "review-token"
+    assert result["revision"] == "revision-1"
+
+
+@pytest.mark.asyncio
+async def test_management_rule_pack_import_requires_confirmation(
+    hass, monkeypatch
+) -> None:
+    rules = SimpleNamespace()
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_request_rules",
+        AsyncMock(return_value=rules),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "validate_rule_pack",
+        lambda _pack: {"rules": [], "groups": []},
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "configured_function_tools_from_data",
+        lambda _data: [],
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "_review_rule_pack",
+        AsyncMock(return_value={"revision": "revision-1", "rules": []}),
+    )
+
+    with pytest.raises(HomeAssistantError, match="Review and confirm"):
+        await management_ui.async_request_rules_command(
+            _management_request(
+                hass,
+                "rule_pack_import",
+                pack={},
+                confirm=False,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_management_rule_pack_import_rejects_changed_revision(
+    hass, monkeypatch
+) -> None:
+    rules = SimpleNamespace()
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_request_rules",
+        AsyncMock(return_value=rules),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "validate_rule_pack",
+        lambda _pack: {"rules": [], "groups": []},
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "configured_function_tools_from_data",
+        lambda _data: [],
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "_review_rule_pack",
+        AsyncMock(return_value={"revision": "revision-2", "rules": []}),
+    )
+
+    with pytest.raises(HomeAssistantError, match="changed after review"):
+        await management_ui.async_request_rules_command(
+            _management_request(
+                hass,
+                "rule_pack_import",
+                pack={},
+                confirm=True,
+                revision="revision-1",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_management_rule_pack_import_consumes_review_and_appends(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    rules = SimpleNamespace()
+    prepared = {"rules": [{"action_type": "local_action"}], "groups": []}
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_request_rules",
+        AsyncMock(return_value=rules),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "validate_rule_pack",
+        lambda _pack: prepared,
+    )
+    validate_model = Mock()
+    monkeypatch.setattr(request_rules, "validate_rule_model_request", validate_model)
+    monkeypatch.setattr(
+        management_ui,
+        "configured_function_tools_from_data",
+        lambda _data: [],
+    )
+    review = {"revision": "revision-1", "rules": []}
+    monkeypatch.setattr(
+        management_ui,
+        "_review_rule_pack",
+        AsyncMock(return_value=review),
+    )
+    consume = Mock()
+    monkeypatch.setattr(management_ui, "_consume_rule_pack_review", consume)
+    append = AsyncMock(
+        return_value={
+            "rules": [{"id": "new"}],
+            "groups": [],
+            "revision": "revision-2",
+        }
+    )
+    monkeypatch.setattr(management_ui, "async_append_rule_pack", append)
+
+    result = await management_ui.async_request_rules_command(
+        _management_request(
+            hass,
+            "rule_pack_import",
+            pack={},
+            confirm=True,
+            revision="revision-1",
+            review_token="review-token",
+        )
+    )
+
+    validate_model.assert_called_once()
+    consume.assert_called_once_with(
+        rules,
+        "review-token",
+        prepared,
+        "revision-1",
+    )
+    append.assert_awaited_once_with(
+        rules,
+        prepared,
+        expected_revision="revision-1",
+    )
+    assert result["revision"] == "revision-2"
+    assert result["review"] == review
