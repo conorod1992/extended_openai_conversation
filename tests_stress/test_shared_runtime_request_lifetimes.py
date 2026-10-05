@@ -131,11 +131,11 @@ async def test_neighbour_shared_client_and_native_script_survive_final_removal(
     async def provider(request):
         body = await request.json()
         bodies.append(body)
-        if len(bodies) == 1:
+        if len(bodies) % 2:
             tool = (
                 _responses_sse_tool_call if mode == "responses" else _chat_sse_tool_call
             )
-            payload = tool("call-shared-script", "shared_script", {})
+            payload = tool(f"call-shared-script-{len(bodies)}", "shared_script", {})
         else:
             payload = _reply(mode, "EOAI healthy")
         return web.Response(body=payload, content_type="text/event-stream")
@@ -235,10 +235,11 @@ async def test_neighbour_shared_client_and_native_script_survive_final_removal(
         assert (await asyncio.wait_for(task, 10)).json() == {"neighbour": "healthy"}
         assert (await client.get(url + "/neighbour")).json() == {"neighbour": "healthy"}
         assert (
-            _speech(await _say(hass, replacement.entry_id, "Independent healthy"))
+            _speech(await _say(hass, replacement.entry_id, "Run recreated script"))
             == "EOAI healthy"
         )
-        assert effects == ["EOAI", "Native", "Automation"]
+        assert effects == ["EOAI", "Native", "Automation", "EOAI"]
+        assert len(bodies) == 4
         assert not client.is_closed
         record(
             stress_trace,
