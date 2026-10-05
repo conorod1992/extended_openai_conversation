@@ -575,7 +575,7 @@ async def test_parallel_outcome_cleanup_cancels_pending_task_on_gather_failure(
     with pytest.raises(RuntimeError, match="gather failed"):
         await parallel_tool_execution.async_execute_parallel_safe_batch_outcomes(
             [(object(), object())],
-            AsyncMock(),
+            Mock(return_value=pending),
         )
 
     assert pending.cancelled()
