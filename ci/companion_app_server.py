@@ -167,6 +167,11 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
     await hass.async_block_till_done()
     entry = result["result"]
     assert entry.state.value == "loaded"
+    subentry = next(iter(entry.subentries.values()))
+    hass.config_entries.async_update_subentry(
+        entry, subentry, title="Companion acceptance assistant"
+    )
+    await hass.async_block_till_done()
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

@@ -98,6 +98,10 @@ appId: io.homeassistant.companion.android
     timeout: 30000
 
 # Edit through the WebView using the Android on-screen input path.
+- scrollUntilVisible:
+    element:
+      text: "Companion acceptance assistant"
+    direction: DOWN
 - tapOn:
     text: "Companion acceptance assistant"
 - eraseText: 100
