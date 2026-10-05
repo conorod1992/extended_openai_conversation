@@ -351,3 +351,167 @@ async def test_debug_endpoint_without_trace_is_transparent(monkeypatch) -> None:
     assert await proxy.create(model="test") == {"ok": True}
     assert proxy.marker == 42
     delegate.create.assert_awaited_once_with(model="test")
+
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_survives_provider_usage_and_sdk_metadata_failures(
+    hass, monkeypatch
+) -> None:
+    from importlib.metadata import PackageNotFoundError
+
+    from custom_components.extended_openai_conversation_responses import diagnostics
+
+    subentry = SimpleNamespace(
+        subentry_id="agent-1",
+        subentry_type="conversation",
+        data={},
+    )
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        data={},
+        subentries={"agent-1": subentry},
+    )
+
+    monkeypatch.setattr(
+        diagnostics,
+        "build_provider_request_snapshot",
+        Mock(side_effect=ValueError("invalid provider configuration")),
+    )
+    monkeypatch.setattr(diagnostics, "conversation_tools_required", Mock(return_value=False))
+    monkeypatch.setattr(
+        diagnostics,
+        "async_get_continuity",
+        Mock(return_value=SimpleNamespace(stats=lambda: {"continuity_sessions": 0})),
+    )
+    monkeypatch.setattr(diagnostics, "_configured_function_tools", Mock(return_value=[]))
+    monkeypatch.setattr(diagnostics, "validate_function_groups", Mock(return_value=[]))
+    monkeypatch.setattr(diagnostics, "get_function_group_runtime", Mock(return_value=None))
+    guest = SimpleNamespace(status=lambda: {"enabled": False})
+    monkeypatch.setattr(diagnostics, "async_get_guest_mode", AsyncMock(return_value=guest))
+    monkeypatch.setattr(
+        diagnostics,
+        "resolve_guest_policy",
+        Mock(return_value=SimpleNamespace(as_diagnostics=lambda: {"enabled": False})),
+    )
+
+    stats_manager = SimpleNamespace(stats=lambda: {"count": 0})
+    monkeypatch.setattr(
+        diagnostics, "async_get_temporary_memory", AsyncMock(return_value=stats_manager)
+    )
+    monkeypatch.setattr(diagnostics, "async_get_memory", AsyncMock(return_value=stats_manager))
+    monkeypatch.setattr(
+        diagnostics, "async_get_knowledge", AsyncMock(return_value=stats_manager)
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "async_get_archive",
+        AsyncMock(return_value=SimpleNamespace(stats=lambda: {"count": 0})),
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "async_get_usage",
+        AsyncMock(side_effect=OSError("usage store unavailable")),
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "version",
+        Mock(side_effect=PackageNotFoundError("openai")),
+    )
+
+    result = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+
+    agent = result["conversation_agents"][0]
+    assert agent["provider_configuration_error"] == "ValueError"
+    assert agent["usage_storage_error"] == "OSError"
+    assert result["openai_sdk_version"] is None
+    assert result["provider_category"] == "openai"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("subsystem_key", "error_field"),
+    [
+        ("temporary_memory", "temporary_memory_storage_error"),
+        ("persistent_memory", "storage_error"),
+        ("knowledge", "knowledge_storage_error"),
+        ("archive", "archive_storage_error"),
+    ],
+)
+async def test_diagnostics_reports_previously_failed_optional_subsystems_without_loading(
+    hass, monkeypatch, subsystem_key: str, error_field: str
+) -> None:
+    from custom_components.extended_openai_conversation_responses import diagnostics
+    from custom_components.extended_openai_conversation_responses.const import (
+        SUBSYSTEM_STATUS_KEY,
+    )
+
+    subentry = SimpleNamespace(
+        subentry_id="agent-1",
+        subentry_type="conversation",
+        data={},
+    )
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        data={},
+        subentries={"agent-1": subentry},
+    )
+    hass.data[SUBSYSTEM_STATUS_KEY] = {
+        ("entry-1", "agent-1"): {subsystem_key: {"status": "failed"}}
+    }
+
+    snapshot = SimpleNamespace(
+        api_mode="responses",
+        api_kwargs={"stream": True},
+        structured_outputs=True,
+    )
+    monkeypatch.setattr(
+        diagnostics, "build_provider_request_snapshot", Mock(return_value=snapshot)
+    )
+    monkeypatch.setattr(diagnostics, "conversation_tools_required", Mock(return_value=False))
+    monkeypatch.setattr(
+        diagnostics,
+        "async_get_continuity",
+        Mock(return_value=SimpleNamespace(stats=lambda: {})),
+    )
+    monkeypatch.setattr(diagnostics, "_configured_function_tools", Mock(return_value=[]))
+    monkeypatch.setattr(diagnostics, "validate_function_groups", Mock(return_value=[]))
+    monkeypatch.setattr(diagnostics, "get_function_group_runtime", Mock(return_value=None))
+    monkeypatch.setattr(
+        diagnostics,
+        "async_get_guest_mode",
+        AsyncMock(return_value=SimpleNamespace(status=lambda: {})),
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "resolve_guest_policy",
+        Mock(return_value=SimpleNamespace(as_diagnostics=lambda: {})),
+    )
+
+    temporary = AsyncMock(return_value=SimpleNamespace(stats=lambda: {}))
+    memory = AsyncMock(return_value=SimpleNamespace(stats=lambda: {}))
+    knowledge = AsyncMock(return_value=SimpleNamespace(stats=lambda: {}))
+    archive = AsyncMock(return_value=SimpleNamespace(stats=lambda: {}))
+    usage = AsyncMock(
+        return_value=SimpleNamespace(
+            as_dict=lambda: {},
+            persistence_status=lambda: {},
+        )
+    )
+    monkeypatch.setattr(diagnostics, "async_get_temporary_memory", temporary)
+    monkeypatch.setattr(diagnostics, "async_get_memory", memory)
+    monkeypatch.setattr(diagnostics, "async_get_knowledge", knowledge)
+    monkeypatch.setattr(diagnostics, "async_get_archive", archive)
+    monkeypatch.setattr(diagnostics, "async_get_usage", usage)
+
+    result = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+
+    agent = result["conversation_agents"][0]
+    assert agent[error_field] == "RuntimeError"
+    loader = {
+        "temporary_memory": temporary,
+        "persistent_memory": memory,
+        "knowledge": knowledge,
+        "archive": archive,
+    }[subsystem_key]
+    loader.assert_not_awaited()
