@@ -1092,8 +1092,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     if not isinstance(updates, dict):
         raise HomeAssistantError("config must be an object")
     phase = perf_counter()
-    if message.get("revision") is not None:
-        _require_agent_config_revision(subentry, message["revision"])
+    _require_agent_config_revision(subentry, message.get("revision"))
     timings["stale_revision_ms"] = _elapsed_ms(phase)
 
     phase = perf_counter()
