@@ -941,3 +941,114 @@ def test_knowledge_chunk_split_handles_paragraph_line_and_overlap_boundaries(
     assert all(text for _offset, text in chunks)
     assert chunks[0][0] == 0
     assert chunks[-1][0] < len(content)
+
+
+
+@pytest.mark.parametrize(
+    ("text", "final", "expected"),
+    [
+        ("   ", False, ("incomplete", 0)),
+        ("   ", True, ("none", 0)),
+        ("#", False, ("incomplete", 0)),
+        ("# Heading", True, ("strip", 2)),
+        ("-", False, ("incomplete", 0)),
+        ("- item", True, ("strip", 2)),
+        ("12.", False, ("incomplete", 0)),
+        ("12. item", True, ("strip", 4)),
+        ("plain", True, ("none", 0)),
+    ],
+)
+def test_speech_line_prefix_boundary_matrix(text: str, final: bool, expected) -> None:
+    from custom_components.extended_openai_conversation_responses import speech
+
+    assert speech.StreamingSpeechSanitizer._line_prefix(text, final) == expected
+
+
+def test_usage_month_summary_merges_only_requested_month() -> None:
+    from custom_components.extended_openai_conversation_responses import usage
+
+    manager = usage.UsageManager.__new__(usage.UsageManager)
+    manager.daily = {
+        "2026-10-01": {
+            **usage._empty_day("2026-10-01"),
+            "total_tokens": 10,
+            "input_tokens": 4,
+            "output_tokens": 6,
+            "run_count": 1,
+        },
+        "2026-10-02": {
+            **usage._empty_day("2026-10-02"),
+            "total_tokens": 20,
+            "input_tokens": 8,
+            "output_tokens": 12,
+            "run_count": 1,
+        },
+        "2026-09-30": {
+            **usage._empty_day("2026-09-30"),
+            "total_tokens": 999,
+            "input_tokens": 999,
+            "run_count": 1,
+        },
+    }
+
+    result = manager.month_summary("2026-10")
+
+    assert result["date"] == "2026-10"
+    assert result["total_tokens"] == 30
+    assert result["input_tokens"] == 12
+    assert result["output_tokens"] == 18
+    assert result["run_count"] == 2
+
+
+def test_skill_activation_failure_restores_previous_target(tmp_path, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses.skills import (
+        SkillManager,
+    )
+
+    target = tmp_path / "installed" / "demo"
+    target.mkdir(parents=True)
+    (target / "old.txt").write_text("old")
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / "new.txt").write_text("new")
+    backup = tmp_path / "backup"
+
+    original_rename = type(staged).rename
+
+    def failing_rename(self, destination):
+        if self == staged:
+            raise OSError("publish failed")
+        return original_rename(self, destination)
+
+    monkeypatch.setattr(type(staged), "rename", failing_rename)
+
+    with pytest.raises(OSError, match="publish failed"):
+        SkillManager._activate_staged_skill_sync(staged, target, backup)
+
+    assert target.exists()
+    assert (target / "old.txt").read_text() == "old"
+
+
+def test_skill_directory_capture_records_loaded_directory(tmp_path) -> None:
+    from contextvars import ContextVar
+
+    from custom_components.extended_openai_conversation_responses.skills import (
+        SkillManager,
+    )
+
+    manager = SkillManager.__new__(SkillManager)
+    path = tmp_path / "demo" / "SKILL.md"
+    manager._skills = {"demo": SimpleNamespace(path=path)}
+    manager._rendered_directories = ContextVar("coverage_skill_dirs", default=None)
+
+    assert manager.get_skill_directory("demo") == path.parent
+
+    token = manager._rendered_directories.set(set())
+    try:
+        assert manager.get_skill_directory("demo") == path.parent
+        assert manager._rendered_directories.get() == {path.parent}
+    finally:
+        manager._rendered_directories.reset(token)
+
+    with pytest.raises(ValueError, match="Skill not found"):
+        manager.get_skill_directory("missing")
