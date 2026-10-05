@@ -11,7 +11,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 from tests_real_ha import test_release_upgrade_acceptance as upgrade_helpers
 
@@ -96,8 +98,9 @@ def _assert_candidate_tree(config_dir: Path) -> None:
 
 
 async def _ensure_hacs(hass: Any) -> Any:
-    """Set up the staged HACS integration with a real token-backed config entry."""
-    from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+    """Set up HACS through its real config flow, faking only human OAuth consent."""
+    from homeassistant.config_entries import ConfigEntryState, SOURCE_USER
+    from homeassistant.data_entry_flow import FlowResultType
 
     entries = hass.config_entries.async_entries(HACS_DOMAIN)
     if entries:
@@ -109,28 +112,60 @@ async def _ensure_hacs(hass: Any) -> Any:
         assert not hacs.system.disabled
         return hacs
 
-    entry = ConfigEntry(
-        version=1,
-        minor_version=0,
-        domain=HACS_DOMAIN,
-        title="",
-        data={"token": os.environ[_TOKEN_ENV]},
-        source="user",
-        options={"experimental": True},
-        unique_id=None,
-        discovery_keys={},
-        subentries_data=None,
-    )
-    await hass.config_entries.async_add(entry)
-    assert await hass.config_entries.async_setup(entry.entry_id)
+    config_flow = importlib.import_module("custom_components.hacs.config_flow")
+    token = os.environ[_TOKEN_ENV]
+
+    class AutomatedDeviceAuthorization:
+        async def register(self) -> Any:
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    device_code="hacs-ci-device",
+                    user_code="HACS-CI",
+                )
+            )
+
+        async def activation(self, *, device_code: str) -> Any:
+            assert device_code == "hacs-ci-device"
+            return SimpleNamespace(
+                data=SimpleNamespace(access_token=token)
+            )
+
+    with patch.object(
+        config_flow,
+        "GitHubDeviceAPI",
+        return_value=AutomatedDeviceAuthorization(),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            HACS_DOMAIN,
+            context={"source": SOURCE_USER},
+        )
+        assert result["type"] is FlowResultType.FORM
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                "acc_logs": True,
+                "acc_addons": True,
+                "acc_untested": True,
+                "acc_disable": True,
+            },
+        )
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        flow_id = result["flow_id"]
+        await hass.async_block_till_done()
+        result = await hass.config_entries.flow.async_configure(flow_id)
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+
     await hass.async_block_till_done()
+    entries = hass.config_entries.async_entries(HACS_DOMAIN)
+    assert len(entries) == 1
+    entry = entries[0]
     assert entry.state is ConfigEntryState.LOADED
+    assert entry.data["token"] == token
 
     hacs = hass.data[HACS_DOMAIN]
     assert not hacs.system.disabled
-    assert hacs.configuration.token == os.environ[_TOKEN_ENV]
+    assert hacs.configuration.token == token
     return hacs
-
 
 async def _eoai_repository(hacs: Any) -> Any:
     """Return the real HACS repository object, registering it when necessary."""
