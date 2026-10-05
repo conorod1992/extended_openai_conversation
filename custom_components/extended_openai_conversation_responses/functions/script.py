@@ -113,6 +113,7 @@ class ScriptFunction(Function):
             DOMAIN,
             running_description=f"[{DOMAIN}] function",
             logger=_LOGGER,
+            variables=function_config.get("variables"),
         )
 
         context = llm_context.context if llm_context else None

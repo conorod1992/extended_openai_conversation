@@ -48,7 +48,9 @@ def startup(monkeypatch):
     monkeypatch.setattr(conversation.conversation, "async_set_agent", Mock())
     monkeypatch.setattr(conversation.SkillManager, "async_get_instance", AsyncMock())
     usage = SimpleNamespace(async_prune_details=AsyncMock())
-    persistent = PersistentMemory(SimpleNamespace(), "agent")
+    persistent = PersistentMemory(
+        SimpleNamespace(async_load=AsyncMock(return_value=None)), "agent"
+    )
     getters = {}
     for name, result in {
         "usage": usage,
@@ -263,6 +265,7 @@ async def test_concurrent_reconciliation_initializes_once_and_retries_after_canc
     async def get_memory(*_args):
         entered.set()
         await release.wait()
+        await startup.memory.async_initialize()
         return startup.memory
 
     getter = AsyncMock(side_effect=get_memory)
