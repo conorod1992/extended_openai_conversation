@@ -437,3 +437,145 @@ def test_sync_all_model_lifecycles_visits_every_entry(monkeypatch) -> None:
     model_lifecycle.sync_all_model_lifecycles(hass)
 
     assert [call.args[1] for call in sync.call_args_list] == entries
+
+
+def _lifecycle_subentry(model="gpt-current"):
+    return SimpleNamespace(
+        subentry_id="agent",
+        subentry_type="conversation",
+        title="Assistant",
+        data={CONF_CHAT_MODEL: model},
+    )
+
+
+def test_sync_entry_model_lifecycle_restores_inactive_persisted_repair(
+    monkeypatch,
+) -> None:
+    subentry = _lifecycle_subentry("gpt-old")
+    entry = SimpleNamespace(
+        entry_id="entry",
+        subentries={"agent": subentry},
+    )
+    stored_issue = SimpleNamespace(
+        active=False,
+        issue_id="retired_model_entry_agent",
+        data={
+            "model": "gpt-old",
+            "configured_model": "gpt-old",
+            "shutdown_at": "2027-04-01",
+        },
+        translation_placeholders={
+            "assistant": "Assistant",
+            "model": "gpt-old",
+            "shutdown_at": "2027-04-01",
+        },
+    )
+    registry = SimpleNamespace(async_get_issue=lambda *_args: stored_issue)
+    hass = SimpleNamespace(data={})
+    monkeypatch.setattr(model_lifecycle.ir, "async_get", lambda _hass: registry)
+    create = Mock()
+    monkeypatch.setattr(model_lifecycle.ir, "async_create_issue", create)
+    monkeypatch.setattr(
+        model_lifecycle,
+        "configured_lifecycle",
+        lambda _subentry: {
+            "model": "gpt-old",
+            "status": "deprecated",
+            "shutdown_reached": True,
+        },
+    )
+    monkeypatch.setattr(
+        model_lifecycle,
+        "lifecycle_snapshot",
+        lambda _model: {
+            "status": "deprecated",
+            "shutdown_reached": True,
+        },
+    )
+    monkeypatch.setattr(model_lifecycle, "log_deprecation_once", Mock())
+
+    model_lifecycle.sync_entry_model_lifecycle(hass, entry)
+
+    assert hass.data[model_lifecycle._DATA_FAILURES][("entry", "agent")] == dict(
+        stored_issue.data
+    )
+    create.assert_called_once()
+    assert create.call_args.kwargs["data"] == stored_issue.data
+
+
+def test_sync_entry_model_lifecycle_clears_stale_configured_failure(
+    monkeypatch,
+) -> None:
+    subentry = _lifecycle_subentry("gpt-new")
+    entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry})
+    hass = SimpleNamespace(
+        data={
+            model_lifecycle._DATA_FAILURES: {
+                ("entry", "agent"): {
+                    "model": "gpt-old",
+                    "configured_model": "gpt-old",
+                }
+            }
+        }
+    )
+    clear = Mock()
+    monkeypatch.setattr(model_lifecycle, "clear_retirement_failure", clear)
+    monkeypatch.setattr(model_lifecycle, "log_deprecation_once", Mock())
+    monkeypatch.setattr(
+        model_lifecycle,
+        "configured_lifecycle",
+        lambda _subentry: {
+            "model": "gpt-new",
+            "status": "current",
+            "shutdown_reached": False,
+        },
+    )
+
+    model_lifecycle.sync_entry_model_lifecycle(hass, entry)
+
+    clear.assert_called_once_with(
+        hass,
+        entry_id="entry",
+        subentry_id="agent",
+    )
+
+
+def test_sync_entry_model_lifecycle_removes_failure_for_deleted_subentry(
+    monkeypatch,
+) -> None:
+    entry = SimpleNamespace(entry_id="entry", subentries={})
+    hass = SimpleNamespace(
+        data={
+            model_lifecycle._DATA_FAILURES: {
+                ("entry", "removed-agent"): {"model": "gpt-old"},
+                ("other-entry", "other-agent"): {"model": "gpt-old"},
+            }
+        }
+    )
+    clear = Mock()
+    monkeypatch.setattr(model_lifecycle, "clear_retirement_failure", clear)
+
+    model_lifecycle.sync_entry_model_lifecycle(hass, entry)
+
+    clear.assert_called_once_with(
+        hass,
+        entry_id="entry",
+        subentry_id="removed-agent",
+    )
+
+
+def test_sync_entry_model_lifecycle_ignores_non_agent_subentries(monkeypatch) -> None:
+    skipped = SimpleNamespace(
+        subentry_id="other",
+        subentry_type="unrelated",
+        title="Other",
+        data={},
+    )
+    entry = SimpleNamespace(entry_id="entry", subentries={"other": skipped})
+    hass = SimpleNamespace(data={})
+    configured = Mock()
+    monkeypatch.setattr(model_lifecycle, "configured_lifecycle", configured)
+
+    model_lifecycle.sync_entry_model_lifecycle(hass, entry)
+
+    configured.assert_not_called()
