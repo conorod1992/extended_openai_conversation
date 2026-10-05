@@ -141,7 +141,7 @@ class _SoftwareSatellite(AssistSatelliteEntity):
 
 
 async def _install_audio_entities(
-    hass, recording, *, speech=None, tts=None, satellites=None
+    hass, recording, *, speech=None, tts=None, satellites=None, media_players=None
 ):
     with wave.open(io.BytesIO(recording), "rb") as wav:
         pcm = wav.readframes(wav.getnframes())
@@ -150,6 +150,8 @@ async def _install_audio_entities(
         "tts": tts or _SoftwareTTS(recording),
         "assist_satellite": satellites[0] if satellites else _SoftwareSatellite(),
     }
+    if media_players:
+        entities["media_player"] = media_players[0]
 
     async def setup_entry(hass, entry):
         await hass.config_entries.async_forward_entry_setups(entry, list(entities))
@@ -175,6 +177,8 @@ async def _install_audio_entities(
         members = (
             satellites if platform == "assist_satellite" and satellites else [entity]
         )
+        if platform == "media_player" and media_players:
+            members = media_players
 
         async def setup_platform(hass, entry, add_entities, members=members):
             add_entities(members)
