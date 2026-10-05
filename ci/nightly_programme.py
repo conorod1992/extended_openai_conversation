@@ -19,7 +19,7 @@ from ci.release_certification import (
     matrix_envelope_errors,
 )
 
-WORKFLOWS = (*REQUIRED_WORKFLOWS, "ha-browser-compatibility.yml")
+WORKFLOWS = (*REQUIRED_WORKFLOWS, "ha-browser-compatibility.yml", "deployment-architecture.yml")
 
 
 def programme_errors(candidate_sha, stable_version, required, evidence):
@@ -34,6 +34,15 @@ def programme_errors(candidate_sha, stable_version, required, evidence):
         run = row["run"]
         if run.get("head_sha") != candidate_sha or run.get("status") != "completed" or run.get("conclusion") != "success":
             errors.append(f"{workflow}: missing successful exact-candidate run")
+        if workflow == "deployment-architecture.yml":
+            proofs = row.get("isolated", [])
+            if {proof.get("machine") for proof in proofs} != {"x86_64", "aarch64"} or len(proofs) != 2:
+                errors.append("Isolated runtime requires both native architecture proofs")
+            for proof in proofs:
+                if proof.get("candidate_sha") != candidate_sha or proof.get("passed") is not True or proof.get("homeassistant") != stable_version:
+                    errors.append("Isolated runtime candidate/environment/result differs")
+                if set(proof.get("phases", [])) != {"seed", "recover", "recover-recorder-first", "recover-provider-first", "auth"}:
+                    errors.append("Isolated runtime cold-start evidence is incomplete")
         for envelope in row.get("envelopes", []):
             if envelope.get("status") != "success":
                 errors.append(f"{workflow}: unsuccessful evidence envelope")
@@ -67,6 +76,7 @@ def collect(actions, candidate_sha):
         run = candidates[0]
         artifacts = actions.run_artifacts(run["id"])
         envelopes = []
+        isolated = []
         if workflow == "enhanced-stress.yml":
             indexes = [artifact for artifact in artifacts if artifact["name"].startswith("certification-index-")]
             if len(indexes) != 1:
@@ -95,7 +105,13 @@ def collect(actions, candidate_sha):
                 if len(selected) != 1:
                     raise RuntimeError(f"Missing native browser evidence for {point}")
                 envelopes.append(actions.artifact_json(selected[0], "certification.json"))
-        evidence[workflow] = {"run": run, "envelopes": envelopes}
+        if workflow == "deployment-architecture.yml":
+            for architecture in ("x86_64-native", "arm64-native"):
+                selected = [artifact for artifact in artifacts if artifact["name"] == f"isolated-deployment-{architecture}"]
+                if len(selected) != 1:
+                    raise RuntimeError(f"Missing isolated runtime evidence for {architecture}")
+                isolated.append(actions.artifact_json(selected[0], "certification.json"))
+        evidence[workflow] = {"run": run, "envelopes": envelopes, "isolated": isolated}
     return evidence
 
 
