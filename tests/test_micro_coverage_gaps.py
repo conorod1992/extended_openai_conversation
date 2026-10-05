@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
-
-from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import (
     function_execution,
@@ -22,6 +20,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.functions.template import (
     TemplateFunction,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def test_matches_json_type_covers_object_fallback() -> None:
@@ -50,7 +49,7 @@ async def test_template_function_authorizes_list_entity_ids(
     hass, exposed_entities
 ) -> None:
     function = TemplateFunction()
-    template = SimpleNamespace(async_render=AsyncMock(return_value="rendered"))
+    template = SimpleNamespace(async_render=Mock(return_value="rendered"))
     hass.states.get.side_effect = lambda entity_id: SimpleNamespace(
         state="on",
         entity_id=entity_id,
@@ -65,7 +64,7 @@ async def test_template_function_authorizes_list_entity_ids(
     )
 
     assert result == "rendered"
-    template.async_render.assert_awaited_once_with(
+    template.async_render.assert_called_once_with(
         {"entity_ids": ["light.living_room", "switch.kitchen"]},
         parse_result=True,
     )
@@ -76,7 +75,7 @@ async def test_template_function_splits_comma_separated_entity_ids(
     hass, exposed_entities
 ) -> None:
     function = TemplateFunction()
-    template = SimpleNamespace(async_render=AsyncMock(return_value="ok"))
+    template = SimpleNamespace(async_render=Mock(return_value="ok"))
     hass.states.get.side_effect = lambda entity_id: SimpleNamespace(
         state="on",
         entity_id=entity_id,
@@ -90,7 +89,9 @@ async def test_template_function_splits_comma_separated_entity_ids(
         exposed_entities,
     )
 
-    template.async_render.assert_awaited_once()
+    template.async_render.assert_called_once_with(
+        {"entity_id": " light.living_room, switch.kitchen, "}, parse_result=False
+    )
 
 
 def test_knowledge_search_payload_omits_only_default_unused_filter() -> None:
@@ -176,7 +177,9 @@ def _canonical_skill_loader() -> dict:
     }
 
 
-def test_effective_skill_loader_rejects_missing_group_loader_for_on_demand_group() -> None:
+def test_effective_skill_loader_rejects_missing_group_loader_for_on_demand_group() -> (
+    None
+):
     loader = _canonical_skill_loader()
     groups = [
         {

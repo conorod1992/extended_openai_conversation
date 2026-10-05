@@ -50,9 +50,7 @@ def test_function_tools_cache_key_round_trips_missing_string_and_json() -> None:
     }
 
     structured = [{"spec": {"name": "example"}}]
-    kind, payload = repair._function_tools_cache_key(
-        {CONF_FUNCTION_TOOLS: structured}
-    )
+    kind, payload = repair._function_tools_cache_key({CONF_FUNCTION_TOOLS: structured})
     assert kind == "json"
     assert repair._options_from_function_tools_cache_key(kind, payload) == {
         CONF_FUNCTION_TOOLS: structured
@@ -81,7 +79,9 @@ def test_isolate_function_tools_rejects_non_array() -> None:
     assert issue == "Saved Function Tools must be a YAML/JSON array"
 
 
-def test_isolate_function_tools_records_invalid_candidate_without_losing_valid_sibling() -> None:
+def test_isolate_function_tools_records_invalid_candidate_without_losing_valid_sibling() -> (
+    None
+):
     tools = _default_tools()
     good = deepcopy(tools[0])
     bad = deepcopy(tools[0])
@@ -99,7 +99,9 @@ def test_isolate_function_tools_records_invalid_candidate_without_losing_valid_s
     assert issue == invalid[0]["validation_error"]
 
 
-def test_effective_function_groups_filters_unavailable_members_but_preserves_raw() -> None:
+def test_effective_function_groups_filters_unavailable_members_but_preserves_raw() -> (
+    None
+):
     valid = _default_tools()[:1]
     valid_name = valid[0]["spec"]["name"]
     raw_groups = [
@@ -159,19 +161,20 @@ def test_effective_function_groups_filters_unavailable_members_but_preserves_raw
     ],
 )
 def test_unavailable_native_tool_preflight(value, expected) -> None:
-    assert (
-        repair.has_unavailable_native_tool({CONF_FUNCTION_TOOLS: value})
-        is expected
-    )
+    assert repair.has_unavailable_native_tool({CONF_FUNCTION_TOOLS: value}) is expected
 
 
-def test_unavailable_native_tool_fast_string_negative_skips_yaml_parse(monkeypatch) -> None:
-    parse = monkeypatch.spy(repair, "editable_function_tools")
+def test_unavailable_native_tool_fast_string_negative_skips_yaml_parse(
+    monkeypatch,
+) -> None:
+    def unexpected_parse(_options):
+        pytest.fail("plain-string negatives should skip YAML parsing")
+
+    monkeypatch.setattr(repair, "editable_function_tools", unexpected_parse)
 
     assert not repair.has_unavailable_native_tool(
         {CONF_FUNCTION_TOOLS: "- function:\n    type: template\n"}
     )
-    assert parse.call_count == 0
 
 
 def test_isolated_function_tools_returns_defensive_copies() -> None:

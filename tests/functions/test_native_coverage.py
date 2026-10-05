@@ -289,6 +289,30 @@ async def test_energy_without_configuration_returns_empty(hass, monkeypatch) -> 
 
 
 @pytest.mark.parametrize(
+    ("start_time", "end_time"),
+    [
+        ("not-a-datetime", "2026-08-02T00:00:00Z"),
+        ("2026-08-01T00:00:00Z", "not-a-datetime"),
+    ],
+)
+async def test_statistics_rejects_unparseable_datetime_bounds(
+    hass, exposed_entities, start_time: str, end_time: str
+) -> None:
+    with pytest.raises(HomeAssistantError, match="Invalid datetime format"):
+        await NativeFunction().get_statistics(
+            hass,
+            {},
+            {
+                "statistic_ids": ["custom:metric"],
+                "start_time": start_time,
+                "end_time": end_time,
+            },
+            None,
+            exposed_entities,
+        )
+
+
+@pytest.mark.parametrize(
     "llm_context",
     [None, SimpleNamespace(context=None), SimpleNamespace(context=Context())],
 )
@@ -332,10 +356,11 @@ def test_datetime_and_state_conversion_edges() -> None:
 @pytest.fixture(autouse=True)
 def authenticated_automation_admin(hass):
     from types import SimpleNamespace
-    from homeassistant.core import Context
+
     from custom_components.extended_openai_conversation_responses.ha_permissions import (
         bind_active_ha_context,
     )
+    from homeassistant.core import Context
 
     hass.auth.async_get_user = AsyncMock(
         return_value=SimpleNamespace(is_active=True, is_admin=True)
