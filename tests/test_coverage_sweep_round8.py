@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -278,7 +277,9 @@ async def test_request_rules_instrumented_match_seam_returns_none(hass, monkeypa
 
 
 def test_model_tool_result_nondefault_source_filter_is_preserved() -> None:
-    from custom_components.extended_openai_conversation_responses import model_tool_results
+    from custom_components.extended_openai_conversation_responses import (
+        model_tool_results,
+    )
 
     result = {
         "source_filter": {
@@ -299,7 +300,9 @@ def test_model_tool_result_nondefault_source_filter_is_preserved() -> None:
 
 
 def test_model_tool_result_compact_json_mutates_mapping_only_when_needed(monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import model_tool_results
+    from custom_components.extended_openai_conversation_responses import (
+        model_tool_results,
+    )
 
     original = object()
     data = {"result": '{ "a": 1 }'}
