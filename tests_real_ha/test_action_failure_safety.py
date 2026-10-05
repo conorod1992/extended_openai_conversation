@@ -158,7 +158,8 @@ async def test_saved_bash_composite_stops_later_step_only_on_execution_failure(
             if item.get("role") == "tool"
         )
         if failed:
-            assert "error" in output, output
+            assert output["result"]["status"] == "error", output
+            assert output["result"]["error"]
             assert "published" not in str(output)
             if outcome == "timeout":
                 assert "Command timed out after 1 seconds" in str(output)
