@@ -70,6 +70,46 @@ test("stale Memory editor cannot resurrect state restored by another real HA tab
   }
 });
 
+test("stale Request Rule editor cannot overwrite a backup restore from another tab", async ({context, page}) => {
+  test.setTimeout(120000);
+  const other = await context.newPage();
+  const restoredName = "Backup restored rule authority";
+  const preRestoreName = "Rule changed before restore";
+  const staleName = "Stale rule editor must lose";
+  try {
+    const panelA = await openRoute(context, page, "capabilities/request-rules");
+    await createSimpleRule(panelA, restoredName, "backup restored rule phrase");
+    const backup = await panelA.evaluate(async host => host._call("backup", "create"));
+    expect(backup.json).toBeTruthy();
+
+    let card = panelA.locator(".request-rule-card").filter({hasText:restoredName});
+    await card.locator(".rule-edit").click();
+    await panelA.locator("#rule-name").fill(preRestoreName);
+    await panelA.locator("#rule-save").click();
+    await expect(panelA.locator(".request-rule-card").filter({hasText:preRestoreName})).toBeVisible();
+
+    const panelB = await openRoute(context, other, "capabilities/request-rules");
+    card = panelA.locator(".request-rule-card").filter({hasText:preRestoreName});
+    await card.locator(".rule-edit").click();
+    await panelA.locator("#rule-name").fill(staleName);
+
+    await panelB.evaluate(async (host, json) => {
+      await host._call("backup", "restore", {document:JSON.parse(json), confirm:true});
+    }, backup.json);
+
+    await panelA.locator("#rule-save").click();
+    await expect(panelA.locator("#rule-error")).toContainText(/changed|stale|restore/i);
+    await expect(panelA.locator("#rule-name")).toHaveValue(staleName);
+
+    await page.reload();
+    await expect(panelA.locator(".request-rule-card").filter({hasText:restoredName})).toBeVisible();
+    await expect(panelA.locator(".request-rule-card").filter({hasText:staleName})).toHaveCount(0);
+    await expect(panelA.locator(".request-rule-card").filter({hasText:preRestoreName})).toHaveCount(0);
+  } finally {
+    await other.close();
+  }
+});
+
 test("Rule Pack download from one assistant imports, conflicts, enables and executes on another", async ({context, page}) => {
   test.setTimeout(120000);
   const panel = await openRoute(context, page, "capabilities/request-rules");
