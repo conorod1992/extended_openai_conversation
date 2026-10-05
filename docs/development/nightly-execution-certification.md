@@ -79,3 +79,20 @@ Missing or expired artifacts fail certification. Different SDK/upgrade matrix
 points keep their own reviewed identities rather than sharing one fingerprint.
 The resulting `nightly-programme.json` lists run URLs, identities and rejection
 reasons. Run it after the required jobs complete; it does not trigger absent runs.
+
+
+Function outcomes are checked against independently specified backend and consumer
+shapes across direct execution, provider execution, composites, Request Rules and
+native AI Tasks. Seven business values include null, false, zero, empty containers
+and error-shaped successful data. Real dependency failures and native tool error
+contracts remain distinct from business results. HTTP 404 is a transport failure;
+an HTTP-successful error-shaped body is business data.
+
+Durable-store schedules compare acknowledged operations, retained live state and
+an independently reloaded store against an allowed-outcome model. Events control
+commit, acknowledgement loss, queued successors and cancellation. Assist is the
+first recovery consumer for Memory and Knowledge after restoration, without a
+manager getter, settings page or reload healing the runtime first. Real stalled
+HTTP requests exercise deadlines rather than raising synthetic timeout errors.
+Retained prompt/API journeys preserve completed calls, summaries and attachments;
+attachment budgets account for the complete retained request before dispatch.

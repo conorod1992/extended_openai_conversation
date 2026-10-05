@@ -55,7 +55,6 @@
     "tests_real_ha/test_persistence_state_round_trips.py",
     "tests_real_ha/test_persistent_memory_runtime_recovery.py",
     "tests_real_ha/test_provider_boundary_contracts.py",
-    "tests_real_ha/test_provider_input_history.py",
     "tests_real_ha/test_provider_protocol_outcomes.py",
     "tests_real_ha/test_quiet_hours_acceptance.py",
     "tests_real_ha/test_readiness_archive_continuity.py",
@@ -433,12 +432,6 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_provider_boundary_contracts runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_provider_input_history.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_provider_input_history runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
     "tests_real_ha/test_provider_protocol_outcomes.py": {
       "workflow": "real-ha.yml",

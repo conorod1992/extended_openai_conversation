@@ -776,14 +776,16 @@ async def test_public_budget_loading_multicall_and_completed_replay(
             ),
         ],
     )
+    ledger = []
     failed = await say()
     assert failed.response.error_code is not None
     assert "Function call limit" in str(failed.response.as_dict())
     assert len(wire.requests) == 3
+    ledger.append({"requests": len(wire.requests), "effects": len(effects)})
     assert effects == (["warm"] if safe_batch else ["warm", "a"])
     assert results == ["load", "warm", "batch-a", "batch-b"]
     # A fresh turn gets a fresh budget; a completed acknowledged id still cannot replay.
-    _install_wire(
+    wire = _install_wire(
         monkeypatch,
         agent,
         [
@@ -796,15 +798,19 @@ async def test_public_budget_loading_multicall_and_completed_replay(
     )
     acknowledged = await say()
     assert _speech(acknowledged) == "Acknowledged"
+    assert len(wire.requests) == 3
+    ledger.append({"requests": len(wire.requests), "effects": len(effects)})
     before = list(effects)
-    _install_wire(
+    wire = _install_wire(
         monkeypatch, agent, [_chat_sse_tool_call("completed", "budget_warm", {})]
     )
     replayed = await say(acknowledged.conversation_id)
     assert replayed.response.error_code is not None
     assert "completed tool call" in str(replayed.response.as_dict())
     assert effects == before
-    _install_wire(
+    assert len(wire.requests) == 1
+    ledger.append({"requests": len(wire.requests), "effects": len(effects)})
+    wire = _install_wire(
         monkeypatch,
         agent,
         [
@@ -820,11 +826,16 @@ async def test_public_budget_loading_multicall_and_completed_replay(
     )
     assert _speech(await say()) == "Fresh budget healthy"
     assert effects == (before if safe_batch else before + ["a", "b"])
+    assert len(wire.requests) == 3
+    ledger.append({"requests": len(wire.requests), "effects": len(effects)})
+    assert ledger == [{"requests": requests, "effects": completed} for requests, completed in zip([3, 3, 1, 3], [1, 2, 2, 2] if safe_batch else [2, 3, 3, 5], strict=True)]
+    assert sum(row["requests"] for row in ledger) == 10
     record(
         stress_trace,
         "summary",
         layer="provider-wire",
         budget_loading_replay_cases=1,
+        aggregate_budget_ledger=ledger,
         budget_atomic_cases=int(safe_batch),
         budget_serial_prefix_cases=int(not safe_batch),
         completed_replay_rejections=1,

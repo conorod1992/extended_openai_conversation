@@ -238,3 +238,92 @@ async def test_primary_prompt_transitions_preserve_users_summaries_and_attachmen
                     items
                 )
     assert len(tool.calls) == 1
+
+    from custom_components.extended_openai_conversation_responses.live_subentry_updates import (
+        update_live_subentry,
+    )
+
+    for mode, new_prompt in (
+        ("chat_completions", "Changed history prompt"),
+        ("responses", ""),
+        ("chat_completions", "Restored history prompt"),
+    ):
+        update_live_subentry(
+            hass,
+            agent.entry,
+            agent.subentry,
+            data={**agent.subentry.data, "api_mode": mode, "prompt": new_prompt},
+        )
+        await hass.async_block_till_done()
+        reply = _responses_sse_text if mode == "responses" else _chat_sse_text
+        async with _transport(
+            agent.entry, [reply("Retained transition healthy")]
+        ) as wire:
+            followup = await _say(
+                hass, agent, "Follow-up after prompt change", result.conversation_id
+            )
+            assert _speech(followup) == "Retained transition healthy"
+            wire.assert_complete(1)
+            serialized = json.dumps(wire.requests[0]["body"])
+            assert "Current user command" in serialized
+            assert "Completed answer" in serialized
+            assert "history-call" in serialized
+            if new_prompt:
+                assert new_prompt in serialized
+            if retained_context:
+                assert "Retained summary context" in serialized
+                assert base64.b64encode(b"Retained image bytes").decode() in serialized
+        assert len(tool.calls) == 1, "Retained completed calls must not execute again"
+
+
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("limit", ["count", "bytes"])
+async def test_retained_attachment_ledger_rejects_aggregate_and_resets_for_new_session(
+    hass, tmp_path, api_mode, limit
+):
+    """Individually valid retained turns share one request budget."""
+    agent = await _contract_agent(hass, api_mode=api_mode)
+    path = tmp_path / "ledger.png"
+    size = 18 * 1024 * 1024 if limit == "bytes" else 12
+    with path.open("wb") as handle:
+        handle.truncate(size)
+    count = 3 if limit == "bytes" else 11
+    acknowledged = {"attachments": 0, "bytes": 0, "provider_requests": 0}
+    attachment = conversation.Attachment(
+        media_content_id="local-ledger", mime_type="image/png", path=path
+    )
+    with async_get_chat_session(hass) as session:
+        cid = session.conversation_id
+        with conversation.async_get_chat_log(hass, session) as log:
+            for index in range(count):
+                log.async_add_user_content(
+                    conversation.UserContent(
+                        content=f"Retained image {index}", attachments=[attachment]
+                    )
+                )
+                acknowledged["attachments"] += 1
+                acknowledged["bytes"] += size
+    assert size < 20 * 1024 * 1024
+    assert (
+        (acknowledged["attachments"] > 10)
+        if limit == "count"
+        else (acknowledged["bytes"] > 50 * 1024 * 1024)
+    )
+    async with _transport(agent.entry, []) as wire:
+        failed = await _say(hass, agent, "Read every retained attachment", cid)
+        assert failed.response.error_code is not None
+        assert (
+            "10 attachments" if limit == "count" else "combined request limit"
+        ) in str(failed.response.as_dict())
+        wire.assert_complete(0)
+    reply = _responses_sse_text if api_mode == "responses" else _chat_sse_text
+    async with _transport(agent.entry, [reply("Fresh request healthy")]) as wire:
+        healthy = await _say(hass, agent, "Independent request")
+        assert _speech(healthy) == "Fresh request healthy"
+        wire.assert_complete(1)
+        acknowledged["provider_requests"] += len(wire.requests)
+    assert acknowledged == {
+        "attachments": count,
+        "bytes": count * size,
+        "provider_requests": 1,
+    }
