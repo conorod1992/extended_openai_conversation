@@ -327,12 +327,16 @@ async def test_responses_incomplete_status_is_reported() -> None:
     ):
         result = await async_test_agent(hass, entry, subentry)
     model = next(check for check in result.checks if check.name == "Model access")
-    assert result.status == "Failed"
+    assert result.status == "Warning"
     assert result.authentication_rejected is False
-    assert model.status == "Failed"
-    assert "max_output_tokens" in model.message
+    assert model.status == "Warning"
+    assert "accepted" in model.message
+    assert "output limit" in model.message
+    assert "rejected" not in result.as_text()
+    client.responses.create.assert_awaited_once()
     usage.async_record_request.assert_awaited_once_with(
-        successful=False,
+        successful=True,
+        usage=agent_test.extract_usage(None),
         **_usage_attribution(model="gpt-5.6", api_mode=API_MODE_RESPONSES),
     )
 

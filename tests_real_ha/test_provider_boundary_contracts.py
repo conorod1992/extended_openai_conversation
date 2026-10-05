@@ -25,6 +25,7 @@ from tests_real_ha.test_ai_task_provider_wire import _task_entity
 from tests_real_ha.test_ai_task_runtime import CallerAPI, ContextProbeTool
 from tests_real_ha.test_cross_feature_acceptance import _say, _speech
 from tests_real_ha.test_entry_point_contract_matrix import _contract_agent
+from tests_real_ha.test_provider_input_history import _transport
 from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
     _chat_sse_tool_call,
@@ -242,6 +243,150 @@ async def test_text_only_production_and_diagnostic_do_not_require_tools(
         diagnostic.as_dict()
     )
     wire.assert_complete(2)
+
+
+@pytest.mark.parametrize(
+    "mode,outcome,web_search",
+    [
+        ("responses", "budget", False),
+        ("responses", "budget", True),
+        ("chat_completions", "budget", False),
+        ("responses", "completed", False),
+        ("responses", "completed", True),
+        ("chat_completions", "completed", False),
+        ("responses", "content_filter", True),
+        ("responses", "failed", True),
+        ("responses", "error_with_budget", True),
+        ("responses", "cancelled", False),
+        ("responses", "unknown_incomplete", False),
+        ("responses", "authentication", True),
+        ("chat_completions", "authentication", False),
+        ("responses", "rejected", True),
+        ("chat_completions", "rejected", False),
+    ],
+)
+async def test_agent_probe_budget_warning_preserves_acceptance_and_usage(
+    hass, mode, outcome, web_search
+):
+    calls = []
+
+    async def record_action(call):
+        calls.append(call)
+
+    hass.services.async_register("probe_budget", "action", record_action)
+    agent = await _contract_agent(
+        hass,
+        api_mode=mode,
+        memory_mode="off",
+        web_search=web_search,
+        functions=[
+            {
+                "spec": {
+                    "name": "never_execute",
+                    "description": "Test action",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                "function": {
+                    "type": "script",
+                    "sequence": [{"action": "probe_budget.action"}],
+                },
+            }
+        ],
+    )
+    if mode == "responses":
+        completion = _response_object("resp-probe-budget", [])
+        completion["usage"] = {
+            "input_tokens": 5,
+            "output_tokens": 16,
+            "total_tokens": 21,
+            "input_tokens_details": {"cached_tokens": 0},
+            "output_tokens_details": {"reasoning_tokens": 16},
+        }
+        if outcome in {
+            "budget",
+            "content_filter",
+            "error_with_budget",
+            "unknown_incomplete",
+        }:
+            completion.update(
+                status="incomplete",
+                incomplete_details={
+                    "reason": "content_filter"
+                    if outcome == "content_filter"
+                    else None
+                    if outcome == "unknown_incomplete"
+                    else "max_output_tokens"
+                },
+            )
+        elif outcome == "cancelled":
+            completion["status"] = "cancelled"
+        if outcome in {"failed", "error_with_budget"}:
+            if outcome == "failed":
+                completion["status"] = "failed"
+            completion["error"] = {"code": "server_error", "message": "Provider failed"}
+    else:
+        completion = {
+            "id": "chat-probe-budget",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "gpt-5.6",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "length" if outcome == "budget" else "stop",
+                    "message": {"role": "assistant", "content": ""},
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 5,
+                "completion_tokens": 16,
+                "total_tokens": 21,
+                "completion_tokens_details": {"reasoning_tokens": 16},
+            },
+        }
+    status_code = 200
+    if outcome in {"authentication", "rejected"}:
+        status_code = 401 if outcome == "authentication" else 400
+        completion = {
+            "error": {
+                "message": "Probe rejected",
+                "type": "invalid_request_error",
+                "code": "invalid_api_key"
+                if outcome == "authentication"
+                else "unsupported_parameter",
+            }
+        }
+    usage = agent._usage
+    before_requests = usage.totals.api_request_count
+    before_tokens = usage.totals.total_tokens
+    async with _transport(agent.entry, [(status_code, completion)]) as wire:
+        result = await async_test_agent(hass, agent.entry, agent.subentry)
+        wire.assert_complete(1)
+    assert not calls
+    request = wire.requests[0]["body"]
+    assert request["tool_choice"] == "none"
+    assert request.get("max_output_tokens", request.get("max_completion_tokens")) == 16
+    assert usage.totals.api_request_count == before_requests + 1
+    checks = {check.name: check for check in result.checks}
+    if outcome in {"budget", "completed"}:
+        assert usage.totals.total_tokens == before_tokens + 21
+        assert checks["Function calling"].status == "Passed"
+        if web_search:
+            assert checks["Web Search"].status == "Passed"
+        assert checks["Model access"].status == (
+            "Warning" if outcome == "budget" else "Passed"
+        )
+        assert "rejected" not in result.as_text().lower()
+        assert result.status != "Failed"
+        if outcome == "budget":
+            assert result.status == "Warning"
+            assert "accepted" in checks["Model access"].message
+            assert "output limit" in checks["Model access"].message
+    else:
+        assert result.status == "Failed"
+        assert checks["Model access"].status == "Failed"
+        assert checks["Function calling"].status == "Failed"
+        assert result.authentication_rejected == (outcome == "authentication")
 
 
 @pytest.mark.parametrize(
