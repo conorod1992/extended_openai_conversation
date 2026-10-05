@@ -56,6 +56,8 @@ def test_companion_evidence_fails_closed_and_names_native_boundaries():
     assert '"management_edit_save": True' in record
     assert '"background_resume": True' in record
     assert '"deep_link_reentry": True' in record
+    assert 'entry["subentries"]' in record
+    assert 'item["title"] == "Companion app saved title"' in record
 
 
 def test_companion_flow_uses_real_release_app_and_native_navigation_boundary():
@@ -67,5 +69,5 @@ def test_companion_flow_uses_real_release_app_and_native_navigation_boundary():
     assert "Forgot password?" in flow
     assert "homeassistant://navigate/extended-openai/assistant/basics" in flow
     assert "Agent name" in flow
-    assert "Save changes" in flow
+    assert 'inputText: "Companion app saved title"' in flow
     assert "pressKey: Home" in flow
