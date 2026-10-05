@@ -1,0 +1,107 @@
+name: IPv6-only networking acceptance
+
+on:
+  schedule:
+    - cron: "47 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ipv6-only-networking-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  ipv6-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --ipc=host
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUN_IPV6_ONLY_ACCEPTANCE: "1"
+      NO_PROXY: "::1,[::1],127.0.0.1,localhost"
+      no_proxy: "::1,[::1],127.0.0.1,localhost"
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Reconcile current stable test environment
+        run: |
+          set -euo pipefail
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+            pip install -r requirements_test.txt
+            pip install --upgrade homeassistant
+            python ci/install_ha_dependencies.py               --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
+          pip check
+
+      - name: Verify IPv6 loopback is real
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import socket
+          sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+          try:
+              sock.bind(("::1", 0))
+              host, port, *_ = sock.getsockname()
+              assert host == "::1"
+              print(f"IPv6 loopback ready on [{host}]:{port}")
+          finally:
+              sock.close()
+          PY
+
+      - name: Run strict IPv6-only acceptance
+        run: |
+          pytest tests_real_ha/test_ipv6_only_networking_acceptance.py             -v --asyncio-mode=auto --timeout=180
+
+      - name: Record exact-candidate IPv6 evidence
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(
+              Path("custom_components/extended_openai_conversation_responses/manifest.json")
+              .read_text(encoding="utf-8")
+          )
+          payload = {
+              "candidate_sha": os.environ["GITHUB_SHA"],
+              "candidate_manifest_version": manifest["version"],
+              "job_status": os.environ["JOB_STATUS"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "network_boundary": "IPv6 loopback only; IPv4 fallback explicitly rejected",
+              "provider_url_shape": "http://[::1]:PORT/v1",
+              "rest_tool_url_shape": "http://[::1]:PORT/fact",
+          }
+          Path("ipv6-only-evidence.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload exact-candidate IPv6 evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ipv6-only-networking-${{ github.sha }}
+          path: ipv6-only-evidence.json
+          if-no-files-found: error
+          retention-days: 30
