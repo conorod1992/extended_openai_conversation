@@ -9,6 +9,9 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "application_privacy_journeys",
+    "raw_application_destination_checks",
+    "authorized_export_privacy_cases",
     "downstream_websocket_cases",
     "downstream_audio_cases",
     "downstream_bounded_samples",

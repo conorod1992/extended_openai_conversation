@@ -2040,7 +2040,15 @@
     "tests_stress/test_downstream_delivery_ownership.py::test_slow_native_audio_recipient_preserves_foreground_progress[abandon]",
     "tests_stress/test_downstream_delivery_ownership.py::test_slow_native_audio_recipient_preserves_foreground_progress[slow]",
     "tests_stress/test_downstream_delivery_ownership.py::test_slow_actual_assist_websocket_has_bounded_native_backlog[abandon]",
-    "tests_stress/test_downstream_delivery_ownership.py::test_slow_actual_assist_websocket_has_bounded_native_backlog[resume]"
+    "tests_stress/test_downstream_delivery_ownership.py::test_slow_actual_assist_websocket_has_bounded_native_backlog[resume]",
+    "tests_stress/test_private_content_destinations.py::test_application_oracle_detects_disclosure_before_upload_redaction[diagnostics]",
+    "tests_stress/test_private_content_destinations.py::test_application_oracle_detects_disclosure_before_upload_redaction[logs]",
+    "tests_stress/test_private_content_destinations.py::test_application_oracle_detects_disclosure_before_upload_redaction[unauthorized_response]",
+    "tests_stress/test_private_content_destinations.py::test_application_oracle_detects_disclosure_before_upload_redaction[unowned_temp]",
+    "tests_stress/test_private_content_destinations.py::test_application_oracle_detects_disclosure_before_upload_redaction[unrelated_store]",
+    "tests_stress/test_private_content_destinations.py::test_authorized_retention_does_not_allow_credentials_or_unrelated_destinations",
+    "tests_stress/test_private_content_destinations.py::test_populated_journey_respects_raw_application_destinations[chat_completions]",
+    "tests_stress/test_private_content_destinations.py::test_populated_journey_respects_raw_application_destinations[responses]"
   ],
   "browser": {
     "browser": [
@@ -2597,7 +2605,10 @@
       "pending_publication_retry_checks": 2,
       "pending_publication_actual_tool_calls": 4,
       "retained_manager_recoveries": 4,
-      "compound_optional_manager_faults": 4
+      "compound_optional_manager_faults": 4,
+      "application_privacy_journeys": 2,
+      "raw_application_destination_checks": 40,
+      "authorized_export_privacy_cases": 2
     },
     "process-chaos": {
       "process_terminations": 1,
@@ -2986,13 +2997,14 @@
       "tests_stress/test_responses_scale_fairness.py"
     ],
     "memory-knowledge": [
+      "tests_real_ha/test_deleted_user_memory_edit.py",
+      "tests_real_ha/test_persistent_memory_runtime_recovery.py",
+      "tests_stress/test_memory_contract_sequences.py",
       "tests_stress/test_memory_knowledge_scale.py",
       "tests_stress/test_pending_retrieval_publication.py",
+      "tests_stress/test_private_content_destinations.py",
       "tests_stress/test_provider_wire_privacy.py",
-      "tests_stress/test_temporary_memory_scale.py",
-      "tests_stress/test_memory_contract_sequences.py",
-      "tests_real_ha/test_deleted_user_memory_edit.py",
-      "tests_real_ha/test_persistent_memory_runtime_recovery.py"
+      "tests_stress/test_temporary_memory_scale.py"
     ],
     "minimum-ha-features": [
       "tests_real_ha/test_assist_voice_identity_precedence.py::test_genuine_assist_prefers_registry_device_voice_identity_when_both_ids_exist",
