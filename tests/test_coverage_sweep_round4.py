@@ -1178,3 +1178,168 @@ def test_debug_continuity_resolution_records_projection(monkeypatch) -> None:
     assert trace.continuity["resolved_conversation_id"] == "resolved"
     assert trace.continuity["restored_history_items"] == 2
     assert trace.continuity["device_id"] == "device-1"
+
+
+
+@pytest.mark.asyncio
+async def test_web_bounded_response_decode_error_without_explicit_encoding_propagates() -> None:
+    from custom_components.extended_openai_conversation_responses.functions import web
+    from tests.test_remote_response_bounds import _FakeResponse
+
+    response = _FakeResponse(b"\xff")
+    response.charset = "utf-8"
+    bounded = web._BoundedResponse(response, 16)
+
+    with pytest.raises(UnicodeDecodeError):
+        await bounded.text()
+
+
+@pytest.mark.asyncio
+async def test_web_bounded_response_unknown_codec_is_sanitized() -> None:
+    from custom_components.extended_openai_conversation_responses.functions import web
+    from tests.test_remote_response_bounds import _FakeResponse
+
+    response = _FakeResponse(b"text")
+    bounded = web._BoundedResponse(response, 16)
+
+    with pytest.raises(HomeAssistantError, match="cannot be decoded"):
+        await bounded.text(encoding="definitely-not-a-codec")
+
+
+def test_payload_prompt_metrics_handles_no_stable_prefix_and_multiple_stable_sections() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        payload_diagnostics,
+        prompt,
+    )
+
+    no_stable = prompt.EffectivePrompt(
+        text="dynamic",
+        sections=(
+            prompt.PromptSection("dynamic", "Dynamic", "dynamic", "mixed"),
+        ),
+    )
+    metrics = payload_diagnostics.prompt_metrics(no_stable)
+    assert metrics["integration_stable_prefix"]["section_count"] == 0
+    assert metrics["integration_stable_prefix"]["first_non_stable_section"] == "dynamic"
+
+    multiple = prompt.EffectivePrompt(
+        text="one\ntwo\nthree",
+        sections=(
+            prompt.PromptSection("one", "One", "one ", "stable"),
+            prompt.PromptSection("two", "Two", "two", "stable"),
+            prompt.PromptSection("three", "Three", "three", "mixed"),
+        ),
+    )
+    metrics = payload_diagnostics.prompt_metrics(multiple)
+    assert metrics["integration_stable_prefix"]["section_count"] == 2
+    assert metrics["integration_stable_prefix"]["characters"] == len("one\ntwo")
+    assert metrics["integration_stable_prefix"]["first_non_stable_section"] == "three"
+
+
+def test_secret_restore_drops_redacted_values_from_lists_and_mappings() -> None:
+    from custom_components.extended_openai_conversation_responses import secret_redaction
+
+    marker = secret_redaction.REDACTED_SECRET_SENTINEL
+    value = {
+        "keep": "visible",
+        "drop": marker,
+        "items": ["a", marker, {"nested": marker, "keep": "b"}],
+    }
+
+    restored = secret_redaction._restore_redacted_secrets(value)
+
+    assert restored == {
+        "keep": "visible",
+        "items": ["a", {"keep": "b"}],
+    }
+
+
+def test_function_group_runtime_quarantine_filters_selected_and_all(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        function_tool_quarantine as quarantine,
+    )
+
+    validate = Mock(side_effect=lambda value, _tools: value)
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.agent_config.validate_function_groups",
+        validate,
+    )
+    groups = [
+        {
+            "id": "group",
+            "functions": ["keep", "drop", 123],
+        }
+    ]
+
+    token_names = quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.set({"drop"})
+    token_all = quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(False)
+    try:
+        result = quarantine._runtime_validate_function_groups(groups, [])
+        assert result[0]["functions"] == ["keep", 123]
+    finally:
+        quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.reset(token_all)
+        quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.reset(token_names)
+
+    token_names = quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.set(set())
+    token_all = quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.set(True)
+    try:
+        result = quarantine._runtime_validate_function_groups(groups, [])
+        assert result[0]["functions"] == [123]
+    finally:
+        quarantine._RUNTIME_QUARANTINE_ALL_FUNCTIONS.reset(token_all)
+        quarantine._RUNTIME_QUARANTINED_FUNCTION_NAMES.reset(token_names)
+
+
+@pytest.mark.asyncio
+async def test_voice_identity_device_mapping_and_default_user_fallback() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        voice_identity_runtime as voice,
+    )
+
+    agent = SimpleNamespace(
+        hass=SimpleNamespace(
+            auth=SimpleNamespace(
+                async_get_user=AsyncMock(
+                    side_effect=lambda user_id: SimpleNamespace(
+                        id=user_id, is_active=user_id != "inactive"
+                    )
+                )
+            )
+        ),
+        subentry=SimpleNamespace(
+            data={
+                voice.CONF_VOICE_SCOPE_POLICY: voice.VOICE_POLICY_DEVICE_MAPPING,
+                voice.CONF_VOICE_DEVICE_MAPPINGS: {
+                    "device": "user:alice",
+                    "shared": voice.VOICE_POLICY_SHARED,
+                    "bad": "user:inactive",
+                },
+                voice.CONF_VOICE_UNMAPPED_POLICY: voice.VOICE_POLICY_DEFAULT_USER,
+                voice.CONF_VOICE_DEFAULT_USER_ID: "default-user",
+            }
+        ),
+    )
+
+    assert await voice._active_configured_users(
+        agent,
+        SimpleNamespace(context=None, device_id="device", satellite_id=None),
+    ) == frozenset({"alice"})
+
+    assert await voice._active_configured_users(
+        agent,
+        SimpleNamespace(context=None, device_id="shared", satellite_id=None),
+    ) == frozenset()
+
+    assert await voice._active_configured_users(
+        agent,
+        SimpleNamespace(context=None, device_id="bad", satellite_id=None),
+    ) == frozenset({"default-user"})
+
+    assert await voice._active_configured_users(
+        agent,
+        SimpleNamespace(
+            context=SimpleNamespace(user_id="authenticated"),
+            device_id="device",
+            satellite_id=None,
+        ),
+    ) == frozenset()
