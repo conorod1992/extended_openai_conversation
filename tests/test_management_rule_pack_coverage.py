@@ -131,7 +131,10 @@ async def test_rule_pack_review_reports_missing_dependencies_without_execution(
 async def test_rule_pack_review_does_not_count_existing_group_name_as_new(
     hass, monkeypatch
 ) -> None:
-    rule = _canonical_rule("Ready", [])
+    rule = _canonical_rule(
+        "Ready",
+        [{"action": "light.turn_on", "target": {"entity_id": ["light.present"]}}],
+    )
     prepared = {
         "groups": [{"id": "source-group", "name": "LIGHTING"}],
         "rules": [rule],
@@ -153,7 +156,15 @@ async def test_rule_pack_review_does_not_count_existing_group_name_as_new(
 
 @pytest.mark.asyncio
 async def test_rule_pack_review_enforces_total_rule_limit(hass) -> None:
-    prepared = {"groups": [], "rules": [_canonical_rule("Extra", [])]}
+    prepared = {
+        "groups": [],
+        "rules": [
+            _canonical_rule(
+                "Extra",
+                [{"action": "light.turn_on", "target": {"entity_id": ["light.present"]}}],
+            )
+        ],
+    }
     rules = _Rules(rules=[{} for _ in range(500)])
 
     with pytest.raises(HomeAssistantError, match="Request Rule limit reached"):
