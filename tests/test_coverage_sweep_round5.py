@@ -521,27 +521,17 @@ def test_agent_config_reasoning_default_is_removed_when_model_has_no_recommendat
     base.pop(agent_config.CONF_REASONING_EFFORT, None)
     monkeypatch.setattr(
         agent_config,
-        "get_model_config",
-        Mock(return_value={"recommended_profile": {"reasoning_effort": None}}),
+        "get_reasoning_effort_options",
+        Mock(return_value=["low"]),
     )
     monkeypatch.setattr(
         agent_config,
-        "get_model_capabilities",
-        Mock(
-            return_value={
-                "reasoning": {"supported": True, "efforts": ["low"]},
-                "api": {"responses": True, "chat_completions": True},
-            }
-        ),
+        "get_model_config",
+        Mock(return_value={"recommended_profile": {"reasoning_effort": None}}),
     )
 
-    try:
-        result = agent_config.normalize_agent_config(base)
-    except Exception:
-        # The full normalizer has other catalogue-dependent invariants. The branch
-        # under test is still reached through the same helper inputs in CI's
-        # existing normalization matrix.
-        return
+    result = agent_config.normalize_agent_config(base)
+
     assert agent_config.CONF_REASONING_EFFORT not in result
 
 
