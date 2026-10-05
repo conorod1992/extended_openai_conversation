@@ -65,7 +65,10 @@ jobs:
           STRESS_SEED: "424242"
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          pytest             tests_real_ha/test_native_ha_backup_restore.py             tests_real_ha/test_https_proxy_acceptance.py             -v -s --asyncio-mode=auto --timeout=300 --tb=short
+          pytest \
+            tests_real_ha/test_native_ha_backup_restore.py \
+            tests_real_ha/test_https_proxy_acceptance.py \
+            -v -s --asyncio-mode=auto --timeout=300 --tb=short
 
       - name: Record source-bound deployment evidence
         if: success()
