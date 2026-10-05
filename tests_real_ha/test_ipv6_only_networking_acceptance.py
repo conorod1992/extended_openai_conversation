@@ -104,7 +104,7 @@ class IPv6OnlyEndpoint:
         self.runner: web.AppRunner | None = None
         self.provider_requests: list[dict[str, Any]] = []
         self.rest_requests: list[dict[str, Any]] = []
-        self.fail_next_provider = False
+        self.provider_failures_remaining = 0
 
     def _connection_evidence(self, request: web.Request) -> dict[str, Any]:
         transport = request.transport
@@ -129,8 +129,8 @@ class IPv6OnlyEndpoint:
         body = await request.json()
         self.provider_requests.append({"connection": connection, "body": body})
 
-        if self.fail_next_provider:
-            self.fail_next_provider = False
+        if self.provider_failures_remaining:
+            self.provider_failures_remaining -= 1
             return web.json_response(
                 {
                     "error": {
@@ -281,7 +281,10 @@ async def test_ipv6_only_provider_stream_rest_tool_and_failure_recovery(
         # Exercise a transport failure and then a fresh conversation. The first
         # request must fail without creating an IPv4 escape hatch; the next request
         # must reconnect successfully to the same IPv6-only provider.
-        endpoint.fail_next_provider = True
+        # OpenAI's SDK retries transient failures internally. Three consecutive
+        # failures exhaust its normal retry budget, so this conversation genuinely
+        # crosses the user-visible failure boundary before the next one reconnects.
+        endpoint.provider_failures_remaining = 3
         failed = await _say(hass, entry.entry_id, "Trigger the controlled failure.")
         assert failed.response.error_code is not None
         provider_count_after_failure = len(endpoint.provider_requests)
