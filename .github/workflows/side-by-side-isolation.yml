@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: side-by-side-isolation-\${{ github.ref }}
+  group: side-by-side-isolation-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -28,12 +28,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     container:
-      image: ghcr.io/\${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
-        username: \${{ github.actor }}
-        password: \${{ secrets.GITHUB_TOKEN }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     env:
-      PYTHONPATH: \${{ github.workspace }}
+      PYTHONPATH: ${{ github.workspace }}
       ORIGINAL_RELEASE: "2.0.2"
       ORIGINAL_SHA: "ceb3dc224c1d59e526a565818b618daafeae3855"
     steps:
