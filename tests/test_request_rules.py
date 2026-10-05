@@ -36,6 +36,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     RequestRuleStore,
     _bounded_function_result,
     _MatchCursor,
+    _validate_result_dependencies,
     async_call_active_function,
     async_evaluate_rule,
     canonical_action_signature,
@@ -806,6 +807,149 @@ async def test_result_dependencies_and_bounds() -> None:
         _bounded_function_result("x" * 20000)
     with pytest.raises(HomeAssistantError, match="deeply nested"):
         _bounded_function_result([[[[[[[[[0]]]]]]]]])
+
+
+@pytest.mark.parametrize(
+    ("actions", "slots", "success", "failure", "message"),
+    [
+        (
+            [
+                {
+                    "choose": [
+                        {
+                            "sequence": [
+                                {
+                                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                                    "data": {"result_alias": "reading"},
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            set(),
+            "",
+            "",
+            "only by top-level steps",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "request"},
+                }
+            ],
+            set(),
+            "",
+            "",
+            "distinct simple identifier",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "bad-name"},
+                }
+            ],
+            set(),
+            "",
+            "",
+            "distinct simple identifier",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "device"},
+                }
+            ],
+            {"device"},
+            "",
+            "",
+            "distinct simple identifier",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading", "step_id": "bad"},
+                }
+            ],
+            set(),
+            "",
+            "",
+            "step IDs must be unique",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading", "step_id": "a" * 32},
+                },
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading", "step_id": "b" * 32},
+                },
+            ],
+            set(),
+            "",
+            "",
+            "aliases must be unique",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading", "step_id": "a" * 32},
+                },
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "other", "step_id": "a" * 32},
+                },
+            ],
+            set(),
+            "",
+            "",
+            "step IDs must be unique",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading"},
+                }
+            ],
+            set(),
+            "{missing.value}",
+            "",
+            "missing Function result",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading"},
+                }
+            ],
+            set(),
+            "",
+            "{reading.value}",
+            "Failure response cannot reference Function results",
+        ),
+    ],
+)
+def test_result_dependency_validation_rejects_unsafe_alias_contracts(
+    actions, slots, success, failure, message
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _validate_result_dependencies(
+            {
+                "actions": actions,
+                "success_response": success,
+                "failure_response": failure,
+            },
+            slots,
+        )
 
 
 async def test_groups_preserve_global_order_and_revision() -> None:
