@@ -56,6 +56,21 @@ async def test_failed_agent_initialization_returns_retryable_assist_error() -> N
     assert "not ready to process requests" in result.response.speech["plain"]["speech"]
 
 
+async def test_empty_assist_input_returns_empty_speech_without_starting_request() -> None:
+    """Whitespace-only input is handled locally before runtime managers are needed."""
+    agent = object.__new__(conversation_module.ExtendedOpenAIAgentEntity)
+    agent._agent_ready = None
+    user_input = SimpleNamespace(
+        language="en", conversation_id="conversation-empty", text="  \t"
+    )
+
+    result = await agent._async_process(user_input)
+
+    assert result.conversation_id == "conversation-empty"
+    assert result.response.speech["plain"]["speech"] == ""
+    assert result.continue_conversation is False
+
+
 async def test_missing_continuity_manager_returns_retryable_assist_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
