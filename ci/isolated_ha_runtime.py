@@ -181,9 +181,38 @@ async def main(root, phase, endpoint):
         "Test harness leaked into runtime"
     )
     sys.path.insert(0, str(root))
-    hass = await bootstrap.async_setup_hass(
-        runner.RuntimeConfig(config_dir=str(root), skip_pip=False)
-    )
+    if phase in ("recover-recorder-first", "recover-provider-first"):
+        from homeassistant import loader
+        from homeassistant.components.recorder import get_instance
+        from homeassistant.components.recorder.const import DATA_INSTANCE
+        from homeassistant.core import HomeAssistant
+
+        # Use HA's normal config-dictionary bootstrap so the observer can see
+        # native readiness while setup is still in flight. No dependency or
+        # installation helper is replaced and skip_pip remains False.
+        hass = HomeAssistant(str(root))
+        loader.async_setup(hass)
+        hass.config.skip_pip = False
+        boot = asyncio.create_task(
+            bootstrap.async_from_config_dict(
+                {"homeassistant": {"name": "Isolated acceptance"}, "recorder": {}}, hass
+            )
+        )
+        await until(lambda: DATA_INSTANCE in hass.data)
+        recorder = get_instance(hass)
+        await until(lambda: recorder.engine is not None and recorder.is_alive())
+        assert not recorder.async_db_ready.done()
+        await write(
+            root,
+            "recorder-pending.json",
+            {"worker_alive": True, "engine_created": True, "ready": False},
+        )
+        assert await boot is hass
+        assert await recorder.async_db_ready
+    else:
+        hass = await bootstrap.async_setup_hass(
+            runner.RuntimeConfig(config_dir=str(root), skip_pip=False)
+        )
     assert hass is not None
     await hass.async_start()
     try:

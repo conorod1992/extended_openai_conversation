@@ -183,7 +183,7 @@ class Provider(BaseHTTPRequestHandler):
 
 
 def run(runtime, root, phase, endpoint, evidence):
-    for name in ("observed.json", "release", "result.json"):
+    for name in ("observed.json", "release", "result.json", "recorder-pending.json"):
         (root / name).unlink(missing_ok=True)
     database = None
     order = []
@@ -204,11 +204,14 @@ def run(runtime, root, phase, endpoint, evidence):
                     raise TimeoutError(
                         f"isolated {phase} did not settle; see {log.name}"
                     )
-                if (
-                    database is not None
-                    and "database is locked" in Path(log.name).read_text()
-                ):
+                if database is not None and (root / "recorder-pending.json").exists():
                     order.append("recorder-blocked")
+                    pending = json.loads((root / "recorder-pending.json").read_text())
+                    assert pending == {
+                        "worker_alive": True,
+                        "engine_created": True,
+                        "ready": False,
+                    }
                     if phase == "recover-provider-first":
                         Provider.mode = "healthy"
                         order.append("provider-restored")
