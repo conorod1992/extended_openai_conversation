@@ -38,8 +38,7 @@ test("older backend response cannot overwrite a newer mounted-panel route", asyn
   });
 
   await page.evaluate(() => {
-    history.pushState({}, "", "/extended-openai/data-memory/knowledge");
-    window.browserHarness.panel.route = {};
+    window.__pendingOldRoute = window.browserHarness.panel._navigate("data-memory", "knowledge");
   });
 
   await expect.poll(() => page.evaluate(() => window.__staleResponseControl.started)).toBe(1);
@@ -54,8 +53,10 @@ test("older backend response cannot overwrite a newer mounted-panel route", asyn
   await expect(panel.getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
   await expect(page).toHaveURL(/\/extended-openai\/data-memory\/memories$/);
 
-  await page.evaluate(() => window.__staleResponseControl.release());
-  await page.waitForTimeout(50);
+  await page.evaluate(async () => {
+    window.__staleResponseControl.release();
+    await window.__pendingOldRoute;
+  });
 
   await expect(panel.getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
   await expect(panel.getByRole("heading", {name: "Sources", exact: true})).toHaveCount(0);

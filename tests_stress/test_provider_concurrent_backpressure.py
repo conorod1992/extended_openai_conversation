@@ -231,3 +231,111 @@ async def test_slow_provider_saturation_isolates_mixed_failure_and_success(
         gated=3,
         attempts=dict(attempts),
     )
+
+
+@pytest.mark.parametrize("mode", [API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS])
+async def test_seeded_public_concurrency_records_realised_barrier_schedule(
+    hass, monkeypatch, stress_seed, stress_scale, stress_trace, mode
+):
+    """Independent requests obey a generated release order with native cancellation."""
+    import random
+
+    MockUser(id=_OWNER, name="Schedule owner", is_owner=True).add_to_hass(hass)
+    agent = await _agent(hass, mode)
+    raw = _raw_client(agent)
+    rng = random.Random(stress_seed)
+    realised = []
+    for witness in range(3 + 3 * stress_scale):
+        markers = tuple(f"schedule-{witness}-{index}" for index in range(4))
+        entered = {marker: asyncio.Event() for marker in markers}
+        releases = {marker: asyncio.Event() for marker in markers}
+        outcomes = dict(
+            zip(markers, ("success", "failure", "cancel", "success"), strict=True)
+        )
+        order = list(markers)
+        rng.shuffle(order)
+
+        async def send(request, *_args, **_kwargs):
+            marker = _marker(request, markers)
+            realised.append({"event": "entered", "marker": marker, "witness": witness})
+            entered[marker].set()
+            await releases[marker].wait()
+            if outcomes[marker] == "failure":
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": "controlled rejected request",
+                            "type": "invalid_request_error",
+                        }
+                    },
+                    request=request,
+                )
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=_reply(mode, marker),
+                request=request,
+            )
+
+        monkeypatch.setattr(raw._client, "send", send)
+        pending = {
+            marker: asyncio.create_task(_say(hass, agent, marker)) for marker in markers
+        }
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(event.wait() for event in entered.values())), 10
+            )
+            assert all(not task.done() for task in pending.values())
+            for marker in order:
+                outcome = outcomes[marker]
+                realised.append(
+                    {
+                        "event": "release",
+                        "marker": marker,
+                        "outcome": outcome,
+                        "witness": witness,
+                    }
+                )
+                if outcome == "cancel":
+                    pending[marker].cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await pending[marker]
+                else:
+                    releases[marker].set()
+                    result = await asyncio.wait_for(pending[marker], 10)
+                    if outcome == "failure":
+                        assert result.response.error_code is not None
+                    else:
+                        assert _speech(result) == marker
+                realised.append(
+                    {"event": "settled", "marker": marker, "witness": witness}
+                )
+                assert all(
+                    not pending[other].done()
+                    for other in order[order.index(marker) + 1 :]
+                )
+            assert [
+                row["marker"]
+                for row in realised
+                if row["event"] == "settled" and row["witness"] == witness
+            ] == order
+        finally:
+            for event in releases.values():
+                event.set()
+            for task in pending.values():
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*pending.values(), return_exceptions=True)
+    assert sum(row["event"] == "settled" for row in realised) == 4 * (
+        3 + 3 * stress_scale
+    )
+    record(
+        stress_trace,
+        "summary",
+        generated_public_schedule_cases=3 + 3 * stress_scale,
+        seed=stress_seed,
+        api=mode,
+        realised_schedule=realised,
+    )
+    assert await hass.config_entries.async_unload(agent.entry.entry_id)
