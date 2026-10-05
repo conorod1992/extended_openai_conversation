@@ -91,8 +91,6 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
         "homeassistant:\n"
         "  name: EOAI Companion Acceptance\n"
         "http:\n"
-        "  server_host: 0.0.0.0\n"
-        "  server_port: 8123\n"
         "frontend:\n"
         "api:\n"
         "websocket_api:\n"
