@@ -164,7 +164,7 @@ def test_explicit_reviewed_partial_selection_remains_valid():
                 "collected": True,
                 "executed": True,
                 "outcome": "passed",
-            }
+            },
         ],
     }
     assert check_execution(item, policy) == []
@@ -339,6 +339,13 @@ def test_only_stable_adds_native_browser_engines():
             assert "github.event_name == 'workflow_dispatch'" in step["if"]
             if step["name"] == "Require every compatibility case to pass":
                 assert step["env"]["HA_POINT"] == "${{ matrix.ha-version }}"
+                installer = next(
+                    item
+                    for item in public_steps
+                    if item["name"]
+                    == "Install selected Home Assistant and test dependencies"
+                )
+                assert step["env"]["HA_DEV_SHA"] == installer["env"]["HA_DEV_SHA"]
                 assert (
                     step["env"]["HA_STABLE_VERSION"]
                     == "${{ needs.prepare.outputs.stable-ha-version }}"
@@ -893,7 +900,9 @@ def test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence(defect
     if defect.startswith("missing"):
         policy["minimums"]["runtime"].pop(metric)
     else:
-        policy["minimums"]["process-chaos"][metric] = policy["minimums"]["runtime"][metric]
+        policy["minimums"]["process-chaos"][metric] = policy["minimums"]["runtime"][
+            metric
+        ]
     with pytest.raises(AssertionError):
         _assert_native_resource_floor_ownership(policy)
 
@@ -905,10 +914,11 @@ def test_calendar_journeys_require_native_worker_and_durable_settlement_evidence
         "test_populated_local_calendar_journey_preserves_visible_expiry_and_recovery["
     )
     journeys = {
-        node for node in expected_cases(policy, "persistence") if node.startswith(prefix)
+        node
+        for node in expected_cases(policy, "persistence")
+        if node.startswith(prefix)
     }
     assert len(journeys) == 4
-    assert (
-        policy["minimums"]["persistence"]["delayed_worker_settlement_checks"]
-        == len(journeys)
+    assert policy["minimums"]["persistence"]["delayed_worker_settlement_checks"] == len(
+        journeys
     )

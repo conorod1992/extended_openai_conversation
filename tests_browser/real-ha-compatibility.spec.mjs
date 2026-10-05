@@ -83,18 +83,27 @@ test("HA native components and actual Assist path remain compatible", async ({co
   await expect(panel.locator("#eoc-rule-live-run")).toBeEnabled();
   if (testInfo.project.name === "webkit-mobile") {
     const mobile = await page.evaluate(() => ({
-      touch: navigator.maxTouchPoints,
       coarse: matchMedia("(pointer: coarse)").matches,
       width: innerWidth,
       height: innerHeight,
     }));
-    expect(mobile.touch).toBeGreaterThan(0);
     expect(mobile.coarse).toBe(true);
     expect(mobile.width).toBeLessThan(mobile.height);
     await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
     await panel.locator("#transfer-export-mode").selectOption("full");
+    // WebKit can report maxTouchPoints=0 even with native touch emulation.
+    // Prove the configured device through a trusted, real delivery instead.
+    const exportButton = panel.locator("#create-backup-transfer");
+    await exportButton.evaluate(button => {
+      button.__touchDeliveries = [];
+      button.addEventListener("touchstart", event => {
+        button.__touchDeliveries.push({trusted:event.isTrusted, touches:event.touches.length});
+      });
+    });
     const downloaded = page.waitForEvent("download");
-    await panel.locator("#create-backup-transfer").tap();
+    await exportButton.tap();
+    expect(await exportButton.evaluate(button => button.__touchDeliveries))
+      .toEqual([{trusted:true, touches:1}]);
     const download = await downloaded;
     expect(await download.failure()).toBeNull();
     const path = await download.path();
