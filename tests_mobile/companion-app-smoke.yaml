@@ -127,6 +127,10 @@ appId: io.homeassistant.companion.android
 - tapOn:
     point: "75%, 90%"
     retryTapIfNoChange: true
+- scrollUntilVisible:
+    element:
+      text: "Companion app saved title"
+    direction: UP
 - extendedWaitUntil:
     visible: "Companion app saved title"
     timeout: 30000
@@ -134,12 +138,20 @@ appId: io.homeassistant.companion.android
 # Exercise native Activity/WebView suspension and restoration.
 - pressKey: Home
 - launchApp
+- scrollUntilVisible:
+    element:
+      text: "Companion app saved title"
+    direction: UP
 - extendedWaitUntil:
     visible: "Companion app saved title"
     timeout: 60000
 
 # Re-enter through the app's navigation handler to rule out a retained DOM-only value.
 - openLink: "homeassistant://navigate/extended-openai/assistant/basics"
+- scrollUntilVisible:
+    element:
+      text: "Companion app saved title"
+    direction: UP
 - extendedWaitUntil:
     visible: "Companion app saved title"
     timeout: 60000
