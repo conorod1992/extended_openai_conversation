@@ -731,3 +731,266 @@ def test_template_skill_dir_requires_initialized_manager(hass, monkeypatch) -> N
 
     with pytest.raises(ValueError, match="SkillManager not initialized"):
         manager._get_skill_dir("missing")
+
+
+
+@pytest.mark.asyncio
+async def test_recovery_guarded_store_remove_without_gate_uses_native_store(
+    monkeypatch,
+) -> None:
+    from homeassistant.helpers.storage import Store
+
+    native_remove = AsyncMock()
+    monkeypatch.setattr(Store, "async_remove", native_remove)
+    store = RecoveryGuardedStore.__new__(RecoveryGuardedStore)
+    store._recovery_gate = None
+
+    await store.async_remove()
+
+    native_remove.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_native_edit_settlement_defers_caller_cancellation_until_writer_finishes() -> None:
+    from custom_components.extended_openai_conversation_responses.functions.file import (
+        _async_settle_native_edit,
+    )
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = False
+
+    async def operation() -> int:
+        nonlocal completed
+        started.set()
+        await release.wait()
+        completed = True
+        return 3
+
+    task = asyncio.create_task(_async_settle_native_edit(operation()))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert completed
+
+
+@pytest.mark.asyncio
+async def test_native_edit_settlement_propagates_writer_cancellation() -> None:
+    from custom_components.extended_openai_conversation_responses.functions.file import (
+        _async_settle_native_edit,
+    )
+
+    async def operation() -> int:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _async_settle_native_edit(operation())
+
+
+@pytest.mark.asyncio
+async def test_automation_update_settlement_propagates_native_failure() -> None:
+    from custom_components.extended_openai_conversation_responses.functions.native import (
+        _async_settle_automation_update,
+    )
+
+    async def operation() -> str:
+        raise OSError("automation reload failed")
+
+    with pytest.raises(OSError, match="automation reload failed"):
+        await _async_settle_automation_update(operation())
+
+
+@pytest.mark.asyncio
+async def test_automation_update_settlement_propagates_native_cancellation() -> None:
+    from custom_components.extended_openai_conversation_responses.functions.native import (
+        _async_settle_automation_update,
+    )
+
+    async def operation() -> str:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _async_settle_automation_update(operation())
+
+
+def test_function_entity_validation_rejects_unavailable_participant(hass) -> None:
+    from custom_components.extended_openai_conversation_responses.functions.base import (
+        Function,
+    )
+    from homeassistant.exceptions import HomeAssistantError
+
+    class DummyFunction(Function):
+        async def execute(self, *args, **kwargs):
+            return None
+
+    hass.states.get = Mock(return_value=SimpleNamespace(state="unavailable"))
+    function = DummyFunction()
+    exposed = [{"entity_id": "light.kitchen"}]
+
+    with pytest.raises(HomeAssistantError, match="Entity is unavailable"):
+        function.validate_entity_ids(hass, ["light.kitchen"], exposed)
+
+    function.validate_entity_ids(
+        hass,
+        ["light.kitchen"],
+        exposed,
+        require_available=False,
+    )
+
+
+def test_exposed_attribute_enrichment_tolerates_non_mapping_options(hass) -> None:
+    from custom_components.extended_openai_conversation_responses.exposed_attributes import (
+        enrich_exposed_entities,
+    )
+
+    exposed = [{"entity_id": "sensor.temperature", "state": "20"}]
+
+    assert enrich_exposed_entities(hass, object(), exposed) is exposed
+
+
+def test_skill_loader_status_returns_structural_failure_from_missing_loader() -> None:
+    from custom_components.extended_openai_conversation_responses.skill_availability import (
+        effective_skill_loader_status,
+    )
+
+    status = effective_skill_loader_status(
+        ["weather"],
+        ["weather"],
+        [],
+        [],
+        max_function_calls=1,
+    )
+
+    assert status.available is False
+    assert status.loadable_skills == ()
+    assert "load_skill" in str(status.reason)
+
+
+def test_template_relative_working_directory_is_rebased_to_config(hass, monkeypatch) -> None:
+    from pathlib import Path
+
+    from custom_components.extended_openai_conversation_responses import template
+
+    monkeypatch.setattr(template, "DEFAULT_WORKING_DIRECTORY", "eoai-work")
+    manager = template.ExtendedOpenAITemplateManager(hass)
+
+    assert manager._get_working_directory() == str(
+        Path(hass.config.config_dir) / "eoai-work"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("parent_data", "expected"),
+    [
+        ({"api_provider": "azure"}, "azure"),
+        (
+            {
+                "api_provider": "compatible",
+                "base_url": "https://example.invalid/v1",
+            },
+            "compatible",
+        ),
+    ],
+)
+async def test_diagnostics_provider_category_branches(
+    hass, monkeypatch, parent_data: dict, expected: str
+) -> None:
+    from custom_components.extended_openai_conversation_responses import diagnostics
+
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        data=parent_data,
+        subentries={},
+    )
+    monkeypatch.setattr(diagnostics, "version", Mock(return_value="test"))
+
+    result = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+
+    assert result["provider_category"] == expected
+
+
+def test_summary_diagnostics_is_best_effort_when_trace_is_malformed() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        request_diagnostics,
+    )
+
+    class BrokenTrace:
+        @property
+        def provider_requests(self):
+            raise RuntimeError("broken trace")
+
+    data = {"kept": True}
+
+    assert request_diagnostics.summary_diagnostics(BrokenTrace(), data) is data
+    assert data == {"kept": True}
+
+
+def test_record_tool_assembly_records_function_group_runtime(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        request_diagnostics,
+    )
+
+    trace = SimpleNamespace(memory={})
+    runtime = SimpleNamespace(stats=Mock(return_value={"loaded_groups": 2}))
+    monkeypatch.setattr(request_diagnostics, "_debug_trace", Mock(return_value=trace))
+    monkeypatch.setattr(
+        request_diagnostics,
+        "get_function_group_runtime",
+        Mock(return_value=runtime),
+    )
+    agent = SimpleNamespace(
+        hass=object(),
+        entry=SimpleNamespace(entry_id="entry"),
+        subentry=SimpleNamespace(subentry_id="agent"),
+    )
+
+    request_diagnostics.record_tool_assembly(agent, [{"spec": {}}], 0.0)
+
+    preparation = trace.memory[request_diagnostics._INTERNAL_PREPARATION]
+    assert preparation["function_tool_assembly"]["last_count"] == 1
+    assert preparation["function_groups"] == {"loaded_groups": 2}
+
+
+def test_runtime_failure_token_length_can_be_recorded_as_local_reply() -> None:
+    from custom_components.extended_openai_conversation_responses.exceptions import (
+        TokenLengthExceededError,
+    )
+    from custom_components.extended_openai_conversation_responses.runtime_failure_hardening import (
+        _conversation_error_result,
+    )
+
+    logger = Mock()
+    usage = SimpleNamespace(mark_current_run_failed=Mock())
+    entity = SimpleNamespace(
+        entry=SimpleNamespace(entry_id="entry"),
+        subentry=SimpleNamespace(subentry_id="agent", data={}),
+        _usage=usage,
+        entity_id="conversation.agent",
+        _fire_conversation_finished=Mock(),
+        hass=SimpleNamespace(),
+    )
+    user_input = SimpleNamespace(language="en", conversation_id="conversation-1")
+    chat_log = SimpleNamespace(content=[])
+    error = TokenLengthExceededError(64)
+
+    result = _conversation_error_result(
+        entity,
+        user_input,
+        chat_log,
+        error,
+        logger=logger,
+        handled_locally=True,
+    )
+
+    logger.warning.assert_called_once()
+    usage.mark_current_run_failed.assert_called_once_with("TokenLengthExceededError")
+    assert len(chat_log.content) == 1
+    assert chat_log.content[0].agent_id == "conversation.agent"
+    assert result.conversation_id == "conversation-1"
+    entity._fire_conversation_finished.assert_called_once()
