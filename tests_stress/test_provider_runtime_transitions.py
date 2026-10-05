@@ -274,41 +274,30 @@ async def test_first_time_config_flow_reaches_loaded_agent_and_first_assist_requ
         DOMAIN,
     )
 
-    authenticated = AsyncMock(return_value=object())
-    with (
-        patch(
-            "custom_components.extended_openai_conversation_responses.config_flow.get_authenticated_client",
-            authenticated,
-        ),
-        patch(
-            "custom_components.extended_openai_conversation_responses.get_authenticated_client",
-            authenticated,
-        ),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": SOURCE_USER}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_NAME: "First Setup Journey",
-                CONF_API_KEY: "first-setup-key",
-                CONF_BASE_URL: DEFAULT_CONF_BASE_URL,
-                CONF_SKIP_AUTHENTICATION: True,
-                CONF_API_PROVIDER: "openai",
-            },
-        )
-        assert result["type"] is FlowResultType.CREATE_ENTRY
-        entries = [
-            entry
-            for entry in hass.config_entries.async_entries(DOMAIN)
-            if entry.title == "First Setup Journey"
-        ]
-        assert len(entries) == 1
-        entry = entries[0]
-        if entry.state is not ConfigEntryState.LOADED:
-            assert await hass.config_entries.async_setup(entry.entry_id)
-            await hass.async_block_till_done()
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "First Setup Journey",
+            CONF_API_KEY: "first-setup-key",
+            CONF_BASE_URL: DEFAULT_CONF_BASE_URL,
+            CONF_SKIP_AUTHENTICATION: True,
+            CONF_API_PROVIDER: "openai",
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    entries = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.title == "First Setup Journey"
+    ]
+    assert len(entries) == 1
+    entry = entries[0]
+    if entry.state is not ConfigEntryState.LOADED:
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
     assert {sub.subentry_type for sub in entry.subentries.values()} == {
