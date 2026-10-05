@@ -8,12 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 import yaml
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import (
     agent_config,
     debug_ui,
     frontend_assets,
+    function_tool_quarantine as quarantine,
     management_function_repair as function_repair,
     management_loading_performance as loading,
     management_ui,
@@ -37,6 +36,7 @@ from custom_components.extended_openai_conversation_responses.management_loading
 from custom_components.extended_openai_conversation_responses.management_ui import (
     async_setup_management_ui,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 class _HashableNamespace(SimpleNamespace):
@@ -333,7 +333,7 @@ def test_function_health_peek_tracks_tool_mutations_and_restore(monkeypatch) -> 
 
 
 def test_agent_config_revision_does_not_validate_persisted_config(monkeypatch) -> None:
-    hass, _entry, subentry = _hass_with_agent()
+    _hass, _entry, subentry = _hass_with_agent()
     subentry.data["functions"] = _persisted_invalid_function_tools()
     monkeypatch.setattr(
         function_repair,
@@ -719,7 +719,7 @@ async def test_agent_catalog_does_not_initialize_per_agent_managers(
 
 
 async def test_cold_catalog_skips_tool_validation_for_multiple_agents(monkeypatch) -> None:
-    hass, entry, subentry = _hass_with_agent()
+    hass, entry, _subentry = _hass_with_agent()
     second = SimpleNamespace(
         subentry_id="agent-2", subentry_type="conversation", title="Second",
         data={**agent_config_defaults(), "functions": _persisted_invalid_function_tools()},
@@ -1311,6 +1311,7 @@ async def test_configuration_save_normalizes_once(monkeypatch) -> None:
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
             "section": "configuration",
+            "revision": management_ui._agent_config_revision(subentry.data, subentry.title),
             "action": "save",
             "config": {"chat_model": "gpt-5-mini"},
             "title": "Updated Jarvis",
@@ -1421,7 +1422,9 @@ async def test_unrelated_save_preserves_authoritative_valid_function_yaml(
     )
     saved = await management_ui.async_management_command(
         hass, "admin", True,
-        {**message, "action": "save", "config": {"prompt": "Unrelated"}},
+        {**message,
+         "revision": management_ui._agent_config_revision(subentry.data, subentry.title),
+         "action": "save", "config": {"prompt": "Unrelated"}},
     )
     assert saved["valid"] is True
     assert subentry.data["functions"] == raw_valid
@@ -1514,7 +1517,9 @@ async def test_function_mutations_revalidate_only_changed_dependencies(
     candidate[0]["spec"]["name"] = "renamed_tool"
     tool_save = await management_ui.async_management_command(
         hass, "admin", True,
-        {**message, "action": "save", "config": {
+        {**message,
+         "revision": management_ui._agent_config_revision(subentry.data, subentry.title),
+         "action": "save", "config": {
             "functions": yaml.safe_dump(candidate, sort_keys=False),
         }},
     )
@@ -1526,7 +1531,9 @@ async def test_function_mutations_revalidate_only_changed_dependencies(
     groups.reset_mock()
     group_save = await management_ui.async_management_command(
         hass, "admin", True,
-        {**message, "action": "save", "config": {"function_groups": [{
+        {**message,
+         "revision": tool_save["revision"],
+         "action": "save", "config": {"function_groups": [{
             "id": "renamed", "name": "Renamed", "description": "Renamed tools",
             "loading_mode": "always", "functions": ["renamed_tool"],
         }]}},
@@ -1562,13 +1569,17 @@ async def test_save_model_metadata_reuses_only_unchanged_model(monkeypatch) -> N
     monkeypatch.setattr(management_ui, "model_capabilities", capabilities)
     ordinary = await management_ui.async_management_command(
         hass, "admin", True,
-        {**message, "action": "save", "config": {"prompt": "Changed"}},
+        {**message,
+         "revision": management_ui._agent_config_revision(_subentry.data, _subentry.title),
+         "action": "save", "config": {"prompt": "Changed"}},
     )
     capabilities.assert_not_called()
     assert ordinary["_performance"]["model_capabilities_cache_hit"] is True
     model = await management_ui.async_management_command(
         hass, "admin", True,
-        {**message, "action": "save", "config": {"chat_model": "gpt-5"}},
+        {**message,
+         "revision": ordinary["revision"],
+         "action": "save", "config": {"chat_model": "gpt-5"}},
     )
     capabilities.assert_called_once_with("gpt-5")
     assert model["_performance"]["model_capabilities_cache_hit"] is False
@@ -1576,7 +1587,9 @@ async def test_save_model_metadata_reuses_only_unchanged_model(monkeypatch) -> N
     model["model_capabilities"]["supports_temperature"] = not expected
     repeated = await management_ui.async_management_command(
         hass, "admin", True,
-        {**message, "action": "save", "config": {"prompt": "Changed again"}},
+        {**message,
+         "revision": model["revision"],
+         "action": "save", "config": {"prompt": "Changed again"}},
     )
     assert repeated["model_capabilities"]["supports_temperature"] is expected
     assert capabilities.call_count == 1
@@ -1607,7 +1620,9 @@ async def test_cold_repairable_save_uses_one_quarantine_state(monkeypatch, caplo
     }
     saved = await management_ui.async_management_command(
         hass, "admin", True,
-        {**message, "action": "save", "config": {"prompt": "Cold safe edit"}},
+        {**message,
+         "revision": management_ui._agent_config_revision(subentry.data, subentry.title),
+         "action": "save", "config": {"prompt": "Cold safe edit"}},
     )
     next_read = await management_ui.async_management_command(
         hass, "admin", True, {**message, "action": "get"}
@@ -1787,6 +1802,7 @@ async def test_configuration_patch_preserves_omitted_fields_and_skips_local_snap
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
             "section": "configuration",
+            "revision": result["revision"],
             "action": "save",
             "config": {"local_intent_exclusions": ["HassTurnOn"]},
         },
@@ -1817,6 +1833,7 @@ async def test_configuration_patch_preserves_omitted_fields_and_skips_local_snap
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
             "section": "configuration",
+            "revision": updated["revision"],
             "action": "save",
             "config": {"local_intent_exclusions": ["HassTurnOn"]},
         },
@@ -1835,6 +1852,7 @@ async def test_configuration_patch_validates_complete_merged_candidate() -> None
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
             "section": "configuration",
+            "revision": management_ui._agent_config_revision(subentry.data, subentry.title),
             "action": "save",
             "config": {"max_tokens": 750},
         },
@@ -1867,6 +1885,7 @@ async def test_configuration_save_validation_failure_does_not_persist(
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
             "section": "configuration",
+            "revision": management_ui._agent_config_revision(_subentry.data, _subentry.title),
             "action": "save",
             "config": {
                 "speech_regex_replacements": [{"pattern": "[", "replacement": ""}]
@@ -1892,6 +1911,7 @@ async def test_configuration_save_rejects_malformed_function_configuration(field
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
             "section": "configuration",
+            "revision": management_ui._agent_config_revision(_subentry.data, _subentry.title),
             "action": "save",
             "config": {field: "not a list"},
         },
@@ -1959,11 +1979,6 @@ async def test_debug_setup_retry_resumes_after_websocket_failure(monkeypatch) ->
     assert hass.data[setup_key] is True
     assert asset_register.await_count == 1
     assert websocket_register.call_count == 2
-
-
-from custom_components.extended_openai_conversation_responses import (
-    function_tool_quarantine as quarantine,
-)
 
 
 async def test_overview_primary_does_not_initialize_storage_managers(monkeypatch) -> None:

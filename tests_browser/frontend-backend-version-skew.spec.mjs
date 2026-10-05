@@ -34,8 +34,7 @@ async function waitForOldSaveToBlock(request) {
   }).toBe(true);
 }
 
-test("old tab cannot overwrite a newer candidate save", async ({browser, request}) => {
-  const context = await browser.newContext();
+test("old tab cannot overwrite a newer candidate save", async ({context, request}) => {
   const oldPage = await context.newPage();
   const oldErrors = trackPageErrors(oldPage);
 
@@ -72,7 +71,9 @@ test("old tab cannot overwrite a newer candidate save", async ({browser, request
 
   // The candidate tab still observes its authoritative state after the delayed old
   // response completes.
-  await newPage.reload();
+  // The harness replaces the URL with the HA route; reload through its entry URL
+  // so the backend bridge and client identity remain available after navigation.
+  await newPage.goto(fixtureUrl({client: "new"}));
   newPanel = newPage.locator("extended-openai-management-panel");
   await expect(newPanel.locator('[data-config="__title"]')).toHaveValue(authoritativeTitle);
   await expect(newPanel.locator('[data-config="chat_model"]')).toHaveValue(expectedModel);

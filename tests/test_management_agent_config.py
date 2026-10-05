@@ -675,7 +675,8 @@ async def test_function_tool_yaml_operations_require_admin(hass, action) -> None
         )
 
 
-async def test_configuration_mutation_requires_revision(hass) -> None:
+@pytest.mark.parametrize("action", ["save", "update"])
+async def test_configuration_mutation_requires_revision(hass, action) -> None:
     _setup_entry(hass)
     with pytest.raises(HomeAssistantError, match="revision is required"):
         await async_management_command(
@@ -684,7 +685,7 @@ async def test_configuration_mutation_requires_revision(hass) -> None:
             True,
             {
                 "section": "configuration",
-                "action": "update",
+                "action": action,
                 "entry_id": "entry-1",
                 "subentry_id": "agent-1",
                 "config": {"max_tokens": 700},

@@ -107,7 +107,7 @@ class _SkewBridge:
         await self.runner.setup()
         site = web.TCPSite(self.runner, "127.0.0.1", 0)
         await site.start()
-        sockets = getattr(site._server, "sockets", None)  # noqa: SLF001 - test socket
+        sockets = getattr(site._server, "sockets", None)
         assert sockets
         port = sockets[0].getsockname()[1]
         self.backend_url = f"http://127.0.0.1:{port}/callws"

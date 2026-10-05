@@ -1013,11 +1013,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
 
     _require_admin(is_admin)
     if action == "save_policy":
-        if not isinstance(message.get("revision"), str):
-        raise HomeAssistantError(
-            "Configuration revision is required; reload the latest saved settings before saving."
-        )
-    _require_agent_config_revision(subentry, message["revision"])
+        _require_agent_config_revision(subentry, message.get("revision"))
         updates = message.get("config")
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
@@ -1096,7 +1092,11 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     if not isinstance(updates, dict):
         raise HomeAssistantError("config must be an object")
     phase = perf_counter()
-    _require_agent_config_revision(subentry, message.get("revision"))
+    if not isinstance(message.get("revision"), str):
+        raise HomeAssistantError(
+            "Configuration revision is required; reload the latest saved settings before saving."
+        )
+    _require_agent_config_revision(subentry, message["revision"])
     timings["stale_revision_ms"] = _elapsed_ms(phase)
 
     phase = perf_counter()
@@ -1456,7 +1456,11 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         updates = message.get("config")
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
-        _require_agent_config_revision(subentry, message.get("revision"))
+        if not isinstance(message.get("revision"), str):
+            raise HomeAssistantError(
+                "Configuration revision is required; reload the latest saved settings before saving."
+            )
+        _require_agent_config_revision(subentry, message["revision"])
         normalized = merge_agent_config(subentry.data, updates)
         _validated_model_request(normalized, entry.data, subentry.data)
         if CONF_GUEST_POLICY_VERSION not in subentry.data:

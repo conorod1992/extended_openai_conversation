@@ -58,7 +58,7 @@ window.addEventListener("error", (event) => window.browserHarness.windowErrors.p
 window.addEventListener("unhandledrejection", (event) => window.browserHarness.rejections.push(String(event.reason)));
 
 if (frontendRoot) {
-  await import(`${frontendRoot.replace(/\\/$/, "")}/management-panel.js`);
+  await import(`${frontendRoot.replace(/\/$/, "")}/management-panel.js`);
 } else if (params.get("bundle") === "1") {
   const shippedRoot = "/custom_components/extended_openai_conversation_responses/frontend/";
   const manifest = await (await fetch(`${shippedRoot}dist/manifest.json`)).json();
