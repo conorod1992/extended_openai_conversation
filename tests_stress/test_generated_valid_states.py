@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -120,6 +121,12 @@ def test_covering_generator_is_valid_complete_bounded_and_reproducible() -> None
     second = generate(2983703646, heavy=True)
     assert first == second
     assert first.cases
+    reviewed = json.loads(Path(__file__).with_name("reviewed_valid_coverage.json").read_text(encoding="utf-8"))
+    first.assert_reviewed_inventory(reviewed)
+    with pytest.raises(AssertionError, match="exclusion reasons changed"):
+        replace(first, obligations=frozenset(list(first.obligations)[1:])).assert_reviewed_inventory(reviewed)
+    with pytest.raises(AssertionError, match="exclusion reasons changed"):
+        replace(first, excluded={**first.excluded, "unexpected rejection": 1}).assert_reviewed_inventory(reviewed)
     assert len(first.cases) < 500
     assert first.exploratory_count <= 15
     actual = set()

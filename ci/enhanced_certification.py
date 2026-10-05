@@ -10,12 +10,12 @@ from urllib.request import Request, urlopen
 
 try:
     from .candidate_evidence import check_candidate, valid_sha
-    from .compatibility_evidence import check_stable_point
+    from .compatibility_evidence import check_ha_environment, check_stable_point
     from .enhanced_evidence import SCHEMA, write_json
     from .execution_contract import CONTRACT, check_execution, expected_cases
 except ImportError:
     from candidate_evidence import check_candidate, valid_sha
-    from compatibility_evidence import check_stable_point
+    from compatibility_evidence import check_ha_environment, check_stable_point
     from enhanced_evidence import SCHEMA, write_json
     from execution_contract import CONTRACT, check_execution, expected_cases
 
@@ -129,6 +129,19 @@ def main(root: Path) -> int:
         if item:
             shas.add(item["eoai_sha"])
             identity_errors.extend(check_candidate(item, candidate_sha))
+            if point in {None, "stable"}:
+                if not expected_stable:
+                    identity_errors.append("Stable lane has no intended HA version")
+                identity_errors.extend(check_ha_environment(item, version=expected_stable, plugin_version=os.environ.get("ENHANCED_EXPECTED_HA_TEST_PLUGIN_VERSION")))
+            elif point == "oldest":
+                minimum = json.loads((Path(__file__).resolve().parents[1] / "hacs.json").read_text(encoding="utf-8"))["homeassistant"]
+                identity_errors.extend(check_ha_environment(item, version=minimum))
+            elif point == "dev":
+                intended_dev = os.environ.get("ENHANCED_EXPECTED_HA_DEV_SHA")
+                if not valid_sha(intended_dev):
+                    identity_errors.append("Dev lane has no intended HA source SHA")
+                else:
+                    identity_errors.extend(check_ha_environment(item, source_sha=intended_dev))
             identity_errors.extend(
                 check_stable_point(
                     item, point, expected_stable, require_reported_version=True

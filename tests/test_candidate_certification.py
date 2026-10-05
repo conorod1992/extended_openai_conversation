@@ -75,6 +75,7 @@ def test_final_lifecycle_gate_requires_independently_resolved_stable_version(
         "ENHANCED_CAMPAIGNS": "[]",
         "ENHANCED_INTENSITIES": '["normal"]',
         "ENHANCED_SELECTED": "lifecycle",
+        "ENHANCED_EXPECTED_HA_DEV_SHA": "d" * 40,
         "STRESS_SEED": "123",
         "ENHANCED_NEEDS": "{}",
     }.items():
@@ -106,7 +107,7 @@ def test_final_lifecycle_gate_requires_independently_resolved_stable_version(
     index = json.loads((tmp_path / "certification-final.json").read_text())
     assert index["passed"] is (expected == 0)
     assert not index["execution_errors"]
-    assert all("Stable" in error for error in index["identity_errors"])
+    assert all("Stable" in error or "HA intended" in error for error in index["identity_errors"])
     if expected:
         assert index["identity_errors"]
     else:
@@ -120,7 +121,7 @@ def test_final_lifecycle_gate_requires_independently_resolved_stable_version(
 
 
 def item(sha=SOURCE):
-    identity = {"python": "3.14.0", "packages": {"openai": "3.10.0"}}
+    identity = {"python": "3.14.0", "packages": {"openai": "3.10.0", "homeassistant": "2026.9.4"}}
     env = {
         "eoai_sha": sha,
         "environment": identity,
@@ -218,6 +219,7 @@ def test_real_final_gate_requires_intended_candidate_even_when_jobs_agree(
     for key, value in {
         "ENHANCED_CANDIDATE_SHA": SOURCE,
         "ENHANCED_CAMPAIGNS": '["runtime","functions"]',
+        "ENHANCED_EXPECTED_STABLE_HA_VERSION": "2026.9.4",
         "ENHANCED_INTENSITIES": '["normal"]',
         "ENHANCED_SELECTED": "runtime",
         "STRESS_SEED": "123",
