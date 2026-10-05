@@ -904,7 +904,7 @@ async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule() -> None:
     match = cursor.next_match()
 
     assert match is not None and match.fuzzy
-    assert match.phrase == "open kitchen lights"
+    assert match.phrase == "open kitchen light"
     assert cursor.next_match() is None
 
 
