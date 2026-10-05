@@ -202,6 +202,21 @@ async def test_reviewed_edge_payloads_cross_real_management_websocket(
     )
     saved_names = [item["spec"]["name"] for item in saved_tool["functions"]]
     assert saved_names.count("edge_lookup") == 1
+    duplicate_tool = await _management_response(
+        client,
+        entry=entry,
+        section="tools",
+        action="save",
+        revision=saved_tool["revision"],
+        tool=_native_tool("edge_lookup"),
+    )
+    assert duplicate_tool["success"] is False
+    after_duplicate = await _management_call(
+        client, entry=entry, section="configuration", action="get"
+    )
+    assert [
+        item["spec"]["name"] for item in after_duplicate["config"][CONF_FUNCTION_TOOLS]
+    ].count("edge_lookup") == 1
 
     # Request Rules: the independently reviewed name limit has the same exact/
     # adjacent split and a failed create cannot consume a durable rule slot.
@@ -221,6 +236,16 @@ async def test_reviewed_edge_payloads_cross_real_management_websocket(
         rule=_rule("R" * (MAX_RULE_NAME_LENGTH + 1), "invalid edge rule"),
     )
     assert rejected_rule["success"] is False
+    duplicate_rule = _rule("Duplicate ID", "duplicate id edge rule")
+    duplicate_rule["id"] = valid_rule["rule"]["id"]
+    rejected_duplicate_id = await _management_response(
+        client,
+        entry=entry,
+        section="request_rules",
+        action="create",
+        rule=duplicate_rule,
+    )
+    assert rejected_duplicate_id["success"] is False
     listed = await _management_call(
         client, entry=entry, section="request_rules", action="list"
     )
@@ -262,6 +287,8 @@ async def test_bounded_seeded_unicode_memory_payloads_use_reviewed_limits(
     # the current validator accepts a generated example.
     assert MAX_MEMORY_CONTENT == 1000
     assert MAX_CATEGORY_LENGTH == 64
+    assert MAX_KNOWLEDGE_TITLE == 120
+    assert MAX_RULE_NAME_LENGTH == 120
     seed = 0xE0A103
     rng = random.Random(seed)
     entry = _entry("Seeded management payloads")
