@@ -247,6 +247,42 @@ async def test_successful_local_rule_continuation_calls_provider_once(monkeypatc
     local_intent.assert_not_awaited()
 
 
+async def test_routing_rule_hands_captured_provider_input_to_ai(monkeypatch):
+    entity, user_input, chat_log, _policy, process = _pipeline_fixture(
+        monkeypatch, text="ask why the sky is blue"
+    )
+    entity._request_rules = object()
+    entity._request_rule_runtime = SimpleNamespace(
+        effective_options=MagicMock(return_value={})
+    )
+    evaluation = RuleEvaluation(
+        match=RuleMatch(
+            {"id": "explain", "name": "Explain"},
+            "ask why the sky is blue",
+            False,
+            100.0,
+        ),
+        consume=False,
+        provider_input="why the sky is blue",
+    )
+    monkeypatch.setattr(
+        conversation_module, "async_evaluate_rule", AsyncMock(return_value=evaluation)
+    )
+    monkeypatch.setattr(
+        conversation_module, "async_try_handle_local_intent", AsyncMock()
+    )
+    expected = conversation.ConversationResult(
+        response=intent.IntentResponse(language="en"),
+        conversation_id="conversation-1",
+    )
+    entity._async_handle_message_with_ha_tools = AsyncMock(return_value=expected)
+
+    assert await process() is expected
+    assert chat_log.content[-1].content == "why the sky is blue"
+    assert user_input.text == "ask why the sky is blue"
+    assert entity._async_handle_message_with_ha_tools.call_args.args[1] is chat_log
+
+
 @pytest.mark.parametrize(
     "mode",
     [
