@@ -934,3 +934,147 @@ async def test_model_catalog_websocket_lookup_returns_capabilities(hass, monkeyp
     assert result["source"] == "bundled"
     assert result["model_capabilities"] == {"ok": True}
     assert result["reasoning_effort_options"] == ["low"]
+
+
+
+def test_usage_daily_series_clamps_limit_and_date_range() -> None:
+    from custom_components.extended_openai_conversation_responses import usage
+
+    manager = usage.UsageManager.__new__(usage.UsageManager)
+    manager.daily = {
+        "2026-10-01": {"date": "2026-10-01", "total_tokens": 1},
+        "2026-10-02": {"date": "2026-10-02", "total_tokens": 2},
+        "2026-10-03": {"date": "2026-10-03", "total_tokens": 3},
+    }
+
+    assert [item["date"] for item in manager.daily_series("2026-10-02", "2026-10-03", 1)] == [
+        "2026-10-02"
+    ]
+    assert len(manager.daily_series("2026-10-01", "2026-10-03", 0)) == 1
+
+
+def test_usage_recent_runs_filters_and_clamps_paging() -> None:
+    from custom_components.extended_openai_conversation_responses import usage
+
+    manager = usage.UsageManager.__new__(usage.UsageManager)
+    manager.runs = [
+        usage.UsageRun(
+            run_id="one",
+            started_at="2026-10-01T00:00:00+00:00",
+            completed_at="2026-10-01T00:01:00+00:00",
+            duration_ms=1,
+            agent_subentry_id="agent",
+            successful=True,
+        ),
+        usage.UsageRun(
+            run_id="two",
+            started_at="2026-10-02T00:00:00+00:00",
+            completed_at="2026-10-02T00:01:00+00:00",
+            duration_ms=1,
+            agent_subentry_id="agent",
+            successful=False,
+        ),
+    ]
+
+    result = manager.recent_runs(limit=9999, offset=-5, successful=False)
+
+    assert [item["run_id"] for item in result["runs"]] == ["two"]
+    assert result["offset"] == 0
+    assert result["limit"] == usage.MAX_RECENT_LIMIT
+    assert result["has_more"] is False
+
+
+def test_usage_requests_for_run_filters_and_paginates() -> None:
+    from custom_components.extended_openai_conversation_responses import usage
+
+    manager = usage.UsageManager.__new__(usage.UsageManager)
+    manager.requests = [
+        usage.UsageRequest(
+            request_id="one",
+            run_id="run",
+            timestamp="2026-10-01T00:00:00+00:00",
+            agent_subentry_id="agent",
+            provider="openai",
+            model="model",
+            api_mode="responses",
+            successful=True,
+            duration_ms=1,
+        ),
+        usage.UsageRequest(
+            request_id="other",
+            run_id="other-run",
+            timestamp="2026-10-01T00:00:00+00:00",
+            agent_subentry_id="agent",
+            provider="openai",
+            model="model",
+            api_mode="responses",
+            successful=True,
+            duration_ms=1,
+        ),
+    ]
+
+    result = manager.requests_for_run("run", limit=0, offset=-1)
+
+    assert [item["request_id"] for item in result["requests"]] == ["one"]
+    assert result["offset"] == 0
+    assert result["limit"] == 1
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({}, False),
+        ({"speech_processing_enabled": False, "speech_regex_replacements": [{"pattern": "x"}]}, False),
+        ({"speech_processing_enabled": True, "speech_regex_replacements": []}, False),
+        ({"speech_processing_enabled": True, "speech_regex_replacements": [{"pattern": "x"}]}, True),
+    ],
+)
+def test_speech_custom_replacement_detection(config, expected) -> None:
+    from custom_components.extended_openai_conversation_responses import speech
+
+    normalized = {
+        speech.CONF_SPEECH_PROCESSING_ENABLED: config.get("speech_processing_enabled", False),
+        speech.CONF_SPEECH_REGEX_REPLACEMENTS: config.get("speech_regex_replacements", []),
+    }
+    assert speech.has_custom_speech_replacements(normalized) is expected
+
+
+def test_speech_cleanup_mode_decisions() -> None:
+    from custom_components.extended_openai_conversation_responses import speech
+
+    enabled = {
+        speech.CONF_SPEECH_PROCESSING_ENABLED: True,
+        speech.CONF_SPEECH_REGEX_REPLACEMENTS: [],
+        speech.CONF_SPEECH_STRIP_MARKDOWN: True,
+        speech.CONF_SPEECH_STRIP_URLS: False,
+    }
+    disabled = {speech.CONF_SPEECH_PROCESSING_ENABLED: False}
+
+    assert speech.needs_async_speech_cleanup(
+        "x" * speech.COMPLETED_SPEECH_EXECUTOR_THRESHOLD, enabled
+    )
+    assert not speech.needs_async_speech_cleanup("short", enabled)
+    assert not speech.needs_async_speech_cleanup("x" * 5000, disabled)
+    assert speech.streaming_speech_processing_enabled(enabled)
+    assert not speech.streaming_speech_processing_enabled(disabled)
+
+    custom = {
+        **enabled,
+        speech.CONF_SPEECH_REGEX_REPLACEMENTS: [{"pattern": "x", "replacement": ""}],
+    }
+    assert speech.needs_async_speech_cleanup("short", custom)
+    assert not speech.streaming_speech_processing_enabled(custom)
+
+
+def test_speech_streaming_sanitizer_rejects_tiny_buffer() -> None:
+    from custom_components.extended_openai_conversation_responses import speech
+
+    with pytest.raises(ValueError, match="at least 32"):
+        speech.StreamingSpeechSanitizer(max_buffer_chars=31)
+
+
+def test_web_decode_compressed_body_passthrough_unknown_encoding() -> None:
+    from custom_components.extended_openai_conversation_responses.functions import web
+
+    body = b"plain"
+    assert web._decode_compressed_body(body, "identity", 100) is body
