@@ -719,3 +719,218 @@ async def test_authenticated_client_materializes_coroutine_paginator(
     )
 
     assert result is client
+
+
+
+class _CatalogContent:
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+
+    async def iter_chunked(self, _size):
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _CatalogResponse:
+    def __init__(self, status, *, chunks=(), headers=None):
+        self.status = status
+        self.content = _CatalogContent(chunks)
+        self.headers = headers or {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+class _CatalogSession:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def get(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.response
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_check_304_requires_existing_etag(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    manager = model_catalog_manager.ModelCatalogManager(hass)
+    manager._save = AsyncMock()
+    session = _CatalogSession(_CatalogResponse(304))
+    monkeypatch.setattr(
+        model_catalog_manager, "async_get_clientsession", Mock(return_value=session)
+    )
+
+    status = await manager.async_check(force=True)
+
+    assert status["last_error"] == "Model data check failed; the current catalogue was kept."
+    manager._save.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_check_304_with_etag_refreshes_check_time(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    manager = model_catalog_manager.ModelCatalogManager(hass)
+    manager.etag = "etag"
+    manager._save = AsyncMock()
+    monkeypatch.setattr(model_catalog_manager.time, "time", Mock(return_value=1234.0))
+    session = _CatalogSession(_CatalogResponse(304))
+    monkeypatch.setattr(
+        model_catalog_manager, "async_get_clientsession", Mock(return_value=session)
+    )
+
+    status = await manager.async_check(force=True)
+
+    assert status["last_checked"] == 1234.0
+    assert status["last_error"] is None
+    manager._save.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [429, 500, 503])
+async def test_model_catalog_check_transient_http_failures(
+    hass, monkeypatch, status_code: int
+) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    manager = model_catalog_manager.ModelCatalogManager(hass)
+    manager._save = AsyncMock()
+    session = _CatalogSession(_CatalogResponse(status_code))
+    monkeypatch.setattr(
+        model_catalog_manager, "async_get_clientsession", Mock(return_value=session)
+    )
+
+    status = await manager.async_check(force=True)
+
+    assert status["last_error"] == "Model data check failed; the current catalogue was kept."
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_check_nontransient_http_failure(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    manager = model_catalog_manager.ModelCatalogManager(hass)
+    manager._save = AsyncMock()
+    session = _CatalogSession(_CatalogResponse(404))
+    monkeypatch.setattr(
+        model_catalog_manager, "async_get_clientsession", Mock(return_value=session)
+    )
+
+    status = await manager.async_check(force=True)
+
+    assert status["last_error"] == "Model data check failed; the current catalogue was kept."
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_check_rejects_oversized_download(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    manager = model_catalog_manager.ModelCatalogManager(hass)
+    manager._save = AsyncMock()
+    oversized = b"x" * (model_catalog_manager.MAX_CATALOG_BYTES + 1)
+    session = _CatalogSession(_CatalogResponse(200, chunks=[oversized]))
+    monkeypatch.setattr(
+        model_catalog_manager, "async_get_clientsession", Mock(return_value=session)
+    )
+
+    status = await manager.async_check(force=True)
+
+    assert status["last_error"] == "Model data check failed; the current catalogue was kept."
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_check_same_catalogue_has_no_available_update(
+    hass, monkeypatch
+) -> None:
+    import json
+
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    manager = model_catalog_manager.ModelCatalogManager(hass)
+    manager._save = AsyncMock()
+    raw = json.dumps(dict(model_catalog_manager.BUNDLED_CATALOG)).encode()
+    # _PreparedCatalog's dict view is raw catalogue-compatible.
+    session = _CatalogSession(
+        _CatalogResponse(200, chunks=[raw], headers={"ETag": "new-etag"})
+    )
+    monkeypatch.setattr(
+        model_catalog_manager, "async_get_clientsession", Mock(return_value=session)
+    )
+
+    status = await manager.async_check(force=True)
+
+    assert status["last_error"] is None
+    assert status["update_available"] is False
+    assert manager.etag == "new-etag"
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_websocket_reports_action_failures(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    connection = SimpleNamespace(send_error=Mock(), send_result=Mock())
+    manager = SimpleNamespace(
+        async_check=AsyncMock(
+            return_value={
+                "last_error": "check failed",
+            }
+        ),
+        status=Mock(return_value={}),
+        catalog=None,
+    )
+    hass.data[model_catalog_manager.DATA_MANAGER] = manager
+
+    await model_catalog_manager.websocket_catalog(
+        hass,
+        connection,
+        {"id": 1, "type": model_catalog_manager.WS_CATALOG, "action": "check", "model": ""},
+    )
+
+    connection.send_error.assert_called_once_with(
+        1, "model_catalog_check_failed", "check failed"
+    )
+    connection.send_result.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_websocket_lookup_returns_capabilities(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    connection = SimpleNamespace(send_error=Mock(), send_result=Mock())
+    manager = SimpleNamespace(
+        status=Mock(return_value={"source": "bundled"}),
+        catalog=None,
+    )
+    hass.data[model_catalog_manager.DATA_MANAGER] = manager
+    metadata = {"reasoning": {"efforts": ["low"]}}
+    monkeypatch.setattr(
+        model_catalog_manager, "model_metadata", Mock(return_value=metadata)
+    )
+    monkeypatch.setattr(
+        model_catalog_manager,
+        "frontend_capabilities",
+        Mock(return_value={"ok": True}),
+    )
+    monkeypatch.setattr(
+        model_catalog_manager,
+        "catalog_picker_models",
+        Mock(return_value=[{"id": "model"}]),
+    )
+
+    await model_catalog_manager.websocket_catalog(
+        hass,
+        connection,
+        {"id": 2, "type": model_catalog_manager.WS_CATALOG, "action": "lookup", "model": "model"},
+    )
+
+    result = connection.send_result.call_args.args[1]
+    assert result["source"] == "bundled"
+    assert result["model_capabilities"] == {"ok": True}
+    assert result["reasoning_effort_options"] == ["low"]
