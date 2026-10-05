@@ -715,12 +715,8 @@ class NativeFunction(Function):
             raise entity_access_error(hass, unexposed)
 
         statistic_ids = set(raw_statistic_ids)
-        start_time_parsed = dt_util.parse_datetime(arguments["start_time"])
-        end_time_parsed = dt_util.parse_datetime(arguments["end_time"])
-        if start_time_parsed is None or end_time_parsed is None:
-            raise HomeAssistantError("Invalid datetime format")
-        start_time = dt_util.as_utc(start_time_parsed)
-        end_time = dt_util.as_utc(end_time_parsed)
+        start_time = dt_util.as_utc(dt_util.parse_datetime(arguments["start_time"]))
+        end_time = dt_util.as_utc(dt_util.parse_datetime(arguments["end_time"]))
 
         return await recorder.get_instance(hass).async_add_executor_job(
             recorder.statistics.statistics_during_period,
