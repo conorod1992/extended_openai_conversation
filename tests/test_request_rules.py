@@ -906,7 +906,14 @@ async def test_match_cursor_deduplicates_matching_phrases_for_one_rule() -> None
     assert cursor.next_match() is None
 
 
-async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule() -> None:
+@pytest.mark.parametrize(
+    "phrases",
+    [
+        ["open kitchen lights", "turn off music", "open kitchen light"],
+        ["open kitchen light", "open kitchen lights", "turn off music"],
+    ],
+)
+async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule(phrases) -> None:
     matching = {
         "word_forms": False,
         "wording_alternatives": False,
@@ -915,7 +922,7 @@ async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule() -> None:
     }
     rules = await manager(
         local_rule(
-            phrases=["open kitchen lights", "open kitchen light"],
+            phrases=phrases,
             match_type="equals",
             behavior="custom",
             matching=matching,
@@ -930,6 +937,21 @@ async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule() -> None:
     assert match is not None and match.fuzzy
     assert match.phrase == "open kitchen light"
     assert cursor.next_match() is None
+
+
+async def test_empty_snapshot_has_no_eligible_matches() -> None:
+    rules = await manager()
+    skipped: list[dict[str, str]] = []
+
+    matches = [
+        match
+        async for match in rules.async_eligible_matches(
+            SimpleNamespace(), "anything", skipped
+        )
+    ]
+
+    assert matches == []
+    assert skipped == []
 
 
 @pytest.mark.parametrize(
