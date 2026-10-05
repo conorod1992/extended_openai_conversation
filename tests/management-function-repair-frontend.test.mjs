@@ -218,3 +218,28 @@ class RepairControl {
     "repair save must read the shared editor adapter rather than a stale textarea value",
   );
 }
+
+
+{
+  const repair = {
+    isolatable: true,
+    validation_error: "Function Tool needs repair",
+    invalid_tools: [{index: 0, name: "broken"}],
+  };
+  const coldFunctions = {
+    _viewKey: functionsView(),
+    _selectedAgent: () => ({subentry_id: "agent"}),
+    _result: {config: {functions: []}, function_repair: repair},
+  };
+  const issue = repairIssue(coldFunctions);
+  assert.equal(issue?.field, "functions");
+  assert.equal(issue?.message, repair.validation_error);
+  assert.equal(issue?.repairable, true);
+
+  const staleCatalogue = {
+    _viewKey: functionsView(),
+    _selectedAgent: repairableAgent,
+    _result: {config: {functions: []}},
+  };
+  assert.equal(repairIssue(staleCatalogue), null);
+}

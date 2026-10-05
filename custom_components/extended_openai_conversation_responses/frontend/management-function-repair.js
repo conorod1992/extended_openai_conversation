@@ -2,6 +2,17 @@ import {getToolYamlEditor} from "./tool-yaml-editor-adapter.js";
 
 function repairIssue(panel) {
   const issue = panel._selectedAgent?.()?.configuration_issue;
+  if (functionRepairView(panel) && panel._result?.config) {
+    // Direct Functions visits may precede the Overview health read. The loaded
+    // configuration is authoritative, including when an earlier issue was fixed.
+    const repair = repairMetadata(panel);
+    if (!repair) return null;
+    return {
+      field: "functions",
+      message: repair.validation_error || issue?.message || "Saved Function Tools need repair.",
+      repairable: true,
+    };
+  }
   return issue?.field === "functions" && issue?.repairable === true ? issue : null;
 }
 
