@@ -322,12 +322,6 @@ async def test_backup_take_completed_import_rejects_cancelled_session(
     )
     backup_transfer._imports(hass)[session.session_id] = session
 
-    original_lock = backup_transfer._registry_lock
-
-    @pytest.fixture
-    def _unused():
-        yield
-
     class RemovingLock:
         async def __aenter__(self):
             backup_transfer._imports(hass).pop(session.session_id, None)
