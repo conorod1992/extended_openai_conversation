@@ -893,6 +893,7 @@ async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule() -> None:
         local_rule(
             phrases=["open kitchen lights", "open kitchen light"],
             match_type="equals",
+            behavior="custom",
             matching=matching,
         )
     )
