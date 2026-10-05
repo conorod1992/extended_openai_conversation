@@ -24,6 +24,8 @@ def test_hacs_acceptance_workflow_is_nightly_manual_only() -> None:
 def test_hacs_journey_uses_hacs_for_both_release_and_candidate() -> None:
     text = JOURNEY.read_text(encoding="utf-8")
 
+    assert 'hass.config_entries.flow.async_init(' in text
+    assert '"GitHubDeviceAPI"' in text
     assert "await hacs.async_register_repository(" in text
     assert "await repository.async_download_repository(ref=release)" in text
     assert "await repository.async_download_repository(ref=candidate_ref)" in text
@@ -38,8 +40,9 @@ def test_hacs_journey_proves_obsolete_files_and_exact_candidate_tree() -> None:
 
     assert '"guest_performance.py"' in text
     assert '"frontend/management-bootstrap.js"' in text
-    assert "HACS left obsolete release file active after update" in text
-    assert "_tree_digest(installed) == _tree_digest(candidate)" in text
+    assert "_assert_obsolete_files_inert" in text
+    assert '"retained_orphans"' in text
+    assert "HACS-installed candidate file differs from checkout" in text
     assert '"frontend/dist/manifest.json"' in text
     assert "upgrade_helpers._released_phase" in text
     assert "upgrade_helpers._candidate_migration_phase" in text
