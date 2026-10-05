@@ -202,3 +202,70 @@ async def test_management_overview_detail_rejects_unknown_kind(hass) -> None:
             is_admin=True,
             kind="invalid",
         )
+
+
+def test_rule_pack_validation_rejects_non_serializable_mapping() -> None:
+    pack = {
+        "format": request_rule_packs.PACK_FORMAT,
+        "version": request_rule_packs.PACK_VERSION,
+        "groups": [],
+        "rules": {object()},
+    }
+
+    with pytest.raises(ValueError, match="invalid or overly nested data"):
+        validate_rule_pack(pack)
+
+
+def test_rule_pack_validation_rejects_oversized_parsed_mapping(monkeypatch) -> None:
+    pack = {
+        "format": request_rule_packs.PACK_FORMAT,
+        "version": request_rule_packs.PACK_VERSION,
+        "groups": [],
+        "rules": [],
+        "padding": "x" * 100,
+    }
+    # Preserve the exact top-level schema while making the serialized document
+    # exceed a deliberately tiny bound.
+    pack.pop("padding")
+    pack["groups"] = [{"id": "g", "name": "x" * 100}]
+    monkeypatch.setattr(request_rule_packs, "MAX_PACK_BYTES", 32)
+
+    with pytest.raises(ValueError, match="2 MB safety limit"):
+        validate_rule_pack(pack)
+
+
+def test_rule_pack_validation_rejects_unrecognized_format() -> None:
+    pack = {
+        "format": "some_other_format",
+        "version": request_rule_packs.PACK_VERSION,
+        "groups": [],
+        "rules": [validate_rule(local_rule("Only"))],
+    }
+
+    with pytest.raises(ValueError, match="Unrecognized Request Rule pack format"):
+        validate_rule_pack(pack)
+
+
+@pytest.mark.asyncio
+async def test_rule_pack_append_enforces_destination_rule_limit() -> None:
+    target = RequestRules(
+        MemoryStore(
+            {
+                "rules": [
+                    local_rule(f"Existing {index}", order=index)
+                    for index in range(request_rule_packs.MAX_RULES)
+                ]
+            }
+        )
+    )
+    await target.async_initialize()
+    source = RequestRules(MemoryStore({"rules": [local_rule("Imported")]}))
+    await source.async_initialize()
+    prepared = validate_rule_pack(export_rule_pack(source, "all"))
+
+    with pytest.raises(ValueError, match="Request Rule limit reached"):
+        await async_append_rule_pack(
+            target,
+            prepared,
+            expected_revision=target.revision(),
+        )
