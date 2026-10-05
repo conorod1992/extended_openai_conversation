@@ -33,9 +33,14 @@ jobs:
       - name: Install Home Assistant and test dependencies
         run: |
           python -m pip install --upgrade pip
+          VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
+          PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
           pip install -r requirements_test.txt
-          pip install homeassistant
+          pip install "pytest-homeassistant-custom-component==$PLUGIN_VERSION" "homeassistant==$VERSION"
+          echo "EOAI_EXPECTED_HA_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION=$PLUGIN_VERSION" >> "$GITHUB_ENV"
           python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          python -m pip check
       - name: Stage production-style component payload
         run: |
           set -euo pipefail
@@ -49,18 +54,29 @@ jobs:
             x86_64-native) test "$(uname -m)" = x86_64 ;;
             arm64-native) [[ "$(uname -m)" =~ ^(aarch64|arm64)$ ]] ;;
           esac
-      - name: Exercise clean packaged install
+      - name: Exercise packaged install and compact native runtime
         run: |
-          pytest tests_real_ha/test_packaged_release.py -v -s --asyncio-mode=auto --timeout=300 --tb=short
+          pytest \
+            tests_real_ha/test_packaged_release.py \
+            tests_real_ha/test_store_write_process_crash.py \
+            tests_stress/test_file_edit_native_cancellation.py::test_cancelled_native_edit_retains_path_until_worker_settles \
+            tests_stress/test_function_provider_wire_remaining.py::test_sqlite_lock_deadline_and_worker_recovery_on_public_assist \
+            tests_stress/test_function_provider_wire_remaining.py::test_bash_exited_leader_pipe_descendants_settle_on_public_assist \
+            tests_real_ha/test_ai_task_provider_wire.py::test_plain_and_structured_ai_tasks_cross_sdk_wire \
+            -v -s --asyncio-mode=auto --timeout=300 --tb=short
       - name: Record native architecture identity
         run: |
           mkdir -p deployment-evidence
           python - <<'PY'
-          import json, platform
+          import json, platform, subprocess
+          from importlib.metadata import version
           from pathlib import Path
           Path("deployment-evidence/architecture.json").write_text(json.dumps({
               "native": True,
               "machine": platform.machine(),
+              "candidate_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "homeassistant": version("homeassistant"),
+              "runtime_boundaries": ["atomic_store_process_kill", "native_edit_settlement", "sqlite_lock_worker", "bash_descendant_cleanup", "chat_and_responses_sdk"],
           }, indent=2))
           PY
       - name: Upload architecture evidence

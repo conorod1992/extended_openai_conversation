@@ -20,9 +20,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
+          PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
           pip install -r requirements_test.txt
-          pip install homeassistant
+          pip install "pytest-homeassistant-custom-component==$PLUGIN_VERSION" "homeassistant==$VERSION"
+          echo "EOAI_EXPECTED_HA_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION=$PLUGIN_VERSION" >> "$GITHUB_ENV"
           python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          python -m pip check
       - name: Run mixed workload on one CPU with bounded address space
         env:
           STRESS_SEED: "424242"
@@ -30,4 +35,8 @@ jobs:
         run: |
           set -euo pipefail
           ulimit -v 1572864
-          taskset -c 0 pytest tests_stress/test_responses_scale_fairness.py::test_mixed_background_pressure_preserves_lightweight_progress -v -s --asyncio-mode=auto --timeout=300 --tb=short
+          CPU="$(python -c 'import os; print(min(os.sched_getaffinity(0)))')"
+          taskset -c "$CPU" pytest \
+            tests_stress/test_responses_scale_fairness.py::test_mixed_background_pressure_preserves_lightweight_progress \
+            tests_stress/test_responses_scale_fairness.py::test_active_native_contention_preserves_assist_management_and_ha_progress \
+            -v -s --asyncio-mode=auto --timeout=300 --tb=short
