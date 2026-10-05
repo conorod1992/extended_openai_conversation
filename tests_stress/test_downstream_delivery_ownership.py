@@ -458,7 +458,13 @@ async def test_slow_actual_assist_websocket_has_bounded_native_backlog(
             assert _progressive_text(events) == _final_speech(events) == expected
         transport.resume_reading()
         await client.close()
-        await asyncio.wait_for(asyncio.gather(writer, return_exceptions=True), 10)
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(writer, return_exceptions=True), 10
+        )
+        assert all(
+            outcome is None or isinstance(outcome, asyncio.CancelledError)
+            for outcome in outcomes
+        ), outcomes
         assert writer.done() and _ws_backlog(handler)[0] == 0
         assert not connection.subscriptions
         assert (
