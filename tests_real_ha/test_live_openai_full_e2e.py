@@ -178,16 +178,43 @@ async def _create_entry(hass: Any) -> Any:
     return entry
 
 
-async def _configure_agent(hass: Any, entry: Any) -> Any:
+async def _configure_agent(hass: Any, entry: Any) -> tuple[Any, str, str | None]:
     from homeassistant.components import conversation
     from custom_components.extended_openai_conversation_responses import (
         agent_config,
         const,
     )
+    from custom_components.extended_openai_conversation_responses.model_capabilities import (
+        capability_allowed,
+        get_model_capabilities,
+        reasoning_efforts_for_api,
+    )
 
     subentry = _conversation_subentry(entry)
     data = dict(subentry.data)
     model = os.environ[_MODEL_ENV]
+    capabilities = get_model_capabilities(model)
+    profile = capabilities.get("recommended_profile", {})
+    candidates: list[tuple[str, str | None]] = []
+    preferred_api = profile.get("api")
+    preferred_effort = profile.get("reasoning_effort")
+    if isinstance(preferred_api, str):
+        candidates.append((preferred_api, preferred_effort))
+    for api_mode in ("responses", "chat_completions"):
+        if not capabilities.get("api", {}).get(api_mode):
+            continue
+        efforts = reasoning_efforts_for_api(model, api_mode) or [None]
+        candidates.extend((api_mode, effort) for effort in efforts)
+
+    selected: tuple[str, str | None] | None = None
+    for api_mode, effort in candidates:
+        if not capabilities.get("api", {}).get(api_mode):
+            continue
+        if capability_allowed(model, "function", api_mode, effort=effort):
+            selected = (api_mode, effort)
+            break
+    assert selected is not None, f"{model} has no function-capable EOAI API profile"
+    api_mode, effort = selected
     tool = {
         "spec": {
             "name": _TOOL_NAME,
@@ -208,10 +235,9 @@ async def _configure_agent(hass: Any, entry: Any) -> Any:
         "enabled": True,
     }
     updates = {
-        const.CONF_API_MODE: "responses",
+        const.CONF_API_MODE: api_mode,
         const.CONF_CHAT_MODEL: model,
-        const.CONF_MAX_TOKENS: 160,
-        const.CONF_REASONING_EFFORT: "low",
+        const.CONF_MAX_TOKENS: 192,
         const.CONF_FUNCTION_TOOLS: yaml.safe_dump(
             [tool],
             sort_keys=False,
@@ -225,6 +251,9 @@ async def _configure_agent(hass: Any, entry: Any) -> Any:
             "Keep final answers concise and preserve acceptance markers exactly."
         ),
     }
+    data.pop(const.CONF_REASONING_EFFORT, None)
+    if effort is not None:
+        updates[const.CONF_REASONING_EFFORT] = effort
     merged = agent_config.merge_agent_config(data, updates)
     hass.config_entries.async_update_subentry(entry, subentry, data=merged)
     await hass.async_block_till_done()
@@ -233,7 +262,7 @@ async def _configure_agent(hass: Any, entry: Any) -> Any:
 
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
-    return agent
+    return agent, api_mode, effort
 
 
 async def _converse(hass: Any, agent: Any, text: str) -> Any:
@@ -281,7 +310,7 @@ async def _journey_tool_continuation(hass: Any, agent: Any) -> dict[str, Any]:
         for request in trace.requests[1:]
         if _serialized_tool_result_contains(request["body"], _TOOL_MARKER)
     )
-    assert continuation["path"] == "/v1/responses"
+    assert continuation["path"] in {"/v1/responses", "/v1/chat/completions"}
 
     return {
         "provider_calls": len(trace.requests),
@@ -359,14 +388,15 @@ async def _child_main() -> None:
 
     try:
         entry = await _create_entry(hass)
-        agent = await _configure_agent(hass, entry)
+        agent, api_mode, effort = await _configure_agent(hass, entry)
 
         tool = await _journey_tool_continuation(hass, agent)
         knowledge = await _journey_knowledge(hass, agent)
 
         report = {
             "model": os.environ[_MODEL_ENV],
-            "api_mode": "responses",
+            "api_mode": api_mode,
+            "reasoning_effort": effort,
             "entry_id": entry.entry_id,
             "subentry_id": agent.subentry.subentry_id,
             "journey_a": tool,
