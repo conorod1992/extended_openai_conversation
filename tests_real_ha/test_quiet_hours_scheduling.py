@@ -224,9 +224,9 @@ async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock
         await hass.async_block_till_done()
         calls.clear()
 
-        # Leap over the first discovery interval and into the quiet period. This
-        # must be noticed by HA's already-registered timer/listener machinery.
-        async_fire_time_changed(hass, (start_at + timedelta(minutes=5)).astimezone(UTC))
+        # Cross the configured start boundary through HA's already-registered
+        # wall-clock listener. Do not call the manager's reconciliation method.
+        async_fire_time_changed(hass, start_at.astimezone(UTC))
         await hass.async_block_till_done()
         assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
             0.20
