@@ -539,6 +539,10 @@ def _validate_expected_type(name: str, value: Any, expected: str) -> Any:
         elif expected == "integer":
             if isinstance(value, str):
                 value = int(value.strip())
+            elif isinstance(value, float):
+                if not math.isfinite(value) or not value.is_integer():
+                    raise ValueError
+                value = int(value)
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValueError
         elif expected == "boolean":

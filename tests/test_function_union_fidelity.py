@@ -70,6 +70,26 @@ def test_single_type_compatibility_coercion_remains(expected, value, result):
     assert _validate_type("input", value, expected) == result
 
 
+async def test_single_integer_decimal_reaches_backend_as_integer(hass) -> None:
+    schema = {
+        "type": "object",
+        "properties": {"count": {"type": "integer"}},
+        "required": ["count"],
+        "additionalProperties": False,
+    }
+    arguments = validate_function_arguments({"parameters": schema}, {"count": 42.0})
+    rendered = await TemplateFunction().execute(
+        hass,
+        {"value_template": Template("{{ count | to_json }}", hass)},
+        arguments,
+        None,
+        [],
+    )
+    delivered = json.loads(rendered)
+    assert type(delivered) is int
+    assert delivered == 42
+
+
 def test_union_still_coerces_when_no_permitted_type_matches():
     assert _validate_type("input", "123", ["integer", "null"]) == 123
     assert _validate_type("input", None, ["string", "null"]) is None

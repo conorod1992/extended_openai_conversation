@@ -514,6 +514,105 @@ async def test_group_name_change_does_not_rebuild_matcher() -> None:
     assert rules._matching_snapshot.phrases[0][2] is snapshot.phrases[0][2]
 
 
+async def test_condition_failed_exact_keeps_earlier_fuzzy_fallback(
+    hass, monkeypatch
+) -> None:
+    fuzzy = {
+        "word_forms": False,
+        "wording_alternatives": False,
+        "fuzzy": True,
+        "fuzzy_threshold": 90,
+    }
+    fallback = local_rule(
+        "Fallback",
+        phrases=["turn on kitchen light"],
+        order=0,
+        behavior="custom",
+        matching=fuzzy,
+    )
+    exact = local_rule(
+        "Exact",
+        phrases=["turn on the kitchen light"],
+        order=1,
+    )
+    exact["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.blocked", "state": "on"}
+    ]
+
+    async def validate(_hass, config):
+        return config
+
+    async def build(_hass, _config):
+        return SimpleNamespace(async_check=lambda **_kwargs: False)
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_validate_condition_config",
+        validate,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_from_config",
+        build,
+    )
+
+    rules = await manager(fallback, exact)
+    match, skipped = await rules.async_match_with_skipped(
+        hass, "turn on the kitchen light"
+    )
+    assert match is not None and match.rule["name"] == "Fallback"
+    assert skipped == [
+        {"id": "exact", "name": "Exact", "reason": "conditions_false"}
+    ]
+
+
+async def test_condition_failed_best_fuzzy_tries_next_eligible_candidate(
+    hass, monkeypatch
+) -> None:
+    fuzzy = {
+        "word_forms": False,
+        "wording_alternatives": False,
+        "fuzzy": True,
+        "fuzzy_threshold": 70,
+    }
+    best = local_rule("Best", phrases=["ligh"], order=0, behavior="custom", matching=fuzzy)
+    best["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.no", "state": "on"}
+    ]
+    fallback = local_rule(
+        "Fallback",
+        phrases=["ligth"],
+        order=1,
+        behavior="custom",
+        matching=fuzzy,
+    )
+    fallback["conditions"] = [
+        {"condition": "state", "entity_id": "input_boolean.yes", "state": "on"}
+    ]
+
+    async def validate(_hass, config):
+        return config
+
+    async def build(_hass, config):
+        return SimpleNamespace(
+            async_check=lambda **_kwargs: config["entity_id"][0].endswith("yes")
+        )
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_validate_condition_config",
+        validate,
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request_rules.ha_condition.async_from_config",
+        build,
+    )
+
+    rules = await manager(best, fallback)
+    match, skipped = await rules.async_match_with_skipped(hass, "light")
+    assert match is not None and match.rule["name"] == "Fallback"
+    assert skipped == [
+        {"id": "best", "name": "Best", "reason": "conditions_false"}
+    ]
+
+
 async def test_fuzzy_chain_never_returns_to_earlier_priority() -> None:
     fuzzy = {
         "word_forms": False,
@@ -529,8 +628,9 @@ async def test_fuzzy_chain_never_returns_to_earlier_priority() -> None:
     )
     cursor = _MatchCursor(rules._matching_snapshot, "light")
     first = cursor.next_match()
-    second = cursor.next_match()
     assert first is not None and first.rule["name"] == "Second"
+    cursor.accept(first)
+    second = cursor.next_match()
     assert second is not None and second.rule["name"] == "Third"
     assert cursor.next_match() is None
 

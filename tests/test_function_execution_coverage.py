@@ -659,6 +659,41 @@ def test_expected_type_rejects_invalid_runtime_values(
         _validate_expected_type("value", value, expected)
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (1, 1),
+        (1.0, 1),
+        (1e0, 1),
+        (42.0, 42),
+    ],
+)
+def test_single_integer_type_accepts_json_integer_values(raw, expected) -> None:
+    spec = {
+        "parameters": {
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+            "additionalProperties": False,
+        }
+    }
+    result = validate_function_arguments(spec, {"count": raw})
+    assert result == {"count": expected}
+    assert type(result["count"]) is int
+
+
+@pytest.mark.parametrize("raw", [1.5, True, float("inf"), float("nan")])
+def test_single_integer_type_rejects_non_integer_json_values(raw) -> None:
+    spec = {
+        "parameters": {
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+        }
+    }
+    with pytest.raises(HomeAssistantError, match="must be integer"):
+        validate_function_arguments(spec, {"count": raw})
+
+
 def test_type_validation_rejects_bad_declarations_and_preserves_union_errors() -> None:
     """Runtime declarations fail closed and nullable unions report all candidates."""
     assert _validate_type("value", "unchanged", None) == "unchanged"
