@@ -362,3 +362,360 @@ async def test_model_catalog_setup_is_idempotent(hass, monkeypatch) -> None:
     await model_catalog_manager.async_setup_model_catalog(hass)
 
     constructor.assert_not_called()
+
+
+
+@pytest.mark.asyncio
+async def test_delayed_tool_schedule_requires_initialized_scheduler(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    manager = delayed_tools.DelayedToolManager(hass)
+    entity = SimpleNamespace(
+        entry=SimpleNamespace(entry_id="entry"),
+        subentry=SimpleNamespace(subentry_id="agent"),
+    )
+
+    with pytest.raises(HomeAssistantError, match="scheduler is unavailable"):
+        await manager.async_schedule(
+            entity,
+            "tool",
+            {"delay": 1},
+            None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_delayed_tool_remove_agent_noop_and_cancels_matching_tasks(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    manager = delayed_tools.DelayedToolManager(hass)
+    await manager.async_remove_agent("entry", "agent")
+
+    one = delayed_tools.DelayedToolCall.from_dict(_valid_delayed_call())
+    two = delayed_tools.DelayedToolCall.from_dict(
+        {**_valid_delayed_call(), "call_id": "other", "entry_id": "other-entry"}
+    )
+    manager._records = {"call": one, "other": two}
+    task = Mock()
+    manager._tasks = {"call": task}
+    save = AsyncMock(side_effect=lambda records: setattr(manager, "_records", records))
+    monkeypatch.setattr(manager, "_async_save_records_transactionally", save)
+
+    await manager.async_remove_agent("entry", "agent")
+
+    assert set(manager._records) == {"other"}
+    task.cancel.assert_called_once()
+
+
+def test_delayed_tool_arm_skips_existing_missing_and_non_pending(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    manager = delayed_tools.DelayedToolManager(hass)
+    existing = Mock()
+    existing.done.return_value = False
+    manager._tasks["existing"] = existing
+    manager._records["existing"] = SimpleNamespace(status=delayed_tools._PENDING)
+
+    create = Mock()
+    monkeypatch.setattr(delayed_tools.asyncio, "create_task", create)
+
+    manager._arm("existing")
+    manager._arm("missing")
+    manager._records["executing"] = SimpleNamespace(status=delayed_tools._EXECUTING)
+    manager._arm("executing")
+
+    create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_manager_apply_rejects_incompatible_saved_requests(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    manager = model_catalog_manager.ModelCatalogManager(hass)
+    candidate = deepcopy(model_catalog_manager.BUNDLED_CATALOG)
+    candidate["catalog_version"] += 1
+    manager.available_catalog = candidate
+    monkeypatch.setattr(
+        model_catalog_manager,
+        "validate_catalog_transition",
+        Mock(),
+    )
+    monkeypatch.setattr(
+        manager,
+        "_candidate_preserves_saved_requests",
+        AsyncMock(return_value=False),
+    )
+    log = Mock()
+    monkeypatch.setattr(model_catalog_manager, "log_handled_failure", log)
+
+    status = await manager.async_apply_update()
+
+    assert "could not be applied" in status["last_error"]
+    assert manager.catalog is None
+    assert manager.available_catalog is candidate
+    log.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_manager_apply_success_activates_candidate(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    manager = model_catalog_manager.ModelCatalogManager(hass)
+    candidate = deepcopy(model_catalog_manager.BUNDLED_CATALOG)
+    candidate["catalog_version"] += 1
+    manager.available_catalog = candidate
+    manager.etag = "etag"
+    manager.last_checked = 123
+    manager._save = AsyncMock()
+    monkeypatch.setattr(model_catalog_manager, "validate_catalog_transition", Mock())
+    monkeypatch.setattr(
+        manager,
+        "_candidate_preserves_saved_requests",
+        AsyncMock(return_value=True),
+    )
+    activate = Mock()
+    sync = Mock()
+    monkeypatch.setattr(model_catalog_manager, "activate_catalog", activate)
+    monkeypatch.setattr(model_catalog_manager, "sync_all_model_lifecycles", sync)
+
+    status = await manager.async_apply_update()
+
+    assert status["source"] == "downloaded"
+    assert status["update_available"] is False
+    assert manager.catalog is candidate
+    assert manager.available_catalog is None
+    activate.assert_called_once_with(candidate)
+    sync.assert_called_once_with(hass)
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_manager_reset_save_failure_keeps_current_catalog(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    manager = model_catalog_manager.ModelCatalogManager(hass)
+    manager.catalog = deepcopy(model_catalog_manager.BUNDLED_CATALOG)
+    manager.catalog["catalog_version"] += 1
+    manager._save = AsyncMock(side_effect=OSError("disk full"))
+    monkeypatch.setattr(
+        manager,
+        "_bundled_reset_would_invalidate_saved_reasoning",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        manager,
+        "_candidate_preserves_saved_requests",
+        AsyncMock(return_value=True),
+    )
+
+    status = await manager.async_reset()
+
+    assert "reset failed" in status["last_error"]
+    assert status["source"] == "downloaded"
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_manager_bundled_reset_check_is_false_without_downloaded_catalog(
+    hass,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog_manager
+
+    manager = model_catalog_manager.ModelCatalogManager(hass)
+    assert await manager._bundled_reset_would_invalidate_saved_reasoning() is False
+
+
+@pytest.mark.asyncio
+async def test_management_scope_projection_includes_orphaned_and_legacy_counts(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import management_projections
+
+    hass.auth.async_get_users = AsyncMock(
+        return_value=[SimpleNamespace(id="current", name="Current")]
+    )
+
+    result = await management_projections.async_scope_catalog_projection(
+        hass,
+        "current",
+        True,
+        memory_counts={"deleted": 2, management_projections.ANONYMOUS_USER_ID: 1},
+        conversation_counts={"user:deleted": 3, management_projections.ANONYMOUS_USER_ID: 4},
+        temporary_memory_counts={"user:deleted": 5},
+    )
+
+    orphan = next(item for item in result if item["scope_id"] == "user:deleted")
+    assert orphan["orphaned"] is True
+    assert orphan["memory_count"] == 2
+    assert orphan["conversation_count"] == 3
+    assert orphan["temporary_memory_count"] == 5
+    legacy = next(
+        item
+        for item in result
+        if item["scope_id"] == management_projections.ANONYMOUS_USER_ID
+    )
+    assert legacy["memory_count"] == 1
+    assert legacy["conversation_count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_management_scope_projection_non_admin_only_sees_self(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import management_projections
+
+    hass.auth.async_get_user = AsyncMock(
+        return_value=SimpleNamespace(id="user", name="User Name")
+    )
+
+    result = await management_projections.async_scope_catalog_projection(
+        hass, "user", False, memory_counts={"user": 2}
+    )
+
+    assert result == [
+        {
+            "scope_id": "user:user",
+            "scope_type": "user",
+            "display_name": "User Name",
+            "is_current_user": True,
+            "orphaned": False,
+            "memory_count": 2,
+            "conversation_count": 0,
+            "temporary_memory_count": 0,
+        }
+    ]
+
+
+def test_speech_markdown_link_end_matrix() -> None:
+    from custom_components.extended_openai_conversation_responses import speech
+
+    cases = [
+        ("[label", 0, False, ("incomplete", 0)),
+        ("[label", 0, True, ("no", 0)),
+        ("[label]", 0, False, ("incomplete", 0)),
+        ("[label]x", 0, True, ("no", 0)),
+        ("[label](", 0, False, ("incomplete", 0)),
+        ("[label](bad url)", 0, True, ("no", 0)),
+        ("[label](https://example.com)", 0, True, ("complete", 28)),
+        ("[label](https://a.example/(x))", 0, True, ("complete", 30)),
+    ]
+    for text, start, final, expected in cases:
+        assert speech.StreamingSpeechSanitizer._markdown_link_end(
+            text, start, final
+        ) == expected
+
+
+@pytest.mark.asyncio
+async def test_request_rule_preview_continuation_chain_stops_at_terminal_rule(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rule_match_preview
+    from custom_components.extended_openai_conversation_responses.request_rules import RuleMatch
+
+    continued_rule = {
+        "id": "one",
+        "name": "One",
+        "match_type": "equals",
+        "action_type": "local_action",
+        "continue_matching": True,
+        "action": {
+            "actions": [],
+            "continue_to_ai": False,
+            "success_response": "done",
+            "failure_response": "failed",
+        },
+    }
+    stopped_rule = {
+        "id": "two",
+        "name": "Two",
+        "match_type": "equals",
+        "action_type": "local_action",
+        "continue_matching": False,
+        "action": {
+            "actions": [],
+            "continue_to_ai": False,
+            "success_response": "done",
+            "failure_response": "failed",
+        },
+    }
+
+    async def eligible(_hass, _text, skipped):
+        skipped.append({"id": "skipped", "name": "Skipped", "reason": "conditions_false"})
+        yield RuleMatch(continued_rule, "hello", False, 100.0)
+        yield RuleMatch(stopped_rule, "hello", False, 100.0)
+
+    rules = SimpleNamespace(
+        _has_continuation=True,
+        async_eligible_matches=eligible,
+    )
+
+    result = await request_rule_match_preview.async_request_rule_match_preview(
+        hass, rules, "hello"
+    )
+
+    assert [item["status"] for item in result["matched_rules"]] == [
+        "continued",
+        "stopped",
+    ]
+    assert result["rule"]["id"] == "two"
+    assert result["skipped_conditions"][0]["id"] == "skipped"
+
+
+class _AsyncPage:
+    def __init__(self, values):
+        self._values = list(values)
+
+    def __aiter__(self):
+        self._iterator = iter(self._values)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iterator)
+        except StopIteration:
+            raise StopAsyncIteration
+
+
+@pytest.mark.asyncio
+async def test_authenticated_client_skip_authentication_and_transport_error(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import helpers
+
+    client = SimpleNamespace(models=SimpleNamespace(list=Mock()))
+    constructor = Mock(return_value=client)
+    monkeypatch.setattr(helpers, "AsyncOpenAI", constructor)
+    monkeypatch.setattr(helpers, "get_async_client", Mock(return_value=object()))
+
+    result = await helpers.get_authenticated_client(
+        hass, "key", None, None, None, "openai", skip_authentication=True
+    )
+    assert result is client
+    client.models.list.assert_not_called()
+
+    hass.async_add_executor_job = AsyncMock(side_effect=TimeoutError("timeout"))
+    with pytest.raises(Exception):
+        await helpers.get_authenticated_client(
+            hass, "key", None, None, None, "openai", skip_authentication=False
+        )
+
+
+@pytest.mark.asyncio
+async def test_authenticated_client_materializes_coroutine_paginator(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import helpers
+
+    async def page_coro():
+        return _AsyncPage([object()])
+
+    client = SimpleNamespace(models=SimpleNamespace(list=Mock()))
+    monkeypatch.setattr(helpers, "AsyncOpenAI", Mock(return_value=client))
+    monkeypatch.setattr(helpers, "get_async_client", Mock(return_value=object()))
+    hass.async_add_executor_job = AsyncMock(return_value=page_coro())
+
+    result = await helpers.get_authenticated_client(
+        hass, "key", None, None, None, "openai"
+    )
+
+    assert result is client
