@@ -438,3 +438,144 @@ def test_debug_conversation_trace_finishes_failure_and_restores_context(monkeypa
     assert manager.finish.call_args.kwargs["successful"] is False
     assert isinstance(manager.finish.call_args.kwargs["error"], RuntimeError)
     assert debug.current_debug_trace() is None
+
+
+
+@pytest.mark.asyncio
+async def test_temporary_memory_reconcile_counts_invalid_and_normalized_owners(
+    monkeypatch,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import temporary_memory
+
+    original = temporary_memory.TemporaryMemoryRecord(
+        memory_id="one",
+        scope_id="conversation:one",
+        content="one",
+        category="general",
+        source="manual",
+        expires_at="2099-01-01T00:00:00+00:00",
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        owner_scope_id=None,
+    )
+    normalized = temporary_memory.TemporaryMemoryRecord(
+        **{
+            **original.__dict__ if hasattr(original, "__dict__") else {
+                "memory_id": original.memory_id,
+                "scope_id": original.scope_id,
+                "content": original.content,
+                "category": original.category,
+                "source": original.source,
+                "expires_at": original.expires_at,
+                "created_at": original.created_at,
+                "updated_at": original.updated_at,
+                "owner_scope_id": "user:alice",
+            }
+        }
+    )
+    invalid = temporary_memory.TemporaryMemoryRecord(
+        memory_id="two",
+        scope_id="conversation:two",
+        content="two",
+        category="general",
+        source="manual",
+        expires_at="2099-01-01T00:00:00+00:00",
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        owner_scope_id=None,
+    )
+    store = SimpleNamespace(
+        async_load=AsyncMock(return_value={"records": [{"id": 1}, {"id": 2}]})
+    )
+    manager = temporary_memory.TemporaryMemory(store)
+
+    monkeypatch.setattr(
+        temporary_memory,
+        "_record_from_storage",
+        Mock(side_effect=[original, invalid]),
+    )
+    monkeypatch.setattr(temporary_memory, "_parse_expiry", Mock(return_value=object()))
+    monkeypatch.setattr(
+        temporary_memory,
+        "_normalize_record_owner",
+        Mock(side_effect=[normalized, None]),
+    )
+
+    await manager._async_reconcile_failed_save()
+
+    assert list(manager._records) == ["one"]
+    assert manager._records["one"].owner_scope_id == "user:alice"
+    assert manager.invalid_owners_pruned == 1
+    assert manager._normalization_pending is True
+    assert manager.initialized is True
+
+
+@pytest.mark.asyncio
+async def test_guest_mode_restrict_rejects_non_widening_invalid_interval(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import guest_mode
+
+    manager = guest_mode.GuestModeManager(hass, "entry", "agent")
+    now = datetime(2026, 10, 5, 19, 0, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="later than active_from"):
+        await manager.async_restrict(
+            active_from=now.isoformat(),
+            active_until=(now - timedelta(minutes=1)).isoformat(),
+            now=now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_guest_mode_restrict_widens_existing_schedule(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import guest_mode
+
+    manager = guest_mode.GuestModeManager(hass, "entry", "agent")
+    now = datetime(2026, 10, 5, 19, 0, tzinfo=UTC)
+    manager._schedule = guest_mode.GuestModeSchedule(
+        active_from=(now - timedelta(hours=1)).isoformat(),
+        active_until=(now + timedelta(hours=1)).isoformat(),
+        source="home_assistant",
+        updated_at=now.isoformat(),
+    )
+
+    async def commit(schedule):
+        manager._schedule = schedule
+
+    monkeypatch.setattr(manager, "_async_commit_schedule", commit)
+
+    status = await manager.async_restrict(
+        active_from=(now - timedelta(hours=2)).isoformat(),
+        active_until=(now + timedelta(hours=2)).isoformat(),
+        now=now,
+    )
+
+    assert status["currently_active"] is True
+    assert manager._schedule is not None
+    assert manager._schedule.active_from == (now - timedelta(hours=2)).isoformat()
+    assert manager._schedule.active_until == (now + timedelta(hours=2)).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_guest_mode_restrict_can_make_existing_schedule_indefinite(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import guest_mode
+
+    manager = guest_mode.GuestModeManager(hass, "entry", "agent")
+    now = datetime(2026, 10, 5, 19, 0, tzinfo=UTC)
+    manager._schedule = guest_mode.GuestModeSchedule(
+        active_from=(now - timedelta(hours=1)).isoformat(),
+        active_until=(now + timedelta(hours=1)).isoformat(),
+        source="home_assistant",
+        updated_at=now.isoformat(),
+    )
+
+    async def commit(schedule):
+        manager._schedule = schedule
+
+    monkeypatch.setattr(manager, "_async_commit_schedule", commit)
+
+    status = await manager.async_restrict(make_indefinite=True, now=now)
+
+    assert status["indefinite"] is True
+    assert manager._schedule.active_until is None
