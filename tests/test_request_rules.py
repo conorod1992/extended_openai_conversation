@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import datetime
 import json
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -525,6 +526,52 @@ async def test_move_at_order_boundaries_is_a_noop() -> None:
         await rules.async_move("first", "sideways")
     with pytest.raises(ValueError, match="target rule id"):
         await rules.async_move("first", "before")
+
+
+async def test_initialize_recovers_each_invalid_stored_matcher_section() -> None:
+    store = MemoryStore(
+        {
+            "groups": [{"id": "broken"}],
+            "defaults": {"fuzzy": "yes"},
+            "wording_groups": [{"canonical": "home", "alternatives": "bad"}],
+        }
+    )
+    rules = RequestRules(store)
+
+    await rules.async_initialize()
+
+    assert rules.snapshot()["groups"] == []
+    assert rules.snapshot()["defaults"] == DEFAULT_MATCHING
+    assert rules.snapshot()["wording_groups"] == DEFAULT_WORDING_GROUPS
+    assert store.saves == 1
+
+
+def test_backup_rejects_rules_with_missing_group_references() -> None:
+    rule = local_rule("Grouped", phrases=["hello"])
+    rule["group_id"] = "missing-group"
+
+    with pytest.raises(ValueError, match="unknown group"):
+        RequestRules.validate_backup_data({"groups": [], "rules": [rule]})
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("conditions", "not-a-list", "Only when conditions must be a list"),
+        ("actions", [None], "Home Assistant action must be an object"),
+    ],
+)
+def test_rule_validation_rejects_invalid_condition_and_action_containers(
+    field: str, value: Any, message: str
+) -> None:
+    rule = local_rule()
+    if field == "conditions":
+        rule[field] = value
+    else:
+        rule["action"][field] = value
+
+    with pytest.raises(ValueError, match=message):
+        validate_rule(rule)
 
 
 async def test_group_name_change_does_not_rebuild_matcher() -> None:
