@@ -437,7 +437,7 @@ async def _child_main() -> None:
             for subentry in entry.subentries.values()
             if subentry.subentry_type == "conversation"
         }
-        assert "Before real HA restart" in conversation_titles
+        assert "Committed while browser acknowledgement is held" in conversation_titles
         auth_data = json.loads((sync_dir / _AUTH_FILE).read_text(encoding="utf-8"))
         assert hass.auth.async_validate_access_token(auth_data["access_token"]) is not None
 
