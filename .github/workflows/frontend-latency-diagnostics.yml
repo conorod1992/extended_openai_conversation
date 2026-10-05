@@ -80,6 +80,7 @@ jobs:
           echo "Baseline:        $BASELINE_SHA"
 
       - name: Require matching dependency declarations
+        id: dependency_check
         run: |
           git show "$BASELINE_SHA:requirements_test.txt" > /tmp/baseline-requirements_test.txt
           git show "$BASELINE_SHA:custom_components/extended_openai_conversation_responses/manifest.json" > /tmp/baseline-manifest.json
@@ -149,7 +150,7 @@ jobs:
         run: pytest ci/frontend_latency/test_frontend_accessibility.py -q --asyncio-mode=auto --timeout=600 --tb=short
 
       - name: Require complete exact-source frontend evidence
-        if: always()
+        if: always() && steps.dependency_check.outcome == 'success'
         run: python -m ci.frontend_latency.review latency-results
 
       - name: Compare results
