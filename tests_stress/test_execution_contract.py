@@ -849,3 +849,50 @@ def test_staged_process_import_regression_is_mandatory():
         "test_staged_components_are_a_regular_package"
     )
     assert node in expected_cases(policy, "lifecycle")
+
+
+_SOAK_NODE = (
+    "tests_stress/test_process_resource_soak.py::"
+    "test_booted_process_resources_and_latency_survive_mixed_traffic"
+)
+_CONTENTION_NODE = (
+    "tests_stress/test_responses_scale_fairness.py::"
+    "test_active_native_contention_preserves_assist_management_and_ha_progress"
+)
+
+
+def _assert_native_resource_floor_ownership(policy):
+    """A claimed metric must be emitted by an actually required native journey."""
+    for campaign, floors in policy["minimums"].items():
+        cases = expected_cases(policy, campaign)
+        booted_soak = _SOAK_NODE in cases
+        if booted_soak:
+            assert floors.get("genuine_management_websocket_commands", 0) >= 20
+            assert floors.get("pre_gc_resource_samples", 0) >= 5
+        else:
+            assert "genuine_management_websocket_commands" not in floors
+        if floors.get("pre_gc_resource_samples", 0):
+            assert booted_soak or _CONTENTION_NODE in cases, campaign
+
+
+def test_resource_floors_follow_the_executed_native_campaign():
+    _assert_native_resource_floor_ownership(json.loads(CONTRACT.read_text()))
+
+
+@pytest.mark.parametrize(
+    "defect", ["missing_websocket", "missing_pre_gc", "wrong_websocket", "wrong_pre_gc"]
+)
+def test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence(defect):
+    policy = json.loads(CONTRACT.read_text())
+    _assert_native_resource_floor_ownership(policy)
+    metric = (
+        "genuine_management_websocket_commands"
+        if defect.endswith("websocket")
+        else "pre_gc_resource_samples"
+    )
+    if defect.startswith("missing"):
+        policy["minimums"]["runtime"].pop(metric)
+    else:
+        policy["minimums"]["process-chaos"][metric] = policy["minimums"]["runtime"][metric]
+    with pytest.raises(AssertionError):
+        _assert_native_resource_floor_ownership(policy)

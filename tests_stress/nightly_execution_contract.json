@@ -2014,7 +2014,12 @@
     "tests_stress/test_responses_scale_fairness.py::test_contention_evidence_rejects_inactive_workloads[exited]",
     "tests_stress/test_responses_scale_fairness.py::test_contention_evidence_rejects_inactive_workloads[idle]",
     "tests_stress/test_responses_scale_fairness.py::test_contention_evidence_rejects_inactive_workloads[missing]",
-    "tests_stress/test_process_resource_soak.py::test_resource_sampling_survives_real_atomic_rename"
+    "tests_stress/test_process_resource_soak.py::test_resource_sampling_survives_real_atomic_rename",
+    "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[missing_pre_gc]",
+    "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[missing_websocket]",
+    "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[wrong_pre_gc]",
+    "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[wrong_websocket]",
+    "tests_stress/test_execution_contract.py::test_resource_floors_follow_the_executed_native_campaign"
   ],
   "browser": {
     "browser": [
@@ -2498,7 +2503,9 @@
       "process_soak_windows": 5,
       "continuity_owner_transitions": 16,
       "continuity_wire_checks": 24,
-      "continuity_serialized_overlaps": 9
+      "continuity_serialized_overlaps": 9,
+      "pre_gc_resource_samples": 5,
+      "genuine_management_websocket_commands": 20
     },
     "functions": {
       "actual_function_executions": 1,
@@ -2580,9 +2587,7 @@
       "delayed_foreground_during_backlog": 6,
       "delayed_retryable_pre_dispatch_failures": 12,
       "filesystem_recovery_cases": 3,
-      "filesystem_recovery_kills": 5,
-      "pre_gc_resource_samples": 5,
-      "genuine_management_websocket_commands": 20
+      "filesystem_recovery_kills": 5
     },
     "browser": {
       "browser_creates": 1,
