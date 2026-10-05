@@ -37,6 +37,6 @@ def test_ipv6_journey_covers_provider_stream_rest_and_recovery() -> None:
     assert "await response.write(" in text
     assert '"type": "rest"' in text
     assert "_MARKER in json.dumps(endpoint.provider_requests[1][\"body\"])" in text
-    assert "fail_next_provider = True" in text
+    assert "provider_failures_remaining = 3" in text
     assert "provider_count_after_failure" in text
     assert "recovered.response.error_code is None" in text
