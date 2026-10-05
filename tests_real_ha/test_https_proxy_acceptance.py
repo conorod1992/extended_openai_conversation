@@ -182,7 +182,7 @@ async def test_management_panel_survives_real_https_reverse_proxy(
         await _run_playwright(
             repo_root=Path(__file__).resolve().parents[1],
             spec="tests_browser/real-ha-https-proxy.spec.mjs",
-            config="playwright.real-ha-shell.config.mjs",
+            config="playwright.real-ha-https-proxy.config.mjs",
             env={
                 **shell["env"],
                 "REAL_HA_FRONTEND_URL": proxy,
