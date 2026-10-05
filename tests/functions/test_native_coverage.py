@@ -264,6 +264,31 @@ def test_indirect_service_target_must_resolve_to_entities(
     )
 
 
+@pytest.mark.parametrize(
+    ("entity_ids", "has_service"),
+    [({"light.living_room"}, False), ({"homeassistant.internal"}, True)],
+)
+def test_homeassistant_service_rejects_target_without_matching_entity_service(
+    hass, exposed_entities, monkeypatch, entity_ids, has_service
+) -> None:
+    referenced = SimpleNamespace(referenced=entity_ids, indirectly_referenced=set())
+    monkeypatch.setattr(
+        native_module.target_helpers,
+        "async_extract_referenced_entity_ids",
+        Mock(return_value=referenced),
+    )
+    hass.services.has_service = Mock(return_value=has_service)
+
+    with pytest.raises(HomeAssistantError, match="participating entities"):
+        NativeFunction().validate_service_targets(
+            hass,
+            {"area_id": "shared-area"},
+            exposed_entities,
+            domain="homeassistant",
+            service="turn_on",
+        )
+
+
 def test_homeassistant_turn_on_filters_indirect_targets_by_domain_service(
     hass, exposed_entities, monkeypatch
 ) -> None:
