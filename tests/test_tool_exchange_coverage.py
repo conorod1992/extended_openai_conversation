@@ -387,6 +387,32 @@ async def test_failed_tool_result_remains_ambiguous_with_fresh_call_id(monkeypat
     assert not was_unacknowledged_equivalent(entity, log, retry)
 
 
+def test_replay_guard_ignores_unscoped_or_empty_ledger_entries(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+        clear_unacknowledged_calls,
+        remember_unacknowledged_calls,
+        was_unacknowledged_equivalent,
+    )
+
+    _patch_content_types(monkeypatch)
+    call = _call("call-1")
+    unscoped = FakeChatLog([FakeAssistantContent([call])])
+    entity = SimpleNamespace()
+
+    remember_unacknowledged_calls(entity, unscoped, set())
+    assert not hasattr(entity, "_unacknowledged_tool_calls")
+
+    empty = FakeChatLog()
+    empty.conversation_id = "conversation"
+    remember_unacknowledged_calls(entity, empty, set())
+    entity._unacknowledged_tool_calls = []
+    assert not was_unacknowledged_equivalent(entity, empty, call)
+
+    entity._unacknowledged_tool_calls = {"conversation": {"pending"}}
+    clear_unacknowledged_calls(entity, None)
+    assert entity._unacknowledged_tool_calls == {"conversation": {"pending"}}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("call_id", ["", "x" * 1025, "bad\nline"])
 async def test_invalid_provider_call_id_never_executes(monkeypatch, call_id) -> None:
