@@ -149,6 +149,12 @@ async def test_restricted_user_cannot_bypass_ha_entity_or_management_permissions
 
     async def turn_off(call: Any) -> None:
         calls.append(call)
+        for entity_id in call.data["entity_id"]:
+            state = hass.states.get(entity_id)
+            assert state is not None
+            hass.states.async_set(
+                entity_id, "off", dict(state.attributes), context=call.context
+            )
 
     hass.services.async_register("light", "turn_off", turn_off)
     hass.states.async_set(_ALLOWED_ENTITY, "on", {"friendly_name": "Allowed light"})
@@ -171,6 +177,7 @@ async def test_restricted_user_cannot_bypass_ha_entity_or_management_permissions
 
     assert _speech(denied) == "The denied light was not changed."
     assert calls == []
+    assert hass.states.get(_DENIED_ENTITY).state == "on"
     denied_tool_result = _tool_result_from_chat_request(
         denied_wire.requests[1]["body"], denied_call_id
     )
@@ -197,6 +204,8 @@ async def test_restricted_user_cannot_bypass_ha_entity_or_management_permissions
     assert len(calls) == 1
     assert calls[0].data["entity_id"] == [_ALLOWED_ENTITY]
     assert calls[0].context.user_id == user.id
+    assert hass.states.get(_ALLOWED_ENTITY).state == "off"
+    assert hass.states.get(_DENIED_ENTITY).state == "on"
     allowed_tool_result = _tool_result_from_chat_request(
         allowed_wire.requests[1]["body"], allowed_call_id
     )
