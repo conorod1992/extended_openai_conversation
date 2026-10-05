@@ -635,3 +635,186 @@ async def test_voice_identity_device_mapping_without_device_or_mapping_returns_e
     agent.subentry.data[voice.CONF_VOICE_DEVICE_MAPPINGS] = "invalid"
     user_input.device_id = "device"
     assert await voice._active_configured_users(agent, user_input) == frozenset()
+
+
+
+def test_management_function_field_unchanged_contract() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        management_function_repair as repair,
+    )
+
+    safe = {
+        repair.CONF_FUNCTION_TOOLS: [{"spec": {"name": "one"}}],
+        repair.CONF_FUNCTION_GROUPS: [{"id": "g", "functions": ["one"]}],
+    }
+    assert repair._function_fields_unchanged({}, safe)
+    assert repair._function_fields_unchanged(
+        {repair.CONF_FUNCTION_TOOLS: deepcopy(safe[repair.CONF_FUNCTION_TOOLS])},
+        safe,
+    )
+    assert not repair._function_fields_unchanged(
+        {repair.CONF_FUNCTION_TOOLS: []},
+        safe,
+    )
+    assert not repair._function_fields_unchanged(
+        {repair.CONF_FUNCTION_GROUPS: []},
+        safe,
+    )
+
+
+def test_management_group_function_rename_and_remove_helpers() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        management_function_repair as repair,
+    )
+
+    groups = [
+        {"id": "valid", "functions": ["old", "keep"]},
+        "malformed",
+        {"id": "invalid-functions", "functions": "old"},
+    ]
+
+    renamed = repair._replace_group_function_name(groups, "old", "new")
+    assert renamed[0]["functions"] == ["new", "keep"]
+    assert groups[0]["functions"] == ["old", "keep"]
+
+    assert repair._replace_group_function_name(groups, None, "new") == groups
+    assert repair._replace_group_function_name(groups, "same", "same") == groups
+    assert repair._replace_group_function_name("not-a-list", "old", "new") == "not-a-list"
+
+    removed = repair._remove_group_function_name(groups, "old")
+    assert removed[0]["functions"] == ["keep"]
+    assert repair._remove_group_function_name(groups, None) == groups
+    assert repair._remove_group_function_name("not-a-list", "old") == "not-a-list"
+
+
+def test_management_revision_guards_accept_none_and_reject_invalid_or_stale(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        management_function_repair as repair,
+    )
+
+    subentry = SimpleNamespace(data={}, title="Agent")
+    repair.require_agent_config_revision(subentry, None)
+
+    with pytest.raises(HomeAssistantError, match="revision must be a string"):
+        repair.require_agent_config_revision(subentry, 123)
+
+    monkeypatch.setattr(
+        repair,
+        "persisted_config_projection",
+        Mock(return_value=SimpleNamespace(revision="current")),
+    )
+    with pytest.raises(HomeAssistantError, match="Configuration changed"):
+        repair.require_agent_config_revision(subentry, "stale")
+
+    repair.require_agent_config_revision(subentry, "current")
+
+    monkeypatch.setattr(repair, "repair_revision", Mock(return_value="repair-current"))
+    with pytest.raises(HomeAssistantError):
+        repair.require_repair_revision(subentry, None)
+    with pytest.raises(HomeAssistantError):
+        repair.require_repair_revision(subentry, "stale")
+    repair.require_repair_revision(subentry, "repair-current")
+
+
+def test_management_projection_cache_hit_and_discard() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        management_function_repair as repair,
+    )
+
+    subentry = SimpleNamespace(data={"x": 1}, title="Agent")
+    diagnostics = {}
+    first = repair.persisted_config_projection(subentry, diagnostics)
+    assert diagnostics["projection_cache_hit"] is False
+
+    diagnostics = {}
+    second = repair.persisted_config_projection(subentry, diagnostics)
+    assert second is first
+    assert diagnostics["projection_cache_hit"] is True
+
+    repair.discard_persisted_config_projection(subentry)
+    third = repair.persisted_config_projection(subentry)
+    assert third is not first
+
+
+def test_management_normalized_projection_reuses_cached_snapshot(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        management_function_repair as repair,
+    )
+
+    snapshot = {"value": [1, 2]}
+    projection = SimpleNamespace(
+        snapshot=deepcopy(snapshot),
+        data={},
+    )
+    diagnostics = {}
+
+    result, hit = repair.normalized_persisted_config_snapshot(
+        projection,
+        diagnostics,
+    )
+
+    assert hit is True
+    assert result == snapshot
+    assert result is not projection.snapshot
+    assert diagnostics["default_snapshot_reused"] is False
+    assert "snapshot_copy_ms" in diagnostics
+
+
+def test_management_seed_projection_preserves_existing_repair_state(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        management_function_repair as repair,
+    )
+
+    data = repair.agent_config_defaults()
+    subentry = SimpleNamespace(subentry_id="agent", data=data, title="Agent")
+    entry = SimpleNamespace(subentries={"agent": subentry})
+    old_state = object()
+    previous = repair._PersistedProjection(
+        subentry,
+        data,
+        "Agent",
+        None,
+        "old",
+        {
+            key: deepcopy(data[key])
+            for key in repair._RETENTION_FIELDS
+        },
+        repair_state=old_state,
+    )
+    repair._persisted_projections[id(subentry)] = previous
+    snapshot = repair.agent_config_snapshot(data)
+
+    repair.seed_persisted_config_projection(entry, subentry, snapshot, "new")
+
+    seeded = repair._persisted_projections[id(subentry)]
+    assert seeded.repair_state is old_state
+    assert seeded.snapshot is None
+    assert seeded.repair_snapshot == snapshot
+
+
+def test_management_saved_revision_uses_supplied_data_for_lightweight_double(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        management_function_repair as repair,
+    )
+
+    subentry = SimpleNamespace(data={"a": 1}, title="Old")
+    expected = repair.agent_config_revision({"a": 2}, "New")
+
+    assert repair.saved_agent_config_revision(subentry, {"a": 2}, "New") == expected
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({"error": {"code": "deployment_not_found"}}, "model_unavailable"),
+        ({"error": {"code": "billing_limit_reached"}}, "insufficient_quota"),
+        ({"error": {"code": "max_context_length_exceeded"}}, "context_length"),
+        ({"error": {"code": "unsupported_value"}}, "unsupported_parameter"),
+    ],
+)
+def test_provider_failure_category_additional_body_codes(body, expected) -> None:
+    from custom_components.extended_openai_conversation_responses import provider_errors
+
+    error = RuntimeError("provider")
+    error.body = body
+    assert provider_errors.provider_failure_category(error) == expected
