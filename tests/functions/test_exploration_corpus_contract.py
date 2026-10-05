@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.functions.exploration_corpus_runner import ADAPTERS, replay_corpus_case
+from tests.functions.exploration_expected_state import ADAPTERS, expected_corpus_case
 
 CORPUS = (
     Path(__file__).resolve().parents[2]
@@ -67,19 +67,19 @@ def test_unknown_or_invalid_corpus_operations_fail_closed():
     unknown = deepcopy(case)
     unknown["operations"][0]["op"] = "invented_operation"
     with pytest.raises(ValueError, match="unknown corpus operation"):
-        replay_corpus_case(unknown)
+        expected_corpus_case(unknown)
 
     invalid = deepcopy(case)
     invalid["operations"][0]["generation"] = "not-generation-A"
     with pytest.raises(ValueError):
-        replay_corpus_case(invalid)
+        expected_corpus_case(invalid)
 
     extra_argument = deepcopy(case)
     extra_argument["operations"][0]["unreviewed"] = True
     with pytest.raises(ValueError, match="invalid arguments"):
-        replay_corpus_case(extra_argument)
+        expected_corpus_case(extra_argument)
 
     unregistered = deepcopy(case)
     unregistered["id"] = "unregistered-case"
     with pytest.raises(ValueError, match="unregistered exploration corpus case"):
-        replay_corpus_case(unregistered)
+        expected_corpus_case(unregistered)

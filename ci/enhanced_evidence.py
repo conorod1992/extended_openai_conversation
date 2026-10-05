@@ -133,6 +133,28 @@ def environment_fingerprint(identity: dict[str, Any]) -> str:
     ).hexdigest()
 
 
+def prebuilt_ha_source(identity_path: Path, source_path: Path) -> str | None:
+    """Read wheel provenance from independently recorded, consistent image inputs."""
+    try:
+        built = json.loads(identity_path.read_text(encoding="utf-8"))
+        if not isinstance(built, dict):
+            return None
+        source = source_path.read_text(encoding="utf-8").strip()
+        digest = built.pop("sha256")
+        canonical = json.dumps(built, sort_keys=True, separators=(",", ":")).encode()
+        if (
+            re.fullmatch(r"[0-9a-f]{40}", source)
+            and hashlib.sha256(canonical).hexdigest() == digest
+            and f"ha_core_sha={source}" in built.get("extra", [])
+            and f"homeassistant=={_version('homeassistant')}" in built.get("installed_python_packages", [])
+            and built.get("python_version") == sys.version.split()[0]
+        ):
+            return source
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
 def environment_identity() -> dict[str, Any]:
     """Compact dependency identity, without installation URLs or local paths."""
     ha_source = None
@@ -146,6 +168,13 @@ def environment_identity() -> dict[str, Any]:
         ValueError,
     ):  # fmt: skip - standalone gates also run on Python 3.12
         pass
+    if ha_source is None:
+        # Wheels have no pip vcs_info. The runtime launcher verifies these image
+        # inputs before executing tests; never fall back to an invocation env var.
+        ha_source = prebuilt_ha_source(
+            Path("/opt/eoai-ci/environment.identity.json"),
+            Path("/opt/eoai-ci/ha-core-sha"),
+        )
     built_environment = Path("/opt/eoai-ci/environment.sha256")
     built_digest = None
     if built_environment.is_file():

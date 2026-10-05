@@ -730,6 +730,8 @@ jobs:
           retention-days: 14
 
   ha-lifecycle-dev:
+    outputs:
+      ha_core_sha: ${{ steps.python.outputs.sha }}
     name: HA dev / shared lifecycle contract
     needs: prepare
     if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'lifecycle'
@@ -856,6 +858,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ENHANCED_CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
           ENHANCED_EXPECTED_STABLE_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
+          ENHANCED_EXPECTED_HA_TEST_PLUGIN_VERSION: ${{ needs.prepare.outputs.ha_test_plugin_version }}
+          ENHANCED_EXPECTED_HA_DEV_SHA: ${{ needs.ha-lifecycle-dev.outputs.ha_core_sha }}
           ENHANCED_CAMPAIGNS: ${{ needs.prepare.outputs.campaigns }}
           ENHANCED_INTENSITIES: ${{ needs.prepare.outputs.intensities }}
           ENHANCED_SELECTED: ${{ inputs.campaign || 'all' }}

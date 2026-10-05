@@ -527,12 +527,22 @@ async def test_structured_task_returns_selector_normalized_data(
 async def test_invalid_final_task_structure_does_not_replay_completed_caller_action(
     hass, monkeypatch, mode
 ):
+    await replay_invalid_final_task_action(hass, monkeypatch, mode)
+
+
+async def replay_invalid_final_task_action(hass, monkeypatch, mode, trace=None):
+    """Shared production journey with optional realised operation evidence."""
+    def record(op, **fields):
+        if trace is not None:
+            trace.append({"op": op, **fields})
+
     entry, entity_id = await _task_entity(hass, mode)
     effects = []
 
     async def action(call):
         effects.append(call.data["value"])
         hass.states.async_set("sensor.task_effect_count", len(effects))
+        record("execute_effect", marker="once")
 
     hass.services.async_register("task_probe", "record", action)
 
@@ -556,6 +566,7 @@ async def test_invalid_final_task_structure_does_not_replay_completed_caller_act
         body = json.loads(request.content)
         requests.append({"path": request.url.path, "body": body})
         if len(requests) == 1:
+            record("request_tool")
             tool = body["tools"][0]
             name = (
                 tool["name"] if mode == API_MODE_RESPONSES else tool["function"]["name"]
@@ -569,6 +580,7 @@ async def test_invalid_final_task_structure_does_not_replay_completed_caller_act
                 "completed-task-action", name, {"value": "already completed"}
             )
         elif len(requests) == 2:
+            record("return_invalid_structured_output")
             payload = _text_reply(mode, '{"answer":"partial"}')
         elif len(requests) == 3:
             payload = _text_reply(mode, '{"answer":"healthy","count":0}')
@@ -598,6 +610,7 @@ async def test_invalid_final_task_structure_does_not_replay_completed_caller_act
             context=Context(),
         )
     assert effects == ["already completed"]
+    record("assert_failure")
     assert len(probe.calls) == 1
     assert len(requests) == 2
     assert hass.states.get("sensor.task_effect_count").state == "1"
@@ -609,10 +622,12 @@ async def test_invalid_final_task_structure_does_not_replay_completed_caller_act
         structure=schema,
     )
     assert healthy.data == {"answer": "healthy", "count": 0}
+    record("healthy_independent_task")
     assert effects == ["already completed"]
     assert len(probe.calls) == 1
     assert len(requests) == 3
     assert "already completed" not in _input_text(requests[-1]["body"])
+    record("assert_effect_count", count=1)
 
 
 @pytest.mark.parametrize("mode", MODES)

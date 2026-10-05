@@ -246,6 +246,21 @@ class CoveringSuite:
     excluded: dict[str, int]
     exploratory_count: int
 
+    def reviewed_inventory(self) -> dict[str, Any]:
+        """Canonical admissibility boundary, independent of covering-set choices."""
+        serialized = sorted(json.dumps(item) for item in self.obligations)
+        return {
+            "obligation_count": len(serialized),
+            "obligation_digest": sha256(json.dumps(serialized).encode()).hexdigest(),
+            "excluded": self.excluded,
+        }
+
+    def assert_reviewed_inventory(self, reviewed: dict[str, Any]) -> None:
+        assert self.reviewed_inventory() == reviewed, (
+            "Reviewed valid configuration coverage or exclusion reasons changed; "
+            "inspect lost/added obligations and review the admissibility boundary"
+        )
+
     def evidence(self, seed: int) -> dict[str, Any]:
         pair_count = sum(len(item) == 2 for item in self.obligations)
         triple_count = len(self.obligations) - pair_count
