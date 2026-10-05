@@ -33,6 +33,7 @@ def validate_evidence(first, recovered):
         )
         assert "homeassistant" in proof["before"]
         assert proof["entities"] >= 2
+        assert proof["controls"]["callbacks"] == 3, "Duplicated native timers"
     assert first["entry"] == recovered["entry"], (
         "Recovery replaced persisted installation"
     )

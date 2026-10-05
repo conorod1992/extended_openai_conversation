@@ -21,6 +21,7 @@ def proof():
         "before": {"homeassistant": "2026.9.4"},
         "entry": "retained",
         "entities": 2,
+        "controls": {"callbacks": 3},
     }
 
 
@@ -36,6 +37,7 @@ def test_complete_independent_runtime_evidence():
         "missing_scrape",
         "entry_replaced",
         "duplicate_entity",
+        "duplicate_timer",
     ],
 )
 def test_isolated_install_rejects_false_claims(fault):
@@ -48,8 +50,10 @@ def test_isolated_install_rejects_false_claims(fault):
         second["paths"].remove("scrape")
     elif fault == "entry_replaced":
         second["entry"] = "replacement"
-    else:
+    elif fault == "duplicate_entity":
         second["entities"] += 1
+    else:
+        second["controls"]["callbacks"] += 1
     with pytest.raises(AssertionError):
         validate_evidence(first, second)
 

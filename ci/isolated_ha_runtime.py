@@ -95,10 +95,14 @@ async def late_controls(hass, phase):
     await until(lambda: hass.states.get(media).attributes["volume_level"] == 0.2)
     assert manager.active["controls"][media]["original_value"] == 0.55
     assert changes == ([0.2] if phase in ("seed", "recover") else []), changes
+    assert len(manager._unsubscribers) == 3, (
+        "Duplicated Quiet Hours timer registrations"
+    )
     return {
         "late_satellite_reconciliations": 1 if phase == "recover" else 0,
         "volume_original": 0.55,
         "volume_effect": 0.2,
+        "callbacks": len(manager._unsubscribers),
     }
 
 
@@ -183,8 +187,7 @@ async def main(root, phase, endpoint):
     sys.path.insert(0, str(root))
     if phase in ("recover-recorder-first", "recover-provider-first"):
         from homeassistant import loader
-        from homeassistant.components.recorder import get_instance
-        from homeassistant.components.recorder.const import DATA_INSTANCE
+        from homeassistant.components.recorder import DATA_INSTANCE, get_instance
         from homeassistant.core import HomeAssistant
 
         # Use HA's normal config-dictionary bootstrap so the observer can see
@@ -313,6 +316,8 @@ async def main(root, phase, endpoint):
             )
             source = await knowledge.async_get(saved["source"])
             assert source is not None and source.content == "retained-source-text"
+        indexed = await knowledge.async_search("retained-source-text")
+        assert [result.source_id for result in indexed] == [source.source_id]
         rows = er_rows(hass, entry.entry_id)
         assert len({row.unique_id for row in rows}) == len(rows)
         after = await asyncio.to_thread(packages)
