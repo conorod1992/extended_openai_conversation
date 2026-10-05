@@ -1,6 +1,7 @@
 """Native staging locks protect other live owners and unrelated filesystem data."""
 
 import asyncio
+import fcntl
 from types import SimpleNamespace
 import threading
 
@@ -50,6 +51,46 @@ def test_unlocked_owned_payload_is_reclaimed_without_session_authority(tmp_path)
         assert list(fresh.directory.glob("extended-openai-backup-*")) == []
     finally:
         fresh.close()
+
+
+def test_owner_close_is_idempotent(tmp_path):
+    owner = _initialize_owner(tmp_path / "private")
+
+    owner.close()
+    owner.close()
+
+    assert not owner.directory.exists()
+
+
+def test_staging_root_symlink_is_rejected(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    root = tmp_path / "staging-link"
+    root.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(OSError, match="must not be a symbolic link"):
+        _initialize_owner(root)
+
+
+def test_owner_lock_failure_releases_lock_and_allows_retry(tmp_path, monkeypatch):
+    root = tmp_path / "private"
+    original_flock = fcntl.flock
+
+    def fail_nonblocking_owner_lock(file_descriptor, operation):
+        if operation & fcntl.LOCK_NB:
+            raise OSError("owner lock unavailable")
+        return original_flock(file_descriptor, operation)
+
+    monkeypatch.setattr(fcntl, "flock", fail_nonblocking_owner_lock)
+    with pytest.raises(OSError, match="owner lock unavailable"):
+        _initialize_owner(root)
+
+    monkeypatch.setattr(fcntl, "flock", original_flock)
+    owner = _initialize_owner(root)
+    try:
+        assert owner.directory.is_dir()
+    finally:
+        owner.close()
 
 
 def _hass(tmp_path):

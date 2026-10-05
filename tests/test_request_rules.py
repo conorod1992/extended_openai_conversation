@@ -2206,6 +2206,31 @@ async def test_conversation_reset_clears_prior_request_reset_during_rule_cascade
     assert result.request_override is None
 
 
+async def test_conversation_route_reapplies_new_values_after_request_reset() -> None:
+    request_reset = routing_rule(scope="request", reset=True)
+    request_reset["order"] = 0
+    request_reset["continue_matching"] = True
+    request_reset["action"]["continue_to_ai"] = False
+    conversation_route = routing_rule(scope="conversation")
+    conversation_route["order"] = 1
+    conversation_route["action"]["continue_to_ai"] = False
+    rules = await manager(request_reset, conversation_route)
+
+    result = await async_evaluate_rule(
+        SimpleNamespace(),
+        rules,
+        RequestRuleRuntime(),
+        "think carefully about this",
+        "session",
+    )
+
+    assert result is not None
+    assert result.request_override == {
+        CONF_CHAT_MODEL: "gpt-5",
+        CONF_REASONING_EFFORT: "high",
+    }
+
+
 async def test_invalid_conversation_update_is_atomic() -> None:
     runtime = RequestRuleRuntime()
     runtime.set("one", {CONF_CHAT_MODEL: "gpt-5", CONF_REASONING_EFFORT: "high"})
