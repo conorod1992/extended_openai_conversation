@@ -245,13 +245,21 @@ def test_bounded_function_result_preserves_all_json_scalar_values() -> None:
         ({"value": object()}, "must contain JSON values"),
         ("x" * (request_rules.MAX_RESULT_BYTES + 1), "too large"),
         ([None] * request_rules.MAX_SCRIPT_NODES, "too many values"),
-        ([[] for _ in range(request_rules.MAX_RESULT_DEPTH + 1)], "too deeply nested"),
     ],
 )
 def test_bounded_function_result_rejects_unbounded_or_non_json_values(
     value: object, message: str
 ) -> None:
     with pytest.raises(HomeAssistantError, match=message):
+        request_rules._bounded_function_result(value)
+
+
+def test_bounded_function_result_rejects_deeply_nested_values() -> None:
+    value: object = None
+    for _ in range(request_rules.MAX_RESULT_DEPTH + 1):
+        value = [value]
+
+    with pytest.raises(HomeAssistantError, match="too deeply nested"):
         request_rules._bounded_function_result(value)
 
 
