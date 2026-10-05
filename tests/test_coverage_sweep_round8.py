@@ -104,11 +104,11 @@ async def test_model_catalog_candidate_skips_dynamic_and_reset_routing_rules(
                     {"action_type": "model_routing", "action": {"reset": True}},
                     {
                         "action_type": "model_routing",
-                        "action": {"model": "{room.model}", "reasoning_effort": None},
+                        "action": {"model": "{model}", "reasoning_effort": None},
                     },
                     {
                         "action_type": "model_routing",
-                        "action": {"model": None, "reasoning_effort": "{room.effort}"},
+                        "action": {"model": None, "reasoning_effort": "{effort}"},
                     },
                     {
                         "action_type": "model_routing",
