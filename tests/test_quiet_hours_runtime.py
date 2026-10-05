@@ -101,6 +101,16 @@ def test_state_entity_falls_back_while_entity_registry_is_loading(
     assert manager._registered_state_entity_id == manager._state_entity_id()
 
 
+def test_public_manager_snapshot_includes_entity_id_and_discovery(hass) -> None:
+    manager = _stateful_public_manager(hass)
+
+    assert manager.discovery_snapshot() == []
+    snapshot = manager.snapshot()
+
+    assert snapshot["state_entity_id"] == manager._state_entity_id()
+    assert snapshot["satellites"] == []
+
+
 def _room_entry(entity_id: str, domain: str, device_id: str, *, name: str):
     return SimpleNamespace(
         entity_id=entity_id,
@@ -650,15 +660,18 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
     manager._publish_state = MagicMock()
     manager._async_restore_locked = AsyncMock()
     manager._initialized = False
+    manager._reschedule = Mock()
 
     await manager.async_reconcile(now=now)
     manager._publish_state.assert_not_called()
 
     manager._initialized = True
     manager._config = QuietHoursConfig(enabled=False)
+    manager._unsubscribers = [Mock()]
     await manager.async_reconcile(now=now)
     manager._publish_state.assert_called_once_with(None)
     manager._async_restore_locked.assert_awaited_once_with()
+    manager._reschedule.assert_called_once_with()
 
     manager._publish_state.reset_mock()
     period = QuietPeriod(now - timedelta(hours=1), now + timedelta(hours=8))
@@ -689,7 +702,25 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
                 wake_sound_entity_id="switch.kitchen_wake",
                 media_player_source="auto",
                 wake_sound_source="auto",
-            )
+            ),
+            SatelliteCapabilities(
+                satellite_entity_id="assist_satellite.office",
+                name="Office",
+                device_id="office-device",
+                media_player_entity_id="media_player.office",
+                wake_sound_entity_id=None,
+                media_player_source="auto",
+                wake_sound_source=None,
+            ),
+            SatelliteCapabilities(
+                satellite_entity_id="assist_satellite.den",
+                name="Den",
+                device_id="den-device",
+                media_player_entity_id=None,
+                wake_sound_entity_id="switch.den_wake",
+                media_player_source=None,
+                wake_sound_source="auto",
+            ),
         ],
     )
 
@@ -699,12 +730,19 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
     assert manager._active is not None
     assert manager._active["period_started_at"] == period.start.isoformat()
     manager._async_save_locked.assert_awaited_once_with()
-    manager._async_apply_volume_locked.assert_awaited_once()
-    manager._async_apply_switch_locked.assert_awaited_once_with(
+    assert manager._async_apply_volume_locked.await_count == 2
+    assert manager._async_apply_switch_locked.await_count == 2
+    assert manager._async_apply_switch_locked.await_args_list[0].args == (
         "assist_satellite.kitchen",
         "switch.kitchen_wake",
         False,
         {},
+    )
+    assert manager._async_apply_switch_locked.await_args_list[0].args[1] == (
+        "switch.kitchen_wake"
+    )
+    assert manager._async_apply_switch_locked.await_args_list[1].args[1] == (
+        "switch.den_wake"
     )
 
 
