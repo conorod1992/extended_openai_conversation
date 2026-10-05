@@ -105,7 +105,7 @@ async def test_memory_edit_during_retrieval_publishes_current_record(
     assert _MEMORY_B in provider
     assert _MEMORY_A not in provider
 
-    stored = await agent._memory.async_search(_USER_ID, "beta saffron")
+    stored = await agent._memory.async_search(_USER_ID, "beta-saffron")
     assert [item.content for item in stored] == [_MEMORY_B]
 
 
