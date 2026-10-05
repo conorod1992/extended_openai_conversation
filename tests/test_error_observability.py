@@ -164,6 +164,7 @@ def test_live_action_targets_reject_changed_context_and_removed_entities(
     agent.hass = hass
     agent._effective_guest_policy = lambda: GuestCapabilityPolicy(False)
     monkeypatch.setattr(conversation, "get_exposed_entities", lambda *_: [])
+    monkeypatch.setattr(hass.states, "get", lambda _entity_id: None)
 
     agent.hass = object()
     with pytest.raises(HomeAssistantError, match="context changed"):
@@ -173,7 +174,11 @@ def test_live_action_targets_reject_changed_context_and_removed_entities(
     with pytest.raises(HomeAssistantError, match="no longer exists"):
         agent._require_current_action_targets(hass, {"light.missing"})
 
-    hass.states.async_set("light.test", "off")
+    monkeypatch.setattr(
+        hass.states,
+        "get",
+        lambda entity_id: object() if entity_id == "light.test" else None,
+    )
     with pytest.raises(HomeAssistantError, match="light.test"):
         agent._require_current_action_targets(hass, {"light.test"})
 
