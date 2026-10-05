@@ -141,6 +141,7 @@ def test_tool_and_api_reasoning_conditions_must_be_supported(mutate):
 @pytest.mark.parametrize(
     "raw",
     [b'{"schema_version":7,"schema_version":7}', b" " * (data.MAX_CATALOG_BYTES + 1)],
+    ids=["duplicate-json-key", "oversized-document"],
 )
 def test_catalog_parser_rejects_ambiguous_or_oversized_documents(raw):
     with pytest.raises(ValueError):
