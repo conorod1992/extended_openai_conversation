@@ -101,9 +101,11 @@ appId: io.homeassistant.companion.android
 - scrollUntilVisible:
     element:
       text: "Companion acceptance assistant"
+      below: "Agent name"
     direction: DOWN
 - tapOn:
     text: "Companion acceptance assistant"
+    below: "Agent name"
 - eraseText: 100
 - inputText: "Companion app saved title"
 - hideKeyboard
