@@ -1305,3 +1305,178 @@ def test_model_retirement_rule_override_returns_rule_specific_message(
     assert result is not None
     assert "Request Rule selected retired model retired-model" in result
     create_issue.assert_called_once()
+
+
+
+@pytest.mark.parametrize(
+    ("value", "prefixed_only", "expected"),
+    [
+        (None, False, None),
+        (123, False, None),
+        ("", False, None),
+        ("   ", False, None),
+        ("user:alice", False, "alice"),
+        ("user:alice", True, "alice"),
+        ("alice", True, None),
+        ("alice", False, "alice"),
+        ("shared", False, None),
+        ("shared:household", False, None),
+        ("unretained", False, None),
+    ],
+)
+def test_transfer_portable_user_id_normalization(
+    value, prefixed_only: bool, expected
+) -> None:
+    from custom_components.extended_openai_conversation_responses import transfer
+
+    assert (
+        transfer._portable_user_id(value, prefixed_only=prefixed_only) == expected
+    )
+
+
+def test_transfer_user_scope_ids_collects_all_selected_owner_sources() -> None:
+    from custom_components.extended_openai_conversation_responses import transfer
+
+    prepared = SimpleNamespace(
+        memories=[
+            SimpleNamespace(user_id="alice"),
+            SimpleNamespace(user_id="shared"),
+        ],
+        temporary_memories=[
+            SimpleNamespace(owner_scope_id="user:bob"),
+            SimpleNamespace(owner_scope_id="household"),
+        ],
+        archive_sessions=[
+            SimpleNamespace(scope_id="user:carol"),
+            SimpleNamespace(scope_id="shared:household"),
+        ],
+        config={
+            transfer.CONF_VOICE_DEFAULT_USER_ID: "dave",
+            transfer.CONF_VOICE_DEVICE_MAPPINGS: {
+                "phone": "user:erin",
+                "tablet": "shared",
+            },
+        },
+    )
+
+    result = transfer.transfer_user_scope_ids(
+        prepared,
+        {
+            transfer.SECTION_PERSISTENT_MEMORY,
+            transfer.SECTION_TEMPORARY_MEMORY,
+            transfer.SECTION_CONVERSATION_ARCHIVE,
+            transfer.SECTION_CONFIGURATION,
+        },
+    )
+
+    assert result == frozenset({"alice", "bob", "carol", "dave", "erin"})
+
+
+@pytest.mark.asyncio
+async def test_transfer_user_scope_mapping_plan_rejects_invalid_mapping_shape(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import backup, transfer
+
+    prepared = SimpleNamespace(
+        memories=[],
+        temporary_memories=[],
+        archive_sessions=[],
+        config=None,
+    )
+    hass.auth.async_get_users = AsyncMock(return_value=[])
+
+    with pytest.raises(backup.BackupError, match="must be an object"):
+        await transfer.async_user_scope_mapping_plan(
+            hass,
+            prepared,
+            [],
+            supplied=[("old", "new")],
+        )
+
+
+@pytest.mark.asyncio
+async def test_transfer_user_scope_mapping_plan_maps_missing_source_user(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import transfer
+
+    prepared = SimpleNamespace(
+        memories=[SimpleNamespace(user_id="old-user")],
+        temporary_memories=[],
+        archive_sessions=[],
+        config=None,
+    )
+    hass.auth.async_get_users = AsyncMock(
+        return_value=[
+            SimpleNamespace(id="new-user", name="New User"),
+            SimpleNamespace(id="other", name=None),
+        ]
+    )
+
+    result = await transfer.async_user_scope_mapping_plan(
+        hass,
+        prepared,
+        [transfer.SECTION_PERSISTENT_MEMORY],
+        supplied={"old-user": "new-user"},
+    )
+
+    assert result["required_source_user_ids"] == ["old-user"]
+    assert result["missing_source_user_ids"] == []
+    assert result["resolved"] == {"old-user": "new-user"}
+    assert result["destination_users"] == [
+        {"user_id": "new-user", "name": "New User"},
+        {"user_id": "other", "name": "other"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_transfer_user_scope_mapping_plan_rejects_unknown_destination(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import backup, transfer
+
+    prepared = SimpleNamespace(
+        memories=[SimpleNamespace(user_id="old-user")],
+        temporary_memories=[],
+        archive_sessions=[],
+        config=None,
+    )
+    hass.auth.async_get_users = AsyncMock(
+        return_value=[SimpleNamespace(id="known", name="Known")]
+    )
+
+    with pytest.raises(backup.BackupError, match="does not exist"):
+        await transfer.async_user_scope_mapping_plan(
+            hass,
+            prepared,
+            [transfer.SECTION_PERSISTENT_MEMORY],
+            supplied={"old-user": "missing"},
+        )
+
+
+def test_transfer_owner_mapping_preserves_user_prefix() -> None:
+    from custom_components.extended_openai_conversation_responses import transfer
+
+    mapping = {"alice": "new-alice"}
+
+    assert transfer._map_owner_value("user:alice", mapping) == "user:new-alice"
+    assert transfer._map_owner_value("alice", mapping) == "new-alice"
+    assert transfer._map_owner_value("shared", mapping) == "shared"
+    assert transfer._map_owner_value(None, mapping) is None
+
+
+def test_transfer_configuration_mapping_handles_non_mapping_and_devices() -> None:
+    from custom_components.extended_openai_conversation_responses import transfer
+
+    assert transfer._map_configuration_users("invalid", {"alice": "bob"}) == "invalid"
+
+    config = {
+        transfer.CONF_VOICE_DEFAULT_USER_ID: "alice",
+        transfer.CONF_VOICE_DEVICE_MAPPINGS: {
+            "phone": "user:alice",
+            7: "shared",
+        },
+    }
+    mapped = transfer._map_configuration_users(config, {"alice": "bob"})
+
+    assert mapped[transfer.CONF_VOICE_DEFAULT_USER_ID] == "bob"
+    assert mapped[transfer.CONF_VOICE_DEVICE_MAPPINGS] == {
+        "phone": "user:bob",
+        "7": "shared",
+    }
+    assert config[transfer.CONF_VOICE_DEFAULT_USER_ID] == "alice"
