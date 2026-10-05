@@ -2226,6 +2226,7 @@ async def test_conversation_route_reapplies_new_values_after_request_reset() -> 
 
     assert result is not None
     assert result.request_override == {
+        "__request_rule_reset__": "1",
         CONF_CHAT_MODEL: "gpt-5",
         CONF_REASONING_EFFORT: "high",
     }
