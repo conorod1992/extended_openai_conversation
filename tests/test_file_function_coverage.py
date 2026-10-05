@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses.functions import (
     file as file_fn,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def test_read_text_bounded_detects_growth_after_stat(tmp_path, monkeypatch) -> None:
@@ -113,3 +115,37 @@ async def test_skill_read_reports_missing_manager(hass, monkeypatch) -> None:
     config = {"path": Template("{{ extended_openai.skill_dir('demo') }}/SKILL.md", hass)}
     result = await function.execute(hass, config, {}, None, None)
     assert "SkillManager not initialized" in result["error"]
+
+
+async def test_edit_settlement_defers_cancellation_until_writer_finishes() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def write() -> int:
+        started.set()
+        await release.wait()
+        return 1
+
+    task = asyncio.create_task(file_fn._async_settle_native_edit(write()))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_non_skill_path_template_errors_remain_visible(hass) -> None:
+    class BrokenTemplate:
+        template = "ordinary path"
+
+        def async_render(self, *_args, **_kwargs):
+            raise HomeAssistantError("template failed")
+
+    function = file_fn.ReadFileFunction()
+    config = {"path": BrokenTemplate()}
+
+    with pytest.raises(HomeAssistantError, match="template failed"):
+        await function.execute(hass, config, {}, None, None)

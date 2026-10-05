@@ -112,6 +112,62 @@ def test_future_schema_and_newer_release_have_distinct_error():
             data.validate_catalog(candidate)
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["models"][0]["tools"]["function"]["responses"].update(
+            support="conditional",
+            requires={"reasoning_effort": ["unsupported"]},
+        ),
+        lambda value: value["models"][0]["tools"]["web_search"]["responses"].update(
+            support="conditional"
+        ),
+        lambda value: value["models"][0]["reasoning"]["by_api"]["responses"].update(
+            efforts=["unsupported"]
+        ),
+        lambda value: value["models"][0]["function_calling"].update(
+            responses={"support": "always", "allowed_reasoning_efforts": ["low"]}
+        ),
+    ],
+)
+def test_tool_and_api_reasoning_conditions_must_be_supported(mutate):
+    candidate = _catalog()
+    mutate(candidate)
+
+    with pytest.raises(ValueError):
+        data.validate_catalog(candidate)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b'{"schema_version":7,"schema_version":7}', b" " * (data.MAX_CATALOG_BYTES + 1)],
+)
+def test_catalog_parser_rejects_ambiguous_or_oversized_documents(raw):
+    with pytest.raises(ValueError):
+        data.parse_catalog(raw)
+
+
+def test_compatible_envelope_and_snapshot_inherit_from_bundled_model():
+    candidate = _catalog()
+    candidate["compatibility"] = {"minimum_eoai_version": "not-a-version"}
+    with pytest.raises(ValueError, match="Invalid minimum EOAI version"):
+        data.validate_catalog(candidate)
+
+    candidate = _catalog()
+    snapshot = deepcopy(candidate["models"][0])
+    snapshot.update(id="coverage.snapshot", kind="snapshot", alias_of="gpt-6-astra")
+    candidate["models"] = [snapshot]
+    assert (
+        data.validate_catalog(candidate).resolved["coverage.snapshot"]["status"]
+        == "current"
+    )
+
+
+def test_future_catalogue_still_requires_a_complete_envelope():
+    with pytest.raises(ValueError, match="Invalid model catalogue envelope"):
+        data.validate_catalog({"schema_version": 99, "catalog_version": 3})
+
+
 def test_invalid_schema_number_is_not_an_incompatible_update():
     candidate = deepcopy(data.BUNDLED_CATALOG)
     candidate["schema_version"] = 0
