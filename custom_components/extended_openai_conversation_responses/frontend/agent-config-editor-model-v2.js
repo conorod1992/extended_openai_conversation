@@ -85,7 +85,11 @@ export async function changeConfigurationModel(panel, control) {
     const validation = await panel._call("configuration", "validate", {config: panel._draft});
     if (!current() || !validation.valid) return;
     panel._result.model_capabilities = validation.model_capabilities;
-    panel._configRestoreFocus = '[data-config="chat_model"]';
+    // A model change finishes after blur. Do not replace the next control or
+    // move focus back while the user is already editing another field.
+    const focused = panel.shadowRoot?.activeElement;
+    if (focused && focused !== control) return;
+    if (focused === control) panel._configRestoreFocus = '[data-config="chat_model"]';
     panel._render();
   } catch (err) {
     if (current()) panel._toast?.(`Unable to inspect model options: ${err.message || String(err)}`, true);

@@ -2009,6 +2009,7 @@
       "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::route hover warming waits for intent while focus and pointerdown stay immediate",
       "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::search into a cold configuration route retains focus until its assets arrive",
       "tests_browser/management-lazy-ownership.spec.mjs::chromium::management-lazy-ownership.spec.mjs::visiting lazy routes keeps the panel prototype fixed and feature imports lazy",
+      "tests_browser/model-validation-focus.stress.mjs::chromium::model-validation-focus.stress.mjs::model validation preserves the next configuration field and its focus",
       "tests_browser/mount-offline-bfcache.stress.mjs::chromium::mount-offline-bfcache.stress.mjs::repeated mount cycles plus offline and browser restoration keep one healthy panel",
       "tests_browser/native-yaml-editor-crud.spec.mjs::chromium::native-yaml-editor-crud.spec.mjs::modified native YAML requires confirmation before built-in preset replacement",
       "tests_browser/native-yaml-editor-crud.spec.mjs::chromium::native-yaml-editor-crud.spec.mjs::native YAML editor validates, duplicates, isolates tool state, deletes, and fits a narrow viewport",
