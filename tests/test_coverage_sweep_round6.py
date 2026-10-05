@@ -459,19 +459,15 @@ async def test_temporary_memory_reconcile_counts_invalid_and_normalized_owners(
         owner_scope_id=None,
     )
     normalized = temporary_memory.TemporaryMemoryRecord(
-        **{
-            **original.__dict__ if hasattr(original, "__dict__") else {
-                "memory_id": original.memory_id,
-                "scope_id": original.scope_id,
-                "content": original.content,
-                "category": original.category,
-                "source": original.source,
-                "expires_at": original.expires_at,
-                "created_at": original.created_at,
-                "updated_at": original.updated_at,
-                "owner_scope_id": "user:alice",
-            }
-        }
+        memory_id=original.memory_id,
+        scope_id=original.scope_id,
+        content=original.content,
+        category=original.category,
+        source=original.source,
+        expires_at=original.expires_at,
+        created_at=original.created_at,
+        updated_at=original.updated_at,
+        owner_scope_id="user:alice",
     )
     invalid = temporary_memory.TemporaryMemoryRecord(
         memory_id="two",
