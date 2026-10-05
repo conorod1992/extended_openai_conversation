@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
@@ -140,6 +141,28 @@ def test_function_group_repair_helpers_preserve_unrelated_groups() -> None:
     assert groups[0]["functions"] == ["turn_on", "turn_off"]
     assert repair._remove_group_function_name(groups, None) == groups
     assert repair._remove_group_function_name(None, "turn_off") is None
+
+
+def test_function_health_cache_evicts_oldest_revision(monkeypatch) -> None:
+    cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
+    monkeypatch.setattr(repair, "_health_cache", cache)
+    monkeypatch.setattr(repair, "_HEALTH_CACHE_LIMIT", 2)
+    monkeypatch.setattr(
+        repair,
+        "_uncached_function_tool_health",
+        lambda options: {"value": options[CONF_FUNCTION_TOOLS]},
+    )
+
+    for value in ("first", "second", "third"):
+        assert repair.management_function_tool_health(
+            {CONF_FUNCTION_TOOLS: value}
+        ) == {"value": value}
+
+    assert len(cache) == 2
+    assert repair.peek_function_tool_health({CONF_FUNCTION_TOOLS: "first"}) is None
+    assert repair.peek_function_tool_health({CONF_FUNCTION_TOOLS: "second"}) == {
+        "value": "second"
+    }
 
 
 def test_isolated_function_tools_keeps_valid_siblings() -> None:
