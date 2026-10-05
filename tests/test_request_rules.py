@@ -31,6 +31,7 @@ from custom_components.extended_openai_conversation_responses.request import (
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     _ACTIVE_FUNCTION_EXECUTOR,
+    _ACTIVE_FUNCTION_RESULTS,
     DEFAULT_MATCHING,
     DEFAULT_WORDING_GROUPS,
     RequestRuleRuntime,
@@ -776,11 +777,40 @@ async def test_function_result_capture_requires_active_result_context() -> None:
     executor.assert_awaited_once_with("lookup", {})
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"plain": "mapping"}, {"plain": "mapping"}),
+        ({"result": "not valid JSON"}, "not valid JSON"),
+    ],
+)
+async def test_function_capture_preserves_unwrapped_and_non_json_results(
+    payload, expected
+) -> None:
+    results = {}
+
+    async def execute(_function, _arguments):
+        return SimpleNamespace(tool_result=payload)
+
+    executor_token = _ACTIVE_FUNCTION_EXECUTOR.set(execute)
+    results_token = _ACTIVE_FUNCTION_RESULTS.set(results)
+    try:
+        captured = await async_call_active_function("lookup", {}, "value")
+    finally:
+        _ACTIVE_FUNCTION_RESULTS.reset(results_token)
+        _ACTIVE_FUNCTION_EXECUTOR.reset(executor_token)
+
+    assert captured == expected
+    assert results["value"] == expected
+
+
 def test_result_resolution_rejects_out_of_range_list_paths() -> None:
     with pytest.raises(ValueError, match="path .* is unavailable"):
         resolve_result_values(
             "{reading.items.1}", {}, {"reading": {"items": ["only item"]}}
         )
+    with pytest.raises(ValueError, match="Function result missing is unavailable"):
+        resolve_result_values("{missing.value}", {}, {})
 
 
 async def test_result_dependencies_and_bounds() -> None:
@@ -828,6 +858,44 @@ async def test_result_dependencies_and_bounds() -> None:
         _bounded_function_result("x" * 20000)
     with pytest.raises(HomeAssistantError, match="deeply nested"):
         _bounded_function_result([[[[[[[[[0]]]]]]]]])
+
+
+async def test_match_cursor_deduplicates_matching_phrases_for_one_rule() -> None:
+    rules = await manager(
+        local_rule(phrases=["turn on", "turn on lights"], match_type="starts_with")
+    )
+    cursor = _MatchCursor(rules._committed_matching_snapshot, "turn on lights")
+
+    match = cursor.next_match()
+
+    assert match is not None and match.rule["id"] == "good-night"
+    assert match.phrase == "turn on"
+    assert cursor.next_match() is None
+
+
+async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule() -> None:
+    matching = {
+        "word_forms": False,
+        "wording_alternatives": False,
+        "fuzzy": True,
+        "fuzzy_threshold": 70,
+    }
+    rules = await manager(
+        local_rule(
+            phrases=["open kitchen lights", "open kitchen light"],
+            match_type="equals",
+            matching=matching,
+        )
+    )
+    cursor = _MatchCursor(
+        rules._committed_matching_snapshot, "open the kitchen lights"
+    )
+
+    match = cursor.next_match()
+
+    assert match is not None and match.fuzzy
+    assert match.phrase == "open kitchen lights"
+    assert cursor.next_match() is None
 
 
 @pytest.mark.parametrize(
