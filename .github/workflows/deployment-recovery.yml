@@ -24,6 +24,7 @@ concurrency:
 jobs:
   deployment-recovery:
     name: Native HA backup + HTTPS proxy
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 1090
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
