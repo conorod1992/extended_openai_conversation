@@ -314,9 +314,7 @@ async def test_function_execution_failure_stops_rule_independently_of_capture(
         _local([_record_action("healthy")], phrase="healthy")
     )
     assert (
-        _cross_feature_speech(
-            await _cross_feature_say(hass, agent, "run rule"), successful=False
-        )
+        _cross_feature_speech(await _cross_feature_say(hass, agent, "run rule"), successful=False)
         == "Failed safely"
     )
     expected = ["before"] if failure_kind == "service" else ["before", "tool before"]
@@ -611,14 +609,14 @@ async def test_matcher_route_scope_reaches_wire_and_next_turn(
     stress_trace: list[dict],
 ) -> None:
     agent = await _agent(hass, api_mode)
-    route_model = "gpt-5.2" if api_mode == API_MODE_CHAT_COMPLETIONS else "gpt-6-astra"
+    routed_model = "gpt-5.2" if api_mode == API_MODE_CHAT_COMPLETIONS else "gpt-6-astra"
     created = await agent._request_rules.async_create(
         _rule(
             match_type,
             "model_routing",
             {
-                "model": route_model,
-                "reasoning_effort": "xhigh",
+                "model": routed_model,
+                "reasoning_effort": "none" if api_mode == API_MODE_CHAT_COMPLETIONS else "xhigh",
                 "scope": scope,
                 "reset": False,
                 "continue_to_ai": True,
@@ -638,9 +636,9 @@ async def test_matcher_route_scope_reaches_wire_and_next_turn(
     second = await _say(hass, agent, "ordinary request", first.conversation_id)
     assert _speech(second) == "followup"
     assert len(wire.requests) == 2
-    assert wire.requests[0]["body"]["model"] == route_model
+    assert wire.requests[0]["body"]["model"] == routed_model
     assert wire.requests[1]["body"]["model"] == (
-        route_model if scope == "conversation" else "gpt-5.6"
+        routed_model if scope == "conversation" else "gpt-5.6"
     )
     record(
         stress_trace,
@@ -893,7 +891,8 @@ async def test_continue_matching_stops_on_local_failure(
 
     wire = _install_wire(monkeypatch, agent, [])
     result = await _say(hass, agent, "failure chain")
-    assert _cross_feature_speech(result, successful=False) == "Failed safely"
+    assert result.response.error_code is not None
+    assert result.response.as_dict()["speech"]["plain"]["speech"] == "Failed safely"
     assert calls == []
     assert not wire.requests
     record(

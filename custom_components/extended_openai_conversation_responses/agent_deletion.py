@@ -88,6 +88,7 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
     gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
     if gate.deleted:
         return
+    await gate.async_retire_readers()
 
     async def remove() -> None:
         with gate.recovery_work():

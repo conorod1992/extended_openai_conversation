@@ -37,6 +37,7 @@ async def test_two_imports_reject_stale_preview_and_changed_target(
     client = await hass_ws_client(hass, await _user_token(hass, admin))
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
     owner = "transfer-race-owner"
+    MockUser(id=owner, name="Transfer owner").add_to_hass(hass)
     await memory.async_add(owner, "BACKUP-A", "acceptance", "explicit")
     archive_a, metadata_a = await _download_archive(client, entry=entry, mode="full")
     await memory.async_add(owner, "BACKUP-B", "acceptance", "explicit")

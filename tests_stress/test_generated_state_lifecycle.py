@@ -137,7 +137,9 @@ async def _converse(
     wire = _install_wire(monkeypatch, agent, replies)
     conversation_send = wire.send
 
-    async def send(request: httpx.Request, *args, **kwargs):
+    wire_failures = []
+
+    async def checked_send(request: httpx.Request, *args, **kwargs):
         if request.url.path == "/v1/embeddings":
             body = json.loads(request.content)
             inputs = body["input"]
@@ -159,6 +161,7 @@ async def _converse(
                 },
                 request=request,
             )
+        assert request.url.path == ("/v1/responses" if api == "responses" else "/v1/chat/completions"), (api, model, dict(agent.subentry.data), request.url.path)
         body = json.loads(request.content)
         _assert_valid_outgoing_history(body, api)
         if case:
@@ -180,6 +183,13 @@ async def _converse(
                 assert calls[index][0] in names, (calls[index][0], names, case)
         return await conversation_send(request, *args, **kwargs)
 
+    async def send(request: httpx.Request, *args, **kwargs):
+        try:
+            return await checked_send(request, *args, **kwargs)
+        except Exception as err:
+            wire_failures.append(repr(err))
+            raise
+
     monkeypatch.setattr(_raw_client(agent)._client, "send", send)
     result = await conversation.async_converse(
         hass=hass,
@@ -191,6 +201,8 @@ async def _converse(
         language="en",
         agent_id=entry.entry_id,
     )
+    if wire_failures:
+        raise AssertionError(wire_failures[0])
     assert result.response.error_code is None, (result.response.as_dict()["speech"],)
     assert result.response.as_dict()["speech"]["plain"]["speech"] == (
         expected_speech(config) if case else "Coverage reply"

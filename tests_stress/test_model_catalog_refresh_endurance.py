@@ -110,7 +110,7 @@ async def test_slow_invalid_and_failed_refresh_preserve_active_operations(
     stress_trace: list[dict],
 ) -> None:
     """Refresh publishes complete metadata and retains last good data on failure."""
-    entry = _make_entry("Catalog refresh endurance", include_ai_task=False)
+    entry = _make_entry("Catalog refresh endurance", include_ai_task=False, conversation_options={"api_mode": "chat_completions"})
     await _setup_entry(hass, entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
