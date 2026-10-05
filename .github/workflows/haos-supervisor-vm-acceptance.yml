@@ -42,7 +42,7 @@ jobs:
           RELEASE_JSON="${RUNNER_TEMP}/haos-release.json"
           curl -fsSL             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             "https://api.github.com/repos/home-assistant/operating-system/releases/latest"             > "$RELEASE_JSON"
 
-          python3 - <<'PY' "$RELEASE_JSON" > "${RUNNER_TEMP}/haos-asset.txt"
+          python3 - "$RELEASE_JSON" <<'PY' > "${RUNNER_TEMP}/haos-asset.txt"
           import json
           import sys
 
