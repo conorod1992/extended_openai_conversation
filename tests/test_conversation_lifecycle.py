@@ -56,6 +56,83 @@ async def test_failed_agent_initialization_returns_retryable_assist_error() -> N
     assert "not ready to process requests" in result.response.speech["plain"]["speech"]
 
 
+async def test_missing_continuity_manager_returns_retryable_assist_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An optional continuity manager outage does not enter provider processing."""
+    agent = object.__new__(conversation_module.ExtendedOpenAIAgentEntity)
+    agent._continuity = None
+    agent.subentry = SimpleNamespace(data={}, subentry_id="agent")
+    agent._resolve_live_guest_policy = lambda: SimpleNamespace(guest_active=False)
+    monkeypatch.setattr(
+        conversation_module, "voice_source_device_id", lambda _input: None
+    )
+    monkeypatch.setattr(
+        conversation_module,
+        "resolve_data_scope",
+        lambda *_args: SimpleNamespace(device_id=None),
+    )
+    user_input = SimpleNamespace(
+        as_llm_context=lambda _domain: SimpleNamespace(context=None),
+        conversation_id="conversation-2",
+        language="en",
+    )
+
+    result = await agent._async_process_with_continuity(user_input)
+
+    assert result.conversation_id == "conversation-2"
+    assert result.response.error_code is intent.IntentResponseErrorCode.UNKNOWN
+
+
+async def test_claimed_conversation_id_collision_is_replaced_and_released(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A conflicting claimed ID gets a replacement before processing the turn."""
+    agent = object.__new__(conversation_module.ExtendedOpenAIAgentEntity)
+    original = SimpleNamespace(
+        conversation_id="shared", key="key", claim_token="claim"
+    )
+    replaced = SimpleNamespace(
+        conversation_id="replacement", key="key", claim_token="claim"
+    )
+    expected = object()
+    continuity = SimpleNamespace(
+        async_resolve=AsyncMock(return_value=original),
+        async_replace_conversation_id=AsyncMock(return_value=replaced),
+        async_release=AsyncMock(),
+    )
+    agent._continuity = continuity
+    agent.subentry = SimpleNamespace(data={}, subentry_id="agent")
+    agent._resolve_live_guest_policy = lambda: SimpleNamespace(guest_active=False)
+    agent._async_process_claimed = AsyncMock(return_value=expected)
+    monkeypatch.setattr(
+        conversation_module, "voice_source_device_id", lambda _input: None
+    )
+    monkeypatch.setattr(
+        conversation_module,
+        "resolve_data_scope",
+        lambda *_args: SimpleNamespace(device_id=None),
+    )
+    monkeypatch.setattr(
+        conversation_module,
+        "claim_conversation_id",
+        lambda *_args, **_kwargs: "replacement",
+    )
+    user_input = SimpleNamespace(
+        as_llm_context=lambda _domain: SimpleNamespace(context=None),
+        conversation_id="shared",
+    )
+
+    result = await agent._async_process_with_continuity(user_input)
+
+    assert result is expected
+    continuity.async_replace_conversation_id.assert_awaited_once_with(
+        original, "replacement"
+    )
+    agent._async_process_claimed.assert_awaited_once()
+    continuity.async_release.assert_awaited_once_with("key", "claim")
+
+
 def test_reset_request_is_scoped_to_current_execution_context() -> None:
     token = begin_conversation_lifecycle()
     try:
