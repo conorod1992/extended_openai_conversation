@@ -1,6 +1,8 @@
 const params = new URLSearchParams(location.search);
 const route = params.get("route") || "assistant/basics";
 const backendUrl = params.get("backend");
+const browserClient = params.get("client") || "default";
+const frontendRoot = params.get("frontend_root");
 if (!backendUrl) throw new Error("Real HA browser fixture requires a backend URL");
 
 history.replaceState({}, "", `/extended-openai/${route}`);
@@ -34,6 +36,7 @@ const hass = {
     try {
       const response = await fetch(backendUrl, {
         method: "POST",
+        headers: {"X-EOAI-Browser-Client": browserClient},
         body: JSON.stringify(message),
       });
       const payload = await response.json();
@@ -53,11 +56,13 @@ window.browserHarness = {calls, outcomes, hass, windowErrors: [], rejections: []
 window.addEventListener("error", (event) => window.browserHarness.windowErrors.push(String(event.error || event.message)));
 window.addEventListener("unhandledrejection", (event) => window.browserHarness.rejections.push(String(event.reason)));
 
-if (params.get("bundle") === "1") {
-  const frontendRoot = "/custom_components/extended_openai_conversation_responses/frontend/";
-  const manifest = await (await fetch(`${frontendRoot}dist/manifest.json`)).json();
+if (frontendRoot) {
+  await import(`${frontendRoot.replace(/\\/$/, "")}/management-panel.js`);
+} else if (params.get("bundle") === "1") {
+  const shippedRoot = "/custom_components/extended_openai_conversation_responses/frontend/";
+  const manifest = await (await fetch(`${shippedRoot}dist/manifest.json`)).json();
   const entry = Object.values(manifest).find((item) => item.isEntry && item.name === "management");
-  await import(`${frontendRoot}dist/${entry.file}`);
+  await import(`${shippedRoot}dist/${entry.file}`);
 } else {
   await import("/custom_components/extended_openai_conversation_responses/frontend/management-panel.js");
 }
