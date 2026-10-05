@@ -244,7 +244,10 @@ async def test_inspection_with_missing_user_mapping_requires_selection_before_pr
             "data": base64.b64encode(b"data").decode(),
         },
     )
-    prepared = SimpleNamespace(available_sections=frozenset({"memory"}))
+    prepared = SimpleNamespace(
+        available_sections=frozenset({"memory"}),
+        summary=lambda: {"available_sections": ["memory"]},
+    )
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1")
     mapping = {
