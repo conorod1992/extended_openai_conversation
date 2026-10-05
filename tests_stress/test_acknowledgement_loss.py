@@ -30,6 +30,200 @@ from tests_stress.conftest import record
 from tests_stress.test_os_storage_faults import real_store_io as real_store_io
 
 
+async def _durable_subject(hass, owner, identity):
+    """Retained mutation consumers and fresh readers over genuine HA stores."""
+    from datetime import timedelta
+    from custom_components.extended_openai_conversation_responses.temporary_memory import (
+        TemporaryMemory,
+        _temporary_memory_store,
+    )
+    from homeassistant.util import dt as dt_util
+    from tests_real_ha.test_request_rules_script_semantics import _local
+
+    if owner == "memory":
+        storage = HomeAssistantMemoryStorage(hass, identity, "schedule")
+        manager = PersistentMemory(storage)
+        store = storage._store
+
+        async def mutate(marker):
+            await manager.async_initialize()
+            return await manager.async_add(
+                "schedule-owner", marker, "schedule", "explicit"
+            )
+
+        async def contents():
+            rows = await manager.async_list("schedule-owner", limit=100)
+            assert len({row.memory_id for row in rows}) == len(rows)
+            return [row.content for row in rows]
+    elif owner == "knowledge":
+        storage = HomeAssistantKnowledgeStorage(hass, identity, "schedule")
+        manager = KnowledgeLibrary(storage)
+        store = storage._store
+
+        async def mutate(marker):
+            await manager.async_initialize()
+            return await manager.async_create(marker, "Schedule witness", marker)
+
+        async def contents():
+            rows = await manager.async_list()
+            assert len({row["source_id"] for row in rows}) == len(rows)
+            return [row["title"] for row in rows]
+    elif owner == "rules":
+        store = RequestRuleStore(
+            hass, RULES_VERSION, f"extended_openai_conversation.{identity}"
+        )
+        manager = RequestRules(store)
+
+        async def mutate(marker):
+            await manager.async_initialize()
+            return await manager.async_create(
+                {**_local([{"stop": "Stored action"}], phrase=marker), "name": marker}
+            )
+
+        async def contents():
+            rows = manager.snapshot()["rules"]
+            assert len({row["id"] for row in rows}) == len(rows)
+            return [row["name"] for row in rows]
+    else:
+        assert owner == "temporary"
+        store = _temporary_memory_store(hass, identity, "schedule")
+        manager = TemporaryMemory(store)
+
+        async def mutate(marker):
+            return await manager.async_add(
+                "user:schedule-owner",
+                marker,
+                (dt_util.utcnow() + timedelta(days=1)).isoformat(),
+                owner_scope_id="user:schedule-owner",
+                source="manual",
+            )
+
+        async def contents():
+            rows = await manager.async_list(owner_scope_id="user:schedule-owner")
+            assert len({row.memory_id for row in rows}) == len(rows)
+            return [row.content for row in rows]
+
+    await manager.async_initialize()
+    return store, mutate, contents
+
+
+@pytest.mark.parametrize("owner", ["memory", "knowledge", "rules", "temporary"])
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        "before_commit",
+        "lost_ack",
+        "failed_readback",
+        "cancel_committed",
+        "cancel_queued",
+    ],
+)
+@pytest.mark.usefixtures("real_store_io")
+async def test_shared_durable_schedules_match_independent_acknowledged_outcomes(
+    hass, monkeypatch, stress_trace, owner, schedule
+):
+    """Acknowledgement, live state and independent disk state share one outcome model."""
+    identity = f"shared-{owner}-{schedule}"
+    store, mutate, contents = await _durable_subject(hass, owner, identity)
+    await mutate("BASELINE")
+    committed_first = schedule in {"lost_ack", "failed_readback", "cancel_committed"}
+    acknowledged = {"BASELINE"}
+    trace = []
+    entered, release, queued = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    write = store._async_write_data
+    load = store._async_load_data
+    writes = 0
+    failed_reads = 0
+
+    async def scheduled_write(data):
+        nonlocal writes
+        writes += 1
+        if writes != 1:
+            trace.append("successor_write")
+            return await write(data)
+        trace.append("first_entered")
+        if committed_first:
+            await write(data)
+            trace.append("first_committed")
+        entered.set()
+        await release.wait()
+        if schedule == "cancel_committed":
+            return
+        trace.append("acknowledgement_failed")
+        raise OSError("controlled durable acknowledgement failure")
+
+    async def scheduled_load(*args, **kwargs):
+        nonlocal failed_reads
+        if schedule == "failed_readback" and failed_reads == 0:
+            failed_reads += 1
+            trace.append("readback_failed")
+            raise OSError("controlled failed readback")
+        trace.append("readback_succeeded")
+        return await load(*args, **kwargs)
+
+    async def successor():
+        queued.set()
+        result = await mutate("SUCCESSOR")
+        acknowledged.add("SUCCESSOR")
+        trace.append("successor_acknowledged")
+        return result
+
+    with monkeypatch.context() as fault:
+        fault.setattr(store, "_async_write_data", scheduled_write)
+        fault.setattr(store, "_async_load_data", scheduled_load)
+        first = asyncio.create_task(mutate("UNCERTAIN_FIRST"))
+        await asyncio.wait_for(entered.wait(), 10)
+        second = asyncio.create_task(successor())
+        await asyncio.wait_for(queued.wait(), 10)
+        assert not second.done()
+        if schedule == "cancel_queued":
+            second.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await second
+            trace.append("successor_cancelled")
+        if schedule == "cancel_committed":
+            first.cancel()
+            trace.append("caller_cancelled")
+        release.set()
+        if schedule == "cancel_committed":
+            with pytest.raises(asyncio.CancelledError):
+                await first
+        else:
+            with pytest.raises(OSError, match="controlled durable"):
+                await first
+        if schedule != "cancel_queued":
+            await asyncio.wait_for(second, 10)
+    assert failed_reads == int(schedule == "failed_readback")
+    # Direct manager callers follow their initialization protocol. Separate public
+    # consumer journeys must recover without test-driven getters or initialization.
+    await mutate("RECOVERY")
+    acknowledged.add("RECOVERY")
+    expected = acknowledged | ({"UNCERTAIN_FIRST"} if committed_first else set())
+    live = await contents()
+    _, _, fresh_contents = await _durable_subject(hass, owner, identity)
+    durable = await fresh_contents()
+    assert set(live) == set(durable) == expected
+    assert len(live) == len(durable) == len(expected)
+    _, independent_mutate, independent_contents = await _durable_subject(
+        hass, owner, identity + "-independent"
+    )
+    await independent_mutate("INDEPENDENT_HEALTHY")
+    assert await independent_contents() == ["INDEPENDENT_HEALTHY"]
+    record(
+        stress_trace,
+        "summary",
+        campaign_action="shared_durable_schedule",
+        shared_durable_schedules=1,
+        owner=owner,
+        schedule=schedule,
+        realised_schedule=trace,
+        acknowledged=sorted(acknowledged),
+        allowed_state=sorted(expected),
+        live=sorted(live),
+        reloaded=sorted(durable),
+    )
+
+
 @pytest.mark.parametrize(
     "owner", ("persistent_memory", "request_rules", "knowledge", "delayed_tools")
 )
