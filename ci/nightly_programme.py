@@ -12,14 +12,16 @@ from ci.compatibility_evidence import check_ha_environment
 from ci.execution_contract import check_execution
 from ci.release_certification import (
     HEAVY_CAMPAIGNS,
+    MUTATION_CAMPAIGNS,
     REQUIRED_WORKFLOWS,
     SUPPORTED_SDK_LANES,
     UPGRADE_EPOCHS,
     GitHubActions,
     matrix_envelope_errors,
+    official_container_errors,
 )
 
-WORKFLOWS = (*REQUIRED_WORKFLOWS, "ha-browser-compatibility.yml", "deployment-architecture.yml")
+WORKFLOWS = REQUIRED_WORKFLOWS
 
 
 def programme_errors(candidate_sha, stable_version, required, evidence):
@@ -43,6 +45,17 @@ def programme_errors(candidate_sha, stable_version, required, evidence):
                     errors.append("Isolated runtime candidate/environment/result differs")
                 if set(proof.get("phases", [])) != {"seed", "recover", "recover-recorder-first", "recover-provider-first", "auth"}:
                     errors.append("Isolated runtime cold-start evidence is incomplete")
+        if workflow == "official-ha-container.yml":
+            proof = row.get("official")
+            if not isinstance(proof, dict):
+                errors.append("Official HA Container evidence is missing")
+            else:
+                errors += [
+                    f"{workflow}: {error}"
+                    for error in official_container_errors(proof, candidate_sha)
+                ]
+                if proof.get("homeassistant") != stable_version:
+                    errors.append("Official HA Container did not exercise resolved stable HA")
         for envelope in row.get("envelopes", []):
             if envelope.get("status") != "success":
                 errors.append(f"{workflow}: unsuccessful evidence envelope")
@@ -77,6 +90,20 @@ def collect(actions, candidate_sha):
         artifacts = actions.run_artifacts(run["id"])
         envelopes = []
         isolated = []
+        official = None
+        if workflow == "mutation.yml":
+            jobs = actions.run_jobs(run["id"])
+            successful = {
+                job.get("name")
+                for job in jobs
+                if job.get("conclusion") == "success"
+            }
+            required = {
+                f"Mutation campaign ({campaign})"
+                for campaign in MUTATION_CAMPAIGNS
+            }
+            if not required <= successful:
+                raise RuntimeError("Nightly mutation campaign inventory is incomplete")
         if workflow == "enhanced-stress.yml":
             indexes = [artifact for artifact in artifacts if artifact["name"].startswith("certification-index-")]
             if len(indexes) != 1:
@@ -111,7 +138,21 @@ def collect(actions, candidate_sha):
                 if len(selected) != 1:
                     raise RuntimeError(f"Missing isolated runtime evidence for {architecture}")
                 isolated.append(actions.artifact_json(selected[0], "certification.json"))
-        evidence[workflow] = {"run": run, "envelopes": envelopes, "isolated": isolated}
+        if workflow == "official-ha-container.yml":
+            selected = [
+                artifact
+                for artifact in artifacts
+                if artifact["name"] == "official-ha-container-evidence"
+            ]
+            if len(selected) != 1:
+                raise RuntimeError("Missing official HA Container evidence")
+            official = actions.artifact_json(selected[0], "certification.json")
+        evidence[workflow] = {
+            "run": run,
+            "envelopes": envelopes,
+            "isolated": isolated,
+            "official": official,
+        }
     return evidence
 
 
