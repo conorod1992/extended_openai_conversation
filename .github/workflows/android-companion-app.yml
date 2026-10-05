@@ -84,6 +84,17 @@ jobs:
           cat "$RUNNER_TEMP/companion-ha.log"
           exit 1
 
+      # Follow android-emulator-runner's Linux setup: the runner user must be
+      # able to open /dev/kvm before the action checks acceleration support.
+      - name: Enable and verify KVM acceleration
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+
       - name: Run real Companion app journey
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
@@ -92,6 +103,7 @@ jobs:
           target: google_apis
           profile: pixel_6
           disable-animations: true
+          disable-linux-hw-accel: false
           script: |
             set -euo pipefail
             adb install -r "$RUNNER_TEMP/home-assistant-companion.apk"
