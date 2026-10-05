@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import random
 from typing import Any
 
 import pytest
@@ -22,7 +23,6 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
 from custom_components.extended_openai_conversation_responses.request_rules import (
     MAX_RULE_NAME_LENGTH,
 )
-from homeassistant.components import conversation
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _say, _speech
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
@@ -31,7 +31,6 @@ from tests_real_ha.test_management_backend_acceptance import (
     _management_call,
     _management_response,
 )
-from tests_real_ha.test_management_command_contracts import _subentry
 
 
 def _native_tool(name: str) -> dict[str, Any]:
@@ -252,6 +251,51 @@ async def _management_call_setup(hass, entry):
     from tests_real_ha.test_management_backend_acceptance import _setup_entry
 
     await _setup_entry(hass, entry)
+
+
+@pytest.mark.asyncio
+async def test_bounded_seeded_unicode_memory_payloads_use_reviewed_limits(
+    hass, hass_ws_client
+):
+    """Seeded payload generation reaches the real WS handler with fixed expectations."""
+    # These are reviewed public limits, not classifications inferred from whether
+    # the current validator accepts a generated example.
+    assert MAX_MEMORY_CONTENT == 1000
+    assert MAX_CATEGORY_LENGTH == 64
+    seed = 0xE0A103
+    rng = random.Random(seed)
+    entry = _entry("Seeded management payloads")
+    await _management_call_setup(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+    alphabet = "AbÉ東🙂"
+
+    reviewed = [(1, True), (17, True), (999, True), (1000, True), (1001, False)]
+    accepted_ids = []
+    for index, (length, expected_accept) in enumerate(reviewed):
+        content = "".join(rng.choice(alphabet) for _ in range(length))
+        payload = {
+            "content": content,
+            "category": "g" * (1 + rng.randrange(MAX_CATEGORY_LENGTH)),
+            "subject": f"seed-{seed}-case-{index}",
+        }
+        response = await _management_response(
+            client,
+            entry=entry,
+            section="memories",
+            action="add",
+            **payload,
+        )
+        assert response["success"] is expected_accept, (
+            f"seed={seed} case={index} length={length} payload={payload!r} "
+            f"response={response!r}"
+        )
+        if expected_accept:
+            accepted_ids.append(response["result"]["memory"]["memory_id"])
+
+    listed = await _management_call(
+        client, entry=entry, section="memories", action="list"
+    )
+    assert [row["memory_id"] for row in listed["memories"]] == accepted_ids
 
 
 @pytest.mark.asyncio
