@@ -27,7 +27,7 @@ const reportFolder = artifactKey ? `playwright-report/${artifactKey}` : "playwri
 
 export default defineConfig({
   testDir: "./tests_browser",
-  testMatch: ["real-ha-shell.spec.mjs", "real-ha-golden.spec.mjs", "real-ha-credential-replacement.spec.mjs", "real-ha-compatibility.spec.mjs", "real-ha-professional-browser.spec.mjs", "real-ha-generated-programmes.spec.mjs"],
+  testMatch: ["real-ha-shell.spec.mjs", "real-ha-golden.spec.mjs", "real-ha-credential-replacement.spec.mjs", "real-ha-compatibility.spec.mjs", "real-ha-professional-browser.spec.mjs", "real-ha-generated-programmes.spec.mjs", "real-ha-https-proxy.spec.mjs"],
   grep: process.env.EOAI_NATIVE_OWNERSHIP === "1" ? /nightly ownership/ : process.env.EOAI_NATIVE_ENDURANCE === "1"
     ? profile === "chromium" ? /nightly native/ : /nightly native.*(?:Composite rejection|two assistants)/
     : undefined,
@@ -46,6 +46,7 @@ export default defineConfig({
   use: {
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
+    ignoreHTTPSErrors: process.env.EOAI_HTTPS_PROXY === "1",
   },
   projects: [
     {
