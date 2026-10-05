@@ -211,7 +211,8 @@ def test_adjust_schema_recurses_objects_arrays_and_compositions() -> None:
     assert nested["properties"]["nested"]["type"] == ["string", "null"]
     choice = schema["properties"]["choice"]
     assert _schema_explicitly_allows_null(choice)
-    object_variant = choice["anyOf"][1]
+    original_choice = choice["anyOf"][0]
+    object_variant = original_choice["anyOf"][1]
     assert object_variant["strict"] is True
     assert object_variant["required"] == ["flag"]
 
@@ -324,7 +325,10 @@ async def test_debug_stream_close_surfaces_all_delegate_close_shapes(close_kind:
     stream = debug._DebugAsyncStream(delegate, request)
     result = await stream.close()
 
-    assert result is None if close_kind == "missing" else result == "closed"
+    if close_kind == "missing":
+        assert result is None
+    else:
+        assert result == "closed"
     assert request.finished == [(True, None)]
 
 
