@@ -259,11 +259,13 @@ def test_skill_recovery_rejects_changed_first_install_candidate(tmp_path) -> Non
     installed, _root, target, staged, _backup, journal = _first_install_transaction(
         tmp_path
     )
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "SKILL.md").write_text("EXTERNAL")
     staged.rename(target)
     (target / "SKILL.md").unlink()
     target.rmdir()
-    target.mkdir()
-    (target / "SKILL.md").write_text("EXTERNAL")
+    external.rename(target)
 
     with pytest.raises(
         HomeAssistantError, match="target is not the interrupted candidate"
