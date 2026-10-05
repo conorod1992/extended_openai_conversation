@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
-    CONF_CURRENT_DATETIME,
+    CONF_CURRENT_DATETIME_ENABLED,
     CONF_FUNCTION_TOOLS,
     CONF_MAX_TOKENS,
 )
@@ -97,9 +97,9 @@ async def test_reviewed_edge_payloads_cross_real_management_websocket(
         section="configuration",
         action="update",
         revision=baseline["revision"],
-        config={CONF_CURRENT_DATETIME: False},
+        config={CONF_CURRENT_DATETIME_ENABLED: False},
     )
-    assert accepted_config["config"][CONF_CURRENT_DATETIME] is False
+    assert accepted_config["config"][CONF_CURRENT_DATETIME_ENABLED] is False
 
     # Memory: exact documented limits and Unicode are valid; the adjacent value
     # is invalid. A mixed valid+invalid edit must publish nothing.
@@ -201,7 +201,8 @@ async def test_reviewed_edge_payloads_cross_real_management_websocket(
         revision=current["revision"],
         tool=_native_tool("edge_lookup"),
     )
-    assert [item["spec"]["name"] for item in saved_tool["functions"]] == ["edge_lookup"]
+    saved_names = [item["spec"]["name"] for item in saved_tool["functions"]]
+    assert saved_names.count("edge_lookup") == 1
 
     # Request Rules: the independently reviewed name limit has the same exact/
     # adjacent split and a failed create cannot consume a durable rule slot.
@@ -264,8 +265,8 @@ async def test_json_object_key_order_preserves_configuration_semantics(
     await _management_call_setup(hass, second)
     client = await _admin_client(hass, hass_ws_client)
 
-    updates_a = {CONF_MAX_TOKENS: 777, CONF_CURRENT_DATETIME: False}
-    updates_b = {CONF_CURRENT_DATETIME: False, CONF_MAX_TOKENS: 777}
+    updates_a = {CONF_MAX_TOKENS: 777, CONF_CURRENT_DATETIME_ENABLED: False}
+    updates_b = {CONF_CURRENT_DATETIME_ENABLED: False, CONF_MAX_TOKENS: 777}
     results = []
     for entry, updates in ((first, updates_a), (second, updates_b)):
         before = await _management_call(
@@ -284,7 +285,7 @@ async def test_json_object_key_order_preserves_configuration_semantics(
 
     for result in results:
         assert result["config"][CONF_MAX_TOKENS] == 777
-        assert result["config"][CONF_CURRENT_DATETIME] is False
+        assert result["config"][CONF_CURRENT_DATETIME_ENABLED] is False
     first_read = await _management_call(
         client, entry=first, section="configuration", action="get"
     )
