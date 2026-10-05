@@ -441,6 +441,40 @@ async def test_function_repair_requires_both_identifiers() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("index", "message"),
+    [
+        ("0", "valid Function Tool index"),
+        (-1, "changed position"),
+        (100, "changed position"),
+    ],
+)
+async def test_function_repair_rejects_invalid_or_stale_single_tool_index(
+    monkeypatch: pytest.MonkeyPatch, index: Any, message: str
+) -> None:
+    """A stale UI index must not edit or delete a different Function Tool."""
+    data, _tools = _invalid_legacy_tool_data()
+    entry, subentry = _entry_and_subentry(data)
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    monkeypatch.setattr(
+        management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
+    )
+
+    with pytest.raises(HomeAssistantError, match=message):
+        await async_function_repair(
+            hass,
+            "admin",
+            True,
+            {
+                "action": "delete_one",
+                "entry_id": entry.entry_id,
+                "subentry_id": subentry.subentry_id,
+                "revision": repair.repair_revision(subentry),
+                "index": index,
+            },
+        )
+
+
 @pytest.mark.asyncio
 async def test_save_one_repairs_and_renames_group_reference_without_touching_sibling(
     monkeypatch: pytest.MonkeyPatch,
