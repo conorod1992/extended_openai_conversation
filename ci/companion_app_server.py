@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -11,7 +12,6 @@ import shutil
 import signal
 import sys
 import threading
-
 
 DOMAIN = "extended_openai_conversation_responses"
 USERNAME = "eoai-companion"
@@ -78,7 +78,7 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
     from homeassistant import bootstrap, runner
     from homeassistant.auth.const import GROUP_ID_ADMIN
     from homeassistant.auth.providers.homeassistant import async_get_provider
-    from homeassistant.components.onboarding import OnboardingStorage, STORAGE_VERSION
+    from homeassistant.components.onboarding import STORAGE_KEY, STORAGE_VERSION
     from homeassistant.components.onboarding.const import STEPS
     from homeassistant.config_entries import SOURCE_USER
     from homeassistant.const import CONF_API_KEY, CONF_NAME
@@ -108,6 +108,22 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
     provider_thread.start()
     endpoint = f"http://127.0.0.1:{provider_server.server_port}"
 
+    # Onboarding reads this once during bootstrap. Saving it after setup leaves
+    # the active views reporting an incomplete setup and redirects app login.
+    storage_dir = config_dir / ".storage"
+    storage_dir.mkdir(exist_ok=True)
+    (storage_dir / STORAGE_KEY).write_text(
+        json.dumps(
+            {
+                "version": STORAGE_VERSION,
+                "minor_version": 1,
+                "key": STORAGE_KEY,
+                "data": {"done": list(STEPS)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
     sys.path.insert(0, str(config_dir))
     hass = await bootstrap.async_setup_hass(
         runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
@@ -124,10 +140,6 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
     assert owner.is_owner
     credentials = await provider.async_get_or_create_credentials({"username": USERNAME})
     await hass.auth.async_link_user(owner, credentials)
-
-    await OnboardingStorage(
-        hass, STORAGE_VERSION, "onboarding", private=True
-    ).async_save({"done": list(STEPS)})
 
     # Start HA before creating EOAI. Several declared HA dependencies (notably
     # Recorder) establish bootstrap-owned runtime data during startup and must not
@@ -160,10 +172,8 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
+        with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop.set)
-        except NotImplementedError:
-            pass
 
     ready.write_text(
         json.dumps(
