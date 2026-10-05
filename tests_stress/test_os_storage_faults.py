@@ -549,6 +549,62 @@ async def test_request_rules_atomic_replace_erofs_rolls_back_and_recovers(
     )
 
 
+async def test_request_rules_target_path_temporarily_unavailable_recovers_next_mutation(
+    hass: HomeAssistant,
+    stress_trace: list[dict],
+    real_store_io: None,
+) -> None:
+    """Restore a temporarily unavailable Store path without reconstructing its owner."""
+    del real_store_io
+    key = "extended_openai_conversation.path_unavailable_rules"
+    store = RequestRuleStore(hass, RULES_VERSION, key)
+    rules = RequestRules(store)
+    await rules.async_initialize()
+    await rules.async_set_groups(
+        [{"id": "saved", "name": "Saved"}], expected_revision=rules.revision()
+    )
+    path = Path(store.path)
+    held = path.with_name(path.name + ".temporarily-unavailable")
+    before = path.read_bytes()
+
+    # Make only this test's target unavailable: preserve its committed generation
+    # beside it and place a directory at the expected file path. The real atomic
+    # writer must fail at its filesystem boundary without touching the runner disk.
+    path.rename(held)
+    path.mkdir()
+    try:
+        with pytest.raises(OSError):
+            await rules.async_set_groups(
+                [{"id": "lost", "name": "Lost"}], expected_revision=rules.revision()
+            )
+    finally:
+        path.rmdir()
+        held.rename(path)
+
+    assert path.read_bytes() == before
+    assert rules.snapshot()["groups"] == [{"id": "saved", "name": "Saved"}]
+    reopened = RequestRules(RequestRuleStore(hass, RULES_VERSION, key))
+    await reopened.async_initialize()
+    assert reopened.snapshot()["groups"] == [{"id": "saved", "name": "Saved"}]
+
+    # Recovery is proved by the next ordinary mutation on the same manager; the
+    # test does not rebuild or reinitialize it after storage becomes available.
+    await rules.async_set_groups(
+        [{"id": "recovered", "name": "Recovered"}],
+        expected_revision=rules.revision(),
+    )
+    fresh = RequestRules(RequestRuleStore(hass, RULES_VERSION, key))
+    await fresh.async_initialize()
+    assert fresh.snapshot()["groups"] == [{"id": "recovered", "name": "Recovered"}]
+    record(
+        stress_trace,
+        "os_storage_fault",
+        store="request_rules",
+        seam="temporarily_unavailable_target",
+        recovery_operation="same_manager_public_mutation",
+    )
+
+
 async def test_restore_journal_replace_eacces_never_claims_commit(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,

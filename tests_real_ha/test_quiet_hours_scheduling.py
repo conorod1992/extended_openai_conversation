@@ -193,6 +193,80 @@ async def test_real_ha_clock_callbacks_activate_and_restore(
 
 
 @pytest.mark.asyncio
+async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock_correction(
+    hass: HomeAssistant,
+) -> None:
+    """Wall-clock jumps are handled by registered HA callbacks, not direct repair calls."""
+    await hass.config.async_set_time_zone("UTC")
+    _satellite_id, media_player_id, wake_sound_id = _install_satellite_entities(
+        hass,
+        slug="clock-correction",
+        name="Clock Correction Voice",
+    )
+    calls: list[tuple[str, str]] = []
+    _install_control_services(hass, calls)
+
+    now = dt_util.utcnow().replace(second=0, microsecond=0)
+    start_at = now + timedelta(minutes=20)
+    end_at = now + timedelta(minutes=50)
+    manager = await async_get_quiet_hours(hass)
+    try:
+        await manager.async_update_config(
+            {
+                "enabled": True,
+                "start": start_at.strftime("%H:%M"),
+                "end": end_at.strftime("%H:%M"),
+                "max_volume": 0.20,
+                "wake_sound": "off",
+                "overrides": {},
+            }
+        )
+        await hass.async_block_till_done()
+        calls.clear()
+
+        # Leap over the first discovery interval and into the quiet period. This
+        # must be noticed by HA's already-registered timer/listener machinery.
+        async_fire_time_changed(hass, (start_at + timedelta(minutes=5)).astimezone(UTC))
+        await hass.async_block_till_done()
+        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
+            0.20
+        )
+        assert hass.states.get(wake_sound_id).state == "off"
+        assert hass.states.get(_STATE_ENTITY_ID).state == "on"
+        assert len(calls) == 2
+
+        # Correct the wall clock backwards to before the quiet period, then let a
+        # normal discovery interval elapse from that corrected clock. The policy
+        # must reflect wall time again rather than retaining stale future state.
+        corrected = start_at - timedelta(minutes=10)
+        async_fire_time_changed(hass, corrected.astimezone(UTC))
+        await hass.async_block_till_done()
+        async_fire_time_changed(
+            hass, (corrected + timedelta(minutes=5)).astimezone(UTC)
+        )
+        await hass.async_block_till_done()
+        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
+            0.60
+        )
+        assert hass.states.get(wake_sound_id).state == "on"
+        assert hass.states.get(_STATE_ENTITY_ID).state == "off"
+        assert len(calls) == 4
+
+        # A later healthy forward transition still applies exactly once, proving
+        # the correction did not duplicate or strand listener ownership.
+        async_fire_time_changed(hass, start_at.astimezone(UTC))
+        await hass.async_block_till_done()
+        assert hass.states.get(_STATE_ENTITY_ID).state == "on"
+        assert len(calls) == 6
+        async_fire_time_changed(hass, end_at.astimezone(UTC))
+        await hass.async_block_till_done()
+        assert hass.states.get(_STATE_ENTITY_ID).state == "off"
+        assert len(calls) == 8
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.asyncio
 async def test_real_ha_discovery_tick_normalizes_utc_to_ha_local_time(
     hass: HomeAssistant,
 ) -> None:

@@ -1006,6 +1006,7 @@
     "tests_real_ha/test_quiet_hours_resilience.py::test_enable_disable_services_enforce_admin_but_allow_system_automation",
     "tests_real_ha/test_quiet_hours_resilience.py::test_live_policy_replacement_restores_old_policy_before_applying_new_one",
     "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_clock_callbacks_activate_and_restore",
+    "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_registered_listeners_reconcile_forward_and_backward_clock_correction",
     "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_discovery_tick_normalizes_utc_to_ha_local_time",
     "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_fall_back_duplicate_time_is_one_quiet_period",
     "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_spring_forward_normalizes_nonexistent_start_time",
@@ -1637,6 +1638,7 @@
     "tests_stress/test_os_storage_faults.py::test_public_consumer_recovers_first_after_commit_and_failed_readback[responses-knowledge]",
     "tests_stress/test_os_storage_faults.py::test_public_consumer_recovers_first_after_commit_and_failed_readback[responses-memory]",
     "tests_stress/test_os_storage_faults.py::test_request_rules_atomic_replace_erofs_rolls_back_and_recovers",
+    "tests_stress/test_os_storage_faults.py::test_request_rules_target_path_temporarily_unavailable_recovers_next_mutation",
     "tests_stress/test_os_storage_faults.py::test_restore_journal_replace_eacces_never_claims_commit",
     "tests_stress/test_os_storage_faults.py::test_temporary_memory_failure_does_not_publish_or_reload_new_fact",
     "tests_stress/test_os_storage_faults.py::test_transactional_store_writer_failure_is_observable_and_retryable[archive_metadata]",
@@ -2048,12 +2050,7 @@
     "tests_stress/test_private_content_destinations.py::test_application_oracle_detects_disclosure_before_upload_redaction[unrelated_store]",
     "tests_stress/test_private_content_destinations.py::test_authorized_retention_does_not_allow_credentials_or_unrelated_destinations",
     "tests_stress/test_private_content_destinations.py::test_populated_journey_respects_raw_application_destinations[chat_completions]",
-    "tests_stress/test_private_content_destinations.py::test_populated_journey_respects_raw_application_destinations[responses]",
-    "tests_stress/test_generated_editor_journey.py::test_generated_programmes_survive_native_edit_and_process_restart[chat_completions]",
-    "tests_stress/test_generated_editor_journey.py::test_generated_programmes_survive_native_edit_and_process_restart[responses]",
-    "tests_stress/test_generated_editor_journey.py::test_programme_oracle_rejects_dropped_falsy_or_unicode_values",
-    "tests_stress/test_generated_editor_journey.py::test_utf8_rest_limits_count_bytes_separately_from_schema_characters[False]",
-    "tests_stress/test_generated_editor_journey.py::test_utf8_rest_limits_count_bytes_separately_from_schema_characters[True]"
+    "tests_stress/test_private_content_destinations.py::test_populated_journey_respects_raw_application_destinations[responses]"
   ],
   "browser": {
     "browser": [
@@ -2291,8 +2288,7 @@
       "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly non-admin Usage omits detail clearing and retention controls",
       "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly run details show failed provider requests, recover from errors, and ignore closed or switched dialogs",
       "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage history windows load lazily, cache selections, page all history, and keep charts responsive",
-      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection",
-      "tests_browser/real-ha-generated-programmes.spec.mjs::chromium::real-ha-generated-programmes.spec.mjs::generated multilingual programmes retain semantics through native editor round trips"
+      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection"
     ],
     "browser-firefox": [
       "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
@@ -2652,12 +2648,7 @@
       "native_registry_fetch_recoveries": 1,
       "production_backup_browser_journeys": 1,
       "native_control_endurance_journeys": 1,
-      "genuine_locale_timezone_journeys": 1,
-      "generated_editor_programmes": 32,
-      "multilingual_public_journeys": 16,
-      "generated_editor_restarts": 2,
-      "unicode_character_boundary_cases": 16,
-      "unicode_byte_boundary_cases": 2
+      "genuine_locale_timezone_journeys": 1
     },
     "browser-firefox": {
       "multi_tab_conflicts": 1,
@@ -2894,7 +2885,6 @@
       "tests_stress/test_browser_backend_resilience.py",
       "tests_stress/test_browser_management_contract.py",
       "tests_stress/test_browser_multi_tab.py",
-      "tests_stress/test_generated_editor_journey.py",
       "tests_stress/test_management_ws_contract.py"
     ],
     "browser-firefox": [
