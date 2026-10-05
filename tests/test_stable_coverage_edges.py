@@ -19,6 +19,7 @@ from custom_components.extended_openai_conversation_responses.request_rule_packs
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     RequestRules,
+    validate_rule,
 )
 from tests.test_request_rules import MemoryStore, local_rule
 
@@ -248,17 +249,9 @@ def test_rule_pack_validation_rejects_unrecognized_format() -> None:
 
 @pytest.mark.asyncio
 async def test_rule_pack_append_enforces_destination_rule_limit() -> None:
-    target = RequestRules(
-        MemoryStore(
-            {
-                "rules": [
-                    local_rule(f"Existing {index}", order=index)
-                    for index in range(request_rule_packs.MAX_RULES)
-                ]
-            }
-        )
-    )
+    target = RequestRules(MemoryStore({"rules": []}))
     await target.async_initialize()
+    target._rules = [{} for _ in range(request_rule_packs.MAX_RULES)]
     source = RequestRules(MemoryStore({"rules": [local_rule("Imported")]}))
     await source.async_initialize()
     prepared = validate_rule_pack(export_rule_pack(source, "all"))
