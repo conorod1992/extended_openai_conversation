@@ -96,6 +96,7 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
         "frontend:\n"
         "api:\n"
         "websocket_api:\n"
+        "mobile_app:\n"
         "recorder:\n"
         "onboarding:\n",
         encoding="utf-8",
