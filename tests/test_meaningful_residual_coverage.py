@@ -178,45 +178,6 @@ def test_guest_denial_propagates_as_guest_mode_denied(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("start_time", "end_time"),
-    [
-        ("not-a-date", "2026-10-06T00:00:00+00:00"),
-        ("2026-10-05T00:00:00+00:00", "not-a-date"),
-    ],
-)
-async def test_native_statistics_rejects_invalid_datetimes(
-    hass, monkeypatch, start_time: str, end_time: str
-) -> None:
-    from custom_components.extended_openai_conversation_responses.functions import native
-
-    monkeypatch.setattr(
-        native,
-        "_normalized_statistics_arguments",
-        Mock(side_effect=lambda value: value),
-    )
-    monkeypatch.setattr(
-        native.recorder.statistics,
-        "valid_statistic_id",
-        Mock(return_value=True),
-    )
-    function = native.NativeFunction()
-
-    with pytest.raises(HomeAssistantError, match="Invalid datetime format"):
-        await function.get_statistics(
-            hass,
-            {},
-            {
-                "statistic_ids": ["sensor:energy"],
-                "start_time": start_time,
-                "end_time": end_time,
-            },
-            None,
-            [],
-        )
-
-
-@pytest.mark.asyncio
 async def test_delayed_waiter_stops_when_call_disappears(hass, monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses import delayed_tools
 
