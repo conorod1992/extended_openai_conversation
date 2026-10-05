@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "ha-version-upgrade-acceptance.yml"
 JOURNEY = ROOT / "tests_real_ha" / "test_ha_version_upgrade_acceptance.py"
