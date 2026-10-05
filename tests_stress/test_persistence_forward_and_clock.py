@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -261,7 +262,7 @@ async def test_populated_local_calendar_journey_preserves_visible_expiry_and_rec
     """One native runtime crosses DST, expiry, pruning and reload with visible effects."""
     import json
     from collections import Counter
-    from copy import deepcopy
+    from pathlib import Path
     from custom_components.extended_openai_conversation_responses.const import (
         DEFAULT_CONF_FUNCTION_TOOLS,
     )
@@ -327,14 +328,18 @@ async def test_populated_local_calendar_journey_preserves_visible_expiry_and_rec
     hass.states.async_set(_ENTITY_ID, "on")
     async_expose_entity(hass, "conversation", _ENTITY_ID, True)
     effects = []
+    service_entered, release_service = asyncio.Event(), asyncio.Event()
 
     async def turn_off(call):
         effects.append(dt_util.utcnow().isoformat())
         hass.states.async_set(_ENTITY_ID, "off", context=call.context)
+        service_entered.set()
+        await release_service.wait()
 
     hass.services.async_register("light", "turn_off", turn_off)
     delayed = await async_setup_delayed_tools(hass)
     call_id = await _schedule_delayed_call(agent, delayed, user, "calendar-delayed")
+    scheduled_worker = delayed._tasks[call_id]
     assert not effects and hass.states.get(_ENTITY_ID).state == "on"
     expires = base + timedelta(hours=1)
     await agent._temporary_memory.async_add_owned(
@@ -397,8 +402,20 @@ async def test_populated_local_calendar_journey_preserves_visible_expiry_and_rec
             )
         if agent._temporary_memory._prune_save_task is not None:
             await agent._temporary_memory._prune_save_task
+        await asyncio.wait_for(service_entered.wait(), 10)
+        assert not scheduled_worker.done()
+        assert delayed._records[call_id].status == "executing"
+        durable = json.loads(Path(delayed._store.path).read_text())["data"]["calls"]
+        assert len(durable) == 1 and durable[0]["call_id"] == call_id
+        assert durable[0]["status"] == "executing"
+        assert len(effects) == 1 and hass.states.get(_ENTITY_ID).state == "off"
+        # The service effect precedes acknowledgement and durable finalization.
+        # This native asyncio owner is not drained by HA's tracked-job helper.
+        release_service.set()
+        await asyncio.wait_for(asyncio.shield(scheduled_worker), 10)
         await hass.async_block_till_done()
         assert call_id not in delayed._records
+        assert json.loads(Path(delayed._store.path).read_text())["data"]["calls"] == []
         assert len(effects) == 1 and hass.states.get(_ENTITY_ID).state == "off", effects
         second = await say("Calendar owner after expiry")
         assert "CALENDAR TEMPORARY MARKER" not in second
@@ -439,6 +456,7 @@ async def test_populated_local_calendar_journey_preserves_visible_expiry_and_rec
             stress_trace,
             "summary",
             integrated_calendar_journeys=1,
+            delayed_worker_settlement_checks=1,
             api=api_mode,
             day=day,
             visible_boundaries=visible,
@@ -447,5 +465,7 @@ async def test_populated_local_calendar_journey_preserves_visible_expiry_and_rec
             pruned_archive=pruned,
         )
     finally:
+        release_service.set()
+        await asyncio.gather(scheduled_worker, return_exceptions=True)
         await quiet.async_shutdown()
         assert await hass.config_entries.async_unload(agent.entry.entry_id)

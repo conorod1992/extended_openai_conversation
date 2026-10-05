@@ -896,3 +896,19 @@ def test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence(defect
         policy["minimums"]["process-chaos"][metric] = policy["minimums"]["runtime"][metric]
     with pytest.raises(AssertionError):
         _assert_native_resource_floor_ownership(policy)
+
+
+def test_calendar_journeys_require_native_worker_and_durable_settlement_evidence():
+    policy = json.loads(CONTRACT.read_text())
+    prefix = (
+        "tests_stress/test_persistence_forward_and_clock.py::"
+        "test_populated_local_calendar_journey_preserves_visible_expiry_and_recovery["
+    )
+    journeys = {
+        node for node in expected_cases(policy, "persistence") if node.startswith(prefix)
+    }
+    assert len(journeys) == 4
+    assert (
+        policy["minimums"]["persistence"]["delayed_worker_settlement_checks"]
+        == len(journeys)
+    )

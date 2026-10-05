@@ -20,6 +20,7 @@ COUNT_METRICS = {
     "populated_ageing_features",
     "generated_public_schedule_cases",
     "integrated_calendar_journeys",
+    "delayed_worker_settlement_checks",
     "shared_backend_business_cases",
     "shared_durable_schedules",
     "consumer_first_recoveries",

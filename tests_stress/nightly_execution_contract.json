@@ -2019,7 +2019,8 @@
     "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[missing_websocket]",
     "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[wrong_pre_gc]",
     "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[wrong_websocket]",
-    "tests_stress/test_execution_contract.py::test_resource_floors_follow_the_executed_native_campaign"
+    "tests_stress/test_execution_contract.py::test_resource_floors_follow_the_executed_native_campaign",
+    "tests_stress/test_execution_contract.py::test_calendar_journeys_require_native_worker_and_durable_settlement_evidence"
   ],
   "browser": {
     "browser": [
@@ -2747,7 +2748,8 @@
       "compound_optional_manager_faults": 4,
       "shared_durable_schedules": 20,
       "consumer_first_recoveries": 4,
-      "integrated_calendar_journeys": 4
+      "integrated_calendar_journeys": 4,
+      "delayed_worker_settlement_checks": 4
     },
     "diagnostics": {
       "artifact_privacy_probes": 4
