@@ -806,7 +806,7 @@ jobs:
       - name: Run lifecycle contract in the constructed exact runtime
         if: steps.dev-image.outputs.match != 'true'
         run: bash ci/run_ha_lifecycle_contract.sh
-      - name: Return dev container evidence ownership to the runner
+      - name: Return dev test evidence ownership to the runner
         if: always() && steps.dev-image.outputs.match == 'true'
         run: sudo chown -R "$(id -u):$(id -g)" stress-artifacts
       - name: Summarize lifecycle contract
@@ -815,7 +815,20 @@ jobs:
           ENHANCED_JOB_STATUS: ${{ job.status }}
         run: |
           python ci/enhanced_evidence.py sanitize-dir stress-artifacts
-          python ci/enhanced_summary.py stress-artifacts
+          if [ "${{ steps.dev-image.outputs.match }}" = "true" ]; then
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+              -e ENHANCED_JOB_STATUS -e STRESS_SEED -e STRESS_INTENSITY \
+              -e STRESS_CAMPAIGN -e HA_POINT \
+              -e EOAI_CONTAINER_IMAGE="ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:ha-dev-${{ steps.python.outputs.sha }}" \
+              "ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:ha-dev-${{ steps.python.outputs.sha }}" \
+              python ci/enhanced_summary.py stress-artifacts | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            python ci/enhanced_summary.py stress-artifacts
+          fi
+      - name: Return dev container evidence ownership to the runner
+        if: always() && steps.dev-image.outputs.match == 'true'
+        run: sudo chown -R "$(id -u):$(id -g)" stress-artifacts
       - name: Upload lifecycle evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
