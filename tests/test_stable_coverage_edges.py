@@ -75,13 +75,17 @@ def test_model_metadata_rejects_conditional_tool_without_condition() -> None:
 
 def test_model_metadata_rejects_tool_support_on_unavailable_api() -> None:
     model = _valid_model()
-    unavailable = next(
-        (api for api, enabled in model["api"].items() if not enabled),
-        None,
-    )
-    if unavailable is None:
-        pytest.skip("Bundled fixture currently exposes every API")
+    # Tool rules cover the two request APIs, while the catalogue also tracks the
+    # legacy completions API. Disable a request API and keep every surrounding
+    # capability internally consistent so validation reaches the intended guard.
+    unavailable = "chat_completions"
+    model["api"][unavailable] = False
+    model["reasoning"]["by_api"][unavailable]["efforts"] = []
+    model["function_calling"][unavailable] = False
+    if model["function_calling"]["preferred_api"] == unavailable:
+        model["function_calling"]["preferred_api"] = "responses"
     model["tools"]["function"][unavailable] = {"support": "always"}
+    model["tools"]["web_search"][unavailable] = {"support": "never"}
 
     with pytest.raises(ValueError, match="available API"):
         model_catalog._validate_metadata(model, model_entry=True)
