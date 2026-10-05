@@ -34,9 +34,10 @@ const hass = {
     calls.push(trace);
     sessionStorage.setItem("eocRealHaCalls", JSON.stringify(calls));
     try {
-      const response = await fetch(backendUrl, {
+      const target = new URL(backendUrl);
+      target.searchParams.set("client", browserClient);
+      const response = await fetch(target, {
         method: "POST",
-        headers: {"X-EOAI-Browser-Client": browserClient},
         body: JSON.stringify(message),
       });
       const payload = await response.json();
