@@ -244,9 +244,10 @@ async def test_inspection_with_missing_user_mapping_requires_selection_before_pr
             "data": base64.b64encode(b"data").decode(),
         },
     )
+    selected_section = transfer.SECTION_PERSISTENT_MEMORY
     prepared = SimpleNamespace(
-        available_sections=frozenset({"memory"}),
-        summary=lambda: {"available_sections": ["memory"]},
+        available_sections=frozenset({selected_section}),
+        summary=lambda: {"available_sections": [selected_section]},
     )
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1")
@@ -275,22 +276,22 @@ async def test_inspection_with_missing_user_mapping_requires_selection_before_pr
     monkeypatch.setattr(
         transfer,
         "inspection_for_frontend",
-        lambda _prepared: {"available_sections": ["memory"]},
+        lambda _prepared: {"available_sections": [selected_section]},
     )
 
     inspection = await backup_transfer._inspect_import(
         hass,
         "entry-1",
         "agent-1",
-        {"session_id": session_id, "sections": ["memory"]},
+        {"session_id": session_id, "sections": [selected_section]},
     )
 
     assert inspection["preview_token"] is None
     assert inspection["preview"]["user_scope_mapping"] == mapping
-    assert inspection["preview"]["selected_sections"] == ["memory"]
+    assert inspection["preview"]["selected_sections"] == [selected_section]
     materialize.assert_not_awaited()
     session = backup_transfer._imports(hass)[session_id]
-    assert session.preview_sections == ("memory",)
+    assert session.preview_sections == (selected_section,)
     assert session.preview_user_scope_mappings is None
 
 

@@ -38,6 +38,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     RequestRuleRuntime,
     RequestRules,
     RequestRuleStore,
+    _assign_missing_result_step_ids,
     _bounded_function_result,
     _MatchCursor,
     _validate_result_dependencies,
@@ -48,6 +49,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     request_rule_session_id,
     resolve_result_values,
     validate_rule,
+    validate_rule_groups,
     validate_wording_groups,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -108,6 +110,50 @@ async def manager(*rules, defaults=None):
     )
     await result.async_initialize()
     return result
+
+
+@pytest.mark.parametrize("fuzzy", [False, True])
+async def test_direct_match_skips_previously_excluded_rule_ids(fuzzy: bool) -> None:
+    settings = {**DEFAULT_MATCHING, "fuzzy": fuzzy}
+    rule = local_rule("Kitchen lights", phrases=["turn on the kitchen light"])
+    rule["matching"] = settings
+    fallback = local_rule("Fallback lights", phrases=["turn on the kitchen light"])
+    fallback["matching"] = settings
+    rules = await manager(rule, fallback)
+
+    match = rules.match("turn on the kitchen light", frozenset({rule["id"]}))
+
+    assert match is not None
+    assert match.rule["id"] == fallback["id"]
+
+
+def test_rule_group_metadata_and_result_step_id_assignment_are_stable() -> None:
+    assert validate_rule_groups([{"id": "rooms", "name": "Rooms"}]) == [
+        {"id": "rooms", "name": "Rooms"}
+    ]
+    with pytest.raises(ValueError, match="group ids must be unique"):
+        validate_rule_groups(
+            [{"id": "rooms", "name": "Rooms"}, {"id": "rooms", "name": "Other"}]
+        )
+
+    rule = {
+        "action": {
+            "actions": [
+                {"type": "function", "result_alias": "reading"},
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "status"},
+                },
+                {"type": "function", "name": "no-result"},
+            ]
+        }
+    }
+    assigned = _assign_missing_result_step_ids(rule)
+
+    assert rule["action"]["actions"][0].get("step_id") is None
+    assert len(assigned["action"]["actions"][0]["step_id"]) == 32
+    assert len(assigned["action"]["actions"][1]["data"]["step_id"]) == 32
+    assert "step_id" not in assigned["action"]["actions"][2]
 
 
 async def test_only_when_uses_first_eligible_text_match_and_preview_trace(

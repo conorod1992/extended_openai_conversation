@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from copy import deepcopy
+import gc
 from types import SimpleNamespace
 from typing import Any
 
@@ -28,6 +29,7 @@ from custom_components.extended_openai_conversation_responses.management_functio
     isolated_function_tools,
 )
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.config_entries import ConfigEntryState
 
 
 class _FakeConfigEntries:
@@ -107,6 +109,62 @@ def test_function_tools_issue_isolates_malformed_yaml() -> None:
 
     assert configured == []
     assert issue is not None
+
+
+def test_editable_function_tool_parser_preserves_broken_and_nontext_values() -> None:
+    malformed = "[unterminated"
+    assert repair.editable_function_tools({CONF_FUNCTION_TOOLS: malformed}) == malformed
+    assert repair.editable_function_tools({CONF_FUNCTION_TOOLS: "---\n"}) == []
+
+    raw = [{"spec": {"name": "tool"}}]
+    editable = repair.editable_function_tools({CONF_FUNCTION_TOOLS: raw})
+    editable[0]["spec"]["name"] = "edited"
+    assert raw[0]["spec"]["name"] == "tool"
+    assert repair.editable_function_tools({}) == []
+
+
+def test_revision_lineage_handles_unweakrefable_and_prunes_dead_owners() -> None:
+    lightweight = SimpleNamespace()
+    repair._remember_revision_lineage(lightweight, {}, "agent", "revision")
+    assert id(lightweight) not in repair._revision_lineages
+
+    class WeakOwner:
+        pass
+
+    owner = WeakOwner()
+    key = id(owner)
+    repair._remember_revision_lineage(owner, {}, "agent", "revision")
+    assert key in repair._revision_lineages
+    del owner
+    gc.collect()
+    assert key not in repair._revision_lineages
+
+
+async def test_projection_prewarm_discards_yaml_after_subentry_replacement(
+    monkeypatch,
+) -> None:
+    original_data = {CONF_FUNCTION_TOOLS: "[]"}
+    entry, subentry = _entry_and_subentry(original_data)
+    entry.state = ConfigEntryState.LOADED
+    projection = SimpleNamespace(
+        snapshot=None,
+        repair_state=None,
+        data=original_data,
+        title=subentry.title,
+    )
+    monkeypatch.setattr(
+        repair, "persisted_config_projection", lambda _subentry: projection
+    )
+
+    async def executor(function, configured):
+        assert function is yaml.safe_load
+        subentry.data = {CONF_FUNCTION_TOOLS: configured}
+        return function(configured)
+
+    hass = SimpleNamespace(async_add_executor_job=executor)
+    await repair.async_prewarm_persisted_config_projection(hass, entry, subentry)
+
+    assert subentry.data is not original_data
 
 
 def test_function_tools_issue_rejects_collection_level_duplicate_names() -> None:
