@@ -1,0 +1,124 @@
+appId: io.homeassistant.companion.android
+---
+- launchApp:
+    clearState: true
+    permissions:
+      all: allow
+
+- tapOn:
+    text: '(?s)Connect to my Home.*Assistant server'
+    retryTapIfNoChange: true
+
+- tapOn:
+    text: "Don.t allow"
+    optional: true
+    retryTapIfNoChange: true
+
+- tapOn:
+    text: "Enter address manually"
+    retryTapIfNoChange: true
+
+- assertVisible:
+    text: '(?s)What is your Home.*Assistant address.*'
+- tapOn: "http://homeassistant.local:8123"
+- inputText: ${HOME_ASSISTANT_URL}
+- hideKeyboard
+- tapOn:
+    text: "Connect"
+    retryTapIfNoChange: true
+
+- extendedWaitUntil:
+    visible: "Forgot password?"
+    timeout: 60000
+
+- tapOn: "Username"
+- inputText: ${HOME_ASSISTANT_USERNAME}
+- tapOn: "Password"
+- inputText: ${HOME_ASSISTANT_PASSWORD}
+- hideKeyboard
+- pressKey: Enter
+- tapOn:
+    text: "Authorize"
+    optional: true
+
+- extendedWaitUntil:
+    visible: "How would you like to name this device?"
+    timeout: 60000
+- tapOn:
+    text: "Save"
+    retryTapIfNoChange: true
+
+- extendedWaitUntil:
+    visible: "Got it"
+    timeout: 30000
+- tapOn:
+    text: "Got it"
+    retryTapIfNoChange: true
+
+- extendedWaitUntil:
+    visible: "Use this device's location for automations"
+    timeout: 15000
+- tapOn:
+    text: "Do not share my location"
+    retryTapIfNoChange: true
+
+- extendedWaitUntil:
+    visible: "Let us help secure your remote connection"
+    timeout: 15000
+- tapOn:
+    text: "Less secure: Do not allow this app to know when you're home"
+    retryTapIfNoChange: true
+- tapOn:
+    text: "Next"
+    retryTapIfNoChange: true
+
+- extendedWaitUntil:
+    visible:
+      text: '(?i)^(Overview|More details|Do not allow)$'
+    timeout: 60000
+- tapOn:
+    text: "Do not allow"
+    optional: true
+    retryTapIfNoChange: true
+
+- extendedWaitUntil:
+    visible:
+      text: '(?i)^Overview$'
+    timeout: 60000
+
+# Use the Companion app's exported navigation boundary rather than manipulating
+# WebView state. This exercises the app -> HA frontend transition users actually use.
+- openLink: "homeassistant://navigate/extended-openai/assistant/basics"
+
+- extendedWaitUntil:
+    visible: "Extended OpenAI"
+    timeout: 60000
+- extendedWaitUntil:
+    visible: "Agent name"
+    timeout: 30000
+
+# Edit through the WebView using the Android on-screen input path.
+- tapOn:
+    text: "Companion acceptance assistant"
+- eraseText: 100
+- inputText: "Companion app saved title"
+- hideKeyboard
+- tapOn:
+    text: "Save changes"
+    retryTapIfNoChange: true
+- extendedWaitUntil:
+    visible: "Companion app saved title"
+    timeout: 30000
+
+# Exercise native Activity/WebView suspension and restoration.
+- pressKey: Home
+- launchApp
+- extendedWaitUntil:
+    visible: "Companion app saved title"
+    timeout: 60000
+
+# Re-enter through the app's navigation handler to rule out a retained DOM-only value.
+- openLink: "homeassistant://navigate/extended-openai/assistant/basics"
+- extendedWaitUntil:
+    visible: "Companion app saved title"
+    timeout: 60000
