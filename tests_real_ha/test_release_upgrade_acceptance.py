@@ -203,7 +203,10 @@ class _ActiveUpgradeWire:
                         {
                             "domain": "upgrade_probe",
                             "service": "record",
-                            "service_data": {"marker": "ACTIVE_UPGRADE_EFFECT"},
+                            "service_data": {
+                                "entity_id": ["switch.upgrade_probe_target"],
+                                "marker": "ACTIVE_UPGRADE_EFFECT",
+                            },
                         }
                     ]
                 },
@@ -592,7 +595,14 @@ async def _released_active_phase(hass: Any, config_dir: Path) -> None:
 
     effect_path = config_dir / _ACTIVE_EFFECT_FILE
 
+    from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+
+    target_entity = "switch.upgrade_probe_target"
+    hass.states.async_set(target_entity, "on", {"friendly_name": "Upgrade Probe Target"})
+    async_expose_entity(hass, conversation.DOMAIN, target_entity, True)
+
     async def record_effect(call: Any) -> None:
+        assert call.data.get("entity_id") == [target_entity]
         payload = {"marker": call.data.get("marker"), "context_id": call.context.id}
         with effect_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, sort_keys=True) + "\n")
