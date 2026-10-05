@@ -313,6 +313,7 @@ async def async_test_agent(
         "strict": True,
     }
     usage_manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
+    probe_budget_exhausted = False
     try:
         if api_mode == API_MODE_RESPONSES:
             tools: list[dict[str, Any]] = [noop_tool] if function_tools_required else []
@@ -327,7 +328,16 @@ async def async_test_agent(
             if tools:
                 response_kwargs.update(tools=tools, tool_choice="none")
             response = await client.responses.create(**response_kwargs)
-            ensure_successful_responses_result(response)
+            probe_budget_exhausted = (
+                getattr(response, "error", None) is None
+                and getattr(response, "status", None) == "incomplete"
+                and getattr(
+                    getattr(response, "incomplete_details", None), "reason", None
+                )
+                == "max_output_tokens"
+            )
+            if not probe_budget_exhausted:
+                ensure_successful_responses_result(response)
         else:
             kwargs: dict[str, Any] = {
                 "model": model,
@@ -350,6 +360,10 @@ async def async_test_agent(
                     tool_choice="none",
                 )
             response = await client.chat.completions.create(**kwargs)
+            probe_budget_exhausted = any(
+                getattr(choice, "finish_reason", None) == "length"
+                for choice in getattr(response, "choices", [])
+            )
     except OpenAIError as err:
         is_authentication_failure = (
             classify_config_provider_error(err) == "invalid_auth"
@@ -411,7 +425,16 @@ async def async_test_agent(
             api_mode=usage_api_mode,
         )
         checks.append(
-            _check("Model access", "Passed", f"Minimal {model} request succeeded")
+            _check(
+                "Model access",
+                "Warning" if probe_budget_exhausted else "Passed",
+                (
+                    "The provider accepted the model and test schemas, but the minimal "
+                    "test reached its output limit before completing a reply."
+                    if probe_budget_exhausted
+                    else f"Minimal {model} request succeeded"
+                ),
+            )
         )
         if function_tools_required:
             checks.append(
