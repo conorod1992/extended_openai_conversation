@@ -994,3 +994,166 @@ def test_runtime_failure_token_length_can_be_recorded_as_local_reply() -> None:
     assert chat_log.content[0].agent_id == "conversation.agent"
     assert result.conversation_id == "conversation-1"
     entity._fire_conversation_finished.assert_called_once()
+
+
+
+def test_request_rule_groups_reject_duplicate_ids() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    with pytest.raises(ValueError, match="duplicate"):
+        request_rules.validate_rule_groups(
+            [
+                {"id": "same", "name": "First"},
+                {"id": "same", "name": "Second"},
+            ]
+        )
+
+
+def test_request_rule_result_step_ids_are_assigned_only_at_result_boundaries() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    rule = {
+        "action": {
+            "actions": [
+                "ignored",
+                {
+                    "type": "function",
+                    "name": "demo",
+                    "result_alias": "first",
+                },
+                {
+                    "type": "function",
+                    "name": "demo",
+                    "result_alias": "existing",
+                    "step_id": "already-set",
+                },
+                {
+                    "action": (
+                        f"{request_rules.DOMAIN}."
+                        f"{request_rules.SERVICE_CALL_FUNCTION}"
+                    ),
+                    "data": {"result_alias": "second"},
+                },
+                {
+                    "action": "light.turn_on",
+                    "data": {"result_alias": "not-a-function-result"},
+                },
+            ]
+        }
+    }
+
+    result = request_rules._assign_missing_result_step_ids(rule)
+    actions = result["action"]["actions"]
+
+    assert "step_id" in actions[1]
+    assert actions[2]["step_id"] == "already-set"
+    assert "step_id" in actions[3]["data"]
+    assert "step_id" not in actions[4]["data"]
+    assert "step_id" not in rule["action"]["actions"][1]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "plain text",
+        {"action": "nothing"},
+    ],
+)
+def test_request_rule_result_step_id_assignment_handles_non_action_shapes(value) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    result = request_rules._assign_missing_result_step_ids(value)
+
+    if isinstance(value, dict):
+        assert result == value
+        assert result is not value
+    else:
+        assert result is value
+
+
+def test_request_rule_result_references_recurse_but_ignore_identity_fields() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    value = {
+        "message": "Value {{ results.first.answer }}",
+        "nested": [
+            "Other {{ results.second }}",
+            {"deep": "{{ results.third.value }}"},
+        ],
+        "result_alias": "{{ results.ignored }}",
+        "step_id": "{{ results.also_ignored }}",
+    }
+
+    assert request_rules._result_references(value) == {
+        "first",
+        "second",
+        "third",
+    }
+
+
+def test_request_rule_result_paths_collect_nested_references() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    paths = request_rules._result_paths_by_alias(
+        {
+            "message": "{{ results.first.answer }} / {{ results.first.name }}",
+            "nested": [{"value": "{{ results.second }}"}],
+        }
+    )
+
+    assert paths == {
+        "first": {
+            "{{ results.first.answer }}",
+            "{{ results.first.name }}",
+        },
+        "second": {"{{ results.second }}"},
+    }
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "{{ slots.missing }}",
+        {"service": "light.{{ slots.missing }}"},
+        ["{{ slots.missing }}"],
+        "{{ unknown_template }}",
+        "{% if true %}light.turn_on{% endif %}",
+        "{# comment #}light.turn_on",
+    ],
+)
+def test_guest_slot_resolution_fails_closed_for_unknown_or_dynamic_templates(
+    value,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    with pytest.raises(request_rules.GuestModeDenied):
+        request_rules._resolve_guest_slot_templates(value, {"known": "kitchen"})
+
+
+def test_guest_slot_resolution_recurses_through_supported_shapes() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    value = {
+        "action": "light.turn_on",
+        "target": {
+            "entity_id": [
+                "light.{{ slots.room }}",
+                "switch.{{ slots.room }}",
+            ]
+        },
+        "count": 2,
+    }
+
+    assert request_rules._resolve_guest_slot_templates(
+        value, {"room": "kitchen"}
+    ) == {
+        "action": "light.turn_on",
+        "target": {
+            "entity_id": [
+                "light.kitchen",
+                "switch.kitchen",
+            ]
+        },
+        "count": 2,
+    }
