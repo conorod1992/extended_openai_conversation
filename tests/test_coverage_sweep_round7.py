@@ -1400,3 +1400,208 @@ def test_model_catalog_rejects_tool_support_removal() -> None:
 
     with pytest.raises(ValueError, match="remove tool support"):
         model_catalog.validate_catalog_transition(current, candidate)
+
+
+
+@pytest.mark.asyncio
+async def test_guest_mode_trusted_update_validates_interval_and_persists(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import guest_mode
+
+    manager = guest_mode.GuestModeManager(hass, "entry", "agent")
+    now = datetime(2026, 10, 5, 19, 0, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="later than active_from"):
+        await manager.async_update_trusted(
+            active_from=now.isoformat(),
+            active_until=(now - timedelta(minutes=1)).isoformat(),
+            now=now,
+        )
+
+    committed = []
+
+    async def commit(schedule):
+        committed.append(schedule)
+        manager._schedule = schedule
+
+    monkeypatch.setattr(manager, "_async_commit_schedule", commit)
+
+    status = await manager.async_update_trusted(
+        active_from=now.isoformat(),
+        active_until=(now + timedelta(hours=1)).isoformat(),
+        now=now,
+    )
+
+    assert len(committed) == 1
+    assert committed[0].source == "home_assistant"
+    assert status["currently_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_guest_mode_disable_trusted_clears_schedule(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import guest_mode
+
+    manager = guest_mode.GuestModeManager(hass, "entry", "agent")
+    manager._schedule = guest_mode.GuestModeSchedule(
+        active_from="2026-10-05T18:00:00+00:00",
+        active_until=None,
+        source="home_assistant",
+        updated_at="2026-10-05T18:00:00+00:00",
+    )
+
+    async def commit(schedule):
+        manager._schedule = schedule
+
+    monkeypatch.setattr(manager, "_async_commit_schedule", commit)
+
+    status = await manager.async_disable_trusted()
+
+    assert manager._schedule is None
+    assert status["state"] == "inactive"
+
+
+def test_guest_mode_listener_add_remove_and_notify(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import guest_mode
+
+    manager = guest_mode.GuestModeManager(hass, "entry", "agent")
+    listener = Mock()
+
+    remove = manager.async_add_listener(listener)
+    manager._notify()
+    listener.assert_called_once()
+
+    remove()
+    manager._notify()
+    listener.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_temporary_memory_reconcile_overflow_keeps_newest(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import temporary_memory
+
+    monkeypatch.setattr(temporary_memory, "MAX_ACTIVE_RECORDS", 2)
+    raws = [{"id": i} for i in range(3)]
+    records = [
+        temporary_memory.TemporaryMemoryRecord(
+            memory_id=str(i),
+            scope_id=f"user:{i}",
+            content=str(i),
+            category="general",
+            source="manual",
+            expires_at="2099-01-01T00:00:00+00:00",
+            created_at=f"2026-01-0{i+1}T00:00:00+00:00",
+            updated_at=f"2026-01-0{i+1}T00:00:00+00:00",
+            owner_scope_id=f"user:{i}",
+        )
+        for i in range(3)
+    ]
+    store = SimpleNamespace(async_load=AsyncMock(return_value={"records": raws}))
+    manager = temporary_memory.TemporaryMemory(store)
+    monkeypatch.setattr(
+        temporary_memory, "_record_from_storage", Mock(side_effect=records)
+    )
+    monkeypatch.setattr(
+        temporary_memory,
+        "_parse_expiry",
+        Mock(return_value=datetime(2099, 1, 1, tzinfo=UTC)),
+    )
+    monkeypatch.setattr(
+        temporary_memory, "_normalize_record_owner", Mock(side_effect=records)
+    )
+
+    await manager._async_reconcile_failed_save()
+
+    assert len(manager._records) == 2
+    assert manager.overflow_pruned == 1
+    assert manager._normalization_pending is True
+
+
+def test_temporary_memory_restore_committed_state_restores_records_and_counter() -> None:
+    from custom_components.extended_openai_conversation_responses import temporary_memory
+
+    manager = temporary_memory.TemporaryMemory(SimpleNamespace())
+    record = temporary_memory.TemporaryMemoryRecord(
+        memory_id="one",
+        scope_id="user:alice",
+        content="fact",
+        category="general",
+        source="manual",
+        expires_at="2099-01-01T00:00:00+00:00",
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        owner_scope_id="user:alice",
+    )
+    manager._committed_state = ({"one": record}, 3)
+    manager._records = {}
+    manager.expired_pruned = 0
+
+    manager._restore_committed_state()
+
+    assert manager._records == {"one": record}
+    assert manager.expired_pruned == 3
+
+
+@pytest.mark.asyncio
+async def test_archive_storage_remove_partition_delegates(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import conversation_archive
+
+    storage = conversation_archive.HomeAssistantArchiveStorage.__new__(
+        conversation_archive.HomeAssistantArchiveStorage
+    )
+    store = SimpleNamespace(async_remove=AsyncMock())
+    monkeypatch.setattr(storage, "_partition_store", Mock(return_value=store))
+
+    await storage.async_remove_partition("2026-10")
+
+    storage._partition_store.assert_called_once_with("2026-10")
+    store.async_remove.assert_awaited_once()
+
+
+def test_archive_metadata_and_partition_payload_wrappers(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import conversation_archive
+
+    archive = conversation_archive.ConversationArchive(SimpleNamespace(), "agent")
+    archive._sessions = {"s": object()}
+    archive._active = {"scope": "s"}
+    archive._partitions = {"2026-10"}
+    archive._turns["s"] = [object()]
+
+    metadata = Mock(return_value={"metadata": True})
+    partition = Mock(return_value={"partition": True})
+    monkeypatch.setattr(archive, "_metadata_payload_for_state", metadata)
+    monkeypatch.setattr(archive, "_partition_payload_for_state", partition)
+
+    assert archive._metadata_payload_locked({"2026-10": {"turns": []}}) == {
+        "metadata": True
+    }
+    assert archive._partition_payload_locked("2026-10") == {"partition": True}
+    metadata.assert_called_once()
+    partition.assert_called_once()
+
+
+def test_model_tool_results_sparse_and_cursor_helpers() -> None:
+    from custom_components.extended_openai_conversation_responses import model_tool_results
+
+    result = {
+        "memory": {"subject": None, "key": "k", "valid_from": None, "content": "x"},
+        "candidate": {"subject": "s", "key": None, "content": "y"},
+        "memories": [
+            {"subject": None, "key": None, "content": "z"},
+            "unchanged",
+        ],
+    }
+
+    compacted = model_tool_results._compact_memory_result(result)
+
+    assert compacted["memory"] == {"key": "k", "content": "x"}
+    assert compacted["candidate"] == {"subject": "s", "content": "y"}
+    assert compacted["memories"][0] == {"content": "z"}
+    assert compacted["memories"][1] == "unchanged"
+
+    page = {"items": [], "has_more": False, "next_cursor": None}
+    assert model_tool_results.omit_null_paging_cursor(page, "next_cursor") == {
+        "items": [],
+        "has_more": False,
+    }
+    assert model_tool_results.omit_null_paging_cursor(
+        {"has_more": True, "next_cursor": None}, "next_cursor"
+    ) == {"has_more": True, "next_cursor": None}
