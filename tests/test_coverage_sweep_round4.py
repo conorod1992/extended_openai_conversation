@@ -403,3 +403,194 @@ def test_request_rule_match_returns_best_fuzzy_candidate() -> None:
     assert result is not None
     assert result.rule["id"] == "higher"
     assert result.fuzzy is True
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "async_step_openai_credentials",
+        "async_step_openai_advanced",
+        "async_step_azure_credentials",
+    ],
+)
+async def test_config_flow_provider_steps_return_to_user_when_setup_state_missing(
+    monkeypatch, method_name: str
+) -> None:
+    from custom_components.extended_openai_conversation_responses import config_flow
+
+    flow = config_flow.ExtendedOpenAIConversationConfigFlow()
+    flow._setup_data = None
+    fallback = AsyncMock(return_value={"type": "form", "step_id": "user"})
+    monkeypatch.setattr(flow, "async_step_user", fallback)
+
+    result = await getattr(flow, method_name)()
+
+    assert result == {"type": "form", "step_id": "user"}
+    fallback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_config_flow_openai_credentials_advanced_and_finish_paths(
+    monkeypatch,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import config_flow
+
+    flow = config_flow.ExtendedOpenAIConversationConfigFlow()
+    flow._setup_data = {config_flow.CONF_API_PROVIDER: "openai"}
+    advanced = AsyncMock(return_value={"step": "advanced"})
+    finish = AsyncMock(return_value={"step": "finished"})
+    monkeypatch.setattr(flow, "async_step_openai_advanced", advanced)
+    monkeypatch.setattr(flow, "_async_finish_initial_setup", finish)
+
+    result = await flow.async_step_openai_credentials(
+        {
+            config_flow.CONF_API_KEY: "secret",
+            config_flow._CONF_PROVIDER_ADVANCED: True,
+        }
+    )
+    assert result == {"step": "advanced"}
+    assert flow._setup_data[config_flow.CONF_API_KEY] == "secret"
+    assert config_flow._CONF_PROVIDER_ADVANCED not in flow._setup_data
+    advanced.assert_awaited_once()
+
+    advanced.reset_mock()
+    result = await flow.async_step_openai_credentials(
+        {
+            config_flow.CONF_API_KEY: "replacement",
+            config_flow._CONF_PROVIDER_ADVANCED: False,
+        }
+    )
+    assert result == {"step": "finished"}
+    finish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "step_id"),
+    [
+        ("async_step_openai_advanced", "openai_advanced"),
+        ("async_step_azure_credentials", "azure_credentials"),
+    ],
+)
+async def test_config_flow_provider_detail_submission_finishes(
+    monkeypatch, method_name: str, step_id: str
+) -> None:
+    from custom_components.extended_openai_conversation_responses import config_flow
+
+    flow = config_flow.ExtendedOpenAIConversationConfigFlow()
+    flow._setup_data = {"base": "kept"}
+    finish = AsyncMock(return_value={"finished": step_id})
+    monkeypatch.setattr(flow, "_async_finish_initial_setup", finish)
+
+    result = await getattr(flow, method_name)({"extra": "value"})
+
+    assert result == {"finished": step_id}
+    data, actual_step, _schema = finish.await_args.args
+    assert data == {"base": "kept", "extra": "value"}
+    assert actual_step == step_id
+
+
+@pytest.mark.asyncio
+async def test_runtime_configuration_partial_entity_returns_without_manager_reconciliation() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        agent_configuration,
+    )
+
+    entity = SimpleNamespace(
+        subentry=SimpleNamespace(data={}, subentry_id=None),
+        hass=None,
+        entry=None,
+    )
+
+    await agent_configuration.async_reconcile_runtime_configuration(entity, force=True)
+
+    assert not hasattr(entity, agent_configuration._RUNTIME_CONFIG_LOCK)
+
+
+def test_agent_config_serialization_falls_back_for_runtime_objects(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import agent_config
+
+    class RuntimeOnly:
+        pass
+
+    dump = Mock(return_value="fallback-yaml")
+    monkeypatch.setattr(agent_config.yaml, "safe_dump", dump)
+
+    result = agent_config._serialize_function_tools_config(
+        [{"runtime": RuntimeOnly()}]
+    )
+
+    assert result == "fallback-yaml"
+    dump.assert_called_once()
+
+
+def test_native_statistics_migration_non_mapping_parameters_is_rejected(
+    monkeypatch,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        native_function_schema_migration as migration,
+    )
+
+    class EqualLegacy:
+        def __eq__(self, other):
+            return other == migration._LEGACY_PRESET_GET_STATISTICS_PARAMETERS
+
+    tool = {"spec": {"parameters": EqualLegacy()}}
+
+    assert migration._migrate_statistics_schema(tool) is False
+
+
+@pytest.mark.asyncio
+async def test_parallel_outcome_cleanup_cancels_pending_task_on_gather_failure(
+    monkeypatch,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        parallel_tool_execution,
+    )
+
+    pending = asyncio.get_running_loop().create_future()
+    monkeypatch.setattr(
+        parallel_tool_execution.asyncio,
+        "ensure_future",
+        Mock(return_value=pending),
+    )
+
+    calls = 0
+
+    async def broken_gather(*_tasks, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("gather failed")
+        return []
+
+    monkeypatch.setattr(
+        parallel_tool_execution.asyncio,
+        "gather",
+        broken_gather,
+    )
+
+    with pytest.raises(RuntimeError, match="gather failed"):
+        await parallel_tool_execution.async_execute_parallel_safe_batch_outcomes(
+            [(object(), object())],
+            AsyncMock(),
+        )
+
+    assert pending.cancelled()
+
+
+def test_request_static_cache_ignores_untracked_tool_measurement() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        request_static_cache,
+    )
+
+    token_keys = request_static_cache._FORMATTED_TOOL_RESULT_KEYS.set({})
+    token_measurements = request_static_cache._FORMATTED_TOOL_MEASUREMENTS.set({})
+    try:
+        request_static_cache.remember_formatted_tool_measurement([], (10, 2))
+        assert request_static_cache._FORMATTED_TOOL_MEASUREMENTS.get() == {}
+    finally:
+        request_static_cache._FORMATTED_TOOL_MEASUREMENTS.reset(token_measurements)
+        request_static_cache._FORMATTED_TOOL_RESULT_KEYS.reset(token_keys)
