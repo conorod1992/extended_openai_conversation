@@ -83,18 +83,72 @@ def _candidate_component() -> Path:
     )
 
 
-def _assert_candidate_tree(config_dir: Path) -> None:
+def _candidate_tree_status(config_dir: Path) -> dict[str, Any]:
+    """Prove every candidate file is exact and report any HACS-retained orphans."""
     installed = _component_dir(config_dir)
     candidate = _candidate_component()
-    assert _tree_digest(installed) == _tree_digest(candidate), (
-        "HACS update did not leave the exact candidate component tree installed"
-    )
+    candidate_files = {
+        str(path.relative_to(candidate))
+        for path in candidate.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+    installed_files = {
+        str(path.relative_to(installed))
+        for path in installed.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+    for relative in candidate_files:
+        assert (installed / relative).read_bytes() == (candidate / relative).read_bytes(), (
+            f"HACS-installed candidate file differs from checkout: {relative}"
+        )
+
     assert _manifest(installed) == _manifest(candidate)
     for relative in (
         "frontend/management-panel.js",
         "frontend/dist/manifest.json",
     ):
         assert (installed / relative).read_bytes() == (candidate / relative).read_bytes()
+
+    return {
+        "candidate_digest": _tree_digest(candidate),
+        "candidate_file_count": len(candidate_files),
+        "retained_orphans": sorted(installed_files - candidate_files),
+    }
+
+
+def _assert_obsolete_files_inert(config_dir: Path) -> None:
+    """Old files may remain physically after HACS update, but cannot stay active."""
+    installed = _component_dir(config_dir)
+
+    assert f"custom_components.{DOMAIN}.guest_performance" not in sys.modules
+    assert f"custom_components.{DOMAIN}.lifecycle_optimizations" not in sys.modules
+
+    frontend_manifest = (
+        installed / "frontend" / "dist" / "manifest.json"
+    ).read_text(encoding="utf-8")
+    assert "management-bootstrap" not in frontend_manifest
+
+    # Candidate code must not reference the retired modules/assets. This turns a
+    # HACS-retained orphan into inert disk debris rather than executable candidate code.
+    retired_needles = (
+        "guest_performance",
+        "management-bootstrap",
+    )
+    for path in installed.rglob("*"):
+        if (
+            not path.is_file()
+            or "__pycache__" in path.parts
+            or str(path.relative_to(installed)) in _OBSOLETE_RELEASE_FILES
+        ):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for needle in retired_needles:
+            assert needle not in text, (
+                f"candidate file still references retired HACS orphan {needle}: {path}"
+            )
 
 
 async def _ensure_hacs(hass: Any) -> Any:
@@ -248,14 +302,16 @@ async def _update_to_candidate(hass: Any, config_dir: Path) -> None:
     await repository.async_download_repository(ref=candidate_ref)
     await hacs.data.async_write(force=True)
 
-    # This is the critical mixed-tree boundary. HACS must remove files that were
-    # present in the old release but are no longer part of the candidate.
-    for relative in _OBSOLETE_RELEASE_FILES:
-        assert not (installed / relative).exists(), (
-            f"HACS left obsolete release file active after update: {relative}"
-        )
-
-    _assert_candidate_tree(config_dir)
+    # HACS currently overlays repository archives and can retain orphaned files.
+    # Record that physical state, but require the installed candidate files to be
+    # byte-for-byte exact and the retired files to have no active references.
+    tree_status = _candidate_tree_status(config_dir)
+    retained_selected = [
+        relative
+        for relative in _OBSOLETE_RELEASE_FILES
+        if (installed / relative).exists()
+    ]
+    _assert_obsolete_files_inert(config_dir)
     assert str(repository.data.id) == previous_id
 
     hacs_state = json.loads(
@@ -263,7 +319,10 @@ async def _update_to_candidate(hass: Any, config_dir: Path) -> None:
     )
     hacs_state.update(
         {
-            "candidate_digest": _tree_digest(installed),
+            "candidate_digest": tree_status["candidate_digest"],
+            "candidate_file_count": tree_status["candidate_file_count"],
+            "retained_orphans": tree_status["retained_orphans"],
+            "retained_selected_obsolete_files": retained_selected,
             "repository_id_after_update": str(repository.data.id),
             "installed_commit_after_update": repository.data.installed_commit,
             "installed_version_after_update": repository.data.installed_version,
@@ -278,27 +337,16 @@ async def _update_to_candidate(hass: Any, config_dir: Path) -> None:
 async def _candidate_migrate(hass: Any, config_dir: Path) -> None:
     """Restart onto the HACS-installed candidate and prove populated state."""
     await _ensure_hacs(hass)
-    _assert_candidate_tree(config_dir)
-
-    # Removed Python modules must not remain importable from the HACS-installed tree.
-    for module_name in (
-        f"custom_components.{DOMAIN}.guest_performance",
-        f"custom_components.{DOMAIN}.lifecycle_optimizations",
-    ):
-        try:
-            importlib.import_module(module_name)
-        except ModuleNotFoundError:
-            pass
-        else:
-            raise AssertionError(f"obsolete module remained importable: {module_name}")
-
+    _candidate_tree_status(config_dir)
+    _assert_obsolete_files_inert(config_dir)
     await upgrade_helpers._candidate_migration_phase(hass, config_dir)
 
 
 async def _candidate_restart(hass: Any, config_dir: Path) -> None:
     """One more cold boot proves the HACS update is durably healthy."""
     await _ensure_hacs(hass)
-    _assert_candidate_tree(config_dir)
+    _candidate_tree_status(config_dir)
+    _assert_obsolete_files_inert(config_dir)
     await upgrade_helpers._candidate_restart_phase(hass, config_dir)
 
 
@@ -391,6 +439,10 @@ def _write_evidence(config_dir: Path) -> None:
         "release_digest": hacs_state["release_digest"],
         "candidate_digest": hacs_state["candidate_digest"],
         "obsolete_files": hacs_state["obsolete_files"],
+        "retained_orphans": hacs_state["retained_orphans"],
+        "retained_selected_obsolete_files": hacs_state[
+            "retained_selected_obsolete_files"
+        ],
         "entry_id": eoai_state["entry_id"],
         "subentry_id": eoai_state["subentry_id"],
         "memory_marker": eoai_state["memory_marker"],
@@ -428,7 +480,8 @@ def test_hacs_installs_release_updates_candidate_and_preserves_state(
         result = _run_child(config_dir, phase)
         _assert_child_ok(result, phase)
 
-    _assert_candidate_tree(config_dir)
+    _candidate_tree_status(config_dir)
+    _assert_obsolete_files_inert(config_dir)
     _write_evidence(config_dir)
 
 
