@@ -347,7 +347,7 @@ async def test_embedding_results_are_count_checked_and_sorted_by_provider_index(
     """Reject incomplete provider responses and restore input order on valid ones."""
     agent = Agent.__new__(Agent)
     agent.subentry = SimpleNamespace(data={})
-    agent._client = SimpleNamespace(
+    agent.entry = SimpleNamespace(runtime_data=SimpleNamespace(
         embeddings=SimpleNamespace(
             create=AsyncMock(
                 return_value=SimpleNamespace(
@@ -358,20 +358,20 @@ async def test_embedding_results_are_count_checked_and_sorted_by_provider_index(
                 )
             )
         )
-    )
+    ))
 
     assert await agent._async_create_embeddings(["first", "second"]) == [
         [1.0],
         [2.0],
     ]
 
-    agent._client.embeddings.create.return_value = SimpleNamespace(
+    agent.entry.runtime_data.embeddings.create.return_value = SimpleNamespace(
         data=[SimpleNamespace(index=0, embedding=[1.0])]
     )
     with pytest.raises(ValueError, match="wrong number of entries"):
         await agent._async_create_embeddings(["first", "second"])
 
-    agent._client.embeddings.create.return_value = SimpleNamespace(
+    agent.entry.runtime_data.embeddings.create.return_value = SimpleNamespace(
         data=[
             SimpleNamespace(index=0, embedding=[1.0]),
             SimpleNamespace(index=0, embedding=[2.0]),
