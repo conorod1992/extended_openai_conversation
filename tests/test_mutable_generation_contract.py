@@ -99,3 +99,21 @@ async def test_ha_tool_discovery_rejects_configuration_generation_change(
     with pytest.raises(HomeAssistantError, match=r"configuration changed.*retry"):
         await task
     assert generated == []
+
+
+def test_tool_dispatch_rejects_configuration_aba_before_execution() -> None:
+    """An equal replacement mapping still represents a new HA config generation."""
+    module = import_module(
+        "custom_components.extended_openai_conversation_responses.conversation"
+    )
+    original = {"function_tools": [], "prompt": "same"}
+    token = module._ACTIVE_REQUEST_CONFIG_DATA.set(original)
+    try:
+        agent = SimpleNamespace(subentry=SimpleNamespace(data=dict(original)))
+        with pytest.raises(HomeAssistantError, match=r"configuration changed.*retry"):
+            module.ExtendedOpenAIAgentEntity._assert_no_aba_configuration(agent)
+
+        agent.subentry.data = original
+        module.ExtendedOpenAIAgentEntity._assert_no_aba_configuration(agent)
+    finally:
+        module._ACTIVE_REQUEST_CONFIG_DATA.reset(token)
