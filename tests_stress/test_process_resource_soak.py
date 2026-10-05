@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import random
 import shutil
+import stat
 import statistics
 import sys
 from time import monotonic
@@ -42,6 +43,46 @@ _LIFETIME_FEATURES = (
     "chat_completions",
     "responses",
 )
+
+
+def _sample_files(root):
+    """Sample actual sizes once; concurrent atomic rename may remove an entry."""
+    sampled = []
+    vanished = 0
+    for path in list(root.rglob("*")):
+        try:
+            metadata = path.stat()
+        except FileNotFoundError:
+            vanished += 1
+            continue
+        if stat.S_ISREG(metadata.st_mode):
+            sampled.append((path, metadata.st_size))
+    return sampled, vanished
+
+
+def test_resource_sampling_survives_real_atomic_rename(tmp_path, monkeypatch):
+    permanent = tmp_path / "retained"
+    permanent.write_bytes(b"retained")
+    transient = tmp_path / "atomic.tmp"
+    transient.write_bytes(b"committed")
+    committed = tmp_path / "committed"
+    original = Path.stat
+    renamed = False
+
+    def during_sample(path, *args, **kwargs):
+        nonlocal renamed
+        if path == transient and not renamed:
+            renamed = True
+            transient.replace(committed)
+        return original(path, *args, **kwargs)
+
+    with monkeypatch.context() as sampling:
+        sampling.setattr(Path, "stat", during_sample)
+        files, vanished = _sample_files(tmp_path)
+    assert renamed and vanished == 1
+    assert (permanent, 8) in files
+    settled, vanished = _sample_files(tmp_path)
+    assert set(settled) == {(permanent, 8), (committed, 9)} and vanished == 0
 
 
 def _assert_populated_lifetime(report):
@@ -424,7 +465,7 @@ async def _booted_soak(config_dir, seed, scale):
         return monotonic() - began
 
     def snapshot(assist, management):
-        files = [path for path in config_dir.rglob("*") if path.is_file()]
+        files, vanished = _sample_files(config_dir)
         executor = getattr(hass.loop, "_default_executor", None)
         queue = getattr(executor, "_work_queue", None)
         item = {
@@ -433,7 +474,7 @@ async def _booted_soak(config_dir, seed, scale):
             if hasattr(process, "num_fds")
             else process.num_handles(),
             "threads": process.num_threads(),
-            "storage_bytes": sum(path.stat().st_size for path in files),
+            "storage_bytes": sum(size for _, size in files),
             "storage_files": len(files),
             "executor_pending": queue.qsize() if queue is not None else None,
             "loop_lag_max_seconds": max(lag_samples, default=0),
@@ -448,8 +489,9 @@ async def _booted_soak(config_dir, seed, scale):
             "sample_phase": "before_gc",
             "background_failures": list(background_failures),
             "transfer_files": sum(
-                path.name.startswith("extended-openai-backup-") for path in files
+                path.name.startswith("extended-openai-backup-") for path, _ in files
             ),
+            "vanished_files_during_sample": vanished,
         }
         lag_samples.clear()
         return item

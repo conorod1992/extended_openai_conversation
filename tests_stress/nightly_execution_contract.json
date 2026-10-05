@@ -1841,7 +1841,8 @@
     "tests_stress/test_responses_scale_fairness.py::test_active_native_contention_preserves_assist_management_and_ha_progress",
     "tests_stress/test_responses_scale_fairness.py::test_contention_evidence_rejects_inactive_workloads[exited]",
     "tests_stress/test_responses_scale_fairness.py::test_contention_evidence_rejects_inactive_workloads[idle]",
-    "tests_stress/test_responses_scale_fairness.py::test_contention_evidence_rejects_inactive_workloads[missing]"
+    "tests_stress/test_responses_scale_fairness.py::test_contention_evidence_rejects_inactive_workloads[missing]",
+    "tests_stress/test_process_resource_soak.py::test_resource_sampling_survives_real_atomic_rename"
   ],
   "browser": {
     "browser": [

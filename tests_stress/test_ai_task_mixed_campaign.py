@@ -6,13 +6,16 @@ import asyncio
 import re
 from typing import Any
 
+import httpx
 import pytest
+from openai import APIError
 from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
 
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     CONF_API_MODE,
     CONF_CHAT_MODEL,
+    CONF_REASONING_EFFORT,
     CONF_SKIP_AUTHENTICATION,
     CONFIG_ENTRY_VERSION,
     DEFAULT_AI_TASK_OPTIONS,
@@ -22,7 +25,6 @@ from homeassistant.components import ai_task, conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from tests_real_ha.test_ai_task_runtime import (
     CallerAPI,
@@ -41,6 +43,8 @@ def _subentry(kind: str, title: str, model: str) -> dict[str, Any]:
     options = dict(DEFAULT_AI_TASK_OPTIONS)
     options[CONF_API_MODE] = API_MODE_CHAT_COMPLETIONS
     options[CONF_CHAT_MODEL] = model
+    if model == "gpt-5.6":
+        options[CONF_REASONING_EFFORT] = "none"
     return {
         "data": options,
         "subentry_type": kind,
@@ -131,7 +135,11 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
             )
         if marker == failure_marker and not failed_once:
             failed_once = True
-            raise RuntimeError("deterministic provider failure")
+            raise APIError(
+                "deterministic provider failure",
+                request=httpx.Request("POST", "https://provider.example/v1/chat/completions"),
+                body=None,
+            )
         return FakeStream([_chunk(content=f"Result {marker}")])
 
     def install_client() -> None:
@@ -191,13 +199,15 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
     fast_model = "gpt-5.6"
     await task(sequential + concurrent + 2)
 
-    with pytest.raises(HomeAssistantError, match="deterministic provider failure"):
+    with pytest.raises(APIError, match="deterministic provider failure"):
         await ai_task.async_generate_data(
             hass,
             task_name="Failed task",
             entity_id=task_entities["Detailed task"],
             instructions=failure_marker,
         )
+    # Restore the dependency and retry the same public feature before a sibling.
+    await task(9999)
     await task(sequential + concurrent + 4)
 
     assert await hass.config_entries.async_reload(entry.entry_id)
@@ -224,16 +234,16 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
     assert tool_result.data == "Tool task completed"
     assert len(tool.calls) == 1
     assert tool.calls[0][1].context is context
-    assert len(provider_calls) == sequential + concurrent + 10
+    assert len(provider_calls) == sequential + concurrent + 11
     record(
         stress_trace,
         "summary",
         layer="real-ha + fake-sdk-client",
-        ai_task_turns=sequential + concurrent + 7,
+        ai_task_turns=sequential + concurrent + 8,
         ai_task_concurrent=concurrent,
         ai_task_agents=2,
         ai_task_provider_failures=1,
-        public_turns=sequential + concurrent + 8,
+        public_turns=sequential + concurrent + 9,
         provider_requests=len(provider_calls),
         actual_tool_executions=1,
     )

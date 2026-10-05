@@ -91,11 +91,15 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
         hass.states.async_set(
             entity.entity_id, "idle", {"friendly_name": entity.entity_id}
         )
+    before = await _management_call(
+        client, entry=entry, section="configuration", action="get"
+    )
     await _management_call(
         client,
         entry=entry,
         section="configuration",
         action="update",
+        revision=before["revision"],
         config={
             "api_mode": "chat_completions",
             "chat_model": "gpt-5.2",
@@ -105,6 +109,7 @@ async def test_native_editor_ownership_and_satellite_registry_recovery(
             "voice_device_mappings": {old.id: "user:ownership-office-user"},
         },
     )
+    await hass.async_block_till_done()
     agent = conversation.async_get_agent(hass, entry.entry_id)
     for owner, marker in (
         (office_user.id, "OFFICE_PRIVATE_REGISTRY"),

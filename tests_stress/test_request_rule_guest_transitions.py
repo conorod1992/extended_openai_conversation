@@ -119,7 +119,7 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
     denied = transition != "deactivate"
-    assert _speech(response) == (GUEST_MODE_UNAVAILABLE if denied else "Done")
+    assert _speech(response, successful=not denied) == (GUEST_MODE_UNAVAILABLE if denied else "Done")
     assert effects == (
         ["light.before", "light.healthy"]
         if transition == "activate_then_disable"
