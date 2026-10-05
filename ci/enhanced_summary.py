@@ -9,6 +9,11 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "generated_editor_programmes",
+    "multilingual_public_journeys",
+    "generated_editor_restarts",
+    "unicode_character_boundary_cases",
+    "unicode_byte_boundary_cases",
     "application_privacy_journeys",
     "raw_application_destination_checks",
     "authorized_export_privacy_cases",

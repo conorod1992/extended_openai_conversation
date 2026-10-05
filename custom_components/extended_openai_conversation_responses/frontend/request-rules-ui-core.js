@@ -246,7 +246,7 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
     }
     groupManager.addEventListener("close",()=>opener?.focus());
     groupManager.querySelector("#rule-new-group-name")?.addEventListener("keydown",(event)=>{
-      if(event.key==="Enter"){event.preventDefault();groupManager.querySelector("#rule-group-add")?.click();}
+      if(event.key==="Enter"&&!event.isComposing&&event.keyCode!==229){event.preventDefault();groupManager.querySelector("#rule-group-add")?.click();}
     });
     groupManager.addEventListener("click",async(event)=>{
       const button=event.target.closest?.("button");if(!button||button.disabled||groupManager.dataset.eocMutationPending==="true")return;
