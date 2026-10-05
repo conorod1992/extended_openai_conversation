@@ -29,6 +29,7 @@ from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
+    _ACTIVE_FUNCTION_EXECUTOR,
     DEFAULT_MATCHING,
     DEFAULT_WORDING_GROUPS,
     RequestRuleRuntime,
@@ -760,6 +761,25 @@ async def test_result_alias_validation_and_substitution() -> None:
     rule["action"]["actions"][0]["data"]["result_alias"] = "bad-name"
     with pytest.raises(ValueError, match="alias"):
         validate_rule(rule)
+
+
+async def test_function_result_capture_requires_active_result_context() -> None:
+    executor = AsyncMock(return_value={"result": "completed"})
+    token = _ACTIVE_FUNCTION_EXECUTOR.set(executor)
+    try:
+        with pytest.raises(HomeAssistantError, match="require an active Request Rule"):
+            await async_call_active_function("lookup", {}, result_alias="lookup_result")
+    finally:
+        _ACTIVE_FUNCTION_EXECUTOR.reset(token)
+
+    executor.assert_awaited_once_with("lookup", {})
+
+
+def test_result_resolution_rejects_out_of_range_list_paths() -> None:
+    with pytest.raises(ValueError, match="path .* is unavailable"):
+        resolve_result_values(
+            "{reading.items.1}", {}, {"reading": {"items": ["only item"]}}
+        )
 
 
 async def test_result_dependencies_and_bounds() -> None:
