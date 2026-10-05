@@ -1859,6 +1859,77 @@ def routing_rule(*, scope="request", reset=False, match_type="starts_with"):
     }
 
 
+def test_routing_rule_validates_required_captured_provider_input() -> None:
+    rule = routing_rule(match_type="sentence_pattern")
+    rule["phrases"] = ["ask {query}", "please ask {query}"]
+    rule["action"]["continue_to_ai"] = True
+    rule["ai_input_mode"] = "capture"
+    rule["ai_input_capture"] = "query"
+
+    validated = validate_rule(rule)
+
+    assert validated["ai_input_mode"] == "capture"
+    assert validated["ai_input_capture"] == "query"
+    assert validated["slots"] == [{"name": "query"}]
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"ai_input_mode": "invalid"}, "AI input must be Original request"),
+        (
+            {"match_type": "equals", "ai_input_mode": "capture"},
+            "Captured AI input requires a Sentence Pattern capture",
+        ),
+        (
+            {
+                "phrases": ["ask {query}"],
+                "ai_input_mode": "capture",
+                "ai_input_capture": "missing",
+            },
+            "Captured AI input must exist in every trigger",
+        ),
+        (
+            {
+                "phrases": ["[{query}] ask"],
+                "ai_input_mode": "capture",
+                "ai_input_capture": "query",
+            },
+            "Captured AI input must be present on every match",
+        ),
+        (
+            {
+                "phrases": ["ask {query}"],
+                "ai_input_mode": "capture",
+                "ai_input_capture": "query",
+                "action_continue_to_ai": False,
+            },
+            "Captured AI input requires Continue to AI",
+        ),
+        (
+            {"ai_input_mode": "original", "ai_input_capture": "query"},
+            "Original AI input cannot select a capture",
+        ),
+    ],
+)
+def test_routing_rule_rejects_invalid_captured_provider_input(
+    change, message
+) -> None:
+    rule = routing_rule()
+    rule["match_type"] = "sentence_pattern"
+    rule["phrases"] = ["ask {query}"]
+    rule["action"]["continue_to_ai"] = True
+    settings = deepcopy(change)
+    if "action_continue_to_ai" in settings:
+        rule["action"]["continue_to_ai"] = settings.pop("action_continue_to_ai")
+    if "match_type" in settings:
+        rule["match_type"] = settings.pop("match_type")
+    rule.update(settings)
+
+    with pytest.raises(ValueError, match=message):
+        validate_rule(rule)
+
+
 async def test_single_request_override_and_provider_assembly() -> None:
     rules = await manager(routing_rule())
     runtime = RequestRuleRuntime()
