@@ -222,8 +222,14 @@ def test_intercom_refresh_state_listener_noops_when_closed_or_unchanged(hass, mo
 def test_intercom_refresh_state_listener_replaces_subscription(hass, monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses import intercom
 
+    real_refresh = intercom.IntercomManager._refresh_state_listener
     monkeypatch.setattr(intercom.IntercomManager, "_refresh_state_listener", lambda self: None)
     manager = intercom.IntercomManager(hass)
+    monkeypatch.setattr(
+        manager,
+        "_refresh_state_listener",
+        real_refresh.__get__(manager, intercom.IntercomManager),
+    )
     previous = Mock()
     replacement = Mock()
     manager._unsub_state = previous
@@ -875,7 +881,11 @@ async def test_model_catalog_check_same_catalogue_has_no_available_update(
 async def test_model_catalog_websocket_reports_action_failures(hass, monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses import model_catalog_manager
 
-    connection = SimpleNamespace(send_error=Mock(), send_result=Mock())
+    connection = SimpleNamespace(
+        user=SimpleNamespace(is_admin=True),
+        send_error=Mock(),
+        send_result=Mock(),
+    )
     manager = SimpleNamespace(
         async_check=AsyncMock(
             return_value={
@@ -903,7 +913,11 @@ async def test_model_catalog_websocket_reports_action_failures(hass, monkeypatch
 async def test_model_catalog_websocket_lookup_returns_capabilities(hass, monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses import model_catalog_manager
 
-    connection = SimpleNamespace(send_error=Mock(), send_result=Mock())
+    connection = SimpleNamespace(
+        user=SimpleNamespace(is_admin=True),
+        send_error=Mock(),
+        send_result=Mock(),
+    )
     manager = SimpleNamespace(
         status=Mock(return_value={"source": "bundled"}),
         catalog=None,
@@ -964,6 +978,8 @@ def test_usage_recent_runs_filters_and_clamps_paging() -> None:
             completed_at="2026-10-01T00:01:00+00:00",
             duration_ms=1,
             agent_subentry_id="agent",
+            home_assistant_conversation_id=None,
+            source_device_id=None,
             successful=True,
         ),
         usage.UsageRun(
@@ -972,6 +988,8 @@ def test_usage_recent_runs_filters_and_clamps_paging() -> None:
             completed_at="2026-10-02T00:01:00+00:00",
             duration_ms=1,
             agent_subentry_id="agent",
+            home_assistant_conversation_id=None,
+            source_device_id=None,
             successful=False,
         ),
     ]
