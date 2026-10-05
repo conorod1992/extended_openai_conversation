@@ -1145,3 +1145,258 @@ def test_bash_function_working_directory_uses_config_dir(tmp_path) -> None:
     function = bash.BashFunction()
 
     assert function.get_working_dir(hass) == tmp_path / bash.DEFAULT_WORKING_DIRECTORY
+
+
+
+@pytest.mark.asyncio
+async def test_delayed_wait_invalid_due_discards_and_returns(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    manager = delayed_tools.DelayedToolManager(hass)
+    manager._started = True
+    manager._records["bad"] = SimpleNamespace(
+        status=delayed_tools._PENDING,
+        due_at="not-a-date",
+        entry_id="entry",
+        subentry_id="agent",
+    )
+    discard = AsyncMock(return_value=True)
+    monkeypatch.setattr(manager, "_async_discard", discard)
+
+    await manager._async_wait_and_execute("bad")
+
+    discard.assert_awaited_once_with("bad", "invalid due timestamp")
+    assert "bad" not in manager._tasks
+
+
+@pytest.mark.asyncio
+async def test_delayed_execute_due_missing_entry_discards(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    manager = delayed_tools.DelayedToolManager(hass)
+    manager._records["call"] = SimpleNamespace(
+        status=delayed_tools._PENDING,
+        user_id=None,
+        entry_id="missing",
+        subentry_id="agent",
+    )
+    hass.config_entries.async_get_entry = Mock(return_value=None)
+    discard = AsyncMock(return_value=True)
+    monkeypatch.setattr(manager, "_async_discard", discard)
+
+    result = await manager._async_execute_due("call")
+
+    assert result is False
+    discard.assert_awaited_once_with("call", "config entry is unavailable")
+
+
+@pytest.mark.asyncio
+async def test_delayed_execute_due_non_pending_is_noop(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    manager = delayed_tools.DelayedToolManager(hass)
+    manager._records["call"] = SimpleNamespace(status=delayed_tools._EXECUTING)
+
+    assert await manager._async_execute_due("call") is False
+    assert await manager._async_execute_due("missing") is False
+
+
+def test_request_rules_restore_committed_state_restores_all_fields(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+    from tests.test_request_rules import MemoryStore
+
+    manager = request_rules.RequestRules(MemoryStore())
+    manager._committed_state = {
+        "defaults": {"fuzzy": False},
+        "wording_groups": [{"canonical": "on", "alternatives": ["enable"]}],
+        "groups": [{"id": "g", "name": "Group"}],
+        "rules": [],
+    }
+    manager._committed_opaque_fields = {"opaque": True}
+    manager._defaults = {"changed": True}
+    manager._wording_groups = []
+    manager._groups = []
+    manager._rules = [{"id": "changed"}]
+    compile_mock = Mock()
+    monkeypatch.setattr(manager, "_sort_and_compile", compile_mock)
+
+    manager._restore_committed_state()
+
+    assert manager._defaults == {"fuzzy": False}
+    assert manager._wording_groups == [
+        {"canonical": "on", "alternatives": ["enable"]}
+    ]
+    assert manager._groups == [{"id": "g", "name": "Group"}]
+    assert manager._rules == []
+    assert manager._opaque_fields == {"opaque": True}
+    compile_mock.assert_called_once()
+
+
+def test_request_rules_invalidate_after_unreadable_store_fails_closed(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+    from tests.test_request_rules import MemoryStore
+
+    manager = request_rules.RequestRules(MemoryStore())
+    manager._initialized = True
+    manager._committed_state = {"x": 1}
+    manager._opaque_fields = {"opaque": True}
+    manager._groups = [{"id": "g", "name": "Group"}]
+    manager._rules = [{"id": "r"}]
+    manager._condition_checkers["r"] = object()
+    manager._has_continuation = True
+
+    manager._invalidate_after_unreadable_store()
+
+    assert manager._initialized is False
+    assert manager._committed_state is None
+    assert manager._opaque_fields == {}
+    assert manager._groups == []
+    assert manager._rules == []
+    assert manager._condition_checkers == {}
+    assert manager._has_continuation is False
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"actions": [], "continue_to_ai": False},
+        {"actions": [{"service": "light.turn_on"}], "continue_to_ai": "yes"},
+        {
+            "actions": [{"service": "light.turn_on"}],
+            "continue_to_ai": False,
+            "unknown": True,
+        },
+    ],
+)
+def test_request_rule_local_action_validation_rejects_invalid_shapes(value) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    with pytest.raises(ValueError):
+        request_rules._validate_action("local_action", value)
+
+
+def test_request_rule_result_dependencies_require_prior_result() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    action = {
+        "actions": [
+            {
+                "action": "light.turn_on",
+                "data": {"message": "{later.value}"},
+            },
+            {
+                "action": f"{request_rules.DOMAIN}.{request_rules.SERVICE_CALL_FUNCTION}",
+                "data": {
+                    "function": "demo",
+                    "result_alias": "later",
+                    "step_id": "step-2",
+                },
+            },
+        ]
+    }
+
+    with pytest.raises(ValueError, match="earlier step"):
+        request_rules._validate_result_dependencies(action, set())
+
+
+def test_request_rule_result_dependencies_reject_nested_capture() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    action = {
+        "actions": [
+            {
+                "choose": [
+                    {
+                        "conditions": [],
+                        "sequence": [
+                            {
+                                "action": f"{request_rules.DOMAIN}.{request_rules.SERVICE_CALL_FUNCTION}",
+                                "data": {
+                                    "function": "demo",
+                                    "result_alias": "nested",
+                                    "step_id": "nested-step",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match="top-level"):
+        request_rules._validate_result_dependencies(action, set())
+
+
+def test_request_rule_outcome_probes_wrap_enabled_stop_steps() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    actions = [
+        {
+            "stop": "done",
+            "enabled": "{{ condition }}",
+            "alias": "stop alias",
+            "continue_on_error": True,
+        }
+    ]
+
+    sequence, completed, stopped = request_rules._outcome_probes(actions)
+
+    assert sequence[0]["variables"][completed] is False
+    wrapped = sequence[1]
+    assert wrapped["enabled"] == "{{ condition }}"
+    assert wrapped["alias"] == "stop alias"
+    assert wrapped["continue_on_error"] is True
+    assert "sequence" in wrapped
+    assert sequence[-1]["variables"][completed] is True
+    assert isinstance(stopped, str)
+
+
+def test_model_catalog_rejects_deprecated_parent_with_current_child() -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog
+
+    document = deepcopy(model_catalog.BUNDLED_CATALOG)
+    deprecated = next(
+        item for item in document["models"] if item.get("status") == "deprecated"
+    )
+    child = deepcopy(deprecated)
+    child["id"] = "coverage-current-child"
+    child["display_name"] = "Coverage current child"
+    child["kind"] = "snapshot"
+    child["alias_of"] = deprecated["id"]
+    child["status"] = "current"
+    child.pop("deprecated_at", None)
+    child.pop("shutdown_at", None)
+    document["models"].append(child)
+
+    with pytest.raises(ValueError, match="Current snapshot cannot inherit"):
+        model_catalog.validate_catalog(document)
+
+
+def test_model_catalog_rejects_tool_support_removal() -> None:
+    from custom_components.extended_openai_conversation_responses import model_catalog
+
+    current = deepcopy(model_catalog.BUNDLED_CATALOG)
+    candidate = deepcopy(model_catalog.BUNDLED_CATALOG)
+    candidate["catalog_version"] += 1
+
+    target = None
+    for model in candidate["models"]:
+        for tool in ("function", "web_search"):
+            for api in ("responses", "chat_completions"):
+                if model["tools"][tool][api]["support"] != "never":
+                    target = (model, tool, api)
+                    break
+            if target:
+                break
+        if target:
+            break
+
+    assert target is not None
+    model, tool, api = target
+    model["tools"][tool][api]["support"] = "never"
+    model["tools"][tool][api]["requires"] = {}
+    model["tools"][tool][api]["excludes"] = {}
+
+    with pytest.raises(ValueError, match="remove tool support"):
+        model_catalog.validate_catalog_transition(current, candidate)
