@@ -80,7 +80,7 @@ def _identity_entry(title: str) -> MockConfigEntry:
     )
 
 
-def _subentry(entry: MockConfigEntry, kind: str):
+def _entry_subentry(entry: MockConfigEntry, kind: str):
     return next(item for item in entry.subentries.values() if item.subentry_type == kind)
 
 
@@ -118,8 +118,8 @@ async def test_duplicate_conversation_titles_across_parents_keep_identity(
     await _setup_entry(hass, first)
     await _setup_entry(hass, second)
 
-    first_subentry = _subentry(first, "conversation")
-    second_subentry = _subentry(second, "conversation")
+    first_subentry = _entry_subentry(first, "conversation")
+    second_subentry = _entry_subentry(second, "conversation")
     assert first_subentry.title == second_subentry.title == _SHARED_CONVERSATION_TITLE
     assert first.entry_id != second.entry_id
     assert first_subentry.subentry_id != second_subentry.subentry_id
@@ -230,8 +230,8 @@ async def test_duplicate_ai_task_titles_across_parents_route_by_entity_identity(
     await _setup_entry(hass, first)
     await _setup_entry(hass, second)
 
-    first_task = _subentry(first, "ai_task_data")
-    second_task = _subentry(second, "ai_task_data")
+    first_task = _entry_subentry(first, "ai_task_data")
+    second_task = _entry_subentry(second, "ai_task_data")
     assert first_task.title == second_task.title == _SHARED_TASK_TITLE
     assert first_task.subentry_id != second_task.subentry_id
 
@@ -305,7 +305,7 @@ async def test_deleted_parent_recreated_with_same_names_gets_fresh_generation(
     MockUser(id=_OWNER, name="Identity isolation owner", is_owner=True).add_to_hass(hass)
     old = _identity_entry("Reusable Provider")
     await _setup_entry(hass, old)
-    old_subentry = _subentry(old, "conversation")
+    old_subentry = _entry_subentry(old, "conversation")
     old_row = _row(hass, old, conversation.DOMAIN)
     old_agent = conversation.async_get_agent(hass, old_row.entity_id)
     assert old_agent is not None and old_agent._memory is not None
@@ -343,7 +343,7 @@ async def test_deleted_parent_recreated_with_same_names_gets_fresh_generation(
 
     replacement = _identity_entry("Reusable Provider")
     await _setup_entry(hass, replacement)
-    replacement_subentry = _subentry(replacement, "conversation")
+    replacement_subentry = _entry_subentry(replacement, "conversation")
     replacement_row = _row(hass, replacement, conversation.DOMAIN)
     replacement_agent = conversation.async_get_agent(hass, replacement_row.entity_id)
     assert replacement_agent is not None and replacement_agent._memory is not None

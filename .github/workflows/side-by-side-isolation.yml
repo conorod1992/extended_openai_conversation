@@ -27,6 +27,9 @@ jobs:
   identity-isolation:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
@@ -41,7 +44,12 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Reconcile stable Home Assistant test environment
-        run: bash ci/reconcile_stable_environment.sh
+        run: |
+          VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json"))["info"]["version"])')"
+          PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
+          export EOAI_EXPECTED_HA_VERSION="$VERSION"
+          export EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION="$PLUGIN_VERSION"
+          bash ci/reconcile_stable_environment.sh
 
       - name: Stage immutable original integration
         run: |
