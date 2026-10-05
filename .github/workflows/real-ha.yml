@@ -196,6 +196,7 @@ jobs:
           ENHANCED_JOB_STATUS: ${{ job.status }}
           HA_POINT: ${{ matrix.ha-version }}
           HA_STABLE_VERSION: ${{ needs.prepare.outputs.stable-ha-version }}
+          HA_DEV_SHA: ${{ needs.prepare.outputs.ha-core-sha }}
         run: |
           python ci/enhanced_summary.py compatibility-evidence
           python ci/compatibility_evidence.py check compatibility-evidence
