@@ -1924,6 +1924,8 @@ def test_routing_rule_rejects_invalid_captured_provider_input(
         rule["action"]["continue_to_ai"] = settings.pop("action_continue_to_ai")
     if "match_type" in settings:
         rule["match_type"] = settings.pop("match_type")
+        if rule["match_type"] == "equals":
+            rule["phrases"] = ["ask"]
     rule.update(settings)
 
     with pytest.raises(ValueError, match=message):

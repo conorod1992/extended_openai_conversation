@@ -555,6 +555,48 @@ def test_target_identity_comparison_uses_object_generation() -> None:
     assert not ha_actions._same_target_identity((), identity)
 
 
+def test_target_identity_captures_entity_device_and_runtime_generations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = SimpleNamespace(device_id="device-1")
+    device = object()
+    state = object()
+    entities = SimpleNamespace(async_get=MagicMock(return_value=entry))
+    devices = SimpleNamespace(async_get=MagicMock(return_value=device))
+    monkeypatch.setattr(ha_actions.er, "async_get", lambda _hass: entities)
+    monkeypatch.setattr(ha_actions.dr, "async_get", lambda _hass: devices)
+    hass = SimpleNamespace(states=SimpleNamespace(get=lambda _entity_id: state))
+
+    identity = ha_actions._target_identity(hass, {"light.kitchen"})
+
+    assert identity == (("light.kitchen", entry, device, state),)
+    entities.async_get.assert_called_once_with("light.kitchen")
+    devices.async_get.assert_called_once_with("device-1")
+
+
+def test_target_identity_skips_registry_reads_for_empty_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry_lookup = MagicMock(side_effect=AssertionError("unexpected registry read"))
+    monkeypatch.setattr(ha_actions.er, "async_get", registry_lookup)
+
+    assert ha_actions._target_identity(SimpleNamespace(), set()) == ()
+    registry_lookup.assert_not_called()
+
+
+def test_service_identity_returns_current_service_owner() -> None:
+    owner = object()
+    hass = SimpleNamespace(
+        services=SimpleNamespace(
+            async_services_for_domain=lambda domain: {"turn_on": owner}
+            if domain == "light"
+            else {}
+        )
+    )
+
+    assert ha_actions._service_identity(hass, "light", "turn_on") is owner
+
+
 @pytest.mark.parametrize("changed", ["target", "registry", "service"])
 async def test_authorization_rejects_target_or_owner_changes_during_permission_check(
     monkeypatch: pytest.MonkeyPatch, changed: str
