@@ -165,6 +165,7 @@ jobs:
           - shard: process-restart-runtime
             test-paths: >-
               tests_real_ha/test_browser_process_restart_acceptance.py
+              tests_stress/test_generated_editor_journey.py
               tests_real_ha/test_browser_runtime_acceptance.py
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
