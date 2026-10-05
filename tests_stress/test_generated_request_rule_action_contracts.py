@@ -103,7 +103,7 @@ async def test_generated_request_rule_failure_isolated_from_healthy_siblings(
 
     speeches = []
     for index in range(6):
-        speeches.append(_speech(await _say(hass, agent, f"case {index}")))
+        speeches.append(_speech(await _say(hass, agent, f"case {index}"), successful=index != 3))
 
     assert speeches == ["ok-0", "ok-1", "ok-2", "failed-3", "ok-4", "ok-5"]
     assert effects == ["case-0", "case-1", "case-2", "case-4", "case-5"]

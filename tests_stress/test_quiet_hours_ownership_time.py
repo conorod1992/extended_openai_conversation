@@ -28,6 +28,13 @@ from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 DUBLIN = ZoneInfo("Europe/Dublin")
 
 
+async def _stop_for_restart(manager):
+    """Simulate process loss while retaining the committed Quiet Hours state."""
+    for unsubscribe in manager._unsubscribers:
+        unsubscribe()
+    manager._unsubscribers.clear()
+
+
 def _volume(hass: HomeAssistant, entity_id: str) -> float:
     state = hass.states.get(entity_id)
     assert state is not None
@@ -466,7 +473,7 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
             in (durable_before or {}).get("observed_controls", []),
         )
         if recovery == "reload":
-            await manager.async_shutdown()
+            await _stop_for_restart(manager)
             manager = QuietHoursManager(hass)
             await manager.async_setup()
         else:
@@ -487,7 +494,7 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
         assert _volume(hass, beta_media) == pytest.approx(0.09)
         assert hass.states.get(beta_wake).state == "off"
         # A second reload preserves the original baseline and does not duplicate action.
-        await manager.async_shutdown()
+        await _stop_for_restart(manager)
         manager = QuietHoursManager(hass)
         await manager.async_setup()
         assert (
@@ -587,7 +594,7 @@ async def test_pending_quiet_control_preserves_manual_change_after_storage_failu
             blocking=True,
         )
         assert len(calls) == 1
-        await manager.async_shutdown()
+        await _stop_for_restart(manager)
         manager = QuietHoursManager(hass)
         await manager.async_setup()
         assert target in manager.active["observed_controls"]
@@ -727,7 +734,7 @@ async def test_unacknowledged_quiet_intent_does_not_claim_independent_goal(
         if end_immediately:
             freezer.move_to(ending)
         if recovery == "reload":
-            await manager.async_shutdown()
+            await _stop_for_restart(manager)
             manager = QuietHoursManager(hass)
             await manager.async_setup()
         else:
@@ -857,7 +864,7 @@ async def test_quiet_control_reconciles_prepared_and_applied_write_outcomes(
             "applied" if boundary == "applied_ack" else "prepared"
         )
         if recovery == "reload":
-            await manager.async_shutdown()
+            await _stop_for_restart(manager)
             manager = QuietHoursManager(hass)
             await manager.async_setup()
         else:

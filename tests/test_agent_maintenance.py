@@ -17,6 +17,49 @@ from custom_components.extended_openai_conversation_responses.agent_maintenance 
 from custom_components.extended_openai_conversation_responses.backup import BackupError
 
 
+async def test_deletion_retires_readers_after_owned_cancellation_cleanup() -> None:
+    """Deletion cannot purge while a cancelled request still owns native work."""
+    gate = AgentMaintenanceGate()
+    sibling = AgentMaintenanceGate()
+    entered, cancelled, settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def reader():
+        async with gate.shared():
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                # A shielded cleanup child inherits the admitted logical lease.
+                async def cleanup():
+                    async with gate.shared():
+                        await settled.wait()
+
+                await asyncio.shield(cleanup())
+                raise
+
+    request = asyncio.create_task(reader())
+    await asyncio.wait_for(entered.wait(), 1)
+    retirement = asyncio.create_task(gate.async_retire_readers())
+    try:
+        await asyncio.wait_for(cancelled.wait(), 1)
+        assert not retirement.done()
+        with pytest.raises(agent_maintenance.HomeAssistantError, match="deleted"):
+            async with gate.shared():
+                pytest.fail("Deletion admitted a new request")
+        async with sibling.shared():
+            pass
+        settled.set()
+        await asyncio.wait_for(retirement, 1)
+        assert request.cancelled()
+        async with gate.exclusive():
+            assert gate._active_readers == 0
+            assert not gate._reader_tasks
+    finally:
+        settled.set()
+        await asyncio.gather(request, retirement, return_exceptions=True)
+
+
 async def test_writer_waits_for_reader_and_blocks_late_reader() -> None:
     """A pending restore drains current work without allowing reader starvation."""
     gate = AgentMaintenanceGate()

@@ -107,11 +107,11 @@ async def test_native_api_key_replacement_preserves_or_reloads_provider_family(h
     entry = shell["entry"]
     subentry = next(iter(entry.subentries.values()))
     hass.config_entries.async_update_subentry(entry, subentry, data={
-        **subentry.data, CONF_API_MODE: "chat_completions", CONF_CHAT_MODEL: "gpt-5.6",
+        **subentry.data, CONF_API_MODE: "chat_completions", CONF_CHAT_MODEL: "gpt-5.6", "reasoning_effort": "none",
         CONF_FUNCTION_TOOLS: [], CONF_FUNCTION_GROUPS: [],
     })
     task = ConfigSubentry(
-        data=MappingProxyType({**DEFAULT_AI_TASK_OPTIONS, CONF_API_MODE: "chat_completions", CONF_CHAT_MODEL: "gpt-5.6"}),
+        data=MappingProxyType({**DEFAULT_AI_TASK_OPTIONS, CONF_API_MODE: "chat_completions", CONF_CHAT_MODEL: "gpt-5.6", "reasoning_effort": "none"}),
         subentry_type="ai_task_data", title="Credential sibling task", unique_id=None,
     )
     assert hass.config_entries.async_add_subentry(entry, task)
@@ -119,7 +119,7 @@ async def test_native_api_key_replacement_preserves_or_reloads_provider_family(h
     secondary = _entry("Unrelated provider connection")
     secondary.add_to_hass(hass)
     secondary_subentry = next(iter(secondary.subentries.values()))
-    hass.config_entries.async_update_subentry(secondary, secondary_subentry, data={**secondary_subentry.data, CONF_API_MODE: "chat_completions", CONF_CHAT_MODEL: "gpt-5.6", CONF_FUNCTION_TOOLS: [], CONF_FUNCTION_GROUPS: []})
+    hass.config_entries.async_update_subentry(secondary, secondary_subentry, data={**secondary_subentry.data, CONF_API_MODE: "chat_completions", CONF_CHAT_MODEL: "gpt-5.6", "reasoning_effort": "none", CONF_FUNCTION_TOOLS: [], CONF_FUNCTION_GROUPS: []})
     await _setup_entry(hass, secondary)
     unrelated = conversation.async_get_agent(hass, secondary.entry_id)
     unrelated_client = secondary.runtime_data

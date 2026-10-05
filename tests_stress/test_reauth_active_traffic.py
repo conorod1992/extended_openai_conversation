@@ -47,7 +47,7 @@ async def test_reauth_replaces_provider_client_without_crossing_active_traffic(
     outcome: str,
 ) -> None:
     """An old in-flight client cannot become the client of the reloaded agent."""
-    entry = _make_entry("Active reauth", include_ai_task=False)
+    entry = _make_entry("Active reauth", include_ai_task=False, conversation_options={CONF_API_MODE: "chat_completions"})
     await _setup_entry(hass, entry)
     old_agent = conversation.async_get_agent(hass, entry.entry_id)
     assert old_agent is not None

@@ -219,7 +219,10 @@ async def test_valid_sse_chunk_boundaries_preserve_assist_meaning(
                 assert json.loads(call["function"]["arguments"]) == _TOOL_ARGUMENTS
             assert service_calls[-1].data["entity_id"] == ["light.provider_wire"]
     assert len(streams) == len(patterns) * (2 if with_tool else 1)
-    assert all(stream.iteration_finished.is_set() for stream in streams)
+    # Chat Completions stops at [DONE] without exhausting the byte iterator.
+    # Both SDK paths must explicitly release every underlying HTTP response.
+    for stream in streams:
+        stream.assert_explicit_close_completed()
     assert agent._usage.totals.conversation_count == len(patterns)
     assert agent._usage.totals.failed_request_count == 0
     archived = [turn for turns in agent._archive._turns.values() for turn in turns]
@@ -232,3 +235,4 @@ async def test_valid_sse_chunk_boundaries_preserve_assist_meaning(
         tool=with_tool,
         patterns=list(patterns),
     )
+    record(stress_trace, "summary", explicit_stream_close_cases=len(streams))

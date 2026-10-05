@@ -119,7 +119,7 @@ test("Guest save acknowledgement survives a failed refresh and edits in flight t
         if (reject) { reject=false; throw Error("Rejected before commit"); }
         if (gate) { gate=false; await new Promise(resolve => { window.releaseGuestCommit=resolve; }); }
       }
-      if (message.section==="guest_mode" && message.action==="details" && window.releaseGuestCommit && failDetails) {
+      if (message.section==="guest_mode" && message.action==="policy" && window.releaseGuestCommit && failDetails) {
         failDetails=false; throw Error("Secondary details unavailable");
       }
       return original(message);
@@ -134,7 +134,7 @@ test("Guest save acknowledgement survives a failed refresh and edits in flight t
   const exclusions = panel.locator('ha-selector[data-guest-key="guest_excluded_domains"]');
   await exclusions.evaluate(node => { node.value=["camera"]; node.dispatchEvent(new CustomEvent("value-changed", {detail:{value:["camera"]}, bubbles:true})); });
   await page.evaluate(() => window.releaseGuestCommit());
-  await expect(panel.locator("#toast")).toContainText("Changes saved. Guest capability details could not be refreshed");
+  await expect(panel.locator("#toast")).toContainText("Changes saved. Saved policy metrics could not be refreshed");
   await expect(panel.locator("#save-page")).toBeEnabled();
   const accepted = await panel.evaluate(async host => {
     const scope=host._unsavedState.scopes.get("capabilities/guest-mode");

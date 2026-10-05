@@ -15,8 +15,12 @@ _DOCUMENT = "EOAI_DOWNGRADE_DOCUMENT"
 def _older_release_child() -> None:
     # A fresh process imports only the staged tagged integration, never the
     # repository checkout's already-loaded module objects.
-    root = Path(os.environ[_COMPONENT]).resolve().parents[1]
-    sys.path.insert(0, str(root))
+    import types
+
+    component = Path(os.environ[_COMPONENT]).resolve()
+    package = types.ModuleType("custom_components")
+    package.__path__ = [str(component.parent)]
+    sys.modules["custom_components"] = package
     from custom_components.extended_openai_conversation_responses import backup
     from homeassistant.exceptions import HomeAssistantError
 

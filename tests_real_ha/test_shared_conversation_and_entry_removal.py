@@ -170,7 +170,7 @@ async def test_permanent_entry_removal_during_inflight_request_never_resurrects_
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A request from a permanently removed entry may finish but cannot resurrect it."""
+    """Permanent entry removal cancels the active request without resurrecting it."""
     entry = _make_entry("Remove during request", include_ai_task=False)
     await _setup_entry(hass, entry)
     old_agent = _agent(hass, entry)
@@ -212,12 +212,12 @@ async def test_permanent_entry_removal_during_inflight_request_never_resurrects_
     assert conversation.async_get_agent(hass, entry.entry_id) is None
     assert not old_request.done()
 
-    release.set()
-    result = await asyncio.wait_for(old_request, timeout=_WAIT_TIMEOUT)
-    assert _speech(result) == "old-generation:request crossing permanent removal"
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(old_request, timeout=_WAIT_TIMEOUT)
     await asyncio.wait_for(removal, timeout=_WAIT_TIMEOUT)
+    assert old_request.cancelled()
 
-    # Completion of the stale generation must not re-register an agent or restore
+    # Cancellation of the stale generation must not re-register an agent or restore
     # registry ownership after Home Assistant has permanently deleted the entry.
     await hass.async_block_till_done()
     assert hass.config_entries.async_get_entry(entry.entry_id) is None
