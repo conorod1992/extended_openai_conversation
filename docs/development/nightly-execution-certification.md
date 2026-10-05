@@ -96,3 +96,17 @@ manager getter, settings page or reload healing the runtime first. Real stalled
 HTTP requests exercise deadlines rather than raising synthetic timeout errors.
 Retained prompt/API journeys preserve completed calls, summaries and attachments;
 attachment budgets account for the complete retained request before dispatch.
+
+
+Frontend latest-intent contracts share a WebSocket gate and record request and
+settlement order. They cover lists, searches, pagination, detail reads, scope and
+assistant changes, navigation, successful saves and unsaved replacement drafts.
+Browser animation-frame and operation-completion barriers replace guessed sleeps.
+Native Assist schedules shuffle success, failure and cancellation releases from a
+recorded seed and require each unreleased sibling to remain pending.
+
+Integrated calendar journeys run both provider APIs through Dublin's spring skip
+and autumn fold. The independent UTC/local ledger checks date-specific Usage;
+Guest and Temporary Memory expiry are checked immediately before and at expiry.
+Quiet Hours asserts restored volume and wake sound, delayed execution asserts an
+actual HA service effect, and Archive/detail pruning remains visible after reload.

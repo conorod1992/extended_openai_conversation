@@ -35,6 +35,7 @@ from homeassistant.util import dt as dt_util
 from tests.test_usage_accounting_recovery import FakeStorage
 from tests_stress.conftest import record
 from tests_stress.test_temporary_memory_scale import MemoryStore
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
 async def test_usage_buckets_survive_dst_folds_and_backward_clock_jump(
@@ -250,3 +251,201 @@ async def test_temporary_memory_forward_backward_jump_is_irreversible(
     record(
         stress_trace, "clock_jump", forward_days=30, backward_days=30, evaluations=11
     )
+
+
+@pytest.mark.parametrize("day", ["2026-03-29", "2026-10-25"])
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+async def test_populated_local_calendar_journey_preserves_visible_expiry_and_recovery(
+    hass, monkeypatch, freezer, real_store_io, stress_trace, day, api_mode
+):
+    """One native runtime crosses DST, expiry, pruning and reload with visible effects."""
+    import json
+    from collections import Counter
+    from copy import deepcopy
+    from custom_components.extended_openai_conversation_responses.const import (
+        DEFAULT_CONF_FUNCTION_TOOLS,
+    )
+    from custom_components.extended_openai_conversation_responses.delayed_tools import (
+        async_setup_delayed_tools,
+    )
+    from custom_components.extended_openai_conversation_responses.quiet_hours import (
+        async_get_quiet_hours,
+    )
+    from homeassistant.components import conversation
+    from homeassistant.components.homeassistant.exposed_entities import (
+        async_expose_entity,
+    )
+    from homeassistant.core import Context
+    from tests_real_ha.test_cross_feature_acceptance import _agent
+    from tests_real_ha.test_delayed_tool_due_reauthorization import (
+        _schedule_delayed_call,
+        _ENTITY_ID,
+    )
+    from tests_real_ha.test_provider_wire_e2e import (
+        _install_wire,
+        _chat_sse_text,
+        _responses_sse_text,
+        _speech,
+    )
+    from tests_real_ha.test_quiet_hours_scheduling import (
+        _install_satellite_entities,
+        _install_control_services,
+    )
+
+    base = datetime.fromisoformat(day).replace(tzinfo=UTC) + timedelta(minutes=15)
+    freezer.move_to(base)
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    user = await hass.auth.async_create_user(
+        "Calendar journey owner", group_ids=["system-admin"]
+    )
+    agent = await _agent(
+        hass,
+        api_mode=api_mode,
+        functions=[deepcopy(DEFAULT_CONF_FUNCTION_TOOLS[0])],
+        archive_enabled=True,
+        temporary_memory="balanced",
+        memory_mode="manual",
+        memory_auto_retrieve_limit=0,
+    )
+    scope = f"user:{user.id}"
+    _, media, wake = _install_satellite_entities(
+        hass, slug="integrated-calendar", volume=0.71, wake="on"
+    )
+    _install_control_services(hass)
+    quiet = await async_get_quiet_hours(hass)
+    await quiet.async_update_config(
+        {
+            "enabled": True,
+            "start": "00:00",
+            "end": "04:00",
+            "max_volume": 0.2,
+            "wake_sound": "off",
+        }
+    )
+    assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.2)
+    assert hass.states.get(wake).state == "off"
+    hass.states.async_set(_ENTITY_ID, "on")
+    async_expose_entity(hass, "conversation", _ENTITY_ID, True)
+    effects = []
+
+    async def turn_off(call):
+        effects.append(dt_util.utcnow().isoformat())
+        hass.states.async_set(_ENTITY_ID, "off", context=call.context)
+
+    hass.services.async_register("light", "turn_off", turn_off)
+    delayed = await async_setup_delayed_tools(hass)
+    call_id = await _schedule_delayed_call(agent, delayed, user, "calendar-delayed")
+    assert not effects and hass.states.get(_ENTITY_ID).state == "on"
+    expires = base + timedelta(hours=1)
+    await agent._temporary_memory.async_add_owned(
+        scope, "CALENDAR TEMPORARY MARKER", expires.isoformat()
+    )
+    await agent._guest_mode.async_restrict(active_until=expires.isoformat())
+    reply = _responses_sse_text if api_mode == "responses" else _chat_sse_text
+    days = Counter()
+    visible = []
+
+    async def say(marker):
+        wire = _install_wire(monkeypatch, agent, [reply(marker)])
+        result = await conversation.async_converse(
+            hass=hass,
+            text=marker,
+            conversation_id=None,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=agent.entry.entry_id,
+        )
+        assert _speech(result) == marker
+        assert len(wire.requests) == 1
+        days[dt_util.as_local(dt_util.utcnow()).date().isoformat()] += 1
+        return json.dumps(wire.requests[0]["body"])
+
+    try:
+        freezer.move_to(base - timedelta(hours=2))
+        await quiet.async_reconcile(now=dt_util.utcnow())
+        assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.71)
+        await say("Calendar previous local date")
+        freezer.move_to(base)
+        await quiet.async_reconcile(now=base)
+        first = await say("Calendar guest before expiry")
+        assert agent._guest_mode.is_active()
+        assert "CALENDAR TEMPORARY MARKER" not in first
+        assert (
+            len(await agent._temporary_memory.async_active(scope, owner_scope_id=scope))
+            == 1
+        )
+        for instant in (expires - timedelta(microseconds=1), expires):
+            freezer.move_to(instant)
+            expected_active = instant < expires
+            assert agent._guest_mode.is_active() is expected_active
+            records = await agent._temporary_memory.async_active(
+                scope, owner_scope_id=scope
+            )
+            assert bool(records) is expected_active
+            await quiet.async_reconcile(now=instant)
+            assert hass.states.get(media).attributes["volume_level"] == pytest.approx(
+                0.2
+            )
+            visible.append(
+                {
+                    "utc": instant.isoformat(),
+                    "local": dt_util.as_local(instant).isoformat(),
+                    "guest": expected_active,
+                    "temporary": len(records),
+                    "volume": 0.2,
+                }
+            )
+        if agent._temporary_memory._prune_save_task is not None:
+            await agent._temporary_memory._prune_save_task
+        await hass.async_block_till_done()
+        assert call_id not in delayed._records
+        assert len(effects) == 1 and hass.states.get(_ENTITY_ID).state == "off", effects
+        second = await say("Calendar owner after expiry")
+        assert "CALENDAR TEMPORARY MARKER" not in second
+        assert (await agent._archive.async_list_sessions(scope))["sessions"]
+        noon = base.replace(hour=12, minute=0)
+        freezer.move_to(noon)
+        await quiet.async_reconcile(now=noon)
+        assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.71)
+        assert hass.states.get(wake).state == "on"
+        await say("Calendar daylight request")
+        usage = agent._usage
+        for local_day, count in days.items():
+            assert usage.summary_for_date(local_day)["api_request_count"] == count
+        assert usage.totals.api_request_count == 4
+        assert len(days) == 2
+        usage.request_retention_days = usage.run_retention_days = 1
+        freezer.move_to(noon + timedelta(days=2))
+        await usage.async_prune_details()
+        await usage._async_save_details()
+        pruned = await agent._archive.async_prune(1)
+        assert pruned["deleted_sessions"] >= 1
+        assert not usage.requests and not usage.runs
+        assert (await agent._archive.async_list_sessions(scope))["sessions"] == []
+        assert await hass.config_entries.async_reload(agent.entry.entry_id)
+        await hass.async_block_till_done()
+        agent = conversation.async_get_agent(hass, agent.entry.entry_id)
+        assert agent._usage.totals.api_request_count == 4
+        assert (
+            await agent._temporary_memory.async_active(scope, owner_scope_id=scope)
+            == []
+        )
+        assert (await agent._archive.async_list_sessions(scope))["sessions"] == []
+        assert not agent._guest_mode.is_active()
+        assert not delayed._records and len(effects) == 1
+        await say("Calendar recovered after reload")
+        assert agent._usage.totals.api_request_count == 5
+        record(
+            stress_trace,
+            "summary",
+            integrated_calendar_journeys=1,
+            api=api_mode,
+            day=day,
+            visible_boundaries=visible,
+            delayed_effects=effects,
+            local_usage=dict(days),
+            pruned_archive=pruned,
+        )
+    finally:
+        await quiet.async_shutdown()
+        assert await hass.config_entries.async_unload(agent.entry.entry_id)
