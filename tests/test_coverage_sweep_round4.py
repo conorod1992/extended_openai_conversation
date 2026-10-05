@@ -843,3 +843,58 @@ def test_targeted_broadcast_parser_resolves_alias_and_strips_display_name() -> N
         {"entity_ids": ["assist_satellite.kitchen"]},
         "message ready",
     )
+
+
+
+@pytest.mark.asyncio
+async def test_guest_mode_initialize_ignores_malformed_schedule(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import guest_mode
+
+    manager = guest_mode.GuestModeManager(hass, "entry", "agent")
+    manager._store = SimpleNamespace(
+        async_load=AsyncMock(return_value={"schedule": {"invalid": True}})
+    )
+
+    await manager.async_initialize()
+
+    assert manager._initialized is True
+    assert manager.schedule is None
+
+
+@pytest.mark.asyncio
+async def test_guest_mode_initialize_recovers_ambiguous_persistence_state(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import guest_mode
+
+    manager = guest_mode.GuestModeManager(hass, "entry", "agent")
+    manager._persistence_unavailable = True
+    manager._store = SimpleNamespace(async_load=AsyncMock(return_value=None))
+    listener = Mock()
+    manager._listeners.add(listener)
+
+    await manager.async_initialize()
+
+    assert manager._initialized is True
+    assert manager._persistence_unavailable is False
+    assert manager.schedule is None
+    listener.assert_called_once()
+
+
+def test_guest_mode_status_fails_closed_when_persistence_unavailable(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import guest_mode
+
+    manager = guest_mode.GuestModeManager(hass, "entry", "agent")
+    manager._persistence_unavailable = True
+
+    with pytest.raises(HomeAssistantError, match="persistence is unavailable"):
+        manager.status()
+
+
+@pytest.mark.asyncio
+async def test_guest_mode_backup_fails_closed_when_persistence_unavailable(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import guest_mode
+
+    manager = guest_mode.GuestModeManager(hass, "entry", "agent")
+    manager._persistence_unavailable = True
+
+    with pytest.raises(HomeAssistantError, match="persistence is unavailable"):
+        await manager.async_backup_data()
