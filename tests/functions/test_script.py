@@ -220,6 +220,7 @@ async def test_script_function_older_cleanup_surface_and_empty_run(hass):
     ("native_trace", "raises"),
     [
         ({}, True),
+        ({"not-a-step": []}, True),
         (
             {
                 "0": [
@@ -229,6 +230,36 @@ async def test_script_function_older_cleanup_surface_and_empty_run(hass):
                 ]
             },
             False,
+        ),
+        (
+            {
+                "0": [
+                    SimpleNamespace(
+                        as_dict=MagicMock(
+                            return_value={
+                                "result": {"result": False},
+                                "error": "native abort",
+                            }
+                        )
+                    )
+                ]
+            },
+            True,
+        ),
+        (
+            {
+                "0": [
+                    SimpleNamespace(
+                        as_dict=MagicMock(
+                            return_value={
+                                "result": {"result": False},
+                                "template_errors": ["failed template"],
+                            }
+                        )
+                    )
+                ]
+            },
+            True,
         ),
     ],
 )
