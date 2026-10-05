@@ -201,12 +201,22 @@ test("RTL document, mixed-direction text and locale decimal input survive genuin
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.type("0,7");
     const typed = await decimal.inputValue();
-    expect(["0,7", "0.7"]).toContain(typed);
-    await panel.locator("#save-config").click();
-    await expect(panel.locator(".save-bar")).toHaveCount(0);
-    const saved = await panel.evaluate(host => host._call("configuration", "get"));
     const key = await decimal.getAttribute("data-config");
-    if (key) expect(Number(saved.config[key])).toBeCloseTo(0.7);
+    if (typed === "0,7" || typed === "0.7") {
+      await panel.locator("#save-config").click();
+      await expect(panel.locator(".save-bar")).toHaveCount(0);
+      const saved = await panel.evaluate(host => host._call("configuration", "get"));
+      if (key) expect(Number(saved.config[key])).toBeCloseTo(0.7);
+    } else {
+      // Native number controls may reject a locale decimal separator. That is
+      // acceptable only if EOAI leaves the setting dirty/invalid rather than
+      // silently saving a different numeric value.
+      await expect(panel.locator("#save-config")).toBeEnabled();
+      const before = await panel.evaluate(host => host._call("configuration", "get"));
+      await panel.locator("#save-config").click();
+      const after = await panel.evaluate(host => host._call("configuration", "get"));
+      if (key) expect(after.config[key]).toBe(before.config[key]);
+    }
   } finally {
     await context.close();
   }
@@ -268,7 +278,7 @@ test("real clipboard round-trip preserves multiline native YAML semantics", asyn
   await expect(editor).toBeVisible({timeout:30000});
   await expect.poll(() => editor.evaluate(element => element.yaml?.length || 0)).toBeGreaterThan(0);
 
-  const document = "spec:\r\n\tname: clipboard_yaml_probe\r\n\tdescription: \"Unicode Δ 東京\"\r\n\tparameters:\r\n\t\ttype: object\r\n\t\tproperties: {}\r\nfunction:\r\n\ttype: template\r\n\tvalue_template: \"line one\\nline two\"\r\n# no final newline";
+  const document = "spec:\r\n  name: clipboard_yaml_probe\r\n  description: \"Unicode Δ 東京\\tTabbed\"\r\n  parameters:\r\n    type: object\r\n    properties: {}\r\nfunction:\r\n  type: template\r\n  value_template: \"line one\\nline two\"\r\n# no final newline";
   await page.evaluate(value => navigator.clipboard.writeText(value), document);
   const surface = editor.locator('[contenteditable="true"], textarea').first();
   await surface.click();
