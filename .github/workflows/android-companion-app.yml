@@ -134,13 +134,21 @@ jobs:
             kill "$(cat "$RUNNER_TEMP/companion-ha.pid")" 2>/dev/null || true
           fi
 
-      - name: Upload Companion diagnostics
+      - name: Upload Companion evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-companion-app-evidence
+          path: companion-evidence/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Companion diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-companion-app-diagnostics
           path: |
-            companion-evidence/
             ${{ runner.temp }}/companion-ha.log
             ~/.maestro/tests/
           if-no-files-found: warn
