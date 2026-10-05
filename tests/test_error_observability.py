@@ -179,7 +179,7 @@ def test_live_action_targets_reject_changed_context_and_removed_entities(
         "get",
         lambda entity_id: object() if entity_id == "light.test" else None,
     )
-    with pytest.raises(HomeAssistantError, match="light.test"):
+    with pytest.raises(HomeAssistantError, match="Function Tool access policy"):
         agent._require_current_action_targets(hass, {"light.test"})
 
 
