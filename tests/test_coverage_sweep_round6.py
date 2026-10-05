@@ -334,3 +334,107 @@ async def test_backup_take_completed_import_rejects_cancelled_session(
         await backup_transfer._take_completed_import(
             hass, "complete", "entry", "agent"
         )
+
+
+
+def test_template_exposed_entities_helper_delegates(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import template
+
+    expected = [{"entity_id": "light.kitchen"}]
+    getter = Mock(return_value=expected)
+    monkeypatch.setattr(template, "get_exposed_entities", getter)
+    manager = template.ExtendedOpenAITemplateManager(hass)
+
+    assert manager._get_exposed_entities() is expected
+    getter.assert_called_once_with(hass)
+
+
+@pytest.mark.asyncio
+async def test_ha_llm_discovery_handles_missing_core_component(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import ha_llm_tools
+
+    monkeypatch.setattr(
+        ha_llm_tools.importlib,
+        "import_module",
+        Mock(side_effect=ImportError("component unavailable")),
+    )
+    monkeypatch.setattr(ha_llm_tools.llm, "async_get_apis", Mock(return_value=[]))
+    context = SimpleNamespace()
+
+    snapshot = await ha_llm_tools.async_discover(hass, context, references=None)
+
+    assert snapshot.tools == {}
+    assert snapshot.unavailable_sources == []
+
+
+@pytest.mark.asyncio
+async def test_ha_llm_discovery_empty_reference_list_short_circuits(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import ha_llm_tools
+
+    importer = Mock()
+    monkeypatch.setattr(ha_llm_tools.importlib, "import_module", importer)
+
+    snapshot = await ha_llm_tools.async_discover(hass, SimpleNamespace(), references=[])
+
+    assert snapshot.tools == {}
+    importer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_web_bounded_response_read_caches_materialized_body() -> None:
+    from custom_components.extended_openai_conversation_responses.functions import web
+    from tests.test_remote_response_bounds import _FakeResponse
+
+    response = _FakeResponse(b"cached")
+    bounded = web._BoundedResponse(response, 16)
+
+    first = await bounded.read()
+    second = await bounded.read()
+
+    assert first == b"cached"
+    assert second is first
+    assert response.content.requested == [17]
+
+
+def test_debug_conversation_trace_disabled_is_noop(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import debug
+
+    manager = SimpleNamespace(enabled=False)
+    monkeypatch.setattr(debug, "get_debug_manager", Mock(return_value=manager))
+    agent = SimpleNamespace(
+        hass=object(),
+        entry=SimpleNamespace(entry_id="entry"),
+        subentry=SimpleNamespace(subentry_id="agent"),
+    )
+    user_input = SimpleNamespace(conversation_id="conversation")
+
+    with debug.conversation_debug_trace(agent, user_input) as trace:
+        assert trace is None
+
+
+def test_debug_conversation_trace_finishes_failure_and_restores_context(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import debug
+
+    trace = SimpleNamespace(error_type=None, result=None)
+    manager = SimpleNamespace(
+        enabled=True,
+        begin=Mock(return_value=trace),
+        finish=Mock(),
+    )
+    monkeypatch.setattr(debug, "get_debug_manager", Mock(return_value=manager))
+    agent = SimpleNamespace(
+        hass=object(),
+        entry=SimpleNamespace(entry_id="entry"),
+        subentry=SimpleNamespace(subentry_id="agent"),
+    )
+    user_input = SimpleNamespace(conversation_id="conversation")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with debug.conversation_debug_trace(agent, user_input) as active:
+            assert active is trace
+            raise RuntimeError("boom")
+
+    manager.finish.assert_called_once()
+    assert manager.finish.call_args.kwargs["successful"] is False
+    assert isinstance(manager.finish.call_args.kwargs["error"], RuntimeError)
+    assert debug.current_debug_trace() is None
