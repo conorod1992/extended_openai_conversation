@@ -2030,7 +2030,17 @@
     "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[remove-chat_completions]",
     "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[remove-responses]",
     "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[unload-chat_completions]",
-    "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[unload-responses]"
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[unload-responses]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_assist_broadcast_and_quiet_hours_share_native_output_ownership[acknowledge]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_assist_broadcast_and_quiet_hours_share_native_output_ownership[expire]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_assist_broadcast_and_quiet_hours_share_native_output_ownership[reconnect]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_recipient_guard_rejects_missing_active_backpressure[finished]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_recipient_guard_rejects_missing_active_backpressure[not_paused]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_recipient_guard_rejects_missing_active_backpressure[unbounded]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_slow_native_audio_recipient_preserves_foreground_progress[abandon]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_slow_native_audio_recipient_preserves_foreground_progress[slow]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_slow_actual_assist_websocket_has_bounded_native_backlog[abandon]",
+    "tests_stress/test_downstream_delivery_ownership.py::test_slow_actual_assist_websocket_has_bounded_native_backlog[resume]"
   ],
   "browser": {
     "browser": [
@@ -2667,7 +2677,11 @@
       "intercom_idle_flaps": 1,
       "actual_expiry_callbacks": 4,
       "delayed_playback_acknowledgements": 1,
-      "intercom_timing_recoveries": 1
+      "intercom_timing_recoveries": 1,
+      "downstream_audio_cases": 2,
+      "downstream_bounded_samples": 4,
+      "shared_satellite_ownership_cases": 3,
+      "downstream_websocket_cases": 2
     },
     "backup": {
       "rollback_phases": 1,
@@ -3121,6 +3135,7 @@
       "tests_real_ha/test_assist_origin_context.py",
       "tests_real_ha/test_assist_voice_identity_precedence.py",
       "tests_real_ha/test_intercom_voice_acceptance.py",
+      "tests_stress/test_downstream_delivery_ownership.py",
       "tests_stress/test_intercom_endurance_campaign.py",
       "tests_stress/test_native_audio_delivery.py",
       "tests_stress/test_voice_household_campaign.py"
