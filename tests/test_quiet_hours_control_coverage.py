@@ -351,6 +351,65 @@ async def test_failed_apply_releases_ownership_when_device_stayed_unchanged(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["volume", "switch"])
+async def test_failed_apply_retains_intent_when_device_value_changed(
+    hass, kind
+) -> None:
+    entity_id = "media_player.bedroom" if kind == "volume" else "switch.wake_sound"
+    control = {
+        "kind": kind,
+        "satellite_entity_id": "assist_satellite.bedroom",
+        "original_value": 0.8 if kind == "volume" else True,
+        "quiet_value": 0.2 if kind == "volume" else False,
+        "baseline_context_id": "baseline",
+        "application_state": "prepared",
+        "application_context_id": "operation",
+    }
+    manager = _stateful_public_manager(hass)
+    manager._active = {
+        "observed_controls": [entity_id],
+        "pending_controls": {},
+        "controls": {entity_id: control},
+    }
+    controls = manager._active["controls"]
+    current = {"volume": 0.8, "switch": "on"}
+
+    def current_state(_entity_id):
+        return _state(
+            "operation",
+            state=current["switch"],
+            volume=current["volume"],
+        )
+
+    hass.states.get.side_effect = current_state
+    manager._async_prepare_control_locked = AsyncMock(return_value=control)
+    manager._async_revalidate_control_locked = AsyncMock(return_value=True)
+    manager._async_save_control_state_locked = AsyncMock()
+
+    async def fail_after_device_changed(*_args):
+        current["volume"] = 0.2
+        current["switch"] = "off"
+        raise RuntimeError("acknowledgement lost")
+
+    manager._async_set_volume = AsyncMock(side_effect=fail_after_device_changed)
+    manager._async_set_switch = AsyncMock(side_effect=fail_after_device_changed)
+
+    if kind == "volume":
+        await manager._async_apply_volume_locked(
+            "assist_satellite.bedroom", entity_id, controls
+        )
+    else:
+        await manager._async_apply_switch_locked(
+            "assist_satellite.bedroom", entity_id, False, controls
+        )
+
+    assert controls[entity_id] is control
+    assert manager._active["observed_controls"] == [entity_id]
+    assert control["application_state"] == "prepared"
+    manager._async_save_control_state_locked.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_apply_does_not_recreate_ownership_removed_during_service_call(hass) -> None:
     entity_id = "switch.wake_sound"
     control = {
@@ -506,6 +565,55 @@ async def test_restore_reverts_prepared_control_owned_by_quiet_hours(hass) -> No
 
     manager._async_set_volume.assert_awaited_once_with(entity_id, 0.8)
     assert manager.active is None
+
+
+@pytest.mark.asyncio
+async def test_pending_only_restore_leaves_non_pending_prepared_control_alone(hass) -> None:
+    manager = _stateful_public_manager(hass)
+    quiet_hours_control = {
+        "kind": "volume",
+        "satellite_entity_id": "assist_satellite.bedroom",
+        "original_value": 0.8,
+        "quiet_value": 0.2,
+        "application_state": "prepared",
+        "application_context_id": "operation",
+        "restoration_pending": False,
+    }
+    pending_control = {
+        "kind": "switch",
+        "satellite_entity_id": "assist_satellite.bedroom",
+        "original_value": True,
+        "quiet_value": False,
+        "application_state": "prepared",
+        "application_context_id": "operation",
+        "restoration_pending": True,
+    }
+    manager._active = {
+        "period_started_at": "2026-10-05T22:00:00+00:00",
+        "period_ends_at": "2026-10-06T07:00:00+00:00",
+        "controls": {
+            "media_player.bedroom": quiet_hours_control,
+            "switch.wake_sound": pending_control,
+        },
+        "observed_controls": ["media_player.bedroom", "switch.wake_sound"],
+    }
+    hass.states.get.side_effect = lambda entity_id: _state(
+        "operation",
+        state="off" if entity_id == "switch.wake_sound" else "idle",
+        volume=0.2,
+    )
+    manager._async_set_volume = AsyncMock()
+    manager._async_set_switch = AsyncMock()
+    manager._async_save_locked = AsyncMock()
+
+    await manager._async_restore_locked(pending_only=True)
+
+    assert manager._active is not None
+    assert manager._active["controls"] == {
+        "media_player.bedroom": quiet_hours_control
+    }
+    manager._async_set_volume.assert_not_awaited()
+    manager._async_set_switch.assert_awaited_once_with("switch.wake_sound", True)
 
 
 @pytest.mark.asyncio
