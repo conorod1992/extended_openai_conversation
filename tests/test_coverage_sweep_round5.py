@@ -1068,3 +1068,127 @@ async def test_service_function_group_enable_missing_and_success_paths(
     persisted = update.call_args.kwargs["data"][services.CONF_FUNCTION_GROUPS]
     assert persisted[0]["enabled"] is True
     assert persisted[1]["enabled"] is False
+
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "not-a-list",
+        [{"canonical": "on"}],
+        [{"canonical": "on", "alternatives": "enable"}],
+        [{"canonical": "on", "alternatives": []}],
+        [{"canonical": "!!!", "alternatives": ["enable"]}],
+        [{"canonical": "turn on", "alternatives": ["turn on"]}],
+        [
+            {"canonical": "turn on", "alternatives": ["enable"]},
+            {"canonical": "enable", "alternatives": ["activate"]},
+        ],
+    ],
+)
+def test_request_rule_wording_groups_reject_invalid_or_ambiguous_shapes(value) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    with pytest.raises(ValueError):
+        request_rules.validate_wording_groups(value)
+
+
+def test_request_rule_wording_groups_deduplicate_exact_alternatives() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    result = request_rules.validate_wording_groups(
+        [
+            {
+                "canonical": "turn on",
+                "alternatives": ["enable", "enable", "activate"],
+            }
+        ]
+    )
+
+    assert result == [
+        {
+            "canonical": "turn on",
+            "alternatives": ["enable", "activate"],
+        }
+    ]
+
+
+def test_request_rule_match_cursor_ranks_one_fuzzy_result_per_rule(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    rule = {
+        "id": "rule",
+        "name": "Rule",
+        "order": 0,
+        "match_type": "equals",
+    }
+    settings = {
+        "word_forms": False,
+        "wording_alternatives": False,
+        "fuzzy_threshold": 0,
+    }
+    snapshot = request_rules._MatchingSnapshot(
+        phrases=(),
+        wording_groups=(),
+        deterministic=(),
+        fuzzy=(
+            (
+                rule,
+                settings,
+                request_rules.CompiledPhrase("first", normalized="first"),
+            ),
+            (
+                rule,
+                settings,
+                request_rules.CompiledPhrase("second", normalized="second"),
+            ),
+        ),
+    )
+    scores = iter([50.0, 90.0])
+    monkeypatch.setattr(request_rules, "_fuzzy_score", lambda *_args: next(scores))
+
+    cursor = request_rules._MatchCursor(snapshot, "input")
+    match = cursor.next_match()
+
+    assert match is not None
+    assert match.rule["id"] == "rule"
+    assert match.score == 90.0
+    assert cursor.next_match() is None
+
+
+def test_request_rule_direct_match_excludes_all_candidates() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+    from tests.test_request_rules import MemoryStore
+
+    rule = {
+        "id": "one",
+        "name": "One",
+        "order": 0,
+        "match_type": "equals",
+    }
+    settings = {
+        "word_forms": False,
+        "wording_alternatives": False,
+        "fuzzy_threshold": 0,
+    }
+    manager = request_rules.RequestRules(MemoryStore())
+    manager._committed_matching_snapshot = request_rules._MatchingSnapshot(
+        phrases=(),
+        wording_groups=(),
+        deterministic=(
+            (
+                rule,
+                settings,
+                request_rules.CompiledPhrase("hello", normalized="hello"),
+            ),
+        ),
+        fuzzy=(
+            (
+                rule,
+                settings,
+                request_rules.CompiledPhrase("hello", normalized="hello"),
+            ),
+        ),
+    )
+
+    assert manager.match("hello", frozenset({"one"})) is None
