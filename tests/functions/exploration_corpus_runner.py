@@ -28,6 +28,7 @@ async def replay_corpus_case(case, hass, tmp_path, monkeypatch):
     expected = expected_corpus_case(case)
     evidence = []
     schedule = []
+    api_schedules = {}
     case_id = case["id"]
     if case_id == "continuity-owner-overlap":
         continuity = ConversationContinuity("corpus-agent")
@@ -147,8 +148,13 @@ async def replay_corpus_case(case, hass, tmp_path, monkeypatch):
     else:
         # This shared genuine-HA journey asserts real service effects, public task
         # failure contracts, exact wire request counts and an independent healthy task.
-        await replay_invalid_final_task_action(hass, monkeypatch, "chat_completions", schedule)
+        for mode in case["environment"]["api_modes"]:
+            realised = []
+            await replay_invalid_final_task_action(hass, monkeypatch, mode, realised)
+            assert realised == case["operations"]
+            api_schedules[mode] = realised
+        schedule = api_schedules["chat_completions"]
         evidence = ["tool-requested", "effect:once", "output:invalid", "task:failed", "independent-task:healthy", "effect-count:1"]
         assert schedule == case["operations"]
     assert evidence == expected["evidence"], case_id
-    return {**expected, "evidence": evidence, "operations": schedule, "production_backed": True}
+    return {**expected, "evidence": evidence, "operations": schedule, "api_schedules": api_schedules, "production_backed": True}

@@ -35,6 +35,7 @@ async def test_saved_exploration_corpus_cases_replay_to_reviewed_outcomes(
             observed_failure_signature=result["failure_signature"],
             replay_evidence=result["evidence"],
             realised_schedule=result["operations"],
+            api_schedules=result["api_schedules"],
             production_backed=result["production_backed"],
         )
         assert result["outcome"] == case["expected_outcome"], case["id"]
