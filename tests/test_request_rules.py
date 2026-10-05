@@ -888,7 +888,7 @@ async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule() -> None:
         )
     )
     cursor = _MatchCursor(
-        rules._committed_matching_snapshot, "open the kitchen lights"
+        rules._committed_matching_snapshot, "open kitchen lightz"
     )
 
     match = cursor.next_match()
