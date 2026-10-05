@@ -764,3 +764,82 @@ async def test_service_call_function_without_result_alias_uses_active_executor(
 
     assert result == {"result": {"ok": True}}
     executor.assert_awaited_once_with("demo", {"value": 1})
+
+
+
+@pytest.mark.asyncio
+async def test_async_get_intercom_rejects_removed_integration(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import intercom
+
+    hass.data[f"{intercom.DOMAIN}.removed"] = True
+
+    with pytest.raises(HomeAssistantError, match="has been removed"):
+        await intercom.async_get_intercom(hass)
+
+
+@pytest.mark.asyncio
+async def test_async_get_intercom_creates_and_initializes_manager(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import intercom
+
+    manager = SimpleNamespace(async_initialize=AsyncMock())
+    monkeypatch.setattr(intercom, "IntercomManager", Mock(return_value=manager))
+
+    result = await intercom.async_get_intercom(hass)
+
+    assert result is manager
+    assert hass.data[intercom.DATA_KEY] is manager
+    manager.async_initialize.assert_awaited_once()
+
+
+def test_targeted_broadcast_parser_handles_non_target_and_unresolved_candidate() -> None:
+    from custom_components.extended_openai_conversation_responses import intercom
+
+    manager = SimpleNamespace(
+        catalog=Mock(
+            return_value={
+                "satellites": [
+                    {"name": "Kitchen", "aliases": ["Cooking"], "id": "satellite.kitchen"}
+                ],
+                "devices": [],
+                "areas": [],
+                "floors": [],
+                "labels": [],
+            }
+        ),
+        resolve_named_target=Mock(return_value=None),
+    )
+
+    assert intercom.parse_targeted_broadcast("hello there", manager) is None
+    assert intercom.parse_targeted_broadcast("tell Kitchen hello", manager) is None
+    manager.resolve_named_target.assert_called()
+
+
+def test_targeted_broadcast_parser_resolves_alias_and_strips_display_name() -> None:
+    from custom_components.extended_openai_conversation_responses import intercom
+
+    manager = SimpleNamespace(
+        catalog=Mock(
+            return_value={
+                "satellites": [
+                    {"name": "Kitchen", "aliases": ["Cooking"], "id": "satellite.kitchen"}
+                ],
+                "devices": [],
+                "areas": [],
+                "floors": [],
+                "labels": [],
+            }
+        ),
+        resolve_named_target=Mock(
+            return_value={"entity_ids": ["assist_satellite.kitchen"], "name": "Kitchen"}
+        ),
+    )
+
+    result = intercom.parse_targeted_broadcast(
+        "announce to Cooking, message ready",
+        manager,
+    )
+
+    assert result == (
+        {"entity_ids": ["assist_satellite.kitchen"]},
+        "message ready",
+    )
