@@ -1131,8 +1131,10 @@ class ExtendedOpenAIAgentEntity(
                 self, llm_context, retrieved_memories
             )
         )
-        temporary_memories = ExtendedOpenAIAgentEntity._revalidate_temporary_memory_expiry(
-            self, temporary_memories
+        temporary_memories = (
+            ExtendedOpenAIAgentEntity._revalidate_temporary_memory_expiry(
+                self, temporary_memories
+            )
         )
 
         # Build custom prompt with exposed entities
