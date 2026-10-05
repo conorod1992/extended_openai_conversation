@@ -1000,7 +1000,7 @@ def test_runtime_failure_token_length_can_be_recorded_as_local_reply() -> None:
 def test_request_rule_groups_reject_duplicate_ids() -> None:
     from custom_components.extended_openai_conversation_responses import request_rules
 
-    with pytest.raises(ValueError, match="duplicate"):
+    with pytest.raises(ValueError, match="unique"):
         request_rules.validate_rule_groups(
             [
                 {"id": "same", "name": "First"},
@@ -1076,13 +1076,13 @@ def test_request_rule_result_references_recurse_but_ignore_identity_fields() -> 
     from custom_components.extended_openai_conversation_responses import request_rules
 
     value = {
-        "message": "Value {{ results.first.answer }}",
+        "message": "Value {first.answer}",
         "nested": [
-            "Other {{ results.second }}",
-            {"deep": "{{ results.third.value }}"},
+            "Other {second.value}",
+            {"deep": "{third.value}"},
         ],
-        "result_alias": "{{ results.ignored }}",
-        "step_id": "{{ results.also_ignored }}",
+        "result_alias": "{ignored.value}",
+        "step_id": "{also_ignored.value}",
     }
 
     assert request_rules._result_references(value) == {
@@ -1097,17 +1097,17 @@ def test_request_rule_result_paths_collect_nested_references() -> None:
 
     paths = request_rules._result_paths_by_alias(
         {
-            "message": "{{ results.first.answer }} / {{ results.first.name }}",
-            "nested": [{"value": "{{ results.second }}"}],
+            "message": "{first.answer} / {first.name}",
+            "nested": [{"value": "{second.value}"}],
         }
     )
 
     assert paths == {
         "first": {
-            "{{ results.first.answer }}",
-            "{{ results.first.name }}",
+            "{first.answer}",
+            "{first.name}",
         },
-        "second": {"{{ results.second }}"},
+        "second": {"{second.value}"},
     }
 
 
@@ -1138,8 +1138,8 @@ def test_guest_slot_resolution_recurses_through_supported_shapes() -> None:
         "action": "light.turn_on",
         "target": {
             "entity_id": [
-                "light.{{ slots.room }}",
-                "switch.{{ slots.room }}",
+                "light.{{ room }}",
+                "switch.{{ room }}",
             ]
         },
         "count": 2,
@@ -1725,7 +1725,7 @@ async def test_import_chunk_rejects_duplicate_chunk_after_completion(hass) -> No
 
 
 @pytest.mark.asyncio
-async def test_take_import_rejects_incomplete_upload(hass) -> None:
+async def test_completed_import_rejects_incomplete_upload(hass) -> None:
     from custom_components.extended_openai_conversation_responses import (
         backup,
         backup_transfer,
@@ -1739,7 +1739,7 @@ async def test_take_import_rejects_incomplete_upload(hass) -> None:
     )
 
     with pytest.raises(backup.BackupError, match="incomplete"):
-        await backup_transfer._take_import(
+        backup_transfer._completed_import(
             hass,
             started["session_id"],
             "entry",
