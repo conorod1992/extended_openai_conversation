@@ -9,6 +9,9 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "shared_runtime_ownership_cases",
+    "nonzero_backoff_cancel_cases",
+    "active_nonterminal_stream_cases",
     "active_contention_journeys",
     "active_native_workloads",
     "active_workload_completions",
