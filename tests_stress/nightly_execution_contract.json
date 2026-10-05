@@ -2020,7 +2020,17 @@
     "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[wrong_pre_gc]",
     "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[wrong_websocket]",
     "tests_stress/test_execution_contract.py::test_resource_floors_follow_the_executed_native_campaign",
-    "tests_stress/test_execution_contract.py::test_calendar_journeys_require_native_worker_and_durable_settlement_evidence"
+    "tests_stress/test_execution_contract.py::test_calendar_journeys_require_native_worker_and_durable_settlement_evidence",
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_active_nonterminal_socket_stream_cancels_and_recovers[chat_completions]",
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_active_nonterminal_socket_stream_cancels_and_recovers[responses]",
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_neighbour_shared_client_and_native_script_survive_final_removal[chat_completions]",
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_neighbour_shared_client_and_native_script_survive_final_removal[responses]",
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[caller-chat_completions]",
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[caller-responses]",
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[remove-chat_completions]",
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[remove-responses]",
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[unload-chat_completions]",
+    "tests_stress/test_shared_runtime_request_lifetimes.py::test_nonzero_sdk_backoff_stops_with_its_owner[unload-responses]"
   ],
   "browser": {
     "browser": [
@@ -2685,7 +2695,10 @@
       "interleaved_exact_usage_rounds": 4,
       "interleaved_exact_usage_negative_controls": 4,
       "interleaved_exact_usage_api_modes": 2,
-      "generated_public_schedule_cases": 12
+      "generated_public_schedule_cases": 12,
+      "shared_runtime_ownership_cases": 2,
+      "nonzero_backoff_cancel_cases": 6,
+      "active_nonterminal_stream_cases": 2
     },
     "large-installation": {
       "concurrent_summary_cases": 2,
@@ -3044,7 +3057,8 @@
       "tests_stress/test_provider_fault_phases.py",
       "tests_stress/test_provider_protocol_acceptance.py",
       "tests_stress/test_provider_real_connection_pool.py",
-      "tests_stress/test_provider_valid_chunking.py"
+      "tests_stress/test_provider_valid_chunking.py",
+      "tests_stress/test_shared_runtime_request_lifetimes.py"
     ],
     "public-version-journeys": [
       "tests_real_ha/test_public_version_journeys.py"
