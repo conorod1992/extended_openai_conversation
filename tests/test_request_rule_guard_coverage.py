@@ -294,3 +294,49 @@ def test_rule_provider_input_rejects_missing_capture_values(
 
     with pytest.raises(HomeAssistantError, match="Captured AI input is unavailable"):
         request_rules.rule_provider_input(match, "say hello")
+
+
+def test_rule_group_validation_cleans_values_and_rejects_duplicate_ids() -> None:
+    assert request_rules.validate_rule_groups(
+        [{"id": " kitchen ", "name": " Kitchen Lights "}]
+    ) == [{"id": "kitchen", "name": "Kitchen Lights"}]
+    with pytest.raises(ValueError, match="group ids must be unique"):
+        request_rules.validate_rule_groups(
+            [{"id": "same", "name": "One"}, {"id": "same", "name": "Two"}]
+        )
+    with pytest.raises(ValueError, match="each group needs an id and name"):
+        request_rules.validate_rule_groups([{"id": "missing-name"}])
+
+
+def test_assign_missing_result_step_ids_only_mutates_result_producers() -> None:
+    rule = {
+        "action": {
+            "actions": [
+                {
+                    "type": "function",
+                    "function": "first",
+                    "result_alias": "first_result",
+                },
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"function": "second", "result_alias": "second_result"},
+                },
+                {"type": "function", "function": "no_result"},
+                {
+                    "type": "function",
+                    "function": "existing",
+                    "result_alias": "kept",
+                    "step_id": "existing-id",
+                },
+            ]
+        }
+    }
+
+    assigned = request_rules._assign_missing_result_step_ids(rule)
+
+    first, second, no_result, existing = assigned["action"]["actions"]
+    assert len(first["step_id"]) == 32
+    assert len(second["data"]["step_id"]) == 32
+    assert "step_id" not in no_result
+    assert existing["step_id"] == "existing-id"
+    assert "step_id" not in rule["action"]["actions"][0]
