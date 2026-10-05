@@ -9,8 +9,18 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "active_contention_journeys",
+    "active_native_workloads",
+    "active_workload_completions",
+    "contention_foreground_requests",
+    "contention_websocket_saves",
+    "provider_isolation_live_saves",
+    "pre_gc_resource_samples",
+    "genuine_management_websocket_commands",
+    "populated_ageing_features",
     "generated_public_schedule_cases",
     "integrated_calendar_journeys",
+    "delayed_worker_settlement_checks",
     "shared_backend_business_cases",
     "shared_durable_schedules",
     "consumer_first_recoveries",

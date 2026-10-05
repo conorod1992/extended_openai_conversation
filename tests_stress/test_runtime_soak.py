@@ -162,7 +162,6 @@ async def test_seeded_multi_entry_runtime_soak(
     for index in range(2):
         await converse(index, 0, -1)
     warm_resources = _resource_footprint(hass)
-    gc.collect()
     warm_tasks = _eoai_task_count()
     for number in range(120 * stress_scale):
         agent_index = rng.randrange(2)
@@ -209,8 +208,9 @@ async def test_seeded_multi_entry_runtime_soak(
         ), (warm_resources, current_resources)
         if number % 12 == 0:
             await hass.async_block_till_done()
-            gc.collect()
             assert _eoai_task_count() <= warm_tasks + 2
+            record(stress_trace, "pre_gc_cleanup", eoai_tasks=_eoai_task_count())
+            gc.collect()
 
     # Preserve every seeded operation, then guarantee the existing conversation
     # floor. A reload-heavy seed adds real validated Assist turns rather than
@@ -248,4 +248,9 @@ async def test_reload_heavy_seed_guarantees_conversation_floor(
     record(stress_trace, "fixed_minimum_seed", seed=3676)
     await test_seeded_multi_entry_runtime_soak(hass, monkeypatch, 3676, 1, stress_trace)
     assert any(item["operation"] == "minimum_conversation" for item in stress_trace)
-    assert next(item for item in stress_trace if item["operation"] == "summary")["conversation_turns"] >= 120
+    assert (
+        next(item for item in stress_trace if item["operation"] == "summary")[
+            "conversation_turns"
+        ]
+        >= 120
+    )

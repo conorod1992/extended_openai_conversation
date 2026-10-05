@@ -16,6 +16,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_REASONING_EFFORT,
     DOMAIN,
 )
+from custom_components.extended_openai_conversation_responses.request_rules import (
+    async_get_request_rules,
+)
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import Context
@@ -185,8 +188,11 @@ async def test_provider_confirmed_lifecycle_tracks_actual_request_and_assistant(
         )
 
     await save_model("gpt-5.6")
+    await hass.async_block_till_done()
     agent = agent_for(original)
-    await agent._request_rules.async_create(
+    install(agent)
+    rules = await async_get_request_rules(hass, entry.entry_id, original.subentry_id)
+    await rules.async_create(
         {
             "name": "Legacy model request",
             "phrases": ["legacy probe"],
@@ -208,7 +214,9 @@ async def test_provider_confirmed_lifecycle_tracks_actual_request_and_assistant(
     assert _speech(await turn(agent, "legacy probe")) == "Available"
     assert issue() is None
     await save_model("gpt-5.1")
+    await hass.async_block_till_done()
     agent = agent_for(original)
+    install(agent)
     reply = (404, "model_not_found", "The model gpt-5.1 is retired")
     gated = True
     pending = asyncio.create_task(turn(agent))

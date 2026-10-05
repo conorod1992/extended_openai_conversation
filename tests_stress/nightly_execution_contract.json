@@ -1992,7 +1992,35 @@
     "tests_stress/test_usage_retention_endurance.py::test_concurrent_usage_writes_survive_retention_jumps_and_reload",
     "tests_stress/test_usage_retention_endurance.py::test_mixed_foreground_failure_detached_summary_accounting_survives_prune_reload",
     "tests_stress/test_valid_configuration_transitions.py::test_generated_configuration_transitions_remain_live_and_reversible",
-    "tests_stress/test_voice_household_campaign.py::test_voice_household_scopes_survive_concurrency_mapping_edits_and_reload"
+    "tests_stress/test_voice_household_campaign.py::test_voice_household_scopes_survive_concurrency_mapping_edits_and_reload",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[ai_tasks]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[archive]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[chat_completions]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[expiry]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[functions]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[knowledge]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[maintenance]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[management]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[memory]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[reload]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[responses]",
+    "tests_stress/test_process_resource_soak.py::test_populated_lifetime_rejects_missing_native_participation[rules]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[background]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[eoai_tasks]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[post_gc]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[subscriptions]",
+    "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[transfer_files]",
+    "tests_stress/test_responses_scale_fairness.py::test_active_native_contention_preserves_assist_management_and_ha_progress",
+    "tests_stress/test_responses_scale_fairness.py::test_contention_evidence_rejects_inactive_workloads[exited]",
+    "tests_stress/test_responses_scale_fairness.py::test_contention_evidence_rejects_inactive_workloads[idle]",
+    "tests_stress/test_responses_scale_fairness.py::test_contention_evidence_rejects_inactive_workloads[missing]",
+    "tests_stress/test_process_resource_soak.py::test_resource_sampling_survives_real_atomic_rename",
+    "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[missing_pre_gc]",
+    "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[missing_websocket]",
+    "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[wrong_pre_gc]",
+    "tests_stress/test_execution_contract.py::test_resource_floor_ownership_rejects_missing_and_wrong_lane_evidence[wrong_websocket]",
+    "tests_stress/test_execution_contract.py::test_resource_floors_follow_the_executed_native_campaign",
+    "tests_stress/test_execution_contract.py::test_calendar_journeys_require_native_worker_and_durable_settlement_evidence"
   ],
   "browser": {
     "browser": [
@@ -2476,7 +2504,9 @@
       "process_soak_windows": 5,
       "continuity_owner_transitions": 16,
       "continuity_wire_checks": 24,
-      "continuity_serialized_overlaps": 9
+      "continuity_serialized_overlaps": 9,
+      "pre_gc_resource_samples": 5,
+      "genuine_management_websocket_commands": 20
     },
     "functions": {
       "actual_function_executions": 1,
@@ -2661,7 +2691,13 @@
       "concurrent_summary_cases": 2,
       "summary_lifecycle_cases": 3,
       "summary_replacement_recoveries": 3,
-      "large_responses_wire_journeys": 1
+      "large_responses_wire_journeys": 1,
+      "active_contention_journeys": 1,
+      "active_native_workloads": 5,
+      "active_workload_completions": 10,
+      "contention_foreground_requests": 8,
+      "contention_websocket_saves": 8,
+      "provider_isolation_live_saves": 1
     },
     "feature-crossroads": {
       "distinct_matcher_pressure_cases": 1,
@@ -2712,7 +2748,8 @@
       "compound_optional_manager_faults": 4,
       "shared_durable_schedules": 20,
       "consumer_first_recoveries": 4,
-      "integrated_calendar_journeys": 4
+      "integrated_calendar_journeys": 4,
+      "delayed_worker_settlement_checks": 4
     },
     "diagnostics": {
       "artifact_privacy_probes": 4
@@ -2725,11 +2762,20 @@
       "lifetime_expired_transfer_reclaims": 1,
       "lifetime_reloads": 4,
       "lifetime_final_healthy_requests": 1,
-      "uninterrupted_lifetime_windows": 5,
+      "uninterrupted_lifetime_windows": 9,
       "uninterrupted_lifetime_reloads": 0,
       "uninterrupted_lifetime_final_healthy_requests": 1,
       "resource_fairness_cases": 1,
-      "resource_fairness_lightweight_requests": 8
+      "resource_fairness_lightweight_requests": 8,
+      "active_contention_journeys": 1,
+      "active_native_workloads": 5,
+      "active_workload_completions": 10,
+      "contention_foreground_requests": 8,
+      "contention_websocket_saves": 8,
+      "provider_isolation_live_saves": 1,
+      "pre_gc_resource_samples": 19,
+      "genuine_management_websocket_commands": 40,
+      "populated_ageing_features": 10
     },
     "ai-task": {
       "ai_task_image_continuations": 2,
@@ -2885,7 +2931,7 @@
       "tests_stress/test_large_installation.py",
       "tests_stress/test_memory_knowledge_scale.py",
       "tests_stress/test_provider_wire_privacy.py",
-      "tests_stress/test_responses_scale_fairness.py::test_populated_scale_executes_responses_retrieval_and_tool_wire"
+      "tests_stress/test_responses_scale_fairness.py"
     ],
     "lifecycle": [
       "tests_real_ha/test_config_flow_lifecycle_contracts.py",
@@ -2910,7 +2956,7 @@
     ],
     "long-lifetime": [
       "tests_stress/test_process_resource_soak.py",
-      "tests_stress/test_responses_scale_fairness.py::test_mixed_background_pressure_preserves_lightweight_progress"
+      "tests_stress/test_responses_scale_fairness.py"
     ],
     "memory-knowledge": [
       "tests_stress/test_memory_knowledge_scale.py",
