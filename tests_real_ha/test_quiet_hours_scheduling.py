@@ -195,6 +195,7 @@ async def test_real_ha_clock_callbacks_activate_and_restore(
 @pytest.mark.asyncio
 async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock_correction(
     hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Wall-clock jumps are handled by registered HA callbacks, not direct repair calls."""
     await hass.config.async_set_time_zone("UTC")
@@ -207,6 +208,10 @@ async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock
     _install_control_services(hass, calls)
 
     now = dt_util.utcnow().replace(second=0, microsecond=0)
+    wall_clock = now
+    # HA's interval listener reads utcnow itself; firing timer handles alone
+    # changes the daily callback timestamp but leaves discovery on the real clock.
+    monkeypatch.setattr(dt_util, "utcnow", lambda: wall_clock)
     start_at = now + timedelta(minutes=20)
     end_at = now + timedelta(minutes=50)
     manager = await async_get_quiet_hours(hass)
@@ -226,6 +231,7 @@ async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock
 
         # Cross the configured start boundary through HA's already-registered
         # wall-clock listener. Do not call the manager's reconciliation method.
+        wall_clock = start_at
         async_fire_time_changed(hass, start_at.astimezone(UTC))
         await hass.async_block_till_done()
         assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
@@ -239,8 +245,10 @@ async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock
         # normal discovery interval elapse from that corrected clock. The policy
         # must reflect wall time again rather than retaining stale future state.
         corrected = start_at - timedelta(minutes=10)
+        wall_clock = corrected
         async_fire_time_changed(hass, corrected.astimezone(UTC))
         await hass.async_block_till_done()
+        wall_clock = corrected + timedelta(minutes=5)
         async_fire_time_changed(
             hass, (corrected + timedelta(minutes=5)).astimezone(UTC)
         )
@@ -254,10 +262,12 @@ async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock
 
         # A later healthy forward transition still applies exactly once, proving
         # the correction did not duplicate or strand listener ownership.
+        wall_clock = start_at
         async_fire_time_changed(hass, start_at.astimezone(UTC))
         await hass.async_block_till_done()
         assert hass.states.get(_STATE_ENTITY_ID).state == "on"
         assert len(calls) == 6
+        wall_clock = end_at
         async_fire_time_changed(hass, end_at.astimezone(UTC))
         await hass.async_block_till_done()
         assert hass.states.get(_STATE_ENTITY_ID).state == "off"
