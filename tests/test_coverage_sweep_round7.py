@@ -1078,3 +1078,52 @@ def test_web_decode_compressed_body_passthrough_unknown_encoding() -> None:
 
     body = b"plain"
     assert web._decode_compressed_body(body, "identity", 100) is body
+
+
+
+@pytest.mark.asyncio
+async def test_native_automation_update_settlement_returns_successful_result() -> None:
+    from custom_components.extended_openai_conversation_responses.functions.native import (
+        _async_settle_automation_update,
+    )
+
+    async def operation():
+        return "updated"
+
+    assert await _async_settle_automation_update(operation()) == "updated"
+
+
+def test_web_decode_gzip_round_trip_and_malformed_payload() -> None:
+    import gzip
+
+    import aiohttp
+
+    from custom_components.extended_openai_conversation_responses.functions import web
+
+    payload = b"hello compressed world"
+    encoded = gzip.compress(payload)
+
+    assert web._decode_compressed_body(encoded, "gzip", 1024) == payload
+
+    with pytest.raises(aiohttp.ClientPayloadError, match="Malformed|Incomplete"):
+        web._decode_compressed_body(b"not-gzip", "gzip", 1024)
+
+
+def test_web_decode_deflate_round_trip() -> None:
+    import zlib
+
+    from custom_components.extended_openai_conversation_responses.functions import web
+
+    payload = b"deflate payload"
+    encoded = zlib.compress(payload)
+
+    assert web._decode_compressed_body(encoded, "deflate", 1024) == payload
+
+
+def test_bash_function_working_directory_uses_config_dir(tmp_path) -> None:
+    from custom_components.extended_openai_conversation_responses.functions import bash
+
+    hass = SimpleNamespace(config=SimpleNamespace(config_dir=str(tmp_path)))
+    function = bash.BashFunction()
+
+    assert function.get_working_dir(hass) == tmp_path / bash.DEFAULT_WORKING_DIRECTORY
