@@ -542,7 +542,7 @@ async def test_initialize_recovers_each_invalid_stored_matcher_section() -> None
 
     assert rules.snapshot()["groups"] == []
     assert rules.snapshot()["defaults"] == DEFAULT_MATCHING
-    assert rules.snapshot()["wording_groups"] == DEFAULT_WORDING_GROUPS
+    assert rules.snapshot()["wording_groups"] == list(DEFAULT_WORDING_GROUPS)
     assert store.saves == 1
 
 
