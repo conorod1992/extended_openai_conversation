@@ -1,0 +1,147 @@
+name: Android Companion app acceptance
+
+on:
+  schedule:
+    - cron: "47 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/android-companion-app.yml"
+      - "ci/companion_app_server.py"
+      - "tests_mobile/**"
+      - "custom_components/extended_openai_conversation_responses/**"
+      - "requirements_test.txt"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-companion-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  companion:
+    name: Android Companion app smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      COMPANION_VERSION: "2026.8.4"
+      COMPANION_APK_SHA256: "ed1ded69472f2fa87c20c975b3e5f628889ec304dc9eb6aa5c52ecb6bd4c4687"
+      MAESTRO_VERSION: "2.11.0"
+      MAESTRO_SHA256: "5384593cb4e7a106489e75a821d157dd43f4e438df6bc308b72e82c685e1283a"
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      - name: Install stable Home Assistant runtime
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
+          pip install "homeassistant==$VERSION"
+          python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          python -m pip check
+          echo "EOAI_EXPECTED_HA_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Download pinned Companion app release
+        run: |
+          set -euo pipefail
+          curl -fL             "https://github.com/home-assistant/android/releases/download/${COMPANION_VERSION}/app-full-release.apk"             -o "$RUNNER_TEMP/home-assistant-companion.apk"
+          echo "${COMPANION_APK_SHA256}  $RUNNER_TEMP/home-assistant-companion.apk" | sha256sum -c -
+
+      - name: Install pinned Maestro CLI
+        run: |
+          set -euo pipefail
+          curl -fL             "https://github.com/mobile-dev-inc/Maestro/releases/download/cli-${MAESTRO_VERSION}/maestro.zip"             -o "$RUNNER_TEMP/maestro.zip"
+          echo "${MAESTRO_SHA256}  $RUNNER_TEMP/maestro.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/maestro.zip" -d "$RUNNER_TEMP/maestro"
+          echo "$RUNNER_TEMP/maestro/maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Start disposable Home Assistant
+        run: |
+          set -euo pipefail
+          READY="$RUNNER_TEMP/companion-ready.json"
+          python ci/companion_app_server.py             --config "$RUNNER_TEMP/companion-ha"             --component custom_components/extended_openai_conversation_responses             --ready "$READY"             > "$RUNNER_TEMP/companion-ha.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/companion-ha.pid"
+          for _ in {1..180}; do
+            if [[ -s "$READY" ]] && curl -fsS http://127.0.0.1:8123/ >/dev/null; then
+              exit 0
+            fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/companion-ha.pid")" 2>/dev/null; then
+              cat "$RUNNER_TEMP/companion-ha.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/companion-ha.log"
+          exit 1
+
+      - name: Run real Companion app journey
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            adb install -r "$RUNNER_TEMP/home-assistant-companion.apk"
+            adb shell settings put global window_animation_scale 0
+            adb shell settings put global transition_animation_scale 0
+            adb shell settings put global animator_duration_scale 0
+            maestro test tests_mobile/companion-app-smoke.yaml               -e HOME_ASSISTANT_URL=http://10.0.2.2:8123               -e HOME_ASSISTANT_USERNAME=eoai-companion               -e HOME_ASSISTANT_PASSWORD=eoai-companion-password
+
+      - name: Record source-bound Companion evidence
+        if: success()
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p companion-evidence
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path("companion-evidence/certification.json").write_text(
+              json.dumps(
+                  {
+                      "candidate_sha": os.environ["CANDIDATE_SHA"],
+                      "passed": True,
+                      "platform": "android-emulator",
+                      "companion_version": os.environ["COMPANION_VERSION"],
+                      "maestro_version": os.environ["MAESTRO_VERSION"],
+                      "onboarding": True,
+                      "management_edit_save": True,
+                      "background_resume": True,
+                      "deep_link_reentry": True,
+                  },
+                  indent=2,
+              ) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Stop disposable Home Assistant
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/companion-ha.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/companion-ha.pid")" 2>/dev/null || true
+          fi
+
+      - name: Upload Companion diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-companion-app-evidence
+          path: |
+            companion-evidence/
+            ${{ runner.temp }}/companion-ha.log
+            ~/.maestro/tests/
+          if-no-files-found: warn
+          retention-days: 14
