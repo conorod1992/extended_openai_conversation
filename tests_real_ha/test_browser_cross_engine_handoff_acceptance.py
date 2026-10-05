@@ -74,7 +74,11 @@ async def _run_playwright(
     )
 
 
-@pytest.mark.parametrize("middle", ["firefox", "webkit"])
+_selected_middle = os.environ.get("CROSS_BROWSER_ENGINE")
+_MIDDLES = [_selected_middle] if _selected_middle in {"firefox", "webkit"} else ["firefox", "webkit"]
+
+
+@pytest.mark.parametrize("middle", _MIDDLES)
 @pytest.mark.asyncio
 async def test_cross_browser_state_handoff_survives_true_ha_restart(
     tmp_path: Path,
