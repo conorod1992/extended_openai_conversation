@@ -1770,3 +1770,70 @@ def test_normalize_active_rejects_invalid_controls(
     else:
         assert normalized is not None
         assert set(normalized["controls"]) == expected_ids
+
+
+@pytest.mark.asyncio
+async def test_prepare_control_reconciles_completed_effect_without_replay() -> None:
+    state = SimpleNamespace(context=SimpleNamespace(id="owned-context"))
+    manager = _public_manager(
+        SimpleNamespace(states=SimpleNamespace(get=lambda _entity_id: state))
+    )
+    manager._active = {"observed_controls": [], "pending_controls": {}}
+    manager._async_save_control_state_locked = AsyncMock()
+    control = {
+        "kind": "switch",
+        "satellite_entity_id": "assist_satellite.kitchen",
+        "original_value": True,
+        "quiet_value": False,
+        "baseline_context_id": "original-context",
+        "application_state": "prepared",
+        "application_context_id": "owned-context",
+    }
+    controls = {"switch.kitchen": control}
+
+    result = await manager._async_prepare_control_locked(
+        "assist_satellite.kitchen",
+        "switch.kitchen",
+        controls,
+        "switch",
+        False,
+        False,
+        True,
+    )
+
+    assert result is None
+    assert control["application_state"] == "applied"
+    manager._async_save_control_state_locked.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_prepare_control_reuses_unapplied_intent_at_original_baseline() -> None:
+    state = SimpleNamespace(context=SimpleNamespace(id="original-context"))
+    manager = _public_manager(
+        SimpleNamespace(states=SimpleNamespace(get=lambda _entity_id: state))
+    )
+    manager._active = {"observed_controls": [], "pending_controls": {}}
+    manager._async_save_control_state_locked = AsyncMock()
+    control = {
+        "kind": "switch",
+        "satellite_entity_id": "assist_satellite.kitchen",
+        "original_value": True,
+        "quiet_value": False,
+        "baseline_context_id": "original-context",
+        "application_state": "prepared",
+        "application_context_id": "owned-context",
+    }
+    controls = {"switch.kitchen": control}
+
+    result = await manager._async_prepare_control_locked(
+        "assist_satellite.kitchen",
+        "switch.kitchen",
+        controls,
+        "switch",
+        True,
+        False,
+        True,
+    )
+
+    assert result is control
+    manager._async_save_control_state_locked.assert_not_awaited()
