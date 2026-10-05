@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from typing import Any
 
 import pytest
@@ -49,6 +50,119 @@ from tests_stress.test_request_rules_matrix import CLASSIFIED_MATCHERS
 
 MATCHERS = sorted(CLASSIFIED_MATCHERS)
 API_MODES = [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES]
+
+
+async def test_seeded_competing_rules_preserve_eligible_public_effects(
+    hass, monkeypatch, stress_seed, stress_trace
+):
+    """Independent eligibility witnesses exercise capture, fuzzy fallback and routing."""
+    calls = []
+
+    async def record_call(call):
+        calls.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "record", record_call)
+    for seed in sorted({0xC0FFEE, stress_seed}):
+        rng = random.Random(seed)
+        for api in API_MODES:
+            agent = await _agent(hass, api)
+            for matcher, phrase, text in [
+                ("equals", "run chain", "run chain"),
+                ("sentence_pattern", "remember {fact}", "remember cobalt"),
+                ("equals", "light", "liagt"),
+            ]:
+                for route in (False, True):
+                    for rule in agent._request_rules.snapshot()["rules"]:
+                        await agent._request_rules.async_delete(rule["id"])
+                    start = len(calls)
+                    disabled = _local([_record_action("disabled")], phrase=text)
+                    disabled["enabled"] = False
+                    ineligible = _local([_record_action("ineligible")], phrase=text)
+                    ineligible["conditions"] = [
+                        {"condition": "template", "value_template": "{{ false }}"}
+                    ]
+                    first = _local(
+                        [_record_action("eligible-first")],
+                        phrase=phrase,
+                        match_type=matcher,
+                    )
+                    first["continue_matching"] = True
+                    final = _local(
+                        [
+                            _record_action(
+                                "{{ fact }}"
+                                if matcher == "sentence_pattern"
+                                else "eligible-final"
+                            )
+                        ],
+                        phrase=phrase,
+                        match_type=matcher,
+                        success="Final complete",
+                    )
+                    if route:
+                        final["action_type"] = "model_routing"
+                        final["action"] = {
+                            "model": "gpt-5.2",
+                            "reasoning_effort": "xhigh",
+                            "scope": "request",
+                            "reset": False,
+                            "continue_to_ai": True,
+                        }
+                    if text == "liagt":
+                        for rule in (first, final):
+                            rule["matching_behavior"] = "custom"
+                            rule["matching"] = {
+                                **DEFAULT_MATCHING,
+                                "fuzzy": True,
+                                "fuzzy_threshold": 70,
+                            }
+                    blockers = [disabled, ineligible]
+                    rng.shuffle(blockers)
+                    await _create_ordered_chain(agent, *blockers, first, final)
+                    reply = (
+                        _chat_sse_text
+                        if api == API_MODE_CHAT_COMPLETIONS
+                        else _responses_sse_text
+                    )
+                    wire = _install_wire(
+                        monkeypatch, agent, [reply("Routed complete")] if route else []
+                    )
+                    result = await _say(hass, agent, text)
+                    assert result.response.error_code is None, (
+                        api,
+                        matcher,
+                        text,
+                        route,
+                        str(result.response.as_dict()),
+                    )
+                    assert _speech(result) == (
+                        "Routed complete" if route else "Final complete"
+                    )
+                    assert calls[start:] == (
+                        ["eligible-first"]
+                        if route
+                        else [
+                            "eligible-first",
+                            "cobalt"
+                            if matcher == "sentence_pattern"
+                            else "eligible-final",
+                        ]
+                    )
+                    assert len(wire.requests) == int(route)
+                    if route:
+                        assert wire.requests[0]["body"]["model"] == "gpt-5.2"
+                    record(
+                        stress_trace,
+                        "competing_rule_witness",
+                        seed=seed,
+                        api=api,
+                        matcher=matcher,
+                        phrase=phrase,
+                        text=text,
+                        route=route,
+                        blocked=[rule["name"] for rule in blockers],
+                        effects=calls[start:],
+                    )
 
 
 @pytest.mark.parametrize("capture", [False, True], ids=["uncaptured", "captured"])
@@ -247,13 +361,17 @@ async def test_referenced_function_recreation_cannot_rebind_inflight_rule(
         calls.append(call)
 
     hass.services.async_register("rule_probe", "record", record_call)
-    await agent._request_rules.async_create(_local([
-        {
-            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-            "data": {"function": name, "arguments": {}},
-        },
-        _record_action("executed"),
-    ]))
+    await agent._request_rules.async_create(
+        _local(
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"function": name, "arguments": {}},
+                },
+                _record_action("executed"),
+            ]
+        )
+    )
     entered, release = asyncio.Event(), asyncio.Event()
     validate = rules_module.async_validate_actions_config
 
@@ -269,19 +387,32 @@ async def test_referenced_function_recreation_cannot_rebind_inflight_rule(
     entry = agent.entry
 
     def replace(tools: list[dict]) -> None:
-        subentry = next(item for item in entry.subentries.values() if item.subentry_type == "conversation")
+        subentry = next(
+            item
+            for item in entry.subentries.values()
+            if item.subentry_type == "conversation"
+        )
         hass.config_entries.async_update_subentry(
-            entry, subentry, data={**subentry.data, CONF_FUNCTION_TOOLS: tools},
+            entry,
+            subentry,
+            data={**subentry.data, CONF_FUNCTION_TOOLS: tools},
         )
 
     before = agent.subentry.data
     replace([])
     replace([tool])
-    after = next(item for item in entry.subentries.values() if item.subentry_type == "conversation").data
+    after = next(
+        item
+        for item in entry.subentries.values()
+        if item.subentry_type == "conversation"
+    ).data
     assert after == before and after is not before
     release.set()
     stale = await asyncio.wait_for(pending, timeout=10)
-    assert stale.response.error_code is not None or stale.response.as_dict()["speech"]["plain"]["speech"] != "Done"
+    assert (
+        stale.response.error_code is not None
+        or stale.response.as_dict()["speech"]["plain"]["speech"] != "Done"
+    )
     assert not calls
     assert not old_wire
 
@@ -318,20 +449,26 @@ async def test_inflight_rule_identity_rejects_replacement_and_aba(
     hass.services.async_register("light", "turn_off", turn_off)
     hass.states.async_set("light.enhanced_rule", "on")
     hass.states.async_set("light.replacement_rule", "on")
-    original = await rules.async_create({
-        **_rule(
-            "equals",
-            "local_action",
-            {
-                "actions": [{
-                    "domain": "light", "service": "turn_off",
-                    "target": {"entity_id": ["light.enhanced_rule"]}, "data": {},
-                }],
-                "success_response": "Original rule executed",
-            },
-        ),
-        "id": "nightly-aba-rule",
-    })
+    original = await rules.async_create(
+        {
+            **_rule(
+                "equals",
+                "local_action",
+                {
+                    "actions": [
+                        {
+                            "domain": "light",
+                            "service": "turn_off",
+                            "target": {"entity_id": ["light.enhanced_rule"]},
+                            "data": {},
+                        }
+                    ],
+                    "success_response": "Original rule executed",
+                },
+            ),
+            "id": "nightly-aba-rule",
+        }
+    )
     before = rules.revision()
     assert not rules._has_continuation
     entered, release = asyncio.Event(), asyncio.Event()
@@ -354,11 +491,19 @@ async def test_inflight_rule_identity_rejects_replacement_and_aba(
             await release.wait()
             return result
 
-        monkeypatch.setattr(rules_module, "async_validate_actions_config", paused_validate)
+        monkeypatch.setattr(
+            rules_module, "async_validate_actions_config", paused_validate
+        )
 
-    pending = asyncio.create_task(async_evaluate_rule(
-        hass, rules, runtime, "think deeply", "nightly-aba-session",
-    ))
+    pending = asyncio.create_task(
+        async_evaluate_rule(
+            hass,
+            rules,
+            runtime,
+            "think deeply",
+            "nightly-aba-session",
+        )
+    )
     await asyncio.wait_for(entered.wait(), timeout=10)
     if mutation == "delete_recreate_same":
         await rules.async_delete(original["id"])
@@ -368,10 +513,14 @@ async def test_inflight_rule_identity_rejects_replacement_and_aba(
             **original,
             "action": {
                 **original["action"],
-                "actions": [{
-                    "domain": "light", "service": "turn_off",
-                    "target": {"entity_id": ["light.replacement_rule"]}, "data": {},
-                }],
+                "actions": [
+                    {
+                        "domain": "light",
+                        "service": "turn_off",
+                        "target": {"entity_id": ["light.replacement_rule"]},
+                        "data": {},
+                    }
+                ],
                 "success_response": "Replacement rule must not execute",
             },
         }
@@ -389,7 +538,9 @@ async def test_inflight_rule_identity_rejects_replacement_and_aba(
     assert _speech(fresh) == "Original rule executed"
     assert len(calls) == 1
     assert not wire.requests
-    record(stress_trace, "summary", phase=phase, mutation=mutation, stale_service_calls=0)
+    record(
+        stress_trace, "summary", phase=phase, mutation=mutation, stale_service_calls=0
+    )
 
 
 async def _agent(hass: HomeAssistant, api_mode: str):
@@ -438,7 +589,9 @@ async def _create_ordered_chain(agent, *items: dict) -> None:
     """Priority is part of each scenario, independent of generated UUID order."""
     created = []
     for priority, item in enumerate(items):
-        created.append(await agent._request_rules.async_create({**item, "order": priority}))
+        created.append(
+            await agent._request_rules.async_create({**item, "order": priority})
+        )
     saved = agent._request_rules.snapshot()["rules"]
     assert [rule["id"] for rule in saved] == [rule["id"] for rule in created]
     assert [rule["order"] for rule in saved] == list(range(len(items)))

@@ -235,3 +235,21 @@ checks. Semantic recovery counts come from
 manager/device assertions, rather than the generic Store fault matrix. All cases
 are mandatory at the candidate SHA; existing minima and reviewed allowances
 remain unchanged. No expensive acceptance case is added to ordinary PR CI.
+
+Generated behavioural witnesses retain independent expected values. The Functions
+campaign constructs recursive objects and arrays to depth three, optional and
+required fields, nullable unions, type-sensitive enum/const values, empty values,
+integral floats and fractional/boundary neighbours. Fixed seeds remain regression
+witnesses; `STRESS_SEED` adds reproducible exploratory construction without filtering
+cases through production validation. Scalar types are asserted separately from
+Python equality. Native Script comparisons cover choose/repeat, templates,
+conditions, service and conversation responses, stops and event-controlled waits.
+
+Public competing-rule journeys shuffle disabled and condition-failed candidates
+ahead of eligible exact, captured and fuzzy matches, then verify ordered local
+effects or real SDK routing on both APIs. Populated interaction journeys save
+live configuration through management WebSockets, disable retained features and
+restore them, with explicit private/shared Memory retrieval, Knowledge search,
+on-demand Function execution, temporary context and speech transformations. Every
+claimed feature must produce its specified effect; retained data must be usable
+again after restoration without a test-driven manager reload.

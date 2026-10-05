@@ -52,7 +52,7 @@ from tests_stress.behaviour_oracles import (
     seed_behaviour,
 )
 from tests_stress.conftest import record
-from tests_stress.generated_valid_states import generate, normalized_state
+from tests_stress.generated_valid_states import GROUP, TOOL, generate, normalized_state
 from tests_stress.test_provider_protocol_acceptance import (
     _assert_valid_outgoing_history,
 )
@@ -273,6 +273,94 @@ def _assert_wire(request: dict, normalized: dict, api: str) -> None:
             else body.get("reasoning_effort")
         )
         assert sent_effort == normalized["reasoning_effort"]
+
+
+async def test_populated_feature_interactions_survive_live_retained_transitions(
+    hass, hass_ws_client, monkeypatch, stress_trace
+):
+    """Each claimed feature participates before, during and after a live disable."""
+    MockUser(id=OWNER, name="Interaction owner", is_owner=True).add_to_hass(hass)
+    MockUser(id=OTHER, name="Other owner").add_to_hass(hass)
+    effects = []
+
+    async def marker(call):
+        effects.append((call.domain, call.service, dict(call.data)))
+
+    hass.services.async_register("coverage_probe", "record", marker)
+    entry = _make_entry(
+        "Populated transitions",
+        include_ai_task=False,
+        conversation_options={"functions": []},
+    )
+    await _setup_entry(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+    source_id = await seed_behaviour(hass, entry, _conversation_subentry(entry))
+    for api in ("chat_completions", "responses"):
+        for enabled in (True, False, True):
+            config = agent_config.normalize_agent_config(
+                {
+                    "chat_model": "gpt-5.2",
+                    "api_mode": api,
+                    "reasoning_effort": "none",
+                    "functions": [{**TOOL, "enabled": enabled}],
+                    "function_groups": [{**GROUP, "loading_mode": "on_demand"}],
+                    "memory_mode": "manual" if enabled else "off",
+                    "shared_memory_mode": "explicit",
+                    "memory_auto_retrieve_limit": 0,
+                    "knowledge_enabled": enabled,
+                    "temporary_memory": "balanced" if enabled else "off",
+                    "speech_processing_enabled": enabled,
+                    "speech_strip_markdown": True,
+                    "speech_strip_urls": True,
+                    "speech_regex_replacements": [
+                        {"pattern": "alpha", "replacement": "beta"}
+                    ],
+                }
+            )
+            current = await _management_call(
+                client, entry=entry, section="configuration", action="get"
+            )
+            await _management_call(
+                client,
+                entry=entry,
+                section="configuration",
+                action="update",
+                revision=current["revision"],
+                config=config,
+            )
+            case = {
+                "function_tools": "direct" if enabled else "disabled",
+                "function_groups": "on_demand",
+            }
+            await hass.async_block_till_done()
+            request = await _converse(
+                hass,
+                entry,
+                monkeypatch,
+                api,
+                "gpt-5.2",
+                context=Context(user_id=OWNER),
+                case=case,
+                config=config,
+                source_id=source_id,
+                effects=effects,
+            )
+            _assert_wire(request, config, api)
+            required = {"memory_search", "knowledge_search", "coverage_marker"}
+            assert (
+                required <= set(request["behaviours"])
+                if enabled
+                else not required.intersection(request["behaviours"])
+            )
+            record(
+                stress_trace,
+                "retained_transition",
+                api=api,
+                enabled=enabled,
+                behaviours=request["behaviours"],
+                effects=len(effects),
+            )
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_generated_valid_states_cross_real_ha_and_sdk_wire(
