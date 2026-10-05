@@ -6,6 +6,7 @@ import asyncio
 from collections import deque
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -897,7 +898,10 @@ async def test_model_catalog_websocket_reports_action_failures(hass, monkeypatch
     )
     hass.data[model_catalog_manager.DATA_MANAGER] = manager
 
-    await model_catalog_manager.websocket_catalog(
+    handler = model_catalog_manager.websocket_catalog
+    while hasattr(handler, "__wrapped__"):
+        handler = handler.__wrapped__
+    await handler(
         hass,
         connection,
         {"id": 1, "type": model_catalog_manager.WS_CATALOG, "action": "check", "model": ""},
@@ -938,7 +942,10 @@ async def test_model_catalog_websocket_lookup_returns_capabilities(hass, monkeyp
         Mock(return_value=[{"id": "model"}]),
     )
 
-    await model_catalog_manager.websocket_catalog(
+    handler = model_catalog_manager.websocket_catalog
+    while hasattr(handler, "__wrapped__"):
+        handler = handler.__wrapped__
+    await handler(
         hass,
         connection,
         {"id": 2, "type": model_catalog_manager.WS_CATALOG, "action": "lookup", "model": "model"},
@@ -1394,9 +1401,7 @@ def test_model_catalog_rejects_tool_support_removal() -> None:
 
     assert target is not None
     model, tool, api = target
-    model["tools"][tool][api]["support"] = "never"
-    model["tools"][tool][api]["requires"] = {}
-    model["tools"][tool][api]["excludes"] = {}
+    model["tools"][tool][api] = {"support": "never"}
 
     with pytest.raises(ValueError, match="remove tool support"):
         model_catalog.validate_catalog_transition(current, candidate)
