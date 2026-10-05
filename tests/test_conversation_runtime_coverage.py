@@ -379,3 +379,37 @@ async def test_embedding_results_are_count_checked_and_sorted_by_provider_index(
     )
     with pytest.raises(ValueError, match="invalid or duplicate index"):
         await agent._async_create_embeddings(["first", "second"])
+
+    for invalid_index in (True, 2):
+        agent.entry.runtime_data.embeddings.create.return_value = SimpleNamespace(
+            data=[
+                SimpleNamespace(index=0, embedding=[1.0]),
+                SimpleNamespace(index=invalid_index, embedding=[2.0]),
+            ]
+        )
+        with pytest.raises(ValueError, match="invalid or duplicate index"):
+            await agent._async_create_embeddings(["first", "second"])
+
+
+def test_request_function_groups_are_validated_once_per_request(monkeypatch) -> None:
+    configured_tools: list[dict] = []
+    groups = [{"name": "validated"}]
+    validations: list[tuple[object, object]] = []
+    monkeypatch.setattr(
+        conversation_module,
+        "validate_function_groups",
+        lambda configured, tools: validations.append((configured, tools)) or groups,
+    )
+    agent = SimpleNamespace(subentry=SimpleNamespace(data={}))
+    token = conversation_module._ACTIVE_FUNCTION_CONFIG.set(
+        (configured_tools, None)
+    )
+    try:
+        first = conversation_module._request_function_groups(agent, configured_tools)
+        second = conversation_module._request_function_groups(agent, configured_tools)
+    finally:
+        conversation_module._ACTIVE_FUNCTION_CONFIG.reset(token)
+
+    assert first is groups
+    assert second is groups
+    assert validations == [([], configured_tools)]
