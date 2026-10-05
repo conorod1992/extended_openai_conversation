@@ -104,7 +104,7 @@ jobs:
           disable-animations: true
           disable-linux-hw-accel: false
           script: |
-            set -euo pipefail
+            # The action runs each command with /bin/sh and fails on nonzero exit.
             adb install -r "$RUNNER_TEMP/home-assistant-companion.apk"
             adb shell settings put global window_animation_scale 0
             adb shell settings put global transition_animation_scale 0
