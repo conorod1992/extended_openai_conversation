@@ -1157,3 +1157,151 @@ def test_guest_slot_resolution_recurses_through_supported_shapes() -> None:
         },
         "count": 2,
     }
+
+
+
+@pytest.mark.asyncio
+async def test_targeted_broadcast_parse_miss_returns_to_normal_routing(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import local_intents
+
+    manager = SimpleNamespace(enabled=True)
+    monkeypatch.setattr(
+        local_intents, "async_get_intercom", AsyncMock(return_value=manager)
+    )
+    monkeypatch.setattr(
+        local_intents, "is_targeted_broadcast_request", Mock(return_value=True)
+    )
+    monkeypatch.setattr(
+        local_intents, "parse_targeted_broadcast", Mock(return_value=None)
+    )
+    user_input = SimpleNamespace(
+        text="broadcast to nowhere hello",
+        context=None,
+        satellite_id=None,
+        device_id=None,
+    )
+
+    assert (
+        await local_intents._async_try_targeted_broadcast(hass, user_input) is None
+    )
+
+
+def test_native_statistics_schema_migration_skips_already_strict_schema() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        native_function_schema_migration as migration,
+    )
+
+    tool = {
+        "spec": {
+            "strict": False,
+            "parameters": migration._LEGACY_PRESET_GET_STATISTICS_PARAMETERS,
+        }
+    }
+
+    assert migration._migrate_statistics_schema(tool) is False
+
+
+@pytest.mark.asyncio
+async def test_parallel_safe_outcomes_cancel_children_when_parent_is_cancelled() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        parallel_tool_execution,
+    )
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def executor(_tool, _input):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    task = asyncio.create_task(
+        parallel_tool_execution.async_execute_parallel_safe_batch_outcomes(
+            [(object(), object())],
+            executor,
+        )
+    )
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cancelled.is_set()
+
+
+def test_skill_transaction_remove_unlinks_regular_file(tmp_path) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        skill_transactions,
+    )
+
+    path = tmp_path / "owned-file"
+    path.write_text("data")
+
+    skill_transactions._remove(path)
+
+    assert not path.exists()
+
+
+def test_model_retirement_provider_error_accepts_provider_error_type(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import model_lifecycle
+
+    monkeypatch.setattr(
+        model_lifecycle,
+        "provider_error_metadata",
+        Mock(
+            return_value={
+                "provider_error_type": "model_deprecated",
+                "code": "",
+                "message": "",
+                "status_code": 400,
+            }
+        ),
+    )
+
+    assert model_lifecycle.retirement_provider_error(RuntimeError("retired")) is True
+
+
+def test_model_retirement_rule_override_returns_rule_specific_message(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import model_lifecycle
+
+    monkeypatch.setattr(
+        model_lifecycle,
+        "lifecycle_snapshot",
+        Mock(
+            return_value={
+                "model": "retired-model",
+                "status": "deprecated",
+                "shutdown_reached": True,
+                "shutdown_at": "2026-10-01",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        model_lifecycle,
+        "retirement_provider_error",
+        Mock(return_value=True),
+    )
+    create_issue = Mock()
+    monkeypatch.setattr(model_lifecycle.ir, "async_create_issue", create_issue)
+
+    result = model_lifecycle.record_retirement_failure(
+        hass,
+        entry_id="entry",
+        subentry_id="agent",
+        title="Jarvis",
+        model="retired-model",
+        configured_model="configured-model",
+        error=RuntimeError("retired"),
+        logger=Mock(),
+    )
+
+    assert result is not None
+    assert "Request Rule selected retired model retired-model" in result
+    create_issue.assert_called_once()
