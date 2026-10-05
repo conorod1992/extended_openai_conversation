@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "ha-version-upgrade-acceptance.yml"
 JOURNEY = ROOT / "tests_real_ha" / "test_ha_version_upgrade_acceptance.py"
+RELEASE_HELPERS = ROOT / "tests_real_ha" / "test_release_upgrade_acceptance.py"
 
 
 def test_ha_version_upgrade_workflow_is_nightly_and_manual_only() -> None:
@@ -36,8 +37,16 @@ def test_ha_version_upgrade_journey_keeps_eoai_fixed_and_checks_durable_state() 
         "CONF_ARCHIVE_RETENTION_DAYS",
         "PERSISTED_HA_UPGRADE_DELAY",
         "archive_session_id",
-        "memory_marker",
-        "knowledge_marker",
-        "request_rule_marker",
     ):
         assert durable_boundary in text
+
+    # Memory, knowledge and request rules are checked by the shared release
+    # journey. Verify both delegation and its assertions rather than requiring
+    # those field names to be duplicated in the HA upgrade wrapper.
+    assert "await upgrade_helpers._released_phase(hass, config_dir)" in text
+    assert "await upgrade_helpers._candidate_migration_phase(hass, config_dir)" in text
+    assert "await upgrade_helpers._candidate_restart_phase(hass, config_dir)" in text
+    helpers = RELEASE_HELPERS.read_text(encoding="utf-8")
+    assert "await _assert_populated_release_state(hass, entry.entry_id, state)" in helpers
+    for durable_boundary in ("memory_marker", "knowledge_marker", "request_rule_marker"):
+        assert f'state["{durable_boundary}"]' in helpers
