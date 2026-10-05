@@ -898,3 +898,46 @@ async def test_guest_mode_backup_fails_closed_when_persistence_unavailable(hass)
 
     with pytest.raises(HomeAssistantError, match="persistence is unavailable"):
         await manager.async_backup_data()
+
+
+
+@pytest.mark.asyncio
+async def test_knowledge_initialization_rejects_invalid_root_and_sources() -> None:
+    from custom_components.extended_openai_conversation_responses import knowledge
+
+    for payload, message in [
+        (["invalid"], "invalid structure"),
+        ({"sources": {}}, "sources have invalid structure"),
+    ]:
+        storage = SimpleNamespace(async_load=AsyncMock(return_value=payload))
+        library = knowledge.KnowledgeLibrary(storage)
+        with pytest.raises(ValueError, match=message):
+            await library.async_initialize()
+        assert library.initialized is False
+
+
+@pytest.mark.asyncio
+async def test_knowledge_delete_missing_source_is_noop() -> None:
+    from custom_components.extended_openai_conversation_responses import knowledge
+
+    library = knowledge.KnowledgeLibrary(SimpleNamespace())
+    library._initialized = True
+
+    assert await library.async_delete("missing") is False
+
+
+def test_knowledge_chunk_split_handles_paragraph_line_and_overlap_boundaries(
+    monkeypatch,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import knowledge
+
+    monkeypatch.setattr(knowledge, "CHUNK_SIZE", 20)
+    monkeypatch.setattr(knowledge, "CHUNK_OVERLAP", 5)
+    content = "first paragraph\n\nsecond line with more text\nthird line"
+
+    chunks = knowledge._split_chunks(content)
+
+    assert len(chunks) >= 2
+    assert all(text for _offset, text in chunks)
+    assert chunks[0][0] == 0
+    assert chunks[-1][0] < len(content)
