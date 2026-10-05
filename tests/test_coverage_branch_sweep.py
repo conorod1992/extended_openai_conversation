@@ -1480,3 +1480,163 @@ def test_transfer_configuration_mapping_handles_non_mapping_and_devices() -> Non
         "7": "shared",
     }
     assert config[transfer.CONF_VOICE_DEFAULT_USER_ID] == "alice"
+
+
+
+@pytest.mark.asyncio
+async def test_restore_journal_load_handles_missing_unreadable_and_corrupt_files(
+    hass, monkeypatch
+) -> None:
+    import json
+    from pathlib import Path
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        restore_recovery,
+    )
+
+    store = restore_recovery._RestoreJournalStore(
+        hass,
+        restore_recovery.RESTORE_JOURNAL_VERSION,
+        "coverage.restore",
+        private=True,
+    )
+
+    monkeypatch.setattr(Path, "read_text", Mock(side_effect=FileNotFoundError()))
+    assert await store._async_load_data() is None
+
+    monkeypatch.setattr(Path, "read_text", Mock(side_effect=OSError("disk error")))
+    with pytest.raises(backup.BackupError, match="unreadable"):
+        await store._async_load_data()
+
+    monkeypatch.setattr(Path, "read_text", Mock(return_value="{not json"))
+    with pytest.raises(backup.BackupError, match="unreadable"):
+        await store._async_load_data()
+
+    corrupt_envelopes = [
+        [],
+        {"version": -1, "minor_version": 1, "key": store.key, "data": {}},
+        {
+            "version": store.version,
+            "minor_version": store.minor_version,
+            "key": "wrong",
+            "data": {},
+        },
+        {
+            "version": store.version,
+            "minor_version": store.minor_version,
+            "key": store.key,
+            "data": [],
+        },
+    ]
+    for envelope in corrupt_envelopes:
+        monkeypatch.setattr(Path, "read_text", Mock(return_value=json.dumps(envelope)))
+        with pytest.raises(backup.BackupError, match="corrupted"):
+            await store._async_load_data()
+
+
+@pytest.mark.asyncio
+async def test_restore_journal_load_returns_valid_payload(hass, monkeypatch) -> None:
+    import json
+    from pathlib import Path
+
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+
+    store = restore_recovery._RestoreJournalStore(
+        hass,
+        restore_recovery.RESTORE_JOURNAL_VERSION,
+        "coverage.restore.valid",
+        private=True,
+    )
+    payload = {"phase": "prepared"}
+    envelope = {
+        "version": store.version,
+        "minor_version": store.minor_version,
+        "key": store.key,
+        "data": payload,
+    }
+    monkeypatch.setattr(Path, "read_text", Mock(return_value=json.dumps(envelope)))
+
+    assert await store._async_load_data() == payload
+
+
+@pytest.mark.asyncio
+async def test_finish_restore_reload_ignores_owned_or_unpending_reload(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+
+    entry = SimpleNamespace(entry_id="entry")
+    subentry = SimpleNamespace(subentry_id="agent")
+    gate = SimpleNamespace(owns_exclusive=Mock(return_value=True))
+    monkeypatch.setattr(
+        restore_recovery, "get_agent_maintenance_gate", Mock(return_value=gate)
+    )
+    hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = {"entry"}
+    hass.config_entries.async_reload = AsyncMock()
+
+    await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
+    hass.config_entries.async_reload.assert_not_awaited()
+
+    gate.owns_exclusive.return_value = False
+    hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = set()
+    await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
+    hass.config_entries.async_reload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_finish_restore_reload_surfaces_loaded_reload_failure(
+    hass, monkeypatch
+) -> None:
+    from homeassistant.config_entries import ConfigEntryState
+    from homeassistant.exceptions import HomeAssistantError
+
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+
+    entry = SimpleNamespace(entry_id="entry", state=ConfigEntryState.LOADED)
+    subentry = SimpleNamespace(subentry_id="agent")
+    gate = SimpleNamespace(owns_exclusive=Mock(return_value=False))
+    monkeypatch.setattr(
+        restore_recovery, "get_agent_maintenance_gate", Mock(return_value=gate)
+    )
+    hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = {"entry"}
+    hass.config_entries.async_reload = AsyncMock(return_value=False)
+
+    with pytest.raises(HomeAssistantError, match="reloading the assistant failed"):
+        await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
+
+    assert "entry" in hass.data[
+        f"{restore_recovery.DOMAIN}.restore_reload_pending"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_finish_restore_reload_discards_successful_pending_marker(
+    hass, monkeypatch
+) -> None:
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+
+    entry = SimpleNamespace(entry_id="entry", state=ConfigEntryState.LOADED)
+    subentry = SimpleNamespace(subentry_id="agent")
+    gate = SimpleNamespace(owns_exclusive=Mock(return_value=False))
+    monkeypatch.setattr(
+        restore_recovery, "get_agent_maintenance_gate", Mock(return_value=gate)
+    )
+    pending = {"entry"}
+    hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = pending
+    hass.config_entries.async_reload = AsyncMock(return_value=True)
+
+    await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
+
+    hass.config_entries.async_reload.assert_awaited_once_with("entry")
+    assert pending == set()
