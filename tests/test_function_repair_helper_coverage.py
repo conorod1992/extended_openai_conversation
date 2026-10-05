@@ -79,6 +79,29 @@ def test_isolate_function_tools_rejects_non_array() -> None:
     assert issue == "Saved Function Tools must be a YAML/JSON array"
 
 
+@pytest.mark.parametrize(
+    ("candidate", "expected_name"),
+    [
+        (None, None),
+        ("broken", None),
+        ({"spec": None}, None),
+        ({"spec": {"name": 42}}, None),
+        ({"spec": {"name": "named_but_invalid"}}, "named_but_invalid"),
+    ],
+)
+def test_isolate_function_tools_reports_bad_legacy_shapes(candidate, expected_name):
+    valid, invalid, issue = repair._isolate_function_tools_uncached(
+        {CONF_FUNCTION_TOOLS: [candidate]}
+    )
+
+    assert valid == []
+    assert len(invalid) == 1
+    assert invalid[0]["name"] == expected_name
+    assert invalid[0]["index"] == 0
+    assert invalid[0]["validation_error"]
+    assert issue == invalid[0]["validation_error"]
+
+
 def test_isolate_function_tools_records_invalid_candidate_without_losing_valid_sibling() -> (
     None
 ):
@@ -190,3 +213,23 @@ def test_isolated_function_tools_returns_defensive_copies() -> None:
     assert second_valid[0]["spec"]["name"] != "mutated"
     assert second_invalid == []
     assert first_issue == second_issue
+
+
+def test_group_repair_helpers_preserve_malformed_siblings() -> None:
+    groups = [
+        "legacy-invalid-group",
+        {"id": "missing-functions"},
+        {"id": "bad-functions", "functions": "not-a-list"},
+        {"id": "valid", "functions": ["legacy", "keep"]},
+    ]
+
+    renamed = repair._replace_group_function_name(groups, "legacy", "repaired")
+    removed = repair._remove_group_function_name(renamed, "keep")
+
+    assert removed == [
+        "legacy-invalid-group",
+        {"id": "missing-functions"},
+        {"id": "bad-functions", "functions": "not-a-list"},
+        {"id": "valid", "functions": ["repaired"]},
+    ]
+    assert groups[-1]["functions"] == ["legacy", "keep"]

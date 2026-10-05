@@ -57,7 +57,7 @@ def test_guard_native_actions_instruments_nested_effects_and_preserves_enabled()
 
 
 def test_guard_native_actions_handles_non_list_container_values() -> None:
-    actions = [{"repeat": {"count": 1, "sequence": []}}]
+    actions = [{"repeat": {"count": 1, "sequence": None}}]
 
     assert request_rules._guard_native_actions(actions) == actions
 
@@ -82,6 +82,7 @@ def test_native_result_sequence_rewrites_nested_result_and_slot_references() -> 
     actions = [
         {
             "action": "test.read",
+            "enabled": False,
             "data": {
                 "result_alias": "reading",
                 "attributes": {"template": "{reading.values.0} {room} {missing}"},
@@ -93,13 +94,34 @@ def test_native_result_sequence_rewrites_nested_result_and_slot_references() -> 
     sequence = request_rules._native_result_sequence(actions, {"room": "Kitchen"})
 
     assert sequence[0]["data"]["attributes"]["template"] == (
-        "{{ reading['values'][0] }} {{ room }} {missing}"
+        "{{ reading['values'][('0' if reading['values'] is mapping else 0)] }} "
+        "{{ room }} {missing}"
     )
     assert sequence[0]["response_variable"] == "__eoai_result_reading"
     assert sequence[1] == {
         "variables": {"reading": "{{ __eoai_result_reading.result }}"}
     }
     assert sequence[2]["data"]["values"][0]["template"] == ("{{ reading['value'] }}")
+    assert sequence[0]["enabled"] is False
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"action_type": "local_action", "action": {}},
+        {"action_type": "model_routing", "action": {"reset": True}},
+        {"action_type": "model_routing", "action": {"model": "{captured}"}},
+    ],
+)
+def test_rule_model_validation_defers_non_routes_resets_and_capture_values(
+    monkeypatch, rule
+) -> None:
+    validate = Mock(side_effect=AssertionError("no static route validation expected"))
+    monkeypatch.setattr(request_rules, "validate_routed_request_options", validate)
+
+    request_rules.validate_rule_model_request(rule, {}, {})
+
+    validate.assert_not_called()
 
 
 @pytest.mark.asyncio

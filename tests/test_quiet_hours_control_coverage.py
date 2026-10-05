@@ -239,11 +239,14 @@ async def test_control_save_failure_reloads_durable_generation(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_control_save_failure_invalidates_unreadable_generation(hass) -> None:
+@pytest.mark.parametrize("persisted", [None, {"active": "broken"}])
+async def test_control_save_failure_invalidates_unreadable_generation(
+    hass, persisted
+) -> None:
     manager = _stateful_public_manager(hass)
     manager._active = _active("media_player.bedroom", "volume")
     manager._async_save_locked = AsyncMock(side_effect=OSError("ack lost"))
-    manager._store.async_load = AsyncMock(return_value={"active": "broken"})
+    manager._store.async_load = AsyncMock(return_value=persisted)
 
     with pytest.raises(OSError, match="ack lost"):
         await manager._async_save_control_state_locked()
@@ -291,6 +294,58 @@ async def test_restore_keeps_prepared_control_when_entity_is_unavailable(hass) -
 
     assert manager.active["controls"][entity_id]["restoration_pending"] is True
     manager._async_set_volume.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_reverts_prepared_control_owned_by_quiet_hours(hass) -> None:
+    manager = _stateful_public_manager(hass)
+    entity_id = "media_player.bedroom"
+    manager._active = _active(entity_id, "volume")
+    manager._active["controls"][entity_id].update(
+        application_state="prepared",
+        application_context_id="quiet-hours-operation",
+    )
+    hass.states.get.side_effect = lambda _entity_id: _state(
+        "quiet-hours-operation", state="playing", volume=0.2
+    )
+    manager._async_set_volume = AsyncMock()
+
+    await manager._async_restore_locked()
+
+    manager._async_set_volume.assert_awaited_once_with(entity_id, 0.8)
+    assert manager.active is None
+
+
+@pytest.mark.asyncio
+async def test_revalidate_releases_control_after_manual_value_change(hass) -> None:
+    manager = _stateful_public_manager(hass)
+    entity_id = "media_player.bedroom"
+    control = {
+        "kind": "volume",
+        "original_value": 0.8,
+        "quiet_value": 0.2,
+        "baseline_context_id": "baseline",
+    }
+    controls = {entity_id: control}
+    manager._active = {
+        "period_started_at": "2026-10-05T22:00:00+00:00",
+        "period_ends_at": "2026-10-06T07:00:00+00:00",
+        "controls": controls,
+        "observed_controls": [entity_id],
+    }
+    hass.states.get.side_effect = lambda _entity_id: _state(
+        "manual-change", state="playing", volume=0.6
+    )
+    manager._async_save_control_state_locked = AsyncMock()
+
+    result = await manager._async_revalidate_control_locked(
+        entity_id, controls, control
+    )
+
+    assert result is False
+    assert controls == {}
+    assert manager._active["observed_controls"] == [entity_id]
+    manager._async_save_control_state_locked.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
