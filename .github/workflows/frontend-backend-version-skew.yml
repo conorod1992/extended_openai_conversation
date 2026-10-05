@@ -8,11 +8,11 @@ on:
       from_version:
         description: "Published EOAI frontend version, or 'latest'"
         required: false
-        default: "latest"
+        default: "6.8.3"
         type: string
 
 concurrency:
-  group: frontend-backend-version-skew-${{ github.ref }}-${{ inputs.from_version || 'latest' }}
+  group: frontend-backend-version-skew-${{ github.ref }}-${{ inputs.from_version || '6.8.3' }}
   cancel-in-progress: true
 
 permissions:
@@ -46,7 +46,7 @@ jobs:
         id: released
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUESTED_FROM: ${{ inputs.from_version || 'latest' }}
+          REQUESTED_FROM: ${{ inputs.from_version || '6.8.3' }}
         run: |
           set -euo pipefail
           FROM_VERSION="$REQUESTED_FROM"
