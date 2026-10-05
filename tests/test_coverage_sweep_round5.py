@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -944,3 +946,125 @@ def test_archive_ensure_initialized_rejects_uninitialized_library() -> None:
     archive = conversation_archive.ConversationArchive(SimpleNamespace(), "agent")
     with pytest.raises(RuntimeError, match="has not been initialized"):
         archive._ensure_initialized()
+
+
+
+class _SharedGate:
+    @asynccontextmanager
+    async def shared(self):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_service_function_tool_enable_rejects_missing_entry_and_unknown_tool(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import services
+
+    monkeypatch.setattr(
+        services, "resolve_memory_agent", Mock(return_value=("entry", "agent"))
+    )
+    monkeypatch.setattr(
+        services, "get_agent_maintenance_gate", Mock(return_value=_SharedGate())
+    )
+    hass.config_entries.async_get_entry = Mock(return_value=None)
+
+    with pytest.raises(HomeAssistantError, match="Config entry not found"):
+        await services.async_set_function_tools_enabled(
+            hass, "entry", "agent", ["missing"], True
+        )
+
+    subentry = SimpleNamespace(subentry_id="agent", data={})
+    entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry})
+    hass.config_entries.async_get_entry = Mock(return_value=entry)
+    monkeypatch.setattr(
+        services,
+        "validate_function_tools",
+        Mock(return_value=[{"spec": {"name": "known"}, "enabled": True}]),
+    )
+
+    with pytest.raises(HomeAssistantError, match="Function Tool not found: missing"):
+        await services.async_set_function_tools_enabled(
+            hass, "entry", "agent", ["missing", "missing"], False
+        )
+
+
+@pytest.mark.asyncio
+async def test_service_function_tool_enable_updates_requested_tool(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import services
+
+    monkeypatch.setattr(
+        services, "resolve_memory_agent", Mock(return_value=("entry", "agent"))
+    )
+    monkeypatch.setattr(
+        services, "get_agent_maintenance_gate", Mock(return_value=_SharedGate())
+    )
+    configured = [
+        {"spec": {"name": "one"}, "enabled": True},
+        {"spec": {"name": "two"}, "enabled": True},
+    ]
+    subentry = SimpleNamespace(subentry_id="agent", data={})
+    entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry})
+    hass.config_entries.async_get_entry = Mock(return_value=entry)
+    monkeypatch.setattr(
+        services, "validate_function_tools", Mock(return_value=deepcopy(configured))
+    )
+    monkeypatch.setattr(
+        services, "merge_agent_config", Mock(side_effect=lambda _base, update: update)
+    )
+    update = Mock()
+    monkeypatch.setattr(services, "update_live_subentry", update)
+
+    await services.async_set_function_tools_enabled(
+        hass, "entry", "agent", ["two", "two"], False
+    )
+
+    persisted = update.call_args.kwargs["data"][services.CONF_FUNCTION_TOOLS]
+    assert persisted[0]["enabled"] is True
+    assert persisted[1]["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_service_function_group_enable_missing_and_success_paths(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import services
+
+    monkeypatch.setattr(
+        services, "resolve_memory_agent", Mock(return_value=("entry", "agent"))
+    )
+    monkeypatch.setattr(
+        services, "get_agent_maintenance_gate", Mock(return_value=_SharedGate())
+    )
+    subentry = SimpleNamespace(subentry_id="agent", data={})
+    entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry})
+    hass.config_entries.async_get_entry = Mock(return_value=entry)
+    monkeypatch.setattr(services, "validate_function_tools", Mock(return_value=[]))
+    groups = [
+        {"id": "one", "name": "One", "functions": [], "enabled": True},
+        {"id": "two", "name": "Two", "functions": [], "enabled": True},
+    ]
+    monkeypatch.setattr(
+        services, "validate_function_groups", Mock(return_value=deepcopy(groups))
+    )
+
+    with pytest.raises(HomeAssistantError, match="Function Group not found: missing"):
+        await services.async_set_function_groups_enabled(
+            hass, "entry", "agent", ["missing"], False
+        )
+
+    monkeypatch.setattr(
+        services, "merge_agent_config", Mock(side_effect=lambda _base, update: update)
+    )
+    update = Mock()
+    monkeypatch.setattr(services, "update_live_subentry", update)
+
+    await services.async_set_function_groups_enabled(
+        hass, "entry", "agent", ["two", "two"], False
+    )
+
+    persisted = update.call_args.kwargs["data"][services.CONF_FUNCTION_GROUPS]
+    assert persisted[0]["enabled"] is True
+    assert persisted[1]["enabled"] is False
