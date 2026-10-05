@@ -503,6 +503,30 @@ async def test_global_drag_reorder_keeps_groups_and_compiled_patterns() -> None:
     ]
 
 
+async def test_move_at_order_boundaries_is_a_noop() -> None:
+    store = MemoryStore(
+        {
+            "rules": [
+                local_rule("First", phrases=["first"]),
+                local_rule("Second", phrases=["second"], order=1),
+            ]
+        }
+    )
+    rules = RequestRules(store)
+    await rules.async_initialize()
+    store.saves = 0
+
+    assert await rules.async_move("first", "up") == rules.snapshot()["rules"][0]
+    assert await rules.async_move("first", "top") == rules.snapshot()["rules"][0]
+    assert await rules.async_move("second", "down") == rules.snapshot()["rules"][1]
+    assert await rules.async_move("second", "bottom") == rules.snapshot()["rules"][1]
+    assert store.saves == 0
+    with pytest.raises(ValueError, match="direction"):
+        await rules.async_move("first", "sideways")
+    with pytest.raises(ValueError, match="target rule id"):
+        await rules.async_move("first", "before")
+
+
 async def test_group_name_change_does_not_rebuild_matcher() -> None:
     rule = local_rule("First", phrases=["hello"])
     rule["group_id"] = "group-1"
