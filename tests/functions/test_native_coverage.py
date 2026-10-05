@@ -197,6 +197,37 @@ async def test_broadcast_whole_home_without_context(hass, monkeypatch) -> None:
     )
 
 
+async def test_broadcast_named_area_target_keeps_indirect_selection(
+    hass, monkeypatch
+) -> None:
+    manager = SimpleNamespace(
+        resolve_named_target=Mock(
+            return_value={"name": "Upstairs", "area_id": "upstairs"}
+        ),
+        async_send=AsyncMock(
+            return_value={"id": "message-3", "targets": ["upstairs"], "deliveries": 3}
+        ),
+    )
+    monkeypatch.setattr(
+        native_module, "async_get_intercom", AsyncMock(return_value=manager)
+    )
+    authorize = AsyncMock(return_value=["assist_satellite.bedroom"])
+    monkeypatch.setattr(native_module, "async_authorized_broadcast_targets", authorize)
+
+    await NativeFunction().send_broadcast(
+        hass, {}, {"destination": "Upstairs", "message": "Lights out"}, None, []
+    )
+
+    authorize.assert_awaited_once_with(
+        hass,
+        manager,
+        context=ANY,
+        origin_device_id=None,
+        whole_home=False,
+        area_id="upstairs",
+    )
+
+
 async def test_broadcast_validates_destination_selection(hass, monkeypatch) -> None:
     manager = SimpleNamespace(resolve_named_target=Mock(return_value=None))
     monkeypatch.setattr(
@@ -279,6 +310,49 @@ def test_homeassistant_turn_on_filters_indirect_targets_by_domain_service(
         exposed_entities,
         availability_entity_ids={"light.living_room", "sensor.temperature"},
     )
+
+
+@pytest.mark.parametrize("participants", [set(), {"light.living_room"}])
+def test_explicit_service_restricts_indirect_participating_entities(
+    hass, exposed_entities, monkeypatch, participants
+) -> None:
+    referenced = SimpleNamespace(
+        referenced={"light.living_room"}, indirectly_referenced=set()
+    )
+    monkeypatch.setattr(
+        native_module.target_helpers,
+        "async_extract_referenced_entity_ids",
+        Mock(return_value=referenced),
+    )
+    select = Mock(return_value=participants)
+    monkeypatch.setattr(native_module, "_service_participants", select)
+    function = NativeFunction()
+    function.validate_entity_ids = Mock()
+
+    if participants:
+        function.validate_service_targets(
+            hass,
+            {"area_id": "shared-area"},
+            exposed_entities,
+            domain="light",
+            service="turn_on",
+        )
+        function.validate_entity_ids.assert_called_once_with(
+            hass,
+            ["light.living_room"],
+            exposed_entities,
+            availability_entity_ids={"light.living_room"},
+        )
+    else:
+        with pytest.raises(HomeAssistantError, match="participating entities"):
+            function.validate_service_targets(
+                hass,
+                {"area_id": "shared-area"},
+                exposed_entities,
+                domain="light",
+                service="turn_on",
+            )
+        function.validate_entity_ids.assert_not_called()
 
 
 async def test_single_service_parses_comma_separated_entities(

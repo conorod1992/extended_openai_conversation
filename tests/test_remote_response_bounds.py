@@ -7,9 +7,8 @@ from typing import Any
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses.functions import web
+from homeassistant.exceptions import HomeAssistantError
 
 
 class _FakeContent:
@@ -123,3 +122,10 @@ async def test_rest_data_preserves_normal_text_and_reuses_bounded_body(
     assert await bounded_response.text() == "hello"
     assert await bounded_response.text(encoding="utf-8") == "hello"
     assert response.content.requested == [6, 6]
+
+
+async def test_bounded_response_rejects_unknown_explicit_text_encoding() -> None:
+    response = _FakeResponse(b"hello")
+
+    with pytest.raises(HomeAssistantError, match="cannot be decoded"):
+        await web._BoundedResponse(response, 32).text(encoding="not-an-encoding")

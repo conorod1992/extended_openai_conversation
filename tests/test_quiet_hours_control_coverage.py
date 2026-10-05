@@ -371,6 +371,7 @@ def test_normalize_active_keeps_distinct_pending_control_and_observation(hass) -
     manager = _stateful_public_manager(hass)
     active = _active("media_player.bedroom", "volume")
     active["controls"]["media_player.bedroom"]["application_state"] = "applied"
+    active["controls"]["media_player.bedroom"]["application_context_id"] = "context-a"
     active["controls"]["media_player.bedroom"]["baseline_context_id"] = "base-a"
     active["observed_controls"] = ["media_player.bedroom", 123]
     active["pending_controls"] = {
@@ -390,6 +391,10 @@ def test_normalize_active_keeps_distinct_pending_control_and_observation(hass) -
         "media_player.bedroom",
         "switch.bedroom_wake_sound",
     ]
+    assert (
+        normalized["controls"]["media_player.bedroom"]["application_context_id"]
+        == "context-a"
+    )
     assert (
         normalized["pending_controls"]["switch.bedroom_wake_sound"][
             "baseline_context_id"

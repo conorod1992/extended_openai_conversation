@@ -257,6 +257,16 @@ def test_brotli_and_zstd_report_malformed_frames_as_payload_errors():
         web._decode_compressed_body(b"not a zstd frame", "zstd", 128)
 
 
+@pytest.mark.parametrize("encoding", ["gzip", "deflate", "zstd"])
+def test_compressed_decoders_reject_empty_and_malformed_streams(encoding):
+    with pytest.raises(aiohttp.ClientPayloadError, match="Empty compressed response"):
+        web._decode_compressed_body(b"", encoding, 128)
+
+    if encoding in {"gzip", "deflate"}:
+        with pytest.raises(aiohttp.ClientPayloadError, match="Malformed compressed"):
+            web._decode_compressed_body(b"not a compressed stream", encoding, 128)
+
+
 async def test_bounded_response_sanitizes_unknown_http_status_and_text_encoding():
     response = _FakeResponse(b"secret")
     response.status = 599

@@ -129,6 +129,8 @@ async def test_settle_automation_update_finishes_owned_operation_after_cancellat
     # Cancellation is deferred until the write has settled so the file and HA
     # reload cannot be left in an unknown half-completed state.
     await asyncio.sleep(0)
+    owner.cancel()
+    await asyncio.sleep(0)
     finish.set()
 
     with pytest.raises(asyncio.CancelledError):
