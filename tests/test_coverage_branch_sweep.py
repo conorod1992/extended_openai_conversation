@@ -515,3 +515,215 @@ async def test_diagnostics_reports_previously_failed_optional_subsystems_without
         "archive": archive,
     }[subsystem_key]
     loader.assert_not_awaited()
+
+
+
+def test_effective_skill_loader_status_success_carries_loadable_skills() -> None:
+    from custom_components.extended_openai_conversation_responses.skill_availability import (
+        CANONICAL_SKILL_LOADER_PATH,
+        effective_skill_loader_status,
+    )
+
+    tools = [
+        {
+            "enabled": True,
+            "spec": {"name": "load_skill"},
+            "function": {
+                "type": "read_file",
+                "path": CANONICAL_SKILL_LOADER_PATH,
+            },
+        }
+    ]
+
+    status = effective_skill_loader_status(
+        ["weather", "weather", "missing"],
+        ["weather"],
+        tools,
+        [],
+        max_function_calls=1,
+    )
+
+    assert status.available is True
+    assert status.loadable_skills == ("weather",)
+    assert status.reason is None
+
+
+def test_effective_skill_loader_status_rejects_unsupported_function_tools() -> None:
+    from custom_components.extended_openai_conversation_responses.skill_availability import (
+        effective_skill_loader_status,
+    )
+
+    status = effective_skill_loader_status(
+        ["weather"],
+        ["weather"],
+        [],
+        [],
+        function_tools_supported=False,
+    )
+
+    assert status.available is False
+    assert status.loadable_skills == ("weather",)
+    assert status.reason == "Function Tools are unavailable for this runtime"
+
+
+def test_effective_skill_loader_status_rejects_unavailable_on_demand_group_loader() -> None:
+    from custom_components.extended_openai_conversation_responses.const import (
+        FUNCTION_GROUP_LOADING_ON_DEMAND,
+    )
+    from custom_components.extended_openai_conversation_responses.skill_availability import (
+        CANONICAL_SKILL_LOADER_PATH,
+        effective_skill_loader_status,
+    )
+
+    tools = [
+        {
+            "spec": {"name": "load_skill"},
+            "function": {
+                "type": "read_file",
+                "path": CANONICAL_SKILL_LOADER_PATH,
+            },
+        }
+    ]
+    groups = [
+        {
+            "id": "skills",
+            "enabled": True,
+            "loading_mode": FUNCTION_GROUP_LOADING_ON_DEMAND,
+            "functions": ["load_skill"],
+        }
+    ]
+
+    status = effective_skill_loader_status(
+        ["weather"],
+        ["weather"],
+        tools,
+        groups,
+        group_loader_supported=False,
+    )
+
+    assert status.available is False
+    assert status.group_id == "skills"
+    assert status.on_demand is True
+    assert status.loadable_skills == ("weather",)
+
+
+def test_model_tool_result_compaction_returns_original_for_already_compact_json(
+    monkeypatch,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_tool_results,
+    )
+
+    result = object()
+    data = {"result": '{"ok":true}'}
+    monkeypatch.setattr(
+        model_tool_results, "tool_result_data", Mock(return_value=data)
+    )
+
+    assert model_tool_results._compact_json_result_content(result) is result
+    assert data["result"] == '{"ok":true}'
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {"result": 42},
+        {"result": "not-json"},
+    ],
+)
+def test_model_tool_result_compaction_preserves_non_json_shapes(
+    monkeypatch, value
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_tool_results,
+    )
+
+    result = object()
+    monkeypatch.setattr(
+        model_tool_results, "tool_result_data", Mock(return_value=value)
+    )
+
+    assert model_tool_results._compact_json_result_content(result) is result
+
+
+def test_model_payload_preserves_malformed_user_owned_tool_entries() -> None:
+    from custom_components.extended_openai_conversation_responses.model_payload import (
+        prepare_model_function_tools,
+    )
+
+    tools = [
+        {"function": {"type": "native"}, "spec": None},
+        {"function": {"type": "native"}, "spec": {"name": 123}},
+    ]
+
+    result = prepare_model_function_tools(tools)
+
+    assert result == tools
+    assert result is not tools
+    assert result[0] is not tools[0]
+    assert result[1] is not tools[1]
+
+
+def test_model_payload_loader_keeps_non_string_description_and_non_mapping_properties() -> None:
+    from custom_components.extended_openai_conversation_responses.model_payload import (
+        prepare_model_function_tools,
+    )
+
+    tool = {
+        "function": {"type": "function_group_loader"},
+        "spec": {
+            "name": "load_groups",
+            "description": None,
+            "parameters": {"properties": []},
+        },
+    }
+
+    assert prepare_model_function_tools([tool]) == [tool]
+
+
+def test_model_payload_property_compaction_ignores_non_mapping_schema() -> None:
+    from custom_components.extended_openai_conversation_responses.model_payload import (
+        prepare_model_function_tools,
+    )
+
+    tool = {
+        "function": {"type": "knowledge"},
+        "spec": {
+            "name": "knowledge_search",
+            "description": "long description",
+            "parameters": {
+                "properties": {
+                    "query": "not-a-schema",
+                    "source_ids": {"description": "old"},
+                }
+            },
+        },
+    }
+
+    result = prepare_model_function_tools([tool])[0]
+
+    assert result["spec"]["parameters"]["properties"]["query"] == "not-a-schema"
+    assert (
+        result["spec"]["parameters"]["properties"]["source_ids"]["description"]
+        == "Exact IDs returned by Knowledge tools."
+    )
+
+
+def test_template_working_directory_absolute_path_is_not_rebased(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import template
+
+    monkeypatch.setattr(template, "DEFAULT_WORKING_DIRECTORY", "/absolute/eoai")
+    manager = template.ExtendedOpenAITemplateManager(hass)
+
+    assert manager._get_working_directory() == "/absolute/eoai"
+
+
+def test_template_skill_dir_requires_initialized_manager(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import template
+
+    monkeypatch.setattr(template.SkillManager, "_instance", None)
+    manager = template.ExtendedOpenAITemplateManager(hass)
+
+    with pytest.raises(ValueError, match="SkillManager not initialized"):
+        manager._get_skill_dir("missing")
