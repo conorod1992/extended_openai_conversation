@@ -1052,3 +1052,129 @@ def test_skill_directory_capture_records_loaded_directory(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="Skill not found"):
         manager.get_skill_directory("missing")
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"session_id": "", "index": 0},
+        {"session_id": "missing", "index": True},
+        {"session_id": "missing", "index": -1},
+    ],
+)
+async def test_export_chunk_rejects_invalid_session_or_index(hass, payload) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        backup_transfer,
+    )
+
+    with pytest.raises(backup.BackupError):
+        await backup_transfer._export_chunk(hass, "entry", "agent", payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"session_id": "", "index": 0, "data": "YQ=="},
+        {"session_id": "missing", "index": True, "data": "YQ=="},
+        {"session_id": "missing", "index": 0, "data": ""},
+        {"session_id": "missing", "index": 0, "data": 123},
+    ],
+)
+async def test_import_chunk_rejects_invalid_envelope(hass, payload) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        backup_transfer,
+    )
+
+    with pytest.raises(backup.BackupError):
+        await backup_transfer._import_chunk(hass, "entry", "agent", payload)
+
+
+@pytest.mark.asyncio
+async def test_agent_deletion_is_idempotent_for_deleted_gate(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import agent_deletion
+
+    gate = SimpleNamespace(deleted=True, async_retire_readers=AsyncMock())
+    monkeypatch.setattr(
+        agent_deletion,
+        "get_agent_maintenance_gate",
+        Mock(return_value=gate),
+    )
+
+    await agent_deletion.async_delete_agent_data(hass, "entry", "agent")
+
+    gate.async_retire_readers.assert_not_awaited()
+
+
+def test_debug_stream_finish_is_idempotent() -> None:
+    from custom_components.extended_openai_conversation_responses import debug
+
+    request = SimpleNamespace(finish=Mock())
+    delegate = SimpleNamespace(__aiter__=lambda self: self)
+    stream = debug._DebugAsyncStream.__new__(debug._DebugAsyncStream)
+    stream._delegate = delegate
+    stream._request = request
+    stream._finished = False
+
+    stream._finish(True)
+    stream._finish(False, RuntimeError("ignored"))
+
+    request.finish.assert_called_once_with(successful=True, error=None)
+
+
+def test_debug_memory_and_model_timing_noop_without_trace(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import debug
+
+    monkeypatch.setattr(debug, "current_debug_trace", Mock(return_value=None))
+
+    debug.record_memory_retrieval("persistent", 0.0, [1, 2])
+    with debug.model_path_timing(SimpleNamespace(_usage=None)):
+        pass
+
+
+def test_debug_model_timing_records_active_usage_run(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import debug
+
+    trace = SimpleNamespace(phases_ms={}, usage_run_id=None)
+    monkeypatch.setattr(debug, "current_debug_trace", Mock(return_value=trace))
+    usage = SimpleNamespace(
+        current_run=Mock(return_value=SimpleNamespace(run_id="run-1"))
+    )
+
+    with debug.model_path_timing(SimpleNamespace(_usage=usage)):
+        pass
+
+    assert trace.usage_run_id == "run-1"
+    assert "model_path_total" in trace.phases_ms
+
+
+def test_debug_continuity_resolution_records_projection(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import debug
+
+    trace = SimpleNamespace(phases_ms={}, continuity=None)
+    monkeypatch.setattr(debug, "current_debug_trace", Mock(return_value=trace))
+    result = SimpleNamespace(
+        conversation_id="resolved",
+        key="key",
+        resumed=True,
+        history=[1, 2],
+    )
+
+    debug.record_continuity_resolution(
+        result,
+        0.0,
+        "device",
+        {"kind": "personal"},
+        "device-1",
+        "incoming",
+        30,
+        "namespace",
+    )
+
+    assert trace.continuity["resolved_conversation_id"] == "resolved"
+    assert trace.continuity["restored_history_items"] == 2
+    assert trace.continuity["device_id"] == "device-1"
