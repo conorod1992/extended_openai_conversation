@@ -1,6 +1,11 @@
 """Action failures stop real rules and finalize local runs accurately."""
 
 import asyncio
+import json
+import os
+import shlex
+import subprocess
+import sys
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
@@ -12,6 +17,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
     CONF_FUNCTION_TOOLS,
     EVENT_CONVERSATION_FINISHED,
+)
+from custom_components.extended_openai_conversation_responses.functions import (
+    BashFunction,
 )
 from custom_components.extended_openai_conversation_responses.local_intents import (
     CONF_LOCAL_INTENTS_ENABLED,
@@ -29,6 +37,151 @@ from tests_real_ha.test_cross_feature_acceptance import (
     _rule,
     _speech,
 )
+from tests_real_ha.test_entry_point_contract_matrix import _contract_agent, _management
+from tests_real_ha.test_provider_input_history import _transport
+from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _chat_sse_tool_call
+
+
+def _python_command(code):
+    arguments = [sys.executable, "-c", code]
+    return (
+        subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)
+    )
+
+
+def _bash_step(directory, code):
+    return {
+        "type": "bash",
+        "command": _python_command(code),
+        "cwd": str(directory),
+        "allow_unsafe_shell": True,
+        "restrict_to_workspace": False,
+    }
+
+
+def _bash_workflow(directory, outcome):
+    first = _bash_step(directory, "print('prepared')")
+    if outcome == "timeout":
+        first = _bash_step(directory, "import time; time.sleep(5)")
+    elif outcome == "launch":
+        first["cwd"] = str(directory / "missing-directory")
+    elif outcome == "nonzero":
+        first["command"] = _python_command("import sys; sys.exit(7)")
+    elif outcome == "business":
+        first = {
+            "type": "template",
+            "value_template": "{{ {'error': 'application data'} }}",
+            "parse_result": True,
+        }
+    return {
+        "type": "composite",
+        "sequence": [
+            first,
+            _bash_step(
+                directory,
+                "from pathlib import Path; Path('later.txt').write_text('executed'); print('published')",
+            ),
+        ],
+    }
+
+
+@pytest.mark.parametrize("route", ["model", "rule"])
+@pytest.mark.parametrize(
+    "outcome", ["timeout", "launch", "success", "nonzero", "business"]
+)
+async def test_saved_bash_composite_stops_later_step_only_on_execution_failure(
+    hass, tmp_path, route, outcome
+):
+    implementation = _bash_workflow(tmp_path, outcome)
+    tool = {
+        "spec": {
+            "name": "bash_workflow",
+            "description": "Prepare then publish",
+            "parameters": {
+                "type": "object",
+                "properties": {"timeout": {"type": "number"}},
+                "required": ["timeout"],
+            },
+        },
+        "function": implementation,
+    }
+    agent = await _contract_agent(
+        hass, memory_mode="off", function_tool_error_recovery=False
+    )
+    command = await _management(hass, agent)
+    current = await command("get")
+    saved = await command(
+        "save", config={"functions": [tool]}, revision=current["revision"]
+    )
+    assert saved["valid"], saved
+    await hass.async_block_till_done()
+    agent = conversation.async_get_agent(hass, agent.entry.entry_id)
+    failed = outcome in {"timeout", "launch"}
+    if route == "rule":
+        await agent._request_rules.async_create(
+            _rule(
+                "local_action",
+                {
+                    "actions": [
+                        {
+                            "type": "function",
+                            "function": "bash_workflow",
+                            "arguments": {"timeout": 1},
+                        }
+                    ],
+                    "success_response": "Published",
+                    "failure_response": "Preparation failed",
+                },
+                phrase="run workflow",
+            )
+        )
+        replies = []
+    else:
+        replies = [
+            _chat_sse_tool_call("bash-workflow-call", "bash_workflow", {"timeout": 1}),
+            _chat_sse_text("Stopped" if failed else "Published"),
+        ]
+    async with _transport(agent.entry, replies) as wire:
+        result = await _authenticated_say(hass, agent, "run workflow", is_admin=True)
+        wire.assert_complete(len(replies))
+    assert (tmp_path / "later.txt").exists() is (not failed)
+    if route == "rule":
+        assert _speech(result, successful=not failed) == (
+            "Preparation failed" if failed else "Published"
+        )
+        assert agent._usage.runs[-1].successful is (not failed)
+    else:
+        assert _speech(result) == ("Stopped" if failed else "Published")
+        output = next(
+            json.loads(item["content"])
+            for item in wire.requests[1]["body"]["messages"]
+            if item.get("role") == "tool"
+        )
+        if failed:
+            assert output["result"]["status"] == "error", output
+            assert output["result"]["error"]
+            assert "published" not in str(output)
+            if outcome == "timeout":
+                assert "Command timed out after 1 seconds" in str(output)
+            else:
+                assert "missing-directory" in str(output)
+        else:
+            assert output["result"]["exit_code"] == 0
+            assert "published" in output["result"]["stdout"]
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "launch"])
+async def test_direct_bash_execution_failure_keeps_legacy_error_response(
+    hass, tmp_path, outcome
+):
+    function = BashFunction()
+    config = function.validate_schema(_bash_workflow(tmp_path, outcome)["sequence"][0])
+    result = await function.execute(hass, config, {"timeout": 1}, None, [])
+    assert set(result) == {"error"}
+    if outcome == "timeout":
+        assert result["error"] == "Command timed out after 1 seconds"
+    else:
+        assert "missing-directory" in result["error"]
 
 
 async def test_origin_only_targeted_broadcast_is_handled_failure(hass, monkeypatch):
