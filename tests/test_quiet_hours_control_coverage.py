@@ -277,7 +277,10 @@ async def test_restore_drops_unacknowledged_control_after_context_changes(hass) 
 
 
 @pytest.mark.asyncio
-async def test_restore_keeps_prepared_control_when_entity_is_unavailable(hass) -> None:
+@pytest.mark.parametrize("entity_state", [None, "unavailable", "unknown"])
+async def test_restore_keeps_prepared_control_when_entity_is_missing_or_unavailable(
+    hass, entity_state
+) -> None:
     manager = _stateful_public_manager(hass)
     entity_id = "media_player.bedroom"
     manager._active = _active(entity_id, "volume")
@@ -285,8 +288,10 @@ async def test_restore_keeps_prepared_control_when_entity_is_unavailable(hass) -
         application_state="prepared",
         application_context_id="quiet-hours-operation",
     )
-    hass.states.get.side_effect = lambda _entity_id: _state(
-        "quiet-hours-operation", state="unavailable", volume=0.2
+    hass.states.get.side_effect = lambda _entity_id: (
+        None
+        if entity_state is None
+        else _state("quiet-hours-operation", state=entity_state, volume=0.2)
     )
     manager._async_set_volume = AsyncMock()
 
