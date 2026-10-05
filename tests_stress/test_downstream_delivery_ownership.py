@@ -377,13 +377,17 @@ async def test_slow_actual_assist_websocket_has_bounded_native_backlog(
         client = await hass_ws_client(hass)
         handler = _native_ws_handler(client)
         transport = client._writer.transport
-        transport.get_extra_info("socket").setsockopt(
-            socket.SOL_SOCKET, socket.SO_RCVBUF, 4096
+        recipient_socket = transport.get_extra_info("socket")
+        original_receive_buffer = recipient_socket.getsockopt(
+            socket.SOL_SOCKET, socket.SO_RCVBUF
         )
+        recipient_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
         server_transport = handler._request.transport
-        server_transport.get_extra_info("socket").setsockopt(
-            socket.SOL_SOCKET, socket.SO_SNDBUF, 8192
+        sender_socket = server_transport.get_extra_info("socket")
+        original_send_buffer = sender_socket.getsockopt(
+            socket.SOL_SOCKET, socket.SO_SNDBUF
         )
+        sender_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8192)
         await client.send_json_auto_id(
             {
                 "type": "assist_pipeline/run",
@@ -442,18 +446,50 @@ async def test_slow_actual_assist_websocket_has_bounded_native_backlog(
             "socket_write_bytes": server_transport.get_write_buffer_size(),
             "resources": _resource_footprint(hass),
         }
+        record(stress_trace, "native_websocket_backpressured", **observation)
         if recipient == "abandon":
             transport.abort()
             async with asyncio.timeout(10):
                 while not transports[0].is_closing():
                     await asyncio.sleep(0)
         else:
+            # Resume normal recipient capacity as well as reading. Keeping an
+            # artificial 4 KiB TCP window here tests kernel window-update delays,
+            # rather than whether HA resumes delivery to a recovered recipient.
+            recipient_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_RCVBUF, original_receive_buffer
+            )
+            sender_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_SNDBUF, original_send_buffer
+            )
             transport.resume_reading()
             finish.set()
-            async with asyncio.timeout(15):
-                while not any(event["type"] == "run-end" for event in events):
-                    message = await client.receive_json()
-                    events.append(message["event"])
+            record(
+                stress_trace,
+                "recipient_resumed",
+                receive_buffer=recipient_socket.getsockopt(
+                    socket.SOL_SOCKET, socket.SO_RCVBUF
+                ),
+                send_buffer=sender_socket.getsockopt(
+                    socket.SOL_SOCKET, socket.SO_SNDBUF
+                ),
+            )
+            try:
+                async with asyncio.timeout(15):
+                    while not any(event["type"] == "run-end" for event in events):
+                        message = await client.receive_json()
+                        events.append(message["event"])
+            except TimeoutError:
+                record(
+                    stress_trace,
+                    "resumption_incomplete",
+                    event_count=len(events),
+                    progressive_characters=len(_progressive_text(events)),
+                    pending_messages=_ws_backlog(handler)[0],
+                    socket_write_bytes=server_transport.get_write_buffer_size(),
+                    writer_done=writer.done(),
+                )
+                raise
             expected = prefix + "".join(parts)
             assert _progressive_text(events) == _final_speech(events) == expected
         transport.resume_reading()
