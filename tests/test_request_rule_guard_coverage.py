@@ -230,3 +230,59 @@ def test_guest_script_scene_is_checked_as_scene_turn_on(hass, monkeypatch) -> No
         "action": "scene.turn_on",
         "target": {"entity_id": "scene.evening"},
     }
+
+
+def test_bounded_function_result_preserves_all_json_scalar_values() -> None:
+    value = {"false": False, "zero": 0, "empty": "", "null": None}
+
+    assert request_rules._bounded_function_result(value) == value
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ({1: "non-text key"}, "object keys must be text"),
+        ({"value": object()}, "must contain JSON values"),
+        ("x" * (request_rules.MAX_RESULT_BYTES + 1), "too large"),
+        ([None] * request_rules.MAX_SCRIPT_NODES, "too many values"),
+        ([[] for _ in range(request_rules.MAX_RESULT_DEPTH + 1)], "too deeply nested"),
+    ],
+)
+def test_bounded_function_result_rejects_unbounded_or_non_json_values(
+    value: object, message: str
+) -> None:
+    with pytest.raises(HomeAssistantError, match=message):
+        request_rules._bounded_function_result(value)
+
+
+def test_rule_provider_input_preserves_trailing_sentence_punctuation() -> None:
+    match = request_rules.RuleMatch(
+        {"ai_input_mode": "capture", "ai_input_capture": "query"},
+        "ask {query}",
+        False,
+        100,
+        {"query": "weather tomorrow"},
+    )
+
+    assert request_rules.rule_provider_input(match, "ask weather tomorrow?!  ") == (
+        "weather tomorrow?!"
+    )
+
+
+@pytest.mark.parametrize(
+    ("capture", "slots"),
+    [(None, {"query": "hello"}), ("query", {}), ("query", {"query": "  "})],
+)
+def test_rule_provider_input_rejects_missing_capture_values(
+    capture: str | None, slots: dict[str, str]
+) -> None:
+    match = request_rules.RuleMatch(
+        {"ai_input_mode": "capture", "ai_input_capture": capture},
+        "say {query}",
+        False,
+        100,
+        slots,
+    )
+
+    with pytest.raises(HomeAssistantError, match="Captured AI input is unavailable"):
+        request_rules.rule_provider_input(match, "say hello")

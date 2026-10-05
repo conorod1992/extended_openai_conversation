@@ -68,9 +68,9 @@ def _mixed_legacy_tool_data() -> tuple[
     valid_tool = deepcopy(tools[0])
     broken_tool = deepcopy(tools[0])
     broken_tool["spec"]["name"] = f"{broken_tool['spec']['name']}_broken"
-    broken_tool["spec"].setdefault(
-        "parameters", {"type": "object", "properties": {}}
-    )["description"] = 123
+    broken_tool["spec"].setdefault("parameters", {"type": "object", "properties": {}})[
+        "description"
+    ] = 123
     mixed = [valid_tool, broken_tool]
     return (
         {
@@ -130,9 +130,7 @@ def test_function_tools_issue_returns_valid_subset_when_one_tool_is_bad() -> Non
     configured, issue = function_tools_issue(data)
 
     assert issue is not None
-    assert [tool["spec"]["name"] for tool in configured] == [
-        valid_tool["spec"]["name"]
-    ]
+    assert [tool["spec"]["name"] for tool in configured] == [valid_tool["spec"]["name"]]
 
 
 @pytest.mark.asyncio
@@ -182,7 +180,11 @@ async def test_function_repair_save_one_replaces_only_selected_invalid_tool(
         hass,
         "admin",
         True,
-        {"action": "get", "entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
+        {
+            "action": "get",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+        },
     )
     replacement = deepcopy(valid_tool)
     replacement["spec"]["name"] = "repaired_tool"
@@ -224,7 +226,11 @@ async def test_function_repair_save_replaces_invalid_collection(
         hass,
         "admin",
         True,
-        {"action": "get", "entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
+        {
+            "action": "get",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+        },
     )
     saved = await async_function_repair(
         hass,
@@ -307,6 +313,74 @@ async def test_function_repair_requires_admin() -> None:
                 "entry_id": entry.entry_id,
                 "subentry_id": subentry.subentry_id,
             },
+        )
+
+
+@pytest.mark.parametrize(
+    ("action", "extra", "message"),
+    [
+        ("configuration_validate", {"config": []}, "config must be an object"),
+        ("configuration_save", {"config": []}, "config must be an object"),
+        ("unknown", {}, "Unknown Function Tool repair action"),
+        ("save", {"tools": "not-an-array"}, "tools must be a JSON array"),
+    ],
+)
+async def test_function_repair_rejects_malformed_action_payloads(
+    monkeypatch: pytest.MonkeyPatch, action, extra, message
+) -> None:
+    data, _tools = _invalid_legacy_tool_data()
+    entry, subentry = _entry_and_subentry(data)
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    monkeypatch.setattr(
+        management_ui,
+        "entry_and_agent",
+        lambda *_args, **_kwargs: (entry, subentry),
+    )
+    payload = {
+        "action": action,
+        "entry_id": entry.entry_id,
+        "subentry_id": subentry.subentry_id,
+        **extra,
+    }
+    if action == "save":
+        payload["revision"] = repair.repair_revision(subentry)
+
+    with pytest.raises(HomeAssistantError, match=message):
+        await async_function_repair(hass, "admin", True, payload)
+
+
+async def test_function_repair_rejects_calls_when_tools_are_already_valid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry, subentry = _entry_and_subentry(agent_config_defaults())
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    monkeypatch.setattr(
+        management_ui,
+        "entry_and_agent",
+        lambda *_args, **_kwargs: (entry, subentry),
+    )
+
+    with pytest.raises(HomeAssistantError, match="do not require repair"):
+        await async_function_repair(
+            hass,
+            "admin",
+            True,
+            {
+                "action": "get",
+                "entry_id": entry.entry_id,
+                "subentry_id": subentry.subentry_id,
+            },
+        )
+
+
+async def test_function_repair_requires_both_identifiers() -> None:
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+
+    with pytest.raises(
+        HomeAssistantError, match="entry_id and subentry_id are required"
+    ):
+        await async_function_repair(
+            hass, "admin", True, {"action": "get", "entry_id": "entry-1"}
         )
 
 

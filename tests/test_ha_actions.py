@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 import voluptuous as vol
@@ -15,7 +15,7 @@ from custom_components.extended_openai_conversation_responses.ha_actions import 
     serialize_reversible_state,
 )
 from homeassistant.core import Context, State
-from homeassistant.exceptions import ServiceNotFound
+from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 
 
 def _state(entity_id: str, value: str, **attributes) -> State:
@@ -524,8 +524,16 @@ def test_additional_reversible_domains_keep_only_control_state(
     attributes: dict[str, Any],
     expected: dict[str, Any],
 ) -> None:
-    state = "eco" if entity_id.startswith("water_heater.") else "open" if entity_id.startswith("valve.") else "on"
-    assert serialize_reversible_state(_state(entity_id, state, **attributes)) == expected
+    state = (
+        "eco"
+        if entity_id.startswith("water_heater.")
+        else "open"
+        if entity_id.startswith("valve.")
+        else "on"
+    )
+    assert (
+        serialize_reversible_state(_state(entity_id, state, **attributes)) == expected
+    )
 
 
 def test_target_identity_comparison_uses_object_generation() -> None:
@@ -545,3 +553,88 @@ def test_target_identity_comparison_uses_object_generation() -> None:
     assert not ha_actions._same_target_identity(changed_entry, identity)
 
     assert not ha_actions._same_target_identity((), identity)
+
+
+@pytest.mark.parametrize("changed", ["target", "registry", "service"])
+async def test_authorization_rejects_target_or_owner_changes_during_permission_check(
+    monkeypatch: pytest.MonkeyPatch, changed: str
+) -> None:
+    entity_ids = {"light.kitchen"}
+    original_identity = (("light.kitchen", object(), object(), object()),)
+    replacement_identity = (("light.kitchen", object(), object(), object()),)
+    original_service = object()
+    replacement_service = object()
+    hass = SimpleNamespace()
+
+    if changed == "target":
+        monkeypatch.setattr(
+            ha_actions,
+            "_resolve_target_entity_ids",
+            MagicMock(side_effect=[entity_ids, {"light.other"}]),
+        )
+        target = {"area_id": "kitchen"}
+    else:
+        monkeypatch.setattr(
+            ha_actions, "_resolve_target_entity_ids", MagicMock(return_value=entity_ids)
+        )
+        target = {"entity_id": "light.kitchen"}
+
+    monkeypatch.setattr(
+        ha_actions,
+        "_target_identity",
+        MagicMock(
+            side_effect=(
+                [original_identity, replacement_identity]
+                if changed == "registry"
+                else [original_identity, original_identity]
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        ha_actions,
+        "_service_identity",
+        MagicMock(
+            side_effect=(
+                [original_service, replacement_service]
+                if changed == "service"
+                else [original_service, original_service]
+            )
+        ),
+    )
+    permission = AsyncMock()
+    monkeypatch.setattr(ha_actions, "async_require_control_permission", permission)
+
+    with pytest.raises(HomeAssistantError, match="target changed while authorization"):
+        await ha_actions.async_authorize_ha_action(
+            hass, "light", "turn_on", target=target, context=Context()
+        )
+
+    permission.assert_awaited_once_with(hass, entity_ids, context=ANY)
+
+
+async def test_authorization_runs_active_revalidator_after_stable_permission_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entity_ids = {"light.kitchen"}
+    identity = (("light.kitchen", object(), object(), object()),)
+    service = object()
+    hass = SimpleNamespace()
+    monkeypatch.setattr(
+        ha_actions, "_resolve_target_entity_ids", MagicMock(return_value=entity_ids)
+    )
+    monkeypatch.setattr(
+        ha_actions, "_target_identity", MagicMock(return_value=identity)
+    )
+    monkeypatch.setattr(
+        ha_actions, "_service_identity", MagicMock(return_value=service)
+    )
+    monkeypatch.setattr(ha_actions, "async_require_control_permission", AsyncMock())
+    revalidator = MagicMock()
+
+    with ha_actions.action_target_revalidation(revalidator):
+        result = await ha_actions.async_authorize_ha_action(
+            hass, "light", "turn_on", target={"entity_id": "light.kitchen"}
+        )
+
+    assert result == entity_ids
+    revalidator.assert_called_once_with(hass, entity_ids)
