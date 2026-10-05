@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import os
 import random
 
 import pytest
@@ -22,6 +23,7 @@ from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
 from homeassistant.exceptions import HomeAssistantError
+from tests.functions.behaviour_generators import assert_typed_value, schema_cases
 from tests.functions.reproduction_reducer import minimize_reproduction
 
 
@@ -92,7 +94,7 @@ def _independent_scalar(kind: str, raw):
     ],
     ids=["chat-completions-sampling", "responses-durable-features"],
 )
-def test_reviewed_configuration_witnesses_have_independent_expected_values(
+async def test_reviewed_configuration_witnesses_have_independent_expected_values(
     saved, expected
 ):
     """Reviewed witnesses must not disappear because a generator filters them out."""
@@ -102,6 +104,83 @@ def test_reviewed_configuration_witnesses_have_independent_expected_values(
     request = build_provider_request_snapshot(normalized, {})
     assert request.api_mode == expected["api_mode"]
     assert request.api_kwargs["model"] == expected["chat_model"]
+    witnesses = [
+        (
+            {"functions": []},
+            {
+                "chat_model": "gpt-5-mini",
+                "api_mode": "auto",
+                "reasoning_effort": "minimal",
+                "memory_mode": "off",
+                "temporary_memory": "off",
+                "speech_processing_enabled": False,
+            },
+        ),
+        (
+            {
+                "functions": [],
+                "knowledge_enabled": False,
+                "speech_regex_replacements": [],
+                "memory_auto_retrieve_limit": 0,
+            },
+            {
+                "functions": [],
+                "knowledge_enabled": False,
+                "speech_regex_replacements": [],
+                "memory_auto_retrieve_limit": 0,
+            },
+        ),
+        (
+            {
+                "functions": [
+                    {
+                        "spec": {
+                            "name": "retained",
+                            "description": "Retained disabled tool",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                        "function": {
+                            "type": "script",
+                            "sequence": [{"stop": "disabled"}],
+                        },
+                        "enabled": False,
+                    }
+                ],
+                "speech_processing_enabled": False,
+                "speech_strip_urls": False,
+            },
+            {"speech_processing_enabled": False, "speech_strip_urls": False},
+        ),
+        (
+            {
+                "functions": [],
+                "memory_mode": "manual",
+                "shared_memory_mode": "explicit",
+                "knowledge_enabled": False,
+                "archive_enabled": False,
+                "temporary_memory": "eager",
+                "memory_auto_retrieve_limit": 0,
+            },
+            {
+                "memory_mode": "manual",
+                "shared_memory_mode": "explicit",
+                "temporary_memory": "eager",
+                "memory_auto_retrieve_limit": 0,
+            },
+        ),
+    ]
+    for payload, reviewed in witnesses:
+        actual = agent_config.normalize_agent_config(payload)
+        public = agent_config.agent_config_snapshot(actual)
+        for key, value in reviewed.items():
+            assert_typed_value(public[key], value)
+        restored = agent_config.normalize_agent_config(actual)
+        assert restored == actual
+        snapshot = build_provider_request_snapshot(actual, {})
+        assert snapshot.api_kwargs["model"] == "gpt-5-mini"
+        if payload.get("functions"):
+            assert public["functions"][0]["enabled"] is False
+            assert public["functions"][0]["spec"]["name"] == "retained"
 
 
 @pytest.mark.parametrize(
@@ -157,6 +236,15 @@ def test_seeded_supported_schema_contracts_match_independent_oracle():
         }
         assert validate_function_schema(schema) == ()
         assert validate_function_arguments(_spec(schema), raw) == expected
+    for seed in {0xE0A1C0DE, int(os.environ.get("STRESS_SEED", "12345"))}:
+        for witness in schema_cases(seed):
+            assert validate_function_schema(witness.schema) == (), witness.witness
+            observed = validate_function_arguments(
+                _spec(witness.schema), witness.arguments
+            )
+            assert_typed_value(observed, witness.expected)
+            with pytest.raises(HomeAssistantError):
+                validate_function_arguments(_spec(witness.schema), witness.invalid)
 
 
 def test_generated_nested_container_contracts_preserve_values_and_constraints():
@@ -206,7 +294,16 @@ def test_generated_nested_container_contracts_preserve_values_and_constraints():
         {**raw, "settings": {"count": 2, "enabled": False, "extra": 1}},
         {**raw, "literal": {"pattern": "wrong", "nested": {"type": "literal"}}},
     ]
-    for bad, message in zip(bad_cases, ["labels.*unique", "settings.count.*at most 5", "Unknown function input: settings.extra", "literal.*required value"], strict=True):
+    for bad, message in zip(
+        bad_cases,
+        [
+            "labels.*unique",
+            "settings.count.*at most 5",
+            "Unknown function input: settings.extra",
+            "literal.*required value",
+        ],
+        strict=True,
+    ):
         with pytest.raises(HomeAssistantError, match=message):
             validate_function_arguments(_spec(schema), bad)
 
