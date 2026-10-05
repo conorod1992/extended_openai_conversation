@@ -289,16 +289,16 @@ async def test_energy_without_configuration_returns_empty(hass, monkeypatch) -> 
 
 
 @pytest.mark.parametrize(
-    ("start_time", "end_time"),
+    ("start_time", "end_time", "invalid_label"),
     [
-        ("not-a-datetime", "2026-08-02T00:00:00Z"),
-        ("2026-08-01T00:00:00Z", "not-a-datetime"),
+        ("not-a-datetime", "2026-08-02T00:00:00Z", "start_time"),
+        ("2026-08-01T00:00:00Z", "not-a-datetime", "end_time"),
     ],
 )
 async def test_statistics_rejects_unparseable_datetime_bounds(
-    hass, exposed_entities, start_time: str, end_time: str
+    hass, exposed_entities, start_time: str, end_time: str, invalid_label: str
 ) -> None:
-    with pytest.raises(HomeAssistantError, match="Invalid datetime format"):
+    with pytest.raises(HomeAssistantError, match=invalid_label):
         await NativeFunction().get_statistics(
             hass,
             {},
