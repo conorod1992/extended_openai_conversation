@@ -128,6 +128,12 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
         hass, STORAGE_VERSION, "onboarding", private=True
     ).async_save({"done": list(STEPS)})
 
+    # Start HA before creating EOAI. Several declared HA dependencies (notably
+    # Recorder) establish bootstrap-owned runtime data during startup and must not
+    # be forced through config-entry dependency setup prematurely.
+    await hass.async_start()
+    await hass.async_block_till_done()
+
     const = __import__(
         f"custom_components.{DOMAIN}.const",
         fromlist=["CONF_BASE_URL"],
@@ -146,8 +152,6 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
         },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY, result
-
-    await hass.async_start()
     await hass.async_block_till_done()
     entry = result["result"]
     assert entry.state.value == "loaded"
