@@ -3,10 +3,6 @@
   "excluded": [
     "tests_real_ha/test_acceptance_lifecycle.py",
     "tests_real_ha/test_acceptance_seams.py",
-    "tests_real_ha/test_action_failure_safety.py",
-    "tests_real_ha/test_action_target_safety.py",
-    "tests_real_ha/test_agent_private_data_deletion.py",
-    "tests_real_ha/test_archive_private_activity.py",
     "tests_real_ha/test_backup_restore_atomicity.py",
     "tests_real_ha/test_backup_restore_delayed_tool_collision.py",
     "tests_real_ha/test_backup_restore_live_runtime_refresh.py",
@@ -24,9 +20,7 @@
     "tests_real_ha/test_cross_entry_inflight_lifecycle.py",
     "tests_real_ha/test_cross_feature_acceptance.py",
     "tests_real_ha/test_cross_feature_interaction_matrix.py",
-    "tests_real_ha/test_deleted_user_memory_edit.py",
     "tests_real_ha/test_entity_registry_disabled.py",
-    "tests_real_ha/test_entry_point_contract_matrix.py",
     "tests_real_ha/test_exposed_attribute_catalog_acceptance.py",
     "tests_real_ha/test_frontend_asset_registration.py",
     "tests_real_ha/test_function_execution_composition.py",
@@ -34,7 +28,6 @@
     "tests_real_ha/test_knowledge_management_lifecycle.py",
     "tests_real_ha/test_knowledge_provider_wire_e2e.py",
     "tests_real_ha/test_lifecycle_concurrency.py",
-    "tests_real_ha/test_live_configuration_save.py",
     "tests_real_ha/test_live_subentry_removal.py",
     "tests_real_ha/test_management_command_contracts.py",
     "tests_real_ha/test_management_history_runtime.py",
@@ -52,9 +45,6 @@
     "tests_real_ha/test_packaged_process_restart.py",
     "tests_real_ha/test_persisted_startup_migration.py",
     "tests_real_ha/test_persistence_state_round_trips.py",
-    "tests_real_ha/test_persistent_memory_runtime_recovery.py",
-    "tests_real_ha/test_provider_boundary_contracts.py",
-    "tests_real_ha/test_provider_input_history.py",
     "tests_real_ha/test_provider_protocol_outcomes.py",
     "tests_real_ha/test_quiet_hours_acceptance.py",
     "tests_real_ha/test_readiness_archive_continuity.py",
@@ -63,17 +53,14 @@
     "tests_real_ha/test_runtime_reauthentication.py",
     "tests_real_ha/test_runtime_stress.py",
     "tests_real_ha/test_same_title_subentry_recreation.py",
-    "tests_real_ha/test_script_function_variables.py",
     "tests_real_ha/test_service_handler_contracts.py",
     "tests_real_ha/test_service_registry_acceptance.py",
     "tests_real_ha/test_shared_service_lifecycle.py",
     "tests_real_ha/test_sibling_subentry_inflight_reload.py",
-    "tests_real_ha/test_state_transition_contracts.py",
     "tests_real_ha/test_subentry_runtime_policy_isolation.py",
     "tests_real_ha/test_template_shutdown_acceptance.py",
     "tests_real_ha/test_temporary_memory_lifecycle.py",
     "tests_real_ha/test_temporary_memory_unload_reload.py",
-    "tests_real_ha/test_usage_period_statistics.py",
     "tests_real_ha/test_user_ownership_privacy.py",
     "tests_real_ha/test_user_permission_acceptance.py"
   ],
@@ -119,30 +106,6 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_acceptance_seams runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_action_failure_safety.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_action_failure_safety runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_action_target_safety.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_action_target_safety runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_agent_private_data_deletion.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_agent_private_data_deletion runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_archive_private_activity.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_archive_private_activity runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
     "tests_real_ha/test_backup_restore_atomicity.py": {
       "workflow": "real-ha.yml",
@@ -246,23 +209,11 @@
       "selector": "tests_real_ha/",
       "reason": "test_cross_feature_interaction_matrix runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
-    "tests_real_ha/test_deleted_user_memory_edit.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_deleted_user_memory_edit runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
     "tests_real_ha/test_entity_registry_disabled.py": {
       "workflow": "real-ha.yml",
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_entity_registry_disabled runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_entry_point_contract_matrix.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_entry_point_contract_matrix runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
     "tests_real_ha/test_exposed_attribute_catalog_acceptance.py": {
       "workflow": "real-ha.yml",
@@ -288,12 +239,6 @@
       "selector": "tests_real_ha/",
       "reason": "test_ha_llm_tool_acceptance runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
-    "tests_real_ha/test_inflight_subentry_removal.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_inflight_subentry_removal runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
     "tests_real_ha/test_knowledge_management_lifecycle.py": {
       "workflow": "real-ha.yml",
       "job": "stable",
@@ -311,12 +256,6 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_lifecycle_concurrency runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_live_configuration_save.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_live_configuration_save runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
     "tests_real_ha/test_live_subentry_removal.py": {
       "workflow": "real-ha.yml",
@@ -420,24 +359,6 @@
       "selector": "tests_real_ha/",
       "reason": "test_persistence_state_round_trips runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
-    "tests_real_ha/test_persistent_memory_runtime_recovery.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_persistent_memory_runtime_recovery runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_provider_boundary_contracts.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_provider_boundary_contracts runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_provider_input_history.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_provider_input_history runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
     "tests_real_ha/test_provider_protocol_outcomes.py": {
       "workflow": "real-ha.yml",
       "job": "stable",
@@ -486,12 +407,6 @@
       "selector": "tests_real_ha/",
       "reason": "test_same_title_subentry_recreation runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
-    "tests_real_ha/test_script_function_variables.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_script_function_variables runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
     "tests_real_ha/test_service_handler_contracts.py": {
       "workflow": "real-ha.yml",
       "job": "stable",
@@ -504,12 +419,6 @@
       "selector": "tests_real_ha/",
       "reason": "test_service_registry_acceptance runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
-    "tests_real_ha/test_shared_conversation_and_entry_removal.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_shared_conversation_and_entry_removal runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
     "tests_real_ha/test_shared_service_lifecycle.py": {
       "workflow": "real-ha.yml",
       "job": "stable",
@@ -521,12 +430,6 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_sibling_subentry_inflight_reload runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_state_transition_contracts.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_state_transition_contracts runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
     "tests_real_ha/test_subentry_runtime_policy_isolation.py": {
       "workflow": "real-ha.yml",
@@ -551,12 +454,6 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_temporary_memory_unload_reload runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_usage_period_statistics.py": {
-      "workflow": "real-ha.yml",
-      "job": "stable",
-      "selector": "tests_real_ha/",
-      "reason": "test_usage_period_statistics runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
     "tests_real_ha/test_user_ownership_privacy.py": {
       "workflow": "real-ha.yml",
