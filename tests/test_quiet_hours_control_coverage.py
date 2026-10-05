@@ -236,6 +236,34 @@ async def test_prepare_control_reuses_pending_intent_at_unchanged_baseline(hass)
 
 
 @pytest.mark.asyncio
+async def test_prepare_control_does_not_reopen_applied_ownership(hass) -> None:
+    entity_id = "switch.wake_sound"
+    manager = _stateful_public_manager(hass)
+    control = {
+        "kind": "switch",
+        "satellite_entity_id": "assist_satellite.bedroom",
+        "original_value": True,
+        "quiet_value": False,
+        "application_state": "applied",
+    }
+    manager._active = {"observed_controls": [entity_id], "pending_controls": {}}
+    manager._async_save_control_state_locked = AsyncMock()
+
+    result = await manager._async_prepare_control_locked(
+        "assist_satellite.bedroom",
+        entity_id,
+        {entity_id: control},
+        "switch",
+        True,
+        False,
+        True,
+    )
+
+    assert result is None
+    manager._async_save_control_state_locked.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["volume", "switch"])
 async def test_apply_skips_service_when_control_changes_before_revalidation(
     hass, kind
@@ -320,6 +348,40 @@ async def test_failed_apply_releases_ownership_when_device_stayed_unchanged(
     assert controls == {}
     assert manager._active["observed_controls"] == []
     manager._async_save_control_state_locked.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_apply_does_not_recreate_ownership_removed_during_service_call(hass) -> None:
+    entity_id = "switch.wake_sound"
+    control = {
+        "kind": "switch",
+        "satellite_entity_id": "assist_satellite.bedroom",
+        "original_value": True,
+        "quiet_value": False,
+        "application_state": "prepared",
+    }
+    manager = _stateful_public_manager(hass)
+    controls = {entity_id: control}
+    manager._active = {"controls": controls, "observed_controls": [entity_id]}
+    hass.states.get.side_effect = lambda _entity_id: _state(
+        "baseline", state="on", volume=0.8
+    )
+    manager._async_prepare_control_locked = AsyncMock(return_value=control)
+    manager._async_revalidate_control_locked = AsyncMock(return_value=True)
+
+    async def complete_after_removal(_entity_id, _enabled):
+        controls.pop(entity_id)
+
+    manager._async_set_switch = AsyncMock(side_effect=complete_after_removal)
+    manager._async_save_control_state_locked = AsyncMock()
+
+    await manager._async_apply_switch_locked(
+        "assist_satellite.bedroom", entity_id, False, controls
+    )
+
+    assert controls == {}
+    assert control["application_state"] == "prepared"
+    manager._async_save_control_state_locked.assert_not_awaited()
 
 
 @pytest.mark.asyncio
