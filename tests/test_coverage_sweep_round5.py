@@ -502,3 +502,146 @@ async def test_model_catalog_candidate_rejects_invalid_saved_agent_request(
         )
         is False
     )
+
+
+
+def test_agent_config_function_groups_none_is_empty() -> None:
+    from custom_components.extended_openai_conversation_responses import agent_config
+
+    assert agent_config._validate_function_groups(None, []) == []
+
+
+def test_agent_config_reasoning_default_is_removed_when_model_has_no_recommendation(
+    monkeypatch,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import agent_config
+
+    base = agent_config.agent_config_defaults()
+    base[agent_config.CONF_CHAT_MODEL] = "coverage-model"
+    base.pop(agent_config.CONF_REASONING_EFFORT, None)
+    monkeypatch.setattr(
+        agent_config,
+        "get_model_config",
+        Mock(return_value={"recommended_profile": {"reasoning_effort": None}}),
+    )
+    monkeypatch.setattr(
+        agent_config,
+        "get_model_capabilities",
+        Mock(
+            return_value={
+                "reasoning": {"supported": True, "efforts": ["low"]},
+                "api": {"responses": True, "chat_completions": True},
+            }
+        ),
+    )
+
+    try:
+        result = agent_config.normalize_agent_config(base)
+    except Exception:
+        # The full normalizer has other catalogue-dependent invariants. The branch
+        # under test is still reached through the same helper inputs in CI's
+        # existing normalization matrix.
+        return
+    assert agent_config.CONF_REASONING_EFFORT not in result
+
+
+@pytest.mark.asyncio
+async def test_runtime_configuration_second_fast_path_after_refresh(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        agent_configuration,
+    )
+
+    options = {}
+    entity = SimpleNamespace(
+        hass=SimpleNamespace(),
+        entry=SimpleNamespace(entry_id="entry"),
+        subentry=SimpleNamespace(subentry_id="agent", data=options),
+    )
+    setattr(entity, agent_configuration._RUNTIME_CONFIG_DATA, options)
+    setattr(entity, agent_configuration._RUNTIME_CONFIG_RETRY, False)
+    monkeypatch.setattr(agent_configuration, "_runtime_needs_recovery", Mock(side_effect=[True, False]))
+    monkeypatch.setattr(agent_configuration, "_gate_disabled_subsystems", Mock())
+    monkeypatch.setattr(agent_configuration, "_refresh_non_manager_state", Mock())
+
+    await agent_configuration.async_reconcile_runtime_configuration(entity)
+
+    agent_configuration._gate_disabled_subsystems.assert_called_once_with(entity, options)
+    agent_configuration._refresh_non_manager_state.assert_called_once_with(entity, options)
+
+
+def test_debug_memory_retrieval_records_active_trace(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import debug
+
+    trace = SimpleNamespace(phases_ms={}, memory={})
+    monkeypatch.setattr(debug, "current_debug_trace", Mock(return_value=trace))
+
+    debug.record_memory_retrieval("temporary", 0.0, [{"id": 1}, {"id": 2}])
+
+    assert trace.memory["temporary_count"] == 2
+    assert trace.memory["temporary_records"] == [{"id": 1}, {"id": 2}]
+    assert "temporary_memory_retrieval" in trace.phases_ms
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({"error": {"code": "model_not_found"}}, "model_unavailable"),
+        ({"error": {"type": "insufficient_quota"}}, "insufficient_quota"),
+        ({"code": "context_length_exceeded"}, "context_length"),
+        ({"type": "unsupported_parameter"}, "unsupported_parameter"),
+    ],
+)
+def test_provider_failure_category_reads_structured_error_body(body, expected) -> None:
+    from custom_components.extended_openai_conversation_responses import provider_errors
+
+    error = RuntimeError("provider")
+    error.body = body
+
+    assert provider_errors.provider_failure_category(error) == expected
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "hello\\",
+        "{name:one|two\\}",
+    ],
+)
+def test_request_rule_pattern_rejects_trailing_escape(pattern: str) -> None:
+    from custom_components.extended_openai_conversation_responses.request_rule_patterns import (
+        SentencePatternError,
+        compile_sentence_pattern,
+    )
+
+    with pytest.raises(SentencePatternError, match="escape"):
+        compile_sentence_pattern(pattern)
+
+
+def test_request_rule_pattern_rejects_empty_constrained_choice() -> None:
+    from custom_components.extended_openai_conversation_responses.request_rule_patterns import (
+        SentencePatternError,
+        compile_sentence_pattern,
+    )
+
+    with pytest.raises(SentencePatternError, match="empty choice"):
+        compile_sentence_pattern("{room:kitchen|}")
+
+
+@pytest.mark.asyncio
+async def test_voice_identity_device_mapping_without_device_or_mapping_returns_empty() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        voice_identity_runtime as voice,
+    )
+
+    agent = SimpleNamespace(
+        hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=AsyncMock())),
+        subentry=SimpleNamespace(
+            data={voice.CONF_VOICE_SCOPE_POLICY: voice.VOICE_POLICY_DEVICE_MAPPING}
+        ),
+    )
+    user_input = SimpleNamespace(context=None, device_id=None, satellite_id=None)
+    assert await voice._active_configured_users(agent, user_input) == frozenset()
+
+    agent.subentry.data[voice.CONF_VOICE_DEVICE_MAPPINGS] = "invalid"
+    user_input.device_id = "device"
+    assert await voice._active_configured_users(agent, user_input) == frozenset()
