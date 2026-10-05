@@ -150,7 +150,9 @@ async def test_reviewed_sparse_default_configuration_uses_genuine_ha_validation(
     assert normalize_agent_config(actual) == actual
 
 
-async def test_generated_native_waits_resume_only_after_the_requested_event(hass):
+async def test_generated_native_waits_resume_only_after_the_requested_event(
+    hass, monkeypatch
+):
     """Native wait registration establishes ordering without elapsed-time sleeps."""
     effects = []
 
@@ -160,38 +162,60 @@ async def test_generated_native_waits_resume_only_after_the_requested_event(hass
     hass.services.async_register("script_probe", "record", mark)
     for index in range(4):
         event = f"generated_script_gate_{index}"
-        sequence = cv.SCRIPT_SCHEMA(
-            [
-                {"variables": {"marker": index}},
-                {
-                    "wait_for_trigger": [{"trigger": "event", "event_type": event}],
-                    "timeout": 30,
-                    "continue_on_timeout": False,
-                },
-                {"action": "script_probe.record", "data": {"marker": "{{ marker }}"}},
-                {
-                    "variables": {
-                        "_function_result": "{{ wait.trigger.event.data.value }}"
-                    }
-                },
-            ]
-        )
-        pending = asyncio.create_task(
-            ScriptFunction().execute(hass, {"sequence": sequence}, {}, None, [])
-        )
-        try:
-            await hass.async_block_till_done()
-            assert hass.bus.async_listeners().get(event) == 1
-            assert not pending.done()
-            assert effects == list(range(index))
-            hass.bus.async_fire(f"{event}_unrelated", {"value": "wrong"})
-            await hass.async_block_till_done()
-            assert not pending.done()
-            hass.bus.async_fire(event, {"value": False})
-            assert await asyncio.wait_for(pending, 10) is False
-            assert effects == list(range(index + 1))
-            assert event not in hass.bus.async_listeners()
-        finally:
-            if not pending.done():
-                pending.cancel()
-                await asyncio.gather(pending, return_exceptions=True)
+        registered = asyncio.Event()
+        original_listen = type(hass.bus).async_listen
+
+        def observe_registration(
+            bus,
+            event_type,
+            *args,
+            original_listen=original_listen,
+            event=event,
+            registered=registered,
+            **kwargs,
+        ):
+            remove = original_listen(bus, event_type, *args, **kwargs)
+            if bus is hass.bus and event_type == event:
+                registered.set()
+            return remove
+
+        # Observe native registration without replacing the listener or script.
+        with monkeypatch.context() as registration_probe:
+            registration_probe.setattr(
+                type(hass.bus), "async_listen", observe_registration
+            )
+            await _assert_registered_wait(hass, event, index, effects, registered)
+
+
+async def _assert_registered_wait(hass, event, index, effects, registered):
+    sequence = cv.SCRIPT_SCHEMA(
+        [
+            {"variables": {"marker": index}},
+            {
+                "wait_for_trigger": [{"trigger": "event", "event_type": event}],
+                "timeout": 30,
+                "continue_on_timeout": False,
+            },
+            {"action": "script_probe.record", "data": {"marker": "{{ marker }}"}},
+            {"variables": {"_function_result": "{{ wait.trigger.event.data.value }}"}},
+        ]
+    )
+    pending = asyncio.create_task(
+        ScriptFunction().execute(hass, {"sequence": sequence}, {}, None, [])
+    )
+    try:
+        await asyncio.wait_for(registered.wait(), 10)
+        assert hass.bus.async_listeners().get(event) == 1
+        assert not pending.done()
+        assert effects == list(range(index))
+        hass.bus.async_fire(f"{event}_unrelated", {"value": "wrong"})
+        await hass.async_block_till_done()
+        assert not pending.done()
+        hass.bus.async_fire(event, {"value": False})
+        assert await asyncio.wait_for(pending, 10) is False
+        assert effects == list(range(index + 1))
+        assert event not in hass.bus.async_listeners()
+    finally:
+        if not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
