@@ -1,5 +1,6 @@
 """Contracts for the genuine Home Assistant OS + Supervisor VM lane."""
 
+import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,7 +40,12 @@ def test_haos_driver_uses_public_ha_interfaces_and_supervisor_restart() -> None:
     assert "/api/onboarding/users" in text
     assert "/api/config/config_entries/flow" in text
     assert '"conversation/process"' in text
-    assert "extended_openai_conversation_responses/management" in text
+    spec = importlib.util.spec_from_file_location("haos_acceptance_driver", DRIVER)
+    assert spec is not None and spec.loader is not None
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    assert driver.WS_COMMAND == "extended_openai_conversation_responses/management"
+    assert "await ws.call(WS_COMMAND," in text
     assert '"/core/restart"' in text
     assert "docker restart homeassistant" not in text
     assert "kill homeassistant" not in text
