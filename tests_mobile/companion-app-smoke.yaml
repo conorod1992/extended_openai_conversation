@@ -137,7 +137,8 @@ appId: io.homeassistant.companion.android
 
 # Exercise native Activity/WebView suspension and restoration.
 - pressKey: Home
-- launchApp
+- launchApp:
+    stopApp: false
 - scrollUntilVisible:
     element:
       text: "Companion app saved title"
