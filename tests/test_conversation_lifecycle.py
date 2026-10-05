@@ -34,7 +34,8 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     get_request_rule_runtime,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
-from homeassistant.components import conversation, intent
+from homeassistant.components import conversation
+from homeassistant.helpers import intent
 from homeassistant.exceptions import HomeAssistantError
 
 
