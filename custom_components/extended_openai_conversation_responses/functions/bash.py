@@ -21,6 +21,7 @@ from ..const import (
     SHELL_OUTPUT_LIMIT,
     SHELL_TIMEOUT,
 )
+from ..function_execution import backend_failure
 from ..operational_errors import log_handled_failure
 from ..regex_execution import async_search_configured_patterns
 from .base import Function
@@ -345,14 +346,18 @@ class BashFunction(Function):
                         (stdout, stdout_truncated),
                         (stderr, stderr_truncated),
                     ) = await asyncio.gather(stdout_task, stderr_task)
-            except TimeoutError:
+            except TimeoutError as err:
                 await _async_cleanup_process(
                     process,
                     stdout_task,
                     stderr_task,
                     graceful=False,
                 )
-                return {"error": f"Command timed out after {timeout:g} seconds"}
+                # Settle through the outer failure handler after process cleanup.
+                # Its backend_failure call can then propagate outside this try.
+                raise TimeoutError(
+                    f"Command timed out after {timeout:g} seconds"
+                ) from err
             except asyncio.CancelledError:
                 await asyncio.shield(
                     _async_cleanup_process(
@@ -377,6 +382,6 @@ class BashFunction(Function):
 
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool shell execution failed", err)
-            return {"error": str(err)}
+            return backend_failure(str(err), err)
 
         return result
