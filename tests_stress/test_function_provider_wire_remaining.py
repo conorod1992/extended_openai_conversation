@@ -61,6 +61,414 @@ ERROR_CASES = (
 API_MODES = (API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES)
 
 
+@pytest.mark.parametrize("api_mode", API_MODES)
+@pytest.mark.parametrize(
+    "kind",
+    (
+        "template",
+        "script",
+        "rest",
+        "scrape",
+        "sqlite",
+        "bash",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "composite",
+    ),
+)
+async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
+    hass, monkeypatch, socket_enabled, tmp_path, stress_trace, kind, api_mode
+):
+    """The same independent result contract applies to every applicable consumer."""
+    from copy import deepcopy
+    from html import escape
+
+    import voluptuous as vol
+
+    from custom_components.extended_openai_conversation_responses.const import (
+        DOMAIN,
+        SERVICE_CALL_FUNCTION,
+    )
+    from custom_components.extended_openai_conversation_responses.functions import (
+        get_function,
+    )
+    from homeassistant.components import ai_task
+    from homeassistant.core import SupportsResponse
+    from homeassistant.exceptions import HomeAssistantError
+    from homeassistant.helpers import llm
+    from custom_components.extended_openai_conversation_responses.function_execution import (
+        propagate_function_execution_errors,
+    )
+    from tests.functions.behaviour_generators import assert_typed_value
+    from tests_real_ha.test_ai_task_provider_wire import _task_entity, _wire
+    from tests_real_ha.test_ai_task_runtime import CallerAPI
+    from tests_real_ha.test_cross_feature_acceptance import _say
+    from tests_real_ha.test_request_rules_script_semantics import _local
+    from tests_stress.function_outcome_contract import (
+        BUSINESS_VALUES,
+        backend_configuration,
+        expected_consumer_result,
+    )
+
+    current = {"value": None}
+    captured = []
+
+    async def read(_call):
+        if current.get("unavailable"):
+            raise HomeAssistantError("backend dependency is unavailable")
+        return {"payload": deepcopy(current["value"])}
+
+    async def capture(call):
+        captured.append(deepcopy(call.data["value"]))
+
+    async def remote(request):
+        if current.get("unavailable"):
+            request.transport.close()
+            return web.Response()
+        serialized = json.dumps(current["value"])
+        return web.Response(
+            text=(
+                f'<span class="probe">{escape(serialized)}</span>'
+                if request.path == "/html"
+                else serialized
+            ),
+            content_type="text/html" if request.path == "/html" else "application/json",
+        )
+
+    hass.services.async_register(
+        "outcome_probe", "read", read, supports_response=SupportsResponse.ONLY
+    )
+    hass.services.async_register("outcome_probe", "capture", capture)
+    app = web.Application()
+    app.router.add_get("/value", remote)
+    app.router.add_get("/html", remote)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    entries = []
+    try:
+        url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+        config = backend_configuration(kind, tmp_path, url)
+        backend = get_function(kind)
+        validated = backend.validate_schema(config)
+        with sqlite3.connect(tmp_path / "outcome.db") as db:
+            db.execute("CREATE TABLE probes (value TEXT)")
+            db.execute("INSERT INTO probes VALUES ('baseline')")
+        tool = {
+            "spec": {
+                "name": "business_probe",
+                "description": "Return actual business data",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"payload": {}, "payload_json": {"type": "string"}},
+                },
+            },
+            "function": config,
+        }
+        entry = _make_entry(
+            "Shared backend outcomes",
+            include_ai_task=False,
+            conversation_options={
+                "chat_model": "gpt-5.2",
+                "reasoning_effort": "none",
+                "function_tool_error_recovery": True,
+                CONF_API_MODE: api_mode,
+                CONF_FUNCTION_TOOLS: [tool],
+            },
+        )
+        await _setup_entry(hass, entry)
+        entries.append(entry)
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        task_entry, task_entity = await _task_entity(hass, api_mode)
+        entries.append(task_entry)
+
+        class BackendTool(llm.Tool):
+            name = "business_probe"
+            description = "Call the genuine configured backend"
+            parameters = vol.Schema(
+                {vol.Required("payload"): object, vol.Required("payload_json"): str}
+            )
+
+            async def async_call(self, hass, tool_input, llm_context):
+                with propagate_function_execution_errors():
+                    return {
+                        "result": await backend.execute(
+                            hass, validated, tool_input.tool_args, llm_context, []
+                        )
+                    }
+
+        caller = CallerAPI(hass=hass, id=f"shared-{kind}", name="Shared outcome caller")
+        caller.tools = [BackendTool()]
+        from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+            caller_api_tools,
+        )
+
+        _, task_tools = caller_api_tools(
+            await caller.async_get_api_instance(
+                llm.LLMContext(
+                    platform=DOMAIN,
+                    context=Context(),
+                    language="en",
+                    assistant="ai_task",
+                    device_id=None,
+                )
+            )
+        )
+        task_tool_name = task_tools[0]["spec"]["name"]
+        observations = [(value, "business", False) for value in BUSINESS_VALUES]
+        if kind in {"script", "rest", "sqlite", "read_file"}:
+            observations += [
+                (False, "healthy", False),
+                (False, "injected_failure", True),
+                (False, "dependency_restored", False),
+                (
+                    {"error": "independent business result"},
+                    "same_feature_healthy",
+                    False,
+                ),
+            ]
+        for value, stage, failed in observations:
+            current["value"] = value
+            current["unavailable"] = failed
+            arguments = {"payload": value, "payload_json": json.dumps(value)}
+            for workflow in (
+                "direct",
+                "composite",
+                "provider",
+                "request_rule",
+                "ai_task",
+            ):
+                expected = expected_consumer_result(kind, value, tmp_path, workflow)
+
+                def prepare(value=value, failed=failed):
+                    (tmp_path / "outcome.txt").write_text(
+                        "START" if kind == "edit_file" else json.dumps(value),
+                        encoding="utf-8",
+                    )
+                    with sqlite3.connect(tmp_path / "outcome.db") as db:
+                        db.execute("CREATE TABLE IF NOT EXISTS probes (value TEXT)")
+                        db.execute("DELETE FROM probes")
+                        db.execute(
+                            "INSERT INTO probes VALUES (?)", (json.dumps(value),)
+                        )
+                        if failed and kind == "sqlite":
+                            db.execute("DROP TABLE probes")
+                    if failed and kind == "read_file":
+                        (tmp_path / "outcome.txt").unlink()
+
+                await hass.async_add_executor_job(prepare)
+                call_id = f"business-{workflow}-{len(captured)}"
+                call = (
+                    _responses_sse_tool_call
+                    if api_mode == API_MODE_RESPONSES
+                    else _chat_sse_tool_call
+                )
+                text = (
+                    _responses_sse_text
+                    if api_mode == API_MODE_RESPONSES
+                    else _chat_sse_text
+                )
+                if workflow == "direct":
+                    with propagate_function_execution_errors():
+                        if failed:
+                            with pytest.raises(HomeAssistantError):
+                                await backend.execute(
+                                    hass, validated, arguments, None, []
+                                )
+                            record(
+                                stress_trace,
+                                "shared_backend_failure",
+                                backend=kind,
+                                workflow=workflow,
+                                api=api_mode,
+                                stage=stage,
+                            )
+                            continue
+                        actual = await backend.execute(
+                            hass, validated, arguments, None, []
+                        )
+                elif workflow == "composite":
+                    if failed:
+                        with pytest.raises(HomeAssistantError):
+                            await get_function("composite").execute(
+                                hass, {"sequence": [validated]}, arguments, None, []
+                            )
+                        record(
+                            stress_trace,
+                            "shared_backend_failure",
+                            backend=kind,
+                            workflow=workflow,
+                            api=api_mode,
+                            stage=stage,
+                        )
+                        continue
+                    actual = await get_function("composite").execute(
+                        hass, {"sequence": [validated]}, arguments, None, []
+                    )
+                elif workflow == "request_rule":
+                    for rule in agent._request_rules.snapshot()["rules"]:
+                        await agent._request_rules.async_delete(rule["id"])
+                    await agent._request_rules.async_create(
+                        _local(
+                            [
+                                {
+                                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                                    "data": {
+                                        "function": "business_probe",
+                                        "arguments": arguments,
+                                        "result_alias": "business_value",
+                                    },
+                                },
+                                {
+                                    "action": "outcome_probe.capture",
+                                    "data": {"value": "{{ business_value }}"},
+                                },
+                            ]
+                        )
+                    )
+                    wire = _install_wire(monkeypatch, agent, [])
+                    before_capture = len(captured)
+                    response = await _say(hass, agent, "run rule")
+                    if failed:
+                        assert response.response.error_code is not None
+                        assert (
+                            response.response.as_dict()["speech"]["plain"]["speech"]
+                            == "Failed safely"
+                        )
+                        assert not agent._usage.runs[-1].successful
+                        assert len(captured) == before_capture
+                        assert not wire.requests
+                        record(
+                            stress_trace,
+                            "shared_backend_failure",
+                            backend=kind,
+                            workflow=workflow,
+                            api=api_mode,
+                            stage=stage,
+                        )
+                        continue
+                    assert response.response.error_code is None, str(
+                        response.response.as_dict()
+                    )
+                    assert _speech(response) == "Done"
+                    assert not wire.requests
+                    actual = captured[-1]
+                else:
+                    wire = (
+                        _wire(
+                            monkeypatch,
+                            task_entry,
+                            [
+                                call(call_id, task_tool_name, arguments),
+                                text("Completed"),
+                            ],
+                        )
+                        if workflow == "ai_task"
+                        else _install_wire(
+                            monkeypatch,
+                            agent,
+                            [
+                                call(call_id, "business_probe", arguments),
+                                text("Completed"),
+                            ],
+                        )
+                    )
+                    if workflow == "ai_task":
+                        if failed:
+                            failed_task = await ai_task.async_generate_data(
+                                hass,
+                                task_name="Shared failure",
+                                entity_id=task_entity,
+                                instructions="Read unavailable dependency",
+                                llm_api=caller,
+                            )
+                            assert failed_task.data == "Completed"
+                            assert len(wire.requests) == 2
+                            native_error = _provider_result(
+                                wire.requests[1], api_mode, call_id
+                            )
+                            assert native_error.get("status") == "error", native_error
+                            record(
+                                stress_trace,
+                                "shared_backend_failure",
+                                backend=kind,
+                                workflow=workflow,
+                                api=api_mode,
+                                stage=stage,
+                            )
+                            continue
+                        assert (
+                            await ai_task.async_generate_data(
+                                hass,
+                                task_name="Shared outcome",
+                                entity_id=task_entity,
+                                instructions="Read the business value",
+                                llm_api=caller,
+                            )
+                        ).data == "Completed"
+                    else:
+                        if failed:
+                            response = await _say(
+                                hass, agent, "Read unavailable dependency"
+                            )
+                            assert response.response.error_code is not None
+                            assert not agent._usage.runs[-1].successful
+                            assert len(wire.requests) == 1
+                            record(
+                                stress_trace,
+                                "shared_backend_failure",
+                                backend=kind,
+                                workflow=workflow,
+                                api=api_mode,
+                                stage=stage,
+                            )
+                            continue
+                        assert (
+                            _speech(await _say(hass, agent, "Read business value"))
+                            == "Completed"
+                        )
+                    assert len(wire.requests) == 2
+                    actual = _provider_result(wire.requests[1], api_mode, call_id)
+                    if workflow == "ai_task":
+                        actual = actual["result"]
+                try:
+                    assert_typed_value(actual, expected)
+                except AssertionError as error:
+                    raise AssertionError(
+                        (kind, workflow, api_mode, value, actual, expected)
+                    ) from error
+                if kind in {"write_file", "edit_file"}:
+                    assert await hass.async_add_executor_job(
+                        (tmp_path / "outcome.txt").read_text, "utf-8"
+                    ) == json.dumps(value)
+                record(
+                    stress_trace,
+                    "summary",
+                    campaign_action="shared_backend_outcome",
+                    shared_backend_business_cases=int(stage == "business"),
+                    backend=kind,
+                    workflow=workflow,
+                    api=api_mode,
+                    value=value,
+                    actual=actual,
+                    stage=stage,
+                )
+        wire = _install_wire(
+            monkeypatch, agent, [text("Independent healthy operation")]
+        )
+        assert (
+            _speech(await _say(hass, agent, "Answer without tools"))
+            == "Independent healthy operation"
+        )
+        assert len(wire.requests) == 1
+    finally:
+        for entry in entries:
+            assert await hass.config_entries.async_unload(entry.entry_id)
+        await runner.cleanup()
+
+
 @pytest.mark.parametrize("boundary", ["release", "deadline", "cancel"])
 async def test_sqlite_lock_deadline_and_worker_recovery_on_public_assist(
     hass, monkeypatch, tmp_path, stress_trace, boundary
@@ -558,7 +966,7 @@ async def test_remaining_function_errors_are_serialized_on_provider_wire(
             assert result is None
         elif failure == "rest_404":
             assert hits == ["rest"]
-            assert result == "404: Not Found"
+            assert result == {"status": "error", "error": "REST request failed: HTTP 404 Not Found"}
         elif failure == "sqlite_bad_query":
             assert result == {
                 "status": "error",
@@ -651,7 +1059,7 @@ async def test_composite_late_failure_preserves_one_completed_side_effect(
     assert _speech(response) == "Partial failure handled"
     _assert_exchange(wire, api_mode, name)
     result = _provider_result(wire.requests[1], api_mode, call_id)
-    assert result == {"error": f"File not found: {missing}"}
+    assert result == {"status": "error", "error": f"File not found: {missing}"}
     assert side_effects.read_text(encoding="utf-8").splitlines() == ["first"]
     record(stress_trace, "composite_partial_failure", mode=api_mode, side_effects=1)
 
@@ -1670,7 +2078,10 @@ async def test_rest_request_templates_keep_per_invocation_arguments(
 async def test_rest_transport_failure_stops_dependent_actions(
     hass, monkeypatch, socket_enabled, stress_trace, api_mode, route, fault
 ):
-    from custom_components.extended_openai_conversation_responses.const import DOMAIN, SERVICE_CALL_FUNCTION
+    from custom_components.extended_openai_conversation_responses.const import (
+        DOMAIN,
+        SERVICE_CALL_FUNCTION,
+    )
     from tests_real_ha.test_request_rules_script_semantics import _local, _record_action
 
     healthy = False
@@ -1702,39 +2113,134 @@ async def test_rest_transport_failure_stops_dependent_actions(
         url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/probe"
         config = {"type": "rest", "method": "POST", "resource": url, "timeout": 1}
         if route == "composite":
-            config = {"type": "composite", "sequence": [{"type": "script", "sequence": [_record_action("before")]}, config, {"type": "script", "sequence": [_record_action("after")]}]}
-        tool = {"spec": {"name": "transport_probe", "description": "Probe transport", "parameters": {"type": "object", "properties": {}}}, "function": config}
-        entry = _make_entry("REST failure consequences", include_ai_task=False, conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]})
+            config = {
+                "type": "composite",
+                "sequence": [
+                    {"type": "script", "sequence": [_record_action("before")]},
+                    config,
+                    {"type": "script", "sequence": [_record_action("after")]},
+                ],
+            }
+        tool = {
+            "spec": {
+                "name": "transport_probe",
+                "description": "Probe transport",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": config,
+        }
+        entry = _make_entry(
+            "REST failure consequences",
+            include_ai_task=False,
+            conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]},
+        )
         await _setup_entry(hass, entry)
         agent = conversation.async_get_agent(hass, entry.entry_id)
         if route == "rule":
-            await agent._request_rules.async_create(_local([_record_action("before"), {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": {"function": "transport_probe", "arguments": {}}}, _record_action("after")]))
+            await agent._request_rules.async_create(
+                _local(
+                    [
+                        _record_action("before"),
+                        {
+                            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                            "data": {"function": "transport_probe", "arguments": {}},
+                        },
+                        _record_action("after"),
+                    ]
+                )
+            )
             replies = []
         else:
-            replies = _provider_replies(api_mode, "transport-failure", "transport_probe", "Failure handled")
+            replies = _provider_replies(
+                api_mode, "transport-failure", "transport_probe", "Failure handled"
+            )
         wire = _install_wire(monkeypatch, agent, replies)
 
         async def say():
-            return await conversation.async_converse(hass=hass, text="run rule" if route == "rule" else "Probe transport", conversation_id=None, context=Context(), language="en", agent_id=entry.entry_id)
+            return await conversation.async_converse(
+                hass=hass,
+                text="run rule" if route == "rule" else "Probe transport",
+                conversation_id=None,
+                context=Context(),
+                language="en",
+                agent_id=entry.entry_id,
+            )
 
+        healthy = True
+        healthy_wire = _install_wire(
+            monkeypatch,
+            agent,
+            []
+            if route == "rule"
+            else _provider_replies(
+                api_mode, "transport-before", "transport_probe", "Healthy before fault"
+            ),
+        )
+        before = await say()
+        assert _speech(before) == (
+            "Done" if route == "rule" else "Healthy before fault"
+        )
+        assert effects == ([] if route == "direct" else ["before", "after"])
+        assert attempts == ["healthy"]
+        assert len(healthy_wire.requests) == (0 if route == "rule" else 2)
+        healthy = False
+        wire = _install_wire(monkeypatch, agent, replies)
         result = await say()
         if route == "rule":
-            assert _speech(result) == "Failed safely"
+            assert result.response.error_code is not None
+            assert result.response.as_dict()["speech"]["plain"]["speech"] == "Failed safely"
             assert not agent._usage.runs[-1].successful
         else:
             assert _speech(result) == "Failure handled"
             outcome = _provider_result(wire.requests[1], api_mode, "transport-failure")
             assert outcome["status"] == "error", outcome
-        assert effects == ([] if route == "direct" else ["before"])
-        assert attempts == [fault], "An uncertain remote operation must not be replayed"
+        assert effects == ([] if route == "direct" else ["before", "after", "before"])
+        assert attempts == ["healthy", fault], (
+            "An uncertain remote operation must not be replayed"
+        )
         healthy = True
         release.set()
-        wire = _install_wire(monkeypatch, agent, [] if route == "rule" else _provider_replies(api_mode, "transport-recovery", "transport_probe", "Recovered transport"))
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            []
+            if route == "rule"
+            else _provider_replies(
+                api_mode, "transport-recovery", "transport_probe", "Recovered transport"
+            ),
+        )
         result = await say()
         assert _speech(result) == ("Done" if route == "rule" else "Recovered transport")
-        assert effects == ([] if route == "direct" else ["before", "before", "after"])
-        assert attempts == [fault, "healthy"]
-        record(stress_trace, "summary", rest_transport_failure_cases=1, rest_transport_recoveries=1, rest_blocked_dependent_actions=int(route != "direct"))
+        assert effects == (
+            []
+            if route == "direct"
+            else ["before", "after", "before", "before", "after"]
+        )
+        assert attempts == ["healthy", fault, "healthy"]
+        final = (
+            _responses_sse_text if api_mode == API_MODE_RESPONSES else _chat_sse_text
+        )
+        independent_wire = _install_wire(
+            monkeypatch, agent, [final("Independent healthy request")]
+        )
+        independent = await conversation.async_converse(
+            hass=hass,
+            text="Independent conversation",
+            conversation_id=None,
+            context=Context(),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+        assert _speech(independent) == "Independent healthy request"
+        assert len(independent_wire.requests) == 1
+        assert attempts == ["healthy", fault, "healthy"]
+        record(
+            stress_trace,
+            "summary",
+            rest_transport_failure_cases=1,
+            rest_transport_recoveries=1,
+            rest_blocked_dependent_actions=int(route != "direct"),
+        )
     finally:
         release.set()
         await runner.cleanup()
@@ -1756,14 +2262,42 @@ async def test_rest_completed_empty_and_http_error_responses_remain_data(
     await site.start()
     try:
         url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/probe"
-        tool = {"spec": {"name": "response_probe", "description": "Probe response", "parameters": {"type": "object", "properties": {}}}, "function": {"type": "rest", "resource": url}}
-        entry = _make_entry("REST received responses", include_ai_task=False, conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]})
+        tool = {
+            "spec": {
+                "name": "response_probe",
+                "description": "Probe response",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {"type": "rest", "resource": url},
+        }
+        entry = _make_entry(
+            "REST received responses",
+            include_ai_task=False,
+            conversation_options={CONF_API_MODE: api_mode, CONF_FUNCTION_TOOLS: [tool]},
+        )
         await _setup_entry(hass, entry)
         agent = conversation.async_get_agent(hass, entry.entry_id)
-        wire = _install_wire(monkeypatch, agent, _provider_replies(api_mode, "received-response", "response_probe", "Received response"))
-        result = await conversation.async_converse(hass=hass, text="Read response", conversation_id=None, context=Context(), language="en", agent_id=entry.entry_id)
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            _provider_replies(
+                api_mode, "received-response", "response_probe", "Received response"
+            ),
+        )
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Read response",
+            conversation_id=None,
+            context=Context(),
+            language="en",
+            agent_id=entry.entry_id,
+        )
         assert _speech(result) == "Received response"
-        assert _provider_result(wire.requests[1], api_mode, "received-response") == body
+        assert _provider_result(wire.requests[1], api_mode, "received-response") == (
+            body
+            if status == 204
+            else {"status": "error", "error": "REST request failed: HTTP 404 Not Found"}
+        )
         record(stress_trace, "summary", rest_received_response_controls=1)
     finally:
         await runner.cleanup()

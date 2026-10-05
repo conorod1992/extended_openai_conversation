@@ -254,6 +254,183 @@ def _files(path: str) -> set[str]:
     return {child.name for child in Path(path).parent.iterdir()}
 
 
+@pytest.mark.parametrize("owner", ["memory", "knowledge"])
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+async def test_public_consumer_recovers_first_after_commit_and_failed_readback(
+    hass, monkeypatch, real_store_io, stress_trace, owner, api_mode
+):
+    """Assist is the first caller after restoration; no test getter heals runtime."""
+    import json
+    from custom_components.extended_openai_conversation_responses.memory import (
+        PersistentMemory,
+    )
+    from homeassistant.components import conversation
+    from homeassistant.core import Context
+    from tests_real_ha.test_cross_feature_acceptance import _agent
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _chat_sse_tool_call,
+        _responses_sse_text,
+        _responses_sse_tool_call,
+        _install_wire,
+        _speech,
+    )
+    from tests_stress.test_function_provider_wire_remaining import _provider_result
+
+    user = await hass.auth.async_create_user("Recovery consumer")
+    agent = await _agent(
+        hass,
+        api_mode=api_mode,
+        memory_mode="manual",
+        memory_auto_retrieve_limit=0,
+        knowledge_enabled=True,
+        function_tool_error_recovery=True,
+    )
+    entry = agent.entry
+    if owner == "memory":
+        manager = agent._memory
+        await manager.async_add(
+            user.id, "BASELINE recovery calibration", "recovery", "explicit"
+        )
+
+        async def mutate():
+            return await manager.async_add(
+                user.id, "UNCERTAIN recovery calibration", "recovery", "explicit"
+            )
+
+        name, args = (
+            "memory_search",
+            {"query": "recovery calibration", "scope": "personal", "limit": 10},
+        )
+    else:
+        manager = agent._knowledge
+        source = await manager.async_create(
+            "Recovery calibration", "Recovery", "BASELINE recovery calibration"
+        )
+
+        async def mutate():
+            return await manager.async_update(
+                source.source_id, content="BASELINE UNCERTAIN recovery calibration"
+            )
+
+        name, args = "knowledge_search", {"query": "recovery calibration", "limit": 10}
+    store = manager._storage._store
+    call = _responses_sse_tool_call if api_mode == "responses" else _chat_sse_tool_call
+    text = _responses_sse_text if api_mode == "responses" else _chat_sse_text
+
+    async def say(call_id):
+        wire = _install_wire(
+            monkeypatch,
+            agent,
+            [call(call_id, name, args), text("Read committed state")],
+        )
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Read recovery calibration",
+            conversation_id=None,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+        return result, wire
+
+    try:
+        result, wire = await say("healthy-before")
+        assert _speech(result) == "Read committed state"
+        assert "BASELINE" in json.dumps(
+            _provider_result(wire.requests[1], api_mode, "healthy-before")
+        )
+        original_write = store._async_write_data
+        readbacks = []
+
+        async def lose_ack(data):
+            await original_write(data)
+            raise OSError("controlled commit acknowledgement failure")
+
+        original_load = Store._async_load_data
+
+        async def unreadable(candidate, *args, **kwargs):
+            if candidate.path == store.path:
+                readbacks.append("failed")
+                raise OSError("controlled failed readback")
+            return await original_load(candidate, *args, **kwargs)
+
+        with monkeypatch.context() as fault:
+            fault.setattr(store, "_async_write_data", lose_ack)
+            fault.setattr(Store, "_async_load_data", unreadable)
+            with pytest.raises(OSError, match="commit acknowledgement"):
+                await mutate()
+            result, failed_wire = await say("degraded-consumer")
+            if owner == "knowledge":
+                assert result.response.error_code is not None
+                assert len(failed_wire.requests) == 1
+            else:
+                # Native memory tools expose an explicit error to the model.
+                assert len(failed_wire.requests) == 2
+                failed = _provider_result(
+                    failed_wire.requests[1], api_mode, "degraded-consumer"
+                )
+                if isinstance(failed, str):
+                    failed = json.loads(failed)
+                assert failed["status"] == "error"
+                assert failed["error"] == "persistent memory has not been initialized"
+        assert readbacks
+        # First request after restoring the dependency, with the original entity.
+        result, recovered_wire = await say("restored-consumer")
+        assert _speech(result) == "Read committed state"
+        payload = json.dumps(
+            _provider_result(recovered_wire.requests[1], api_mode, "restored-consumer")
+        )
+        assert "BASELINE" in payload and "UNCERTAIN" in payload
+        wire = _install_wire(monkeypatch, agent, [text("Independent healthy reply")])
+        result = await conversation.async_converse(
+            hass=hass,
+            text="Answer without tools",
+            conversation_id=None,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+        assert _speech(result) == "Independent healthy reply"
+        assert len(wire.requests) == 1
+        if owner == "memory":
+            fresh = PersistentMemory(
+                HomeAssistantMemoryStorage(
+                    hass, entry.entry_id, agent.subentry.subentry_id
+                )
+            )
+            await fresh.async_initialize()
+            assert {row.content for row in await fresh.async_list(user.id)} == {
+                "BASELINE recovery calibration",
+                "UNCERTAIN recovery calibration",
+            }
+        else:
+            fresh = KnowledgeLibrary(
+                HomeAssistantKnowledgeStorage(
+                    hass, entry.entry_id, agent.subentry.subentry_id
+                )
+            )
+            await fresh.async_initialize()
+            assert (
+                await fresh.async_get(source.source_id)
+            ).content == "BASELINE UNCERTAIN recovery calibration"
+        record(
+            stress_trace,
+            "summary",
+            campaign_action="consumer_first_recovery",
+            consumer_first_recoveries=1,
+            owner=owner,
+            api=api_mode,
+            healthy_before=True,
+            committed_uncertain=True,
+            failed_readbacks=len(readbacks),
+            same_feature_recovered=True,
+            independent_healthy=True,
+        )
+    finally:
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 @pytest.fixture
 def real_store_io(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
