@@ -13,7 +13,10 @@ from custom_components.extended_openai_conversation_responses import (
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_MEMORY_RETRIEVAL_MODE,
+    CONF_TEMPORARY_MEMORY,
     MEMORY_RETRIEVAL_HYBRID,
+    TEMPORARY_MEMORY_BALANCED,
+    TEMPORARY_MEMORY_OFF,
 )
 
 Agent = conversation_module.ExtendedOpenAIAgentEntity
@@ -413,3 +416,25 @@ def test_request_function_groups_are_validated_once_per_request(monkeypatch) -> 
     assert first is groups
     assert second is groups
     assert validations == [([], configured_tools)]
+
+
+@pytest.mark.asyncio
+async def test_temporary_memory_loading_respects_disabled_and_missing_owner() -> None:
+    """Temporary facts are skipped when disabled or when no retained owner exists."""
+    disabled_agent = SimpleNamespace(
+        subentry=SimpleNamespace(data={CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_OFF}),
+        _effective_guest_policy=lambda: SimpleNamespace(temporary_memory=True),
+        _temporary_memory=SimpleNamespace(async_active=AsyncMock()),
+    )
+    assert await Agent._async_load_temporary_memories(disabled_agent) == []
+    disabled_agent._temporary_memory.async_active.assert_not_awaited()
+
+    unscoped_agent = SimpleNamespace(
+        subentry=SimpleNamespace(
+            data={CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED}
+        ),
+        _effective_guest_policy=lambda: SimpleNamespace(temporary_memory=True),
+        _temporary_memory=SimpleNamespace(async_active=AsyncMock()),
+    )
+    assert await Agent._async_load_temporary_memories(unscoped_agent) == []
+    unscoped_agent._temporary_memory.async_active.assert_not_awaited()

@@ -182,6 +182,8 @@ def test_live_action_targets_reject_changed_context_and_removed_entities(
     with pytest.raises(HomeAssistantError, match="Function Tool access policy"):
         agent._require_current_action_targets(hass, {"light.test"})
 
+    agent._require_current_action_targets(hass, set())
+
 
 async def test_usage_fallback_is_explained_and_shared(
     hass, monkeypatch, caplog
