@@ -106,9 +106,17 @@ appId: io.homeassistant.companion.android
 - tapOn:
     text: "Companion acceptance assistant"
     below: "Agent name"
+- longPressOn:
+    text: "Companion acceptance assistant"
+    below: "Agent name"
+- tapOn: "Select all"
 - eraseText: 100
 - inputText: "Companion app saved title"
 - hideKeyboard
+- scrollUntilVisible:
+    element:
+      text: "Save changes"
+    direction: DOWN
 - tapOn:
     text: "Save changes"
     retryTapIfNoChange: true
