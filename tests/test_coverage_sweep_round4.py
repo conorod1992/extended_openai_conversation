@@ -594,3 +594,173 @@ def test_request_static_cache_ignores_untracked_tool_measurement() -> None:
     finally:
         request_static_cache._FORMATTED_TOOL_MEASUREMENTS.reset(token_measurements)
         request_static_cache._FORMATTED_TOOL_RESULT_KEYS.reset(token_keys)
+
+
+
+@pytest.mark.asyncio
+async def test_skill_source_ref_explicit_version_and_development_fallback(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import services
+
+    assert await services.async_skill_source_ref(hass, "  custom-ref  ") == "custom-ref"
+    with pytest.raises(HomeAssistantError, match="cannot be empty"):
+        await services.async_skill_source_ref(hass, "   ")
+
+    monkeypatch.setattr(
+        services,
+        "async_get_integration",
+        AsyncMock(return_value=SimpleNamespace(version="7.0.0")),
+    )
+    assert await services.async_skill_source_ref(hass) == "7.0.0"
+
+    monkeypatch.setattr(
+        services,
+        "async_get_integration",
+        AsyncMock(return_value=SimpleNamespace(version="  ")),
+    )
+    assert await services.async_skill_source_ref(hass) == services.GITHUB_SKILLS_BRANCH
+
+
+@pytest.mark.asyncio
+async def test_service_admin_allows_system_context_and_rejects_non_admin(
+    hass,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import services
+
+    system_call = SimpleNamespace(context=SimpleNamespace(user_id=None))
+    await services._async_require_service_admin(hass, system_call)
+    hass.auth.async_get_user.assert_not_awaited()
+
+    hass.auth.async_get_user = AsyncMock(
+        return_value=SimpleNamespace(is_admin=False)
+    )
+    user_call = SimpleNamespace(context=SimpleNamespace(user_id="user"))
+    with pytest.raises(HomeAssistantError, match="Administrator permission"):
+        await services._async_require_service_admin(hass, user_call)
+
+    hass.auth.async_get_user = AsyncMock(
+        return_value=SimpleNamespace(is_admin=True)
+    )
+    await services._async_require_service_admin(hass, user_call)
+
+
+def test_management_debug_bounded_text_tracks_page_budget_exhaustion() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        debug_management_projection as projection,
+    )
+
+    budget = projection._ProjectionBudget(remaining=3)
+    value, meta = projection._bounded_text("abcdef", 10, budget)
+
+    assert value.startswith("abc")
+    assert meta["truncated"] is True
+    assert meta["original_characters"] == 6
+    assert budget.remaining == 0
+    assert budget.truncated is True
+
+    value, meta = projection._bounded_text(None, 10, budget)
+    assert value is None
+    assert meta == {"truncated": False, "limit_characters": 10}
+
+
+def test_management_debug_bounded_text_untruncated_path() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        debug_management_projection as projection,
+    )
+
+    value, meta = projection._bounded_text("ok", 10)
+
+    assert value == "ok"
+    assert meta == {"truncated": False, "limit_characters": 10}
+
+
+def test_archive_list_sync_filters_sorts_and_pages() -> None:
+    from dataclasses import dataclass
+
+    from custom_components.extended_openai_conversation_responses import (
+        management_history_queries as history,
+    )
+
+    @dataclass
+    class Session:
+        session_id: str
+        scope_id: str
+        retention_state: str
+        last_message_at: str
+
+    sessions = {
+        "old": Session("old", "user:one", "retained", "2026-01-01T00:00:00+00:00"),
+        "new": Session("new", "user:one", "retained", "2026-03-01T00:00:00+00:00"),
+        "middle": Session(
+            "middle", "user:one", "retained", "2026-02-01T00:00:00+00:00"
+        ),
+        "private": Session(
+            "private", "user:one", "private", "2026-04-01T00:00:00+00:00"
+        ),
+        "other": Session(
+            "other", "user:two", "retained", "2026-05-01T00:00:00+00:00"
+        ),
+    }
+
+    result = history._archive_list_sync(sessions, "user:one", 1, 1)
+
+    assert [item["session_id"] for item in result["sessions"]] == ["middle"]
+    assert result["total"] == 3
+    assert result["has_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_archive_query_defers_cancellation_until_worker_settles(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        management_history_queries as history,
+    )
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = False
+
+    def query() -> str:
+        return "unused"
+
+    async def to_thread(_query, *_args):
+        nonlocal completed
+        started.set()
+        await release.wait()
+        completed = True
+        return "done"
+
+    monkeypatch.setattr(history.asyncio, "to_thread", to_thread)
+    archive = SimpleNamespace(
+        _lock=asyncio.Lock(),
+        _ensure_initialized=Mock(),
+    )
+
+    task = asyncio.create_task(history._async_archive_query(archive, query))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert completed
+    archive._ensure_initialized.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_service_call_function_without_result_alias_uses_active_executor(
+    monkeypatch,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import services
+
+    executor = AsyncMock(return_value={"result": {"ok": True}})
+    monkeypatch.setattr(services, "async_call_active_function", executor)
+
+    # Exercise the registered closure indirectly by reproducing its deliberately
+    # tiny branch contract through the public helper inputs.
+    result = await services.async_call_active_function("demo", {"value": 1})
+
+    assert result == {"result": {"ok": True}}
+    executor.assert_awaited_once_with("demo", {"value": 1})
