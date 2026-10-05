@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import datetime
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
