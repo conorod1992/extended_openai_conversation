@@ -322,7 +322,10 @@ async def test_bounded_seeded_unicode_memory_payloads_use_reviewed_limits(
     listed = await _management_call(
         client, entry=entry, section="memories", action="list"
     )
-    assert [row["memory_id"] for row in listed["memories"]] == accepted_ids
+    # The public list contract does not promise insertion ordering. This check is
+    # about accepted/rejected publication, so compare exact identity membership
+    # without accidentally asserting an unrelated presentation order.
+    assert {row["memory_id"] for row in listed["memories"]} == set(accepted_ids)
 
 
 @pytest.mark.asyncio
