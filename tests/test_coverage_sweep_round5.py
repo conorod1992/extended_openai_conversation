@@ -818,3 +818,129 @@ def test_provider_failure_category_additional_body_codes(body, expected) -> None
     error = RuntimeError("provider")
     error.body = body
     assert provider_errors.provider_failure_category(error) == expected
+
+
+
+@pytest.mark.asyncio
+async def test_continuity_default_claim_lifecycle_and_unknown_release() -> None:
+    from custom_components.extended_openai_conversation_responses.continuity import (
+        ConversationContinuity,
+    )
+
+    manager = ConversationContinuity("agent")
+    token = await manager._async_claim_ha_default_conversation("conversation")
+
+    assert token in manager._ha_default_claims
+    assert manager._ha_default_lock_users["conversation"] == 1
+    assert manager._release_ha_default_claim("missing") is False
+    assert manager._release_ha_default_claim(token) is True
+    assert "conversation" not in manager._ha_default_locks
+    assert "conversation" not in manager._ha_default_lock_users
+
+
+@pytest.mark.asyncio
+async def test_continuity_default_claim_cancellation_drops_waiter_reference() -> None:
+    from custom_components.extended_openai_conversation_responses.continuity import (
+        ConversationContinuity,
+    )
+
+    manager = ConversationContinuity("agent")
+    first = await manager._async_claim_ha_default_conversation("conversation")
+    waiter = asyncio.create_task(
+        manager._async_claim_ha_default_conversation("conversation")
+    )
+    await asyncio.sleep(0)
+    assert manager._ha_default_lock_users["conversation"] == 2
+
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    assert manager._ha_default_lock_users["conversation"] == 1
+    assert manager._release_ha_default_claim(first) is True
+    assert "conversation" not in manager._ha_default_locks
+
+
+def test_continuity_new_conversation_id_namespaces_are_inspectable() -> None:
+    from custom_components.extended_openai_conversation_responses.continuity import (
+        ConversationContinuity,
+    )
+
+    manager = ConversationContinuity("agent")
+    plain = manager._new_conversation_id(None)
+    guest = manager._new_conversation_id("guest")
+
+    assert plain.startswith("extended-openai-agent-")
+    assert guest.startswith("extended-openai-guest-agent-")
+    assert plain != guest
+
+
+@pytest.mark.asyncio
+async def test_archive_record_turn_missing_session_returns_none() -> None:
+    from custom_components.extended_openai_conversation_responses import conversation_archive
+
+    archive = conversation_archive.ConversationArchive(SimpleNamespace(), "agent")
+    archive._initialized = True
+
+    result = await archive.async_record_turn(
+        "missing",
+        run_id=None,
+        user_text="hello",
+        assistant_text="world",
+        successful=True,
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_archive_delete_date_range_requires_confirmation_and_string_dates() -> None:
+    from custom_components.extended_openai_conversation_responses import conversation_archive
+
+    archive = conversation_archive.ConversationArchive(SimpleNamespace(), "agent")
+    archive._initialized = True
+
+    with pytest.raises(ValueError, match="confirmation"):
+        await archive.async_delete_date_range(
+            "user:one",
+            "2026-01-01",
+            "2026-01-02",
+            confirm=False,
+        )
+
+    with pytest.raises(ValueError, match="valid start_date"):
+        await archive.async_delete_date_range(
+            "user:one",
+            123,
+            "2026-01-02",
+            confirm=True,
+        )
+
+
+def test_archive_invalidate_clears_all_live_state() -> None:
+    from custom_components.extended_openai_conversation_responses import conversation_archive
+
+    archive = conversation_archive.ConversationArchive(SimpleNamespace(), "agent")
+    archive._sessions["s"] = object()
+    archive._turns["s"].append(object())
+    archive._active["scope"] = "s"
+    archive._partitions.add("2026-10")
+    archive._pending_partitions.add("2026-10")
+    archive._initialized = True
+
+    archive._invalidate_after_unreadable_metadata()
+
+    assert archive._sessions == {}
+    assert dict(archive._turns) == {}
+    assert archive._active == {}
+    assert archive._partitions == set()
+    assert archive._pending_partitions == set()
+    assert archive._initialized is False
+
+
+def test_archive_ensure_initialized_rejects_uninitialized_library() -> None:
+    from custom_components.extended_openai_conversation_responses import conversation_archive
+
+    archive = conversation_archive.ConversationArchive(SimpleNamespace(), "agent")
+    with pytest.raises(RuntimeError, match="has not been initialized"):
+        archive._ensure_initialized()
