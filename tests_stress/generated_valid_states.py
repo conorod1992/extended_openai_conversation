@@ -195,7 +195,9 @@ def _config(state: dict[str, Any]) -> dict[str, Any]:
 def normalized_state(state: dict[str, Any]) -> tuple[dict[str, Any], str]:
     """Use production normalization and request-path selection as the oracle."""
     normalized = agent_config.normalize_agent_config(_config(state))
-    from custom_components.extended_openai_conversation_responses.request import conversation_tools_required
+    from custom_components.extended_openai_conversation_responses.request import (
+        conversation_tools_required,
+    )
 
     request = build_provider_request_snapshot(
         normalized, {}, tools_required=conversation_tools_required(normalized)

@@ -36,7 +36,9 @@ async def test_cancelled_download_settles_native_work_before_owned_cleanup(
     root = tmp_path / "skills"
     _write_skill(root / "demo", "OLD installed")
     manager = await SkillManager.async_get_instance(hass, str(root))
-    from custom_components.extended_openai_conversation_responses.template import ExtendedOpenAITemplateManager
+    from custom_components.extended_openai_conversation_responses.template import (
+        ExtendedOpenAITemplateManager,
+    )
 
     helper = ExtendedOpenAITemplateManager(hass)
     await helper.async_setup()

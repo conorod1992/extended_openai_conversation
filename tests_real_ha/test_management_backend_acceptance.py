@@ -257,9 +257,12 @@ async def _management_response(
         }
     )
     response = await client.receive_json()
-    if section == "configuration" and action == "update":
-        if test_hass := getattr(client, "_eoai_test_hass", None):
-            await test_hass.async_block_till_done()
+    if (
+        section == "configuration"
+        and action == "update"
+        and (test_hass := getattr(client, "_eoai_test_hass", None))
+    ):
+        await test_hass.async_block_till_done()
     return response
 
 
