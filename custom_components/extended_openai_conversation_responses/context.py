@@ -109,8 +109,6 @@ def select_summary_history(
     if not older_turns:
         older_turns = parts.turns[:-1]
         recent = parts.turns[-1:]
-    if not older_turns:
-        return None
     older = [item for turn in older_turns for item in turn]
     raw_recent = [item for turn in recent for item in turn]
     return older, [*parts.prefix, *raw_recent]
