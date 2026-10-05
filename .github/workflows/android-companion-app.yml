@@ -122,6 +122,10 @@ jobs:
           python - <<'PY'
           import json, os
           from pathlib import Path
+          ready = json.loads((Path(os.environ["RUNNER_TEMP"]) / "companion-ready.json").read_text())
+          stored = json.loads((Path(os.environ["RUNNER_TEMP"]) / "companion-ha/.storage/core.config_entries").read_text())
+          entry = next(item for item in stored["data"]["entries"] if item["entry_id"] == ready["entry_id"])
+          assert any(item["title"] == "Companion app saved title" for item in entry["subentries"]), entry
           Path("companion-evidence/certification.json").write_text(
               json.dumps(
                   {

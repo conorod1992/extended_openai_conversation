@@ -117,10 +117,15 @@ appId: io.homeassistant.companion.android
 - hideKeyboard
 - scrollUntilVisible:
     element:
-      text: "Save changes"
+      text: "Listen for a follow-up"
     direction: DOWN
+# Android WebView omits the dynamically inserted save bar from its accessibility
+# tree. At the end of Basics on the pinned Pixel 6, its Save button is here.
+- swipe:
+    start: "50%, 80%"
+    end: "50%, 20%"
 - tapOn:
-    text: "Save changes"
+    point: "75%, 90%"
     retryTapIfNoChange: true
 - extendedWaitUntil:
     visible: "Companion app saved title"
