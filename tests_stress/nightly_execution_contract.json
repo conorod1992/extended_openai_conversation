@@ -761,6 +761,8 @@
     "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_loads_inside_real_home_assistant_shell",
     "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_browser_frontend_talks_to_real_management_websocket",
     "tests_real_ha/test_browser_compatibility_acceptance.py::test_compact_native_frontend_version_contract",
+    "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py::test_cross_browser_state_handoff_survives_true_ha_restart[firefox]",
+    "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py::test_cross_browser_state_handoff_survives_true_ha_restart[webkit]",
     "tests_real_ha/test_browser_golden_acceptance.py::test_native_api_key_replacement_preserves_or_reloads_provider_family",
     "tests_real_ha/test_browser_golden_acceptance.py::test_native_shell_golden_runtime_journey[context]",
     "tests_real_ha/test_browser_golden_acceptance.py::test_native_shell_golden_runtime_journey[tool]",
@@ -2295,6 +2297,7 @@
       "tests_browser/real-ha-generated-programmes.spec.mjs::chromium::real-ha-generated-programmes.spec.mjs::generated multilingual programmes retain semantics through native editor round trips"
     ],
     "browser-firefox": [
+      "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py::test_cross_browser_state_handoff_survives_true_ha_restart[firefox]",
       "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
       "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
       "tests_browser/backend-reconnect.spec.mjs::firefox::backend-reconnect.spec.mjs::mounted management panel recovers after HA backend disconnect and reconnect",
@@ -2325,6 +2328,7 @@
       "tests_browser/stale-response-ordering.spec.mjs::firefox::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route"
     ],
     "browser-webkit": [
+      "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py::test_cross_browser_state_handoff_survives_true_ha_restart[webkit]",
       "tests_browser/accessibility-layout.stress.mjs::webkit::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
       "tests_browser/accessibility-layout.stress.mjs::webkit::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
       "tests_browser/backend-reconnect.spec.mjs::webkit::backend-reconnect.spec.mjs::mounted management panel recovers after HA backend disconnect and reconnect",
