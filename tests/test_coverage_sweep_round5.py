@@ -249,12 +249,12 @@ def test_model_catalog_validation_rejects_bad_version_and_duplicate_model() -> N
     document = deepcopy(model_catalog.BUNDLED_CATALOG)
     document["catalog_version"] = 6
     with pytest.raises(ValueError, match="at least 7"):
-        model_catalog.prepare_catalog(document)
+        model_catalog.validate_catalog(document)
 
     document = deepcopy(model_catalog.BUNDLED_CATALOG)
     document["models"].append(deepcopy(document["models"][0]))
     with pytest.raises(ValueError, match="duplicate model ID"):
-        model_catalog.prepare_catalog(document)
+        model_catalog.validate_catalog(document)
 
 
 def test_model_catalog_validation_rejects_snapshot_cycle() -> None:
@@ -271,7 +271,7 @@ def test_model_catalog_validation_rejects_snapshot_cycle() -> None:
     document["models"] = [base, other]
 
     with pytest.raises(ValueError, match="inheritance cycle"):
-        model_catalog.prepare_catalog(document)
+        model_catalog.validate_catalog(document)
 
 
 @pytest.mark.asyncio
@@ -297,7 +297,7 @@ async def test_service_admin_rejects_missing_user(hass) -> None:
         await services._async_require_service_admin(hass, call)
 
 
-def test_guest_mode_policy_custom_groups_ignores_malformed_groups() -> None:
+def test_guest_mode_policy_custom_groups_ignores_malformed_groups(hass) -> None:
     from custom_components.extended_openai_conversation_responses import guest_mode
 
     tools = [
@@ -308,6 +308,7 @@ def test_guest_mode_policy_custom_groups_ignores_malformed_groups() -> None:
         }
     ]
     options = {
+        guest_mode.CONF_GUEST_POLICY_VERSION: guest_mode.GUEST_POLICY_VERSION,
         guest_mode.CONF_GUEST_FUNCTION_POLICY: "custom",
         guest_mode.CONF_GUEST_ALLOWED_GROUP_IDS: ["allowed"],
         guest_mode.CONF_FUNCTION_GROUPS: [
@@ -317,11 +318,14 @@ def test_guest_mode_policy_custom_groups_ignores_malformed_groups() -> None:
         ],
     }
 
+    manager = Mock()
+    manager.is_active.return_value = True
     policy = guest_mode.resolve_guest_policy(
-        SimpleNamespace(),
+        hass,
         options,
-        SimpleNamespace(is_active=Mock(return_value=True)),
+        manager,
         tools,
+        exposed_entities=[],
     )
 
     assert "safe" not in policy.function_tools
@@ -586,7 +590,10 @@ def test_debug_memory_retrieval_records_active_trace(monkeypatch) -> None:
 def test_provider_failure_category_reads_structured_error_body(body, expected) -> None:
     from custom_components.extended_openai_conversation_responses import provider_errors
 
-    error = RuntimeError("provider")
+    class ProviderError(RuntimeError):
+        pass
+
+    error = ProviderError("provider")
     error.body = body
 
     assert provider_errors.provider_failure_category(error) == expected
@@ -616,7 +623,7 @@ def test_request_rule_pattern_rejects_empty_constrained_choice() -> None:
     )
 
     with pytest.raises(SentencePatternError, match="empty choice"):
-        compile_sentence_pattern("{room:kitchen|}")
+        compile_sentence_pattern("{room=kitchen|}")
 
 
 @pytest.mark.asyncio
