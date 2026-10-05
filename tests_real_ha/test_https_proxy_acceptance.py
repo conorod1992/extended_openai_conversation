@@ -6,6 +6,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 import ipaddress
 import json
+import os
 from pathlib import Path
 import ssl
 
@@ -14,10 +15,16 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
+import pytest
 
 from tests_real_ha.test_browser_backend_acceptance import (
     _run_playwright,
     real_ha_shell as real_ha_shell,
+)
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_REAL_HA_BROWSER") != "1",
+    reason="enabled only by the dedicated deployment recovery browser job",
 )
 
 _HOP_BY_HOP = {

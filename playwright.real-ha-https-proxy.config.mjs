@@ -14,6 +14,10 @@ export default defineConfig({
   use: {
     ...devices["Desktop Chrome"],
     ignoreHTTPSErrors: true,
+    // Trust this lane's ephemeral local certificate before the first handshake.
+    // Context-level ignoring alone makes Chromium first reject it, which HA's
+    // strict event-loop exception fixture correctly treats as an error.
+    launchOptions: {args: ["--ignore-certificate-errors"]},
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },

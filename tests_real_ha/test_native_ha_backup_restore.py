@@ -160,6 +160,7 @@ async def _seed(config_dir: Path, endpoint: str) -> None:
         )
         const = importlib.import_module(f"custom_components.{DOMAIN}.const")
         updated = dict(subentry.data)
+        updated[const.CONF_API_MODE] = "chat_completions"
         updated[const.CONF_FUNCTION_TOOLS] = yaml.safe_dump(
             [_tool_config()], sort_keys=False, allow_unicode=True
         )
@@ -281,7 +282,7 @@ async def _verify(config_dir: Path) -> None:
         tools = configured_function_tools_from_data(subentry.data)
         assert any(
             item["spec"]["name"] == "native_backup_marker"
-            and item["function"]["value_template"] == "BACKUP_TOOL_RESTORED"
+            and item["function"]["value_template"].template == "BACKUP_TOOL_RESTORED"
             for item in tools
         )
         memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
