@@ -1013,7 +1013,11 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
 
     _require_admin(is_admin)
     if action == "save_policy":
-        _require_agent_config_revision(subentry, message.get("revision"))
+        if not isinstance(message.get("revision"), str):
+        raise HomeAssistantError(
+            "Configuration revision is required; reload the latest saved settings before saving."
+        )
+    _require_agent_config_revision(subentry, message["revision"])
         updates = message.get("config")
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
