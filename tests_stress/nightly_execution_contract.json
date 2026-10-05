@@ -2053,7 +2053,14 @@
     "tests_stress/test_generated_editor_journey.py::test_generated_programmes_survive_native_edit_and_process_restart[responses]",
     "tests_stress/test_generated_editor_journey.py::test_programme_oracle_rejects_dropped_falsy_or_unicode_values",
     "tests_stress/test_generated_editor_journey.py::test_utf8_rest_limits_count_bytes_separately_from_schema_characters[False]",
-    "tests_stress/test_generated_editor_journey.py::test_utf8_rest_limits_count_bytes_separately_from_schema_characters[True]"
+    "tests_stress/test_generated_editor_journey.py::test_utf8_rest_limits_count_bytes_separately_from_schema_characters[True]",
+    "tests_stress/test_semantic_equivalence_retrieval.py::test_competing_knowledge_scores_track_edits_disabled_sources_and_rebuild",
+    "tests_stress/test_semantic_equivalence_retrieval.py::test_controlled_semantic_corpus_survives_edits_cache_and_reconstruction[chat_completions]",
+    "tests_stress/test_semantic_equivalence_retrieval.py::test_controlled_semantic_corpus_survives_edits_cache_and_reconstruction[responses]",
+    "tests_stress/test_semantic_equivalence_retrieval.py::test_equivalent_public_installations_preserve_context_tools_and_effects[chat_completions]",
+    "tests_stress/test_semantic_equivalence_retrieval.py::test_equivalent_public_installations_preserve_context_tools_and_effects[responses]",
+    "tests_stress/test_semantic_equivalence_retrieval.py::test_ranking_oracle_rejects_swapped_associations_stale_results_and_wrong_ties",
+    "tests_stress/test_semantic_equivalence_retrieval.py::test_semantic_comparison_preserves_types_and_meaningful_fields"
   ],
   "browser": {
     "browser": [
@@ -2614,7 +2621,14 @@
       "compound_optional_manager_faults": 4,
       "application_privacy_journeys": 2,
       "raw_application_destination_checks": 40,
-      "authorized_export_privacy_cases": 2
+      "authorized_export_privacy_cases": 2,
+      "controlled_retrieval_journeys": 3,
+      "controlled_ranking_checks": 19,
+      "independent_index_reconstructions": 5,
+      "retrieval_pagination_checks": 12,
+      "disabled_source_ranking_checks": 2,
+      "semantic_equivalence_histories": 8,
+      "equivalent_public_journeys": 8
     },
     "process-chaos": {
       "process_terminations": 1,
@@ -3016,6 +3030,7 @@
       "tests_stress/test_pending_retrieval_publication.py",
       "tests_stress/test_private_content_destinations.py",
       "tests_stress/test_provider_wire_privacy.py",
+      "tests_stress/test_semantic_equivalence_retrieval.py",
       "tests_stress/test_temporary_memory_scale.py"
     ],
     "minimum-ha-features": [

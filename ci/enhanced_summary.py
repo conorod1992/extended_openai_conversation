@@ -9,6 +9,13 @@ import sys
 from enhanced_evidence import envelope, safe, write_json
 
 COUNT_METRICS = {
+    "controlled_retrieval_journeys",
+    "controlled_ranking_checks",
+    "independent_index_reconstructions",
+    "retrieval_pagination_checks",
+    "disabled_source_ranking_checks",
+    "semantic_equivalence_histories",
+    "equivalent_public_journeys",
     "generated_editor_programmes",
     "multilingual_public_journeys",
     "generated_editor_restarts",
