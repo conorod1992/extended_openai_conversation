@@ -1640,3 +1640,146 @@ async def test_finish_restore_reload_discards_successful_pending_marker(
 
     hass.config_entries.async_reload.assert_awaited_once_with("entry")
     assert pending == set()
+
+
+
+@pytest.mark.asyncio
+async def test_export_chunk_rejects_out_of_range_and_missing_staged_archive(
+    hass, tmp_path, monkeypatch
+) -> None:
+    import hashlib
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        backup_transfer,
+    )
+
+    monkeypatch.setattr(backup_transfer, "BACKUP_CHUNK_BYTES", 4)
+    path = tmp_path / "export.zip"
+    payload = b"abcd"
+    path.write_bytes(payload)
+    session = backup_transfer.ExportSession(
+        session_id="coverage-export",
+        entry_id="entry",
+        subentry_id="agent",
+        path=str(path),
+        filename="backup.zip",
+        size=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        expires_at=10**12,
+    )
+    backup_transfer._exports(hass)[session.session_id] = session
+
+    try:
+        with pytest.raises(backup.BackupError, match="out of range"):
+            await backup_transfer._export_chunk(
+                hass,
+                "entry",
+                "agent",
+                {"session_id": session.session_id, "index": 1},
+            )
+
+        path.unlink()
+        with pytest.raises(backup.BackupError, match="staged backup archive"):
+            await backup_transfer._export_chunk(
+                hass,
+                "entry",
+                "agent",
+                {"session_id": session.session_id, "index": 0},
+            )
+    finally:
+        backup_transfer._exports(hass).pop(session.session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_import_chunk_rejects_duplicate_chunk_after_completion(hass) -> None:
+    import base64
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        backup_transfer,
+    )
+
+    started = await backup_transfer._start_import(
+        hass,
+        "entry",
+        "agent",
+        {"filename": "backup.json", "size": 4},
+    )
+    session_id = started["session_id"]
+    payload = base64.b64encode(b"data").decode()
+    await backup_transfer._import_chunk(
+        hass,
+        "entry",
+        "agent",
+        {"session_id": session_id, "index": 0, "data": payload},
+    )
+
+    with pytest.raises(backup.BackupError, match="already complete|Expected backup chunk"):
+        await backup_transfer._import_chunk(
+            hass,
+            "entry",
+            "agent",
+            {"session_id": session_id, "index": 1, "data": payload},
+        )
+
+
+@pytest.mark.asyncio
+async def test_take_import_rejects_incomplete_upload(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        backup_transfer,
+    )
+
+    started = await backup_transfer._start_import(
+        hass,
+        "entry",
+        "agent",
+        {"filename": "backup.json", "size": 8},
+    )
+
+    with pytest.raises(backup.BackupError, match="incomplete"):
+        await backup_transfer._take_import(
+            hass,
+            started["session_id"],
+            "entry",
+            "agent",
+        )
+
+
+@pytest.mark.asyncio
+async def test_restore_import_requires_preview_token(hass) -> None:
+    import base64
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        backup_transfer,
+    )
+
+    started = await backup_transfer._start_import(
+        hass,
+        "entry",
+        "agent",
+        {"filename": "backup.json", "size": 4},
+    )
+    session_id = started["session_id"]
+    await backup_transfer._import_chunk(
+        hass,
+        "entry",
+        "agent",
+        {
+            "session_id": session_id,
+            "index": 0,
+            "data": base64.b64encode(b"data").decode(),
+        },
+    )
+    entry = SimpleNamespace(entry_id="entry")
+    subentry = SimpleNamespace(subentry_id="agent")
+
+    with pytest.raises(backup.BackupError, match="Preview the backup"):
+        await backup_transfer._restore_import(
+            hass,
+            entry,
+            subentry,
+            {"session_id": session_id},
+        )
