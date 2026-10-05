@@ -30,7 +30,12 @@ async def test_deletion_retires_readers_after_owned_cancellation_cleanup() -> No
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
                 cancelled.set()
-                await settled.wait()
+                # A shielded cleanup child inherits the admitted logical lease.
+                async def cleanup():
+                    async with gate.shared():
+                        await settled.wait()
+
+                await asyncio.shield(cleanup())
                 raise
 
     request = asyncio.create_task(reader())

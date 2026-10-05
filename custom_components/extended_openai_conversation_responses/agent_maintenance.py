@@ -40,7 +40,12 @@ class AgentMaintenanceGate:
 
     def require_available(self) -> None:
         """Reject indeterminate generations except inside owned recovery work."""
-        if self.deleted or (self._retiring and not self.owns_exclusive()):
+        reader_owner = self._reader_owner.get()
+        if self.deleted or (
+            self._retiring
+            and not self.owns_exclusive()
+            and not self._reader_depth.get(reader_owner, 0)
+        ):
             raise HomeAssistantError("This assistant has been deleted")
         if self.recovery_required and not (
             self._active_owner is not None

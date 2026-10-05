@@ -131,7 +131,7 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A deleted subentry may finish its old request but must stay permanently removed."""
+    """Deleting a subentry cancels its old request and keeps its sibling isolated."""
     entry = _entry()
     await _setup_entry(hass, entry)
 
@@ -188,7 +188,9 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
     assert entry.state is ConfigEntryState.LOADED
     assert removed_subentry.subentry_id not in entry.subentries
     assert survivor_subentry.subentry_id in entry.subentries
-    assert not removed_request.done()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(removed_request, timeout=_WAIT_TIMEOUT)
+    await asyncio.wait_for(hass.async_block_till_done(), timeout=_WAIT_TIMEOUT)
 
     rows_after_removal = _conversation_rows(hass, entry)
     assert not any(
@@ -207,9 +209,8 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
     assert surviving_rows[0].entity_id == survivor_entity_id
     survivor_agent = _agent(hass, survivor_entity_id)
 
-    # Prove the surviving sibling is already healthy before the stale request is
-    # allowed to finish. Its provider payload must contain no history from the
-    # removed subentry.
+    # The surviving sibling must remain healthy after cancellation. Its provider
+    # payload must contain no history from the removed subentry.
     before_wire = _install_wire(
         monkeypatch,
         survivor_agent,
@@ -225,15 +226,7 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
     before_payload = json.dumps(before_wire.requests[0]["body"], ensure_ascii=False)
     assert _REMOVED_REQUEST_TEXT not in before_payload
     assert _REMOVED_RESPONSE_TEXT not in before_payload
-    assert not removed_request.done()
-
-    # The request that began while the deleted entity still existed is permitted to
-    # complete. Completion must not re-register that entity or otherwise replace the
-    # surviving runtime established after removal.
-    release.set()
-    removed_result = await asyncio.wait_for(removed_request, timeout=_WAIT_TIMEOUT)
-    assert _speech(removed_result) == _REMOVED_RESPONSE_TEXT
-    await asyncio.wait_for(hass.async_block_till_done(), timeout=_WAIT_TIMEOUT)
+    assert removed_request.cancelled()
 
     assert removed_subentry.subentry_id not in entry.subentries
     final_rows = _conversation_rows(hass, entry)
@@ -245,7 +238,7 @@ async def test_removing_exact_subentry_during_request_cannot_resurrect_or_touch_
     assert conversation.async_get_agent(hass, removed_entity_id) is None
     assert conversation.async_get_agent(hass, survivor_entity_id) is survivor_agent
 
-    # Continue the surviving sibling's own conversation after the stale completion.
+    # Continue the surviving sibling's own conversation after cancellation.
     # Its valid history should persist while no text from the removed request leaks in.
     after_wire = _install_wire(
         monkeypatch,
