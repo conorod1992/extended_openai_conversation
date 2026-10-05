@@ -749,6 +749,11 @@ async def test_result_alias_validation_and_substitution() -> None:
     )
     assert resolve_result_values("{battery}", {}, {"battery": False}) is False
     assert resolve_result_values("{battery}", {}, {"battery": 0}) == 0
+    assert resolve_result_values(
+        {"message": "Battery: {battery.level}", "items": ["{device}", 7]},
+        {"device": "tablet"},
+        {"battery": {"level": 62}},
+    ) == {"message": "Battery: 62", "items": ["tablet", 7]}
     assert (
         resolve_result_values(
             "{battery.items.0.name}", {}, {"battery": {"items": [{"name": "tablet"}]}}
@@ -858,6 +863,10 @@ async def test_result_dependencies_and_bounds() -> None:
         _bounded_function_result("x" * 20000)
     with pytest.raises(HomeAssistantError, match="deeply nested"):
         _bounded_function_result([[[[[[[[[0]]]]]]]]])
+    with pytest.raises(HomeAssistantError, match="keys must be text"):
+        _bounded_function_result({1: "invalid key"})
+    with pytest.raises(HomeAssistantError, match="must contain JSON values"):
+        _bounded_function_result(object())
 
 
 async def test_match_cursor_deduplicates_matching_phrases_for_one_rule() -> None:
