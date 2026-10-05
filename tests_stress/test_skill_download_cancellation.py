@@ -36,6 +36,10 @@ async def test_cancelled_download_settles_native_work_before_owned_cleanup(
     root = tmp_path / "skills"
     _write_skill(root / "demo", "OLD installed")
     manager = await SkillManager.async_get_instance(hass, str(root))
+    from custom_components.extended_openai_conversation_responses.template import ExtendedOpenAITemplateManager
+
+    helper = ExtendedOpenAITemplateManager(hass)
+    await helper.async_setup()
     foreign = manager.staging_dir / "demo.download-foreign"
     foreign.mkdir(parents=True)
     (foreign / "keep.txt").write_bytes(b"unowned evidence")
@@ -146,8 +150,8 @@ async def test_cancelled_download_settles_native_work_before_owned_cleanup(
         assert manager.get_skill("demo").description == "OLD installed"
         result = await ReadFileFunction().execute(
             hass,
-            {"path": Template("{{ extended_openai.skill_dir }}/SKILL.md", hass)},
-            {"name": "demo", "extended_openai": {"skill_dir": str(root / "demo")}},
+            {"path": Template("{{ extended_openai.skill_dir(name) }}/SKILL.md", hass)},
+            {"name": "demo"},
             None,
             [],
         )

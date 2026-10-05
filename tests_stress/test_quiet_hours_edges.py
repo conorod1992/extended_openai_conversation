@@ -25,6 +25,7 @@ from tests_real_ha.test_quiet_hours_scheduling import (
     _install_satellite_entities,
 )
 from tests_stress.conftest import record
+from tests_stress.test_quiet_hours_ownership_time import _stop_for_restart
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
@@ -194,7 +195,7 @@ async def test_control_changes_then_raises_preserves_durable_ownership(
                 blocking=True,
             )
         before_restart = list(calls)
-        await manager.async_shutdown()
+        await _stop_for_restart(manager)
         manager = QuietHoursManager(hass)
         await manager.async_setup()
         if manual:
@@ -290,7 +291,7 @@ async def test_loaded_status_registry_rename_tracks_transitions_and_restart(
             ("volume_set", media),
             ("turn_on", wake),
         ]
-        await manager.async_shutdown()
+        await _stop_for_restart(manager)
         manager = QuietHoursManager(hass)
         hass.data[DOMAIN]["quiet_hours_manager"] = manager
         await manager.async_setup()

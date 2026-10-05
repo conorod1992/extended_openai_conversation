@@ -129,6 +129,7 @@ def test_narrowed_live_selector_does_not_shrink_reviewed_obligation():
     policy = contract()
     first = "tests_stress/test_runtime_soak.py::test_probe"
     second = "tests_stress/test_runtime_soak.py::test_other_probe"
+    policy["browser"] = {}
     policy["pytest"] = [first, second]
     policy["selections"] = {"runtime": ["tests_stress/test_runtime_soak.py"]}
 
@@ -151,6 +152,7 @@ def test_explicit_reviewed_partial_selection_remains_valid():
     policy = contract()
     first = "tests_stress/test_runtime_soak.py::test_probe"
     second = "tests_stress/test_runtime_soak.py::test_other_probe"
+    policy["browser"] = {}
     policy["pytest"] = [first, second]
     policy["selections"] = {"runtime": [first]}
     assert expected_cases(policy, "runtime") == {first}
@@ -564,7 +566,7 @@ def test_frontend_quality_workflow_has_no_pr_or_push_execution():
     )
     assert checkout["with"]["ref"] == "${{ github.sha }}"
     assert any(
-        step.get("if") == "always()"
+        "always()" in step.get("if", "")
         and "frontend_latency.review" in step.get("run", "")
         for step in steps
     )

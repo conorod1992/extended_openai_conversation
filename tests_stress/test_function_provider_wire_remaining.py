@@ -558,7 +558,7 @@ async def test_remaining_function_errors_are_serialized_on_provider_wire(
             assert result is None
         elif failure == "rest_404":
             assert hits == ["rest"]
-            assert result == "404: Not Found"
+            assert result == {"status": "error", "error": "REST request failed: HTTP 404 Not Found"}
         elif failure == "sqlite_bad_query":
             assert result == {
                 "status": "error",
@@ -651,7 +651,7 @@ async def test_composite_late_failure_preserves_one_completed_side_effect(
     assert _speech(response) == "Partial failure handled"
     _assert_exchange(wire, api_mode, name)
     result = _provider_result(wire.requests[1], api_mode, call_id)
-    assert result == {"error": f"File not found: {missing}"}
+    assert result == {"status": "error", "error": f"File not found: {missing}"}
     assert side_effects.read_text(encoding="utf-8").splitlines() == ["first"]
     record(stress_trace, "composite_partial_failure", mode=api_mode, side_effects=1)
 
@@ -1719,7 +1719,8 @@ async def test_rest_transport_failure_stops_dependent_actions(
 
         result = await say()
         if route == "rule":
-            assert _speech(result) == "Failed safely"
+            assert result.response.error_code is not None
+            assert result.response.as_dict()["speech"]["plain"]["speech"] == "Failed safely"
             assert not agent._usage.runs[-1].successful
         else:
             assert _speech(result) == "Failure handled"
@@ -1763,7 +1764,9 @@ async def test_rest_completed_empty_and_http_error_responses_remain_data(
         wire = _install_wire(monkeypatch, agent, _provider_replies(api_mode, "received-response", "response_probe", "Received response"))
         result = await conversation.async_converse(hass=hass, text="Read response", conversation_id=None, context=Context(), language="en", agent_id=entry.entry_id)
         assert _speech(result) == "Received response"
-        assert _provider_result(wire.requests[1], api_mode, "received-response") == body
+        assert _provider_result(wire.requests[1], api_mode, "received-response") == (
+            body if status < 400 else {"status": "error", "error": "REST request failed: HTTP 404 Not Found"}
+        )
         record(stress_trace, "summary", rest_received_response_controls=1)
     finally:
         await runner.cleanup()

@@ -61,6 +61,7 @@ async def test_setup_staging_failure_recovers_before_registered_backup_transfer(
     assert list(owner_directory.parent.glob("owner-*")) == [owner_directory]
     subentry = _conversation_subentry(entry)
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
+    MockUser(id="transfer-owner", name="Transfer owner").add_to_hass(hass)
     await memory.async_add("transfer-owner", "RECOVERED-STAGING-MEMORY", "acceptance", "explicit")
     client = await hass_ws_client(hass, await _user_token(
         hass, MockUser(id="staging-retry-admin", name="Transfer admin", is_owner=True)))
@@ -126,6 +127,7 @@ async def test_large_multichunk_transfer_retry_and_restore(
 
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
     knowledge = await async_get_knowledge(hass, entry.entry_id, subentry.subentry_id)
+    MockUser(id="transfer-owner", name="Transfer owner").add_to_hass(hass)
     rng = random.Random(stress_seed ^ 0xBAACE)
     alphabet = string.ascii_letters + string.digits
     await memory.async_add(

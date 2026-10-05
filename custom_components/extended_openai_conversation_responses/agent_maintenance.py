@@ -26,6 +26,8 @@ class AgentMaintenanceGate:
             f"extended_openai_maintenance_reader_{id(self)}", default=None
         )
         self._reader_depth: dict[object, int] = {}
+        self._reader_tasks: dict[asyncio.Task[Any], int] = {}
+        self._retiring = False
         self._waiting_writers = 0
         self._writer_active = False
         self.recovery_required = False
@@ -38,7 +40,7 @@ class AgentMaintenanceGate:
 
     def require_available(self) -> None:
         """Reject indeterminate generations except inside owned recovery work."""
-        if self.deleted:
+        if self.deleted or (self._retiring and not self.owns_exclusive()):
             raise HomeAssistantError("This assistant has been deleted")
         if self.recovery_required and not (
             self._active_owner is not None
@@ -53,6 +55,23 @@ class AgentMaintenanceGate:
         """Let platform reloads observe the settled maintenance outcome."""
         async with self._condition:
             await self._condition.wait_for(lambda: not self._writer_active)
+
+    async def async_retire_readers(self) -> None:
+        """Stop deleted-agent requests, settling their cancellation-owned work."""
+        current = asyncio.current_task()
+        async with self._condition:
+            self._retiring = True
+            tasks = [
+                task
+                for task in self._reader_tasks
+                if task is not current and not task.done()
+            ]
+            for task in tasks:
+                task.cancel()
+        # Readers need the condition to release their leases. Native writes may
+        # defer cancellation until their owned work is settled; deletion must wait.
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def owns_exclusive(self) -> bool:
         """Whether this logical task still owns the active maintenance lease."""
@@ -100,12 +119,21 @@ class AgentMaintenanceGate:
                 owner_token = self._reader_owner.set(owner)
                 self._reader_depth[owner] = 1
                 self._active_readers += 1
+            task = asyncio.current_task()
+            if task is not None:
+                self._reader_tasks[task] = self._reader_tasks.get(task, 0) + 1
         try:
             yield
         finally:
             if owner is None:  # pragma: no cover - every admitted reader owns a token
                 raise RuntimeError("Agent maintenance reader lease was not established")
             async with self._condition:
+                if task is not None:
+                    task_depth = self._reader_tasks[task]
+                    if task_depth > 1:
+                        self._reader_tasks[task] = task_depth - 1
+                    else:
+                        del self._reader_tasks[task]
                 depth = self._reader_depth[owner]
                 if depth > 1:
                     self._reader_depth[owner] = depth - 1

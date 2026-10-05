@@ -105,6 +105,9 @@ async def _start_ws_bridge(
         async with lock:
             await selected.send_json_auto_id(message)
             response = await selected.receive_json()
+            if message.get("section") == "configuration" and message.get("action") in {"update", "duplicate", "import"}:
+                if test_hass := getattr(selected, "_eoai_test_hass", None):
+                    await test_hass.async_block_till_done()
 
         if not response.get("success"):
             error = response.get("error") or {}

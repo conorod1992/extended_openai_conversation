@@ -231,7 +231,9 @@ async def _admin_client(
     admin.add_to_hass(hass)
     refresh_token = await hass.auth.async_create_refresh_token(admin, CLIENT_ID)
     access_token = hass.auth.async_create_access_token(refresh_token)
-    return await hass_ws_client(hass, access_token)
+    client = await hass_ws_client(hass, access_token)
+    client._eoai_test_hass = hass
+    return client
 
 
 async def _management_response(
@@ -254,7 +256,11 @@ async def _management_response(
             **payload,
         }
     )
-    return await client.receive_json()
+    response = await client.receive_json()
+    if section == "configuration" and action == "update":
+        if test_hass := getattr(client, "_eoai_test_hass", None):
+            await test_hass.async_block_till_done()
+    return response
 
 
 async def _management_call(

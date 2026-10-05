@@ -40,6 +40,7 @@ def _subentry(kind: str, title: str, model: str) -> dict[str, Any]:
     options = dict(DEFAULT_AI_TASK_OPTIONS)
     options[CONF_API_MODE] = API_MODE_CHAT_COMPLETIONS
     options[CONF_CHAT_MODEL] = model
+    options["reasoning_effort"] = "none" if model == "gpt-5.6" else "low"
     return {
         "data": options,
         "subentry_type": kind,
@@ -181,7 +182,7 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
     hass.config_entries.async_update_subentry(
         entry,
         fast_subentry,
-        data={**fast_subentry.data, CONF_CHAT_MODEL: "gpt-5.6"},
+        data={**fast_subentry.data, CONF_CHAT_MODEL: "gpt-5.6", "reasoning_effort": "none"},
     )
     await hass.async_block_till_done()
     # HA may reload the parent entry after a subentry edit, replacing the SDK
