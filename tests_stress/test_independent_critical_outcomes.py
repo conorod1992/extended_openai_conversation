@@ -38,10 +38,10 @@ async def _say(hass, agent, text, *, user_id=None):
     )
 
 
-async def _fresh_memory(agent):
+async def _fresh_memory(hass, agent):
     memory = PersistentMemory(
         HomeAssistantMemoryStorage(
-            agent.hass,
+            hass,
             agent.entry.entry_id,
             agent.subentry.subentry_id,
         )
@@ -70,7 +70,7 @@ async def test_memory_delete_is_absent_from_live_and_fresh_durable_views(hass):
         item.memory_id != memory_id for item in await agent._memory.async_list(owner.id)
     )
 
-    fresh = await _fresh_memory(agent)
+    fresh = await _fresh_memory(hass, agent)
     assert all(item.memory_id != memory_id for item in await fresh.async_list(owner.id))
 
 
@@ -89,7 +89,7 @@ async def test_memory_ownership_is_independently_preserved_in_fresh_store(hass):
         "OWNER TWO WITNESS"
     ]
 
-    fresh = await _fresh_memory(agent)
+    fresh = await _fresh_memory(hass, agent)
     assert [item.content for item in await fresh.async_list(first.id)] == [
         "OWNER ONE WITNESS"
     ]
