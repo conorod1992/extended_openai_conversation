@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -220,8 +220,7 @@ async def test_get_intercom_rejects_removed_integration(hass) -> None:
 
 @pytest.mark.asyncio
 async def test_get_intercom_reuses_existing_manager(hass, monkeypatch) -> None:
-    manager = SimpleNamespace(async_initialize=Mock())
-    manager.async_initialize = pytest.importorskip("unittest.mock").AsyncMock()
+    manager = SimpleNamespace(async_initialize=AsyncMock())
     hass.data[intercom.DATA_KEY] = manager
 
     result = await intercom.async_get_intercom(hass)
