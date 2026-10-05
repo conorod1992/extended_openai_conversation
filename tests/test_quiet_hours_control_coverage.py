@@ -8,9 +8,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.quiet_hours_runtime import (
-    QuietHoursConfig,
-)
 from tests.test_quiet_hours_restoration_regressions import _active
 from tests.test_quiet_hours_runtime import _stateful_public_manager
 
@@ -107,9 +104,7 @@ async def test_prepare_control_reconciles_lost_acknowledgement_without_replay(
         "observed_controls": ["media_player.bedroom"],
         "pending_controls": {},
     }
-    hass.states.get.side_effect = lambda _entity_id: _state(
-        "apply-context", volume=0.2
-    )
+    hass.states.get.side_effect = lambda _entity_id: _state("apply-context", volume=0.2)
     manager._async_save_control_state_locked = AsyncMock()
 
     result = await manager._async_prepare_control_locked(
@@ -233,9 +228,7 @@ async def test_control_save_failure_reloads_durable_generation(hass) -> None:
     manager = _stateful_public_manager(hass)
     durable = _active("media_player.bedroom", "volume")
     manager._async_save_locked = AsyncMock(side_effect=OSError("ack lost"))
-    manager._store.async_load = AsyncMock(
-        return_value={"active": deepcopy(durable)}
-    )
+    manager._store.async_load = AsyncMock(return_value={"active": deepcopy(durable)})
 
     with pytest.raises(OSError, match="ack lost"):
         await manager._async_save_control_state_locked()
@@ -257,6 +250,47 @@ async def test_control_save_failure_invalidates_unreadable_generation(hass) -> N
 
     assert manager._active is None
     assert manager._initialized is False
+
+
+@pytest.mark.asyncio
+async def test_restore_drops_unacknowledged_control_after_context_changes(hass) -> None:
+    manager = _stateful_public_manager(hass)
+    entity_id = "media_player.bedroom"
+    manager._active = _active(entity_id, "volume")
+    control = manager._active["controls"][entity_id]
+    control.update(
+        application_state="prepared",
+        application_context_id="quiet-hours-operation",
+    )
+    hass.states.get.side_effect = lambda _entity_id: _state(
+        "unrelated-operation", state="playing", volume=0.2
+    )
+    manager._async_set_volume = AsyncMock()
+
+    await manager._async_restore_locked()
+
+    assert manager.active is None
+    manager._async_set_volume.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_keeps_prepared_control_when_entity_is_unavailable(hass) -> None:
+    manager = _stateful_public_manager(hass)
+    entity_id = "media_player.bedroom"
+    manager._active = _active(entity_id, "volume")
+    manager._active["controls"][entity_id].update(
+        application_state="prepared",
+        application_context_id="quiet-hours-operation",
+    )
+    hass.states.get.side_effect = lambda _entity_id: _state(
+        "quiet-hours-operation", state="unavailable", volume=0.2
+    )
+    manager._async_set_volume = AsyncMock()
+
+    await manager._async_restore_locked()
+
+    assert manager.active["controls"][entity_id]["restoration_pending"] is True
+    manager._async_set_volume.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -301,9 +335,12 @@ def test_normalize_active_keeps_distinct_pending_control_and_observation(hass) -
         "media_player.bedroom",
         "switch.bedroom_wake_sound",
     ]
-    assert normalized["pending_controls"]["switch.bedroom_wake_sound"][
-        "baseline_context_id"
-    ] == "base-b"
+    assert (
+        normalized["pending_controls"]["switch.bedroom_wake_sound"][
+            "baseline_context_id"
+        ]
+        == "base-b"
+    )
 
 
 def test_control_value_comparison_handles_volume_and_switch(hass) -> None:

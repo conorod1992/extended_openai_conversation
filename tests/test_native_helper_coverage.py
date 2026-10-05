@@ -89,10 +89,7 @@ def test_service_participants_returns_none_for_non_entity_service_shapes(
         {} if registered is None else {"turn_on": registered}
     )
 
-    assert (
-        native._service_participants(hass, "light", "turn_on", {"light.one"})
-        is None
-    )
+    assert native._service_participants(hass, "light", "turn_on", {"light.one"}) is None
 
 
 @pytest.mark.asyncio
@@ -112,6 +109,30 @@ async def test_settle_automation_update_surfaces_native_failure() -> None:
 
     with pytest.raises(OSError, match="reload failed"):
         await native._async_settle_automation_update(operation())
+
+
+@pytest.mark.asyncio
+async def test_settle_automation_update_finishes_owned_operation_after_cancellation() -> (
+    None
+):
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def operation():
+        started.set()
+        await finish.wait()
+        return "saved"
+
+    owner = asyncio.create_task(native._async_settle_automation_update(operation()))
+    await started.wait()
+    owner.cancel()
+    # Cancellation is deferred until the write has settled so the file and HA
+    # reload cannot be left in an unknown half-completed state.
+    await asyncio.sleep(0)
+    finish.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await owner
 
 
 def test_exposed_entity_ids_ignores_non_string_ids() -> None:

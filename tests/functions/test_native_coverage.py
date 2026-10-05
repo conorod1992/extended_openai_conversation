@@ -165,6 +165,38 @@ async def test_broadcast_resolves_destination_and_passes_origin(
     )
 
 
+async def test_broadcast_whole_home_without_context(hass, monkeypatch) -> None:
+    manager = SimpleNamespace(
+        resolve_named_target=Mock(),
+        async_send=AsyncMock(
+            return_value={"id": "message-2", "targets": ["all"], "deliveries": 2}
+        ),
+    )
+    monkeypatch.setattr(
+        native_module, "async_get_intercom", AsyncMock(return_value=manager)
+    )
+    authorize = AsyncMock(return_value=["assist_satellite.one", "assist_satellite.two"])
+    monkeypatch.setattr(native_module, "async_authorized_broadcast_targets", authorize)
+
+    result = await NativeFunction().send_broadcast(
+        hass, {}, {"whole_home": True, "message": "Good night"}, None, []
+    )
+
+    assert result == {
+        "success": True,
+        "message_id": "message-2",
+        "targets": ["all"],
+        "deliveries": 2,
+    }
+    authorize.assert_awaited_once_with(
+        hass,
+        manager,
+        context=ANY,
+        origin_device_id=None,
+        whole_home=True,
+    )
+
+
 async def test_broadcast_validates_destination_selection(hass, monkeypatch) -> None:
     manager = SimpleNamespace(resolve_named_target=Mock(return_value=None))
     monkeypatch.setattr(
@@ -198,6 +230,54 @@ def test_indirect_service_target_must_resolve_to_entities(
     referenced.indirectly_referenced.add("light.living_room")
     NativeFunction().validate_service_targets(
         hass, {"area_id": "living-room"}, exposed_entities
+    )
+
+
+def test_homeassistant_turn_on_filters_indirect_targets_by_domain_service(
+    hass, exposed_entities, monkeypatch
+) -> None:
+    referenced = SimpleNamespace(
+        referenced={
+            "light.living_room",
+            "sensor.temperature",
+            "homeassistant.internal",
+        },
+        indirectly_referenced=set(),
+    )
+    monkeypatch.setattr(
+        native_module.target_helpers,
+        "async_extract_referenced_entity_ids",
+        Mock(return_value=referenced),
+    )
+    hass.services.has_service = Mock(return_value=True)
+    participants = Mock(side_effect=[None, {"sensor.temperature"}])
+    monkeypatch.setattr(native_module, "_service_participants", participants)
+    function = NativeFunction()
+    function.validate_entity_ids = Mock()
+
+    function.validate_service_targets(
+        hass,
+        {"area_id": "shared-area"},
+        exposed_entities,
+        domain="homeassistant",
+        service="turn_on",
+    )
+
+    assert participants.call_args_list[0].args[1:] == (
+        "light",
+        "turn_on",
+        {"light.living_room"},
+    )
+    assert participants.call_args_list[1].args[1:] == (
+        "sensor",
+        "turn_on",
+        {"sensor.temperature"},
+    )
+    function.validate_entity_ids.assert_called_once_with(
+        hass,
+        ["homeassistant.internal", "light.living_room", "sensor.temperature"],
+        exposed_entities,
+        availability_entity_ids={"light.living_room", "sensor.temperature"},
     )
 
 
@@ -286,6 +366,31 @@ async def test_energy_without_configuration_returns_empty(hass, monkeypatch) -> 
         AsyncMock(return_value=SimpleNamespace(data=None)),
     )
     assert await NativeFunction().get_energy(hass, {}, {}, None, []) == {}
+
+
+async def test_history_surfaces_recorder_unavailability(
+    hass, exposed_entities, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        native_module.recorder,
+        "get_instance",
+        Mock(
+            return_value=SimpleNamespace(
+                async_add_executor_job=AsyncMock(
+                    side_effect=OSError("database offline")
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(HomeAssistantError, match="History is temporarily unavailable"):
+        await NativeFunction().get_history(
+            hass,
+            {},
+            {"entity_ids": ["sensor.temperature"]},
+            None,
+            exposed_entities,
+        )
 
 
 @pytest.mark.parametrize(

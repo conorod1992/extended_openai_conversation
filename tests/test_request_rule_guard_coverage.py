@@ -7,8 +7,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import request_rules
 from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
@@ -17,9 +15,12 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
-def test_guard_native_actions_instruments_nested_effects_and_preserves_enabled() -> None:
+def test_guard_native_actions_instruments_nested_effects_and_preserves_enabled() -> (
+    None
+):
     actions = [
         {
             "choose": [
@@ -61,6 +62,46 @@ def test_guard_native_actions_handles_non_list_container_values() -> None:
     assert request_rules._guard_native_actions(actions) == actions
 
 
+def test_result_resolution_recurses_through_authored_response_values() -> None:
+    value = {
+        "summary": "{room}: {reading.value}",
+        "details": [{"value": "{reading.items.0}"}, 3],
+    }
+
+    assert request_rules.resolve_result_values(
+        value,
+        {"room": "Kitchen"},
+        {"reading": {"value": "warm", "items": ["21 C"]}},
+    ) == {
+        "summary": "Kitchen: warm",
+        "details": [{"value": "21 C"}, 3],
+    }
+
+
+def test_native_result_sequence_rewrites_nested_result_and_slot_references() -> None:
+    actions = [
+        {
+            "action": "test.read",
+            "data": {
+                "result_alias": "reading",
+                "attributes": {"template": "{reading.values.0} {room} {missing}"},
+            },
+        },
+        {"action": "test.log", "data": {"values": [{"template": "{reading.value}"}]}},
+    ]
+
+    sequence = request_rules._native_result_sequence(actions, {"room": "Kitchen"})
+
+    assert sequence[0]["data"]["attributes"]["template"] == (
+        "{{ reading['values'][0] }} {{ room }} {missing}"
+    )
+    assert sequence[0]["response_variable"] == "__eoai_result_reading"
+    assert sequence[1] == {
+        "variables": {"reading": "{{ __eoai_result_reading.result }}"}
+    }
+    assert sequence[2]["data"]["values"][0]["template"] == ("{{ reading['value'] }}")
+
+
 @pytest.mark.asyncio
 async def test_action_guard_service_requires_active_authorizer(hass) -> None:
     registered = {}
@@ -75,15 +116,19 @@ async def test_action_guard_service_requires_active_authorizer(hass) -> None:
 
     handler = registered[(DOMAIN, request_rules._GUARD_SERVICE)]
     with pytest.raises(HomeAssistantError, match="No active Request Rule"):
-        await handler(SimpleNamespace(data={"pending_action": {"action": "light.turn_on"}}))
+        await handler(
+            SimpleNamespace(data={"pending_action": {"action": "light.turn_on"}})
+        )
 
 
 @pytest.mark.asyncio
-async def test_action_guard_service_calls_active_authorizer_and_registers_once(hass) -> None:
+async def test_action_guard_service_calls_active_authorizer_and_registers_once(
+    hass,
+) -> None:
     registered = {}
     hass.services.has_service.return_value = False
-    hass.services.async_register.side_effect = (
-        lambda domain, service, handler: registered.__setitem__((domain, service), handler)
+    hass.services.async_register.side_effect = lambda domain, service, handler: (
+        registered.__setitem__((domain, service), handler)
     )
     request_rules._ensure_action_guard_service(hass)
     authorizer = Mock()
