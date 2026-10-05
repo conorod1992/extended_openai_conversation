@@ -134,7 +134,7 @@ def test_narrowed_live_selector_does_not_shrink_reviewed_obligation():
 
     # A live workflow narrowed to one test node remains an execution detail;
     # the independently reviewed file obligation still contains both tests.
-    assert expected_cases(policy, "runtime") == {first, second}
+    assert expected_cases(policy, "runtime") == {first, second, BROWSER}
     item = {
         "campaign": "runtime",
         "measured_totals": {"actual_tool_executions": 1},
@@ -153,12 +153,18 @@ def test_explicit_reviewed_partial_selection_remains_valid():
     second = "tests_stress/test_runtime_soak.py::test_other_probe"
     policy["pytest"] = [first, second]
     policy["selections"] = {"runtime": [first]}
-    assert expected_cases(policy, "runtime") == {first}
+    assert expected_cases(policy, "runtime") == {first, BROWSER}
     item = {
         "campaign": "runtime",
         "measured_totals": {"actual_tool_executions": 1},
         "execution_cases": [
-            {"nodeid": first, "collected": True, "executed": True, "outcome": "passed"}
+            {"nodeid": first, "collected": True, "executed": True, "outcome": "passed"},
+            {
+                "nodeid": BROWSER,
+                "collected": True,
+                "executed": True,
+                "outcome": "passed",
+            }
         ],
     }
     assert check_execution(item, policy) == []
@@ -564,7 +570,7 @@ def test_frontend_quality_workflow_has_no_pr_or_push_execution():
     )
     assert checkout["with"]["ref"] == "${{ github.sha }}"
     assert any(
-        step.get("if") == "always()"
+        step.get("if") == "always() && steps.dependency_check.outcome == 'success'"
         and "frontend_latency.review" in step.get("run", "")
         for step in steps
     )
@@ -792,7 +798,7 @@ def test_normalized_function_constraints_are_mandatory():
     policy = json.loads(CONTRACT.read_text())
     cases = expected_cases(policy, "functions")
     for name, count in {
-        "test_unique_items_checks_normalized_json_values": 12,
+        "test_unique_items_checks_normalized_json_values": 17,
         "test_enum_and_const_use_json_equality": 16,
         "test_successful_normalization_satisfies_reference_schema": 1,
         "test_normalized_arguments_guard_public_function_dispatch": 12,
