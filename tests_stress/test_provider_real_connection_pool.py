@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import ipaddress
 import json
 from pathlib import Path
+import socket
 import ssl
 from typing import Any
 
@@ -202,6 +203,112 @@ async def test_real_pool_wait_and_cancellation_release_sdk_stream(
         await runner.cleanup()
 
 
+@pytest.mark.parametrize("direction", ["ipv4-to-ipv6", "ipv6-to-ipv4"])
+async def test_live_provider_client_re_resolves_endpoint_address_family(
+    hass, monkeypatch, socket_enabled, stress_trace, direction
+):
+    """A DNS family change takes effect on the next request in the same HA run."""
+    del socket_enabled
+    MockUser(id="real-pool-owner", name="DNS owner", is_owner=True).add_to_hass(hass)
+    seen = []
+
+    def handler_for(family, label):
+        async def provider(request):
+            body = await request.json()
+            transport_socket = request.transport.get_extra_info("socket")
+            assert transport_socket.family == family
+            seen.append((family, label, body))
+            response = web.Response(
+                body=_chat_sse_text(f"Reached {label} endpoint"),
+                content_type="text/event-stream",
+                headers={"Connection": "close"},
+            )
+            return response
+
+        return provider
+
+    ipv4_app = web.Application()
+    ipv4_app.router.add_post(
+        "/v1/chat/completions", handler_for(socket.AF_INET, "IPv4")
+    )
+    ipv4_runner = web.AppRunner(ipv4_app)
+    await ipv4_runner.setup()
+    ipv4_site = web.TCPSite(ipv4_runner, "127.0.0.1", 0)
+    await ipv4_site.start()
+    port = ipv4_site._server.sockets[0].getsockname()[1]
+
+    ipv6_app = web.Application()
+    ipv6_app.router.add_post(
+        "/v1/chat/completions", handler_for(socket.AF_INET6, "IPv6")
+    )
+    ipv6_runner = web.AppRunner(ipv6_app)
+    client = None
+    try:
+        await ipv6_runner.setup()
+        ipv6_site = web.TCPSite(ipv6_runner, "::1", port)
+        await ipv6_site.start()
+
+        old_family = socket.AF_INET if direction == "ipv4-to-ipv6" else socket.AF_INET6
+        new_family = socket.AF_INET6 if direction == "ipv4-to-ipv6" else socket.AF_INET
+        active_family = [old_family]
+        real_getaddrinfo = socket.getaddrinfo
+
+        def resolve(host, service, *args, **kwargs):
+            if host == "eoai-dns.test":
+                address = "127.0.0.1" if active_family[0] == socket.AF_INET else "::1"
+                return real_getaddrinfo(
+                    address,
+                    service,
+                    *args,
+                    **{**kwargs, "family": active_family[0]},
+                )
+            return real_getaddrinfo(host, service, *args, **kwargs)
+
+        monkeypatch.setattr(socket, "getaddrinfo", resolve)
+        client = httpx.AsyncClient(trust_env=False, timeout=10)
+        monkeypatch.setattr(helpers, "get_async_client", lambda _hass: client)
+        entry = _make_entry(
+            "Provider DNS family change",
+            include_ai_task=False,
+            base_url=f"http://eoai-dns.test:{port}/v1",
+            conversation_options={CONF_API_MODE: API_MODE_CHAT_COMPLETIONS},
+        )
+        await _setup_entry(hass, entry)
+
+        assert _speech(await _say(hass, entry.entry_id, "First address")) == (
+            "Reached IPv4 endpoint"
+            if old_family == socket.AF_INET
+            else "Reached IPv6 endpoint"
+        )
+        active_family[0] = new_family
+        assert _speech(await _say(hass, entry.entry_id, "After DNS change")) == (
+            "Reached IPv4 endpoint"
+            if new_family == socket.AF_INET
+            else "Reached IPv6 endpoint"
+        )
+        assert [sample[0] for sample in seen] == [old_family, new_family]
+        assert [sample[1] for sample in seen] == [
+            "IPv4" if old_family == socket.AF_INET else "IPv6",
+            "IPv4" if new_family == socket.AF_INET else "IPv6",
+        ]
+        record(
+            stress_trace,
+            "summary",
+            journey="live_provider_dns_family_change",
+            direction=direction,
+            resolved_families=[
+                "AF_INET" if old_family == socket.AF_INET else "AF_INET6",
+                "AF_INET" if new_family == socket.AF_INET else "AF_INET6",
+            ],
+            same_provider_client=True,
+        )
+    finally:
+        if client is not None:
+            await client.aclose()
+        await ipv6_runner.cleanup()
+        await ipv4_runner.cleanup()
+
+
 def _local_tls(tmp_path: Path) -> tuple[ssl.SSLContext, ssl.SSLContext, Path]:
     """Generate a private loopback CA; never disable certificate verification."""
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -239,6 +346,70 @@ def _local_tls(tmp_path: Path) -> tuple[ssl.SSLContext, ssl.SSLContext, Path]:
     server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     server.load_cert_chain(cert_path, key_path)
     return server, ssl.create_default_context(), cert_path
+
+
+def _rotating_tls_material(tmp_path: Path):
+    """Create a trusted CA and current, expired, and replacement server leaves."""
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "EOAI test CA")])
+    now = datetime.now(UTC)
+    ca = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=30))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+
+    def issue(filename, start, end):
+        certificate = (
+            x509.CertificateBuilder()
+            .subject_name(leaf_name)
+            .issuer_name(ca_name)
+            .public_key(leaf_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(start)
+            .not_valid_after(end)
+            .add_extension(
+                x509.BasicConstraints(ca=False, path_length=None), critical=True
+            )
+            .add_extension(
+                x509.SubjectAlternativeName(
+                    [x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+                ),
+                critical=False,
+            )
+            .sign(ca_key, hashes.SHA256())
+        )
+        path = tmp_path / f"{filename}.pem"
+        path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+        return path
+
+    current = issue("current", now - timedelta(minutes=1), now + timedelta(days=2))
+    expired = issue("expired", now - timedelta(days=3), now - timedelta(days=2))
+    replacement = issue(
+        "replacement", now - timedelta(minutes=1), now + timedelta(days=3)
+    )
+    key_path = tmp_path / "rotating.key"
+    key_path.write_bytes(
+        leaf_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    ca_path = tmp_path / "test-ca.pem"
+    ca_path.write_bytes(ca.public_bytes(serialization.Encoding.PEM))
+    server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server.load_cert_chain(current, key_path)
+    verifier = ssl.create_default_context(cafile=str(ca_path))
+    return server, verifier, key_path, expired, replacement
 
 
 async def _local_endpoint(handler, *, tls=None, idle_probe=None):
@@ -411,6 +582,106 @@ async def test_verified_https_buffered_sse_and_idle_close_recover(
         await proxy_runner.cleanup()
         await proxy_client.close()
         await upstream_runner.cleanup()
+
+
+async def test_expired_provider_certificate_rotation_recovers_same_live_client(
+    hass, monkeypatch, socket_enabled, tmp_path, stress_trace
+):
+    """An expired leaf fails closed, then a replacement cert recovers in place."""
+    del socket_enabled
+    MockUser(id="real-pool-owner", name="Certificate owner", is_owner=True).add_to_hass(
+        hass
+    )
+    (
+        server_tls,
+        verifier,
+        key_path,
+        expired_path,
+        replacement_path,
+    ) = await hass.async_add_executor_job(_rotating_tls_material, tmp_path)
+    request_bodies = []
+
+    async def provider(request):
+        request_bodies.append(await request.json())
+        return web.Response(
+            body=_chat_sse_text("Verified replacement certificate recovered."),
+            content_type="text/event-stream",
+            headers={"Connection": "close"},
+        )
+
+    runner, url = await _local_endpoint(provider, tls=server_tls)
+    client = httpx.AsyncClient(verify=verifier, trust_env=False, timeout=10)
+    monkeypatch.setattr(helpers, "get_async_client", lambda _hass: client)
+    entry = _make_entry(
+        "Rotating provider certificate",
+        include_ai_task=False,
+        base_url=url,
+        conversation_options={CONF_API_MODE: API_MODE_CHAT_COMPLETIONS},
+    )
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    port = int(url.split(":")[2].split("/")[0])
+    expected_expiry_rejections = []
+    expired_phase = False
+
+    def account_expired_leaf_rejection(active_loop, context):
+        transport = context.get("transport")
+        address = transport.get_extra_info("sockname") if transport else None
+        if (
+            expired_phase
+            and address
+            and address[1] == port
+            and context.get("message")
+            == "Error on transport creation for incoming connection"
+            and isinstance(
+                context.get("exception"), (ConnectionResetError, ssl.SSLError)
+            )
+        ):
+            expected_expiry_rejections.append(type(context["exception"]).__name__)
+            return
+        if previous_handler:
+            previous_handler(active_loop, context)
+        else:
+            active_loop.default_exception_handler(context)
+
+    loop.set_exception_handler(account_expired_leaf_rejection)
+    try:
+        await _setup_entry(hass, entry)
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        _raw_client(agent).max_retries = 0
+        assert _speech(
+            await _say(hass, entry.entry_id, "Before certificate rotation")
+        ) == ("Verified replacement certificate recovered.")
+        server_tls.load_cert_chain(expired_path, key_path)
+        expired_phase = True
+        rejected = await _say(hass, entry.entry_id, "Expired provider certificate")
+        assert rejected.response.error_code is not None
+        assert len(request_bodies) == 1
+        await asyncio.sleep(0.05)
+        expired_phase = False
+
+        server_tls.load_cert_chain(replacement_path, key_path)
+        assert _speech(
+            await _say(hass, entry.entry_id, "After certificate replacement")
+        ) == ("Verified replacement certificate recovered.")
+        assert len(request_bodies) == 2
+        assert "Before certificate rotation" in json.dumps(request_bodies[0])
+        assert "After certificate replacement" in json.dumps(request_bodies[1])
+        record(
+            stress_trace,
+            "summary",
+            journey="provider_certificate_rotation",
+            trusted_initial_certificate=True,
+            expired_certificate_rejected=True,
+            certificate_replaced=True,
+            next_request_recovered=True,
+            expected_server_handshake_errors=len(expected_expiry_rejections),
+        )
+    finally:
+        expired_phase = False
+        loop.set_exception_handler(previous_handler)
+        await client.aclose()
+        await runner.cleanup()
 
 
 @pytest.mark.parametrize("mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
