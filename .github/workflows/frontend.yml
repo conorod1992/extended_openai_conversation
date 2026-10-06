@@ -163,6 +163,7 @@ jobs:
               tests_real_ha/test_browser_backend_acceptance.py
               tests_real_ha/test_browser_refresh_boundary_acceptance.py
               tests_real_ha/test_browser_identity_lifecycle_acceptance.py
+              tests_real_ha/test_browser_all_surfaces_scale_acceptance.py
           - shard: process-restart-runtime
             test-paths: >-
               tests_real_ha/test_browser_process_restart_acceptance.py
