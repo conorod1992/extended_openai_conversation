@@ -626,10 +626,20 @@ def _wait_for_core_restart(ssh: HostSSH, previous_started: str, *, timeout: floa
 
 def _restart_core_via_supervisor(ssh: HostSSH) -> None:
     """Request a Core restart from the host's Supervisor CLI."""
-    result = ssh.run("ha core restart", timeout=120, check=False)
-    assert result.returncode == 0, (
-        f"Supervisor Core restart command failed:\n{result.stdout}\n{result.stderr}"
-    )
+    deadline = time.monotonic() + 300
+    while True:
+        result = ssh.run("ha core restart", timeout=120, check=False)
+        if result.returncode == 0:
+            return
+        output = f"{result.stdout}\n{result.stderr}"
+        if (
+            "Another job is running for job group home_assistant_core" not in output
+            or time.monotonic() >= deadline
+        ):
+            raise AssertionError(
+                f"Supervisor Core restart command failed:\n{output}"
+            )
+        time.sleep(5)
 
 
 def _sha256(path: Path) -> str:
