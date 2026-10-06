@@ -153,6 +153,8 @@ jobs:
           UPGRADE_FROM_VERSION: ${{ steps.payloads.outputs.from_version }}
           UPGRADE_TO_VERSION: ${{ steps.payloads.outputs.to_version }}
           RUN_UPGRADE_BROWSER: "1"
+          # Keep the expensive interruption matrix on one reviewed published-release lane.
+          UPGRADE_ACTIVE_DISRUPTION: ${{ matrix.from_version == 'latest' && '1' || '0' }}
         run: |
           TEST_PATHS=(
             tests_real_ha/test_release_upgrade_acceptance.py
