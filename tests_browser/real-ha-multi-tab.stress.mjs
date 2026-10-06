@@ -347,9 +347,9 @@ test("a tab duplicated after an editor becomes dirty cannot overwrite a newer cl
     await expect(original.locator("#rule-dialog")).toHaveJSProperty("open", true);
     trace.push("original tab held dirty draft before clone existed");
 
-    // A browser duplicate starts from the same URL/profile and therefore the same
-    // authoritative object revision, while the original tab keeps its dirty editor.
-    await clone.goto(page.url());
+    // Open the same route/profile through the fixture server. The panel rewrites
+    // page.url() to an HA route that this static server cannot serve directly.
+    await clone.goto(realFixtureUrl("capabilities/request-rules"));
     const cloned = clone.locator("extended-openai-management-panel");
     const cloneCard = cloned.locator(".request-rule-card").filter({hasText: "Duplicate-tab source rule"});
     await expect(cloneCard).toBeVisible();
