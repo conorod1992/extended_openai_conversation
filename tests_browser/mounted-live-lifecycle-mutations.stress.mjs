@@ -79,7 +79,8 @@ test("mounted frontend recovers from integration removal and clean re-add", asyn
 
   await expect.poll(() => panel.evaluate(host => host._agentId)).toBe("agent-readded");
   await expect(panel.locator(".route-error-state")).toHaveCount(0);
-  await expect(panel.getByText("Jarvis re-added", {exact: true})).toBeVisible();
+  await expect(panel.getByRole("combobox", {name: "Editing assistant", exact: true})).toHaveValue("agent-readded");
+  await expect(panel.getByRole("option", {name: "Jarvis re-added", exact: true})).toHaveAttribute("value", "agent-readded");
   expect(
     await page.evaluate(() =>
       browserHarness.calls.filter(call => call.section === "memories" && call.action === "add").length,
@@ -140,7 +141,8 @@ test("deleting the currently viewed HA user cannot leave its personal scope moun
   await panel.evaluate(host => host._loadAgents());
   await expect.poll(() => panel.evaluate(host => host._scopeId)).toBe("user:replacement-user");
   await expect(panel.getByText("Baseline browser fixture memory", {exact: true})).toHaveCount(0);
-  await expect(panel.getByText("Replacement User", {exact: true})).toBeVisible();
+  await expect(panel.getByRole("combobox", {name: "Show memories available to", exact: true})).toHaveValue("user:replacement-user");
+  await expect(panel.getByRole("option", {name: /Replacement User/})).toHaveAttribute("value", "user:replacement-user");
   await expectHarnessClean(page, errors);
 });
 
