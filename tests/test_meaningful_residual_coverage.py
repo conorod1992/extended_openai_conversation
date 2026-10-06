@@ -71,11 +71,14 @@ def test_local_intent_error_without_speech_uses_error_message() -> None:
 async def test_persistent_memory_failure_cancels_owned_temporary_prefetch(
     monkeypatch,
 ) -> None:
-    started = asyncio.Event()
+    pending = asyncio.get_running_loop().create_future()
 
     async def temporary_prefetch():
-        started.set()
         await asyncio.Event().wait()
+
+    def create_task(coro):
+        coro.close()
+        return pending
 
     entity = SimpleNamespace(
         _temporary_memory=object(),
@@ -83,6 +86,7 @@ async def test_persistent_memory_failure_cancels_owned_temporary_prefetch(
         _async_load_temporary_memories=temporary_prefetch,
         _async_select_memories=AsyncMock(side_effect=RuntimeError("memory failed")),
     )
+    monkeypatch.setattr(conversation.asyncio, "create_task", create_task)
     monkeypatch.setattr(conversation, "memory_enabled", Mock(return_value=True))
     monkeypatch.setattr(conversation, "sync_memory_embedding_provider", Mock())
     monkeypatch.setattr(conversation, "record_memory_retrieval", Mock())
@@ -95,7 +99,7 @@ async def test_persistent_memory_failure_cancels_owned_temporary_prefetch(
                 SimpleNamespace(),
                 "query",
             )
-        await started.wait()
+        assert pending.cancelled()
         assert conversation._TEMPORARY_MEMORY_PREFETCH.get() is None
     finally:
         conversation._TEMPORARY_MEMORY_PREFETCH.reset(token)
