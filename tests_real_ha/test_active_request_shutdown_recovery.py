@@ -362,7 +362,9 @@ async def _recovery_phase(hass: Any, config_dir: Path) -> None:
     )
     assert interrupted.total_tokens == (13 if os.environ.get(_AFTER_TOOL) == "1" else 0)
     assert usage.totals.total_tokens == interrupted.total_tokens
-    assert interrupted.failed_request_count == 1
+    assert interrupted.failed_request_count == (
+        0 if os.environ.get(_SLOW_NATIVE) == "1" else 1
+    )
     expected_requests = (
         1
         if os.environ.get(_SLOW_NATIVE) == "1"
