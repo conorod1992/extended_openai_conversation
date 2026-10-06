@@ -81,6 +81,7 @@ test("distinguishes active and disabled saved schedules", () => {
     satellites: [],
   }));
   assert.match(disabled, /Quiet Hours schedule disabled/);
+  assert.match(disabled, /class="neutral-badge">Inactive<\/span>/);
 });
 
 test("renders native device-scoped override pickers and preserves manual status", () => {

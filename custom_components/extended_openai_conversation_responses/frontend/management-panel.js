@@ -88,7 +88,7 @@ const CRITICAL_STYLE = `
   [hidden]{display:none!important}
   .page-shell{max-width:1380px;margin:auto}
   header{display:flex;justify-content:space-between;gap:36px;align-items:end;margin-bottom:28px}
-  .page-heading h1{margin:0;font-size:30px;font-weight:500}
+  .page-heading .product-title{margin:0;font-size:30px;font-weight:500}
   .page-heading p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}
   header .global-search.eoc-global-search{width:min(380px,100%);max-width:100%;min-width:280px;margin:0;align-self:end;position:relative}
   header .eoc-global-search>label{display:block}
@@ -1574,7 +1574,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const navigation = NAVIGATION.filter((item) => this._canAccessView(item.id));
     const local = this._visibleSubsections();
     const currentSection = local.find((item) => item.id === this._subsection);
-    this._eocMainMarkup = !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loadingContent(agent) : this._error ? `<div class="error" role="alert">${this._e(this._error)}</div>` : this._content(agent);
+    this._eocMainMarkup = !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loadingContent(agent) : this._error ? this._routeError(this._error) : this._content(agent);
     const configurationActions = agent && !this._busy && !this._error ? this._configurationActions() : "";
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
@@ -1582,7 +1582,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     shell.innerHTML = `
       <div class="page-shell" data-eoc-persistent-shell>
         <header>
-          <div class="page-heading"><h1>Extended OpenAI</h1></div>
+          <div class="page-heading"><div class="product-title">Extended OpenAI</div></div>
           ${settingsSearchShellMarkup(this)}
         </header>
         <label class="mobile-nav"><span>Page</span><select id="top-section-mobile" tabindex="0">${navigation.map((item) => `<option value="${item.id}" ${item.id === this._page ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
@@ -1607,7 +1607,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this.shadowRoot.append(shell.content);
     this._bindActions();
     this._markColdLifecycle("shell-complete");
-    if (this.shadowRoot.querySelector(".page-heading h1")
+    if (this.shadowRoot.querySelector(".page-heading .product-title")
         && this._markColdLifecycle("shell-title-present")) {
       requestAnimationFrame(() => this._markColdLifecycle("shell-next-frame"));
     }
@@ -1682,7 +1682,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _homeAssistantIntro() {
-    return `<section class="page-intro"><h1>Home Assistant access</h1><p>Home Assistant controls which entities this assistant is allowed to access through Assist. Extended OpenAI can also automatically include exposed entity names and current states in the context sent to the model.</p></section>`;
+    return `<section class="page-intro"><h1>Home Assistant & local handling</h1><p>Review the Home Assistant access available to this assistant and choose which supported commands Extended OpenAI should handle locally before using AI.</p></section>`;
   }
 
   _homeAssistant(agent) {
@@ -1927,6 +1927,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       q("#list-search")?.addEventListener("input", (event) => { this._query = event.target.value; this._updateVisibleList(); });
     }
     const view = this._viewKey();
+    q("#retry-route")?.addEventListener("click", () => { void this._loadSection(); });
     if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
     if (view === "data-memory/conversations") {
@@ -2397,7 +2398,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._viewKey() === "data-memory/memories" && this._memoryKind === "temporary") return getRouteFeature("data-memory/memories")?.renderTemporaryScopePicker(this);
     const memories = this._viewKey() === "data-memory/memories";
     const hasEmpty = (this._data?.scopes || []).some((scope) => (memories ? scope.memory_count : scope.conversation_count) === 0 && scope.scope_type === "user" && !scope.is_current_user);
-    return `${memories ? "" : `<section class="page-intro"><h1>Conversation history</h1><p>Recent conversations can continue when the same user or device speaks again. Review or search retained conversations below.</p></section>`}<section class="scope-bar" aria-label="${memories ? "Memory scope" : "Conversation scope"}"><span class="scope-title">${memories ? "Memory scope" : "Conversation scope"}</span><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
+    return `${memories ? `<section class="page-intro"><h1>Memories</h1><p>Review and manage saved long-term and short-term memories for the selected scope.</p></section>` : `<section class="page-intro"><h1>Conversation history</h1><p>Recent conversations can continue when the same user or device speaks again. Review or search retained conversations below.</p></section>`}<section class="scope-bar" aria-label="${memories ? "Memory scope" : "Conversation scope"}"><span class="scope-title">${memories ? "Memory scope" : "Conversation scope"}</span><label><span>${memories ? "Show memories available to" : "Show conversations belonging to"}</span><select id="scope">${this._scopeOptions(memories ? "memories" : "conversations")}</select></label>${hasEmpty ? `<label class="show-empty"><input id="show-empty-scopes" type="checkbox" ${this._showEmptyScopes ? "checked" : ""}> Show users with no ${memories ? "memories" : "conversations"}</label>` : ""}${this._data?.is_admin ? `<small>You can view data for all users because you are an administrator.</small>` : ""}</section>`;
   }
 
   _scopeOptions(section, includeEmpty = this._showEmptyScopes, excludeLegacy = false) {
@@ -2426,6 +2427,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _toggle(id, label, checked) { return `<label class="toggle"><span>${this._e(label)}</span><input id="${id}" type="checkbox" role="switch" ${checked ? "checked" : ""}></label>`; }
   _table(headers, rows) { return `<div class="table"><table><thead><tr>${headers.map((header) => `<th>${this._e(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((value) => `<td>${this._e(typeof value === "number" && Number.isFinite(value) ? formatUsageNumber(value) : String(value))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`; }
   _loading() { return `<div class="loading" role="status"><span class="spinner"></span>Loading…</div>`; }
+  _routeError(message) { return `<section class="route-error-state" role="alert"><div><strong>Unable to load this section</strong><p>${this._e(message)}</p></div><button type="button" class="secondary" id="retry-route">Retry</button></section>`; }
   _empty(message) { return `<div class="empty">${this._e(message)}</div>`; }
   _label(value) { return value[0].toUpperCase() + value.slice(1); }
   _titleCase(value) { return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }

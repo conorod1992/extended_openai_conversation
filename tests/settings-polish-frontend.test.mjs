@@ -14,12 +14,17 @@ const config = renderConfiguration(panel);
 assert.match(config, /<h2 class="eyebrow">General<\/h2>/);
 assert.doesNotMatch(config, /<section class="page-intro"><h1>General<\/h1>/);
 assert.match(config, /Auto is recommended unless your provider requires a specific API/);
+assert.match(config, /<summary>Advanced request settings<\/summary>/);
+assert.match(config, /data-search="advanced request settings provider api format tool call limit safe tool error recovery"/);
 assert.doesNotMatch(config, /Recommended default: Automatic \(Auto\)/);
 assert.doesNotMatch(config, /eoc-decision-badge default[^>]*>Default: Automatic/);
 assert.match(config, /Uses Home Assistant sessions/);
 assert.doesNotMatch(config, /Default: Ha Default/);
 const memory = renderMemorySettings(panel);
 assert.match(memory, /How memories are matched/);
+assert.match(memory, /<h2>Personal memory<\/h2>/);
+assert.match(memory, /<h2>Matching memories<\/h2>/);
+assert.match(memory, /<h2>Shared household memory<\/h2>/);
 assert.match(memory, /Keyword \+ meaning/);
 assert.match(memory, /Uses a model to compare meaning/);
 for (const key of ["temperature", "archive_enabled", "temporary_memory", "current_datetime_enabled"]) {

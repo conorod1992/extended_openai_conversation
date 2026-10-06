@@ -63,7 +63,13 @@ jobs:
           rm -rf "$HACS_ROOT"
           mkdir -p "$HACS_ROOT"
           curl -fsSL             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/octet-stream"             "$HACS_ZIP"             -o "${RUNNER_TEMP}/hacs.zip"
-          unzip -q "${RUNNER_TEMP}/hacs.zip" -d "$HACS_ROOT"
+          python - <<'PY' "${RUNNER_TEMP}/hacs.zip" "$HACS_ROOT"
+          import sys
+          from zipfile import ZipFile
+
+          with ZipFile(sys.argv[1]) as archive:
+              archive.extractall(sys.argv[2])
+          PY
 
           test -f "$HACS_ROOT/manifest.json"
           echo "version=$HACS_VERSION" >> "$GITHUB_OUTPUT"

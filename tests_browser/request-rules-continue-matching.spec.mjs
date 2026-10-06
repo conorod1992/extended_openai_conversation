@@ -72,7 +72,7 @@ test("Request Rules UI authors and reloads a three-rule Continue Matching chain"
   });
 
   let cards = panel.locator(".request-rule-card");
-  await expect(cards.locator("h2")).toContainText(["Baseline rule", "Chain first", "Chain conditional", "Chain final"]);
+  await expect(cards.locator("h3")).toContainText(["Baseline rule", "Chain first", "Chain conditional", "Chain final"]);
 
   for (const [name, expected] of [["Chain first", true], ["Chain conditional", true], ["Chain final", false]]) {
     const card = panel.locator(".request-rule-card").filter({hasText:name});
@@ -92,7 +92,7 @@ test("Request Rules UI authors and reloads a three-rule Continue Matching chain"
   await page.goto(fixtureUrl("capabilities/request-rules"));
   panel = page.locator("extended-openai-management-panel");
   cards = panel.locator(".request-rule-card");
-  await expect(cards.locator("h2")).toContainText(["Baseline rule", "Chain first", "Chain conditional", "Chain final"]);
+  await expect(cards.locator("h3")).toContainText(["Baseline rule", "Chain first", "Chain conditional", "Chain final"]);
   await panel.locator(".request-rule-card").filter({hasText:"Chain first"}).locator(".rule-edit").click();
   await expect(panel.locator("#rule-continue-matching")).toBeChecked();
   await panel.locator(".rule-close").first().click();

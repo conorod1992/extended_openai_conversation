@@ -96,5 +96,8 @@ test("timeout preset and request-local tool budget have accurate names",async({p
   const panel=page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("combobox",{name:"Conversation timeout preset",exact:true})).toBeVisible();
   await page.goto(fixtureUrl("assistant/basics"));
+  const advanced = panel.locator("details.general-advanced");
+  await expect(advanced.locator("summary")).toBeVisible();
+  await advanced.locator("summary").click();
   await expect(panel.getByRole("spinbutton",{name:"Tool-call limit per request",exact:true})).toBeVisible();
 });

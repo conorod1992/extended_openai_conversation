@@ -524,7 +524,7 @@ async function openAssistantFromOverview(page) {
 
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel).toHaveCount(1);
-  await expect(panel.getByRole("heading", {name: "Extended OpenAI", exact: true})).toBeVisible({timeout: 30_000});
+  await expect(panel.locator(".page-heading .product-title")).toHaveText("Extended OpenAI", {timeout: 30_000});
 
   await panel.getByRole("button", {name: "Assistant", exact: true}).click();
   await expect(page).toHaveURL(/\/extended-openai\/assistant\/basics$/);

@@ -188,7 +188,9 @@ jobs:
           else
             TEST_PATHS=(tests_real_ha/test_public_version_journeys.py)
           fi
-          pytest "${TEST_PATHS[@]}" -v --asyncio-mode=auto --timeout=600 --tb=short
+          # Newer HA Core aliases httpx during initialization. Import Core
+          # before pytest autoloads plugins that may import httpx first.
+          python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' "${TEST_PATHS[@]}" -v --asyncio-mode=auto --timeout=600 --tb=short
       - name: Require every compatibility case to pass
         if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:

@@ -26,6 +26,7 @@
   "requirements": [
     "jsonschema==4.26.0",
     "openai>=2.21.0,<=3.10.0",
+    "zstandard>=0.24.0",
     "voluptuous-openapi==0.4.1"
   ],
   "version": "6.8.3"

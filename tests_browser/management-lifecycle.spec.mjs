@@ -17,12 +17,12 @@ test(`critical CSS prevents shell and route-title FOUC while full stylesheet is 
   await page.goto(fixtureUrl("capabilities/home-assistant", bundled ? "&bundle=1" : ""), {waitUntil:"domcontentloaded"});
   await stylesheetRequested;
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.locator(".page-heading h1")).toHaveText("Extended OpenAI");
-  await expect(panel.locator(".page-intro h1")).toHaveText("Home Assistant access");
+  await expect(panel.locator(".page-heading .product-title")).toHaveText("Extended OpenAI");
+  await expect(panel.locator(".page-intro h1")).toHaveText("Home Assistant & local handling");
 
   const before = await panel.evaluate((host) => {
     const root = host.shadowRoot;
-    const shellTitle = root.querySelector(".page-heading h1");
+    const shellTitle = root.querySelector(".page-heading .product-title");
     const routeTitle = root.querySelector(".page-intro h1");
     const routeIntro = root.querySelector(".page-intro");
     const rect = (node) => {
@@ -77,7 +77,7 @@ test(`critical CSS prevents shell and route-title FOUC while full stylesheet is 
       return {x:box.x,y:box.y,width:box.width,height:box.height};
     };
     return {
-      shellTitle:textRect(".page-heading h1"),
+      shellTitle:textRect(".page-heading .product-title"),
       routeTitle:textRect(".page-intro h1"),
       routeIntro:rect(".page-intro"),
     };
