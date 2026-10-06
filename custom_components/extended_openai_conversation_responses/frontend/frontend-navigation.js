@@ -28,7 +28,7 @@ export const NAVIGATION = [
     {id: "request-debug", label: "Request debugging", description: "Capture and inspect complete recent provider requests."},
     {id: "backup-restore", label: "Backup & Restore", description: "Create or restore a private agent backup."},
     {id: "diagnostics", label: "Diagnostics", description: "Test the provider and inspect the selected agent."},
-    {id: "retention", label: "Retention & maintenance", description: "Control detailed usage retention and cleanup."},
+    {id: "retention", label: "Usage data retention", description: "Control detailed usage retention and cleanup."},
   ]},
 ];
 

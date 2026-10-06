@@ -62,7 +62,7 @@ function temporaryMemoryStatus(panel) {
 function renderTemporaryMemories(panel) {
   const items = panel._result?.memories || [];
   return `<section class="content-card" data-temporary-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}">
-    <div class="section-heading"><div><h2>Memories</h2><p>Review short-term details saved for a Personal or Shared scope. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><div class="actions"><button type="button" id="add-memory">+ Add memory</button><button type="button" class="danger" id="clear-temporary">Clear short-term memories</button></div></div>
+    <div class="section-heading"><div><h2>Short-term memories</h2><p>Review short-term details saved for a Personal or Shared scope. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><div class="actions"><button type="button" id="add-memory">+ Add memory</button><button type="button" class="danger" id="clear-temporary">Clear short-term memories</button></div></div>
     <div data-temporary-feature-status>${temporaryMemoryStatus(panel)}</div>
     <div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent">Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary" disabled>Short-term</button></div>
     <p class="help">Once stored, short-term memories remain until their expiry time, even if short-term memory is later turned off. Conversation and device continuity do not determine ownership.</p>

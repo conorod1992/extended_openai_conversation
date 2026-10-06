@@ -23,7 +23,7 @@ test("dropped save keeps its draft and the authoritative HA state", async ({page
   const draft = `Dropped save ${seed}`;
   await title(page).fill(draft);
   let dropped = 0;
-  await page.route(backendUrl, route => {
+  await page.route(`${backendUrl}*`, route => {
     const body = route.request().postDataJSON();
     if (dropped === 0 && body?.section === "configuration" && body?.action === "save") {
       dropped++;
@@ -42,7 +42,7 @@ test("dropped save keeps its draft and the authoritative HA state", async ({page
     await expect(title(fresh)).toHaveValue(original);
   } finally { await fresh.close(); }
 
-  await page.unroute(backendUrl);
+  await page.unroute(`${backendUrl}*`);
   await panel(page).getByRole("button", {name: "Save changes", exact: true}).click();
   await expect(panel(page).getByText("Unsaved changes", {exact: true})).toHaveCount(0);
   await page.goto(fixture("assistant/basics"));
@@ -81,7 +81,7 @@ test("slow reads and a dropped read converge on real HA state", async ({page}) =
   await control(page);
 
   let dropped = 0;
-  await page.route(backendUrl, route => {
+  await page.route(`${backendUrl}*`, route => {
     const body = route.request().postDataJSON();
     if (dropped === 0 && body?.section === "memories" && body?.action === "list") {
       dropped++;
@@ -91,7 +91,7 @@ test("slow reads and a dropped read converge on real HA state", async ({page}) =
   });
   await page.goto(fixture("data-memory/memories"));
   await expect.poll(() => dropped).toBe(1);
-  await page.unroute(backendUrl);
+  await page.unroute(`${backendUrl}*`);
   await page.goto(fixture("data-memory/memories"));
   await expect(panel(page).getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
   await expect(panel(page).locator("#add-memory")).toBeVisible();

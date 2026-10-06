@@ -91,11 +91,11 @@ test("Request Rules support create, precedence changes, reload, edit, and delete
   await expect(card.locator(".rule-enabled")).toBeChecked();
   await card.locator(".rule-move-menu > summary").click();
   await card.locator('.rule-move[data-direction="up"]').click();
-  await expect.poll(async () => panel.locator(".request-rule-card h2").allTextContents()).toEqual(["Browser rule", "Baseline rule"]);
+  await expect.poll(async () => panel.locator(".request-rule-card h3").allTextContents()).toEqual(["Browser rule", "Baseline rule"]);
 
   await page.goto(fixtureUrl("capabilities/request-rules"));
   panel = page.locator("extended-openai-management-panel");
-  await expect.poll(async () => panel.locator(".request-rule-card h2").allTextContents()).toEqual(["Browser rule", "Baseline rule"]);
+  await expect.poll(async () => panel.locator(".request-rule-card h3").allTextContents()).toEqual(["Browser rule", "Baseline rule"]);
   card = panel.locator(".request-rule-card").filter({hasText: "Browser rule"});
   await card.locator(".rule-edit").click();
   await expect(panel.locator("#rule-enabled-edit")).toHaveCount(0);
@@ -142,7 +142,7 @@ test("Rule Sharing reviews before importing disabled rules at the bottom", async
   const card=panel.locator(".request-rule-card").filter({hasText:"Shared route"});
   await expect(card).toBeVisible();
   await expect(card.locator(".rule-enabled")).not.toBeChecked();
-  await expect.poll(async()=>panel.locator(".request-rule-card h2").allTextContents()).toEqual(["Baseline rule","Shared route"]);
+  await expect.poll(async()=>panel.locator(".request-rule-card h3").allTextContents()).toEqual(["Baseline rule","Shared route"]);
   await panel.locator("#rule-pack-selection").selectOption("selected");
   await panel.locator("#rule-pack-export").click();
   await expect(panel.locator("#rule-pack-select-dialog")).toHaveJSProperty("open",true);

@@ -109,7 +109,7 @@ const literalHelpWords = "Home Assistant sentence pattern";
 const literalHtml = renderRequestRules({...panel, _result: {...panel._result, rules: [
   {...panel._result.rules[0], name: literalHelpWords, phrases: [literalHelpWords]},
 ]}});
-assert.match(literalHtml, /<h2>Home Assistant sentence pattern<\/h2>/);
+assert.match(literalHtml, /<h3>Home Assistant sentence pattern<\/h3>/);
 assert.match(literalHtml, /<span>Home Assistant sentence pattern<\/span>/);
 assert.match(literalHtml, /1 trigger phrase · Equals · Default matching/);
 assert.equal((literalHtml.match(/Equals/g) || []).length, 1, "matching method is shown once, not repeated on each phrase");
