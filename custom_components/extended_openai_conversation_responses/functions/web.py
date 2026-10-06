@@ -3,16 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-
-try:
-    from compression.zstd import ZstdDecompressor, ZstdError
-except ImportError:  # Python builds can omit the optional stdlib zstd extension.
-    import zstandard as _zstandard
-
-    ZstdError = _zstandard.ZstdError
-    ZstdDecompressor = _zstandard.ZstdDecompressor
-else:
-    _zstandard = None
 from contextlib import suppress
 from http import HTTPStatus
 import logging
@@ -47,6 +37,15 @@ from homeassistant.util.json import JSON_DECODE_EXCEPTIONS, json_loads
 from ..const import CONF_PAYLOAD_TEMPLATE
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from .base import Function
+
+_zstandard: Any = None
+try:
+    from compression.zstd import (
+        ZstdDecompressor as _StdlibZstdDecompressor,
+        ZstdError as _StdlibZstdError,
+    )
+except ImportError:  # Python builds can omit the optional stdlib zstd extension.
+    import zstandard as _zstandard
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -123,7 +122,7 @@ def _decode_zstd(body: bytes, max_bytes: int) -> bytes:
     decoded = bytearray()
     try:
         while body:
-            decoder = ZstdDecompressor()
+            decoder = _StdlibZstdDecompressor()
             pending = body
             while True:
                 part = decoder.decompress(
@@ -138,7 +137,7 @@ def _decode_zstd(body: bytes, max_bytes: int) -> bytes:
                     break
                 if decoder.needs_input:
                     raise aiohttp.ClientPayloadError("Incomplete compressed response")
-    except ZstdError as err:
+    except _StdlibZstdError as err:
         raise aiohttp.ClientPayloadError("Malformed compressed response") from err
     return bytes(decoded)
 
