@@ -23,6 +23,7 @@ _CHILD_PHASE = "ACTIVE_REQUEST_SHUTDOWN_PHASE"
 _CONFIG_DIR = "ACTIVE_REQUEST_SHUTDOWN_CONFIG_DIR"
 _STATE_FILE = "active-request-shutdown-state.json"
 _AFTER_TOOL = "ACTIVE_REQUEST_SHUTDOWN_AFTER_TOOL"
+_SLOW_NATIVE = "ACTIVE_REQUEST_SHUTDOWN_SLOW_NATIVE"
 
 
 def _raw_client(agent: Any) -> Any:
@@ -268,6 +269,8 @@ async def _interrupt_phase(hass: Any, config_dir: Path) -> None:
     assert agent is not None
 
     markers = []
+    native_started = asyncio.Event()
+    native_cancelled = asyncio.Event()
     if os.environ.get(_AFTER_TOOL) == "1":
         from homeassistant.components.homeassistant.exposed_entities import (
             async_expose_entity,
@@ -278,6 +281,13 @@ async def _interrupt_phase(hass: Any, config_dir: Path) -> None:
 
         async def mark(call):
             markers.append(call.data)
+            if os.environ.get(_SLOW_NATIVE) == "1":
+                native_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    native_cancelled.set()
+                    raise
 
         hass.services.async_register("light", "turn_off", mark)
 
@@ -294,8 +304,12 @@ async def _interrupt_phase(hass: Any, config_dir: Path) -> None:
                 agent_id=entry.entry_id,
             )
         )
-        async with asyncio.timeout(15):
-            await wire.started.wait()
+        if os.environ.get(_SLOW_NATIVE) == "1":
+            async with asyncio.timeout(15):
+                await native_started.wait()
+        else:
+            async with asyncio.timeout(15):
+                await wire.started.wait()
 
         assert wire.requests, "provider request never reached the real SDK HTTP seam"
         assert len(markers) == (1 if os.environ.get(_AFTER_TOOL) == "1" else 0)
@@ -308,7 +322,10 @@ async def _interrupt_phase(hass: Any, config_dir: Path) -> None:
         async with asyncio.timeout(20):
             await hass.async_stop()
 
-        assert wire.cancelled.is_set(), "provider send did not receive cancellation"
+        if os.environ.get(_SLOW_NATIVE) == "1":
+            assert native_cancelled.is_set(), "native function outlived HA shutdown"
+        if os.environ.get(_SLOW_NATIVE) != "1":
+            assert wire.cancelled.is_set(), "provider send did not receive cancellation"
         assert request_task.done(), "conversation task survived Home Assistant shutdown"
         assert request_task.cancelled(), (
             "interrupted conversation did not end by cancellation"
@@ -345,8 +362,17 @@ async def _recovery_phase(hass: Any, config_dir: Path) -> None:
     )
     assert interrupted.total_tokens == (13 if os.environ.get(_AFTER_TOOL) == "1" else 0)
     assert usage.totals.total_tokens == interrupted.total_tokens
-    assert interrupted.failed_request_count == 1
-    assert interrupted.request_count == (2 if os.environ.get(_AFTER_TOOL) == "1" else 1)
+    assert interrupted.failed_request_count == (
+        0 if os.environ.get(_SLOW_NATIVE) == "1" else 1
+    )
+    expected_requests = (
+        1
+        if os.environ.get(_SLOW_NATIVE) == "1"
+        else 2
+        if os.environ.get(_AFTER_TOOL) == "1"
+        else 1
+    )
+    assert interrupted.request_count == expected_requests
     wire = _RecoveryWire("Recovered cleanly after the interrupted request.")
     raw_client = _raw_client(agent)
     with patch.object(raw_client._client, "send", wire.send):
@@ -406,7 +432,10 @@ async def _child_main() -> None:
 
 
 def _run_child(
-    config_dir: Path, phase: str, after_tool: bool = False
+    config_dir: Path,
+    phase: str,
+    after_tool: bool = False,
+    slow_native: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     return run_python_child(
         __file__,
@@ -415,6 +444,7 @@ def _run_child(
             _CHILD_PHASE: phase,
             _CONFIG_DIR: str(config_dir),
             _AFTER_TOOL: "1" if after_tool else "0",
+            _SLOW_NATIVE: "1" if slow_native else "0",
         },
         timeout=90,
     )
@@ -427,14 +457,19 @@ def _assert_child_ok(result: subprocess.CompletedProcess[str], phase: str) -> No
     )
 
 
-@pytest.mark.parametrize("after_tool", [False, True])
+@pytest.mark.parametrize(
+    ("after_tool", "slow_native"),
+    [(False, False), (True, False), (True, True)],
+    ids=["provider", "after-tool-provider", "slow-native-function"],
+)
 @pytest.mark.usefixtures("socket_enabled")
 def test_shutdown_cancels_inflight_provider_request_and_next_boot_is_healthy(
     tmp_path: Path,
     after_tool: bool,
+    slow_native: bool,
     unused_tcp_port: int,
 ) -> None:
-    """Interrupt a live request during HA shutdown, then cold-start and converse."""
+    """Stop HA during provider or native work, cold-start, and converse again."""
     repo_root = Path(__file__).resolve().parent.parent
     source = repo_root / "custom_components" / DOMAIN
     config_dir = tmp_path / "ha-config"
@@ -447,12 +482,12 @@ def test_shutdown_cancels_inflight_provider_request_and_next_boot_is_healthy(
         encoding="utf-8",
     )
 
-    interrupted = _run_child(config_dir, "interrupt", after_tool)
+    interrupted = _run_child(config_dir, "interrupt", after_tool, slow_native)
     _assert_child_ok(interrupted, "interrupt")
     assert (config_dir / ".storage" / "core.config_entries").exists()
     assert (config_dir / _STATE_FILE).exists()
 
-    recovered = _run_child(config_dir, "recover", after_tool)
+    recovered = _run_child(config_dir, "recover", after_tool, slow_native)
     _assert_child_ok(recovered, "recover")
 
 

@@ -32,6 +32,7 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.components.websocket_api.const import MAX_PENDING_MSG
 from homeassistant.core import Context
+from homeassistant.helpers import entity_registry as er
 from tests_real_ha.test_acceptance_lifecycle import _setup_entry
 from tests_real_ha.test_assist_streaming_speech_processing import (
     _chat_sse_deltas,
@@ -701,4 +702,66 @@ async def test_assist_broadcast_and_quiet_hours_share_native_output_ownership(
             await manager.async_shutdown()
         if quiet is not None:
             await quiet.async_shutdown()
+        await runner.cleanup()
+
+
+async def test_removed_satellite_during_announcement_never_redirects_delivery(
+    hass, socket_enabled, stress_trace
+):
+    """A disappearing in-flight recipient must not redirect household audio."""
+    del socket_enabled
+    MockUser(id="real-pool-owner", is_owner=True).add_to_hass(hass)
+
+    async def provider(request):
+        await request.json()
+        return web.Response(
+            body=_chat_sse_text("Ordinary Assist reply"),
+            content_type="text/event-stream",
+        )
+
+    runner, url = await _endpoint(provider)
+    manager = None
+    satellites = []
+    try:
+        _, _, satellites, _, _, _ = await _audio_runtime(hass, url)
+        selected, peer = satellites
+        manager = await async_get_intercom(hass)
+        await manager.async_set_enabled(True)
+        selected.announce_release = asyncio.Event()
+        item = await hass.services.async_call(
+            DOMAIN,
+            "broadcast",
+            {"message": "Private selected target", "entity_id": [selected.entity_id]},
+            blocking=True,
+            return_response=True,
+            context=Context(user_id="real-pool-owner"),
+        )
+        await asyncio.wait_for(selected.announce_started.wait(), 10)
+        async with asyncio.timeout(10):
+            while manager.history()[0]["deliveries"][selected.entity_id]["status"] != "delivering":
+                await asyncio.sleep(0)
+
+        registry = er.async_get(hass)
+        registry.async_remove(selected.entity_id)
+        await hass.async_block_till_done()
+        assert hass.states.get(selected.entity_id) is None
+        assert not peer.announcements
+        selected.announce_release.set()
+        await hass.async_block_till_done()
+
+        row = next(row for row in manager.history() if row["id"] == item["id"])
+        assert row["deliveries"][selected.entity_id]["status"] == "delivered"
+        assert peer.entity_id not in row["deliveries"]
+        assert [announcement.message for announcement in selected.announcements] == [
+            "Private selected target"
+        ]
+        assert not peer.announcements
+        assert selected.entity_id not in manager._queues
+        record(stress_trace, "summary", disappearing_target_cases=1, no_misdelivery=True)
+    finally:
+        for satellite in satellites:
+            if satellite.announce_release is not None:
+                satellite.announce_release.set()
+        if manager is not None:
+            await manager.async_shutdown()
         await runner.cleanup()
