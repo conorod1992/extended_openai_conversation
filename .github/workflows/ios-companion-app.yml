@@ -24,7 +24,7 @@ jobs:
     name: iOS Companion app smoke
     # During introduction, run this expensive lane on its own PR so failures can
     # be repaired before merge. After merge it remains weekly/manual only.
-    if: github.event_name != 'pull_request' || github.head_ref == 'test/ios-companion-app-acceptance'
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 1136
     runs-on: xcode-27
     timeout-minutes: 120
     env:
