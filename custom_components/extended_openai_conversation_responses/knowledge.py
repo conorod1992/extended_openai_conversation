@@ -512,6 +512,25 @@ class KnowledgeLibrary:
                 ignored.append(requested_id)
         return (valid or None), ignored
 
+    async def async_revalidate_search_results(
+        self, results: list[SearchResult]
+    ) -> list[SearchResult]:
+        """Keep only search results that still match the current enabled source."""
+        if not results:
+            return results
+        async with async_storage_lock(self._storage, self._lock):
+            self._ensure_initialized()
+            current = self._published_sources()
+            return [
+                result
+                for result in results
+                if (
+                    (source := current.get(result.source_id)) is not None
+                    and source.enabled
+                    and source.updated_at == result.updated_at
+                )
+            ]
+
     async def async_get_section(
         self,
         source_id: str,
