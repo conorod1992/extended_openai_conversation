@@ -9,6 +9,7 @@ import socket
 
 import pytest
 from pytest_homeassistant_custom_component.components.recorder.common import (
+    async_recorder_block_till_done,
     async_wait_recording_done,
 )
 from pytest_socket import socket_allow_hosts
@@ -29,6 +30,7 @@ from homeassistant.components import recorder
 from homeassistant.components.recorder import statistics
 from homeassistant.components.recorder.models.statistics import StatisticMeanType
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_entry_point_contract_matrix import _contract_agent
@@ -56,6 +58,14 @@ def external_recorder_network(socket_enabled, monkeypatch, env_name):
 
     monkeypatch.setattr(socket, "getaddrinfo", resolve)
     socket_allow_hosts(["127.0.0.1", "::1", hostname], allow_unix_socket=True)
+
+
+async def _wait_recording_done(hass: HomeAssistant) -> None:
+    """Drain queued writes before asking HA to commit its pending transaction."""
+    # The commit trigger checks pending writes, not queued events. On an external
+    # backend it can otherwise run before the Recorder thread processes them.
+    await async_recorder_block_till_done(hass)
+    await async_wait_recording_done(hass)
 
 
 async def _setup_recorder(hass: HomeAssistant, db_url: str) -> None:
@@ -288,7 +298,7 @@ async def test_native_history_against_external_recorder_database(
     await _setup_recorder(hass, db_url)
     hass.states.async_set("sensor.recorder_acceptance", f"{backend}-recorded")
     await hass.async_block_till_done()
-    await async_wait_recording_done(hass)
+    await _wait_recording_done(hass)
     rows = await NativeFunction().get_history(
         hass,
         {},
@@ -347,7 +357,7 @@ async def test_recorder_backend_switch_preserves_history_and_statistics_semantic
     later = hass.states.get("sensor.recorder_acceptance").last_changed
     # The runtime commit future may finish before the event queue drains. Use
     # HA's test barrier, which forces a commit and waits for all Recorder tasks.
-    await async_wait_recording_done(hass)
+    await _wait_recording_done(hass)
 
     between = inside + (later - inside) / 2
     history = await NativeFunction().get_history(
@@ -406,7 +416,7 @@ async def test_recorder_backend_switch_preserves_history_and_statistics_semantic
             },
         ],
     )
-    await async_wait_recording_done(hass)
+    await _wait_recording_done(hass)
     stats = await NativeFunction().get_statistics(
         hass,
         {},
@@ -546,4 +556,91 @@ def test_request_debug_clear_invalidates_current_detail_and_export_source(
         debug_open_detail_clears=1,
         stale_debug_snapshots_detached=1,
         exportable_cleared_debug_records=0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("env_name", "backend"),
+    [
+        ("EOAI_TEST_MARIADB_URL", "mariadb"),
+        ("EOAI_TEST_POSTGRES_URL", "postgresql"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_external_recorder_connection_loss_then_recovery(
+    hass: HomeAssistant,
+    env_name: str,
+    backend: str,
+    external_recorder_network,
+    monkeypatch: pytest.MonkeyPatch,
+    stress_trace: list[dict],
+) -> None:
+    """A lost external Recorder connection fails one read and a later read recovers."""
+    db_url = os.getenv(env_name)
+    if not db_url:
+        if os.getenv("EOAI_REQUIRE_EXTERNAL_RECORDER") == "1":
+            pytest.fail(f"{env_name} is required for external Recorder certification")
+        pytest.skip(f"{env_name} is not configured")
+
+    await _setup_recorder(hass, db_url)
+    hass.states.async_set("sensor.recorder_acceptance", f"{backend}-before-outage")
+    await hass.async_block_till_done()
+    await _wait_recording_done(hass)
+
+    instance = recorder.get_instance(hass)
+    engine = instance.engine
+
+    # Drop pooled connections first, then make fresh DB acquisition unavailable.
+    # This models the EOAI-observable boundary of a network/database outage without
+    # requiring CI to stop the shared MariaDB/PostgreSQL service for other jobs.
+    await hass.async_add_executor_job(engine.dispose)
+
+    def unavailable_connect(*args, **kwargs):
+        del args, kwargs
+        raise ConnectionError(f"controlled {backend} Recorder outage")
+
+    with monkeypatch.context() as outage:
+        outage.setattr(engine, "connect", unavailable_connect)
+        with pytest.raises(
+            HomeAssistantError, match="^History is temporarily unavailable$"
+        ) as unavailable:
+            await NativeFunction().get_history(
+                hass,
+                {},
+                {
+                    "entity_ids": ["sensor.recorder_acceptance"],
+                    "significant_changes_only": False,
+                },
+                None,
+                _EXPOSED,
+            )
+        assert isinstance(unavailable.value.__cause__, ConnectionError)
+        assert str(unavailable.value.__cause__) == f"controlled {backend} Recorder outage"
+
+    hass.states.async_set("sensor.recorder_acceptance", f"{backend}-after-recovery")
+    await hass.async_block_till_done()
+    await _wait_recording_done(hass)
+
+    recovered = await NativeFunction().get_history(
+        hass,
+        {},
+        {
+            "entity_ids": ["sensor.recorder_acceptance"],
+            "significant_changes_only": False,
+        },
+        None,
+        _EXPOSED,
+    )
+    assert any(
+        row.get("state") == f"{backend}-after-recovery"
+        for group in recovered
+        for row in group
+    )
+
+    record(
+        stress_trace,
+        "summary",
+        external_recorder_backend=backend,
+        recorder_connection_outages=1,
+        recorder_connection_recoveries=1,
     )
