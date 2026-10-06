@@ -43,7 +43,7 @@ def test_ios_companion_workflow_runs_on_introducing_pr_and_not_every_pr():
     job = _workflow()["jobs"]["companion"]
     condition = job["if"]
     assert "github.event_name != 'pull_request'" in condition
-    assert "test/ios-companion-app-acceptance" in condition
+    assert "github.event.pull_request.number == 1136" in condition
 
 
 def test_ios_companion_uses_official_xcuitest_harness_and_fails_closed():
