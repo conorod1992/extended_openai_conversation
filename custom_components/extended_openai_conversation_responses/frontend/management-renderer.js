@@ -1,5 +1,6 @@
 import {updateDialogs} from "./management-dialogs.js";
 import {NAVIGATION, pageMetadata} from "./frontend-navigation.js";
+import {writeOptionalStorage} from "./browser-storage.js";
 
 export const ASSISTANT_INTRO_MARKUP = '<section class="page-intro assistant-parent-intro"><h1>Assistant settings</h1><p>Configure how this assistant responds, handles conversations, uses context, and works with voice.</p></section>';
 
@@ -162,7 +163,7 @@ function bindDynamicBase(panel) {
       control.value = nextAgent;
       panel._unsavedState?.scopes.clear();
       panel._agentId = nextAgent;
-      localStorage.setItem("extended-openai-agent", panel._agentId);
+      writeOptionalStorage("extended-openai-agent", panel._agentId);
       panel._clearConfigDraft();
       panel._scopeId = null;
       panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
