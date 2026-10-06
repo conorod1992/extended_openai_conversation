@@ -22,7 +22,11 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
-from tests_real_ha.test_acceptance_lifecycle import _conversation_subentry, _make_entry, _setup_entry
+from tests_real_ha.test_acceptance_lifecycle import (
+    _conversation_subentry,
+    _make_entry,
+    _setup_entry,
+)
 from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
 from tests_real_ha.test_user_ownership_privacy import (
     _management_call,
@@ -67,7 +71,7 @@ async def test_recreated_visible_identity_and_live_voice_remap_do_not_inherit_pr
     first_wire = _install_wire(monkeypatch, agent, [_chat_sse_text("old identity")])
     first = await conversation.async_converse(
         hass=hass,
-        text="Remember who I am.",
+        text="What is my private identity token?",
         conversation_id=None,
         context=Context(),
         language="en",
@@ -94,7 +98,7 @@ async def test_recreated_visible_identity_and_live_voice_remap_do_not_inherit_pr
     stale_wire = _install_wire(monkeypatch, agent, [_chat_sse_text("stale mapping")])
     stale = await conversation.async_converse(
         hass=hass,
-        text="Who am I now?",
+        text="What is my private identity token now?",
         conversation_id=conversation_id,
         context=Context(),
         language="en",
@@ -124,7 +128,7 @@ async def test_recreated_visible_identity_and_live_voice_remap_do_not_inherit_pr
     remapped_wire = _install_wire(monkeypatch, agent, [_chat_sse_text("new identity")])
     remapped = await conversation.async_converse(
         hass=hass,
-        text="Continue after the remap.",
+        text="What is my private identity token after the remap?",
         conversation_id=conversation_id,
         context=Context(),
         language="en",
@@ -169,8 +173,8 @@ async def test_language_change_inside_continuity_keeps_user_boundary(
     await _setup_entry(hass, entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
-    await agent._memory.async_add(alice.id, "ALICE_LANGUAGE_PRIVATE", "identity", "explicit")
-    await agent._memory.async_add(bob.id, "BOB_LANGUAGE_PRIVATE", "identity", "explicit")
+    await agent._memory.async_add(alice.id, "Language continuity token is ALICE_LANGUAGE_PRIVATE", "identity", "explicit")
+    await agent._memory.async_add(bob.id, "Language continuity token is BOB_LANGUAGE_PRIVATE", "identity", "explicit")
 
     wire = _install_wire(
         monkeypatch,
@@ -179,7 +183,7 @@ async def test_language_change_inside_continuity_keeps_user_boundary(
     )
     first = await conversation.async_converse(
         hass=hass,
-        text="Start in English.",
+        text="What is my language continuity token in English?",
         conversation_id=None,
         context=Context(user_id=alice.id),
         language="en",
@@ -188,7 +192,7 @@ async def test_language_change_inside_continuity_keeps_user_boundary(
     assert first.conversation_id
     second = await conversation.async_converse(
         hass=hass,
-        text="Continue en français.",
+        text="Language continuity token en français.",
         conversation_id=first.conversation_id,
         context=Context(user_id=alice.id),
         language="fr",
@@ -196,7 +200,7 @@ async def test_language_change_inside_continuity_keeps_user_boundary(
     )
     third = await conversation.async_converse(
         hass=hass,
-        text="Try the same caller-selected conversation as Bob.",
+        text="What is my language continuity token as Bob?",
         conversation_id=first.conversation_id,
         context=Context(user_id=bob.id),
         language="de",

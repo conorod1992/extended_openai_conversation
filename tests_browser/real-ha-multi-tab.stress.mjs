@@ -347,9 +347,9 @@ test("a tab duplicated after an editor becomes dirty cannot overwrite a newer cl
     await expect(original.locator("#rule-dialog")).toHaveJSProperty("open", true);
     trace.push("original tab held dirty draft before clone existed");
 
-    // A browser duplicate starts from the same URL/profile and therefore the same
-    // authoritative object revision, while the original tab keeps its dirty editor.
-    await clone.goto(page.url());
+    // Open the same route/profile through the fixture server. The panel rewrites
+    // page.url() to an HA route that this static server cannot serve directly.
+    await clone.goto(realFixtureUrl("capabilities/request-rules"));
     const cloned = clone.locator("extended-openai-management-panel");
     const cloneCard = cloned.locator(".request-rule-card").filter({hasText: "Duplicate-tab source rule"});
     await expect(cloneCard).toBeVisible();
@@ -371,9 +371,11 @@ test("a tab duplicated after an editor becomes dirty cannot overwrite a newer cl
 
     await expectHarnessClean(clone, errorsClone);
     expect(errorsOriginal).toHaveLength(0);
-    await expect.poll(() => errorsOriginal.consoleErrors).toEqual([
-      `Failed to load resource: the server responded with a status of 400 (Bad Request) (${backendUrl}?client=default:0)`,
-    ]);
+    // Engines differ in whether a handled HTTP error is echoed to the console.
+    // The network assertion below independently requires the rejected save.
+    expect(errorsOriginal.consoleErrors.every(message =>
+      /Failed to load resource:.*400/.test(message) && message.includes(backendUrl)
+    )).toBe(true);
     expect(errorsOriginal.requestFailures).toEqual([]);
     expect(errorsOriginal.badResponses).toEqual([`400 POST ${backendUrl}?client=default`]);
     expect(await page.evaluate(() => ({

@@ -26,7 +26,7 @@ test("major management pages keep unique IDs and reachable navigation at narrow 
         return ids.filter((id, index) => ids.indexOf(id) !== index);
       });
       expect(duplicateIds, `${route} at ${width}px`).toEqual([]);
-      await expect(panel.locator(width < 600 ? "#local-section" : ".top-nav")).toBeVisible();
+      await expect(panel.locator(width <= 760 ? "#local-section" : ".top-nav")).toBeVisible();
       await expect(panel).toHaveCount(1);
       checked++;
     }
@@ -50,7 +50,7 @@ test("200% and 400% reflow keep primary controls reachable across management rou
       const panel = page.locator("extended-openai-management-panel");
       await expect(panel.getByRole("heading", {name: heading, exact: true}).first()).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${route} at ${width}px`).toBe(true);
-      await expect(panel.locator(width < 600 ? "#local-section" : ".top-nav")).toBeVisible();
+      await expect(panel.locator(width <= 760 ? "#local-section" : ".top-nav")).toBeVisible();
       const save = panel.locator("#save-page, #save-config").first();
       if (await save.count()) {
         await save.scrollIntoViewIfNeeded();

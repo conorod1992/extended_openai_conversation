@@ -84,8 +84,9 @@ test("nightly Rule Pack UI rejects malformed and oversized files, preserves revi
   await panel.locator("#rule-pack-confirm").click();
   await expect(panel.locator("#rule-pack-message")).toContainText("2 disabled rules imported");
 
-  const titles = await panel.locator(".request-rule-card h2").allTextContents();
-  expect(titles.slice(-2)).toEqual(["Nightly shared second", "Nightly shared first"]);
+  await expect.poll(async () => (
+    await panel.locator(".request-rule-card").getByRole("heading").allTextContents()
+  ).slice(-2)).toEqual(["Nightly shared second", "Nightly shared first"]);
   await expect(panel.locator(".request-rule-card").filter({hasText:"Nightly shared second"}).locator(".rule-enabled")).not.toBeChecked();
   const imported = await page.evaluate(() => window.browserHarness.getState().requestRules.rules.slice(-2));
   expect(imported.map((rule) => rule.order)).toEqual([1,2]);

@@ -392,7 +392,9 @@ async def test_live_assist_language_change_reaches_same_satellite_session(
             self.deliveries.append((message, language))
             return "wav", self.recording
 
-    speech = MultilingualSTT(recording)
+    with wave.open(io.BytesIO(recording), "rb") as wav:
+        pcm = wav.readframes(wav.getnframes())
+    speech = MultilingualSTT(pcm)
     tts = MultilingualTTS(recording)
     satellite = _SoftwareSatellite()
     entities, pcm = await _install_audio_entities(

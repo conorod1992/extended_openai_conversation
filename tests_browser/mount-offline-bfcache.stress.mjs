@@ -57,7 +57,7 @@ test("repeated mount cycles plus offline and browser restoration keep one health
     browserHarness.restoreCallWS();
   });
   await panel.locator('.top-nav button[data-page="capabilities"]').click();
-  await expect(panel.getByRole("heading", {name: "Home Assistant access", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Home Assistant & local handling", exact: true})).toBeVisible();
   await expect(panel.getByRole("alert")).toHaveCount(0);
 
   await page.evaluate(() => {
@@ -93,7 +93,7 @@ test("repeated mount cycles plus offline and browser restoration keep one health
   expect(hasHarness).toBe(true);
   panel = page.locator("extended-openai-management-panel");
   await expect(panel).toHaveCount(1);
-  await expect(panel.getByRole("heading", {name: "Home Assistant access", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Home Assistant & local handling", exact: true})).toBeVisible();
 
   const state = await page.evaluate(() => ({
     connected: browserHarness.panel.isConnected,

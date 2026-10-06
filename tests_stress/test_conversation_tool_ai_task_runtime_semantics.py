@@ -13,6 +13,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_CHAT_MODEL,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
+    CONF_REASONING_EFFORT,
 )
 from homeassistant.components import automation, conversation, media_source
 from homeassistant.core import Context, HomeAssistant
@@ -25,11 +26,7 @@ from tests_real_ha.test_live_config_mutation_semantics import (
     _tool,
     _tool_revision,
 )
-from tests_real_ha.test_provider_wire_e2e import (
-    _chat_sse_text,
-    _install_wire,
-    _speech,
-)
+from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
 from tests_stress.conftest import record
 
 
@@ -73,6 +70,17 @@ async def test_real_automation_consumes_structured_ai_task_media_and_falsey_valu
         for subentry in entry.subentries.values()
         if subentry.subentry_type == "ai_task_data"
     )
+    hass.config_entries.async_update_subentry(
+        entry,
+        task_subentry,
+        data={
+            **task_subentry.data,
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_CHAT_MODEL: "gpt-5.6",
+            CONF_REASONING_EFFORT: "none",
+        },
+    )
+    await hass.async_block_till_done()
     entity_id = er.async_get(hass).async_get_entity_id(
         ai_task.DOMAIN,
         "extended_openai_conversation_responses",
@@ -128,7 +136,7 @@ async def test_real_automation_consumes_structured_ai_task_media_and_falsey_valu
                             },
                             "attachments": [
                                 {
-                                    "media_content_id": "media-source://camera/camera.eoai_runtime",
+                                    "media_content_id": "media-source://local/automation-camera.jpg",
                                     "media_content_type": "image/jpeg",
                                 }
                             ],

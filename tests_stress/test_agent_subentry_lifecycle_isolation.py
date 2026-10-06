@@ -9,18 +9,20 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import backup
 from custom_components.extended_openai_conversation_responses.const import (
-    CONF_CHAT_MODEL,
-    CONF_MEMORY_MODE,
-    MEMORY_MODE_MANUAL,
     DEFAULT_AI_TASK_OPTIONS,
 )
-from custom_components.extended_openai_conversation_responses.memory import async_get_memory
+from custom_components.extended_openai_conversation_responses.memory import (
+    async_get_memory,
+)
 from homeassistant.components import ai_task, conversation
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from tests_real_ha.test_ai_task_runtime import FakeClient
-from tests_real_ha.test_live_subentry_removal import _entry as _mixed_entry, _setup_entry as _setup_mixed
+from tests_real_ha.test_live_subentry_removal import (
+    _entry as _mixed_entry,
+    _setup_entry as _setup_mixed,
+)
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
     _entry,
@@ -51,7 +53,6 @@ async def test_duplicate_and_imported_agents_start_config_only_then_diverge_dura
     await _setup_entry(hass, destination)
     client = await _admin_client(hass, hass_ws_client)
 
-    source_subentry = next(iter(source.subentries.values()))
     source_cfg = await _management_call(
         client, entry=source, section="configuration", action="get"
     )
@@ -349,7 +350,24 @@ async def test_ai_task_delete_recreate_keeps_active_conversation_sibling_usable(
         conversation_result.response.as_dict()["speech"]["plain"]["speech"]
         == "conversation survived task recreation"
     )
-    assert conversation.async_get_agent(hass, conversation_row.entity_id) is agent
+    # Parent entry updates reload its platforms. The active turn above must
+    # finish safely, and the reconstructed sibling must remain ready for use.
+    current_agent = conversation.async_get_agent(hass, conversation_row.entity_id)
+    assert current_agent is not None and current_agent._agent_ready.is_set()
+    assert current_agent.subentry.subentry_id == conversation_subentry.subentry_id
+    monkeypatch.setattr(current_agent, "_async_handle_chat_log", blocked_model)
+    resumed = await conversation.async_converse(
+        hass=hass,
+        text="check the reconstructed conversation sibling",
+        conversation_id=None,
+        context=Context(),
+        language="en",
+        agent_id=conversation_row.entity_id,
+    )
+    assert (
+        resumed.response.as_dict()["speech"]["plain"]["speech"]
+        == "conversation survived task recreation"
+    )
     record(
         stress_trace,
         "summary",

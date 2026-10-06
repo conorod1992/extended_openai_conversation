@@ -21,6 +21,7 @@ from cryptography.x509.oid import NameOID
 import httpx
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
+from pytest_socket import socket_allow_hosts
 
 from custom_components.extended_openai_conversation_responses import helpers
 from custom_components.extended_openai_conversation_responses.const import (
@@ -209,6 +210,7 @@ async def test_live_provider_client_re_resolves_endpoint_address_family(
 ):
     """A DNS family change takes effect on the next request in the same HA run."""
     del socket_enabled
+    socket_allow_hosts(["127.0.0.1", "::1"], allow_unix_socket=True)
     MockUser(id="real-pool-owner", name="DNS owner", is_owner=True).add_to_hass(hass)
     seen = []
 
@@ -253,16 +255,19 @@ async def test_live_provider_client_re_resolves_endpoint_address_family(
         active_family = [old_family]
         real_getaddrinfo = socket.getaddrinfo
 
-        def resolve(host, service, *args, **kwargs):
-            if host == "eoai-dns.test":
+        def resolve(host, service, family=0, type=0, proto=0, flags=0):
+            # AnyIO passes the IDNA-encoded hostname to socket.getaddrinfo.
+            if host in ("eoai-dns.test", b"eoai-dns.test"):
                 address = "127.0.0.1" if active_family[0] == socket.AF_INET else "::1"
                 return real_getaddrinfo(
                     address,
                     service,
-                    *args,
-                    **{**kwargs, "family": active_family[0]},
+                    family=active_family[0],
+                    type=type,
+                    proto=proto,
+                    flags=flags,
                 )
-            return real_getaddrinfo(host, service, *args, **kwargs)
+            return real_getaddrinfo(host, service, family, type, proto, flags)
 
         monkeypatch.setattr(socket, "getaddrinfo", resolve)
         client = httpx.AsyncClient(trust_env=False, timeout=10)
@@ -271,7 +276,10 @@ async def test_live_provider_client_re_resolves_endpoint_address_family(
             "Provider DNS family change",
             include_ai_task=False,
             base_url=f"http://eoai-dns.test:{port}/v1",
-            conversation_options={CONF_API_MODE: API_MODE_CHAT_COMPLETIONS},
+            conversation_options={
+                CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+                CONF_CHAT_MODEL: "gpt-5.6",
+            },
         )
         await _setup_entry(hass, entry)
 
@@ -362,6 +370,19 @@ def _rotating_tls_material(tmp_path: Path):
         .not_valid_before(now - timedelta(days=1))
         .not_valid_after(now + timedelta(days=30))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+            critical=False,
+        )
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True, content_commitment=False,
+                key_encipherment=False, data_encipherment=False,
+                key_agreement=False, key_cert_sign=True, crl_sign=True,
+                encipher_only=False, decipher_only=False,
+            ),
+            critical=True,
+        )
         .sign(ca_key, hashes.SHA256())
     )
     leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -378,6 +399,14 @@ def _rotating_tls_material(tmp_path: Path):
             .not_valid_after(end)
             .add_extension(
                 x509.BasicConstraints(ca=False, path_length=None), critical=True
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(leaf_key.public_key()),
+                critical=False,
             )
             .add_extension(
                 x509.SubjectAlternativeName(
@@ -616,7 +645,10 @@ async def test_expired_provider_certificate_rotation_recovers_same_live_client(
         "Rotating provider certificate",
         include_ai_task=False,
         base_url=url,
-        conversation_options={CONF_API_MODE: API_MODE_CHAT_COMPLETIONS},
+        conversation_options={
+            CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
+            CONF_CHAT_MODEL: "gpt-5.6",
+        },
     )
     loop = asyncio.get_running_loop()
     previous_handler = loop.get_exception_handler()
