@@ -120,9 +120,6 @@ def _assert_obsolete_files_inert(config_dir: Path) -> None:
     """Old files may remain physically after HACS update, but cannot stay active."""
     installed = _component_dir(config_dir)
 
-    assert f"custom_components.{DOMAIN}.guest_performance" not in sys.modules
-    assert f"custom_components.{DOMAIN}.lifecycle_optimizations" not in sys.modules
-
     frontend_manifest = (
         installed / "frontend" / "dist" / "manifest.json"
     ).read_text(encoding="utf-8")
@@ -149,6 +146,12 @@ def _assert_obsolete_files_inert(config_dir: Path) -> None:
             assert needle not in text, (
                 f"candidate file still references retired HACS orphan {needle}: {path}"
             )
+
+
+def _assert_obsolete_modules_not_loaded() -> None:
+    """A cold boot onto the candidate must not load retired release modules."""
+    assert f"custom_components.{DOMAIN}.guest_performance" not in sys.modules
+    assert f"custom_components.{DOMAIN}.lifecycle_optimizations" not in sys.modules
 
 
 async def _ensure_hacs(hass: Any) -> Any:
@@ -344,6 +347,7 @@ async def _update_to_candidate(hass: Any, config_dir: Path) -> None:
 async def _candidate_migrate(hass: Any, config_dir: Path) -> None:
     """Restart onto the HACS-installed candidate and prove populated state."""
     await _ensure_hacs(hass)
+    _assert_obsolete_modules_not_loaded()
     _candidate_tree_status(config_dir)
     _assert_obsolete_files_inert(config_dir)
     await upgrade_helpers._candidate_migration_phase(hass, config_dir)
@@ -352,6 +356,7 @@ async def _candidate_migrate(hass: Any, config_dir: Path) -> None:
 async def _candidate_restart(hass: Any, config_dir: Path) -> None:
     """One more cold boot proves the HACS update is durably healthy."""
     await _ensure_hacs(hass)
+    _assert_obsolete_modules_not_loaded()
     _candidate_tree_status(config_dir)
     _assert_obsolete_files_inert(config_dir)
     await upgrade_helpers._candidate_restart_phase(hass, config_dir)
