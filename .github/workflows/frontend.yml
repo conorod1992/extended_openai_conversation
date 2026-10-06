@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   packages: read
 
 concurrency:
@@ -80,23 +80,6 @@ jobs:
 
       - name: Check production bundle regression ceilings
         run: python ci/check_frontend_bundle.py
-
-      - name: Commit regenerated frontend bundle on fix branch
-        if: github.head_ref == 'fix/nightly-failures-2026-10-06'
-        run: |
-          if git diff --quiet -- custom_components/extended_openai_conversation_responses/frontend/dist/; then
-            exit 0
-          fi
-          cp -a custom_components/extended_openai_conversation_responses/frontend/dist "$RUNNER_TEMP/generated-dist"
-          git fetch origin fix/nightly-failures-2026-10-06
-          git checkout -B fix/nightly-failures-2026-10-06 origin/fix/nightly-failures-2026-10-06
-          rm -rf custom_components/extended_openai_conversation_responses/frontend/dist
-          cp -a "$RUNNER_TEMP/generated-dist" custom_components/extended_openai_conversation_responses/frontend/dist
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add custom_components/extended_openai_conversation_responses/frontend/dist/
-          git commit -m "Regenerate frontend bundle"
-          git push origin HEAD:fix/nightly-failures-2026-10-06
 
       - name: Verify tracked production frontend bundle
         run: git diff --exit-code -- custom_components/extended_openai_conversation_responses/frontend/dist/
