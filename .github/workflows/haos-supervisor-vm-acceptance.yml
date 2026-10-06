@@ -1,0 +1,185 @@
+name: Home Assistant OS Supervisor VM acceptance
+
+on:
+  schedule:
+    - cron: "17 6 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: haos-supervisor-vm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  haos-supervisor:
+    name: Genuine HA OS + Supervisor smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Install VM tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             qemu-system-x86 qemu-utils ovmf             dosfstools mtools openssh-client xz-utils
+          python3 -m venv "${RUNNER_TEMP}/haos-tools"
+          "${RUNNER_TEMP}/haos-tools/bin/pip" install --upgrade pip
+          "${RUNNER_TEMP}/haos-tools/bin/pip" install aiohttp
+
+      - name: Resolve latest stable HA OS image
+        id: haos
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_JSON="${RUNNER_TEMP}/haos-release.json"
+          curl -fsSL             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             "https://api.github.com/repos/home-assistant/operating-system/releases/latest"             > "$RELEASE_JSON"
+
+          python3 - "$RELEASE_JSON" <<'PY' > "${RUNNER_TEMP}/haos-asset.txt"
+          import json
+          import sys
+
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          matches = [
+              asset
+              for asset in release.get("assets", [])
+              if "generic-x86-64" in asset.get("name", "")
+              and asset.get("name", "").endswith(".qcow2.xz")
+          ]
+          if len(matches) != 1:
+              raise SystemExit(f"Expected one generic x86-64 qcow2.xz asset, got {len(matches)}")
+          print(release["tag_name"])
+          print(matches[0]["browser_download_url"])
+          print(matches[0]["name"])
+          PY
+
+          mapfile -t HAOS_ASSET < "${RUNNER_TEMP}/haos-asset.txt"
+          echo "version=${HAOS_ASSET[0]}" >> "$GITHUB_OUTPUT"
+          echo "url=${HAOS_ASSET[1]}" >> "$GITHUB_OUTPUT"
+          echo "name=${HAOS_ASSET[2]}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare HA OS disk and CONFIG key disk
+        id: prepare
+        env:
+          HAOS_URL: ${{ steps.haos.outputs.url }}
+        run: |
+          set -euo pipefail
+          WORK="${RUNNER_TEMP}/haos-vm"
+          mkdir -p "$WORK"
+
+          curl -fL "$HAOS_URL" -o "$WORK/haos.qcow2.xz"
+          xz -d "$WORK/haos.qcow2.xz"
+          qemu-img resize "$WORK/haos.qcow2" 32G
+
+          ssh-keygen -q -t ed25519 -N "" -f "$WORK/id_ed25519"
+          dd if=/dev/zero of="$WORK/config.img" bs=1M count=16 status=none
+          mkfs.vfat -n CONFIG "$WORK/config.img"
+          mcopy -i "$WORK/config.img" "$WORK/id_ed25519.pub" ::authorized_keys
+
+          OVMF_CODE="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE_4M.fd' | head -n1)"
+          OVMF_VARS="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_VARS_4M.fd' | head -n1)"
+          if [ -z "$OVMF_CODE" ] || [ -z "$OVMF_VARS" ]; then
+            OVMF_CODE="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_CODE.fd' | head -n1)"
+            OVMF_VARS="$(find /usr/share/OVMF -maxdepth 1 -type f -name 'OVMF_VARS.fd' | head -n1)"
+          fi
+          test -f "$OVMF_CODE"
+          test -f "$OVMF_VARS"
+          cp "$OVMF_VARS" "$WORK/OVMF_VARS.fd"
+
+          echo "work=$WORK" >> "$GITHUB_OUTPUT"
+          echo "ovmf_code=$OVMF_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Boot genuine HA OS VM
+        env:
+          WORK: ${{ steps.prepare.outputs.work }}
+          OVMF_CODE: ${{ steps.prepare.outputs.ovmf_code }}
+        run: |
+          set -euo pipefail
+          ACCEL="tcg"
+          CPU="max"
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm || true
+            ACCEL="kvm"
+            CPU="host"
+          fi
+          echo "Using QEMU accelerator: $ACCEL"
+
+          qemu-system-x86_64             -daemonize             -pidfile "$WORK/qemu.pid"             -name eoai-haos-acceptance             -machine "q35,accel=$ACCEL"             -cpu "$CPU"             -smp 2             -m 4096             -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"             -drive "if=pflash,format=raw,file=$WORK/OVMF_VARS.fd"             -drive "file=$WORK/haos.qcow2,if=virtio,format=qcow2,cache=writeback"             -device qemu-xhci             -drive "if=none,id=configdrive,file=$WORK/config.img,format=raw,readonly=on"             -device usb-storage,drive=configdrive             -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:8123-:8123,hostfwd=tcp:127.0.0.1:22222-:22222"             -device virtio-net-pci,netdev=net0             -display none             -serial "file:$WORK/serial.log"
+
+          test -s "$WORK/qemu.pid"
+          kill -0 "$(cat "$WORK/qemu.pid")"
+
+      - name: Run HA OS Supervisor acceptance
+        env:
+          HAOS_EVIDENCE: ${{ runner.temp }}/haos-supervisor-evidence.json
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/haos-tools/bin/python" ci/haos_supervisor_acceptance.py             --repo-root "$GITHUB_WORKSPACE"             --work-dir "${{ steps.prepare.outputs.work }}"             --ssh-key "${{ steps.prepare.outputs.work }}/id_ed25519"             --ssh-port 22222             --ha-port 8123             --evidence "$HAOS_EVIDENCE"
+
+      - name: Add exact-source workflow evidence
+        if: always()
+        env:
+          EVIDENCE: ${{ runner.temp }}/haos-supervisor-evidence.json
+          HAOS_VERSION: ${{ steps.haos.outputs.version }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["EVIDENCE"])
+          payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+          payload.update(
+              {
+                  "candidate_sha": os.environ["GITHUB_SHA"],
+                  "haos_release": os.environ.get("HAOS_VERSION"),
+                  "job_status": os.environ["JOB_STATUS"],
+                  "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+                  "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                  "scheduled_weekly": True,
+              }
+          )
+          path.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Collect VM diagnostics
+        if: always()
+        env:
+          WORK: ${{ steps.prepare.outputs.work }}
+        run: |
+          set +e
+          mkdir -p haos-vm-diagnostics
+          cp "$WORK/serial.log" haos-vm-diagnostics/ 2>/dev/null || true
+          if [ -f "$WORK/qemu.pid" ] && kill -0 "$(cat "$WORK/qemu.pid")" 2>/dev/null; then
+            ssh               -i "$WORK/id_ed25519" -p 22222               -o StrictHostKeyChecking=no               -o UserKnownHostsFile=/dev/null               -o ConnectTimeout=5               root@127.0.0.1               'ha os info --raw-json; ha supervisor info --raw-json; ha core info --raw-json; docker logs --tail 300 hassio_supervisor; docker logs --tail 300 homeassistant'               > haos-vm-diagnostics/runtime.log 2>&1 || true
+            kill "$(cat "$WORK/qemu.pid")" || true
+          fi
+
+      - name: Upload HA OS acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: haos-supervisor-${{ github.sha }}
+          path: ${{ runner.temp }}/haos-supervisor-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload VM diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: haos-supervisor-vm-diagnostics
+          path: haos-vm-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
