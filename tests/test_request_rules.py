@@ -1476,7 +1476,7 @@ def test_normalization_is_conservative_and_predictable() -> None:
         ("café lights", "cafe\u0301 lights"),
         ("straße", "STRASSE"),
         ("ΟΣ", "ος"),
-        ("İSTANBUL", "istanbul"),
+        ("İSTANBUL", "i\u0307stanbul"),
     ],
 )
 async def test_request_rule_matching_has_explicit_unicode_equivalence_contract(
@@ -1513,6 +1513,8 @@ def test_unicode_normalization_distinguishes_dotless_i_from_ascii_i() -> None:
     assert normalize_text("I", settings) == "i"
     assert normalize_text("ı", settings) == "ı"
     assert normalize_text("I", settings) != normalize_text("ı", settings)
+    assert normalize_text("\u0130", settings) == "i\u0307"
+    assert normalize_text("\u0130", settings) != normalize_text("i", settings)
 
 
 def test_session_identity_uses_continuity_or_actual_chat_log_id() -> None:
