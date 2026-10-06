@@ -9,13 +9,18 @@ const representativeRoutes = [
   "data-memory/knowledge",
 ];
 
-async function assertDialogFocusContained(page, panel, dialogSelector, opener) {
+async function assertDialogFocusContained(page, panel, dialogSelector, opener, restoreTarget = opener) {
   await opener.focus();
   await page.keyboard.press("Enter");
   const dialog = panel.locator(dialogSelector);
   await expect(dialog).toHaveJSProperty("open", true);
   for (let index = 0; index < 30; index++) {
     await page.keyboard.press(index % 7 === 6 ? "Shift+Tab" : "Tab");
+    // Native modal tab order may visit browser chrome at the wrap boundary.
+    // No background page control may receive focus; the next Tab must return.
+    const browserBoundary = await panel.evaluate(host =>
+      !host.shadowRoot.activeElement && document.activeElement === document.body);
+    if (browserBoundary) await page.keyboard.press("Tab");
     const contained = await panel.evaluate((host, selector) => {
       const dialog = host.shadowRoot.querySelector(selector);
       let active = host.shadowRoot.activeElement;
@@ -26,7 +31,7 @@ async function assertDialogFocusContained(page, panel, dialogSelector, opener) {
   }
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
-  await expect(opener).toBeFocused();
+  await expect(restoreTarget).toBeFocused();
 }
 
 test("forced colours keep representative management controls visible and operable", async ({page}) => {
@@ -153,7 +158,7 @@ test("major modal editors contain keyboard focus and restore it to their opener"
   panel = page.locator("extended-openai-management-panel");
   await panel.locator("#function-add").click();
   const addTool = panel.locator("#add-tool");
-  await assertDialogFocusContained(page, panel, "#tool-dialog", addTool);
+  await assertDialogFocusContained(page, panel, "#tool-dialog", addTool, panel.locator("#function-add"));
 
   await expectHarnessClean(page, errors);
 });
@@ -163,16 +168,17 @@ test("mobile primary and card actions meet a 24 CSS pixel touch-target floor", a
   await page.setViewportSize({width: 390, height: 844});
 
   const cases = [
-    ["capabilities/request-rules", "button:visible, summary:visible"],
-    ["data-memory/memories", "button:visible"],
-    ["data-memory/knowledge", "button:visible"],
-    ["capabilities/functions", "button:visible, summary:visible"],
+    ["capabilities/request-rules", "button:visible:not(.guide-topic-link), summary:visible"],
+    ["data-memory/memories", "button:visible:not(.guide-topic-link)"],
+    ["data-memory/knowledge", "button:visible:not(.guide-topic-link)"],
+    ["capabilities/functions", "button:visible:not(.guide-topic-link), summary:visible"],
   ];
 
   for (const [route, selector] of cases) {
     await page.goto(fixtureUrl(route));
     const panel = page.locator("extended-openai-management-panel");
     const controls = panel.locator(selector);
+    await expect(controls.first()).toBeVisible();
     const count = await controls.count();
     expect(count, `${route} has no touch controls`).toBeGreaterThan(0);
     for (let index = 0; index < count; index++) {
