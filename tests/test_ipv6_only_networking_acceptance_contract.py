@@ -3,6 +3,8 @@
 import ast
 from pathlib import Path
 
+import httpx
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +33,20 @@ def test_ipv6_workflow_is_nightly_manual_only() -> None:
     assert "pull_request:" not in trigger_block
     assert "push:" not in trigger_block
     assert 'RUN_IPV6_ONLY_ACCEPTANCE: "1"' in text
-    assert 'NO_PROXY: "::1,[::1],127.0.0.1,localhost"' in text
+    assert 'NO_PROXY: "::1,127.0.0.1,localhost"' in text
+
+
+def test_ipv6_workflow_proxy_bypass_is_accepted_by_httpx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    environment = workflow["jobs"]["ipv6-only"]["env"]
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.setenv("NO_PROXY", environment["NO_PROXY"])
+
+    # Construction parses bypass hosts even when no HTTP request is made.
+    with httpx.Client(trust_env=True):
+        pass
 
 
 def test_ipv6_journey_cannot_fall_back_to_ipv4() -> None:
