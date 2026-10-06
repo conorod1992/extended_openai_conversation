@@ -37,8 +37,15 @@ test.describe("browser de-DE numeric configuration", () => {
 
   test("decimal model settings remain numeric and never become tenfold values", async ({page}) => {
     const errors = trackPageErrors(page);
-    await page.goto(fixtureUrl("assistant/model-responses"));
+    await page.goto(fixtureUrl("assistant/basics"));
     const panel = page.locator("extended-openai-management-panel");
+    await panel.evaluate(host => {
+      const capabilities = {supports_temperature: true, temperature: {support: "always"}};
+      host._configData.model_capabilities = capabilities;
+      host._result.model_capabilities = capabilities;
+      host._modelCatalogData.model_capabilities = capabilities;
+      host._render();
+    });
     const temperature = panel.locator('[data-config="temperature"]');
     await expect(temperature).toHaveAttribute("type", "number");
     // HTML number inputs expose a locale-independent canonical value even
@@ -49,7 +56,7 @@ test.describe("browser de-DE numeric configuration", () => {
       .filter(call => call.section === "configuration" && call.action === "save")
       .at(-1)?.config?.temperature)).toBe(0.7);
     expect(await temperature.inputValue()).not.toBe("7");
-    await page.goto(fixtureUrl("assistant/model-responses"));
+    await page.goto(fixtureUrl("assistant/basics"));
     await expect(panel.locator('[data-config="temperature"]')).toHaveValue("0.7");
     await expectHarnessClean(page, errors);
   });
