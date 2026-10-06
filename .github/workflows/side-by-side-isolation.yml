@@ -1,0 +1,97 @@
+name: Side-by-side Integration Isolation
+
+on:
+  pull_request:
+    paths:
+      - "custom_components/extended_openai_conversation_responses/__init__.py"
+      - "custom_components/extended_openai_conversation_responses/ai_task.py"
+      - "custom_components/extended_openai_conversation_responses/conversation.py"
+      - "custom_components/extended_openai_conversation_responses/management_ui.py"
+      - "custom_components/extended_openai_conversation_responses/memory.py"
+      - "custom_components/extended_openai_conversation_responses/frontend/**"
+      - "tests_real_ha/test_identity_isolation_matrix.py"
+      - "tests/test_side_by_side_identity_contract.py"
+      - ".github/workflows/side-by-side-isolation.yml"
+  schedule:
+    - cron: "37 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: side-by-side-isolation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  identity-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      ORIGINAL_RELEASE: "2.0.2"
+      ORIGINAL_SHA: "ceb3dc224c1d59e526a565818b618daafeae3855"
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Reconcile stable Home Assistant test environment
+        run: |
+          VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json"))["info"]["version"])')"
+          PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
+          export EOAI_EXPECTED_HA_VERSION="$VERSION"
+          export EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION="$PLUGIN_VERSION"
+          bash ci/reconcile_stable_environment.sh
+
+      - name: Stage immutable original integration
+        run: |
+          set -euo pipefail
+          ORIGINAL_ROOT="$RUNNER_TEMP/original-extended-openai"
+          git init "$ORIGINAL_ROOT"
+          git -C "$ORIGINAL_ROOT" remote add origin \
+            https://github.com/jekalmin/extended_openai_conversation.git
+          git -C "$ORIGINAL_ROOT" fetch --depth=1 origin "$ORIGINAL_SHA"
+          git -C "$ORIGINAL_ROOT" checkout --detach FETCH_HEAD
+          test "$(git -C "$ORIGINAL_ROOT" rev-parse HEAD)" = "$ORIGINAL_SHA"
+          ORIGINAL_COMPONENT_DIR="$ORIGINAL_ROOT/custom_components/extended_openai_conversation"
+          test -f "$ORIGINAL_COMPONENT_DIR/manifest.json"
+          test "$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' \
+            "$ORIGINAL_COMPONENT_DIR/manifest.json")" = "$ORIGINAL_RELEASE"
+          echo "ORIGINAL_COMPONENT_DIR=$ORIGINAL_COMPONENT_DIR" >> "$GITHUB_ENV"
+          echo "Pinned original integration: $ORIGINAL_RELEASE ($ORIGINAL_SHA)" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run cross-domain and reused-name identity acceptance
+        run: |
+          # The original release pins an older SDK that remains supported by
+          # the fork. Resolve both delivered manifests together before HA boots.
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          manifests = (
+              Path(os.environ["ORIGINAL_COMPONENT_DIR"]) / "manifest.json",
+              Path("custom_components/extended_openai_conversation_responses/manifest.json"),
+          )
+          requirements = [
+              requirement
+              for manifest in manifests
+              for requirement in json.loads(manifest.read_text())["requirements"]
+          ]
+          subprocess.check_call([sys.executable, "-m", "pip", "install", *requirements])
+          PY
+          python -m pip check
+          python -m pytest -q \
+            tests_real_ha/test_identity_isolation_matrix.py \
+            tests/test_side_by_side_identity_contract.py
