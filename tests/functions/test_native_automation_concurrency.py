@@ -232,3 +232,27 @@ def authenticated_automation_admin(hass):
     )
     with bind_active_ha_context(Context(user_id="admin")):
         yield
+
+
+async def test_automation_update_finishes_before_propagating_cancellation() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = False
+
+    async def operation() -> str:
+        nonlocal completed
+        started.set()
+        await release.wait()
+        completed = True
+        return "automation_id"
+
+    task = asyncio.create_task(native._async_settle_automation_update(operation()))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert completed

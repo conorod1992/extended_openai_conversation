@@ -6,6 +6,8 @@ from copy import deepcopy
 from datetime import datetime
 import json
 from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -29,13 +31,17 @@ from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
+    _ACTIVE_FUNCTION_EXECUTOR,
+    _ACTIVE_FUNCTION_RESULTS,
     DEFAULT_MATCHING,
     DEFAULT_WORDING_GROUPS,
     RequestRuleRuntime,
     RequestRules,
     RequestRuleStore,
+    _assign_missing_result_step_ids,
     _bounded_function_result,
     _MatchCursor,
+    _validate_result_dependencies,
     async_call_active_function,
     async_evaluate_rule,
     canonical_action_signature,
@@ -43,6 +49,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     request_rule_session_id,
     resolve_result_values,
     validate_rule,
+    validate_rule_groups,
     validate_wording_groups,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -103,6 +110,50 @@ async def manager(*rules, defaults=None):
     )
     await result.async_initialize()
     return result
+
+
+@pytest.mark.parametrize("fuzzy", [False, True])
+async def test_direct_match_skips_previously_excluded_rule_ids(fuzzy: bool) -> None:
+    settings = {**DEFAULT_MATCHING, "fuzzy": fuzzy}
+    rule = local_rule("Kitchen lights", phrases=["turn on the kitchen light"])
+    rule["matching"] = settings
+    fallback = local_rule("Fallback lights", phrases=["turn on the kitchen light"])
+    fallback["matching"] = settings
+    rules = await manager(rule, fallback)
+
+    match = rules.match("turn on the kitchen light", frozenset({rule["id"]}))
+
+    assert match is not None
+    assert match.rule["id"] == fallback["id"]
+
+
+def test_rule_group_metadata_and_result_step_id_assignment_are_stable() -> None:
+    assert validate_rule_groups([{"id": "rooms", "name": "Rooms"}]) == [
+        {"id": "rooms", "name": "Rooms"}
+    ]
+    with pytest.raises(ValueError, match="group ids must be unique"):
+        validate_rule_groups(
+            [{"id": "rooms", "name": "Rooms"}, {"id": "rooms", "name": "Other"}]
+        )
+
+    rule = {
+        "action": {
+            "actions": [
+                {"type": "function", "result_alias": "reading"},
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "status"},
+                },
+                {"type": "function", "name": "no-result"},
+            ]
+        }
+    }
+    assigned = _assign_missing_result_step_ids(rule)
+
+    assert rule["action"]["actions"][0].get("step_id") is None
+    assert len(assigned["action"]["actions"][0]["step_id"]) == 32
+    assert len(assigned["action"]["actions"][1]["data"]["step_id"]) == 32
+    assert "step_id" not in assigned["action"]["actions"][2]
 
 
 async def test_only_when_uses_first_eligible_text_match_and_preview_trace(
@@ -499,6 +550,76 @@ async def test_global_drag_reorder_keeps_groups_and_compiled_patterns() -> None:
     ]
 
 
+async def test_move_at_order_boundaries_is_a_noop() -> None:
+    store = MemoryStore(
+        {
+            "rules": [
+                local_rule("First", phrases=["first"]),
+                local_rule("Second", phrases=["second"], order=1),
+            ]
+        }
+    )
+    rules = RequestRules(store)
+    await rules.async_initialize()
+    store.saves = 0
+
+    assert await rules.async_move("first", "up") == rules.snapshot()["rules"][0]
+    assert await rules.async_move("first", "top") == rules.snapshot()["rules"][0]
+    assert await rules.async_move("second", "down") == rules.snapshot()["rules"][1]
+    assert await rules.async_move("second", "bottom") == rules.snapshot()["rules"][1]
+    assert store.saves == 0
+    with pytest.raises(ValueError, match="direction"):
+        await rules.async_move("first", "sideways")
+    with pytest.raises(ValueError, match="target rule id"):
+        await rules.async_move("first", "before")
+
+
+async def test_initialize_recovers_each_invalid_stored_matcher_section() -> None:
+    store = MemoryStore(
+        {
+            "groups": [{"id": "broken"}],
+            "defaults": {"fuzzy": "yes"},
+            "wording_groups": [{"canonical": "home", "alternatives": "bad"}],
+        }
+    )
+    rules = RequestRules(store)
+
+    await rules.async_initialize()
+
+    assert rules.snapshot()["groups"] == []
+    assert rules.snapshot()["defaults"] == DEFAULT_MATCHING
+    assert rules.snapshot()["wording_groups"] == list(DEFAULT_WORDING_GROUPS)
+    assert store.saves == 1
+
+
+def test_backup_rejects_rules_with_missing_group_references() -> None:
+    rule = local_rule("Grouped", phrases=["hello"])
+    rule["group_id"] = "missing-group"
+
+    with pytest.raises(ValueError, match="unknown group"):
+        RequestRules.validate_backup_data({"groups": [], "rules": [rule]})
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("conditions", "not-a-list", "Only when conditions must be a list"),
+        ("actions", [None], "Home Assistant action must be an object"),
+    ],
+)
+def test_rule_validation_rejects_invalid_condition_and_action_containers(
+    field: str, value: Any, message: str
+) -> None:
+    rule = local_rule()
+    if field == "conditions":
+        rule[field] = value
+    else:
+        rule["action"][field] = value
+
+    with pytest.raises(ValueError, match=message):
+        validate_rule(rule)
+
+
 async def test_group_name_change_does_not_rebuild_matcher() -> None:
     rule = local_rule("First", phrases=["hello"])
     rule["group_id"] = "group-1"
@@ -745,6 +866,11 @@ async def test_result_alias_validation_and_substitution() -> None:
     )
     assert resolve_result_values("{battery}", {}, {"battery": False}) is False
     assert resolve_result_values("{battery}", {}, {"battery": 0}) == 0
+    assert resolve_result_values(
+        {"message": "Battery: {battery.level}", "items": ["{device}", 7]},
+        {"device": "tablet"},
+        {"battery": {"level": 62}},
+    ) == {"message": "Battery: 62", "items": ["tablet", 7]}
     assert (
         resolve_result_values(
             "{battery.items.0.name}", {}, {"battery": {"items": [{"name": "tablet"}]}}
@@ -759,6 +885,54 @@ async def test_result_alias_validation_and_substitution() -> None:
     rule["action"]["actions"][0]["data"]["result_alias"] = "bad-name"
     with pytest.raises(ValueError, match="alias"):
         validate_rule(rule)
+
+
+async def test_function_result_capture_requires_active_result_context() -> None:
+    executor = AsyncMock(return_value={"result": "completed"})
+    token = _ACTIVE_FUNCTION_EXECUTOR.set(executor)
+    try:
+        with pytest.raises(HomeAssistantError, match="require an active Request Rule"):
+            await async_call_active_function("lookup", {}, result_alias="lookup_result")
+    finally:
+        _ACTIVE_FUNCTION_EXECUTOR.reset(token)
+
+    executor.assert_awaited_once_with("lookup", {})
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"plain": "mapping"}, {"plain": "mapping"}),
+        ({"result": "not valid JSON"}, "not valid JSON"),
+    ],
+)
+async def test_function_capture_preserves_unwrapped_and_non_json_results(
+    payload, expected
+) -> None:
+    results = {}
+
+    async def execute(_function, _arguments):
+        return SimpleNamespace(tool_result=payload)
+
+    executor_token = _ACTIVE_FUNCTION_EXECUTOR.set(execute)
+    results_token = _ACTIVE_FUNCTION_RESULTS.set(results)
+    try:
+        captured = await async_call_active_function("lookup", {}, "value")
+    finally:
+        _ACTIVE_FUNCTION_RESULTS.reset(results_token)
+        _ACTIVE_FUNCTION_EXECUTOR.reset(executor_token)
+
+    assert captured == expected
+    assert results["value"] == expected
+
+
+def test_result_resolution_rejects_out_of_range_list_paths() -> None:
+    with pytest.raises(ValueError, match="path .* is unavailable"):
+        resolve_result_values(
+            "{reading.items.1}", {}, {"reading": {"items": ["only item"]}}
+        )
+    with pytest.raises(ValueError, match="Function result missing is unavailable"):
+        resolve_result_values("{missing.value}", {}, {})
 
 
 async def test_result_dependencies_and_bounds() -> None:
@@ -806,6 +980,214 @@ async def test_result_dependencies_and_bounds() -> None:
         _bounded_function_result("x" * 20000)
     with pytest.raises(HomeAssistantError, match="deeply nested"):
         _bounded_function_result([[[[[[[[[0]]]]]]]]])
+    with pytest.raises(HomeAssistantError, match="keys must be text"):
+        _bounded_function_result({1: "invalid key"})
+    with pytest.raises(HomeAssistantError, match="must contain JSON values"):
+        _bounded_function_result(object())
+
+
+async def test_match_cursor_deduplicates_matching_phrases_for_one_rule() -> None:
+    rules = await manager(
+        local_rule(phrases=["turn on", "turn on lights"], match_type="starts_with")
+    )
+    cursor = _MatchCursor(rules._committed_matching_snapshot, "turn on lights")
+
+    match = cursor.next_match()
+
+    assert match is not None and match.rule["id"] == "good-night"
+    assert match.phrase == "turn on"
+    assert cursor.next_match() is None
+
+
+@pytest.mark.parametrize(
+    "phrases",
+    [
+        ["open kitchen lights", "turn off music", "open kitchen light"],
+        ["open kitchen light", "open kitchen lights", "turn off music"],
+    ],
+)
+async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule(phrases) -> None:
+    matching = {
+        "word_forms": False,
+        "wording_alternatives": False,
+        "fuzzy": True,
+        "fuzzy_threshold": 70,
+    }
+    rules = await manager(
+        local_rule(
+            phrases=phrases,
+            match_type="equals",
+            behavior="custom",
+            matching=matching,
+        )
+    )
+    cursor = _MatchCursor(
+        rules._committed_matching_snapshot, "open kitchen lightz"
+    )
+
+    match = cursor.next_match()
+
+    assert match is not None and match.fuzzy
+    assert match.phrase == "open kitchen light"
+    assert cursor.next_match() is None
+
+
+async def test_empty_snapshot_has_no_eligible_matches() -> None:
+    rules = await manager()
+    skipped: list[dict[str, str]] = []
+
+    matches = [
+        match
+        async for match in rules.async_eligible_matches(
+            SimpleNamespace(), "anything", skipped
+        )
+    ]
+
+    assert matches == []
+    assert skipped == []
+
+
+@pytest.mark.parametrize(
+    ("actions", "slots", "success", "failure", "message"),
+    [
+        (
+            [
+                {
+                    "choose": [
+                        {
+                            "sequence": [
+                                {
+                                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                                    "data": {"result_alias": "reading"},
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            set(),
+            "",
+            "",
+            "only by top-level steps",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "request"},
+                }
+            ],
+            set(),
+            "",
+            "",
+            "distinct simple identifier",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "bad-name"},
+                }
+            ],
+            set(),
+            "",
+            "",
+            "distinct simple identifier",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "device"},
+                }
+            ],
+            {"device"},
+            "",
+            "",
+            "distinct simple identifier",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading", "step_id": "bad"},
+                }
+            ],
+            set(),
+            "",
+            "",
+            "step IDs must be unique",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading", "step_id": "a" * 32},
+                },
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading", "step_id": "b" * 32},
+                },
+            ],
+            set(),
+            "",
+            "",
+            "aliases must be unique",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading", "step_id": "a" * 32},
+                },
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "other", "step_id": "a" * 32},
+                },
+            ],
+            set(),
+            "",
+            "",
+            "step IDs must be unique",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading"},
+                }
+            ],
+            set(),
+            "{missing.value}",
+            "",
+            "missing Function result",
+        ),
+        (
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {"result_alias": "reading"},
+                }
+            ],
+            set(),
+            "",
+            "{reading.value}",
+            "Failure response cannot reference Function results",
+        ),
+    ],
+)
+def test_result_dependency_validation_rejects_unsafe_alias_contracts(
+    actions, slots, success, failure, message
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _validate_result_dependencies(
+            {
+                "actions": actions,
+                "success_response": success,
+                "failure_response": failure,
+            },
+            slots,
+        )
 
 
 async def test_groups_preserve_global_order_and_revision() -> None:
@@ -829,6 +1211,17 @@ async def test_groups_preserve_global_order_and_revision() -> None:
     moved = await rules.async_move("two", "top", expected_revision=rules.revision())
     assert moved["order"] == 0
     assert rules.match("good night").rule["name"] == "Two"
+
+
+async def test_group_updates_reject_non_list_and_unknown_rule_group() -> None:
+    rules = await manager(local_rule("Grouped"))
+    with pytest.raises(ValueError, match="groups must be a list"):
+        await rules.async_set_groups(None)
+
+    changed = rules.snapshot()["rules"][0]
+    changed["group_id"] = "missing"
+    with pytest.raises(ValueError, match="group does not exist"):
+        await rules.async_update(changed["id"], changed)
 
 
 async def test_group_creation_assigns_stable_backend_id() -> None:
@@ -1859,6 +2252,79 @@ def routing_rule(*, scope="request", reset=False, match_type="starts_with"):
     }
 
 
+def test_routing_rule_validates_required_captured_provider_input() -> None:
+    rule = routing_rule(match_type="sentence_pattern")
+    rule["phrases"] = ["ask {query}", "please ask {query}"]
+    rule["action"]["continue_to_ai"] = True
+    rule["ai_input_mode"] = "capture"
+    rule["ai_input_capture"] = "query"
+
+    validated = validate_rule(rule)
+
+    assert validated["ai_input_mode"] == "capture"
+    assert validated["ai_input_capture"] == "query"
+    assert validated["slots"] == [{"name": "query"}]
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"ai_input_mode": "invalid"}, "AI input must be Original request"),
+        (
+            {"match_type": "equals", "ai_input_mode": "capture"},
+            "Captured AI input requires a Sentence Pattern capture",
+        ),
+        (
+            {
+                "phrases": ["ask {query}"],
+                "ai_input_mode": "capture",
+                "ai_input_capture": "missing",
+            },
+            "Captured AI input must exist in every trigger",
+        ),
+        (
+            {
+                "phrases": ["[{query}] ask"],
+                "ai_input_mode": "capture",
+                "ai_input_capture": "query",
+            },
+            "Captured AI input must be present on every match",
+        ),
+        (
+            {
+                "phrases": ["ask {query}"],
+                "ai_input_mode": "capture",
+                "ai_input_capture": "query",
+                "action_continue_to_ai": False,
+            },
+            "Captured AI input requires Continue to AI",
+        ),
+        (
+            {"ai_input_mode": "original", "ai_input_capture": "query"},
+            "Original AI input cannot select a capture",
+        ),
+    ],
+)
+def test_routing_rule_rejects_invalid_captured_provider_input(
+    change, message
+) -> None:
+    rule = routing_rule()
+    rule["match_type"] = "sentence_pattern"
+    rule["phrases"] = ["ask {query}"]
+    rule["action"]["continue_to_ai"] = True
+    settings = deepcopy(change)
+    if "action_continue_to_ai" in settings:
+        rule["action"]["continue_to_ai"] = settings.pop("action_continue_to_ai")
+    if "match_type" in settings:
+        rule["match_type"] = settings.pop("match_type")
+        if rule["match_type"] == "equals":
+            rule["phrases"] = ["ask"]
+    rule.update(settings)
+
+    with pytest.raises(ValueError, match=message):
+        validate_rule(rule)
+
+
 async def test_single_request_override_and_provider_assembly() -> None:
     rules = await manager(routing_rule())
     runtime = RequestRuleRuntime()
@@ -1963,6 +2429,55 @@ async def test_conversation_overrides_compose_across_separate_rules() -> None:
     assert runtime.get("one") == {
         CONF_CHAT_MODEL: "gpt-5-mini",
         CONF_REASONING_EFFORT: "low",
+    }
+
+
+async def test_conversation_reset_clears_prior_request_reset_during_rule_cascade() -> None:
+    request_reset = routing_rule(scope="request", reset=True)
+    request_reset["order"] = 0
+    request_reset["continue_matching"] = True
+    request_reset["action"]["continue_to_ai"] = False
+    conversation_reset = routing_rule(scope="conversation", reset=True)
+    conversation_reset["order"] = 1
+    conversation_reset["action"]["continue_to_ai"] = False
+    rules = await manager(request_reset, conversation_reset)
+
+    result = await async_evaluate_rule(
+        SimpleNamespace(),
+        rules,
+        RequestRuleRuntime(),
+        "think carefully about this",
+        "session",
+    )
+
+    assert result is not None
+    assert result.match.rule["action"]["scope"] == "conversation"
+    assert result.request_override is None
+
+
+async def test_conversation_route_reapplies_new_values_after_request_reset() -> None:
+    request_reset = routing_rule(scope="request", reset=True)
+    request_reset["order"] = 0
+    request_reset["continue_matching"] = True
+    request_reset["action"]["continue_to_ai"] = False
+    conversation_route = routing_rule(scope="conversation")
+    conversation_route["order"] = 1
+    conversation_route["action"]["continue_to_ai"] = False
+    rules = await manager(request_reset, conversation_route)
+
+    result = await async_evaluate_rule(
+        SimpleNamespace(),
+        rules,
+        RequestRuleRuntime(),
+        "think carefully about this",
+        "session",
+    )
+
+    assert result is not None
+    assert result.request_override == {
+        "__request_rule_reset__": "1",
+        CONF_CHAT_MODEL: "gpt-5",
+        CONF_REASONING_EFFORT: "high",
     }
 
 

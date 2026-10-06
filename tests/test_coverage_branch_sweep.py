@@ -1,0 +1,1932 @@
+"""Focused branch coverage for storage, schema, and debug lifecycle edges."""
+
+from __future__ import annotations
+
+import asyncio
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
+from custom_components.extended_openai_conversation_responses import debug
+from custom_components.extended_openai_conversation_responses.entity import (
+    _adjust_schema,
+    _make_schema_nullable,
+    _normalize_function_result,
+    _normalize_url_citation,
+    _schema_explicitly_allows_null,
+)
+from custom_components.extended_openai_conversation_responses.strict_store import (
+    RecoveryGuardedStore,
+    _async_settle_store_io,
+    async_storage_lock,
+)
+
+
+@pytest.mark.asyncio
+async def test_settle_store_io_propagates_native_task_cancellation() -> None:
+    async def cancelled_operation() -> None:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _async_settle_store_io(cancelled_operation())
+
+
+@pytest.mark.asyncio
+async def test_settle_store_io_finishes_native_io_before_caller_cancellation() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = False
+
+    async def operation() -> str:
+        nonlocal finished
+        started.set()
+        await release.wait()
+        finished = True
+        return "saved"
+
+    task = asyncio.create_task(_async_settle_store_io(operation()))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert finished
+
+
+@pytest.mark.asyncio
+async def test_settle_store_io_preserves_native_exception_after_shield() -> None:
+    async def operation() -> None:
+        raise OSError("disk unavailable")
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        await _async_settle_store_io(operation())
+
+
+def test_recovery_guarded_store_availability_delegates_only_when_bound() -> None:
+    store = RecoveryGuardedStore.__new__(RecoveryGuardedStore)
+    store._recovery_gate = None
+    store.require_available()
+    assert store.recovery_pending is False
+
+    gate = SimpleNamespace(recovery_required=True, require_available=Mock())
+    store._recovery_gate = gate
+    assert store.recovery_pending is True
+    store.require_available()
+    gate.require_available.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_storage_lock_uses_recovery_gate_when_store_is_bound() -> None:
+    entered: list[str] = []
+
+    class Gate:
+        recovery_required = False
+
+        @asynccontextmanager
+        async def shared(self, *, maintenance: bool):
+            assert maintenance is True
+            entered.append("gate")
+            try:
+                yield
+            finally:
+                entered.append("gate-exit")
+
+    store = RecoveryGuardedStore.__new__(RecoveryGuardedStore)
+    store._recovery_gate = Gate()
+    lock = asyncio.Lock()
+
+    async with async_storage_lock(store, lock):
+        assert lock.locked()
+        entered.append("body")
+
+    assert entered == ["gate", "body", "gate-exit"]
+    assert not lock.locked()
+
+
+@pytest.mark.asyncio
+async def test_storage_lock_falls_back_for_non_guarded_storage() -> None:
+    lock = asyncio.Lock()
+    async with async_storage_lock(SimpleNamespace(_store=object()), lock):
+        assert lock.locked()
+    assert not lock.locked()
+
+
+@pytest.mark.parametrize(
+    ("schema", "expected"),
+    [
+        ({"nullable": True}, True),
+        ({"type": "null"}, True),
+        ({"type": ["string", "null"]}, True),
+        ({"enum": ["a", None]}, True),
+        ({"const": None}, True),
+        ({"type": "string"}, False),
+        ({"enum": ["a"]}, False),
+        ({"const": "a"}, False),
+        ({"anyOf": [{"type": "string"}, {"type": "null"}]}, True),
+        ({"anyOf": [{"type": "string"}, {"type": "number"}]}, False),
+        ({"oneOf": [{"type": "string"}, {"type": "null"}]}, True),
+        ({"oneOf": [{"type": "null"}, {"const": None}]}, False),
+        ({"allOf": [{"type": "null"}, {"const": None}]}, True),
+        ({"allOf": [{"type": "null"}, {"type": "string"}]}, False),
+        ({"allOf": []}, False),
+    ],
+)
+def test_schema_nullability_matrix(schema: dict, expected: bool) -> None:
+    assert _schema_explicitly_allows_null(schema) is expected
+
+
+@pytest.mark.parametrize(
+    ("schema", "expected"),
+    [
+        ({"type": "string"}, {"type": ["string", "null"]}),
+        ({"type": ["string", "number"]}, {"type": ["string", "number", "null"]}),
+        (
+            {"enum": ["a", "b"]},
+            {"anyOf": [{"enum": ["a", "b"]}, {"type": "null"}]},
+        ),
+        (
+            {"const": "a"},
+            {"anyOf": [{"const": "a"}, {"type": "null"}]},
+        ),
+        (
+            {"anyOf": [{"type": "string"}]},
+            {
+                "anyOf": [
+                    {"anyOf": [{"type": "string"}]},
+                    {"type": "null"},
+                ]
+            },
+        ),
+    ],
+)
+def test_make_schema_nullable_variants(schema: dict, expected: dict) -> None:
+    _make_schema_nullable(schema)
+    assert schema == expected
+
+
+def test_make_schema_nullable_leaves_already_nullable_schema_unchanged() -> None:
+    schema = {"type": ["string", "null"]}
+    _make_schema_nullable(schema)
+    assert schema == {"type": ["string", "null"]}
+
+
+def test_adjust_schema_recurses_objects_arrays_and_compositions() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "already_required": {"type": "integer"},
+            "optional": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"nested": {"type": "string"}},
+                },
+            },
+            "choice": {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "object", "properties": {"flag": {"type": "boolean"}}},
+                ]
+            },
+            "ignored": "not-a-schema",
+        },
+        "required": ["already_required"],
+    }
+
+    _adjust_schema(schema)
+
+    assert schema["strict"] is True
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["already_required", "optional", "choice"]
+    optional = schema["properties"]["optional"]
+    assert optional["type"] == ["array", "null"]
+    nested = optional["items"]
+    assert nested["strict"] is True
+    assert nested["required"] == ["nested"]
+    assert nested["properties"]["nested"]["type"] == ["string", "null"]
+    choice = schema["properties"]["choice"]
+    assert _schema_explicitly_allows_null(choice)
+    original_choice = choice["anyOf"][0]
+    object_variant = original_choice["anyOf"][1]
+    assert object_variant["strict"] is True
+    assert object_variant["required"] == ["flag"]
+
+
+def test_adjust_schema_honours_legacy_nullable_keyword() -> None:
+    schema = {"type": "string", "nullable": True}
+    _adjust_schema(schema)
+    assert schema == {"type": ["string", "null"]}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ({"ok": True}, {"ok": True}),
+        ([1, 2, 3], [1, 2, 3]),
+        ({1, 2}, "{1, 2}"),
+    ],
+)
+def test_normalize_function_result_serializable_and_fallback(value, expected) -> None:
+    assert _normalize_function_result(value) == expected
+
+
+def test_normalize_url_citation_accepts_objects_and_rejects_invalid_indexes() -> None:
+    citation = SimpleNamespace(
+        type="url_citation",
+        start_index=2,
+        end_index=8,
+        title="Docs",
+        url="https://example.invalid",
+    )
+    assert _normalize_url_citation(citation) == {
+        "type": "url_citation",
+        "start_index": 2,
+        "end_index": 8,
+        "title": "Docs",
+        "url": "https://example.invalid",
+    }
+    assert _normalize_url_citation({"type": "other"}) is None
+    assert (
+        _normalize_url_citation(
+            {"type": "url_citation", "start_index": "2", "end_index": 8}
+        )
+        is None
+    )
+
+
+class _Request:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+        self.finished: list[tuple[bool, BaseException | None]] = []
+
+    def add_event(self, event: object) -> None:
+        self.events.append(event)
+
+    def finish(
+        self, *, successful: bool, error: BaseException | None = None
+    ) -> None:
+        self.finished.append((successful, error))
+
+
+class _AsyncIterator:
+    def __init__(self, events: list[object], error: BaseException | None = None) -> None:
+        self.events = list(events)
+        self.error = error
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.events:
+            return self.events.pop(0)
+        if self.error is not None:
+            error, self.error = self.error, None
+            raise error
+        raise StopAsyncIteration
+
+
+@pytest.mark.asyncio
+async def test_debug_stream_records_events_and_finishes_on_exhaustion() -> None:
+    request = _Request()
+    stream = debug._DebugAsyncStream(_AsyncIterator(["one", "two"]), request)
+
+    assert [event async for event in stream] == ["one", "two"]
+    assert request.events == ["one", "two"]
+    assert request.finished == [(True, None)]
+
+
+@pytest.mark.asyncio
+async def test_debug_stream_records_iteration_failure() -> None:
+    request = _Request()
+    error = RuntimeError("stream failed")
+    stream = debug._DebugAsyncStream(_AsyncIterator([], error), request)
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        await stream.__anext__()
+    assert request.finished == [(False, error)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_kind", ["missing", "sync", "async"])
+async def test_debug_stream_close_surfaces_all_delegate_close_shapes(close_kind: str) -> None:
+    request = _Request()
+    delegate = _AsyncIterator([])
+
+    if close_kind == "sync":
+        delegate.close = Mock(return_value="closed")
+    elif close_kind == "async":
+        delegate.close = AsyncMock(return_value="closed")
+
+    stream = debug._DebugAsyncStream(delegate, request)
+    result = await stream.close()
+
+    if close_kind == "missing":
+        assert result is None
+    else:
+        assert result == "closed"
+    assert request.finished == [(True, None)]
+
+
+@pytest.mark.asyncio
+async def test_debug_stream_context_exit_delegates_and_records_failure() -> None:
+    request = _Request()
+    delegate = _AsyncIterator([])
+    delegate.__aexit__ = AsyncMock()
+    stream = debug._DebugAsyncStream(delegate, request)
+    error = ValueError("consumer failed")
+
+    await stream.__aexit__(ValueError, error, None)
+
+    delegate.__aexit__.assert_awaited_once_with(ValueError, error, None)
+    assert request.finished == [(False, error)]
+
+
+@pytest.mark.asyncio
+async def test_debug_endpoint_without_trace_is_transparent(monkeypatch) -> None:
+    delegate = SimpleNamespace(create=AsyncMock(return_value={"ok": True}), marker=42)
+    monkeypatch.setattr(debug, "current_debug_trace", lambda: None)
+    proxy = debug._DebugEndpointProxy(delegate, "responses")
+
+    assert await proxy.create(model="test") == {"ok": True}
+    assert proxy.marker == 42
+    delegate.create.assert_awaited_once_with(model="test")
+
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_survives_provider_usage_and_sdk_metadata_failures(
+    hass, monkeypatch
+) -> None:
+    from importlib.metadata import PackageNotFoundError
+
+    from custom_components.extended_openai_conversation_responses import diagnostics
+
+    subentry = SimpleNamespace(
+        subentry_id="agent-1",
+        subentry_type="conversation",
+        data={},
+    )
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        data={},
+        subentries={"agent-1": subentry},
+    )
+
+    monkeypatch.setattr(
+        diagnostics,
+        "build_provider_request_snapshot",
+        Mock(side_effect=ValueError("invalid provider configuration")),
+    )
+    monkeypatch.setattr(diagnostics, "conversation_tools_required", Mock(return_value=False))
+    monkeypatch.setattr(
+        diagnostics,
+        "async_get_continuity",
+        Mock(return_value=SimpleNamespace(stats=lambda: {"continuity_sessions": 0})),
+    )
+    monkeypatch.setattr(diagnostics, "_configured_function_tools", Mock(return_value=[]))
+    monkeypatch.setattr(diagnostics, "validate_function_groups", Mock(return_value=[]))
+    monkeypatch.setattr(diagnostics, "get_function_group_runtime", Mock(return_value=None))
+    guest = SimpleNamespace(status=lambda: {"enabled": False})
+    monkeypatch.setattr(diagnostics, "async_get_guest_mode", AsyncMock(return_value=guest))
+    monkeypatch.setattr(
+        diagnostics,
+        "resolve_guest_policy",
+        Mock(return_value=SimpleNamespace(as_diagnostics=lambda: {"enabled": False})),
+    )
+
+    stats_manager = SimpleNamespace(stats=lambda: {"count": 0})
+    monkeypatch.setattr(
+        diagnostics, "async_get_temporary_memory", AsyncMock(return_value=stats_manager)
+    )
+    monkeypatch.setattr(diagnostics, "async_get_memory", AsyncMock(return_value=stats_manager))
+    monkeypatch.setattr(
+        diagnostics, "async_get_knowledge", AsyncMock(return_value=stats_manager)
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "async_get_archive",
+        AsyncMock(return_value=SimpleNamespace(stats=lambda: {"count": 0})),
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "async_get_usage",
+        AsyncMock(side_effect=OSError("usage store unavailable")),
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "version",
+        Mock(side_effect=PackageNotFoundError("openai")),
+    )
+
+    result = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+
+    agent = result["conversation_agents"][0]
+    assert agent["provider_configuration_error"] == "ValueError"
+    assert agent["usage_storage_error"] == "OSError"
+    assert result["openai_sdk_version"] is None
+    assert result["provider_category"] == "openai"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("subsystem_key", "error_field"),
+    [
+        ("temporary_memory", "temporary_memory_storage_error"),
+        ("persistent_memory", "storage_error"),
+        ("knowledge", "knowledge_storage_error"),
+        ("archive", "archive_storage_error"),
+    ],
+)
+async def test_diagnostics_reports_previously_failed_optional_subsystems_without_loading(
+    hass, monkeypatch, subsystem_key: str, error_field: str
+) -> None:
+    from custom_components.extended_openai_conversation_responses import diagnostics
+    from custom_components.extended_openai_conversation_responses.const import (
+        SUBSYSTEM_STATUS_KEY,
+    )
+
+    subentry = SimpleNamespace(
+        subentry_id="agent-1",
+        subentry_type="conversation",
+        data={},
+    )
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        data={},
+        subentries={"agent-1": subentry},
+    )
+    hass.data[SUBSYSTEM_STATUS_KEY] = {
+        ("entry-1", "agent-1"): {subsystem_key: {"status": "failed"}}
+    }
+
+    snapshot = SimpleNamespace(
+        api_mode="responses",
+        api_kwargs={"stream": True},
+        structured_outputs=True,
+    )
+    monkeypatch.setattr(
+        diagnostics, "build_provider_request_snapshot", Mock(return_value=snapshot)
+    )
+    monkeypatch.setattr(diagnostics, "conversation_tools_required", Mock(return_value=False))
+    monkeypatch.setattr(
+        diagnostics,
+        "async_get_continuity",
+        Mock(return_value=SimpleNamespace(stats=lambda: {})),
+    )
+    monkeypatch.setattr(diagnostics, "_configured_function_tools", Mock(return_value=[]))
+    monkeypatch.setattr(diagnostics, "validate_function_groups", Mock(return_value=[]))
+    monkeypatch.setattr(diagnostics, "get_function_group_runtime", Mock(return_value=None))
+    monkeypatch.setattr(
+        diagnostics,
+        "async_get_guest_mode",
+        AsyncMock(return_value=SimpleNamespace(status=lambda: {})),
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "resolve_guest_policy",
+        Mock(return_value=SimpleNamespace(as_diagnostics=lambda: {})),
+    )
+
+    temporary = AsyncMock(return_value=SimpleNamespace(stats=lambda: {}))
+    memory = AsyncMock(return_value=SimpleNamespace(stats=lambda: {}))
+    knowledge = AsyncMock(return_value=SimpleNamespace(stats=lambda: {}))
+    archive = AsyncMock(return_value=SimpleNamespace(stats=lambda: {}))
+    usage = AsyncMock(
+        return_value=SimpleNamespace(
+            as_dict=lambda: {},
+            persistence_status=lambda: {},
+        )
+    )
+    monkeypatch.setattr(diagnostics, "async_get_temporary_memory", temporary)
+    monkeypatch.setattr(diagnostics, "async_get_memory", memory)
+    monkeypatch.setattr(diagnostics, "async_get_knowledge", knowledge)
+    monkeypatch.setattr(diagnostics, "async_get_archive", archive)
+    monkeypatch.setattr(diagnostics, "async_get_usage", usage)
+
+    result = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+
+    agent = result["conversation_agents"][0]
+    assert agent[error_field] == "RuntimeError"
+    loader = {
+        "temporary_memory": temporary,
+        "persistent_memory": memory,
+        "knowledge": knowledge,
+        "archive": archive,
+    }[subsystem_key]
+    loader.assert_not_awaited()
+
+
+
+def test_effective_skill_loader_status_success_carries_loadable_skills() -> None:
+    from custom_components.extended_openai_conversation_responses.skill_availability import (
+        CANONICAL_SKILL_LOADER_PATH,
+        effective_skill_loader_status,
+    )
+
+    tools = [
+        {
+            "enabled": True,
+            "spec": {"name": "load_skill"},
+            "function": {
+                "type": "read_file",
+                "path": CANONICAL_SKILL_LOADER_PATH,
+            },
+        }
+    ]
+
+    status = effective_skill_loader_status(
+        ["weather", "weather", "missing"],
+        ["weather"],
+        tools,
+        [],
+        max_function_calls=1,
+    )
+
+    assert status.available is True
+    assert status.loadable_skills == ("weather",)
+    assert status.reason is None
+
+
+def test_effective_skill_loader_status_rejects_unsupported_function_tools() -> None:
+    from custom_components.extended_openai_conversation_responses.skill_availability import (
+        effective_skill_loader_status,
+    )
+
+    status = effective_skill_loader_status(
+        ["weather"],
+        ["weather"],
+        [],
+        [],
+        function_tools_supported=False,
+    )
+
+    assert status.available is False
+    assert status.loadable_skills == ("weather",)
+    assert status.reason == "Function Tools are unavailable for this runtime"
+
+
+def test_effective_skill_loader_status_rejects_unavailable_on_demand_group_loader() -> None:
+    from custom_components.extended_openai_conversation_responses.const import (
+        FUNCTION_GROUP_LOADING_ON_DEMAND,
+    )
+    from custom_components.extended_openai_conversation_responses.skill_availability import (
+        CANONICAL_SKILL_LOADER_PATH,
+        effective_skill_loader_status,
+    )
+
+    tools = [
+        {
+            "spec": {"name": "load_skill"},
+            "function": {
+                "type": "read_file",
+                "path": CANONICAL_SKILL_LOADER_PATH,
+            },
+        }
+    ]
+    groups = [
+        {
+            "id": "skills",
+            "enabled": True,
+            "loading_mode": FUNCTION_GROUP_LOADING_ON_DEMAND,
+            "functions": ["load_skill"],
+        }
+    ]
+
+    status = effective_skill_loader_status(
+        ["weather"],
+        ["weather"],
+        tools,
+        groups,
+        group_loader_supported=False,
+    )
+
+    assert status.available is False
+    assert status.group_id == "skills"
+    assert status.on_demand is True
+    assert status.loadable_skills == ("weather",)
+
+
+def test_model_tool_result_compaction_returns_original_for_already_compact_json(
+    monkeypatch,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_tool_results,
+    )
+
+    result = object()
+    data = {"result": '{"ok":true}'}
+    monkeypatch.setattr(
+        model_tool_results, "tool_result_data", Mock(return_value=data)
+    )
+
+    assert model_tool_results._compact_json_result_content(result) is result
+    assert data["result"] == '{"ok":true}'
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {"result": 42},
+        {"result": "not-json"},
+    ],
+)
+def test_model_tool_result_compaction_preserves_non_json_shapes(
+    monkeypatch, value
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_tool_results,
+    )
+
+    result = object()
+    monkeypatch.setattr(
+        model_tool_results, "tool_result_data", Mock(return_value=value)
+    )
+
+    assert model_tool_results._compact_json_result_content(result) is result
+
+
+def test_model_payload_preserves_malformed_user_owned_tool_entries() -> None:
+    from custom_components.extended_openai_conversation_responses.model_payload import (
+        prepare_model_function_tools,
+    )
+
+    tools = [
+        {"function": {"type": "native"}, "spec": None},
+        {"function": {"type": "native"}, "spec": {"name": 123}},
+    ]
+
+    result = prepare_model_function_tools(tools)
+
+    assert result == tools
+    assert result is not tools
+    assert result[0] is not tools[0]
+    assert result[1] is not tools[1]
+
+
+def test_model_payload_loader_keeps_non_string_description_and_non_mapping_properties() -> None:
+    from custom_components.extended_openai_conversation_responses.model_payload import (
+        prepare_model_function_tools,
+    )
+
+    tool = {
+        "function": {"type": "function_group_loader"},
+        "spec": {
+            "name": "load_groups",
+            "description": None,
+            "parameters": {"properties": []},
+        },
+    }
+
+    assert prepare_model_function_tools([tool]) == [tool]
+
+
+def test_model_payload_property_compaction_ignores_non_mapping_schema() -> None:
+    from custom_components.extended_openai_conversation_responses.model_payload import (
+        prepare_model_function_tools,
+    )
+
+    tool = {
+        "function": {"type": "knowledge"},
+        "spec": {
+            "name": "knowledge_search",
+            "description": "long description",
+            "parameters": {
+                "properties": {
+                    "query": "not-a-schema",
+                    "source_ids": {"description": "old"},
+                }
+            },
+        },
+    }
+
+    result = prepare_model_function_tools([tool])[0]
+
+    assert result["spec"]["parameters"]["properties"]["query"] == "not-a-schema"
+    assert (
+        result["spec"]["parameters"]["properties"]["source_ids"]["description"]
+        == "Exact IDs returned by Knowledge tools."
+    )
+
+
+def test_template_working_directory_absolute_path_is_not_rebased(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import template
+
+    monkeypatch.setattr(template, "DEFAULT_WORKING_DIRECTORY", "/absolute/eoai")
+    manager = template.ExtendedOpenAITemplateManager(hass)
+
+    assert manager._get_working_directory() == "/absolute/eoai"
+
+
+def test_template_skill_dir_requires_initialized_manager(hass, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import template
+
+    monkeypatch.setattr(template.SkillManager, "_instance", None)
+    manager = template.ExtendedOpenAITemplateManager(hass)
+
+    with pytest.raises(ValueError, match="SkillManager not initialized"):
+        manager._get_skill_dir("missing")
+
+
+
+@pytest.mark.asyncio
+async def test_recovery_guarded_store_remove_without_gate_uses_native_store(
+    monkeypatch,
+) -> None:
+    from homeassistant.helpers.storage import Store
+
+    native_remove = AsyncMock()
+    monkeypatch.setattr(Store, "async_remove", native_remove)
+    store = RecoveryGuardedStore.__new__(RecoveryGuardedStore)
+    store._recovery_gate = None
+
+    await store.async_remove()
+
+    native_remove.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_native_edit_settlement_defers_caller_cancellation_until_writer_finishes() -> None:
+    from custom_components.extended_openai_conversation_responses.functions.file import (
+        _async_settle_native_edit,
+    )
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = False
+
+    async def operation() -> int:
+        nonlocal completed
+        started.set()
+        await release.wait()
+        completed = True
+        return 3
+
+    task = asyncio.create_task(_async_settle_native_edit(operation()))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert completed
+
+
+@pytest.mark.asyncio
+async def test_native_edit_settlement_propagates_writer_cancellation() -> None:
+    from custom_components.extended_openai_conversation_responses.functions.file import (
+        _async_settle_native_edit,
+    )
+
+    async def operation() -> int:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _async_settle_native_edit(operation())
+
+
+@pytest.mark.asyncio
+async def test_automation_update_settlement_propagates_native_failure() -> None:
+    from custom_components.extended_openai_conversation_responses.functions.native import (
+        _async_settle_automation_update,
+    )
+
+    async def operation() -> str:
+        raise OSError("automation reload failed")
+
+    with pytest.raises(OSError, match="automation reload failed"):
+        await _async_settle_automation_update(operation())
+
+
+@pytest.mark.asyncio
+async def test_automation_update_settlement_propagates_native_cancellation() -> None:
+    from custom_components.extended_openai_conversation_responses.functions.native import (
+        _async_settle_automation_update,
+    )
+
+    async def operation() -> str:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _async_settle_automation_update(operation())
+
+
+def test_function_entity_validation_rejects_unavailable_participant(hass) -> None:
+    from custom_components.extended_openai_conversation_responses.functions.base import (
+        Function,
+    )
+    from homeassistant.exceptions import HomeAssistantError
+
+    class DummyFunction(Function):
+        async def execute(self, *args, **kwargs):
+            return None
+
+    hass.states.get = Mock(return_value=SimpleNamespace(state="unavailable"))
+    function = DummyFunction()
+    exposed = [{"entity_id": "light.kitchen"}]
+
+    with pytest.raises(HomeAssistantError, match="Entity is unavailable"):
+        function.validate_entity_ids(hass, ["light.kitchen"], exposed)
+
+    function.validate_entity_ids(
+        hass,
+        ["light.kitchen"],
+        exposed,
+        require_available=False,
+    )
+
+
+def test_exposed_attribute_enrichment_tolerates_non_mapping_options(hass) -> None:
+    from custom_components.extended_openai_conversation_responses.exposed_attributes import (
+        enrich_exposed_entities,
+    )
+
+    exposed = [{"entity_id": "sensor.temperature", "state": "20"}]
+
+    assert enrich_exposed_entities(hass, object(), exposed) is exposed
+
+
+def test_skill_loader_status_returns_structural_failure_from_missing_loader() -> None:
+    from custom_components.extended_openai_conversation_responses.skill_availability import (
+        effective_skill_loader_status,
+    )
+
+    status = effective_skill_loader_status(
+        ["weather"],
+        ["weather"],
+        [],
+        [],
+        max_function_calls=1,
+    )
+
+    assert status.available is False
+    assert status.loadable_skills == ()
+    assert "load_skill" in str(status.reason)
+
+
+def test_template_relative_working_directory_is_rebased_to_config(hass, monkeypatch) -> None:
+    from pathlib import Path
+
+    from custom_components.extended_openai_conversation_responses import template
+
+    monkeypatch.setattr(template, "DEFAULT_WORKING_DIRECTORY", "eoai-work")
+    manager = template.ExtendedOpenAITemplateManager(hass)
+
+    assert manager._get_working_directory() == str(
+        Path(hass.config.config_dir) / "eoai-work"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("parent_data", "expected"),
+    [
+        ({"api_provider": "azure"}, "azure"),
+        (
+            {
+                "api_provider": "compatible",
+                "base_url": "https://example.invalid/v1",
+            },
+            "compatible",
+        ),
+    ],
+)
+async def test_diagnostics_provider_category_branches(
+    hass, monkeypatch, parent_data: dict, expected: str
+) -> None:
+    from custom_components.extended_openai_conversation_responses import diagnostics
+
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        data=parent_data,
+        subentries={},
+    )
+    monkeypatch.setattr(diagnostics, "version", Mock(return_value="test"))
+
+    result = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+
+    assert result["provider_category"] == expected
+
+
+def test_summary_diagnostics_is_best_effort_when_trace_is_malformed() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        request_diagnostics,
+    )
+
+    class BrokenTrace:
+        @property
+        def provider_requests(self):
+            raise RuntimeError("broken trace")
+
+    data = {"kept": True}
+
+    assert request_diagnostics.summary_diagnostics(BrokenTrace(), data) is data
+    assert data == {"kept": True}
+
+
+def test_record_tool_assembly_records_function_group_runtime(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        request_diagnostics,
+    )
+
+    trace = SimpleNamespace(memory={})
+    runtime = SimpleNamespace(stats=Mock(return_value={"loaded_groups": 2}))
+    monkeypatch.setattr(request_diagnostics, "_debug_trace", Mock(return_value=trace))
+    monkeypatch.setattr(
+        request_diagnostics,
+        "get_function_group_runtime",
+        Mock(return_value=runtime),
+    )
+    agent = SimpleNamespace(
+        hass=object(),
+        entry=SimpleNamespace(entry_id="entry"),
+        subentry=SimpleNamespace(subentry_id="agent"),
+    )
+
+    request_diagnostics.record_tool_assembly(agent, [{"spec": {}}], 0.0)
+
+    preparation = trace.memory[request_diagnostics._INTERNAL_PREPARATION]
+    assert preparation["function_tool_assembly"]["last_count"] == 1
+    assert preparation["function_groups"] == {"loaded_groups": 2}
+
+
+def test_runtime_failure_token_length_can_be_recorded_as_local_reply() -> None:
+    from custom_components.extended_openai_conversation_responses.exceptions import (
+        TokenLengthExceededError,
+    )
+    from custom_components.extended_openai_conversation_responses.runtime_failure_hardening import (
+        _conversation_error_result,
+    )
+
+    logger = Mock()
+    usage = SimpleNamespace(mark_current_run_failed=Mock())
+    entity = SimpleNamespace(
+        entry=SimpleNamespace(entry_id="entry"),
+        subentry=SimpleNamespace(subentry_id="agent", data={}),
+        _usage=usage,
+        entity_id="conversation.agent",
+        _fire_conversation_finished=Mock(),
+        hass=SimpleNamespace(),
+    )
+    user_input = SimpleNamespace(language="en", conversation_id="conversation-1")
+    chat_log = SimpleNamespace(content=[])
+    error = TokenLengthExceededError(64)
+
+    result = _conversation_error_result(
+        entity,
+        user_input,
+        chat_log,
+        error,
+        logger=logger,
+        handled_locally=True,
+    )
+
+    logger.warning.assert_called_once()
+    usage.mark_current_run_failed.assert_called_once_with("TokenLengthExceededError")
+    assert len(chat_log.content) == 1
+    assert chat_log.content[0].agent_id == "conversation.agent"
+    assert result.conversation_id == "conversation-1"
+    entity._fire_conversation_finished.assert_called_once()
+
+
+
+def test_request_rule_groups_reject_duplicate_ids() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    with pytest.raises(ValueError, match="unique"):
+        request_rules.validate_rule_groups(
+            [
+                {"id": "same", "name": "First"},
+                {"id": "same", "name": "Second"},
+            ]
+        )
+
+
+def test_request_rule_result_step_ids_are_assigned_only_at_result_boundaries() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    rule = {
+        "action": {
+            "actions": [
+                "ignored",
+                {
+                    "type": "function",
+                    "name": "demo",
+                    "result_alias": "first",
+                },
+                {
+                    "type": "function",
+                    "name": "demo",
+                    "result_alias": "existing",
+                    "step_id": "already-set",
+                },
+                {
+                    "action": (
+                        f"{request_rules.DOMAIN}."
+                        f"{request_rules.SERVICE_CALL_FUNCTION}"
+                    ),
+                    "data": {"result_alias": "second"},
+                },
+                {
+                    "action": "light.turn_on",
+                    "data": {"result_alias": "not-a-function-result"},
+                },
+            ]
+        }
+    }
+
+    result = request_rules._assign_missing_result_step_ids(rule)
+    actions = result["action"]["actions"]
+
+    assert "step_id" in actions[1]
+    assert actions[2]["step_id"] == "already-set"
+    assert "step_id" in actions[3]["data"]
+    assert "step_id" not in actions[4]["data"]
+    assert "step_id" not in rule["action"]["actions"][1]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "plain text",
+        {"action": "nothing"},
+    ],
+)
+def test_request_rule_result_step_id_assignment_handles_non_action_shapes(value) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    result = request_rules._assign_missing_result_step_ids(value)
+
+    if isinstance(value, dict):
+        assert result == value
+        assert result is not value
+    else:
+        assert result is value
+
+
+def test_request_rule_result_references_recurse_but_ignore_identity_fields() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    value = {
+        "message": "Value {first.answer}",
+        "nested": [
+            "Other {second.value}",
+            {"deep": "{third.value}"},
+        ],
+        "result_alias": "{ignored.value}",
+        "step_id": "{also_ignored.value}",
+    }
+
+    assert request_rules._result_references(value) == {
+        "first",
+        "second",
+        "third",
+    }
+
+
+def test_request_rule_result_paths_collect_nested_references() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    paths = request_rules._result_paths_by_alias(
+        {
+            "message": "{first.answer} / {first.name}",
+            "nested": [{"value": "{second.value}"}],
+        }
+    )
+
+    assert paths == {
+        "first": {
+            "{first.answer}",
+            "{first.name}",
+        },
+        "second": {"{second.value}"},
+    }
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "{{ slots.missing }}",
+        {"service": "light.{{ slots.missing }}"},
+        ["{{ slots.missing }}"],
+        "{{ unknown_template }}",
+        "{% if true %}light.turn_on{% endif %}",
+        "{# comment #}light.turn_on",
+    ],
+)
+def test_guest_slot_resolution_fails_closed_for_unknown_or_dynamic_templates(
+    value,
+) -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    with pytest.raises(request_rules.GuestModeDenied):
+        request_rules._resolve_guest_slot_templates(value, {"known": "kitchen"})
+
+
+def test_guest_slot_resolution_recurses_through_supported_shapes() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    value = {
+        "action": "light.turn_on",
+        "target": {
+            "entity_id": [
+                "light.{{ room }}",
+                "switch.{{ room }}",
+            ]
+        },
+        "count": 2,
+    }
+
+    assert request_rules._resolve_guest_slot_templates(
+        value, {"room": "kitchen"}
+    ) == {
+        "action": "light.turn_on",
+        "target": {
+            "entity_id": [
+                "light.kitchen",
+                "switch.kitchen",
+            ]
+        },
+        "count": 2,
+    }
+
+
+
+@pytest.mark.asyncio
+async def test_targeted_broadcast_parse_miss_returns_to_normal_routing(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import local_intents
+
+    manager = SimpleNamespace(enabled=True)
+    monkeypatch.setattr(
+        local_intents, "async_get_intercom", AsyncMock(return_value=manager)
+    )
+    monkeypatch.setattr(
+        local_intents, "is_targeted_broadcast_request", Mock(return_value=True)
+    )
+    monkeypatch.setattr(
+        local_intents, "parse_targeted_broadcast", Mock(return_value=None)
+    )
+    user_input = SimpleNamespace(
+        text="broadcast to nowhere hello",
+        context=None,
+        satellite_id=None,
+        device_id=None,
+    )
+
+    assert (
+        await local_intents._async_try_targeted_broadcast(hass, user_input) is None
+    )
+
+
+def test_native_statistics_schema_migration_skips_already_strict_schema() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        native_function_schema_migration as migration,
+    )
+
+    tool = {
+        "spec": {
+            "strict": False,
+            "parameters": migration._LEGACY_PRESET_GET_STATISTICS_PARAMETERS,
+        }
+    }
+
+    assert migration._migrate_statistics_schema(tool) is False
+
+
+@pytest.mark.asyncio
+async def test_parallel_safe_outcomes_cancel_children_when_parent_is_cancelled() -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        parallel_tool_execution,
+    )
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def executor(_tool, _input):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    task = asyncio.create_task(
+        parallel_tool_execution.async_execute_parallel_safe_batch_outcomes(
+            [(object(), object())],
+            executor,
+        )
+    )
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cancelled.is_set()
+
+
+def test_skill_transaction_remove_unlinks_regular_file(tmp_path) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        skill_transactions,
+    )
+
+    path = tmp_path / "owned-file"
+    path.write_text("data")
+
+    skill_transactions._remove(path)
+
+    assert not path.exists()
+
+
+def test_model_retirement_provider_error_accepts_provider_error_type(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import model_lifecycle
+
+    monkeypatch.setattr(
+        model_lifecycle,
+        "provider_error_metadata",
+        Mock(
+            return_value={
+                "provider_error_type": "model_deprecated",
+                "code": "",
+                "message": "",
+                "status_code": 400,
+            }
+        ),
+    )
+
+    assert model_lifecycle.retirement_provider_error(RuntimeError("retired")) is True
+
+
+def test_model_retirement_rule_override_returns_rule_specific_message(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import model_lifecycle
+
+    monkeypatch.setattr(
+        model_lifecycle,
+        "lifecycle_snapshot",
+        Mock(
+            return_value={
+                "model": "retired-model",
+                "status": "deprecated",
+                "shutdown_reached": True,
+                "shutdown_at": "2026-10-01",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        model_lifecycle,
+        "retirement_provider_error",
+        Mock(return_value=True),
+    )
+    create_issue = Mock()
+    monkeypatch.setattr(model_lifecycle.ir, "async_create_issue", create_issue)
+
+    result = model_lifecycle.record_retirement_failure(
+        hass,
+        entry_id="entry",
+        subentry_id="agent",
+        title="Jarvis",
+        model="retired-model",
+        configured_model="configured-model",
+        error=RuntimeError("retired"),
+        logger=Mock(),
+    )
+
+    assert result is not None
+    assert "Request Rule selected retired model retired-model" in result
+    create_issue.assert_called_once()
+
+
+
+@pytest.mark.parametrize(
+    ("value", "prefixed_only", "expected"),
+    [
+        (None, False, None),
+        (123, False, None),
+        ("", False, None),
+        ("   ", False, None),
+        ("user:alice", False, "alice"),
+        ("user:alice", True, "alice"),
+        ("alice", True, None),
+        ("alice", False, "alice"),
+        ("shared", False, None),
+        ("shared:household", False, None),
+        ("unretained", False, None),
+    ],
+)
+def test_transfer_portable_user_id_normalization(
+    value, prefixed_only: bool, expected
+) -> None:
+    from custom_components.extended_openai_conversation_responses import transfer
+
+    assert (
+        transfer._portable_user_id(value, prefixed_only=prefixed_only) == expected
+    )
+
+
+def test_transfer_user_scope_ids_collects_all_selected_owner_sources() -> None:
+    from custom_components.extended_openai_conversation_responses import transfer
+
+    prepared = SimpleNamespace(
+        memories=[
+            SimpleNamespace(user_id="alice"),
+            SimpleNamespace(user_id="shared"),
+        ],
+        temporary_memories=[
+            SimpleNamespace(owner_scope_id="user:bob"),
+            SimpleNamespace(owner_scope_id="household"),
+        ],
+        archive_sessions=[
+            SimpleNamespace(scope_id="user:carol"),
+            SimpleNamespace(scope_id="shared:household"),
+        ],
+        config={
+            transfer.CONF_VOICE_DEFAULT_USER_ID: "dave",
+            transfer.CONF_VOICE_DEVICE_MAPPINGS: {
+                "phone": "user:erin",
+                "tablet": "shared",
+            },
+        },
+    )
+
+    result = transfer.transfer_user_scope_ids(
+        prepared,
+        {
+            transfer.SECTION_PERSISTENT_MEMORY,
+            transfer.SECTION_TEMPORARY_MEMORY,
+            transfer.SECTION_CONVERSATION_ARCHIVE,
+            transfer.SECTION_CONFIGURATION,
+        },
+    )
+
+    assert result == frozenset({"alice", "bob", "carol", "dave", "erin"})
+
+
+@pytest.mark.asyncio
+async def test_transfer_user_scope_mapping_plan_rejects_invalid_mapping_shape(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import backup, transfer
+
+    prepared = SimpleNamespace(
+        memories=[],
+        temporary_memories=[],
+        archive_sessions=[],
+        config=None,
+    )
+    hass.auth.async_get_users = AsyncMock(return_value=[])
+
+    with pytest.raises(backup.BackupError, match="must be an object"):
+        await transfer.async_user_scope_mapping_plan(
+            hass,
+            prepared,
+            [],
+            supplied=[("old", "new")],
+        )
+
+
+@pytest.mark.asyncio
+async def test_transfer_user_scope_mapping_plan_maps_missing_source_user(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import transfer
+
+    prepared = SimpleNamespace(
+        memories=[SimpleNamespace(user_id="old-user")],
+        temporary_memories=[],
+        archive_sessions=[],
+        config=None,
+    )
+    hass.auth.async_get_users = AsyncMock(
+        return_value=[
+            SimpleNamespace(id="new-user", name="New User"),
+            SimpleNamespace(id="other", name=None),
+        ]
+    )
+
+    result = await transfer.async_user_scope_mapping_plan(
+        hass,
+        prepared,
+        [transfer.SECTION_PERSISTENT_MEMORY],
+        supplied={"old-user": "new-user"},
+    )
+
+    assert result["required_source_user_ids"] == ["old-user"]
+    assert result["missing_source_user_ids"] == []
+    assert result["resolved"] == {"old-user": "new-user"}
+    assert result["destination_users"] == [
+        {"user_id": "new-user", "name": "New User"},
+        {"user_id": "other", "name": "other"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_transfer_user_scope_mapping_plan_rejects_unknown_destination(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import backup, transfer
+
+    prepared = SimpleNamespace(
+        memories=[SimpleNamespace(user_id="old-user")],
+        temporary_memories=[],
+        archive_sessions=[],
+        config=None,
+    )
+    hass.auth.async_get_users = AsyncMock(
+        return_value=[SimpleNamespace(id="known", name="Known")]
+    )
+
+    with pytest.raises(backup.BackupError, match="does not exist"):
+        await transfer.async_user_scope_mapping_plan(
+            hass,
+            prepared,
+            [transfer.SECTION_PERSISTENT_MEMORY],
+            supplied={"old-user": "missing"},
+        )
+
+
+def test_transfer_owner_mapping_preserves_user_prefix() -> None:
+    from custom_components.extended_openai_conversation_responses import transfer
+
+    mapping = {"alice": "new-alice"}
+
+    assert transfer._map_owner_value("user:alice", mapping) == "user:new-alice"
+    assert transfer._map_owner_value("alice", mapping) == "new-alice"
+    assert transfer._map_owner_value("shared", mapping) == "shared"
+    assert transfer._map_owner_value(None, mapping) is None
+
+
+def test_transfer_configuration_mapping_handles_non_mapping_and_devices() -> None:
+    from custom_components.extended_openai_conversation_responses import transfer
+
+    assert transfer._map_configuration_users("invalid", {"alice": "bob"}) == "invalid"
+
+    config = {
+        transfer.CONF_VOICE_DEFAULT_USER_ID: "alice",
+        transfer.CONF_VOICE_DEVICE_MAPPINGS: {
+            "phone": "user:alice",
+            7: "shared",
+        },
+    }
+    mapped = transfer._map_configuration_users(config, {"alice": "bob"})
+
+    assert mapped[transfer.CONF_VOICE_DEFAULT_USER_ID] == "bob"
+    assert mapped[transfer.CONF_VOICE_DEVICE_MAPPINGS] == {
+        "phone": "user:bob",
+        "7": "shared",
+    }
+    assert config[transfer.CONF_VOICE_DEFAULT_USER_ID] == "alice"
+
+
+
+@pytest.mark.asyncio
+async def test_restore_journal_load_handles_missing_unreadable_and_corrupt_files(
+    hass, monkeypatch
+) -> None:
+    import json
+    from pathlib import Path
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        restore_recovery,
+    )
+
+    store = restore_recovery._RestoreJournalStore(
+        hass,
+        restore_recovery.RESTORE_JOURNAL_VERSION,
+        "coverage.restore",
+        private=True,
+    )
+
+    monkeypatch.setattr(Path, "read_text", Mock(side_effect=FileNotFoundError()))
+    assert await store._async_load_data() is None
+
+    monkeypatch.setattr(Path, "read_text", Mock(side_effect=OSError("disk error")))
+    with pytest.raises(backup.BackupError, match="unreadable"):
+        await store._async_load_data()
+
+    monkeypatch.setattr(Path, "read_text", Mock(return_value="{not json"))
+    with pytest.raises(backup.BackupError, match="unreadable"):
+        await store._async_load_data()
+
+    corrupt_envelopes = [
+        [],
+        {"version": -1, "minor_version": 1, "key": store.key, "data": {}},
+        {
+            "version": store.version,
+            "minor_version": store.minor_version,
+            "key": "wrong",
+            "data": {},
+        },
+        {
+            "version": store.version,
+            "minor_version": store.minor_version,
+            "key": store.key,
+            "data": [],
+        },
+    ]
+    for envelope in corrupt_envelopes:
+        monkeypatch.setattr(Path, "read_text", Mock(return_value=json.dumps(envelope)))
+        with pytest.raises(backup.BackupError, match="corrupted"):
+            await store._async_load_data()
+
+
+@pytest.mark.asyncio
+async def test_restore_journal_load_returns_valid_payload(hass, monkeypatch) -> None:
+    import json
+    from pathlib import Path
+
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+
+    store = restore_recovery._RestoreJournalStore(
+        hass,
+        restore_recovery.RESTORE_JOURNAL_VERSION,
+        "coverage.restore.valid",
+        private=True,
+    )
+    payload = {"phase": "prepared"}
+    envelope = {
+        "version": store.version,
+        "minor_version": store.minor_version,
+        "key": store.key,
+        "data": payload,
+    }
+    monkeypatch.setattr(Path, "read_text", Mock(return_value=json.dumps(envelope)))
+
+    assert await store._async_load_data() == payload
+
+
+@pytest.mark.asyncio
+async def test_finish_restore_reload_ignores_owned_or_unpending_reload(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+
+    entry = SimpleNamespace(entry_id="entry")
+    subentry = SimpleNamespace(subentry_id="agent")
+    gate = SimpleNamespace(owns_exclusive=Mock(return_value=True))
+    monkeypatch.setattr(
+        restore_recovery, "get_agent_maintenance_gate", Mock(return_value=gate)
+    )
+    hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = {"entry"}
+    hass.config_entries.async_reload = AsyncMock()
+
+    await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
+    hass.config_entries.async_reload.assert_not_awaited()
+
+    gate.owns_exclusive.return_value = False
+    hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = set()
+    await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
+    hass.config_entries.async_reload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_finish_restore_reload_surfaces_loaded_reload_failure(
+    hass, monkeypatch
+) -> None:
+    from homeassistant.config_entries import ConfigEntryState
+    from homeassistant.exceptions import HomeAssistantError
+
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+
+    entry = SimpleNamespace(entry_id="entry", state=ConfigEntryState.LOADED)
+    subentry = SimpleNamespace(subentry_id="agent")
+    gate = SimpleNamespace(owns_exclusive=Mock(return_value=False))
+    monkeypatch.setattr(
+        restore_recovery, "get_agent_maintenance_gate", Mock(return_value=gate)
+    )
+    hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = {"entry"}
+    hass.config_entries.async_reload = AsyncMock(return_value=False)
+
+    with pytest.raises(HomeAssistantError, match="reloading the assistant failed"):
+        await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
+
+    assert "entry" in hass.data[
+        f"{restore_recovery.DOMAIN}.restore_reload_pending"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_finish_restore_reload_discards_successful_pending_marker(
+    hass, monkeypatch
+) -> None:
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+
+    entry = SimpleNamespace(entry_id="entry", state=ConfigEntryState.LOADED)
+    subentry = SimpleNamespace(subentry_id="agent")
+    gate = SimpleNamespace(owns_exclusive=Mock(return_value=False))
+    monkeypatch.setattr(
+        restore_recovery, "get_agent_maintenance_gate", Mock(return_value=gate)
+    )
+    pending = {"entry"}
+    hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = pending
+    hass.config_entries.async_reload = AsyncMock(return_value=True)
+
+    await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
+
+    hass.config_entries.async_reload.assert_awaited_once_with("entry")
+    assert pending == set()
+
+
+
+@pytest.mark.asyncio
+async def test_export_chunk_rejects_out_of_range_and_missing_staged_archive(
+    hass, tmp_path, monkeypatch
+) -> None:
+    import hashlib
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        backup_transfer,
+    )
+
+    monkeypatch.setattr(backup_transfer, "BACKUP_CHUNK_BYTES", 4)
+    path = tmp_path / "export.zip"
+    payload = b"abcd"
+    path.write_bytes(payload)
+    session = backup_transfer.ExportSession(
+        session_id="coverage-export",
+        entry_id="entry",
+        subentry_id="agent",
+        path=str(path),
+        filename="backup.zip",
+        size=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        expires_at=10**12,
+    )
+    backup_transfer._exports(hass)[session.session_id] = session
+
+    try:
+        with pytest.raises(backup.BackupError, match="out of range"):
+            await backup_transfer._export_chunk(
+                hass,
+                "entry",
+                "agent",
+                {"session_id": session.session_id, "index": 1},
+            )
+
+        path.unlink()
+        with pytest.raises(backup.BackupError, match="staged backup archive"):
+            await backup_transfer._export_chunk(
+                hass,
+                "entry",
+                "agent",
+                {"session_id": session.session_id, "index": 0},
+            )
+    finally:
+        backup_transfer._exports(hass).pop(session.session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_import_chunk_rejects_duplicate_chunk_after_completion(hass) -> None:
+    import base64
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        backup_transfer,
+    )
+
+    started = await backup_transfer._start_import(
+        hass,
+        "entry",
+        "agent",
+        {"filename": "backup.json", "size": 4},
+    )
+    session_id = started["session_id"]
+    payload = base64.b64encode(b"data").decode()
+    await backup_transfer._import_chunk(
+        hass,
+        "entry",
+        "agent",
+        {"session_id": session_id, "index": 0, "data": payload},
+    )
+
+    with pytest.raises(backup.BackupError, match="already complete|Expected backup chunk"):
+        await backup_transfer._import_chunk(
+            hass,
+            "entry",
+            "agent",
+            {"session_id": session_id, "index": 1, "data": payload},
+        )
+
+
+@pytest.mark.asyncio
+async def test_completed_import_rejects_incomplete_upload(hass) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        backup_transfer,
+    )
+
+    started = await backup_transfer._start_import(
+        hass,
+        "entry",
+        "agent",
+        {"filename": "backup.json", "size": 8},
+    )
+
+    with pytest.raises(backup.BackupError, match="incomplete"):
+        backup_transfer._completed_import(
+            hass,
+            started["session_id"],
+            "entry",
+            "agent",
+        )
+
+
+@pytest.mark.asyncio
+async def test_restore_import_requires_preview_token(hass) -> None:
+    import base64
+
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        backup_transfer,
+    )
+
+    started = await backup_transfer._start_import(
+        hass,
+        "entry",
+        "agent",
+        {"filename": "backup.json", "size": 4},
+    )
+    session_id = started["session_id"]
+    await backup_transfer._import_chunk(
+        hass,
+        "entry",
+        "agent",
+        {
+            "session_id": session_id,
+            "index": 0,
+            "data": base64.b64encode(b"data").decode(),
+        },
+    )
+    entry = SimpleNamespace(entry_id="entry")
+    subentry = SimpleNamespace(subentry_id="agent")
+
+    with pytest.raises(backup.BackupError, match="Preview the backup"):
+        await backup_transfer._restore_import(
+            hass,
+            entry,
+            subentry,
+            {"session_id": session_id},
+        )
+
+
+
+def test_local_handling_snapshot_falls_back_for_lightweight_hass(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import local_intents
+
+    monkeypatch.setattr(
+        local_intents,
+        "registered_intent_catalog",
+        Mock(side_effect=TypeError("not a real HA registry key")),
+    )
+
+    result = local_intents.local_handling_snapshot(
+        SimpleNamespace(),
+        "entry",
+        "agent",
+        configured_exclusions=["HassTurnOn", "", "HassTurnOn", 123],
+    )
+
+    assert result["intents"] == [
+        {
+            "intent": "HassTurnOn",
+            "label": local_intents._friendly_intent_name("HassTurnOn"),
+            "available": False,
+        }
+    ]
+    assert result["pipeline_conflicts"] == []
+
+
+def test_prompt_entity_name_handles_invalid_and_mechanically_duplicated_names() -> None:
+    from custom_components.extended_openai_conversation_responses import prompt
+
+    assert prompt._entity_prompt_name({"name": 123}) == "123"
+    assert (
+        prompt._entity_prompt_name(
+            {"entity_id": "light.kitchen_light", "name": "Kitchen Light"}
+        )
+        == ""
+    )
+    assert (
+        prompt._entity_prompt_name(
+            {"entity_id": "light.kitchen", "name": "Main Kitchen"}
+        )
+        == "Main Kitchen"
+    )
+
+
+def test_model_tool_result_compaction_rewrites_pretty_json(monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        model_tool_results,
+    )
+
+    result = object()
+    data = {"result": '{\n  "ok": true,\n  "items": [1, 2]\n}'}
+    monkeypatch.setattr(
+        model_tool_results,
+        "tool_result_data",
+        Mock(return_value=data),
+    )
+
+    assert model_tool_results._compact_json_result_content(result) is result
+    assert data["result"] == '{"ok":true,"items":[1,2]}'
+
+
+@pytest.mark.asyncio
+async def test_recovery_guarded_store_remove_with_gate_settles_under_maintenance(
+    monkeypatch,
+) -> None:
+    from homeassistant.helpers.storage import Store
+
+    entered: list[str] = []
+
+    class Gate:
+        @asynccontextmanager
+        async def shared(self, *, maintenance: bool):
+            assert maintenance is True
+            entered.append("gate")
+            try:
+                yield
+            finally:
+                entered.append("exit")
+
+    native_remove = AsyncMock()
+    monkeypatch.setattr(Store, "async_remove", native_remove)
+    store = RecoveryGuardedStore.__new__(RecoveryGuardedStore)
+    store._recovery_gate = Gate()
+
+    await store.async_remove()
+
+    native_remove.assert_awaited_once_with()
+    assert entered == ["gate", "exit"]
+
+
+def test_period_usage_sensor_abstract_summary_branch() -> None:
+    from custom_components.extended_openai_conversation_responses import sensor
+
+    subentry = SimpleNamespace(
+        subentry_id="agent",
+        title="Jarvis",
+        data={},
+    )
+    usage = SimpleNamespace()
+
+    period = sensor._PeriodUsageSensor(subentry, usage)
+
+    with pytest.raises(NotImplementedError):
+        period._summary()
+
+
+def test_usage_period_sensor_summary_and_last_reset_branches(monkeypatch) -> None:
+    from datetime import datetime, UTC
+
+    from custom_components.extended_openai_conversation_responses import sensor
+
+    summary = {
+        "total_tokens": 10,
+        "input_tokens": 4,
+        "output_tokens": 6,
+        "cached_input_tokens": 1,
+        "reasoning_tokens": 2,
+        "run_count": 3,
+        "api_request_count": 4,
+        "failed_request_count": 1,
+        "average_tokens_per_completed_run": 5,
+    }
+    usage = SimpleNamespace(
+        today_summary=Mock(return_value=summary),
+        month_summary=Mock(return_value=summary),
+    )
+    subentry = SimpleNamespace(
+        subentry_id="agent",
+        title="Jarvis",
+        data={},
+    )
+    day_start = datetime(2026, 10, 5, tzinfo=UTC)
+    monkeypatch.setattr(sensor.dt_util, "start_of_local_day", Mock(return_value=day_start))
+
+    today = sensor.UsageTodaySensor(subentry, usage)
+    month = sensor.UsageMonthSensor(subentry, usage)
+
+    assert today.native_value == 10
+    assert today.last_reset == day_start
+    assert month.native_value == 10
+    assert month.last_reset == day_start.replace(day=1)
+    assert today.extra_state_attributes["failures"] == 1
+    usage.today_summary.assert_called()
+    usage.month_summary.assert_called()

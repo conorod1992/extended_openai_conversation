@@ -1,6 +1,7 @@
 """Native staging locks protect other live owners and unrelated filesystem data."""
 
 import asyncio
+import fcntl
 from types import SimpleNamespace
 import threading
 
@@ -22,11 +23,14 @@ def test_live_owner_and_unmarked_data_survive_reconciliation(tmp_path):
     unknown = root / f"owner-{'a' * 32}"
     unknown.mkdir()
     (unknown / "sentinel").write_text("UNMARKED")
+    empty_unmarked = root / f"owner-{'b' * 32}"
+    empty_unmarked.mkdir()
     (root / "unrelated-sentinel").write_text("KEEP")
     try:
         second = _initialize_owner(root)
         assert payload.read_bytes() == b"LIVE-OWNER"
         assert (unknown / "sentinel").read_text() == "UNMARKED"
+        assert not empty_unmarked.exists()
         assert (root / "unrelated-sentinel").read_text() == "KEEP"
         assert first.directory != second.directory
     finally:
@@ -47,6 +51,46 @@ def test_unlocked_owned_payload_is_reclaimed_without_session_authority(tmp_path)
         assert list(fresh.directory.glob("extended-openai-backup-*")) == []
     finally:
         fresh.close()
+
+
+def test_owner_close_is_idempotent(tmp_path):
+    owner = _initialize_owner(tmp_path / "private")
+
+    owner.close()
+    owner.close()
+
+    assert not owner.directory.exists()
+
+
+def test_staging_root_symlink_is_rejected(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    root = tmp_path / "staging-link"
+    root.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(OSError, match="must not be a symbolic link"):
+        _initialize_owner(root)
+
+
+def test_owner_lock_failure_releases_lock_and_allows_retry(tmp_path, monkeypatch):
+    root = tmp_path / "private"
+    original_flock = fcntl.flock
+
+    def fail_nonblocking_owner_lock(file_descriptor, operation):
+        if operation & fcntl.LOCK_NB:
+            raise OSError("owner lock unavailable")
+        return original_flock(file_descriptor, operation)
+
+    monkeypatch.setattr(fcntl, "flock", fail_nonblocking_owner_lock)
+    with pytest.raises(OSError, match="owner lock unavailable"):
+        _initialize_owner(root)
+
+    monkeypatch.setattr(fcntl, "flock", original_flock)
+    owner = _initialize_owner(root)
+    try:
+        assert owner.directory.is_dir()
+    finally:
+        owner.close()
 
 
 def _hass(tmp_path):
@@ -120,6 +164,10 @@ async def test_shared_allocation_survives_waiter_cancellation(tmp_path, monkeypa
         release.set()
         await asyncio.gather(first, second, return_exceptions=True)
         await staging.async_close_transfer_staging(hass)
+
+
+async def test_close_without_an_allocated_owner_is_safe(tmp_path) -> None:
+    await staging.async_close_transfer_staging(_hass(tmp_path))
 
 
 async def test_failed_shared_attempt_with_cancelled_waiters_is_retryable(tmp_path, monkeypatch):

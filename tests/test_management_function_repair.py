@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from copy import deepcopy
+import gc
 from types import SimpleNamespace
 from typing import Any
 
@@ -27,6 +29,7 @@ from custom_components.extended_openai_conversation_responses.management_functio
     isolated_function_tools,
 )
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.config_entries import ConfigEntryState
 
 
 class _FakeConfigEntries:
@@ -68,9 +71,9 @@ def _mixed_legacy_tool_data() -> tuple[
     valid_tool = deepcopy(tools[0])
     broken_tool = deepcopy(tools[0])
     broken_tool["spec"]["name"] = f"{broken_tool['spec']['name']}_broken"
-    broken_tool["spec"].setdefault(
-        "parameters", {"type": "object", "properties": {}}
-    )["description"] = 123
+    broken_tool["spec"].setdefault("parameters", {"type": "object", "properties": {}})[
+        "description"
+    ] = 123
     mixed = [valid_tool, broken_tool]
     return (
         {
@@ -108,6 +111,118 @@ def test_function_tools_issue_isolates_malformed_yaml() -> None:
     assert issue is not None
 
 
+def test_editable_function_tool_parser_preserves_broken_and_nontext_values() -> None:
+    malformed = "[unterminated"
+    assert repair.editable_function_tools({CONF_FUNCTION_TOOLS: malformed}) == malformed
+    assert repair.editable_function_tools({CONF_FUNCTION_TOOLS: "---\n"}) == []
+
+    raw = [{"spec": {"name": "tool"}}]
+    editable = repair.editable_function_tools({CONF_FUNCTION_TOOLS: raw})
+    editable[0]["spec"]["name"] = "edited"
+    assert raw[0]["spec"]["name"] == "tool"
+    assert repair.editable_function_tools({}) == []
+
+
+def test_revision_lineage_handles_unweakrefable_and_prunes_dead_owners() -> None:
+    lightweight = SimpleNamespace()
+    repair._remember_revision_lineage(lightweight, {}, "agent", "revision")
+    assert id(lightweight) not in repair._revision_lineages
+
+    class WeakOwner:
+        pass
+
+    owner = WeakOwner()
+    key = id(owner)
+    repair._remember_revision_lineage(owner, {}, "agent", "revision")
+    assert key in repair._revision_lineages
+    del owner
+    gc.collect()
+    assert key not in repair._revision_lineages
+
+
+async def test_projection_prewarm_discards_yaml_after_subentry_replacement(
+    monkeypatch,
+) -> None:
+    original_data = {CONF_FUNCTION_TOOLS: "[]"}
+    entry, subentry = _entry_and_subentry(original_data)
+    entry.state = ConfigEntryState.LOADED
+    projection = SimpleNamespace(
+        snapshot=None,
+        repair_state=None,
+        data=original_data,
+        title=subentry.title,
+    )
+    monkeypatch.setattr(
+        repair, "persisted_config_projection", lambda _subentry: projection
+    )
+
+    async def executor(function, configured):
+        assert function is yaml.safe_load
+        subentry.data = {CONF_FUNCTION_TOOLS: configured}
+        return function(configured)
+
+    hass = SimpleNamespace(async_add_executor_job=executor)
+    await repair.async_prewarm_persisted_config_projection(hass, entry, subentry)
+
+    assert subentry.data is not original_data
+
+
+def test_function_tools_issue_rejects_collection_level_duplicate_names() -> None:
+    defaults = agent_config_defaults()
+    tools = yaml.safe_load(defaults[CONF_FUNCTION_TOOLS])
+    assert isinstance(tools, list) and tools
+
+    configured, issue = function_tools_issue(
+        {CONF_FUNCTION_TOOLS: [tools[0], deepcopy(tools[0])]}
+    )
+
+    assert configured == []
+    assert issue is not None and "duplicate tool name" in issue
+
+
+def test_function_group_repair_helpers_preserve_unrelated_groups() -> None:
+    groups = [
+        {"name": "lights", "functions": ["turn_on", "turn_off"]},
+        {"name": "empty", "functions": []},
+        "legacy-malformed-group",
+    ]
+
+    renamed = repair._replace_group_function_name(groups, "turn_on", "lights_on")
+    assert renamed[0]["functions"] == ["lights_on", "turn_off"]
+    assert groups[0]["functions"] == ["turn_on", "turn_off"]
+    assert repair._replace_group_function_name(groups, None, "new") == groups
+    assert repair._replace_group_function_name(groups, "same", "same") == groups
+    assert repair._replace_group_function_name(None, "old", "new") is None
+
+    removed = repair._remove_group_function_name(groups, "turn_off")
+    assert removed[0]["functions"] == ["turn_on"]
+    assert groups[0]["functions"] == ["turn_on", "turn_off"]
+    assert repair._remove_group_function_name(groups, None) == groups
+    assert repair._remove_group_function_name(None, "turn_off") is None
+
+
+def test_function_health_cache_evicts_oldest_revision(monkeypatch) -> None:
+    cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
+    monkeypatch.setattr(repair, "_health_cache", cache)
+    monkeypatch.setattr(repair, "_HEALTH_CACHE_LIMIT", 2)
+    monkeypatch.setattr(
+        repair,
+        "_uncached_function_tool_health",
+        lambda options: {"value": options[CONF_FUNCTION_TOOLS]},
+    )
+
+    for value in ("first", "second", "third"):
+        assert repair.management_function_tool_health(
+            {CONF_FUNCTION_TOOLS: value}
+        ) == {"value": value}
+
+    assert len(cache) == 2
+    assert repair.peek_function_tool_health({CONF_FUNCTION_TOOLS: "first"}) is None
+    assert repair.peek_function_tool_health({CONF_FUNCTION_TOOLS: "second"}) == {
+        "value": "second"
+    }
+
+
 def test_isolated_function_tools_keeps_valid_siblings() -> None:
     """Per-tool repair isolates a bad tool without presenting valid siblings as broken."""
     data, _mixed, valid_tool = _mixed_legacy_tool_data()
@@ -130,9 +245,7 @@ def test_function_tools_issue_returns_valid_subset_when_one_tool_is_bad() -> Non
     configured, issue = function_tools_issue(data)
 
     assert issue is not None
-    assert [tool["spec"]["name"] for tool in configured] == [
-        valid_tool["spec"]["name"]
-    ]
+    assert [tool["spec"]["name"] for tool in configured] == [valid_tool["spec"]["name"]]
 
 
 @pytest.mark.asyncio
@@ -182,7 +295,11 @@ async def test_function_repair_save_one_replaces_only_selected_invalid_tool(
         hass,
         "admin",
         True,
-        {"action": "get", "entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
+        {
+            "action": "get",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+        },
     )
     replacement = deepcopy(valid_tool)
     replacement["spec"]["name"] = "repaired_tool"
@@ -224,7 +341,11 @@ async def test_function_repair_save_replaces_invalid_collection(
         hass,
         "admin",
         True,
-        {"action": "get", "entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
+        {
+            "action": "get",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+        },
     )
     saved = await async_function_repair(
         hass,
@@ -306,6 +427,108 @@ async def test_function_repair_requires_admin() -> None:
                 "action": "get",
                 "entry_id": entry.entry_id,
                 "subentry_id": subentry.subentry_id,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("action", "extra", "message"),
+    [
+        ("configuration_validate", {"config": []}, "config must be an object"),
+        ("configuration_save", {"config": []}, "config must be an object"),
+        ("unknown", {}, "Unknown Function Tool repair action"),
+        ("save", {"tools": "not-an-array"}, "tools must be a JSON array"),
+    ],
+)
+async def test_function_repair_rejects_malformed_action_payloads(
+    monkeypatch: pytest.MonkeyPatch, action, extra, message
+) -> None:
+    data, _tools = _invalid_legacy_tool_data()
+    entry, subentry = _entry_and_subentry(data)
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    monkeypatch.setattr(
+        management_ui,
+        "entry_and_agent",
+        lambda *_args, **_kwargs: (entry, subentry),
+    )
+    payload = {
+        "action": action,
+        "entry_id": entry.entry_id,
+        "subentry_id": subentry.subentry_id,
+        **extra,
+    }
+    if action == "save":
+        payload["revision"] = repair.repair_revision(subentry)
+
+    with pytest.raises(HomeAssistantError, match=message):
+        await async_function_repair(hass, "admin", True, payload)
+
+
+async def test_function_repair_rejects_calls_when_tools_are_already_valid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry, subentry = _entry_and_subentry(agent_config_defaults())
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    monkeypatch.setattr(
+        management_ui,
+        "entry_and_agent",
+        lambda *_args, **_kwargs: (entry, subentry),
+    )
+
+    with pytest.raises(HomeAssistantError, match="do not require repair"):
+        await async_function_repair(
+            hass,
+            "admin",
+            True,
+            {
+                "action": "get",
+                "entry_id": entry.entry_id,
+                "subentry_id": subentry.subentry_id,
+            },
+        )
+
+
+async def test_function_repair_requires_both_identifiers() -> None:
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+
+    with pytest.raises(
+        HomeAssistantError, match="entry_id and subentry_id are required"
+    ):
+        await async_function_repair(
+            hass, "admin", True, {"action": "get", "entry_id": "entry-1"}
+        )
+
+
+@pytest.mark.parametrize(
+    ("index", "message"),
+    [
+        ("0", "valid Function Tool index"),
+        (-1, "changed position"),
+        (100, "changed position"),
+    ],
+)
+async def test_function_repair_rejects_invalid_or_stale_single_tool_index(
+    monkeypatch: pytest.MonkeyPatch, index: Any, message: str
+) -> None:
+    """A stale UI index must not edit or delete a different Function Tool."""
+    data, _tools = _invalid_legacy_tool_data()
+    entry, subentry = _entry_and_subentry(data)
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    monkeypatch.setattr(
+        management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
+    )
+
+    with pytest.raises(HomeAssistantError, match=message):
+        await async_function_repair(
+            hass,
+            "admin",
+            True,
+            {
+                "action": "delete_one",
+                "entry_id": entry.entry_id,
+                "subentry_id": subentry.subentry_id,
+                "revision": repair.repair_revision(subentry),
+                "index": index,
             },
         )
 

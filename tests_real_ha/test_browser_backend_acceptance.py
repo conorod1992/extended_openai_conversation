@@ -13,15 +13,21 @@ from typing import Any
 from aiohttp import web
 import pytest
 from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
+import yaml
 
+from custom_components.extended_openai_conversation_responses.const import (
+    CONF_FUNCTION_TOOLS,
+)
 from homeassistant.components import conversation, onboarding
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
+from tests_real_ha.test_acceptance_lifecycle import _make_entry
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
     _entry,
+    _management_call,
     _setup_entry,
 )
 
@@ -161,6 +167,76 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
             config="playwright.config.mjs",
             env={"REAL_HA_BACKEND_URL": backend_url},
             failure_label="Playwright genuine-HA backend acceptance failed",
+        )
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_function_repair_controls_on_cold_functions_route(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+) -> None:
+    """A direct Functions visit exposes and repairs quarantined tools."""
+    valid = {
+        "spec": {
+            "name": "generated_valid_sibling",
+            "description": "Preserved sibling",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "get_user_from_user_id"},
+        "enabled": False,
+    }
+    invalid = {
+        "spec": {
+            "name": "generated_invalid",
+            "description": "Needs repair",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "description": 123,
+            },
+        },
+        "function": {"type": "native", "name": "get_user_from_user_id"},
+    }
+    entry = _make_entry(
+        "Browser Function Repair",
+        include_ai_task=False,
+        conversation_options={CONF_FUNCTION_TOOLS: yaml.safe_dump([valid, invalid])},
+    )
+    await _setup_entry(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+    before = await _management_call(
+        client, entry=entry, section="configuration", action="get"
+    )
+    assert len(before["function_repair"]["invalid_tools"]) == 1
+    assert [tool["spec"]["name"] for tool in before["config"]["functions"]] == [
+        "generated_valid_sibling"
+    ]
+
+    class BrowserClient:
+        # Authenticate after Chromium starts, so slow browser startup cannot
+        # expire an idle Home Assistant test WebSocket.
+        client = None
+
+        async def send_json_auto_id(self, message):
+            if self.client is None:
+                self.client = await _admin_client(
+                    hass, hass_ws_client, user_id="browser-function-repair-admin"
+                )
+            await self.client.send_json_auto_id(message)
+
+        async def receive_json(self):
+            return await self.client.receive_json()
+
+    runner, backend_url = await _start_ws_bridge(BrowserClient())
+    try:
+        await _run_playwright(
+            repo_root=Path(__file__).resolve().parent.parent,
+            spec="tests_browser/real-ha-function-repair-direct-route.spec.mjs",
+            config="playwright.config.mjs",
+            env={"REAL_HA_BACKEND_URL": backend_url},
+            failure_label="Cold Function Repair controls were unavailable",
         )
     finally:
         await runner.cleanup()

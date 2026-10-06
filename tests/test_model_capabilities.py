@@ -206,6 +206,44 @@ def test_unknown_model_auto_path_remains_conservative(
     assert model_capabilities.select_api_path("custom", API_MODE_AUTO) == API_MODE_RESPONSES
 
 
+def test_legacy_capability_shapes_remain_supported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Older catalogue records retain their function and Responses search rules."""
+    legacy = {
+        "api": {
+            API_MODE_RESPONSES: True,
+            API_MODE_CHAT_COMPLETIONS: False,
+        },
+        "function_calling": {
+            API_MODE_RESPONSES: {"allowed_reasoning_efforts": ["low"]},
+            API_MODE_CHAT_COMPLETIONS: True,
+        },
+        "responses_web_search": True,
+    }
+    monkeypatch.setattr(
+        model_capabilities, "_request_capabilities", lambda _model: legacy
+    )
+
+    assert model_capabilities.capability_allowed(
+        "legacy", "function", API_MODE_RESPONSES, effort="low"
+    )
+    assert not model_capabilities.capability_allowed(
+        "legacy", "function", API_MODE_RESPONSES, effort="high"
+    )
+    assert model_capabilities.capability_allowed(
+        "legacy", "function", API_MODE_CHAT_COMPLETIONS
+    ) is False
+    legacy["api"][API_MODE_CHAT_COMPLETIONS] = True
+    assert model_capabilities.capability_allowed(
+        "legacy", "function", API_MODE_CHAT_COMPLETIONS
+    )
+    assert model_capabilities.capability_allowed(
+        "legacy", "web_search", API_MODE_RESPONSES
+    )
+    assert not model_capabilities.capability_allowed(
+        "legacy", "web_search", API_MODE_CHAT_COMPLETIONS
+    )
+
+
 def test_output_token_limit_rejects_invalid_values_and_model_ceiling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

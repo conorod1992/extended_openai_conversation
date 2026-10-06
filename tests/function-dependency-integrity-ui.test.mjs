@@ -88,3 +88,15 @@ for (const action of ["settings", "defaults", "wording_groups", "groups", "creat
   assert.equal(panel._eocSectionCacheTimes.has(key), false);
   assert.equal(panel._sectionCache.has(other), true, "other agents retain their cache");
 }
+
+for (const action of ["save", "save_one", "delete_one", "configuration_save"]) {
+  const key = "entry-1|agent-1|full";
+  panel._data.agents[0].entry_id = "entry-1";
+  panel._cleanConfigSnapshots.set(key, {config: {functions: ["old"]}});
+  panel._sectionCache.set("agent-1|capabilities/request-rules", {function_catalog: ["old"]});
+  panel._invalidateAfterMutation("agent-1", "function_repair", action);
+  assert.equal(panel._cleanConfigSnapshots.has(key), false,
+    `${action} must invalidate the configuration snapshot after Function Repair`);
+  assert.equal(panel._sectionCache.has("agent-1|capabilities/request-rules"), false,
+    "repaired tools must refresh the Request Rules function catalogue too");
+}

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from bs4 import BeautifulSoup
 import pytest
 
-from homeassistant.const import CONF_ATTRIBUTE, CONF_VALUE_TEMPLATE
-
 from custom_components.extended_openai_conversation_responses.functions import web
+from homeassistant.const import CONF_ATTRIBUTE, CONF_VALUE_TEMPLATE
 
 
 @pytest.mark.asyncio
@@ -26,7 +25,9 @@ async def test_rest_execute_preserves_none_without_rendering_value_template(
         def data_without_xml(self) -> None:
             return None
 
-    monkeypatch.setattr(web, "get_rest_data", lambda hass, config, arguments: FakeRestData())
+    monkeypatch.setattr(
+        web, "get_rest_data", lambda hass, config, arguments: FakeRestData()
+    )
     value_template = MagicMock()
 
     result = await web.RestFunction.execute(
@@ -74,18 +75,27 @@ def test_extract_value_handles_attribute_raw_text_and_normal_text() -> None:
     )
     function = web.ScrapeFunction.__new__(web.ScrapeFunction)
 
-    assert function._extract_value(
-        data,
-        {web.scrape.const.CONF_SELECT: "#link", CONF_ATTRIBUTE: "href"},
-    ) == "/status"
-    assert function._extract_value(
-        data,
-        {web.scrape.const.CONF_SELECT: "#payload"},
-    ) == '{"ok": true}'
-    assert function._extract_value(
-        data,
-        {web.scrape.const.CONF_SELECT: "#message"},
-    ) == "Hello world"
+    assert (
+        function._extract_value(
+            data,
+            {web.scrape.const.CONF_SELECT: "#link", CONF_ATTRIBUTE: "href"},
+        )
+        == "/status"
+    )
+    assert (
+        function._extract_value(
+            data,
+            {web.scrape.const.CONF_SELECT: "#payload"},
+        )
+        == '{"ok": true}'
+    )
+    assert (
+        function._extract_value(
+            data,
+            {web.scrape.const.CONF_SELECT: "#message"},
+        )
+        == "Hello world"
+    )
 
     assert (
         function._extract_value(
@@ -112,9 +122,14 @@ def test_extract_value_handles_attribute_raw_text_and_normal_text() -> None:
 @pytest.mark.parametrize("kind", ["timeout", "disconnect"])
 async def test_rest_execute_propagates_recorded_transport_failure(monkeypatch, kind):
     import aiohttp
+
     from homeassistant.exceptions import HomeAssistantError
 
-    error = TimeoutError("Timed out") if kind == "timeout" else aiohttp.ServerDisconnectedError("Disconnected")
+    error = (
+        TimeoutError("Timed out")
+        if kind == "timeout"
+        else aiohttp.ServerDisconnectedError("Disconnected")
+    )
 
     class FailedRestData:
         last_exception = error
@@ -123,9 +138,33 @@ async def test_rest_execute_propagates_recorded_transport_failure(monkeypatch, k
             return None
 
         def data_without_xml(self):
-            raise AssertionError("Transport failure must be inspected before returning data")
+            raise AssertionError(
+                "Transport failure must be inspected before returning data"
+            )
 
     monkeypatch.setattr(web, "get_rest_data", lambda *args: FailedRestData())
     with pytest.raises(HomeAssistantError, match="REST request failed") as caught:
         await web.RestFunction().execute(SimpleNamespace(), {}, {}, None, [])
     assert caught.value.__cause__ is error
+
+
+@pytest.mark.asyncio
+async def test_scrape_reports_missing_remote_data(monkeypatch):
+    """A successful refresh with no parsed response remains an explicit error."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    coordinator = SimpleNamespace(data=None, async_refresh=AsyncMock())
+    monkeypatch.setattr(web, "get_rest_data", lambda *_args: object())
+    monkeypatch.setattr(
+        web.scrape.coordinator,
+        "ScrapeCoordinator",
+        MagicMock(return_value=coordinator),
+    )
+
+    with pytest.raises(
+        HomeAssistantError, match="Remote scrape response is unavailable"
+    ):
+        await web.ScrapeFunction().execute(
+            SimpleNamespace(), {"sensor": []}, {}, None, []
+        )
+    coordinator.async_refresh.assert_awaited_once()

@@ -198,6 +198,7 @@ export const MUTATIONS = new Map([
   ["backup", new Set(["restore"])],
   ["quiet_hours", new Set(["update"])],
   ["configuration", new Set(["update", "save", "import"])],
+  ["function_repair", new Set(["save", "save_one", "delete_one", "configuration_save"])],
   ["conversations", new Set(["delete", "end_active"])],
   ["guest_mode", new Set(["save_policy", "update", "disable"])],
   ["knowledge", new Set(["create", "update", "delete", "set_enabled"])],

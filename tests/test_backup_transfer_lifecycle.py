@@ -223,6 +223,78 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
     assert not os.path.exists(staged_path)
 
 
+async def test_inspection_with_missing_user_mapping_requires_selection_before_preview(
+    hass, monkeypatch
+) -> None:
+    """Missing source owners produce an actionable preview without a restore token."""
+    started = await backup_transfer._start_import(
+        hass,
+        "entry-1",
+        "agent-1",
+        {"filename": "backup.json", "size": 4},
+    )
+    session_id = started["session_id"]
+    await backup_transfer._import_chunk(
+        hass,
+        "entry-1",
+        "agent-1",
+        {
+            "session_id": session_id,
+            "index": 0,
+            "data": base64.b64encode(b"data").decode(),
+        },
+    )
+    selected_section = transfer.SECTION_PERSISTENT_MEMORY
+    prepared = SimpleNamespace(
+        available_sections=frozenset({selected_section}),
+        summary=lambda: {"available_sections": [selected_section]},
+    )
+    entry = SimpleNamespace(entry_id="entry-1")
+    subentry = SimpleNamespace(subentry_id="agent-1")
+    mapping = {
+        "required_source_user_ids": ["old-user"],
+        "missing_source_user_ids": ["old-user"],
+        "destination_users": [],
+        "resolved": {},
+    }
+    materialize = AsyncMock()
+    monkeypatch.setattr(
+        backup_transfer,
+        "_async_load_prepared_restore",
+        AsyncMock(return_value=prepared),
+    )
+    monkeypatch.setattr(
+        backup_transfer, "_resolve_agent", lambda *_args: (entry, subentry)
+    )
+    monkeypatch.setattr(
+        transfer, "async_user_scope_mapping_plan", AsyncMock(return_value=mapping)
+    )
+    monkeypatch.setattr(
+        transfer, "_current_snapshot", AsyncMock(return_value=object())
+    )
+    monkeypatch.setattr(transfer, "async_materialize_restore", materialize)
+    monkeypatch.setattr(
+        transfer,
+        "inspection_for_frontend",
+        lambda _prepared: {"available_sections": [selected_section]},
+    )
+
+    inspection = await backup_transfer._inspect_import(
+        hass,
+        "entry-1",
+        "agent-1",
+        {"session_id": session_id, "sections": [selected_section]},
+    )
+
+    assert inspection["preview_token"] is None
+    assert inspection["preview"]["user_scope_mapping"] == mapping
+    assert inspection["preview"]["selected_sections"] == [selected_section]
+    materialize.assert_not_awaited()
+    session = backup_transfer._imports(hass)[session_id]
+    assert session.preview_sections == (selected_section,)
+    assert session.preview_user_scope_mappings is None
+
+
 async def test_restore_failure_still_consumes_and_deletes_completed_upload(
     hass, monkeypatch
 ) -> None:

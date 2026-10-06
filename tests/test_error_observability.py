@@ -155,6 +155,36 @@ def test_live_guest_denial_does_not_advise_assist_exposure(hass, monkeypatch) ->
     assert "Expose" not in str(caught.value)
 
 
+def test_live_action_targets_reject_changed_context_and_removed_entities(
+    hass, monkeypatch
+) -> None:
+    agent = conversation.ExtendedOpenAIAgentEntity.__new__(
+        conversation.ExtendedOpenAIAgentEntity
+    )
+    agent.hass = hass
+    agent._effective_guest_policy = lambda: GuestCapabilityPolicy(False)
+    monkeypatch.setattr(conversation, "get_exposed_entities", lambda *_: [])
+    monkeypatch.setattr(hass.states, "get", lambda _entity_id: None)
+
+    agent.hass = object()
+    with pytest.raises(HomeAssistantError, match="context changed"):
+        agent._require_current_action_targets(hass, {"light.test"})
+
+    agent.hass = hass
+    with pytest.raises(HomeAssistantError, match="no longer exists"):
+        agent._require_current_action_targets(hass, {"light.missing"})
+
+    monkeypatch.setattr(
+        hass.states,
+        "get",
+        lambda entity_id: object() if entity_id == "light.test" else None,
+    )
+    with pytest.raises(HomeAssistantError, match="Function Tool access policy"):
+        agent._require_current_action_targets(hass, {"light.test"})
+
+    agent._require_current_action_targets(hass, set())
+
+
 async def test_usage_fallback_is_explained_and_shared(
     hass, monkeypatch, caplog
 ) -> None:

@@ -852,7 +852,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _invalidateAfterMutation(agentId, section, action) {
     if (agentId && ((section === "configuration" && ["save", "update", "import"].includes(action))
-        || (section === "function_repair" && action === "configuration_save")
+        || (section === "function_repair" && isAgentMutation(section, action))
         || (section === "tools" && TOOL_MUTATIONS.has(action))
         || (section === "knowledge" && action === "set_enabled")
         || (section === "guest_mode" && action === "save_policy")
@@ -902,6 +902,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
     const affectsRequestRules = agentId && (
       (section === "tools" && TOOL_MUTATIONS.has(action))
+      || (section === "function_repair" && isAgentMutation(section, action))
       || (section === "request_rules" && action === "move")
     );
     if (affectsRequestRules) {

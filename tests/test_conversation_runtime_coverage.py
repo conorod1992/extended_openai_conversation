@@ -13,7 +13,10 @@ from custom_components.extended_openai_conversation_responses import (
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_MEMORY_RETRIEVAL_MODE,
+    CONF_TEMPORARY_MEMORY,
     MEMORY_RETRIEVAL_HYBRID,
+    TEMPORARY_MEMORY_BALANCED,
+    TEMPORARY_MEMORY_OFF,
 )
 
 Agent = conversation_module.ExtendedOpenAIAgentEntity
@@ -340,3 +343,98 @@ async def test_memory_retrieval_ranking_failure_is_best_effort() -> None:
 
     assert result == []
     rank.assert_awaited_once_with(["user:alice"], "remember this", 2)
+
+
+@pytest.mark.asyncio
+async def test_embedding_results_are_count_checked_and_sorted_by_provider_index() -> None:
+    """Reject incomplete provider responses and restore input order on valid ones."""
+    agent = Agent.__new__(Agent)
+    agent.subentry = SimpleNamespace(data={})
+    agent.entry = SimpleNamespace(runtime_data=SimpleNamespace(
+        embeddings=SimpleNamespace(
+            create=AsyncMock(
+                return_value=SimpleNamespace(
+                    data=[
+                        SimpleNamespace(index=1, embedding=[2.0]),
+                        SimpleNamespace(index=0, embedding=[1.0]),
+                    ]
+                )
+            )
+        )
+    ))
+
+    assert await agent._async_create_embeddings(["first", "second"]) == [
+        [1.0],
+        [2.0],
+    ]
+
+    agent.entry.runtime_data.embeddings.create.return_value = SimpleNamespace(
+        data=[SimpleNamespace(index=0, embedding=[1.0])]
+    )
+    with pytest.raises(ValueError, match="wrong number of entries"):
+        await agent._async_create_embeddings(["first", "second"])
+
+    agent.entry.runtime_data.embeddings.create.return_value = SimpleNamespace(
+        data=[
+            SimpleNamespace(index=0, embedding=[1.0]),
+            SimpleNamespace(index=0, embedding=[2.0]),
+        ]
+    )
+    with pytest.raises(ValueError, match="invalid or duplicate index"):
+        await agent._async_create_embeddings(["first", "second"])
+
+    for invalid_index in (True, 2):
+        agent.entry.runtime_data.embeddings.create.return_value = SimpleNamespace(
+            data=[
+                SimpleNamespace(index=0, embedding=[1.0]),
+                SimpleNamespace(index=invalid_index, embedding=[2.0]),
+            ]
+        )
+        with pytest.raises(ValueError, match="invalid or duplicate index"):
+            await agent._async_create_embeddings(["first", "second"])
+
+
+def test_request_function_groups_are_validated_once_per_request(monkeypatch) -> None:
+    configured_tools: list[dict] = []
+    groups = [{"name": "validated"}]
+    validations: list[tuple[object, object]] = []
+    monkeypatch.setattr(
+        conversation_module,
+        "validate_function_groups",
+        lambda configured, tools: validations.append((configured, tools)) or groups,
+    )
+    agent = SimpleNamespace(subentry=SimpleNamespace(data={}))
+    token = conversation_module._ACTIVE_FUNCTION_CONFIG.set(
+        (configured_tools, None)
+    )
+    try:
+        first = conversation_module._request_function_groups(agent, configured_tools)
+        second = conversation_module._request_function_groups(agent, configured_tools)
+    finally:
+        conversation_module._ACTIVE_FUNCTION_CONFIG.reset(token)
+
+    assert first is groups
+    assert second is groups
+    assert validations == [([], configured_tools)]
+
+
+@pytest.mark.asyncio
+async def test_temporary_memory_loading_respects_disabled_and_missing_owner() -> None:
+    """Temporary facts are skipped when disabled or when no retained owner exists."""
+    disabled_agent = SimpleNamespace(
+        subentry=SimpleNamespace(data={CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_OFF}),
+        _effective_guest_policy=lambda: SimpleNamespace(temporary_memory=True),
+        _temporary_memory=SimpleNamespace(async_active=AsyncMock()),
+    )
+    assert await Agent._async_load_temporary_memories(disabled_agent) == []
+    disabled_agent._temporary_memory.async_active.assert_not_awaited()
+
+    unscoped_agent = SimpleNamespace(
+        subentry=SimpleNamespace(
+            data={CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED}
+        ),
+        _effective_guest_policy=lambda: SimpleNamespace(temporary_memory=True),
+        _temporary_memory=SimpleNamespace(async_active=AsyncMock()),
+    )
+    assert await Agent._async_load_temporary_memories(unscoped_agent) == []
+    unscoped_agent._temporary_memory.async_active.assert_not_awaited()
