@@ -1,0 +1,116 @@
+name: Full live OpenAI EOAI end-to-end
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Current OpenAI model to use for the bounded end-to-end journeys"
+        required: true
+        default: "gpt-5.6"
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: full-live-openai-e2e
+  cancel-in-progress: false
+
+jobs:
+  live-e2e:
+    name: Real HA → EOAI → OpenAI tool continuation
+    if: github.actor == 'conorod1992'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      LIVE_OPENAI_E2E_MODEL: ${{ inputs.model }}
+      LIVE_OPENAI_E2E_REPORT: ${{ github.workspace }}/live-openai-full-e2e-report.json
+      PYTHONPATH: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify caller and protected secret
+        run: |
+          set -euo pipefail
+          test "${GITHUB_ACTOR}" = "conorod1992"
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::Repository secret OPENAI_API_KEY is not configured."
+            exit 1
+          fi
+          if [ -z "${LIVE_OPENAI_E2E_MODEL:-}" ]; then
+            echo "::error::A live OpenAI model is required."
+            exit 1
+          fi
+
+      - name: Reconcile current dependencies
+        run: |
+          set -euo pipefail
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+            pip install -r requirements_test.txt
+            pip install --upgrade homeassistant
+            python ci/install_ha_dependencies.py               --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
+          pip check
+
+      - name: Run bounded full live OpenAI journey
+        run: |
+          set -euo pipefail
+          pytest tests_real_ha/test_live_openai_full_e2e.py             -v --asyncio-mode=auto --timeout=300
+
+      - name: Add exact-candidate workflow metadata
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("live-openai-full-e2e-report.json")
+          payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+          manifest = json.loads(
+              Path("custom_components/extended_openai_conversation_responses/manifest.json")
+              .read_text(encoding="utf-8")
+          )
+          payload.update(
+              {
+                  "candidate_sha": os.environ["GITHUB_SHA"],
+                  "candidate_manifest_version": manifest["version"],
+                  "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+                  "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                  "job_status": os.environ["JOB_STATUS"],
+                  "manual_only": True,
+              }
+          )
+          path.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload sanitized live journey evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-openai-full-e2e-${{ github.sha }}
+          path: live-openai-full-e2e-report.json
+          if-no-files-found: error
+          retention-days: 14
