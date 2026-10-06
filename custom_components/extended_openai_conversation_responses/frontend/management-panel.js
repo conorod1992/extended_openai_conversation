@@ -965,6 +965,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._markColdLifecycle("agents-complete", {status: "fulfilled"});
     } catch (err) {
       this._markColdLifecycle("agents-complete", {status: "rejected"});
+      // Failed catalogue reads cannot validate the owner of a mounted editor.
+      // Close it so the failure can render and stale drafts cannot be submitted.
+      this.shadowRoot?.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
+      this._memoryEditorAgent = null;
+      this._memoryEditorScope = null;
+      this._busy = false;
       this._error = err.message || String(err);
       this._render();
     }
