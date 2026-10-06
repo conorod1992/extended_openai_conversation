@@ -30,7 +30,29 @@ REQUIRED_WORKFLOWS = (
     "enhanced-stress.yml",
     "upgrade-acceptance.yml",
     "openai-sdk-compatibility.yml",
+    "ha-browser-compatibility.yml",
+    "deployment-architecture.yml",
+    "resource-constrained.yml",
+    "mutation.yml",
+    "official-ha-container.yml",
 )
+MUTATION_CAMPAIGNS = (
+    "function-tools",
+    "guest-security",
+    "ha-permissions",
+    "request-rules",
+    "function-groups",
+    "contract-sensitivity",
+)
+SCHEDULED_CERTIFICATION_WORKFLOWS = {
+    "upgrade-acceptance.yml",
+    "openai-sdk-compatibility.yml",
+    "ha-browser-compatibility.yml",
+    "deployment-architecture.yml",
+    "resource-constrained.yml",
+    "mutation.yml",
+    "official-ha-container.yml",
+}
 UPGRADE_EPOCHS = ("latest", "6.8.2", "6.7.0", "6.5.0", "6.3.1", "6.2.0")
 SUPPORTED_SDK_LANES = ("2.21.0", "2.45.0", "3.10.0")
 ADVISORY_SDK_LANE = "latest-3x-early-warning"
@@ -152,6 +174,22 @@ def matrix_envelope_errors(
         or (lane != "latest" and item.get("source_version") != lane)
     ):
         errors.append(f"Upgrade lane {lane} lacks matching released payload identity")
+    return errors
+
+
+def official_container_errors(item: dict, source_sha: str) -> list[str]:
+    """Require a source-bound proof from the published Home Assistant image."""
+    errors = []
+    if item.get("candidate_sha") != source_sha:
+        errors.append("Official HA Container evidence is for another candidate")
+    if item.get("passed") is not True or item.get("official_container") is not True:
+        errors.append("Official HA Container acceptance did not pass")
+    if set(item.get("phases", [])) != {"seed", "recover", "entrypoint"}:
+        errors.append("Official HA Container lifecycle evidence is incomplete")
+    if not item.get("retained_entry") or not item.get("retained_entities"):
+        errors.append("Official HA Container restart did not preserve runtime identity")
+    if not item.get("homeassistant") or not item.get("image_id"):
+        errors.append("Official HA Container environment identity is incomplete")
     return errors
 
 
@@ -283,8 +321,7 @@ def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
                 workflow_id=workflow_id,
                 source_sha=source_sha,
                 events={"workflow_dispatch", "schedule"}
-                if filename
-                in {"upgrade-acceptance.yml", "openai-sdk-compatibility.yml"}
+                if filename in SCHEDULED_CERTIFICATION_WORKFLOWS
                 else None,
             )
         ]
@@ -293,6 +330,8 @@ def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
             "enhanced-stress.yml",
             "upgrade-acceptance.yml",
             "openai-sdk-compatibility.yml",
+            "mutation.yml",
+            "official-ha-container.yml",
         }:
             complete = []
             for run in candidates:
@@ -322,6 +361,35 @@ def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
                             ),
                             source_sha,
                         )
+                    elif filename == "mutation.yml":
+                        errors = []
+                        required_jobs = {
+                            f"Mutation campaign ({campaign})"
+                            for campaign in MUTATION_CAMPAIGNS
+                        }
+                        missing_jobs = required_jobs - successful
+                        if missing_jobs:
+                            errors.append(
+                                "Required mutation campaigns absent: "
+                                + ", ".join(sorted(missing_jobs))
+                            )
+                    elif filename == "official-ha-container.yml":
+                        selected = [
+                            item
+                            for item in artifacts
+                            if item["name"] == "official-ha-container-evidence"
+                        ]
+                        if len(selected) != 1:
+                            errors = [
+                                "Exactly one official HA Container evidence artifact is required"
+                            ]
+                        else:
+                            errors = official_container_errors(
+                                actions.artifact_json(
+                                    selected[0], "certification.json"
+                                ),
+                                source_sha,
+                            )
                     else:
                         kind = (
                             "upgrade" if filename == "upgrade-acceptance.yml" else "sdk"

@@ -266,6 +266,8 @@ jobs:
               "test_browser_runtime_acceptance.py",
               "test_browser_release_upgrade_acceptance.py",
               # Release/package journeys are owned by their specialized workflows.
+              "test_native_ha_backup_restore.py",
+              "test_https_proxy_acceptance.py",
               "test_release_upgrade_acceptance.py",
               "test_release_upgrade_custom_function_tool.py",
               "test_packaged_release.py",
@@ -452,6 +454,8 @@ jobs:
                 --ignore=tests_real_ha/test_browser_refresh_boundary_acceptance.py
                 --ignore=tests_real_ha/test_browser_runtime_acceptance.py
                 --ignore=tests_real_ha/test_browser_release_upgrade_acceptance.py
+                --ignore=tests_real_ha/test_native_ha_backup_restore.py
+                --ignore=tests_real_ha/test_https_proxy_acceptance.py
                 --ignore=tests_real_ha/test_release_upgrade_acceptance.py
                 --ignore=tests_real_ha/test_release_upgrade_custom_function_tool.py
                 --ignore=tests_real_ha/test_packaged_release.py
