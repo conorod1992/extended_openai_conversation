@@ -11,6 +11,7 @@ export const nightlyInteractionSpecs = [
   "conversation-actions.spec.mjs",
   "request-debug-persistence.spec.mjs",
   "timezone-locale-boundaries.spec.mjs",
+  "control-reachability.spec.mjs",
 ];
 export default {
   ...base,
