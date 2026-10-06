@@ -6,7 +6,9 @@ const frontend = "/custom_components/extended_openai_conversation_responses/fron
 test("configuration and Knowledge return final markup before any enhancement can run", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));
-  await expect(page.locator("extended-openai-management-panel [data-config='api_mode']")).toBeVisible();
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("details.general-advanced summary")).toBeVisible();
+  await expect(panel.locator("[data-config='api_mode']")).toBeAttached();
   const result = await page.evaluate(async (base) => {
     const {renderConfiguration} = await import(`${base}agent-config-editor-base.js`);
     const {renderMemorySettings} = await import(`${base}memory-settings-ui.js`);
