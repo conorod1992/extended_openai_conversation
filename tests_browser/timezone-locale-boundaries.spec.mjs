@@ -32,6 +32,29 @@ for (const locale of ["en-GB", "en-US", "en-IE", "fr-FR"]) {
   });
 }
 
+test.describe("browser de-DE numeric configuration", () => {
+  test.use({timezoneId: "Europe/Berlin", locale: "de-DE"});
+
+  test("decimal model settings remain numeric and never become tenfold values", async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("assistant/basics"));
+    const panel = page.locator("extended-openai-management-panel");
+    const temperature = panel.locator('[data-config="temperature"]');
+    await expect(temperature).toHaveAttribute("type", "number");
+    // HTML number inputs expose a locale-independent canonical value even
+    // when the surrounding browser locale uses a decimal comma.
+    await temperature.fill("0.7");
+    await panel.locator("#save-config").click();
+    await expect.poll(() => page.evaluate(() => window.browserHarness.calls
+      .filter(call => call.section === "configuration" && call.action === "save")
+      .at(-1)?.config?.temperature)).toBe(0.7);
+    expect(await temperature.inputValue()).not.toBe("7");
+    await page.goto(fixtureUrl("assistant/basics"));
+    await expect(panel.locator('[data-config="temperature"]')).toHaveValue("0.7");
+    await expectHarnessClean(page, errors);
+  });
+});
+
 test.describe("browser Kiritimati / HA Dublin wall clock", () => {
   test.use({timezoneId: "Pacific/Kiritimati", locale: "en-GB"});
 

@@ -39,6 +39,38 @@ test("major management pages keep unique IDs and reachable navigation at narrow 
   console.log(`ENHANCED ACCESSIBILITY_LAYOUT pages=${checked}`);
 });
 
+test("200% and 400% reflow keep primary controls reachable across management routes", async ({page}) => {
+  const errors = trackPageErrors(page);
+  // Browser zoom reduces the available CSS viewport. Exercise the equivalent
+  // 640px and 320px layouts without relying on browser-specific zoom shortcuts.
+  for (const width of [640, 320]) {
+    await page.setViewportSize({width, height: 800});
+    for (const [route, heading] of pages) {
+      await page.goto(fixtureUrl(route));
+      const panel = page.locator("extended-openai-management-panel");
+      await expect(panel.getByRole("heading", {name: heading, exact: true}).first()).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${route} at ${width}px`).toBe(true);
+      await expect(panel.locator(width < 600 ? "#local-section" : ".top-nav")).toBeVisible();
+      const save = panel.locator("#save-page, #save-config").first();
+      if (await save.count()) {
+        await save.scrollIntoViewIfNeeded();
+        await expect(save).toBeInViewport();
+      }
+    }
+  }
+  await page.setViewportSize({width: 320, height: 800});
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  const panel = page.locator("extended-openai-management-panel");
+  const create = panel.getByRole("button", {name: "Create rule", exact: true}).first();
+  await create.scrollIntoViewIfNeeded();
+  await create.click();
+  await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", true);
+  const save = panel.locator("#rule-save");
+  await save.scrollIntoViewIfNeeded();
+  await expect(save).toBeInViewport();
+  await expectHarnessClean(page, errors);
+});
+
 test("Request Rule dialog supports keyboard cancellation and returns usable focus", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
