@@ -59,3 +59,34 @@ def test_prebuilt_wheel_source_requires_consistent_recorded_build_identity(tmp_p
     source.write_text(SHA)
     identity.write_text(json.dumps(built | {"sha256": "wrong"}))
     assert enhanced_evidence.prebuilt_ha_source(identity, source) is None
+
+
+def test_enhanced_nightly_requires_real_mariadb_and_postgresql_recorder():
+    """The full overnight lane must execute, not skip, both external Recorder backends."""
+    from pathlib import Path
+
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github"
+        / "workflows"
+        / "enhanced-stress.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "external-recorder:" in workflow
+    assert "image: mariadb:11.4" in workflow
+    assert "image: postgres:17" in workflow
+    assert "EOAI_TEST_MARIADB_URL:" in workflow
+    assert "EOAI_TEST_POSTGRES_URL:" in workflow
+    assert 'EOAI_REQUIRE_EXTERNAL_RECORDER: "1"' in workflow
+    assert (
+        "test_recorder_time_retention_lifecycle.py::"
+        "test_native_history_against_external_recorder_database"
+        in workflow
+    )
+    assert (
+        "test_recorder_time_retention_lifecycle.py::"
+        "test_recorder_backend_switch_preserves_history_and_statistics_semantics"
+        in workflow
+    )
+    assert "github.event_name == 'schedule'" in workflow
+    assert "inputs.campaign == 'all'" in workflow

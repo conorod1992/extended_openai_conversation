@@ -21,6 +21,8 @@ from custom_components.extended_openai_conversation_responses.usage import (
     async_get_usage,
 )
 from homeassistant.components import recorder
+from homeassistant.components.recorder import statistics
+from homeassistant.components.recorder.models.statistics import StatisticMeanType
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
@@ -249,6 +251,8 @@ async def test_native_history_against_external_recorder_database(
     """Enhanced/manual environments can certify EOAI against real external Recorder DBs."""
     db_url = os.getenv(env_name)
     if not db_url:
+        if os.getenv("EOAI_REQUIRE_EXTERNAL_RECORDER") == "1":
+            pytest.fail(f"{env_name} is required for external Recorder certification")
         pytest.skip(f"{env_name} is not configured")
     await _setup_recorder(hass, db_url)
     hass.states.async_set("sensor.recorder_acceptance", f"{backend}-recorded")
@@ -271,6 +275,135 @@ async def test_native_history_against_external_recorder_database(
         "summary",
         external_recorder_backend=backend,
         external_recorder_history_queries=1,
+    )
+
+
+@pytest.mark.parametrize(
+    ("env_name", "backend"),
+    [
+        ("EOAI_TEST_MARIADB_URL", "mariadb"),
+        ("EOAI_TEST_POSTGRES_URL", "postgresql"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_recorder_backend_switch_preserves_history_and_statistics_semantics(
+    hass: HomeAssistant,
+    env_name: str,
+    backend: str,
+    stress_trace: list[dict],
+) -> None:
+    """Migrated-style Recorder data keeps EOAI semantics after leaving SQLite."""
+    db_url = os.getenv(env_name)
+    if not db_url:
+        if os.getenv("EOAI_REQUIRE_EXTERNAL_RECORDER") == "1":
+            pytest.fail(f"{env_name} is required for external Recorder certification")
+        pytest.skip(f"{env_name} is not configured")
+
+    await _setup_recorder(hass, db_url)
+
+    # This state sequence mirrors the boundary-sensitive SQLite acceptance case.
+    # The migration itself belongs to Home Assistant; EOAI's contract is that the
+    # same Recorder data has the same visible meaning once the backend changes.
+    hass.states.async_set("sensor.recorder_acceptance", "before")
+    await hass.async_block_till_done()
+    before = hass.states.get("sensor.recorder_acceptance").last_changed
+    hass.states.async_set("sensor.recorder_acceptance", "inside")
+    await hass.async_block_till_done()
+    inside = hass.states.get("sensor.recorder_acceptance").last_changed
+    hass.states.async_set("sensor.recorder_acceptance", "later")
+    await hass.async_block_till_done()
+    later = hass.states.get("sensor.recorder_acceptance").last_changed
+    instance = recorder.get_instance(hass)
+    await instance.async_block_till_done()
+
+    between = inside + (later - inside) / 2
+    history = await NativeFunction().get_history(
+        hass,
+        {},
+        {
+            "entity_ids": ["sensor.recorder_acceptance"],
+            "start_time": (before + timedelta(microseconds=1)).isoformat(),
+            "end_time": between.isoformat(),
+            "include_start_time_state": False,
+            "significant_changes_only": False,
+        },
+        None,
+        _EXPOSED,
+    )
+    assert [[item["state"] for item in group] for group in history] == [["inside"]]
+
+    with_boundary = await NativeFunction().get_history(
+        hass,
+        {},
+        {
+            "entity_ids": ["sensor.recorder_acceptance"],
+            "start_time": (inside + timedelta(microseconds=1)).isoformat(),
+            "include_start_time_state": True,
+            "significant_changes_only": False,
+        },
+        None,
+        _EXPOSED,
+    )
+    assert with_boundary
+    assert with_boundary[0][0]["state"] == "inside"
+
+    start = dt_util.utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(
+        hours=2
+    )
+    metadata = {
+        "statistic_id": "sensor.recorder_acceptance",
+        "source": "recorder",
+        "name": "Recorder backend switch",
+        "unit_of_measurement": "°C",
+        "unit_class": "temperature",
+        "has_mean": True,
+        "mean_type": StatisticMeanType.ARITHMETIC,
+        "has_sum": False,
+    }
+    statistics.async_import_statistics(
+        hass,
+        metadata,
+        [
+            {"start": start, "mean": 21.5, "min": 20.0, "max": 23.0},
+            {
+                "start": start + timedelta(hours=1),
+                "mean": 22.5,
+                "min": 21.0,
+                "max": 24.0,
+            },
+        ],
+    )
+    await instance.async_block_till_done()
+    stats = await NativeFunction().get_statistics(
+        hass,
+        {},
+        {
+            "statistic_ids": ["sensor.recorder_acceptance"],
+            "start_time": start.isoformat(),
+            "end_time": (start + timedelta(hours=2)).isoformat(),
+            "period": "hour",
+            "types": {"mean", "min", "max"},
+            "units": {"temperature": "°F"},
+        },
+        None,
+        _EXPOSED,
+    )
+    rows = stats["sensor.recorder_acceptance"]
+    assert len(rows) == 2
+    assert rows[0]["mean"] == pytest.approx(70.7)
+    assert rows[0]["min"] == pytest.approx(68.0)
+    assert rows[0]["max"] == pytest.approx(73.4)
+    assert [row["start"] for row in rows] == [
+        start.timestamp(),
+        (start + timedelta(hours=1)).timestamp(),
+    ]
+
+    record(
+        stress_trace,
+        "summary",
+        recorder_backend_switch_target=backend,
+        backend_switch_history_semantics=1,
+        backend_switch_statistics_semantics=1,
     )
 
 
