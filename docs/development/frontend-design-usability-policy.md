@@ -998,3 +998,348 @@ Use:
 - short help text;
 - help buttons/popovers;
 - "Learn more" links;
+- expandable references;
+- guidance panels.
+
+14.3 Avoid overloading the page
+-------------------------------
+
+Do not duplicate long documentation directly into settings pages.
+
+Use progressive disclosure for deeper information.
+
+
+15. ACCESSIBILITY
+=================
+
+All interactive elements should be usable by keyboard.
+
+Custom controls should provide:
+- accessible names;
+- sensible roles;
+- focus-visible treatment;
+- keyboard interaction;
+- state where applicable.
+
+Do not rely only on:
+- colour;
+- hover;
+- pointer precision.
+
+Status changes that matter should use appropriate live-region or equivalent accessible behaviour where necessary.
+
+Clickable cards or custom interactive regions must behave like genuine accessible controls.
+
+Native HA controls are preferred partly because they already provide established accessibility behaviour.
+
+
+16. RESPONSIVE DESIGN
+=====================
+
+16.1 Mobile is a designed layout
+--------------------------------
+
+Narrow layouts may:
+- stack sections;
+- convert two columns to one;
+- move actions beneath headings;
+- make buttons full width;
+- replace horizontal navigation;
+- simplify secondary presentation.
+
+16.2 Preserve capability
+------------------------
+
+No feature should become inaccessible merely because the viewport is narrow.
+
+16.3 Avoid overflow
+-------------------
+
+Controls, cards, dialogs, tables, and editors should:
+- remain reachable;
+- avoid clipping;
+- wrap appropriately;
+- use scrolling only where it is the correct interaction.
+
+
+17. HOME ASSISTANT INTEGRATION PRINCIPLES
+========================================
+
+17.1 Prefer HA selectors
+------------------------
+
+Use native HA selectors when they naturally represent the value being configured, especially where the value is a Home Assistant-owned concept.
+
+Strong candidates include:
+- entities;
+- devices;
+- areas;
+- users;
+- labels;
+- Home Assistant actions;
+- Home Assistant conditions.
+
+Ordinary accessible HTML controls remain appropriate for EOAI-owned scalar values such as free text, numbers, simple booleans, provider-specific enums, and other settings where a native HA selector adds no usability or semantic benefit.
+
+The goal is to reuse Home Assistant's established authoring experience where it helps the user, not to replace every normal form control with a custom HA component.
+
+17.2 Prefer HA-native action/condition editing
+---------------------------------------------
+
+Where EOAI exposes Home Assistant actions or conditions, use the native authoring experience where practical rather than inventing a parallel editor.
+
+17.3 Respect HA themes
+----------------------
+
+Use HA-provided theme variables for:
+- backgrounds;
+- text;
+- divider colours;
+- primary/accent colours;
+- semantic colours where available.
+
+Avoid hard-coded feature colours.
+
+17.4 Follow HA conventions unless EOAI has a usability reason to differ
+-----------------------------------------------------------------------
+
+Consistency with Home Assistant is a benefit, but EOAI may diverge where:
+- HA has no suitable component;
+- the native pattern would make the task materially worse;
+- EOAI requires a specialist workflow.
+
+Such divergence should be intentional.
+
+
+18. ADVANCED EDITORS AND RAW CONFIGURATION
+==========================================
+
+18.1 Preserve unsupported fields
+--------------------------------
+
+Visual editors must not erase valid advanced configuration they do not expose.
+
+18.2 Make mode changes understandable
+-------------------------------------
+
+If switching between visual/native/raw modes changes editing capability or representation, explain that clearly.
+
+18.3 Avoid forcing raw configuration for ordinary tasks
+-------------------------------------------------------
+
+YAML/JSON should remain available where useful, but common workflows should not require it when a clear visual/native alternative exists.
+
+
+19. STATUS AND HEALTH PRESENTATION
+==================================
+
+Use consistent language for:
+- healthy;
+- enabled;
+- disabled by choice;
+- inactive;
+- warning;
+- unavailable;
+- failed;
+- unknown.
+
+Do not use one label for multiple materially different states.
+
+Disabled/inactive should normally use neutral presentation. Green should remain reserved for positive/healthy state and red for failure or danger.
+
+Status text should tell the user what the state means, not merely name it.
+
+Where a problem is actionable, provide the route or action needed to address it.
+
+
+20. CONTENT DENSITY
+===================
+
+EOAI is a powerful configuration interface and may contain a lot of information.
+
+Aim for:
+- high capability;
+- low ambiguity;
+- moderate visual density.
+
+Avoid:
+- giant empty layouts;
+- unnecessary cards;
+- repeated explanatory paragraphs;
+- excessive modal flows;
+- hiding common settings behind too many clicks.
+
+Use spacing and hierarchy to improve readability without making every section oversized.
+
+
+21. CONSISTENCY RULES FOR NEW FEATURES
+======================================
+
+When adding a new frontend feature, first determine:
+
+1. Is this a settings section, collection, dashboard summary, metric/stat summary, or specialist workflow?
+2. Can an existing EOAI layout pattern be reused?
+3. Does this configure a Home Assistant-owned concept for which a native HA selector/component should be used?
+4. What is the primary user task?
+5. What information must be visible without the Guide?
+6. What is advanced and can be progressively disclosed?
+7. What state can be loading/empty/error/unavailable?
+8. What data could be lost if navigation or refresh occurs?
+9. What is the scope/owner of the change?
+10. Does the feature behave correctly on mobile and keyboard?
+11. Does it introduce a new card, spacing, colour, or button pattern unnecessarily?
+12. Can the user recover from failure without losing work?
+
+If a new visual or interaction pattern is introduced, there should be a clear reason existing patterns are unsuitable.
+
+
+22. CURRENT CANONICAL PATTERNS
+==============================
+
+The following existing EOAI patterns should be treated as useful references.
+
+22.1 Settings pages
+-------------------
+
+Configuration's flatter, divider-separated section layout is the preferred model for settings-heavy pages.
+
+A single encompassing settings surface may be retained where it provides a coherent editing canvas or shared Save/Discard behaviour, provided the internal hierarchy remains flat rather than card-per-subsection.
+
+22.2 Collections
+----------------
+
+Memory and Knowledge are the preferred model for collection-oriented pages:
+- section heading;
+- description/count;
+- Add action;
+- search;
+- list items;
+- empty state.
+
+22.3 Dashboard
+--------------
+
+Overview may retain its dashboard-summary-card pattern.
+
+22.4 Metrics and compact summaries
+----------------------------------
+
+Usage, Diagnostics, Guest Mode, and similar analytical/status views may use the shared metric/stat-card pattern for compact comparable figures.
+
+Metric/stat cards are evidence summaries, not generic navigation or content containers.
+
+22.5 Specialist workflow
+------------------------
+
+Request Rules may retain a more specialised internal structure, while continuing to follow shared hierarchy, action, accessibility, and semantic rules.
+
+22.6 Voice & Identity
+---------------------
+
+Voice & Identity should gradually converge on the shared Section / Subsection / Supporting Panel model rather than accumulating feature-specific card types.
+
+
+23. VISUAL CONSISTENCY CHECKLIST
+===============================
+
+Before merging a frontend change, check:
+
+- Does the routed content expose exactly one semantic H1, separate from persistent product branding?
+- Does the page use the normal H1 -> H2 -> H3 hierarchy without skipped levels where avoidable?
+- Is the tagline concise?
+- Is a card actually necessary?
+- Is the correct shared card/surface type being used, including metric/stat cards where appropriate?
+- Are spacing values consistent with the shared scale?
+- Is the primary action obvious?
+- Are destructive/danger actions red only when genuinely destructive, difficult to reverse, or materially weakening a protective state?
+- Are disabled/inactive states neutral rather than accidentally red or green?
+- Do notices use the correct neutral/warning/success/error semantics?
+- Are HA theme variables used instead of arbitrary colours?
+- Does the layout remain usable on narrow screens?
+- Are labels understandable without the Guide?
+- Are disabled controls explained where necessary?
+- Are loading/error/empty/unavailable states distinct?
+- Are unsaved changes preserved or clearly protected?
+- Are native HA selectors/components used for Home Assistant-owned concepts where suitable, without forcing them onto ordinary EOAI scalar fields?
+- Are controls keyboard accessible?
+- Does the UI remain stable after local actions?
+- Is the displayed state authoritative?
+- Are summaries semantically accurate?
+
+
+24. USABILITY CHECKLIST
+=======================
+
+Ask:
+
+- Can a first-time user tell what this page is for from its own H1 and intro, without relying on the application brand or navigation label?
+- Can they tell what the main action is?
+- Can they understand each ordinary setting without leaving the page?
+- Is important help next to the decision?
+- Is advanced complexity hidden until useful?
+- Will they understand what scope or assistant they are editing?
+- Could they accidentally lose work?
+- Could loading be mistaken for an empty result?
+- If something is disabled, will they know why?
+- If an operation fails, will they know what to do next?
+- Does the interface behave sensibly without hover?
+- Does it work on mobile?
+- Does it remain usable with keyboard navigation?
+- Does it feel like Home Assistant where a native HA pattern exists?
+- Does the page feel like the same product as the rest of EOAI?
+
+
+25. EXCEPTIONS
+==============
+
+These policies are defaults, not rigid restrictions.
+
+A feature may diverge where:
+- the generic pattern would make the task harder;
+- a specialised editor genuinely requires a different layout;
+- performance constraints justify a different interaction;
+- Home Assistant has no suitable native control;
+- accessibility or clarity improves through a different design.
+
+When diverging:
+- preserve shared terminology;
+- preserve semantic colours;
+- preserve action meaning;
+- preserve spacing discipline;
+- preserve accessibility;
+- preserve responsive behaviour;
+- document the reason if the divergence introduces a new reusable pattern.
+
+
+26. POLICY INTENT
+=================
+
+The purpose of this policy is to make future EOAI frontend work easier to design and easier to review.
+
+A contributor should be able to answer:
+
+"How should this new feature be laid out?"
+"Which button style should this use?"
+"Should this be a card, a metric/stat card, a supporting panel, or no container at all?"
+"Should this use a native HA selector, or is it an ordinary EOAI-owned scalar value?"
+"Is this notice informational, warning, success, or error?"
+"Where should the help text go?"
+"What should happen while it loads?"
+"What happens to unsaved work?"
+"Will this still make sense on mobile?"
+"Does the user need the Guide just to understand it?"
+
+without inventing a new answer each time.
+
+The target is not visual uniformity for its own sake.
+
+The target is a frontend that remains:
+- understandable;
+- fast;
+- consistent;
+- powerful;
+- safe;
+- discoverable;
+- accessible;
+- recognisably native to Home Assistant;
+- and scalable as EOAI grows.
