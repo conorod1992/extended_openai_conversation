@@ -38,14 +38,16 @@ from ..const import CONF_PAYLOAD_TEMPLATE
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from .base import Function
 
-_zstandard: Any = None
+_ZSTD_COMPAT: Any = None
 try:
     from compression.zstd import (
         ZstdDecompressor as _StdlibZstdDecompressor,
         ZstdError as _StdlibZstdError,
     )
 except ImportError:  # Python builds can omit the optional stdlib zstd extension.
-    import zstandard as _zstandard
+    import zstandard as _zstandard_backend
+
+    _ZSTD_COMPAT = _zstandard_backend
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,12 +97,12 @@ def _decode_zstd(body: bytes, max_bytes: int) -> bytes:
     """Bound each output allocation and validate all concatenated frames."""
     if not body:
         raise aiohttp.ClientPayloadError("Empty compressed response")
-    if _zstandard is not None:
+    if _ZSTD_COMPAT is not None:
         import io
 
         decoded = bytearray()
         try:
-            with _zstandard.ZstdDecompressor().stream_reader(
+            with _ZSTD_COMPAT.ZstdDecompressor().stream_reader(
                 io.BytesIO(body), read_size=_DECODE_CHUNK_BYTES, read_across_frames=True
             ) as reader:
                 while chunk := reader.read(
@@ -109,7 +111,7 @@ def _decode_zstd(body: bytes, max_bytes: int) -> bytes:
                     if len(chunk) > max_bytes - len(decoded):
                         raise _response_limit_error(max_bytes)
                     decoded.extend(chunk)
-        except _zstandard.ZstdError as err:
+        except _ZSTD_COMPAT.ZstdError as err:
             message = str(err).lower()
             reason = (
                 "Incomplete compressed response"
