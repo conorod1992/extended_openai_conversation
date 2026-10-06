@@ -103,7 +103,7 @@ async def test_request_rule_condition_rebinds_after_entity_delete_and_same_id_re
     ]
     fallback = _local_action("fallback", order=1)
 
-    await agent._request_rules.async_create(conditioned)
+    conditioned = await agent._request_rules.async_create(conditioned)
     await agent._request_rules.async_create(fallback)
 
     # Warm the rule's cached native HA condition checker on generation A.
@@ -111,8 +111,7 @@ async def test_request_rule_condition_rebinds_after_entity_delete_and_same_id_re
     assert _speech(first) == "conditioned"
     assert calls == ["conditioned"]
     cached = agent._request_rules._condition_checkers
-    assert conditioned["id"] if "id" in conditioned else cached
-    assert cached
+    assert conditioned["id"] in cached
 
     # Delete both state and registry identity. The cached checker must treat the
     # condition as false, skip this rule entirely and allow the next match.
@@ -243,7 +242,8 @@ async def test_function_tool_uses_reloaded_native_script_body_without_agent_relo
     # stay loaded and unchanged while the native script integration reloads itself.
     updated = {_SCRIPT_OBJECT_ID: _script("script-body-v2")}
     scripts_file.write_text(yaml.safe_dump(updated, sort_keys=False), encoding="utf-8")
-    assert await hass.services.async_call("script", "reload", blocking=True) is None
+    reload_result = await hass.services.async_call("script", "reload", blocking=True)
+    assert reload_result is None
     await hass.async_block_till_done()
     assert hass.states.get(_SCRIPT_ENTITY_ID) is not None
     assert conversation.async_get_agent(hass, entry.entry_id) is agent
