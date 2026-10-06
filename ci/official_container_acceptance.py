@@ -269,6 +269,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
     parser.add_argument("--expected-ha-version", required=True)
+    parser.add_argument("--expected-machine", required=True)
+    parser.add_argument("--expected-image-arch", required=True)
     parser.add_argument("--component", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--candidate-sha", required=True)
@@ -301,6 +303,21 @@ def main() -> None:
     assert version.stdout.strip() == args.expected_ha_version
     image_id = _docker("image", "inspect", "-f", "{{.Id}}", args.image)
     assert image_id.returncode == 0 and image_id.stdout.strip()
+    image_arch = _docker("image", "inspect", "-f", "{{.Architecture}}", args.image)
+    assert image_arch.returncode == 0, image_arch.stderr
+    assert image_arch.stdout.strip() == args.expected_image_arch
+
+    container_machine = _docker(
+        "run",
+        "--rm",
+        args.image,
+        "python",
+        "-c",
+        "import platform; print(platform.machine())",
+    )
+    assert container_machine.returncode == 0, container_machine.stderr
+    assert container_machine.stdout.strip() == args.expected_machine
+    assert platform.machine() == args.expected_machine
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -323,6 +340,8 @@ def main() -> None:
                     "image": args.image,
                     "image_id": image_id.stdout.strip(),
                     "machine": platform.machine(),
+                    "container_machine": container_machine.stdout.strip(),
+                    "image_architecture": image_arch.stdout.strip(),
                     "phases": ["seed", "recover", "entrypoint"],
                     "retained_entry": first["entry"] == recovered["entry"],
                     "retained_entities": first["entities"] == recovered["entities"],
