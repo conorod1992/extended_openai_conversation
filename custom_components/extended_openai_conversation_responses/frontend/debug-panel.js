@@ -103,8 +103,29 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     }
   }
 
+  _confirmClear() {
+    const dialog = this.shadowRoot.querySelector("#debug-confirm-dialog");
+    const cancel = this.shadowRoot.querySelector("#debug-confirm-cancel");
+    const accept = this.shadowRoot.querySelector("#debug-confirm-accept");
+    if (!dialog || !cancel || !accept) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const finish = (value) => {
+        cancel.onclick = null;
+        accept.onclick = null;
+        dialog.oncancel = null;
+        if (dialog.open) dialog.close();
+        resolve(value);
+      };
+      cancel.onclick = () => finish(false);
+      accept.onclick = () => finish(true);
+      dialog.oncancel = (event) => { event.preventDefault(); finish(false); };
+      dialog.showModal();
+      cancel.focus();
+    });
+  }
+
   async _clear() {
-    if (!confirm("Clear all captured debug runs for this agent?")) return;
+    if (!await this._confirmClear()) return;
     try {
       await this._call("clear", {confirm: true});
       await this._loadRuns();
@@ -270,11 +291,11 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
       .card-heading{display:flex;align-items:start;justify-content:space-between;gap:24px;margin:0 0 20px}.card-heading h2{margin:0;font-size:19px;font-weight:600;line-height:1.3}.card-heading p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}.card-heading + .table-wrap{margin-top:0}.card{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:12px;padding:24px}.warning{border-left:4px solid var(--warning-color,#ff9800)}
       .warning p{margin-top:7px;line-height:1.55}.controls{display:grid;grid-template-columns:minmax(220px,1fr) auto auto auto;gap:14px;align-items:end}
       label{display:grid;gap:7px;font-size:13px;color:var(--secondary-text-color)}select,button{font:inherit;min-height:42px;border-radius:8px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);padding:8px 12px}
-      button{cursor:pointer;color:var(--eoc-accent-text);font-weight:600}button.primary{background:var(--eoc-action-background);color:var(--card-background-color);border-color:var(--primary-color)}button.danger{color:var(--eoc-error-text)}button:disabled{opacity:.55;cursor:default}
+      button{cursor:pointer;color:var(--eoc-accent-text);font-weight:600}button.primary{background:var(--eoc-action-background);color:var(--card-background-color);border-color:var(--primary-color)}button.secondary{background:transparent;color:var(--eoc-accent-text);border-color:var(--primary-color)}button.danger{background:var(--eoc-error-background);color:#fff;border-color:var(--error-color,#db4437)}button:disabled{opacity:.55;cursor:default}
       .switch-row{display:flex;align-items:center;gap:10px;min-height:42px}.switch-row input{width:20px;height:20px}.status{font-size:13px;color:var(--secondary-text-color);margin-top:12px}
       .table-wrap{overflow:auto;margin-top:14px}table{width:100%;border-collapse:collapse;min-width:1050px}th,td{text-align:left;padding:11px 10px;border-bottom:1px solid var(--divider-color);vertical-align:middle}th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--secondary-text-color)}td{font-size:14px}.mono{font-family:var(--code-font-family,monospace);font-size:12px}.actions{display:flex;gap:7px;white-space:nowrap}.actions button{min-height:34px;padding:5px 9px;font-size:13px}
       .empty{padding:30px;text-align:center;color:var(--secondary-text-color)}.error-box{padding:13px;border-radius:8px;background:color-mix(in srgb,var(--error-color) 12%,transparent);color:var(--eoc-error-text)}
-      dialog{width:min(1200px,94vw);height:min(850px,90vh);border:1px solid var(--divider-color);border-radius:12px;background:var(--card-background-color);color:var(--primary-text-color);padding:0}dialog::backdrop{background:rgba(0,0,0,.45)}.dialog-head,.dialog-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 18px;border-bottom:1px solid var(--divider-color)}.dialog-foot{border-top:1px solid var(--divider-color);border-bottom:0;justify-content:flex-end}.dialog-body{height:calc(100% - 130px);overflow:auto;padding:0}pre{margin:0;padding:18px;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--code-font-family,monospace);font-size:12px;line-height:1.5}
+      dialog{width:min(1200px,94vw);height:min(850px,90vh);border:1px solid var(--divider-color);border-radius:12px;background:var(--card-background-color);color:var(--primary-text-color);padding:0}dialog::backdrop{background:rgba(0,0,0,.45)}.confirm-dialog{width:min(520px,calc(100vw - 28px));height:auto}.dialog-head,.dialog-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 18px;border-bottom:1px solid var(--divider-color)}.dialog-foot{border-top:1px solid var(--divider-color);border-bottom:0;justify-content:flex-end}.dialog-body{height:calc(100% - 130px);overflow:auto;padding:0}.confirm-dialog .dialog-body{height:auto;padding:18px}pre{margin:0;padding:18px;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--code-font-family,monospace);font-size:12px;line-height:1.5}
       .toast{position:fixed;right:24px;bottom:24px;z-index:10000;background:var(--primary-text-color);color:var(--primary-background-color);padding:11px 15px;border-radius:8px;opacity:0;pointer-events:none;transform:translateY(8px);transition:.15s}.toast.visible{opacity:1;transform:none}.toast.error{background:var(--error-color);color:white}
       @media(max-width:800px){main{padding:14px}.heading{display:grid}.controls{grid-template-columns:1fr 1fr}.controls label:first-child{grid-column:1/-1}}
     </style>`;
@@ -295,11 +316,11 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
       <td class="mono" title="${this._e(run.resolved_conversation_id || "")}">${this._e((run.resolved_conversation_id || "—").slice(0,22))}${(run.resolved_conversation_id || "").length > 22 ? "…" : ""}</td>
       <td>${this._e(this._continuityLabel(run))}</td>
       <td>${run.successful === false ? this._e(run.error_type || "Failed") : "Success"}</td>
-      <td><div class="actions"><button data-view="${this._e(run.debug_id)}">View</button><button data-copy="${this._e(run.debug_id)}">${embedded ? "Copy first page" : "Copy entire log"}</button></div></td>
+      <td><div class="actions"><button class="secondary" data-view="${this._e(run.debug_id)}">View</button><button class="secondary" data-copy="${this._e(run.debug_id)}">${embedded ? "Copy first page" : "Copy entire log"}</button></div></td>
     </tr>`).join("");
 
     this.shadowRoot.innerHTML = `${this._styles()}<main>
-      <div class="debug-intro"><section class="page-intro"><h1>Request debugging</h1><p>Inspect exactly what Extended OpenAI assembled and how long each provider request took.</p></section><button id="refresh">Refresh</button></div>
+      <div class="debug-intro"><section class="page-intro"><h1>Request debugging</h1><p>Inspect exactly what Extended OpenAI assembled and how long each provider request took.</p></section><button id="refresh" class="secondary">Refresh</button></div>
       <section class="card warning"><strong>Debug captures can contain private data</strong><p>When enabled, Extended OpenAI keeps complete recent request material in memory, including the effective system prompt, conversation input, entity states, retrieved memories, tool schemas, provider events and tool results carried into later requests. Captures are bounded and disappear when Home Assistant restarts. Do not share a copied log without reviewing it first.</p></section>
       ${this._error ? `<div class="error-box">${this._e(this._error)}</div>` : ""}
       <section class="card"><div class="controls">
@@ -310,7 +331,8 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
       </div><p class="status">${status.enabled ? `Capturing the next requests · ${this._number(status.count)} of ${this._number(status.limit)} slots currently used.` : "Capture is off. Normal usage history remains content-free."}</p></section>
       <section class="card"><div class="card-heading"><div><h2>Recent debug runs</h2><p>${embedded ? "Times are measured locally. First text is relative to provider request dispatch. Session handling describes how this run resolved conversation history. Prompt-cache hits can be shared across separate sessions and do not imply shared conversation history." : "Times are measured locally. First text is relative to provider request dispatch. Continuity shows whether the request started a new conversation, continued the incoming Home Assistant conversation, or restored integration-managed continuity."}</p></div></div><div class="table-wrap"><table><thead><tr><th>Completed</th><th>Run</th><th>Input</th><th>Cached</th><th>Requests</th><th>First text</th><th>Conversation ID</th><th>${embedded ? "Session handling" : "Continuity"}</th><th>Result</th><th>Debug log</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : `<div class="empty">${status.enabled ? "No debug runs captured yet." : "Enable request debugging to capture future runs."}</div>`}</div></section>
     </main>
-    <dialog id="debug-dialog"><div class="dialog-head"><h2 id="debug-dialog-title">Debug run</h2><button id="close-debug" aria-label="Close">Close</button></div><div class="dialog-body"><pre id="debug-json"></pre></div><div class="dialog-foot">${embedded ? `<span id="debug-provider-status" class="status"></span><button id="debug-provider-previous" disabled>Previous requests</button><button id="debug-provider-next" disabled>Next requests</button>` : ""}<button id="copy-debug-log" class="primary" disabled>${embedded ? "Copy visible page" : "Copy entire debug log"}</button></div></dialog>
+    <dialog id="debug-dialog"><div class="dialog-head"><h2 id="debug-dialog-title">Debug run</h2><button id="close-debug" class="secondary" aria-label="Close">Close</button></div><div class="dialog-body"><pre id="debug-json"></pre></div><div class="dialog-foot">${embedded ? `<span id="debug-provider-status" class="status"></span><button id="debug-provider-previous" class="secondary" disabled>Previous requests</button><button id="debug-provider-next" class="secondary" disabled>Next requests</button>` : ""}<button id="copy-debug-log" class="primary" disabled>${embedded ? "Copy visible page" : "Copy entire debug log"}</button></div></dialog>
+    <dialog id="debug-confirm-dialog" class="confirm-dialog" aria-labelledby="debug-confirm-title"><div class="dialog-head"><h2 id="debug-confirm-title">Clear debug captures?</h2></div><div class="dialog-body"><p>This removes all captured debug runs for the selected assistant. This cannot be undone.</p></div><div class="dialog-foot"><button id="debug-confirm-cancel" class="secondary">Cancel</button><button id="debug-confirm-accept" class="danger">Clear captures</button></div></dialog>
     <div id="toast" class="toast"></div>`;
 
     this.shadowRoot.querySelector("#agent")?.addEventListener("change", (event) => this._selectAgent(event.target.value));
