@@ -176,6 +176,7 @@ test("keyboard-only Request Rule journey creates, edits and deletes a routing ru
   await tabTo(page, panel.locator("#confirm-accept"));
   await page.keyboard.press("Enter");
   await expect(card).toHaveCount(0);
+  await tabTo(page, create);
   await assertUsableFocus(page);
   operations.push("deleted");
 
@@ -228,6 +229,7 @@ test("keyboard-only Function Tool journey authors, edits and deletes YAML", asyn
   await tabTo(page, panel.locator("#confirm-accept"));
   await page.keyboard.press("Enter");
   await expect(card).toHaveCount(0);
+  await tabTo(page, panel.locator("#function-add"));
   await assertUsableFocus(page);
   operations.push("deleted");
 
@@ -278,6 +280,7 @@ test("keyboard-only Knowledge journey creates, edits and deletes a source", asyn
   await tabTo(page, panel.locator("#confirm-accept"));
   await page.keyboard.press("Enter");
   await expect(card).toHaveCount(0);
+  await tabTo(page, panel.locator("#add-source"));
   await assertUsableFocus(page);
   operations.push("deleted");
 
@@ -303,7 +306,9 @@ test("keyboard-only Assistant configuration edit saves and survives reload", asy
   await page.keyboard.press("Enter");
   await expect(panel.locator(".save-bar")).toHaveCount(0);
 
-  await page.reload();
+  // The harness replaces the URL with HA's route, which the static server
+  // does not serve. Reload the fixture document for the same route instead.
+  await page.goto(fixtureUrl("assistant/basics"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator('[data-config="__title"]')).toHaveValue("Keyboard saved assistant");
   await assertUsableFocus(page, true);
