@@ -371,9 +371,11 @@ test("a tab duplicated after an editor becomes dirty cannot overwrite a newer cl
 
     await expectHarnessClean(clone, errorsClone);
     expect(errorsOriginal).toHaveLength(0);
-    await expect.poll(() => errorsOriginal.consoleErrors).toEqual([
-      `Failed to load resource: the server responded with a status of 400 (Bad Request) (${backendUrl}?client=default:0)`,
-    ]);
+    // Engines differ in whether a handled HTTP error is echoed to the console.
+    // The network assertion below independently requires the rejected save.
+    expect(errorsOriginal.consoleErrors.every(message =>
+      /Failed to load resource:.*400/.test(message) && message.includes(backendUrl)
+    )).toBe(true);
     expect(errorsOriginal.requestFailures).toEqual([]);
     expect(errorsOriginal.badResponses).toEqual([`400 POST ${backendUrl}?client=default`]);
     expect(await page.evaluate(() => ({

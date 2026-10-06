@@ -2085,7 +2085,60 @@
     "tests_stress/test_semantic_equivalence_retrieval.py::test_equivalent_public_installations_preserve_context_tools_and_effects[chat_completions]",
     "tests_stress/test_semantic_equivalence_retrieval.py::test_equivalent_public_installations_preserve_context_tools_and_effects[responses]",
     "tests_stress/test_semantic_equivalence_retrieval.py::test_ranking_oracle_rejects_swapped_associations_stale_results_and_wrong_ties",
-    "tests_stress/test_semantic_equivalence_retrieval.py::test_semantic_comparison_preserves_types_and_meaningful_fields"
+    "tests_stress/test_semantic_equivalence_retrieval.py::test_semantic_comparison_preserves_types_and_meaningful_fields",
+    "tests/functions/test_native_automation_concurrency.py::test_automation_update_finishes_before_propagating_cancellation",
+    "tests/functions/test_native_coverage.py::test_broadcast_named_area_target_keeps_indirect_selection",
+    "tests/functions/test_native_coverage.py::test_broadcast_whole_home_without_context",
+    "tests/functions/test_native_coverage.py::test_explicit_service_restricts_indirect_participating_entities[participants0]",
+    "tests/functions/test_native_coverage.py::test_explicit_service_restricts_indirect_participating_entities[participants1]",
+    "tests/functions/test_native_coverage.py::test_history_surfaces_recorder_unavailability",
+    "tests/functions/test_native_coverage.py::test_homeassistant_service_rejects_target_without_matching_entity_service[entity_ids0-False]",
+    "tests/functions/test_native_coverage.py::test_homeassistant_service_rejects_target_without_matching_entity_service[entity_ids1-True]",
+    "tests/functions/test_native_coverage.py::test_homeassistant_turn_on_filters_indirect_targets_by_domain_service",
+    "tests/functions/test_native_coverage.py::test_statistics_rejects_unparseable_datetime_bounds[2026-08-01T00:00:00Z-not-a-datetime-end_time]",
+    "tests/functions/test_native_coverage.py::test_statistics_rejects_unparseable_datetime_bounds[not-a-datetime-2026-08-02T00:00:00Z-start_time]",
+    "tests/functions/test_script.py::test_aborted_script_only_treats_false_top_level_condition_as_success[native_trace0-True]",
+    "tests/functions/test_script.py::test_aborted_script_only_treats_false_top_level_condition_as_success[native_trace1-True]",
+    "tests/functions/test_script.py::test_aborted_script_only_treats_false_top_level_condition_as_success[native_trace2-False]",
+    "tests/functions/test_script.py::test_aborted_script_only_treats_false_top_level_condition_as_success[native_trace3-True]",
+    "tests/functions/test_script.py::test_aborted_script_only_treats_false_top_level_condition_as_success[native_trace4-True]",
+    "tests_real_ha/test_ha_runtime_mutation.py::test_function_tool_uses_reloaded_native_script_body_without_agent_reload",
+    "tests_real_ha/test_ha_runtime_mutation.py::test_request_rule_condition_rebinds_after_entity_delete_and_same_id_recreate",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_cross_origin_provider_redirect_never_forwards_credentials[chat-301]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_cross_origin_provider_redirect_never_forwards_credentials[chat-302]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_cross_origin_provider_redirect_never_forwards_credentials[chat-307]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_cross_origin_provider_redirect_never_forwards_credentials[chat-308]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_cross_origin_provider_redirect_never_forwards_credentials[responses-301]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_cross_origin_provider_redirect_never_forwards_credentials[responses-302]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_cross_origin_provider_redirect_never_forwards_credentials[responses-307]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_cross_origin_provider_redirect_never_forwards_credentials[responses-308]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_diagnostics_after_native_credential_rotation_redact_old_and_new_secrets",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_diagnostics_during_active_tool_continuation_are_safe_and_non_intrusive",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_http_200_invalid_provider_body_fails_then_next_turn_recovers[chat-html]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_http_200_invalid_provider_body_fails_then_next_turn_recovers[chat-unrelated-json]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_http_200_invalid_provider_body_fails_then_next_turn_recovers[chat-wrong-content-type-sse-lookalike]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_http_200_invalid_provider_body_fails_then_next_turn_recovers[responses-html]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_http_200_invalid_provider_body_fails_then_next_turn_recovers[responses-unrelated-json]",
+    "tests_real_ha/test_provider_transport_diagnostics_privacy.py::test_http_200_invalid_provider_body_fails_then_next_turn_recovers[responses-wrong-content-type-sse-lookalike]",
+    "tests_real_ha/test_release_upgrade_acceptance.py::test_active_published_release_upgrade_recovers_without_replay",
+    "tests_real_ha/test_retained_context_publication_races.py::test_deleted_knowledge_source_after_search_never_reaches_tool_result",
+    "tests_real_ha/test_retained_context_publication_races.py::test_memory_edit_during_retrieval_publishes_current_record",
+    "tests_real_ha/test_retained_context_publication_races.py::test_temporary_memory_expiring_after_prefetch_is_omitted_from_prompt",
+    "tests_stress/test_agent_subentry_lifecycle_isolation.py::test_ai_task_delete_recreate_keeps_active_conversation_sibling_usable",
+    "tests_stress/test_agent_subentry_lifecycle_isolation.py::test_backup_snapshot_of_one_agent_is_stable_while_sibling_mutates",
+    "tests_stress/test_agent_subentry_lifecycle_isolation.py::test_duplicate_and_imported_agents_start_config_only_then_diverge_durably",
+    "tests_stress/test_agent_subentry_lifecycle_isolation.py::test_one_conversation_initialization_failure_does_not_poison_healthy_sibling",
+    "tests_stress/test_conversation_tool_ai_task_runtime_semantics.py::test_completed_tool_history_survives_later_tool_rename_or_removal[delete]",
+    "tests_stress/test_conversation_tool_ai_task_runtime_semantics.py::test_completed_tool_history_survives_later_tool_rename_or_removal[rename]",
+    "tests_stress/test_conversation_tool_ai_task_runtime_semantics.py::test_real_automation_consumes_structured_ai_task_media_and_falsey_values",
+    "tests_stress/test_identity_privacy_continuity.py::test_language_change_inside_continuity_keeps_user_boundary",
+    "tests_stress/test_identity_privacy_continuity.py::test_long_lived_user_clients_remain_private_across_entry_recreation",
+    "tests_stress/test_identity_privacy_continuity.py::test_recreated_visible_identity_and_live_voice_remap_do_not_inherit_private_state",
+    "tests_stress/test_provider_runtime_transitions.py::test_established_conversation_survives_api_and_model_capability_transitions",
+    "tests_stress/test_provider_runtime_transitions.py::test_first_time_config_flow_reaches_loaded_agent_and_first_assist_request",
+    "tests_stress/test_provider_runtime_transitions.py::test_parent_provider_family_base_url_and_credentials_change_next_wire",
+    "tests_stress/test_provider_runtime_transitions.py::test_private_storage_unreadable_at_boot_recovers_without_overwriting_state",
+    "tests_stress/test_repeated_subentry_churn.py::test_repeated_conversation_and_ai_task_churn_leaves_no_registry_accumulation"
   ],
   "browser": {
     "browser": [
@@ -2921,7 +2974,8 @@
       "tests_real_ha/test_ai_task_provider_wire.py",
       "tests_real_ha/test_ai_task_runtime.py",
       "tests_stress/test_ai_task_continuity.py",
-      "tests_stress/test_ai_task_mixed_campaign.py"
+      "tests_stress/test_ai_task_mixed_campaign.py",
+      "tests_stress/test_conversation_tool_ai_task_runtime_semantics.py"
     ],
     "archive": [
       "tests/test_conversation_archive.py",
@@ -2954,12 +3008,14 @@
     "browser-firefox": [
       "tests_stress/test_browser_backend_resilience.py::test_native_editor_ownership_and_satellite_registry_recovery",
       "tests_stress/test_browser_backend_resilience.py::test_native_shell_lifetime_and_assistant_isolation",
-      "tests_stress/test_browser_multi_tab.py"
+      "tests_stress/test_browser_multi_tab.py",
+      "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py"
     ],
     "browser-webkit": [
       "tests_stress/test_browser_backend_resilience.py::test_native_editor_ownership_and_satellite_registry_recovery",
       "tests_stress/test_browser_backend_resilience.py::test_native_shell_lifetime_and_assistant_isolation",
-      "tests_stress/test_browser_multi_tab.py"
+      "tests_stress/test_browser_multi_tab.py",
+      "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py"
     ],
     "chaos": [
       "tests_stress/test_cross_feature_chaos.py"
@@ -3017,7 +3073,8 @@
       "tests_stress/test_identity_generation_races.py",
       "tests_stress/test_native_broadcast_authorization.py",
       "tests_stress/test_native_history_automation_lifecycle.py",
-      "tests_stress/test_request_rules_provider_wire.py::test_function_execution_failure_stops_rule_independently_of_capture"
+      "tests_stress/test_request_rules_provider_wire.py::test_function_execution_failure_stops_rule_independently_of_capture",
+      "tests_real_ha/test_ha_runtime_mutation.py"
     ],
     "guest-security": [
       "tests_real_ha/test_management_authorization_matrix.py",
@@ -3025,7 +3082,8 @@
       "tests_stress/test_guest_functions_matrix.py",
       "tests_stress/test_guest_mode_acknowledgement.py",
       "tests_stress/test_guest_provider_wire.py",
-      "tests_stress/test_request_rule_guest_transitions.py"
+      "tests_stress/test_request_rule_guest_transitions.py",
+      "tests_stress/test_identity_privacy_continuity.py"
     ],
     "large-installation": [
       "tests_stress/test_archive_living_campaign.py",
@@ -3052,7 +3110,9 @@
       "tests_real_ha/test_live_configuration_save.py",
       "tests/test_agent_maintenance.py",
       "tests_real_ha/test_inflight_subentry_removal.py",
-      "tests_real_ha/test_shared_conversation_and_entry_removal.py"
+      "tests_real_ha/test_shared_conversation_and_entry_removal.py",
+      "tests_stress/test_agent_subentry_lifecycle_isolation.py",
+      "tests_stress/test_repeated_subentry_churn.py"
     ],
     "lifecycle-matrix": [
       "tests_real_ha/test_public_version_journeys.py",
@@ -3071,7 +3131,8 @@
       "tests_stress/test_private_content_destinations.py",
       "tests_stress/test_provider_wire_privacy.py",
       "tests_stress/test_semantic_equivalence_retrieval.py",
-      "tests_stress/test_temporary_memory_scale.py"
+      "tests_stress/test_temporary_memory_scale.py",
+      "tests_real_ha/test_retained_context_publication_races.py"
     ],
     "minimum-ha-features": [
       "tests_real_ha/test_assist_voice_identity_precedence.py::test_genuine_assist_prefers_registry_device_voice_identity_when_both_ids_exist",
@@ -3151,7 +3212,9 @@
       "tests_stress/test_provider_protocol_acceptance.py",
       "tests_stress/test_provider_real_connection_pool.py",
       "tests_stress/test_provider_valid_chunking.py",
-      "tests_stress/test_shared_runtime_request_lifetimes.py"
+      "tests_stress/test_shared_runtime_request_lifetimes.py",
+      "tests_stress/test_provider_runtime_transitions.py",
+      "tests_real_ha/test_provider_transport_diagnostics_privacy.py"
     ],
     "public-version-journeys": [
       "tests_real_ha/test_public_version_journeys.py"
@@ -3199,7 +3262,9 @@
       "tests_real_ha/test_provider_boundary_contracts.py",
       "tests_real_ha/test_provider_input_history.py",
       "tests_real_ha/test_state_transition_contracts.py",
-      "tests_real_ha/test_archive_private_activity.py"
+      "tests_real_ha/test_archive_private_activity.py",
+      "tests_stress/test_independent_critical_outcomes.py",
+      "tests_real_ha/test_management_edge_semantics.py"
     ],
     "setup": [
       "tests_real_ha/test_config_flow.py",
