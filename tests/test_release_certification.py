@@ -11,6 +11,7 @@ from ci.release_certification import (
     ADVISORY_SDK_LANE,
     HEAVY_CAMPAIGNS,
     HEAVY_JOBS,
+    MUTATION_CAMPAIGNS,
     REQUIRED_WORKFLOWS,
     SUPPORTED_SDK_LANES,
     UPGRADE_EPOCHS,
@@ -40,6 +41,11 @@ class FakeActions:
                         "enhanced-stress.yml",
                         "upgrade-acceptance.yml",
                         "openai-sdk-compatibility.yml",
+                        "ha-browser-compatibility.yml",
+                        "deployment-architecture.yml",
+                        "resource-constrained.yml",
+                        "mutation.yml",
+                        "official-ha-container.yml",
                     }
                     else "push",
                     "status": "completed",
@@ -83,6 +89,32 @@ class FakeActions:
                             "upgrade_source_sha": PARENT,
                         },
                     )
+            elif filename == "mutation.yml":
+                self.jobs[index] = [
+                    {
+                        "name": f"Mutation campaign ({campaign})",
+                        "conclusion": "success",
+                    }
+                    for campaign in MUTATION_CAMPAIGNS
+                ]
+            elif filename == "official-ha-container.yml":
+                self.jobs[index] = [
+                    {"name": "Official HA Container runtime", "conclusion": "success"}
+                ]
+                self._artifact(
+                    index,
+                    "official-ha-container-evidence",
+                    {
+                        "candidate_sha": SOURCE,
+                        "passed": True,
+                        "official_container": True,
+                        "homeassistant": "2026.9.4",
+                        "image_id": "sha256:" + "c" * 64,
+                        "phases": ["seed", "recover", "entrypoint"],
+                        "retained_entry": True,
+                        "retained_entities": True,
+                    },
+                )
 
     def _envelope(self, campaign, *, sdk="3.10.0"):
         identity = {
@@ -160,7 +192,11 @@ class FakeActions:
         return self.artifacts[run_id]
 
     def artifact_json(self, artifact, filename):
-        assert filename in {"workflow-evidence.json", "certification-final.json"}
+        assert filename in {
+            "workflow-evidence.json",
+            "certification-final.json",
+            "certification.json",
+        }
         return deepcopy(self.contents[artifact["id"]])
 
     def workflow_runs(self, filename, source_sha):
@@ -338,6 +374,50 @@ def test_upgrade_envelope_must_name_the_actual_reviewed_source_epoch():
     item["source_version"] = "6.8.4"
     with pytest.raises(RuntimeError, match="matching released payload"):
         certify(actions, SOURCE)
+
+
+def test_release_requires_every_mutation_campaign():
+    actions = FakeActions()
+    run_id = REQUIRED_WORKFLOWS.index("mutation.yml") + 1
+    actions.jobs[run_id].pop()
+    with pytest.raises(RuntimeError, match="Required mutation campaigns absent"):
+        certify(actions, SOURCE)
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["missing", "candidate", "passed", "phases", "retention", "identity"],
+)
+def test_official_container_evidence_is_source_bound_and_complete(change):
+    actions = FakeActions()
+    run_id = REQUIRED_WORKFLOWS.index("official-ha-container.yml") + 1
+    artifact = actions.artifacts[run_id][0]
+    proof = actions.contents[artifact["id"]]
+    if change == "missing":
+        actions.artifacts[run_id].clear()
+    elif change == "candidate":
+        proof["candidate_sha"] = PARENT
+    elif change == "passed":
+        proof["passed"] = False
+    elif change == "phases":
+        proof["phases"].remove("entrypoint")
+    elif change == "retention":
+        proof["retained_entry"] = False
+    else:
+        proof["image_id"] = ""
+    with pytest.raises(RuntimeError, match="official-ha-container"):
+        certify(actions, SOURCE)
+
+
+def test_all_new_certification_workflows_are_exact_sha_requirements():
+    required = {
+        "ha-browser-compatibility.yml",
+        "deployment-architecture.yml",
+        "resource-constrained.yml",
+        "mutation.yml",
+        "official-ha-container.yml",
+    }
+    assert required <= set(REQUIRED_WORKFLOWS)
 
 
 def test_signed_artifact_download_never_forwards_github_authorization(monkeypatch):

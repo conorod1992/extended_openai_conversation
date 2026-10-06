@@ -122,6 +122,53 @@ def test_supported_sdk_policy_matches_matrix_and_manifest_ceiling():
     assert (SUPPORTED_SDK_LANES[0], SUPPORTED_SDK_LANES[-1]) == (floor, ceiling)
 
 
+def test_mutation_dispatch_can_certify_the_complete_campaign_matrix():
+    data = workflow("mutation.yml")
+    triggers = data.get("on", data.get(True))
+    options = triggers["workflow_dispatch"]["inputs"]["campaign"]["options"]
+    assert options[0] == "all"
+    matrix = data["jobs"]["mutation"]["strategy"]["matrix"]["campaign"]
+    assert "inputs.campaign == 'all'" in matrix
+    for campaign in (
+        "function-tools",
+        "guest-security",
+        "ha-permissions",
+        "request-rules",
+        "function-groups",
+        "contract-sensitivity",
+    ):
+        assert campaign in matrix
+
+
+def test_official_container_workflow_binds_image_evidence_to_exact_candidate():
+    data = workflow("official-ha-container.yml")
+    job = data["jobs"]["official-container"]
+    checkout = next(
+        step
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert checkout["with"]["ref"] == "${{ github.sha }}"
+    runner = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Exercise staged EOAI inside official runtime"
+    )
+    assert "--candidate-sha \"$CANDIDATE_SHA\"" in runner["run"]
+    assert "ghcr.io/home-assistant/home-assistant:" in next(
+        step["run"]
+        for step in job["steps"]
+        if step.get("name") == "Resolve stable Home Assistant image"
+    )
+    upload = next(
+        step
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert upload["with"]["name"] == "official-ha-container-evidence"
+    assert upload["with"]["if-no-files-found"] == "error"
+
+
 def test_standalone_certification_imports_support_the_lightweight_runner_python():
     # The final gate uses ubuntu-latest's Python, independently of HA's Python.
     # Parse its complete dependency chain using that runner's older grammar.

@@ -9,6 +9,7 @@ on:
         default: function-tools
         type: choice
         options:
+          - all
           - function-tools
           - guest-security
           - ha-permissions
@@ -40,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        campaign: ${{ fromJSON(github.event_name == 'schedule' && '["function-tools","guest-security","ha-permissions","request-rules","function-groups","contract-sensitivity"]' || format('["{0}"]', inputs.campaign)) }}
+        campaign: ${{ fromJSON((github.event_name == 'schedule' || inputs.campaign == 'all') && '["function-tools","guest-security","ha-permissions","request-rules","function-groups","contract-sensitivity"]' || format('["{0}"]', inputs.campaign)) }}
 
     steps:
       - name: Checkout repository

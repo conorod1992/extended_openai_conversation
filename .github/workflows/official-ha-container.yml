@@ -1,0 +1,73 @@
+name: Official Home Assistant Container acceptance
+
+on:
+  schedule:
+    - cron: "7 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-ha-container-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  official-container:
+    name: Official HA Container runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Resolve stable Home Assistant image
+        id: ha
+        run: |
+          set -euo pipefail
+          VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
+          [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]
+          IMAGE="ghcr.io/home-assistant/home-assistant:$VERSION"
+          docker pull "$IMAGE"
+          INSTALLED="$(docker run --rm "$IMAGE" python -c 'from importlib.metadata import version; print(version("homeassistant"))')"
+          test "$INSTALLED" = "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Official Home Assistant image: $IMAGE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Exercise staged EOAI inside official runtime
+        env:
+          IMAGE: ${{ steps.ha.outputs.image }}
+          HA_VERSION: ${{ steps.ha.outputs.version }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python ci/official_container_acceptance.py             --image "$IMAGE"             --expected-ha-version "$HA_VERSION"             --component custom_components/extended_openai_conversation_responses             --work "$RUNNER_TEMP/official-ha-container"             --candidate-sha "$CANDIDATE_SHA"
+
+      - name: Require exact candidate evidence
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+          HA_VERSION: ${{ steps.ha.outputs.version }}
+        run: |
+          python - "$RUNNER_TEMP/official-ha-container/evidence/certification.json" "$CANDIDATE_SHA" "$HA_VERSION" <<'PY'
+          import json
+          import sys
+          evidence = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert evidence["passed"] is True
+          assert evidence["official_container"] is True
+          assert evidence["candidate_sha"] == sys.argv[2]
+          assert evidence["homeassistant"] == sys.argv[3]
+          assert set(evidence["phases"]) == {"seed", "recover", "entrypoint"}
+          assert evidence["retained_entry"] and evidence["retained_entities"]
+          PY
+
+      - name: Upload official runtime evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: official-ha-container-evidence
+          path: ${{ runner.temp }}/official-ha-container/evidence/
+          if-no-files-found: error
+          retention-days: 14
