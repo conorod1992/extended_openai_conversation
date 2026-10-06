@@ -497,6 +497,10 @@ async def _configure_and_seed(
                 "chat_model": MODEL,
                 "reasoning_effort": "none",
                 "max_tokens": 128,
+                # Keep this acceptance journey focused on Supervisor state
+                # persistence; the stock prompt exercises optional template
+                # helpers that have separate integration coverage.
+                "prompt": "You are a concise assistant. Use the provided tools when asked.",
                 "knowledge_enabled": True,
                 "functions": [tool],
             },

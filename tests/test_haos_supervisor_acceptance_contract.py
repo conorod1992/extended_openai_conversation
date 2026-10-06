@@ -67,6 +67,7 @@ def test_haos_driver_exercises_function_tool_and_supervisor_backup_manager() -> 
 
     assert 'TOOL_NAME = "haos_marker"' in text
     assert "TOOL_MARKER" in text
+    assert '"prompt": "You are a concise assistant.' in text
     assert "DeterministicProvider.requests" in text
     assert '"/backups/new/full"' in text
     assert 'f"/backups/{backup_slug}/restore/full"' in text
