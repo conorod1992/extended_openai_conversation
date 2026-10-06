@@ -71,6 +71,27 @@ jobs:
 
       - name: Run cross-domain and reused-name identity acceptance
         run: |
+          # The original release pins an older SDK that remains supported by
+          # the fork. Resolve both delivered manifests together before HA boots.
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          manifests = (
+              Path(os.environ["ORIGINAL_COMPONENT_DIR"]) / "manifest.json",
+              Path("custom_components/extended_openai_conversation_responses/manifest.json"),
+          )
+          requirements = [
+              requirement
+              for manifest in manifests
+              for requirement in json.loads(manifest.read_text())["requirements"]
+          ]
+          subprocess.check_call([sys.executable, "-m", "pip", "install", *requirements])
+          PY
+          python -m pip check
           python -m pytest -q \
             tests_real_ha/test_identity_isolation_matrix.py \
             tests/test_side_by_side_identity_contract.py
