@@ -5,6 +5,7 @@ export const CONFIG_OWNER_BY_KEY = Object.freeze({
   "api_mode": "assistant/basics",
   "max_tokens": "assistant/basics",
   "max_function_calls_per_conversation": "assistant/basics",
+  "function_tool_error_recovery": "assistant/basics",
   "continue_conversation": "assistant/basics",
   "temperature": "assistant/model-responses",
   "top_p": "assistant/model-responses",

@@ -248,7 +248,7 @@
   .voice-flow-step{background:var(--secondary-background-color)}
   .voice-flow-step strong{display:block;margin-bottom:4px}.voice-flow-step small{display:block;color:var(--secondary-text-color);line-height:1.4}
   .voice-policy-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
-  .voice-policy-card h3,.voice-default-card h3,.voice-mappings-card h3{margin:0 0 4px;font-size:15px}
+  .voice-policy-card h2,.voice-default-card h2,.voice-mappings-card h2{margin:0 0 4px;font-size:15px}
   .voice-policy-card>p,.voice-default-card>p,.voice-mappings-card .section-heading p{margin:0 0 11px;color:var(--secondary-text-color)}
   .voice-policy-card .setting,.voice-default-card .setting{margin:0}.voice-default-card{margin-bottom:14px}
   .voice-policy-card.is-disabled,.voice-default-card.is-disabled,.voice-mappings-card.is-disabled{opacity:.7}

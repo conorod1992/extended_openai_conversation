@@ -20,6 +20,10 @@ export const SETTING_LOOKUP = Object.freeze({
     "label": "Maximum tool calls per request",
     "aliases": "maximum tool calls per request limits tool calls within each request (conversation turn); resets on the next turn. function tools calls budget conversation max_function_calls_per_conversation"
   },
+  "function_tool_error_recovery": {
+    "label": "Correct safe tool-call errors automatically",
+    "aliases": "correct safe tool-call errors automatically lets the assistant correct and retry safe tool-call mistakes when no action could already have started. tool function error recovery retry safe function_tool_error_recovery"
+  },
   "continue_conversation": {
     "label": "Listen for a follow-up",
     "aliases": "listen for a follow-up whether home assistant keeps listening after a response. continue conversation follow up voice continue_conversation"
