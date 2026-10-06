@@ -47,3 +47,12 @@ def test_hacs_journey_proves_obsolete_files_and_exact_candidate_tree() -> None:
     assert "upgrade_helpers._released_phase" in text
     assert "upgrade_helpers._candidate_migration_phase" in text
     assert "upgrade_helpers._candidate_restart_phase" in text
+
+
+def test_hacs_journey_covers_interrupted_replacement_recovery() -> None:
+    text = JOURNEY.read_text(encoding="utf-8")
+
+    assert "_simulate_interrupted_candidate_overlay" in text
+    assert "test_hacs_recovers_from_interrupted_candidate_replacement" in text
+    assert "remaining_release_files" in text
+    assert 'for phase in ("hacs-update", "candidate-migrate", "candidate-restart")' in text
