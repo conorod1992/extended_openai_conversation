@@ -142,7 +142,7 @@ test("mobile layout exposes working responsive navigation", async ({page}) => {
 
   await panel.locator("#top-section-mobile").selectOption("capabilities");
   await expect(page).toHaveURL(/\/extended-openai\/capabilities\/home-assistant$/);
-  await expect(panel.getByRole("heading", {name: "Home Assistant access", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Home Assistant & local handling", exact: true})).toBeVisible();
 
   await expectHarnessClean(page, pageErrors);
 });
