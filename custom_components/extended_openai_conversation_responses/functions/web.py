@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from compression.zstd import ZstdDecompressor, ZstdError
+
+try:
+    from compression.zstd import ZstdDecompressor, ZstdError
+except ImportError:  # Python builds can omit the optional stdlib zstd extension.
+    from backports.zstd import ZstdDecompressor, ZstdError
 from contextlib import suppress
 from http import HTTPStatus
 import logging
