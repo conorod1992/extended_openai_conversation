@@ -144,7 +144,10 @@ export function bindNativeToolYaml(panel) {
 
   installNativeStyle(root);
   const current = getToolYamlEditor(panel);
-  if (current?.nativeEditor === nativeEditor) return;
+  if (current?.nativeEditor === nativeEditor) {
+    current.retryNative?.();
+    return;
+  }
 
   let rawYaml = current?.getYaml?.() ?? String(textarea.value ?? "");
   let nativeReady = false;
@@ -263,6 +266,9 @@ export function bindNativeToolYaml(panel) {
   const adapter = {
     textarea,
     nativeEditor,
+    retryNative() {
+      if (!nativeReady) activate();
+    },
     getYaml() {
       return rawYaml;
     },

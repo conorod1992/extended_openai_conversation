@@ -9,7 +9,6 @@ export default {
   testMatch: [
     "cross-browser-keyboard.stress.mjs",
     "accessibility-layout.stress.mjs",
-    "accessibility-contracts.stress.mjs",
     "enhanced-endurance.stress.mjs",
     "management-crud.spec.mjs",
     "frontend-resilience.spec.mjs",
@@ -17,9 +16,11 @@ export default {
     "stale-response-ordering.spec.mjs",
     "backend-reconnect.spec.mjs",
     "mount-offline-bfcache.stress.mjs",
+    "mounted-environment-transitions.stress.mjs",
+    "accessibility-contracts.stress.mjs",
     "browser-lifecycle-resilience.stress.mjs",
   ],
-  grep: /keyboard-only|malformed browser-local|major management pages|large text and long names|forced colours|reduced motion|screen-reader announcement|contain keyboard focus|touch-target floor|one mounted panel survives a long seeded route journey|persistent memories support create|failed Memory save|server-rejected general configuration save|a cold lazy import failure|search into a cold configuration route|older backend response|mounted management panel recovers|repeated mount cycles plus offline and browser restoration|suspend-resume simulation|clipboard denial/,
+  grep: /keyboard-only|malformed browser-local|major management pages|large text and long names|one mounted panel survives a long seeded route journey|persistent memories support create|failed Memory save|server-rejected general configuration save|a cold lazy import failure|search into a cold configuration route|older backend response|mounted management panel recovers|repeated mount cycles plus offline and browser restoration|live light-dark theme changes|portrait-landscape-portrait|coarse-pointer context|live language metadata changes|native YAML initialization fails|forced colours|reduced motion|screen-reader announcement|contain keyboard focus|touch-target floor|suspend-resume simulation|clipboard denial/,
   timeout: 180_000,
   workers: 1,
   projects: [
