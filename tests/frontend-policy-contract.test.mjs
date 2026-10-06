@@ -111,7 +111,7 @@ for (const path of sourceFiles(FRONTEND)) {
       }
     }
   }
-  for (const match of source.matchAll(/\.([A-Za-z_][\w-]*(?:-(?:card|panel|surface)|card))\b/g)) {
+  for (const match of source.matchAll(/\.(card|[A-Za-z_][\w-]*-(?:card|panel|surface))\b/g)) {
     if (!match[1].startsWith("cm-")) foundSurfaces.add(match[1]);
   }
 }
