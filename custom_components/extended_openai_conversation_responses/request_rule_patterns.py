@@ -627,8 +627,6 @@ class _Parser:
                 choice = []
             else:
                 choice.append(char)
-        if escaped:
-            raise SentencePatternError("captured value ends with an escape")
         choices.append("".join(choice))
         values = tuple(_normalize_literal(item).strip() for item in choices)
         if any(not item for item in values):
