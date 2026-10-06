@@ -56,6 +56,7 @@ async function createRule(panel) {
 
 async function executeRule(panel) {
   const live = panel.locator("#eoc-rule-live-test");
+  await expect(live).toBeVisible();
   await live.locator("summary").click();
   await panel.locator("#eoc-rule-live-text").fill("cross engine execute");
   await panel.locator("#eoc-rule-live-run").click();
@@ -160,11 +161,14 @@ test("browser engines hand persisted state across one HA backend", async () => {
     await expect(panel.locator("#memory-valid-from")).toHaveValue("2026-10-05T12:34:56+01:00");
     await panel.locator("#memory-content").fill("Éire 東京 first writer edited by middle engine\nmultiline persisted payload");
     await panel.locator("#memory-save").click();
+    await expect(panel.locator("#memory-dialog")).not.toHaveJSProperty("open", true);
 
     await panel.locator("#add-memory").click();
     await panel.locator("#memory-content").fill(`${middleName} second writer`);
     await panel.locator("#memory-category").fill("cross-engine");
     await panel.locator("#memory-save").click();
+    await expect(panel.locator("#memory-dialog")).not.toHaveJSProperty("open", true);
+    await expect(panel.locator(".memory-list")).toContainText(`${middleName} second writer`);
 
     await panel.evaluate(host => host._navigate("capabilities", "request-rules"));
     await executeRule(panel);
