@@ -342,7 +342,7 @@ def _supervisor_api(
         "req=urllib.request.Request(url,data=data,method="
         f"{method!r},headers={{'Authorization':'Bearer '+os.environ['SUPERVISOR_TOKEN'],"
         "'Content-Type':'application/json'});"
-        "resp=urllib.request.urlopen(req,timeout=120);"
+        f"resp=urllib.request.urlopen(req,timeout={max(1, int(timeout))});"
         "print(resp.read().decode())"
     )
     command = (
@@ -562,6 +562,53 @@ async def _verify_after_restart(
         assert TOOL_MARKER in result["response"]["speech"]["plain"]["speech"]
 
 
+async def _mutate_knowledge_before_restore(
+    base_url: str,
+    token: str,
+    identity: dict[str, str],
+) -> None:
+    async with HAWebSocket(base_url, token) as ws:
+        changed = await ws.call(
+            WS_COMMAND,
+            action="update",
+            section="knowledge",
+            entry_id=identity["entry_id"],
+            subentry_id=identity["subentry_id"],
+            source_id=identity["source_id"],
+            content="MUTATED_AFTER_SUPERVISOR_BACKUP",
+        )
+        assert "MUTATED_AFTER_SUPERVISOR_BACKUP" in changed["source"]["content"]
+
+
+def _wait_supervisor_job(ssh: HostSSH, job_id: str, *, timeout: float = 900) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        response = _supervisor_api(ssh, "GET", f"/jobs/{job_id}", timeout=30)
+        assert response.get("result") == "ok", response
+        last = response.get("data", {})
+        if last.get("done"):
+            assert not last.get("errors"), last
+            return last
+        time.sleep(5)
+    raise TimeoutError(f"Supervisor job {job_id} did not finish: {last}")
+
+
+def _wait_for_core_restart(ssh: HostSSH, previous_started: str, *, timeout: float = 600) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = ssh.run(
+            "docker inspect -f '{{.State.StartedAt}}' homeassistant",
+            check=False,
+        )
+        if result.returncode == 0:
+            started = result.stdout.strip()
+            if started and started != previous_started:
+                return started
+        time.sleep(3)
+    raise TimeoutError("Supervisor did not restart Core")
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -636,13 +683,62 @@ async def _run(args: argparse.Namespace) -> None:
         _wait_http(base_url, token=token, timeout=600)
         await _verify_after_restart(base_url, token, identity)
 
-        # Exercise Supervisor's backup manager without creating a heavyweight
-        # artifact: reload its backup inventory, then read manager state.
-        reload_result = _supervisor_api(ssh, "POST", "/backups/reload", {})
-        assert reload_result.get("result") == "ok", reload_result
-        backup_info = _supervisor_api(ssh, "GET", "/backups/info")
-        assert backup_info.get("result") == "ok", backup_info
-        assert isinstance(backup_info.get("data", {}).get("backups"), list)
+        # Exercise the real appliance restore path: Supervisor creates a full
+        # backup containing EOAI, live EOAI data is changed, then Supervisor
+        # restores the archive and Core is restarted before state is checked.
+        created = _supervisor_api(
+            ssh,
+            "POST",
+            "/backups/new/full",
+            {"name": "EOAI Supervisor restore acceptance", "compressed": True},
+            timeout=900,
+        )
+        assert created.get("result") == "ok", created
+        backup_slug = created.get("data", {}).get("slug")
+        assert backup_slug, created
+        backup_detail = _supervisor_api(
+            ssh, "GET", f"/backups/{backup_slug}/info", timeout=60
+        )
+        assert backup_detail.get("result") == "ok", backup_detail
+        backup_record = backup_detail.get("data", {})
+        assert backup_record.get("type") == "full", backup_record
+        inventory = _supervisor_api(ssh, "GET", "/backups/info", timeout=60)
+        assert inventory.get("result") == "ok", inventory
+        backup_summary = next(
+            item
+            for item in inventory.get("data", {}).get("backups", [])
+            if item.get("slug") == backup_slug
+        )
+        assert backup_summary.get("content", {}).get("homeassistant") is True, backup_summary
+
+        await _mutate_knowledge_before_restore(base_url, token, identity)
+        restore = _supervisor_api(
+            ssh,
+            "POST",
+            f"/backups/{backup_slug}/restore/full",
+            {"background": True},
+            timeout=60,
+        )
+        assert restore.get("result") == "ok", restore
+        restore_job = restore.get("data", {}).get("job_id")
+        assert restore_job, restore
+        _wait_supervisor_job(ssh, restore_job, timeout=900)
+        _wait_http(base_url, token=token, timeout=900)
+
+        # A real Supervisor Core restart after restore rules out success based
+        # only on the still-running process's in-memory state.
+        before_restore_reboot = ssh.run(
+            "docker inspect -f '{{.State.StartedAt}}' homeassistant"
+        ).stdout.strip()
+        _supervisor_api(ssh, "POST", "/core/restart", {}, detached=True)
+        _wait_for_core_restart(ssh, before_restore_reboot, timeout=600)
+        _wait_http(base_url, token=token, timeout=600)
+        await _verify_after_restart(base_url, token, identity)
+
+        deleted = _supervisor_api(
+            ssh, "DELETE", f"/backups/{backup_slug}", timeout=120
+        )
+        assert deleted.get("result") == "ok", deleted
 
     evidence = {
         "candidate_sha": os.environ.get("GITHUB_SHA"),
@@ -654,7 +750,7 @@ async def _run(args: argparse.Namespace) -> None:
         "subentry_id": identity["subentry_id"],
         "knowledge_source_id": identity["source_id"],
         "supervisor_core_restart": True,
-        "backup_inventory_reload": True,
+        "supervisor_full_backup_restore_reboot": True,
         "provider_calls": len(DeterministicProvider.requests),
         "tool_marker": TOOL_MARKER,
         "knowledge_marker": KNOWLEDGE_MARKER,
