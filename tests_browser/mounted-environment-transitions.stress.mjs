@@ -80,7 +80,6 @@ test("open editor survives portrait-landscape-portrait viewport transitions", as
 test("touch-first coarse-pointer context exposes all important actions without hover", async ({browser}) => {
   const context = await browser.newContext({
     hasTouch: true,
-    isMobile: true,
     viewport: {width: 390, height: 844},
   });
   const page = await context.newPage();
