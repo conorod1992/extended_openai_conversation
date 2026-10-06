@@ -93,29 +93,26 @@ class TemporaryMemory:
         if self._initialized:
             return
         try:
-            if not self._initialized:
-                data = await self._store.async_load()
-                if data is not None and not isinstance(data, Mapping):
-                    raise ValueError("Temporary Memory store has invalid structure")
-                if isinstance(data, Mapping) and not isinstance(
-                    data.get("records", []), list
-                ):
-                    raise ValueError("Temporary Memory records have invalid structure")
-                raw_records = (
-                    data.get("records", []) if isinstance(data, Mapping) else []
-                )
-                for raw in raw_records:
-                    try:
-                        record = _record_from_storage(raw)
-                        if _parse_expiry(record.expires_at) > dt_util.utcnow():
-                            self._records[record.memory_id] = record
-                        else:
-                            self.expired_pruned += 1
-                    except TypeError, ValueError:
-                        continue
-                self._initialized = True
-                if self.expired_pruned:
-                    await self._async_save_locked(reconcile_failure=False)
+            data = await self._store.async_load()
+            if data is not None and not isinstance(data, Mapping):
+                raise ValueError("Temporary Memory store has invalid structure")
+            if isinstance(data, Mapping) and not isinstance(
+                data.get("records", []), list
+            ):
+                raise ValueError("Temporary Memory records have invalid structure")
+            raw_records = data.get("records", []) if isinstance(data, Mapping) else []
+            for raw in raw_records:
+                try:
+                    record = _record_from_storage(raw)
+                    if _parse_expiry(record.expires_at) > dt_util.utcnow():
+                        self._records[record.memory_id] = record
+                    else:
+                        self.expired_pruned += 1
+                except TypeError, ValueError:
+                    continue
+            self._initialized = True
+            if self.expired_pruned:
+                await self._async_save_locked(reconcile_failure=False)
         except Exception:
             self._records.clear()
             self.expired_pruned = 0
