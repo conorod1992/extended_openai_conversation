@@ -112,6 +112,7 @@ async def test_configuration_read_and_update_require_admin(hass) -> None:
         {
             **message,
             "action": "update",
+            "revision": result["revision"],
             "title": "Jarvis Home",
             "config": {"max_tokens": 750},
         },
@@ -196,6 +197,7 @@ async def test_guest_policy_requires_explicit_central_save(hass, monkeypatch) ->
             "action": "update",
             "entry_id": "entry-1",
             "subentry_id": "agent-1",
+            "revision": _agent_config_revision(subentry.data, subentry.title),
             "config": {"max_tokens": 700},
         },
     )
@@ -671,6 +673,25 @@ async def test_function_tool_yaml_operations_require_admin(hass, action) -> None
                 "subentry_id": "agent-1",
             },
         )
+
+
+@pytest.mark.parametrize("action", ["save", "update"])
+async def test_configuration_mutation_requires_revision(hass, action) -> None:
+    _setup_entry(hass)
+    with pytest.raises(HomeAssistantError, match="revision is required"):
+        await async_management_command(
+            hass,
+            "admin",
+            True,
+            {
+                "section": "configuration",
+                "action": action,
+                "entry_id": "entry-1",
+                "subentry_id": "agent-1",
+                "config": {"max_tokens": 700},
+            },
+        )
+    hass.config_entries.async_update_subentry.assert_not_called()
 
 
 async def test_stale_agent_configuration_revision_is_rejected(hass) -> None:

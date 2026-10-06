@@ -1,0 +1,152 @@
+name: Frontend backend version-skew acceptance
+
+on:
+  schedule:
+    - cron: "53 4 * * *"
+  workflow_dispatch:
+    inputs:
+      from_version:
+        description: "Published EOAI frontend version, or 'latest'"
+        required: false
+        default: "6.8.3"
+        type: string
+
+concurrency:
+  group: frontend-backend-version-skew-${{ github.ref }}-${{ inputs.from_version || '6.8.3' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  version-skew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --ipc=host
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Trust mounted checkout for Git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Resolve genuine released frontend
+        id: released
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_FROM: ${{ inputs.from_version || '6.8.3' }}
+        run: |
+          set -euo pipefail
+          FROM_VERSION="$REQUESTED_FROM"
+          if [[ -z "$FROM_VERSION" || "$FROM_VERSION" == "latest" ]]; then
+            FROM_VERSION="$(
+              curl -fsSL                 -H "Authorization: Bearer ${GH_TOKEN}"                 -H "Accept: application/vnd.github+json"                 "https://api.github.com/repos/${{ github.repository }}/releases/latest"                 | python -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])'
+            )"
+          fi
+
+          git fetch --force --tags origin
+          git rev-parse --verify "refs/tags/${FROM_VERSION}^{commit}" >/dev/null
+
+          RELEASE_ROOT="${RUNNER_TEMP}/version-skew-release"
+          rm -rf "$RELEASE_ROOT"
+          mkdir -p "$RELEASE_ROOT"
+          git archive "$FROM_VERSION"             custom_components/extended_openai_conversation_responses/frontend             | tar -x -C "$RELEASE_ROOT"
+
+          FRONTEND_DIR="$RELEASE_ROOT/custom_components/extended_openai_conversation_responses/frontend"
+          test -f "$FRONTEND_DIR/management-panel.js"
+          test -f "$FRONTEND_DIR/agent-config-editor-base.js"
+
+          echo "version=$FROM_VERSION" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse "refs/tags/${FROM_VERSION}^{commit}")" >> "$GITHUB_OUTPUT"
+          echo "frontend_dir=$FRONTEND_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Reconcile current candidate test environment
+        run: |
+          set -euo pipefail
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+            pip install -r requirements_test.txt
+            pip install --upgrade homeassistant
+            python ci/install_ha_dependencies.py               --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
+          pip check
+          node --version
+          npx playwright --version
+          test -d "${PLAYWRIGHT_BROWSERS_PATH}"
+
+      - name: Install local Playwright test runner
+        run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+
+      - name: Run old-frontend candidate-backend two-tab acceptance
+        env:
+          RUN_FRONTEND_BACKEND_SKEW: "1"
+          VERSION_SKEW_OLD_FRONTEND_DIR: ${{ steps.released.outputs.frontend_dir }}
+          VERSION_SKEW_OLD_VERSION: ${{ steps.released.outputs.version }}
+          PLAYWRIGHT_ARTIFACT_SUFFIX: frontend-backend-version-skew
+        run: |
+          pytest tests_real_ha/test_frontend_backend_version_skew_acceptance.py             -v --asyncio-mode=auto --timeout=300
+
+      - name: Record exact-source skew evidence
+        if: always()
+        env:
+          RELEASED_VERSION: ${{ steps.released.outputs.version }}
+          RELEASED_SOURCE_SHA: ${{ steps.released.outputs.source_sha }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(
+              Path("custom_components/extended_openai_conversation_responses/manifest.json")
+              .read_text(encoding="utf-8")
+          )
+          payload = {
+              "candidate_sha": os.environ["GITHUB_SHA"],
+              "candidate_manifest_version": manifest["version"],
+              "released_frontend_version": os.environ.get("RELEASED_VERSION"),
+              "released_frontend_source_sha": os.environ.get("RELEASED_SOURCE_SHA"),
+              "job_status": os.environ["JOB_STATUS"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "journey": "released frontend -> candidate backend, two-tab stale save",
+          }
+          Path("frontend-backend-version-skew-evidence.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload exact-source skew evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-backend-version-skew-${{ github.sha }}
+          path: frontend-backend-version-skew-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-backend-version-skew-browser-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 7
