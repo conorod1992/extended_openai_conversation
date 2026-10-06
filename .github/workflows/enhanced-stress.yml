@@ -391,6 +391,70 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+
+  external-recorder:
+    name: External Recorder / MariaDB + PostgreSQL
+    needs: prepare
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'functions'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_DATABASE: eoai
+          MARIADB_USER: eoai
+          MARIADB_PASSWORD: eoai-recorder
+          MARIADB_ROOT_PASSWORD: eoai-root
+        options: >-
+          --health-cmd "mariadb-admin ping -h 127.0.0.1 -ueoai -peoai-recorder"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: eoai
+          POSTGRES_USER: eoai
+          POSTGRES_PASSWORD: eoai-recorder
+        options: >-
+          --health-cmd "pg_isready -U eoai -d eoai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      STRESS_SEED: ${{ needs.prepare.outputs.seed }}
+      STRESS_INTENSITY: heavy
+      STRESS_CAMPAIGN: functions
+      EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
+      EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION: ${{ needs.prepare.outputs.ha_test_plugin_version }}
+      EOAI_TEST_MARIADB_URL: mysql+pymysql://eoai:eoai-recorder@mariadb/eoai?charset=utf8mb4
+      EOAI_TEST_POSTGRES_URL: postgresql+psycopg2://eoai:eoai-recorder@postgres/eoai
+      EOAI_REQUIRE_EXTERNAL_RECORDER: "1"
+    steps:
+      - name: Checkout immutable run candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+      - name: Reconcile current test requirements
+        run: bash ci/reconcile_stable_environment.sh
+      - name: Install external Recorder database drivers
+        run: pip install "PyMySQL>=1.1,<2" "psycopg2-binary>=2.9,<3"
+      - name: Certify MariaDB and PostgreSQL Recorder history
+        run: >-
+          pytest
+          tests_stress/test_recorder_time_retention_lifecycle.py::test_native_history_against_external_recorder_database
+          -v -s --asyncio-mode=auto --timeout=180 --tb=short
+
   browser:
     name: browser / ${{ matrix.intensity }}
     needs: prepare
