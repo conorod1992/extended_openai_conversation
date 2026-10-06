@@ -100,7 +100,14 @@ test("an already-authenticated browser obeys live HA admin downgrade and restora
     }
   }, request);
   expect(restored.ok).toBe(true);
-  await expectHarnessClean(page, errors);
+  expect(errors).toHaveLength(0);
+  expect(errors.consoleErrors).toEqual([]);
+  expect(errors.requestFailures).toEqual([]);
+  expect(errors.badResponses.every(item => item.startsWith("400 "))).toBe(true);
+  expect(await page.evaluate(() => ({
+    errors: browserHarness.windowErrors,
+    rejections: browserHarness.rejections,
+  }))).toEqual({errors: [], rejections: []});
 });
 
 test("two separately authenticated admins cannot overwrite the same stale Request Rule", async ({browser}) => {
@@ -146,8 +153,14 @@ test("two separately authenticated admins cannot overwrite the same stale Reques
     await expect(panelB.getByRole("heading", {name: "Cross-admin authoritative A", exact: true})).toBeVisible();
     await expect(panelB.getByRole("heading", {name: "Cross-admin stale B", exact: true})).toHaveCount(0);
     await expectHarnessClean(pageA, errorsA);
-    expect(errorsB.windowErrors).toEqual([]);
-    expect(errorsB.rejections).toEqual([]);
+    expect(errorsB).toHaveLength(0);
+    expect(errorsB.consoleErrors).toEqual([]);
+    expect(errorsB.requestFailures).toEqual([]);
+    expect(errorsB.badResponses.every(item => item.startsWith("400 "))).toBe(true);
+    expect(await pageB.evaluate(() => ({
+      errors: browserHarness.windowErrors,
+      rejections: browserHarness.rejections,
+    }))).toEqual({errors: [], rejections: []});
   } finally {
     await contextA.close();
     await contextB.close();
