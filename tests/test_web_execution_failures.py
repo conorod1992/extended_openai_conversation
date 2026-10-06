@@ -211,7 +211,7 @@ def test_brotli_output_allocations_are_bounded(monkeypatch):
 
 
 def test_zstd_output_allocations_and_multiple_frames(monkeypatch):
-    original = web.ZstdDecompressor
+    original = web._StdlibZstdDecompressor
     outputs = []
 
     class TrackingDecoder:
@@ -226,7 +226,7 @@ def test_zstd_output_allocations_and_multiple_frames(monkeypatch):
         def __getattr__(self, name):
             return getattr(self.decoder, name)
 
-    monkeypatch.setattr(web, "ZstdDecompressor", TrackingDecoder)
+    monkeypatch.setattr(web, "_StdlibZstdDecompressor", TrackingDecoder)
     with pytest.raises(HomeAssistantError, match="safety limit"):
         web._decode_compressed_body(zstd.compress(b"x" * 1_000_000), "zstd", 64)
     assert outputs == [65]

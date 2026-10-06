@@ -554,7 +554,7 @@ async def test_request_rules_target_path_temporarily_unavailable_recovers_next_m
     stress_trace: list[dict],
     real_store_io: None,
 ) -> None:
-    """Restore a temporarily unavailable Store path without reconstructing its owner."""
+    """Recover a temporarily unavailable Store path on the same invalidated owner."""
     del real_store_io
     key = "extended_openai_conversation.path_unavailable_rules"
     store = RequestRuleStore(hass, RULES_VERSION, key)
@@ -582,13 +582,17 @@ async def test_request_rules_target_path_temporarily_unavailable_recovers_next_m
         held.rename(path)
 
     assert path.read_bytes() == before
-    assert rules.snapshot()["groups"] == [{"id": "saved", "name": "Saved"}]
+    # An unreadable authoritative Store deliberately invalidates the manager
+    # rather than exposing a possibly stale management snapshot.
+    assert not rules._initialized
     reopened = RequestRules(RequestRuleStore(hass, RULES_VERSION, key))
     await reopened.async_initialize()
     assert reopened.snapshot()["groups"] == [{"id": "saved", "name": "Saved"}]
 
-    # Recovery is proved by the next ordinary mutation on the same manager; the
-    # test does not rebuild or reinitialize it after storage becomes available.
+    # Once storage is available again, reinitialize the same owner and prove
+    # that its next ordinary public mutation persists normally.
+    await rules.async_initialize()
+    assert rules.snapshot()["groups"] == [{"id": "saved", "name": "Saved"}]
     await rules.async_set_groups(
         [{"id": "recovered", "name": "Recovered"}],
         expected_revision=rules.revision(),
@@ -601,7 +605,7 @@ async def test_request_rules_target_path_temporarily_unavailable_recovers_next_m
         "os_storage_fault",
         store="request_rules",
         seam="temporarily_unavailable_target",
-        recovery_operation="same_manager_public_mutation",
+        recovery_operation="same_manager_reinitialize_then_public_mutation",
     )
 
 
