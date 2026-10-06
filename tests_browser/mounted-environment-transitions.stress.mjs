@@ -148,7 +148,7 @@ test("mounted native HA controls receive live language metadata changes without 
   await expectHarnessClean(page, errors);
 });
 
-test("Function Tool editor falls back when native YAML lookup disappears and recovers when restored", async ({page}) => {
+test("Function Tool editor falls back when native YAML initialization fails and recovers when restored", async ({page}) => {
   const errors = trackPageErrors(page);
 
   await page.addInitScript(() => {
@@ -159,6 +159,7 @@ test("Function Tool editor falls back when native YAML lookup disappears and rec
         this.isValid = true;
       }
       setValue(value) {
+        if (window.__eocNativeYamlUnavailable) throw new Error("Native YAML editor unavailable");
         this.lastSetValue = structuredClone(value);
       }
       get yaml() {
@@ -177,9 +178,7 @@ test("Function Tool editor falls back when native YAML lookup disappears and rec
   await panel.locator("#tool-cancel").click();
 
   await page.evaluate(() => {
-    const originalGet = customElements.get.bind(customElements);
-    window.__eocOriginalCustomElementGet = originalGet;
-    customElements.get = name => name === "ha-yaml-editor" ? undefined : originalGet(name);
+    window.__eocNativeYamlUnavailable = true;
   });
   await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
@@ -189,7 +188,7 @@ test("Function Tool editor falls back when native YAML lookup disappears and rec
   await panel.locator("#tool-cancel").click();
 
   await page.evaluate(() => {
-    customElements.get = window.__eocOriginalCustomElementGet;
+    window.__eocNativeYamlUnavailable = false;
   });
   await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();

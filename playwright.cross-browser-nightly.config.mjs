@@ -18,7 +18,7 @@ export default {
     "mount-offline-bfcache.stress.mjs",
     "mounted-environment-transitions.stress.mjs",
   ],
-  grep: /keyboard-only|malformed browser-local|major management pages|large text and long names|one mounted panel survives a long seeded route journey|persistent memories support create|failed Memory save|server-rejected general configuration save|a cold lazy import failure|search into a cold configuration route|older backend response|mounted management panel recovers|repeated mount cycles plus offline and browser restoration|live light-dark theme changes|portrait-landscape-portrait|coarse-pointer context|live language metadata changes|native YAML lookup disappears/,
+  grep: /keyboard-only|malformed browser-local|major management pages|large text and long names|one mounted panel survives a long seeded route journey|persistent memories support create|failed Memory save|server-rejected general configuration save|a cold lazy import failure|search into a cold configuration route|older backend response|mounted management panel recovers|repeated mount cycles plus offline and browser restoration|live light-dark theme changes|portrait-landscape-portrait|coarse-pointer context|live language metadata changes|native YAML initialization fails/,
   timeout: 180_000,
   workers: 1,
   projects: [
