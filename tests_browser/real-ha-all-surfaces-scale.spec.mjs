@@ -8,6 +8,7 @@ const fixture = (route) => "/tests_browser/real-ha-fixture.html?route=" + encode
 
 const routes = [
   "overview",
+  "guide",
   "assistant/basics",
   "assistant/model-responses",
   "assistant/conversation",
@@ -26,6 +27,7 @@ const routes = [
   "data-memory/knowledge",
   "data-memory/conversations",
   "usage-maintenance/usage",
+  "usage-maintenance/request-debug",
   "usage-maintenance/backup-restore",
   "usage-maintenance/diagnostics",
   "usage-maintenance/retention",
@@ -38,6 +40,7 @@ test("large genuine configuration remains usable across all management surfaces"
 
   for (const route of routes) {
     const started = Date.now();
+    const expectedRoute = route === "assistant/advanced" ? "capabilities/web-skills" : route;
     await page.goto(fixture(route));
     const panel = page.locator("extended-openai-management-panel");
     await expect(panel).toHaveCount(1);
@@ -47,18 +50,22 @@ test("large genuine configuration remains usable across all management surfaces"
         text: host.shadowRoot?.textContent?.trim().length || 0,
       })),
       {timeout: 20_000},
-    ).toEqual(expect.objectContaining({view: route}));
+    ).toEqual(expect.objectContaining({view: expectedRoute}));
     const rendered = await panel.evaluate((host) => ({
       view: host._viewKey?.(),
       textLength: host.shadowRoot?.textContent?.trim().length || 0,
     }));
     expect(rendered.textLength).toBeGreaterThan(80);
-    evidence.push({route, elapsed_ms: Date.now() - started, text_length: rendered.textLength});
+    evidence.push({route, rendered_route: rendered.view, elapsed_ms: Date.now() - started, text_length: rendered.textLength});
   }
 
   await page.goto(fixture("capabilities/functions"));
   let panel = page.locator("extended-openai-management-panel");
+  const groups = panel.locator(".function-group-card[data-group-id]");
+  await expect(groups).toHaveCount(20);
+  await groups.first().locator("summary").click();
   await expect(panel.locator(".tool-card").first()).toBeVisible();
+  await expect(panel.locator(".tool-card")).toHaveCount(60);
   const functionCount = await panel.evaluate(async (host) => {
     const config = await host._call("configuration", "get");
     return config.config.functions.length;
