@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from compression.zstd import ZstdDecompressor, ZstdError
 from contextlib import suppress
 from http import HTTPStatus
 import logging
@@ -38,6 +37,17 @@ from homeassistant.util.json import JSON_DECODE_EXCEPTIONS, json_loads
 from ..const import CONF_PAYLOAD_TEMPLATE
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from .base import Function
+
+_ZSTD_COMPAT: Any = None
+try:
+    from compression.zstd import (
+        ZstdDecompressor as _StdlibZstdDecompressor,
+        ZstdError as _StdlibZstdError,
+    )
+except ImportError:  # Python builds can omit the optional stdlib zstd extension.
+    import zstandard as _zstandard_backend
+
+    _ZSTD_COMPAT = _zstandard_backend
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,10 +97,34 @@ def _decode_zstd(body: bytes, max_bytes: int) -> bytes:
     """Bound each output allocation and validate all concatenated frames."""
     if not body:
         raise aiohttp.ClientPayloadError("Empty compressed response")
+    if _ZSTD_COMPAT is not None:
+        import io
+
+        decoded = bytearray()
+        try:
+            with _ZSTD_COMPAT.ZstdDecompressor().stream_reader(
+                io.BytesIO(body), read_size=_DECODE_CHUNK_BYTES, read_across_frames=True
+            ) as reader:
+                while chunk := reader.read(
+                    min(_DECODE_CHUNK_BYTES, max_bytes + 1 - len(decoded))
+                ):
+                    if len(chunk) > max_bytes - len(decoded):
+                        raise _response_limit_error(max_bytes)
+                    decoded.extend(chunk)
+        except _ZSTD_COMPAT.ZstdError as err:
+            message = str(err).lower()
+            reason = (
+                "Incomplete compressed response"
+                if "src size is incorrect" in message or "unexpected eof" in message
+                else "Malformed compressed response"
+            )
+            raise aiohttp.ClientPayloadError(reason) from err
+        return bytes(decoded)
+
     decoded = bytearray()
     try:
         while body:
-            decoder = ZstdDecompressor()
+            decoder = _StdlibZstdDecompressor()
             pending = body
             while True:
                 part = decoder.decompress(
@@ -105,7 +139,7 @@ def _decode_zstd(body: bytes, max_bytes: int) -> bytes:
                     break
                 if decoder.needs_input:
                     raise aiohttp.ClientPayloadError("Incomplete compressed response")
-    except ZstdError as err:
+    except _StdlibZstdError as err:
         raise aiohttp.ClientPayloadError("Malformed compressed response") from err
     return bytes(decoded)
 
