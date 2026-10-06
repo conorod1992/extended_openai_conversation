@@ -235,6 +235,10 @@ async function auditControls(page, panel, label) {
 async function openSurface(panel, surface) {
   for (const selector of surface.open) {
     const opener = panel.locator(selector).first();
+    await opener.evaluate((element) => {
+      const details = element.closest("details");
+      if (details) details.open = true;
+    });
     await expect(opener, `${surface.name}: opener ${selector}`).toBeVisible();
     await opener.click();
   }
