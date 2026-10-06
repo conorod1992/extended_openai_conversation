@@ -16,8 +16,12 @@ from tests.test_conversation_archive import FakeArchiveStorage
 
 
 @pytest.fixture(autouse=True)
-def restore_time_zone(verify_cleanup):
+def restore_time_zone(request: pytest.FixtureRequest):
     """Restore HA's global zone before its cleanup assertion runs."""
+    # HA-dev's compatibility lane disables the HA plugin. When it is loaded,
+    # request its autouse cleanup fixture first to preserve teardown ordering.
+    if "verify_cleanup" in request.fixturenames:
+        request.getfixturevalue("verify_cleanup")
     prior = module.dt_util.DEFAULT_TIME_ZONE
     yield
     module.dt_util.set_default_time_zone(prior)

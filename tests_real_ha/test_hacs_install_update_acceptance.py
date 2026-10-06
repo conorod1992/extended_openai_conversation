@@ -454,6 +454,50 @@ def _write_evidence(config_dir: Path) -> None:
     )
 
 
+
+def _simulate_interrupted_candidate_overlay(config_dir: Path) -> dict[str, Any]:
+    """Create a deterministic mixed release/candidate tree without touching HACS metadata."""
+    installed = _component_dir(config_dir)
+    candidate = _candidate_component()
+    differing = []
+    for candidate_path in sorted(candidate.rglob("*")):
+        if not candidate_path.is_file() or "__pycache__" in candidate_path.parts:
+            continue
+        relative = candidate_path.relative_to(candidate)
+        installed_path = installed / relative
+        if (
+            not installed_path.is_file()
+            or installed_path.read_bytes() != candidate_path.read_bytes()
+        ):
+            differing.append(relative)
+    assert len(differing) >= 4, "candidate must differ materially from published release"
+
+    # Approximate a replacement interrupted after candidate files have begun
+    # overwriting the installed release but before HACS commits repository state.
+    chosen = differing[: max(2, len(differing) // 3)]
+    for relative in chosen:
+        source = candidate / relative
+        target = installed / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+    untouched = [relative for relative in differing if relative not in chosen]
+    assert untouched
+    assert any(
+        (installed / relative).is_file()
+        and (installed / relative).read_bytes() != (candidate / relative).read_bytes()
+        for relative in untouched
+    ), "interrupted fixture must retain at least one release-generation file"
+    assert all(
+        (installed / relative).read_bytes() == (candidate / relative).read_bytes()
+        for relative in chosen
+    )
+    return {
+        "overwritten_candidate_files": [str(item) for item in chosen],
+        "remaining_release_files": [str(item) for item in untouched],
+    }
+
+
 def test_hacs_installs_release_updates_candidate_and_preserves_state(
     socket_enabled: Any,
     tmp_path: Path,
@@ -483,6 +527,53 @@ def test_hacs_installs_release_updates_candidate_and_preserves_state(
     _candidate_tree_status(config_dir)
     _assert_obsolete_files_inert(config_dir)
     _write_evidence(config_dir)
+
+
+
+
+def test_hacs_recovers_from_interrupted_candidate_replacement(
+    socket_enabled: Any,
+    tmp_path: Path,
+) -> None:
+    """A partially overlaid EOAI tree is repaired by the next genuine HACS update."""
+    del socket_enabled
+    config_dir = tmp_path / "ha-config-interrupted"
+    config_dir.mkdir()
+    _stage_hacs(config_dir)
+    (config_dir / "configuration.yaml").write_text(
+        "homeassistant:\n"
+        "  name: Interrupted HACS Replacement Acceptance\n"
+        "recorder:\n",
+        encoding="utf-8",
+    )
+
+    for phase in ("install-release", "populate-release"):
+        result = _run_child(config_dir, phase)
+        _assert_child_ok(result, phase)
+
+    hacs_state_before = json.loads(
+        (config_dir / _HACS_STATE_FILE).read_text(encoding="utf-8")
+    )
+    mixed = _simulate_interrupted_candidate_overlay(config_dir)
+    assert mixed["overwritten_candidate_files"]
+    assert mixed["remaining_release_files"]
+
+    # HACS still believes the published release owns this repository generation.
+    hacs_state_after_mix = json.loads(
+        (config_dir / _HACS_STATE_FILE).read_text(encoding="utf-8")
+    )
+    assert hacs_state_after_mix == hacs_state_before
+
+    # A normal subsequent HACS update must converge the mixed filesystem onto the
+    # exact candidate generation, preserve EOAI's populated state, and remain
+    # healthy across another cold start.
+    for phase in ("hacs-update", "candidate-migrate", "candidate-restart"):
+        result = _run_child(config_dir, phase)
+        _assert_child_ok(result, phase)
+
+    status = _candidate_tree_status(config_dir)
+    _assert_obsolete_files_inert(config_dir)
+    assert status["candidate_file_count"] > 0
 
 
 if __name__ == "__main__" and os.environ.get(_CHILD_PHASE_ENV):

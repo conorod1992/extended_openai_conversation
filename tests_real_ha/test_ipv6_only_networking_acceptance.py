@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from aiohttp import web
 import pytest
+from pytest_socket import socket_allow_hosts
 import yaml
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -175,7 +176,7 @@ class IPv6OnlyEndpoint:
         site = web.TCPSite(self.runner, "::1", self.port)
         await site.start()
 
-        sockets = getattr(site._server, "sockets", None)  # noqa: SLF001 - test socket
+        sockets = getattr(site._server, "sockets", None)
         assert sockets and len(sockets) == 1
         assert sockets[0].family == socket.AF_INET6
         assert sockets[0].getsockname()[0] == "::1"
@@ -225,8 +226,12 @@ async def _say(
 
 async def test_ipv6_only_provider_stream_rest_tool_and_failure_recovery(
     hass: HomeAssistant,
+    socket_enabled: Any,
 ) -> None:
     """EOAI must work when every tested remote endpoint is reachable only over IPv6."""
+    # HA separately restricts connect() to IPv4 loopback even with sockets enabled.
+    # Permit IPv6 loopback and the IPv4 probe that must fail to reach our server.
+    socket_allow_hosts(["::1", "127.0.0.1"], allow_unix_socket=True)
     port = _reserve_ipv6_port()
     endpoint = IPv6OnlyEndpoint(port)
     await endpoint.start()
