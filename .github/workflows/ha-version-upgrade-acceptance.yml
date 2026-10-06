@@ -1,0 +1,153 @@
+name: Home Assistant version-upgrade acceptance
+
+on:
+  schedule:
+    - cron: "37 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ha-version-upgrade-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  ha-version-upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --ipc=host
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Trust mounted checkout for Git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Reconcile current stable Home Assistant environment
+        run: |
+          set -euo pipefail
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+            pip install -r requirements_test.txt
+            python ci/install_ha_dependencies.py               --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
+          pip install --upgrade homeassistant
+          pip check
+
+      - name: Build oldest-supported Home Assistant runtime
+        id: runtimes
+        run: |
+          set -euo pipefail
+          MINIMUM_HA="$(python - <<'PY'
+          import json
+          print(json.load(open("hacs.json", encoding="utf-8"))["homeassistant"])
+          PY
+          )"
+          STABLE_HA="$(python - <<'PY'
+          from importlib.metadata import version
+          print(version("homeassistant"))
+          PY
+          )"
+
+          if [ "$MINIMUM_HA" = "$STABLE_HA" ]; then
+            echo "Minimum and stable HA unexpectedly resolve to the same version: $MINIMUM_HA"
+            exit 1
+          fi
+
+          python -m venv "${RUNNER_TEMP}/ha-oldest"
+          "${RUNNER_TEMP}/ha-oldest/bin/python" -m pip install --upgrade pip wheel
+          "${RUNNER_TEMP}/ha-oldest/bin/python" -m pip install --pre "homeassistant==${MINIMUM_HA}"
+
+          INSTALLED_OLDEST="$("${RUNNER_TEMP}/ha-oldest/bin/python" - <<'PY'
+          from importlib.metadata import version
+          print(version("homeassistant"))
+          PY
+          )"
+          test "$INSTALLED_OLDEST" = "$MINIMUM_HA"
+
+          python - <<PY > "${RUNNER_TEMP}/ha-version-runtimes.json"
+          import json
+          import sys
+          print(json.dumps([
+              {
+                  "label": "oldest-supported",
+                  "python": "${RUNNER_TEMP}/ha-oldest/bin/python",
+                  "version": "${MINIMUM_HA}",
+              },
+              {
+                  "label": "current-stable",
+                  "python": sys.executable,
+                  "version": "${STABLE_HA}",
+              },
+          ]))
+          PY
+
+          echo "minimum_ha=${MINIMUM_HA}" >> "$GITHUB_OUTPUT"
+          echo "stable_ha=${STABLE_HA}" >> "$GITHUB_OUTPUT"
+          cat "${RUNNER_TEMP}/ha-version-runtimes.json"
+
+      - name: Run populated HA version-upgrade continuity journey
+        env:
+          HA_VERSION_UPGRADE_RUNTIMES_FILE: ${{ runner.temp }}/ha-version-runtimes.json
+          HA_VERSION_UPGRADE_EVIDENCE_FILE: ${{ runner.temp }}/ha-version-upgrade-evidence.json
+        run: |
+          set -euo pipefail
+          export HA_VERSION_UPGRADE_RUNTIMES="$(cat "$HA_VERSION_UPGRADE_RUNTIMES_FILE")"
+          pytest tests_real_ha/test_ha_version_upgrade_acceptance.py             -v --asyncio-mode=auto --timeout=300
+
+      - name: Record workflow metadata
+        if: always()
+        env:
+          EVIDENCE_PATH: ${{ runner.temp }}/ha-version-upgrade-evidence.json
+          MINIMUM_HA: ${{ steps.runtimes.outputs.minimum_ha }}
+          STABLE_HA: ${{ steps.runtimes.outputs.stable_ha }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["EVIDENCE_PATH"])
+          if path.exists():
+              payload = json.loads(path.read_text(encoding="utf-8"))
+          else:
+              payload = {}
+          payload.update(
+              {
+                  "candidate_sha": os.environ["GITHUB_SHA"],
+                  "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+                  "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                  "job_status": os.environ["JOB_STATUS"],
+                  "minimum_homeassistant": os.environ["MINIMUM_HA"],
+                  "stable_homeassistant": os.environ["STABLE_HA"],
+              }
+          )
+          path.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload exact-candidate acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ha-version-upgrade-${{ github.sha }}
+          path: ${{ runner.temp }}/ha-version-upgrade-evidence.json
+          if-no-files-found: error
+          retention-days: 30
