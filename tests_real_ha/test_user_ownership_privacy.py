@@ -422,3 +422,63 @@ async def test_known_cross_user_record_ids_cannot_be_read_or_modified(
     assert bob_conversation["result"]["turns"][0]["user_text"] == (
         "Bob IDOR conversation marker."
     )
+
+
+@pytest.mark.asyncio
+async def test_ha_user_rename_preserves_personal_ownership_and_updates_display_name(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+) -> None:
+    """Renaming a HA user must not move, duplicate, or orphan their personal data."""
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    user, token = await _normal_user_token(
+        hass, "rename-owner-stable-id", "Original Display Name"
+    )
+    memory_id, session_id = await _seed_personal_data(
+        hass,
+        entry,
+        user=user,
+        memory_text="Rename-stable personal memory.",
+        conversation_text="Rename-stable retained conversation.",
+    )
+    temporary_id = await _seed_temporary_memory(
+        hass,
+        entry,
+        user=user,
+        content="Rename-stable temporary memory.",
+    )
+
+    # Home Assistant identity is the immutable user id. A display-name change must
+    # not rewrite EOAI ownership keys or make the records appear under a new scope.
+    user.name = "Renamed Display Name"
+    client = await hass_ws_client(hass, token)
+
+    scopes = await _management_call(
+        client, entry=entry, section="scopes", action="catalog"
+    )
+    assert scopes["success"]
+    assert [item["scope_id"] for item in scopes["result"]["scopes"]] == [
+        f"user:{user.id}"
+    ]
+    assert scopes["result"]["scopes"][0]["display_name"] == "Renamed Display Name"
+
+    memories = await _management_call(
+        client, entry=entry, section="memories", action="list"
+    )
+    temporary = await _management_call(
+        client, entry=entry, section="memories", action="temporary_list"
+    )
+    conversations = await _management_call(
+        client, entry=entry, section="conversations", action="list"
+    )
+
+    assert [item["memory_id"] for item in memories["result"]["memories"]] == [memory_id]
+    assert [item["memory_id"] for item in temporary["result"]["memories"]] == [
+        temporary_id
+    ]
+    assert [item["session_id"] for item in conversations["result"]["sessions"]] == [
+        session_id
+    ]
+    assert memories["result"]["scope_id"] == f"user:{user.id}"
+    assert temporary["result"]["scope_id"] == f"user:{user.id}"
