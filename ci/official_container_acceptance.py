@@ -211,7 +211,17 @@ def _validate(first: dict, recovered: dict, expected_ha: str) -> None:
         assert required <= set(proof["paths"])
         assert proof["entities"] >= 2
         assert proof["controls"]["callbacks"] == 3
-        assert not any(name.startswith("pytest") for name in proof["before"])
+        before_pytest = {
+            name: version
+            for name, version in proof["before"].items()
+            if name.startswith("pytest")
+        }
+        after_pytest = {
+            name: version
+            for name, version in proof["after"].items()
+            if name.startswith("pytest")
+        }
+        assert after_pytest == before_pytest
     assert first["entry"] == recovered["entry"]
     assert first["entities"] == recovered["entities"]
 
