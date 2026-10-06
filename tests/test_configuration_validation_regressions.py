@@ -159,7 +159,10 @@ async def test_legacy_configuration_model_update_uses_reload_boundary(monkeypatc
         hass,
         "admin",
         True,
-        _residual_message("configuration", "update", config={"chat_model": "gpt-4o"}),
+        _residual_message(
+            "configuration", "update", config={"chat_model": "gpt-4o"},
+            revision=management_ui._agent_config_revision(subentry.data, subentry.title),
+        ),
     )
     assert observed == [False]
 
