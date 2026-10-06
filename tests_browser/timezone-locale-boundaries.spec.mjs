@@ -37,7 +37,7 @@ test.describe("browser de-DE numeric configuration", () => {
 
   test("decimal model settings remain numeric and never become tenfold values", async ({page}) => {
     const errors = trackPageErrors(page);
-    await page.goto(fixtureUrl("assistant/basics"));
+    await page.goto(fixtureUrl("assistant/model-responses"));
     const panel = page.locator("extended-openai-management-panel");
     const temperature = panel.locator('[data-config="temperature"]');
     await expect(temperature).toHaveAttribute("type", "number");
@@ -49,7 +49,7 @@ test.describe("browser de-DE numeric configuration", () => {
       .filter(call => call.section === "configuration" && call.action === "save")
       .at(-1)?.config?.temperature)).toBe(0.7);
     expect(await temperature.inputValue()).not.toBe("7");
-    await page.goto(fixtureUrl("assistant/basics"));
+    await page.goto(fixtureUrl("assistant/model-responses"));
     await expect(panel.locator('[data-config="temperature"]')).toHaveValue("0.7");
     await expectHarnessClean(page, errors);
   });
