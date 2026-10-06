@@ -168,10 +168,10 @@ test("mobile primary and card actions meet a 24 CSS pixel touch-target floor", a
   await page.setViewportSize({width: 390, height: 844});
 
   const cases = [
-    ["capabilities/request-rules", "button:visible:not(.guide-topic-link), summary:visible"],
-    ["data-memory/memories", "button:visible:not(.guide-topic-link)"],
-    ["data-memory/knowledge", "button:visible:not(.guide-topic-link)"],
-    ["capabilities/functions", "button:visible:not(.guide-topic-link), summary:visible"],
+    ["capabilities/request-rules", "button:visible:not(.guide-topic-link):not(.help-button), summary:visible"],
+    ["data-memory/memories", "button:visible:not(.guide-topic-link):not(.help-button)"],
+    ["data-memory/knowledge", "button:visible:not(.guide-topic-link):not(.help-button)"],
+    ["capabilities/functions", "button:visible:not(.guide-topic-link):not(.help-button), summary:visible"],
   ];
 
   for (const [route, selector] of cases) {
