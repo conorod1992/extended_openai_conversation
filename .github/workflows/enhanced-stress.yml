@@ -454,6 +454,7 @@ jobs:
           pytest
           tests_stress/test_recorder_time_retention_lifecycle.py::test_native_history_against_external_recorder_database
           tests_stress/test_recorder_time_retention_lifecycle.py::test_recorder_backend_switch_preserves_history_and_statistics_semantics
+          tests_stress/test_recorder_time_retention_lifecycle.py::test_external_recorder_connection_loss_then_recovery
           -v -s --asyncio-mode=auto --timeout=180 --tb=short
 
   browser:

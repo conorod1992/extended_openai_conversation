@@ -9,6 +9,7 @@ import socket
 
 import pytest
 from pytest_homeassistant_custom_component.components.recorder.common import (
+    async_recorder_block_till_done,
     async_wait_recording_done,
 )
 from pytest_socket import socket_allow_hosts
@@ -56,6 +57,14 @@ def external_recorder_network(socket_enabled, monkeypatch, env_name):
 
     monkeypatch.setattr(socket, "getaddrinfo", resolve)
     socket_allow_hosts(["127.0.0.1", "::1", hostname], allow_unix_socket=True)
+
+
+async def _wait_recording_done(hass: HomeAssistant) -> None:
+    """Drain queued writes before asking HA to commit its pending transaction."""
+    # The commit trigger checks pending writes, not queued events. On an external
+    # backend it can otherwise run before the Recorder thread processes them.
+    await async_recorder_block_till_done(hass)
+    await async_wait_recording_done(hass)
 
 
 async def _setup_recorder(hass: HomeAssistant, db_url: str) -> None:
@@ -288,7 +297,7 @@ async def test_native_history_against_external_recorder_database(
     await _setup_recorder(hass, db_url)
     hass.states.async_set("sensor.recorder_acceptance", f"{backend}-recorded")
     await hass.async_block_till_done()
-    await async_wait_recording_done(hass)
+    await _wait_recording_done(hass)
     rows = await NativeFunction().get_history(
         hass,
         {},
@@ -347,7 +356,7 @@ async def test_recorder_backend_switch_preserves_history_and_statistics_semantic
     later = hass.states.get("sensor.recorder_acceptance").last_changed
     # The runtime commit future may finish before the event queue drains. Use
     # HA's test barrier, which forces a commit and waits for all Recorder tasks.
-    await async_wait_recording_done(hass)
+    await _wait_recording_done(hass)
 
     between = inside + (later - inside) / 2
     history = await NativeFunction().get_history(
@@ -406,7 +415,7 @@ async def test_recorder_backend_switch_preserves_history_and_statistics_semantic
             },
         ],
     )
-    await async_wait_recording_done(hass)
+    await _wait_recording_done(hass)
     stats = await NativeFunction().get_statistics(
         hass,
         {},
@@ -575,7 +584,7 @@ async def test_external_recorder_connection_loss_then_recovery(
     await _setup_recorder(hass, db_url)
     hass.states.async_set("sensor.recorder_acceptance", f"{backend}-before-outage")
     await hass.async_block_till_done()
-    await async_wait_recording_done(hass)
+    await _wait_recording_done(hass)
 
     instance = recorder.get_instance(hass)
     engine = instance.engine
@@ -606,7 +615,7 @@ async def test_external_recorder_connection_loss_then_recovery(
     monkeypatch.setattr(engine, "connect", real_connect)
     hass.states.async_set("sensor.recorder_acceptance", f"{backend}-after-recovery")
     await hass.async_block_till_done()
-    await async_wait_recording_done(hass)
+    await _wait_recording_done(hass)
 
     recovered = await NativeFunction().get_history(
         hass,
