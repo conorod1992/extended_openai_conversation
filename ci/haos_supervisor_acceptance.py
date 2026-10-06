@@ -620,6 +620,14 @@ def _wait_for_core_restart(ssh: HostSSH, previous_started: str, *, timeout: floa
     raise TimeoutError("Supervisor did not restart Core")
 
 
+def _restart_core_via_supervisor(ssh: HostSSH) -> None:
+    """Request a Core restart from the host's Supervisor CLI."""
+    result = ssh.run("ha core restart", timeout=120, check=False)
+    assert result.returncode == 0, (
+        f"Supervisor Core restart command failed:\n{result.stdout}\n{result.stderr}"
+    )
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -656,7 +664,7 @@ async def _run(args: argparse.Namespace) -> None:
     before_started = ssh.run(
         "docker inspect -f '{{.State.StartedAt}}' homeassistant"
     ).stdout.strip()
-    _supervisor_api(ssh, "POST", "/core/restart", {}, detached=True)
+    _restart_core_via_supervisor(ssh)
     deadline = time.monotonic() + 600
     after_started = before_started
     while time.monotonic() < deadline:
@@ -677,7 +685,7 @@ async def _run(args: argparse.Namespace) -> None:
         identity = await _configure_and_seed(base_url, token, entry_id)
 
         before_second = after_started
-        _supervisor_api(ssh, "POST", "/core/restart", {}, detached=True)
+        _restart_core_via_supervisor(ssh)
         deadline = time.monotonic() + 600
         second_started = before_second
         while time.monotonic() < deadline:
@@ -741,7 +749,7 @@ async def _run(args: argparse.Namespace) -> None:
         before_restore_reboot = ssh.run(
             "docker inspect -f '{{.State.StartedAt}}' homeassistant"
         ).stdout.strip()
-        _supervisor_api(ssh, "POST", "/core/restart", {}, detached=True)
+        _restart_core_via_supervisor(ssh)
         _wait_for_core_restart(ssh, before_restore_reboot, timeout=600)
         _wait_http(base_url, token=token, timeout=600)
         await _verify_after_restart(base_url, token, identity)
