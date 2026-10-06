@@ -290,26 +290,28 @@ def _install_candidate(ssh: HostSSH, repo_root: Path, work_dir: Path) -> str:
     with tarfile.open(archive, "w:gz") as handle:
         handle.add(source, arcname=DOMAIN)
 
-    scp = subprocess.run(
+    upload = subprocess.run(
         [
-            "scp",
+            "ssh",
             "-i",
             str(ssh.key),
-            "-P",
+            "-p",
             str(ssh.port),
             "-o",
             "StrictHostKeyChecking=no",
             "-o",
             "UserKnownHostsFile=/dev/null",
-            str(archive),
-            "root@127.0.0.1:/tmp/eoai-candidate.tar.gz",
+            "root@127.0.0.1",
+            "cat > /tmp/eoai-candidate.tar.gz",
         ],
-        text=True,
+        input=archive.read_bytes(),
         capture_output=True,
         timeout=120,
         check=False,
     )
-    assert scp.returncode == 0, f"candidate upload failed:\n{scp.stdout}\n{scp.stderr}"
+    assert upload.returncode == 0, (
+        f"candidate upload failed:\n{upload.stdout!r}\n{upload.stderr.decode(errors='replace')}"
+    )
 
     command = (
         "set -eu; "
