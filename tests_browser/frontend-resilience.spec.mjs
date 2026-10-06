@@ -230,7 +230,7 @@ test("browser document closure at request boundaries preserves authoritative sta
   const savedTitle = "Committed before browser document closed";
   await activePage.goto(fixtureUrl("assistant/basics"));
   let panel = activePage.locator("extended-openai-management-panel");
-  const title = panel.locator('[data-config="__title"]');
+  let title = panel.locator('[data-config="__title"]');
   await expect.poll(() => activePage.evaluate(() => {
     const current = document.querySelector("extended-openai-management-panel");
     return Boolean(current?._configData?.config && !current._busy);
@@ -270,6 +270,7 @@ test("browser document closure at request boundaries preserves authoritative sta
     activePage = await context.newPage();
     await activePage.goto(fixtureUrl("assistant/basics"));
     panel = activePage.locator("extended-openai-management-panel");
+    title = panel.locator('[data-config="__title"]');
     await expect(panel.locator('[data-config="__title"]')).toHaveValue(
       stage === "committed-before-ack" ? savedTitle : initialTitle,
     );
