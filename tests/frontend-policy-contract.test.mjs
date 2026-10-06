@@ -78,15 +78,18 @@ const APPROVED_SURFACES = new Set([
   "config-surface",
   "content-card",
   "dashboard-card",
+  "eoc-overview-snapshot-card",
   "eoc-model-data-panel",
   "feature-status-card",
   "function-group-card",
   "guide-quick-card",
   "list-card",
   "request-rule-card",
+  "rule-card",
   "retention-surface",
   "rule-preview-panel",
   "supporting-panel",
+  "transfer-panel",
   "tool-card",
   "tools-surface",
   "usage-diagnostic-panel",
@@ -103,11 +106,13 @@ for (const path of sourceFiles(FRONTEND)) {
   for (const match of source.matchAll(/class(?:Name)?\s*=\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)/g)) {
     const value = (match[1] || match[2] || match[3] || "").replace(/\$\{[^}]*\}/g, " ");
     for (const token of value.split(/\s+/).filter(Boolean)) {
-      if (/(?:card|panel|surface)$/.test(token)) foundSurfaces.add(token);
+      if ((token === "card" || /-(?:card|panel|surface)$/.test(token)) && !token.startsWith("cm-")) {
+        foundSurfaces.add(token);
+      }
     }
   }
-  for (const match of source.matchAll(/\.([A-Za-z_][\w-]*(?:card|panel|surface))\b/g)) {
-    foundSurfaces.add(match[1]);
+  for (const match of source.matchAll(/\.([A-Za-z_][\w-]*(?:-(?:card|panel|surface)|card))\b/g)) {
+    if (!match[1].startsWith("cm-")) foundSurfaces.add(match[1]);
   }
 }
 assert.deepEqual(
