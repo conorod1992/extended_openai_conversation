@@ -187,3 +187,52 @@ test("browser engines hand persisted state across one HA backend", async () => {
     await closeEngine(returned);
   }
 });
+
+
+test("dirty Chromium editor rejects a newer save committed by the other browser engine", async () => {
+  test.skip(phase === "post-restart", "conflict journey runs before the HA restart");
+  const auth = JSON.parse(authDataRaw);
+  const first = await freshEngine("chromium");
+  const middle = await freshEngine(middleName);
+  await first.context.addInitScript(tokens => localStorage.setItem("hassTokens", JSON.stringify(tokens)), auth);
+  await middle.context.addInitScript(tokens => localStorage.setItem("hassTokens", JSON.stringify(tokens)), auth);
+
+  const originalName = `Cross-engine stale editor ${middleName}`;
+  const authoritativeName = `Cross-engine authoritative ${middleName}`;
+  const staleDraft = `Cross-engine stale Chromium ${middleName}`;
+
+  try {
+    const panelA = await openRoute(first, "capabilities/request-rules");
+    await panelA.getByRole("button", {name: "Create rule", exact: true}).first().click();
+    await panelA.locator("#rule-name").fill(originalName);
+    await panelA.locator("#rule-phrases").fill(`cross engine conflict ${middleName}`);
+    await panelA.locator("#rule-action-type").selectOption("model_routing");
+    await panelA.locator("#rule-model").fill("gpt-5-mini");
+    await panelA.locator("#rule-save").click();
+    await expect(panelA.locator(".request-rule-card").filter({hasText: originalName})).toBeVisible();
+
+    const cardA = panelA.locator(".request-rule-card").filter({hasText: originalName});
+    await cardA.locator(".rule-edit").click();
+    await panelA.locator("#rule-name").fill(staleDraft);
+    await expect(panelA.locator("#rule-dialog")).toHaveJSProperty("open", true);
+
+    const panelB = await openRoute(middle, "capabilities/request-rules");
+    const cardB = panelB.locator(".request-rule-card").filter({hasText: originalName});
+    await expect(cardB).toBeVisible();
+    await cardB.locator(".rule-edit").click();
+    await panelB.locator("#rule-name").fill(authoritativeName);
+    await panelB.locator("#rule-save").click();
+    await expect(panelB.locator(".request-rule-card").filter({hasText: authoritativeName})).toBeVisible();
+
+    await panelA.locator("#rule-save").click();
+    await expect(panelA.locator("#rule-error")).toContainText(/changed|stale|another tab/i);
+    await expect(panelA.locator("#rule-name")).toHaveValue(staleDraft);
+
+    await first.page.reload();
+    await expect(panelA.locator(".request-rule-card").filter({hasText: authoritativeName})).toBeVisible();
+    await expect(panelA.locator(".request-rule-card").filter({hasText: staleDraft})).toHaveCount(0);
+  } finally {
+    await closeEngine(first);
+    await closeEngine(middle);
+  }
+});
