@@ -916,7 +916,7 @@ jobs:
 
   certify:
     name: Consolidated nightly certification
-    needs: [prepare, python-campaigns, browser, browser-engines, ha-lifecycle-matrix, ha-lifecycle-dev]
+    needs: [prepare, python-campaigns, external-recorder, browser, browser-engines, ha-lifecycle-matrix, ha-lifecycle-dev]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     steps:
