@@ -17,7 +17,7 @@ test("Home Assistant route paints its intro while configuration assets are still
   await page.goto(fixtureUrl("capabilities/home-assistant"));
   const panel = page.locator("extended-openai-management-panel");
   await expect.poll(() => requested).toBe(true);
-  await expect(panel.getByRole("heading", {name:"Home Assistant access", exact:true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name:"Home Assistant & local handling", exact:true})).toBeVisible();
   await expect(panel.locator("main .loading")).toBeVisible();
   await expect(panel.getByRole("button", {name:"Configure exposed entity context"})).toHaveCount(0);
 
@@ -321,7 +321,7 @@ test("hover does not compete with a cold route but pointerdown still warms the d
   // while the hover timer is pending and the test no longer exercises its premise.
   await expect(panel.locator(".eoc-overview-snapshot")).toHaveCount(0);
   await expect(panel.locator(".setup-health")).toBeVisible();
-  await expect(panel.locator("#broadcast-card")).not.toContainText("Loading Broadcast�");
+  await expect(panel.locator("#broadcast-card")).not.toContainText("Loading Broadcast");
   await expect.poll(() => panel.evaluate(host => host._busy)).toBe(false);
   const warmed = await panel.evaluate(async host => {
     const target = host.shadowRoot.querySelector('.top-nav button[data-page="capabilities"]');
@@ -519,9 +519,9 @@ test("embedded Debug pins its assistant and binds paged view/copy once", async (
     debug._copyText = async (text) => { window.lazyDebugCopies.push(text); };
   });
   await debug.locator('[data-view="debug-one"]').click();
-  await expect(debug.locator("#debug-provider-status")).toHaveText("Provider requests 1–5 of 10");
+  await expect(debug.locator("#debug-provider-status")).toHaveText("Provider requests 1â5 of 10");
   await debug.locator("#debug-provider-next").click();
-  await expect(debug.locator("#debug-provider-status")).toHaveText("Provider requests 6–10 of 10");
+  await expect(debug.locator("#debug-provider-status")).toHaveText("Provider requests 6â10 of 10");
   await debug.locator("#copy-debug-log").click();
   await expect.poll(() => page.evaluate(() => window.lazyDebugCopies.length)).toBe(1);
   expect(await page.evaluate(() => JSON.parse(window.lazyDebugCopies[0]).page)).toBe(5);
