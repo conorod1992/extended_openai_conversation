@@ -26,6 +26,34 @@ test("Assistant parent introduction stays between subsection navigation and the 
   await expectHarnessClean(page, errors);
 });
 
+test("routed views own the semantic H1 while product branding stays outside the heading tree", async ({page}) => {
+  const errors = trackPageErrors(page);
+  const panel = page.locator("extended-openai-management-panel");
+  const cases = [
+    ["capabilities/functions", "Functions"],
+    ["data-memory/memories", "Memories"],
+    ["usage-maintenance/usage", "Usage"],
+    ["usage-maintenance/backup-restore", "Export, Backup, Import & Restore"],
+    ["capabilities/home-assistant", "Home Assistant & local handling"],
+  ];
+  for (const [route, heading] of cases) {
+    await page.goto(fixtureUrl(route));
+    await expect(panel.locator(".page-heading .product-title")).toHaveText("Extended OpenAI");
+    await expect(panel.locator(".page-heading h1")).toHaveCount(0);
+    await expect(panel.getByRole("heading", {level:1, name:heading, exact:true})).toBeVisible();
+    await expect(panel.locator("h1")).toHaveCount(1);
+  }
+  await page.goto(fixtureUrl("data-memory/memory-settings"));
+  for (const heading of ["Personal memory", "Matching memories", "Shared household memory"]) {
+    await expect(panel.getByRole("heading", {level:2, name:heading, exact:true})).toBeVisible();
+  }
+  await page.goto(fixtureUrl("assistant/voice"));
+  await expect(panel.locator(".voice-policy-card.supporting-panel")).toBeVisible();
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  await expect(panel.locator('[data-rule-key="rule-1"] h3')).toBeVisible();
+  await expectHarnessClean(page, errors);
+});
+
 test("Web search and retention use contextual page introductions without repeating navigation labels", async ({page}) => {
   const errors = trackPageErrors(page);
   const panel = page.locator("extended-openai-management-panel");
