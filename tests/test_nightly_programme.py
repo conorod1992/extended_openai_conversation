@@ -83,5 +83,10 @@ def test_enhanced_nightly_requires_real_mariadb_and_postgresql_recorder():
         "test_native_history_against_external_recorder_database"
         in workflow
     )
+    assert (
+        "test_recorder_time_retention_lifecycle.py::"
+        "test_recorder_backend_switch_preserves_history_and_statistics_semantics"
+        in workflow
+    )
     assert "github.event_name == 'schedule'" in workflow
     assert "inputs.campaign == 'all'" in workflow
