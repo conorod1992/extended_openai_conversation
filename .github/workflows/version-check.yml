@@ -1,6 +1,7 @@
 name: Version metadata
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "custom_components/extended_openai_conversation_responses/manifest.json"

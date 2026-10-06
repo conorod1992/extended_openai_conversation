@@ -1,0 +1,69 @@
+name: Full validation
+
+run-name: Full validation · ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Optional reproducible seed for enhanced stress
+        required: false
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: full-validation-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch-and-wait:
+    name: Dispatch and monitor all CI test lanes
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - name: Check out the selected commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Dispatch test workflows and wait for their results
+        env:
+          GH_API_URL: ${{ github.api_url }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          GH_SHA: ${{ github.sha }}
+          GH_REF: ${{ github.ref_name }}
+          GH_RUN_ID: ${{ github.run_id }}
+          GH_RUN_ATTEMPT: ${{ github.run_attempt }}
+          FULL_VALIDATION_SEED: ${{ inputs.seed }}
+        run: python3 ci/full_validation.py
+
+  cleanup-ref:
+    name: Remove temporary validation ref
+    if: always()
+    needs: dispatch-and-wait
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete temporary ref
+        env:
+          GH_API_URL: ${{ github.api_url }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          GH_RUN_ID: ${{ github.run_id }}
+          GH_RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          REF="full-validation-${GH_RUN_ID}-${GH_RUN_ATTEMPT}"
+          STATUS="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -X DELETE \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "${GH_API_URL}/repos/${GH_REPOSITORY}/git/refs/heads/${REF}")"
+          if [[ "$STATUS" != 204 && "$STATUS" != 404 ]]; then
+            echo "Temporary ref cleanup returned HTTP ${STATUS}" >&2
+            exit 1
+          fi
