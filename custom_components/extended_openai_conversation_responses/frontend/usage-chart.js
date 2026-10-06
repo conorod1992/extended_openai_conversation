@@ -341,7 +341,7 @@ function renderUsageBar(panel, bucket, max) {
 }
 
 function usageWarnings(panel, result) {
-  return (result.load_errors || []).map((issue) => `<div class="notice"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
+  return (result.load_errors || []).map((issue) => `<div class="notice warning"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
 }
 
 function usageRecentRows(panel, result) {
@@ -393,7 +393,7 @@ export function renderUsagePage(panel, result = {}) {
   return `<style>
       .usage-range-card{display:flex;align-items:end;justify-content:space-between;gap:20px}.usage-range-copy{display:grid;gap:6px}.usage-range-copy h2,.usage-range-copy p{margin:0}.usage-range-copy p{color:var(--secondary-text-color)}.usage-range-control{min-width:190px}.usage-range-control select{width:100%;min-height:42px}.usage-history-note{line-height:1.5}.usage-history-note strong{display:block;margin-bottom:4px}
       @media(max-width:680px){.usage-range-card{display:grid}.usage-range-control{min-width:0;width:100%}}
-    </style><div data-eoc-usage-warnings>${usageWarnings(panel, result)}</div>
+    </style><section class="page-intro"><h1>Usage</h1><p>Review token use, provider activity, recent runs, and retained usage detail for this assistant.</p></section><div data-eoc-usage-warnings>${usageWarnings(panel, result)}</div>
     <section class="content-card usage-range-card"><div class="usage-range-copy"><h2>Usage period</h2><p>Totals, chart data, and model/provider/API-mode breakdowns use this same Home Assistant local-calendar period.</p><small>${panel._e(historyRangeLabel(history))}</small></div><label class="usage-range-control">History window<select id="usage-window">${options}</select></label></section>
     <section class="metric-grid compact">
       ${panel._metric(history.label, summary.total_tokens || 0, cachedMeta(summary.cached_input_tokens))}
