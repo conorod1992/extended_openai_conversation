@@ -267,11 +267,13 @@ async def test_open_browser_survives_true_home_assistant_process_restart(
         # still-valid browser journey halfway through that diagnostic window.
         await _wait_for_process_marker(browser, sync_dir / "browser-ready", timeout=130)
 
-        # The browser save must be durable before SIGKILL. Waiting for the exact
-        # subentry title keeps the crash boundary after HA's atomic Store commit.
+        # The browser deliberately holds the save acknowledgement only after HA
+        # has processed the mutation. Wait for that exact committed generation
+        # before SIGKILL so the crash boundary sits between durable commit and
+        # browser acknowledgement.
         await _wait_for_stored_values(
             config_dir / ".storage" / "core.config_entries",
-            "Before real HA restart",
+            "Committed while browser acknowledgement is held",
         )
 
         # Hard-kill the HA process rather than invoking hass.async_stop(), unloading
@@ -435,7 +437,7 @@ async def _child_main() -> None:
             for subentry in entry.subentries.values()
             if subentry.subentry_type == "conversation"
         }
-        assert "Before real HA restart" in conversation_titles
+        assert "Committed while browser acknowledgement is held" in conversation_titles
         auth_data = json.loads((sync_dir / _AUTH_FILE).read_text(encoding="utf-8"))
         assert hass.auth.async_validate_access_token(auth_data["access_token"]) is not None
 

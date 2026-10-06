@@ -81,6 +81,33 @@ test("open Home Assistant page survives a real backend process death and restart
     return window.__extendedOpenAIRestartSentinel;
   });
 
+  // Hold the panel-level acknowledgement after Home Assistant has genuinely
+  // processed the configuration write. The browser has sent the mutation, but the
+  // editor still considers it pending when the harness kills the HA process.
+  await panel.evaluate(host => {
+    const original = host.hass.callWS.bind(host.hass);
+    window.__restartHeldSave = null;
+    window.__releaseRestartHeldSave = null;
+    host.hass.callWS = async message => {
+      const result = await original(message);
+      if (
+        !window.__restartHeldSave
+        && message.type === "extended_openai_conversation_responses/management"
+        && message.section === "configuration"
+        && ["save", "update"].includes(message.action)
+      ) {
+        window.__restartHeldSave = {message:structuredClone(message), result:structuredClone(result)};
+        await new Promise(resolve => { window.__releaseRestartHeldSave = resolve; });
+      }
+      return result;
+    };
+  });
+  const pendingTitle = "Committed while browser acknowledgement is held";
+  await title.fill(pendingTitle);
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
+  await expect.poll(() => page.evaluate(() => Boolean(window.__restartHeldSave))).toBe(true);
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
+
   fs.writeFileSync(marker("browser-ready"), "ready\n");
   await waitForMarker("ha-dead");
 
@@ -126,7 +153,25 @@ test("open Home Assistant page survives a real backend process death and restart
   ).toBe(true);
 
   await expect(panel.locator('[data-config="__title"]')).toBeVisible({timeout: 30_000});
-  await expect(title).toHaveValue("Before real HA restart", {timeout: 30_000});
+
+  // Release the pre-crash acknowledgement only after the replacement HA process is
+  // reachable. A stale completion must not overwrite the authoritative generation.
+  await page.evaluate(() => window.__releaseRestartHeldSave?.());
+  await expect.poll(async () => panel.evaluate(async host => {
+    const current = await host._call("configuration", "get");
+    return current.title;
+  }), {timeout:30_000}).toBe(pendingTitle);
+  await expect(title).toHaveValue(pendingTitle, {timeout: 30_000});
+  await expect(panel.locator("#agent option:checked")).toHaveText(pendingTitle);
+
+  // Retry the exact same value through the recovered document. This must remain a
+  // single authoritative configuration state, not create a duplicate or roll back
+  // when the delayed acknowledgement finally settles.
+  await title.fill(pendingTitle);
+  if (await panel.getByText("Unsaved changes", {exact:true}).count()) {
+    await panel.getByRole("button", {name: "Save changes", exact: true}).click();
+    await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0, {timeout:30_000});
+  }
 
   await title.fill("After real HA restart");
   await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
