@@ -168,6 +168,7 @@ async def _ensure_hacs(hass: Any) -> Any:
 
     config_flow = importlib.import_module("custom_components.hacs.config_flow")
     token = os.environ[_TOKEN_ENV]
+    activation_release = asyncio.Event()
 
     class AutomatedDeviceAuthorization:
         async def register(self) -> Any:
@@ -180,6 +181,11 @@ async def _ensure_hacs(hass: Any) -> Any:
 
         async def activation(self, *, device_code: str) -> Any:
             assert device_code == "hacs-ci-device"
+            # Keep the mocked OAuth task pending until the config flow has
+            # returned SHOW_PROGRESS. An immediately completed task races with
+            # Home Assistant's progress handling and can turn this first result
+            # into SHOW_PROGRESS_DONE before the test receives it.
+            await activation_release.wait()
             return SimpleNamespace(
                 data=SimpleNamespace(access_token=token)
             )
@@ -203,11 +209,12 @@ async def _ensure_hacs(hass: Any) -> Any:
                 "acc_disable": True,
             },
         )
-        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert result["type"] is FlowResultType.SHOW_PROGRESS, result
         flow_id = result["flow_id"]
+        activation_release.set()
         await hass.async_block_till_done()
         result = await hass.config_entries.flow.async_configure(flow_id)
-        assert result["type"] is FlowResultType.CREATE_ENTRY
+        assert result["type"] is FlowResultType.CREATE_ENTRY, result
 
     await hass.async_block_till_done()
     entries = hass.config_entries.async_entries(HACS_DOMAIN)
