@@ -276,7 +276,8 @@ test("nightly saved wording defaults change the real Safe Preview matcher result
   }
   // Both deliberately rejected saves cross the HTTP bridge as 400s. Account
   // for exactly those diagnostics; retain strict checks for every other error.
-  expect(errors.badResponses).toEqual(Array(2).fill(`400 POST ${realBackendUrl}`));
+  expect(errors.badResponses.map((item) => item.replace("?client=default", "")))
+    .toEqual(Array(2).fill(`400 POST ${realBackendUrl}`));
   expect(errors.consoleErrors).toEqual(Array(2).fill(
     `Failed to load resource: the server responded with a status of 400 (Bad Request) (${realBackendUrl}:0)`));
   errors.badResponses.splice(0, 2);

@@ -13,6 +13,8 @@ from ci.release_certification import (
     HEAVY_JOBS,
     MUTATION_CAMPAIGNS,
     REQUIRED_WORKFLOWS,
+    SCHEDULED_CERTIFICATION_WORKFLOWS,
+    SPECIALIST_CERTIFICATION_WORKFLOWS,
     SUPPORTED_SDK_LANES,
     UPGRADE_EPOCHS,
     certify,
@@ -36,17 +38,8 @@ class FakeActions:
                     "head_sha": SOURCE,
                     "head_branch": "develop",
                     "event": "workflow_dispatch"
-                    if filename
-                    in {
-                        "enhanced-stress.yml",
-                        "upgrade-acceptance.yml",
-                        "openai-sdk-compatibility.yml",
-                        "ha-browser-compatibility.yml",
-                        "deployment-architecture.yml",
-                        "resource-constrained.yml",
-                        "mutation.yml",
-                        "official-ha-container.yml",
-                    }
+                    if filename == "enhanced-stress.yml"
+                    or filename in SCHEDULED_CERTIFICATION_WORKFLOWS
                     else "push",
                     "status": "completed",
                     "conclusion": "success",
@@ -468,3 +461,52 @@ def test_expired_matrix_artifact_fails_before_network_access():
         GitHubActions("owner/repo", "fixture-token").artifact_json(
             {"id": 1, "name": "sdk-evidence", "expired": True}, "workflow-evidence.json"
         )
+
+
+def test_specialist_environment_workflows_are_exact_sha_release_requirements():
+    expected = {
+        "android-companion-app.yml",
+        "haos-supervisor-vm-acceptance.yml",
+        "hacs-install-update-acceptance.yml",
+        "ipv6-only-networking-acceptance.yml",
+        "frontend-backend-version-skew.yml",
+        "ha-version-upgrade-acceptance.yml",
+        "deployment-recovery.yml",
+        "side-by-side-isolation.yml",
+    }
+    assert set(SPECIALIST_CERTIFICATION_WORKFLOWS) == expected
+    assert expected <= set(REQUIRED_WORKFLOWS)
+    assert expected <= SCHEDULED_CERTIFICATION_WORKFLOWS
+
+
+@pytest.mark.parametrize("workflow", SPECIALIST_CERTIFICATION_WORKFLOWS)
+def test_specialist_release_workflow_requires_success_on_exact_develop_sha(workflow):
+    actions = FakeActions()
+    assert certify(actions, SOURCE)
+
+    actions.runs[workflow][0]["head_sha"] = PARENT
+    with pytest.raises(RuntimeError, match=workflow.replace(".", r"\.")):
+        certify(actions, SOURCE)
+
+    actions = FakeActions()
+    actions.runs[workflow][0]["head_branch"] = "feature-branch"
+    with pytest.raises(RuntimeError, match=workflow.replace(".", r"\.")):
+        certify(actions, SOURCE)
+
+    actions = FakeActions()
+    actions.runs[workflow][0]["event"] = "pull_request"
+    with pytest.raises(RuntimeError, match=workflow.replace(".", r"\.")):
+        certify(actions, SOURCE)
+
+
+@pytest.mark.parametrize("workflow", SPECIALIST_CERTIFICATION_WORKFLOWS)
+def test_missing_or_failed_specialist_workflow_blocks_release(workflow):
+    actions = FakeActions()
+    actions.runs[workflow][0]["conclusion"] = "failure"
+    with pytest.raises(RuntimeError, match=workflow.replace(".", r"\.")):
+        certify(actions, SOURCE)
+
+    actions = FakeActions()
+    actions.runs[workflow] = []
+    with pytest.raises(RuntimeError, match=workflow.replace(".", r"\.")):
+        certify(actions, SOURCE)

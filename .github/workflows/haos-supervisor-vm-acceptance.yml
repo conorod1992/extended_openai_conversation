@@ -1,6 +1,10 @@
 name: Home Assistant OS Supervisor VM acceptance
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/haos-supervisor-vm-acceptance.yml"
+      - "ci/haos_supervisor_acceptance.py"
   schedule:
     - cron: "17 6 * * 0"
   workflow_dispatch:
@@ -50,11 +54,11 @@ jobs:
           matches = [
               asset
               for asset in release.get("assets", [])
-              if "generic-x86-64" in asset.get("name", "")
+              if asset.get("name", "").startswith("haos_ova-")
               and asset.get("name", "").endswith(".qcow2.xz")
           ]
           if len(matches) != 1:
-              raise SystemExit(f"Expected one generic x86-64 qcow2.xz asset, got {len(matches)}")
+              raise SystemExit(f"Expected one HAOS OVA qcow2.xz asset, got {len(matches)}")
           print(release["tag_name"])
           print(matches[0]["browser_download_url"])
           print(matches[0]["name"])
@@ -111,7 +115,7 @@ jobs:
           fi
           echo "Using QEMU accelerator: $ACCEL"
 
-          qemu-system-x86_64             -daemonize             -pidfile "$WORK/qemu.pid"             -name eoai-haos-acceptance             -machine "q35,accel=$ACCEL"             -cpu "$CPU"             -smp 2             -m 4096             -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"             -drive "if=pflash,format=raw,file=$WORK/OVMF_VARS.fd"             -drive "file=$WORK/haos.qcow2,if=virtio,format=qcow2,cache=writeback"             -device qemu-xhci             -drive "if=none,id=configdrive,file=$WORK/config.img,format=raw,readonly=on"             -device usb-storage,drive=configdrive             -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:8123-:8123,hostfwd=tcp:127.0.0.1:22222-:22222"             -device virtio-net-pci,netdev=net0             -display none             -serial "file:$WORK/serial.log"
+          qemu-system-x86_64             -daemonize             -pidfile "$WORK/qemu.pid"             -name eoai-haos-acceptance             -machine "q35,accel=$ACCEL"             -cpu "$CPU"             -smp 2             -m 4096             -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"             -drive "if=pflash,format=raw,file=$WORK/OVMF_VARS.fd"             -drive "file=$WORK/haos.qcow2,if=virtio,format=qcow2,cache=writeback"             -device qemu-xhci             -drive "if=none,id=configdrive,file=$WORK/config.img,format=raw,readonly=on"             -device usb-storage,drive=configdrive             -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:8123-:80,hostfwd=tcp:127.0.0.1:22222-:22222"             -device virtio-net-pci,netdev=net0             -display none             -serial "file:$WORK/serial.log"
 
           test -s "$WORK/qemu.pid"
           kill -0 "$(cat "$WORK/qemu.pid")"

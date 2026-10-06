@@ -21,6 +21,17 @@ except ImportError:
     from enhanced_evidence import SCHEMA
     from execution_contract import CONTRACT, check_execution
 
+SPECIALIST_CERTIFICATION_WORKFLOWS = (
+    "android-companion-app.yml",
+    "haos-supervisor-vm-acceptance.yml",
+    "hacs-install-update-acceptance.yml",
+    "ipv6-only-networking-acceptance.yml",
+    "frontend-backend-version-skew.yml",
+    "ha-version-upgrade-acceptance.yml",
+    "deployment-recovery.yml",
+    "side-by-side-isolation.yml",
+)
+
 REQUIRED_WORKFLOWS = (
     "ci.yml",
     "frontend.yml",
@@ -35,6 +46,7 @@ REQUIRED_WORKFLOWS = (
     "resource-constrained.yml",
     "mutation.yml",
     "official-ha-container.yml",
+    *SPECIALIST_CERTIFICATION_WORKFLOWS,
 )
 MUTATION_CAMPAIGNS = (
     "function-tools",
@@ -52,6 +64,7 @@ SCHEDULED_CERTIFICATION_WORKFLOWS = {
     "resource-constrained.yml",
     "mutation.yml",
     "official-ha-container.yml",
+    *SPECIALIST_CERTIFICATION_WORKFLOWS,
 }
 UPGRADE_EPOCHS = ("latest", "6.8.2", "6.7.0", "6.5.0", "6.3.1", "6.2.0")
 SUPPORTED_SDK_LANES = ("2.21.0", "2.45.0", "3.10.0")
