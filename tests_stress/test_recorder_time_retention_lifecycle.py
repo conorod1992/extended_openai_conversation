@@ -30,6 +30,7 @@ from homeassistant.components import recorder
 from homeassistant.components.recorder import statistics
 from homeassistant.components.recorder.models.statistics import StatisticMeanType
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_entry_point_contract_matrix import _contract_agent
@@ -588,7 +589,6 @@ async def test_external_recorder_connection_loss_then_recovery(
 
     instance = recorder.get_instance(hass)
     engine = instance.engine
-    real_connect = engine.connect
 
     # Drop pooled connections first, then make fresh DB acquisition unavailable.
     # This models the EOAI-observable boundary of a network/database outage without
@@ -599,20 +599,24 @@ async def test_external_recorder_connection_loss_then_recovery(
         del args, kwargs
         raise ConnectionError(f"controlled {backend} Recorder outage")
 
-    monkeypatch.setattr(engine, "connect", unavailable_connect)
-    with pytest.raises(Exception, match="controlled .* Recorder outage"):
-        await NativeFunction().get_history(
-            hass,
-            {},
-            {
-                "entity_ids": ["sensor.recorder_acceptance"],
-                "significant_changes_only": False,
-            },
-            None,
-            _EXPOSED,
-        )
+    with monkeypatch.context() as outage:
+        outage.setattr(engine, "connect", unavailable_connect)
+        with pytest.raises(
+            HomeAssistantError, match="^History is temporarily unavailable$"
+        ) as unavailable:
+            await NativeFunction().get_history(
+                hass,
+                {},
+                {
+                    "entity_ids": ["sensor.recorder_acceptance"],
+                    "significant_changes_only": False,
+                },
+                None,
+                _EXPOSED,
+            )
+        assert isinstance(unavailable.value.__cause__, ConnectionError)
+        assert str(unavailable.value.__cause__) == f"controlled {backend} Recorder outage"
 
-    monkeypatch.setattr(engine, "connect", real_connect)
     hass.states.async_set("sensor.recorder_acceptance", f"{backend}-after-recovery")
     await hass.async_block_till_done()
     await _wait_recording_done(hass)
