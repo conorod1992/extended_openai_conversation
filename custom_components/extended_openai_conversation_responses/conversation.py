@@ -2734,9 +2734,7 @@ class ExtendedOpenAIAgentEntity(
                     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
                 ):
                     raise RuntimeError("model archive search is disabled")
-                query = arguments.get("query")
-                if not isinstance(query, str):
-                    raise ValueError("query is required")
+                query = arguments["query"]
                 return await self._archive.async_search(
                     scope.scope_id,
                     query,

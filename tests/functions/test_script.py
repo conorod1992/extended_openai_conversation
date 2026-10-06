@@ -189,10 +189,10 @@ class TestScriptFunctionYaml:
 
 
 async def test_script_function_older_cleanup_surface_and_empty_run(hass):
-    from homeassistant.exceptions import HomeAssistantError
     from custom_components.extended_openai_conversation_responses.functions import (
         script as module,
     )
+    from homeassistant.exceptions import HomeAssistantError
 
     older = SimpleNamespace(
         async_run=AsyncMock(
@@ -216,12 +216,100 @@ async def test_script_function_older_cleanup_surface_and_empty_run(hass):
     assert older.async_stop.await_count == 3
 
 
+@pytest.mark.parametrize(
+    ("native_trace", "raises"),
+    [
+        ({}, True),
+        ({"not-a-step": []}, True),
+        (
+            {
+                "0": [
+                    SimpleNamespace(
+                        as_dict=MagicMock(return_value={"result": {"result": False}})
+                    )
+                ]
+            },
+            False,
+        ),
+        (
+            {
+                "0": [
+                    SimpleNamespace(
+                        as_dict=MagicMock(
+                            return_value={
+                                "result": {"result": False},
+                                "error": "native abort",
+                            }
+                        )
+                    )
+                ]
+            },
+            True,
+        ),
+        (
+            {
+                "0": [
+                    SimpleNamespace(
+                        as_dict=MagicMock(
+                            return_value={
+                                "result": {"result": False},
+                                "template_errors": ["failed template"],
+                            }
+                        )
+                    )
+                ]
+            },
+            True,
+        ),
+    ],
+)
+async def test_aborted_script_only_treats_false_top_level_condition_as_success(
+    hass, monkeypatch, native_trace, raises
+):
+    from custom_components.extended_openai_conversation_responses.functions import (
+        script as module,
+    )
+    from homeassistant.exceptions import HomeAssistantError
+
+    sequence = [{"condition": "template", "value_template": "{{ false }}"}]
+    script = SimpleNamespace(
+        async_run=AsyncMock(),
+        async_unload=AsyncMock(),
+    )
+
+    async def run(**_kwargs):
+        module.trace.script_execution_set("aborted")
+        return SimpleNamespace(variables={})
+
+    script.async_run.side_effect = run
+    monkeypatch.setattr(
+        module, "async_validate_actions_config", AsyncMock(return_value=sequence)
+    )
+    monkeypatch.setattr(module, "Script", MagicMock(return_value=script))
+    monkeypatch.setattr(module.trace, "trace_get", MagicMock(return_value=native_trace))
+
+    if raises:
+        with pytest.raises(HomeAssistantError, match="aborted before completion"):
+            await ScriptFunction().execute(hass, {"sequence": sequence}, {}, None, [])
+    else:
+        assert (
+            await ScriptFunction().execute(hass, {"sequence": sequence}, {}, None, [])
+            == "Success"
+        )
+    script.async_unload.assert_awaited_once()
+
+
 @pytest.mark.parametrize("reject", [False, True])
-async def test_script_scoped_service_boundary_preserves_response_or_blocks_dispatch(hass, monkeypatch, reject):
+async def test_script_scoped_service_boundary_preserves_response_or_blocks_dispatch(
+    hass, monkeypatch, reject
+):
+    from custom_components.extended_openai_conversation_responses import ha_actions
+    from custom_components.extended_openai_conversation_responses.functions.script import (
+        _AuthorizedScriptServices,
+    )
     from homeassistant.core import Context
     from homeassistant.exceptions import HomeAssistantError
-    from custom_components.extended_openai_conversation_responses import ha_actions
-    from custom_components.extended_openai_conversation_responses.functions.script import _AuthorizedScriptServices
+
     function = ScriptFunction()
     function.validate_entity_ids = MagicMock()
     authorize = AsyncMock(return_value={"light.kitchen"})
@@ -230,14 +318,36 @@ async def test_script_scoped_service_boundary_preserves_response_or_blocks_dispa
     monkeypatch.setattr(ha_actions, "async_authorize_ha_action", authorize)
     hass.services.async_call = AsyncMock(return_value={"value": "response"})
     context = Context(user_id="restricted")
-    boundary = _AuthorizedScriptServices(hass, function, [{"entity_id": "light.kitchen"}])
+    boundary = _AuthorizedScriptServices(
+        hass, function, [{"entity_id": "light.kitchen"}]
+    )
     if reject:
         with pytest.raises(HomeAssistantError):
-            await boundary.async_call("light", "turn_on", {}, True, context, {"entity_id": "light.kitchen"}, True)
+            await boundary.async_call(
+                "light",
+                "turn_on",
+                {},
+                True,
+                context,
+                {"entity_id": "light.kitchen"},
+                True,
+            )
         hass.services.async_call.assert_not_awaited()
     else:
-        result = await boundary.async_call("light", "turn_on", {}, True, context, {"entity_id": "light.kitchen"}, True)
+        result = await boundary.async_call(
+            "light", "turn_on", {}, True, context, {"entity_id": "light.kitchen"}, True
+        )
         assert result == {"value": "response"}
-        function.validate_entity_ids.assert_called_once_with(hass, ["light.kitchen"], [{"entity_id": "light.kitchen"}])
-        hass.services.async_call.assert_awaited_once_with("light", "turn_on", {}, blocking=True, context=context, target={"entity_id": "light.kitchen"}, return_response=True)
+        function.validate_entity_ids.assert_called_once_with(
+            hass, ["light.kitchen"], [{"entity_id": "light.kitchen"}]
+        )
+        hass.services.async_call.assert_awaited_once_with(
+            "light",
+            "turn_on",
+            {},
+            blocking=True,
+            context=context,
+            target={"entity_id": "light.kitchen"},
+            return_response=True,
+        )
     assert authorize.await_args.kwargs["context"] is context

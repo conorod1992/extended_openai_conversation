@@ -39,6 +39,30 @@ from custom_components.extended_openai_conversation_responses.secret_redaction i
 from tests.test_backup import _document
 
 
+async def test_current_snapshot_falls_back_when_durable_manager_api_is_unavailable(
+    hass, monkeypatch
+) -> None:
+    from custom_components.extended_openai_conversation_responses import restore_recovery
+
+    entry = SimpleNamespace(entry_id="entry")
+    subentry = SimpleNamespace(subentry_id="agent")
+    managers = object()
+    snapshot = object()
+    monkeypatch.setattr(
+        restore_recovery,
+        "_durable_managers",
+        AsyncMock(side_effect=ImportError("compatibility fallback")),
+    )
+    legacy_managers = AsyncMock(return_value=managers)
+    create_snapshot = AsyncMock(return_value=snapshot)
+    monkeypatch.setattr(backup, "_managers", legacy_managers)
+    monkeypatch.setattr(backup, "_snapshot_for_restore", create_snapshot)
+
+    assert await transfer._current_snapshot(hass, entry, subentry) is snapshot
+    legacy_managers.assert_awaited_once_with(hass, "entry", "agent")
+    create_snapshot.assert_awaited_once_with(managers, subentry)
+
+
 def _rules_backup(rules: list[dict] | None = None) -> dict:
     return {
         "storage_version": 1,

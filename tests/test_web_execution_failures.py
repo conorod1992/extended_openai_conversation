@@ -234,3 +234,47 @@ def test_zstd_output_allocations_and_multiple_frames(monkeypatch):
     assert web._decode_compressed_body(body, "zstd", 11) == b"firstsecond"
     with pytest.raises(aiohttp.ClientPayloadError, match="Incomplete"):
         web._decode_compressed_body(body[:-1], "zstd", 11)
+
+
+def test_brotli_fails_closed_when_support_or_bounded_codec_is_missing(monkeypatch):
+    compression = web.aiohttp.compression_utils
+    body = brotli.compress(b"safe")
+
+    monkeypatch.setattr(compression, "HAS_BROTLI", False)
+    with pytest.raises(HomeAssistantError, match="decoding is unavailable"):
+        web._decode_compressed_body(body, "br", 32)
+
+    monkeypatch.setattr(compression, "HAS_BROTLI", True)
+    monkeypatch.setattr(compression.brotli, "Decompressor", object)
+    with pytest.raises(HomeAssistantError, match="bounded codec"):
+        web._decode_compressed_body(body, "br", 32)
+
+
+def test_brotli_and_zstd_report_malformed_frames_as_payload_errors():
+    with pytest.raises(aiohttp.ClientPayloadError, match="Malformed compressed"):
+        web._decode_compressed_body(b"not a brotli frame", "br", 128)
+    with pytest.raises(aiohttp.ClientPayloadError, match="Malformed compressed"):
+        web._decode_compressed_body(b"not a zstd frame", "zstd", 128)
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "deflate", "zstd"])
+def test_compressed_decoders_reject_empty_and_malformed_streams(encoding):
+    with pytest.raises(aiohttp.ClientPayloadError, match="Empty compressed response"):
+        web._decode_compressed_body(b"", encoding, 128)
+
+    if encoding in {"gzip", "deflate"}:
+        with pytest.raises(aiohttp.ClientPayloadError, match="Malformed compressed"):
+            web._decode_compressed_body(b"not a compressed stream", encoding, 128)
+
+
+async def test_bounded_response_sanitizes_unknown_http_status_and_text_encoding():
+    response = _FakeResponse(b"secret")
+    response.status = 599
+    with pytest.raises(HomeAssistantError, match="HTTP 599 Unsuccessful response"):
+        await web._BoundedResponse(response, 32).read()
+    assert response.content.requested == []
+
+    response.status = 200
+    response.content.body = b"\xff"
+    with pytest.raises(HomeAssistantError, match="cannot be decoded"):
+        await web._BoundedResponse(response, 32).text(encoding="ascii")

@@ -106,6 +106,45 @@ async def test_guest_configured_tool_is_revalidated_against_latest_config(
     assert result["reason"] == "guest_mode"
 
 
+@pytest.mark.asyncio
+async def test_configured_tool_rejects_changed_function_group_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A request cannot execute a tool after it moves to another group."""
+    tool = {"spec": {"name": "control_light"}, "function": {"type": "script"}}
+    request_groups = [{"id": "lights", "functions": ["control_light"]}]
+    live_groups = [{"id": "admin", "functions": ["control_light"]}]
+    agent = SimpleNamespace(
+        subentry=SimpleNamespace(data={}),
+        _effective_guest_policy=lambda: _policy(),
+        _configured_function_tools_from_data=lambda _data: [tool],
+        _tool_result=lambda _tool_input, result: result,
+    )
+    monkeypatch.setattr(
+        conversation_module,
+        "current_configuration_data",
+        lambda _agent: {"live": True},
+    )
+    monkeypatch.setattr(
+        conversation_module,
+        "validate_function_groups",
+        lambda data, _tools: (
+            request_groups if data == {"id": "lights"} else live_groups
+        ),
+    )
+
+    token = conversation_module._ACTIVE_FUNCTION_CONFIG.set(
+        ([tool], request_groups)
+    )
+    try:
+        with pytest.raises(conversation_module.FunctionNotFound):
+            await Agent._async_dispatch_function_tool(
+                agent, tool, SimpleNamespace(tool_args={}), None, []
+            )
+    finally:
+        conversation_module._ACTIVE_FUNCTION_CONFIG.reset(token)
+
+
 def _memory_agent(
     *,
     shared_mode: str = SHARED_MEMORY_DISABLED,

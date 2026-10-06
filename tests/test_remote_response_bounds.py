@@ -7,9 +7,8 @@ from typing import Any
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses.functions import web
+from homeassistant.exceptions import HomeAssistantError
 
 
 class _FakeContent:
@@ -123,3 +122,30 @@ async def test_rest_data_preserves_normal_text_and_reuses_bounded_body(
     assert await bounded_response.text() == "hello"
     assert await bounded_response.text(encoding="utf-8") == "hello"
     assert response.content.requested == [6, 6]
+
+
+async def test_bounded_response_rejects_unknown_explicit_text_encoding() -> None:
+    response = _FakeResponse(b"hello")
+
+    with pytest.raises(HomeAssistantError, match="cannot be decoded"):
+        await web._BoundedResponse(response, 32).text(encoding="not-an-encoding")
+
+
+async def test_bounded_response_preserves_default_charset_decode_error() -> None:
+    """RestData needs the original decode error to retry with configured encoding."""
+    response = _FakeResponse(b"\xff")
+
+    with pytest.raises(UnicodeDecodeError):
+        await web._BoundedResponse(response, 32).text()
+
+
+def test_decode_compressed_body_supports_raw_deflate_and_unknown_encodings() -> None:
+    import zlib
+
+    compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+    raw_deflate = compressor.compress(b"payload") + compressor.flush()
+
+    assert web._decode_compressed_body(raw_deflate, "deflate", 32) == b"payload"
+    # Unrecognized encodings are passed through so the caller can preserve the
+    # response bytes without accidentally applying a different codec.
+    assert web._decode_compressed_body(b"opaque", "custom", 32) == b"opaque"

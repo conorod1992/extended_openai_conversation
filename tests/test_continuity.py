@@ -39,6 +39,25 @@ async def test_ha_default_preserves_incoming_id() -> None:
     assert result.key is None
 
 
+async def test_replacing_ha_default_id_releases_old_claim_and_claims_new_id() -> None:
+    manager = ConversationContinuity("agent")
+    original = await manager.async_resolve(
+        CONVERSATION_CONTINUITY_HA_DEFAULT,
+        user_scope("one", source="test"),
+        None,
+        "incoming",
+        30,
+    )
+
+    replacement = await manager.async_replace_conversation_id(original, "fresh")
+
+    assert replacement.conversation_id == "fresh"
+    assert replacement.history == []
+    assert replacement.claim_token != original.claim_token
+    assert manager._release_ha_default_claim("unknown-claim") is False
+    await manager.async_release(replacement.key, replacement.claim_token)
+
+
 async def test_device_owner_changes_isolate_history_and_memory_bundles() -> None:
     from custom_components.extended_openai_conversation_responses.function_groups import FunctionGroupRuntime
     from custom_components.extended_openai_conversation_responses.request_rules import RequestRuleRuntime, request_rule_session_id

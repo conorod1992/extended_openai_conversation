@@ -1454,8 +1454,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                     )
                 validate_tool_call_ids(tool_calls_list)
-                if tool_calls_list:
-                    yield {"tool_calls": tool_calls_list}
+                yield {"tool_calls": tool_calls_list}
                 current_tool_calls.clear()
             if finish_reason in {"stop", "tool_calls", "function_call"}:
                 terminal_finish_seen = True
