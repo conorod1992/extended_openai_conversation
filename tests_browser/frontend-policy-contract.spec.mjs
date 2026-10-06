@@ -67,7 +67,7 @@ async function semanticDistances(locator, property) {
 function expectClosest(records, expected, alternatives, label) {
   for (const record of records) {
     for (const alternative of alternatives) {
-      expect(
+      expect.soft(
         record[expected],
         `${label}: ${record.text || "(unnamed)"} should be closer to ${expected} than ${alternative}`,
       ).toBeLessThan(record[alternative]);
@@ -83,10 +83,10 @@ test("all management routes satisfy deterministic frontend policy contracts", as
     await page.goto(fixtureUrl(route, ROUTE_EXTRAS[route] || ""));
     const panel = page.locator("extended-openai-management-panel");
 
-    await expect(panel.locator("h1:visible"), `${route}: exactly one visible routed H1`).toHaveCount(1);
+    await expect.soft(panel.locator("h1:visible"), `${route}: exactly one visible routed H1`).toHaveCount(1);
     const product = panel.locator(".page-heading .product-title");
-    await expect(product, `${route}: product identity remains visible`).toHaveText("Extended OpenAI");
-    expect(
+    await expect.soft(product, `${route}: product identity remains visible`).toHaveText("Extended OpenAI");
+    expect.soft(
       await product.evaluate((element) => /^H[1-6]$/.test(element.tagName)),
       `${route}: product identity must not consume a semantic heading level`,
     ).toBe(false);
@@ -97,11 +97,11 @@ test("all management routes satisfy deterministic frontend policy contracts", as
         text: (node.textContent || "").trim().slice(0, 120),
       })),
     );
-    expect(outline.length, `${route}: visible heading outline`).toBeGreaterThan(0);
-    expect(outline[0].level, `${route}: first visible heading is H1`).toBe(1);
-    expect(outline.filter((heading) => heading.level === 1), `${route}: one H1`).toHaveLength(1);
+    expect.soft(outline.length, `${route}: visible heading outline`).toBeGreaterThan(0);
+    expect.soft(outline[0].level, `${route}: first visible heading is H1`).toBe(1);
+    expect.soft(outline.filter((heading) => heading.level === 1), `${route}: one H1`).toHaveLength(1);
     for (let index = 1; index < outline.length; index++) {
-      expect(
+      expect.soft(
         outline[index].level,
         `${route}: heading "${outline[index].text}" skips a level after "${outline[index - 1].text}"`,
       ).toBeLessThanOrEqual(outline[index - 1].level + 1);
@@ -112,7 +112,7 @@ test("all management routes satisfy deterministic frontend policy contracts", as
       [...new Set(nodes.map((node) => node.dataset.field).filter(Boolean))],
     );
     for (const field of renderedFields) {
-      expect(indexed.has(field), `${route}: rendered setting "${field}" is missing from global settings search`).toBe(true);
+      expect.soft(indexed.has(field), `${route}: rendered setting "${field}" is missing from global settings search`).toBe(true);
     }
 
     const unexplainedDisabled = await panel.locator(
@@ -145,7 +145,7 @@ test("all management routes satisfy deterministic frontend policy contracts", as
         label: control.getAttribute("aria-label") || control.closest("label")?.textContent?.trim() || "",
       }));
     });
-    expect(unexplainedDisabled, `${route}: visible disabled controls need an explanation or visible prerequisite`).toEqual([]);
+    expect.soft(unexplainedDisabled, `${route}: visible disabled controls need an explanation or visible prerequisite`).toEqual([]);
 
     const actionIssues = await panel.locator(
       ".dialog-actions,.section-actions,.rule-heading-actions,.backup-actions,.tools-actions,.card-heading,.section-heading",
@@ -172,7 +172,7 @@ test("all management routes satisfy deterministic frontend policy contracts", as
         };
       }).filter((item) => item.primary.length > 1);
     });
-    expect(actionIssues, `${route}: one competing primary action per local context`).toEqual([]);
+    expect.soft(actionIssues, `${route}: one competing primary action per local context`).toEqual([]);
 
     expectClosest(
       await semanticDistances(panel.locator(".notice.warning"), "borderLeftColor"),
@@ -198,6 +198,7 @@ test("all management routes satisfy deterministic frontend policy contracts", as
       await semanticDistances(panel.locator("button.danger"), "backgroundColor"),
       "error", ["primary"], `${route} danger action`,
     );
+    await page.waitForLoadState("networkidle");
   }
 
   await expectHarnessClean(page, diagnostics);
