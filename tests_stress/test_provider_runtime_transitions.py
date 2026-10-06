@@ -378,7 +378,7 @@ async def test_parent_credential_rotation_isolated_from_sibling_parent_opening_c
         if key == "parent-b-key":
             b_started.set()
             await release_b.wait()
-        return AsyncMock()
+        return AsyncMock(api_key=key)
 
     async def validate_rotation(**kwargs):
         observed_rotation_keys.append(kwargs["api_key"])
@@ -390,21 +390,24 @@ async def test_parent_credential_rotation_isolated_from_sibling_parent_opening_c
     )
 
     b_setup = asyncio.create_task(_setup_entry(hass, parent_b))
-    await asyncio.wait_for(b_started.wait(), timeout=10)
-
-    rotated = await async_replace_api_key(hass, parent_a, "parent-a-new")
-    assert rotated["updated"] is True
-    assert parent_a.data[CONF_API_KEY] == "parent-a-new"
-    assert parent_b.data[CONF_API_KEY] == "parent-b-key"
-
-    release_b.set()
-    await asyncio.wait_for(b_setup, timeout=20)
+    try:
+        await asyncio.wait_for(b_started.wait(), timeout=10)
+        rotated = await async_replace_api_key(hass, parent_a, "parent-a-new")
+        assert rotated["updated"] is True
+        assert parent_a.data[CONF_API_KEY] == "parent-a-new"
+        assert parent_b.data[CONF_API_KEY] == "parent-b-key"
+    finally:
+        release_b.set()
+        await asyncio.wait_for(b_setup, timeout=20)
     await hass.async_block_till_done()
 
     assert parent_b.state is ConfigEntryState.LOADED
     assert observed_rotation_keys == ["parent-a-new"]
     assert "parent-b-key" in observed_setup_keys
-    assert "parent-a-new" not in observed_setup_keys
+    # Parent A legitimately reloads its own client after credential rotation.
+    assert "parent-a-new" in observed_setup_keys
+    assert parent_a.runtime_data.api_key == "parent-a-new"
+    assert parent_b.runtime_data.api_key == "parent-b-key"
     assert parent_b.runtime_data is not parent_a.runtime_data
     assert parent_b.runtime_data is not original_runtime_a
 
