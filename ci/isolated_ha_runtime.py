@@ -181,9 +181,9 @@ async def main(root, phase, endpoint):
     from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 
     before = await asyncio.to_thread(packages)
-    assert not any(name.startswith("pytest") for name in before), (
-        "Test harness leaked into runtime"
-    )
+    baseline_test_packages = {
+        name: version for name, version in before.items() if name.startswith("pytest")
+    }
     sys.path.insert(0, str(root))
     if phase in ("recover-recorder-first", "recover-provider-first"):
         from homeassistant import loader
@@ -321,6 +321,14 @@ async def main(root, phase, endpoint):
         rows = er_rows(hass, entry.entry_id)
         assert len({row.unique_id for row in rows}) == len(rows)
         after = await asyncio.to_thread(packages)
+        after_test_packages = {
+            name: version for name, version in after.items() if name.startswith("pytest")
+        }
+        assert after_test_packages == baseline_test_packages, (
+            "EOAI acceptance installed or changed pytest packages inside the official runtime",
+            baseline_test_packages,
+            after_test_packages,
+        )
         await write(
             root,
             "result.json",
