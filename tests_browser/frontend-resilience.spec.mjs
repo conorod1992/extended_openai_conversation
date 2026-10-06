@@ -243,7 +243,7 @@ test("browser document closure at request boundaries preserves authoritative sta
         const hass = window.browserHarness.hass;
         const original = hass.callWS.bind(hass);
         hass.callWS = async (request) => {
-          if (request.section !== "configuration" || request.action !== "update") {
+          if (request.section !== "configuration" || !["save", "update"].includes(request.action)) {
             return original(request);
           }
           const key = `eoc-document-operation-count-${currentStage}`;
