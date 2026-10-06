@@ -222,6 +222,106 @@ test("server-rejected general configuration save remains dirty and retries witho
   await expectHarnessClean(page, pageErrors);
 });
 
+test("browser document closure at request boundaries preserves authoritative state without replay", async ({page}) => {
+  test.setTimeout(30000);
+  const context = page.context();
+  let activePage = page;
+  const initialTitle = "Jarvis";
+  const savedTitle = "Committed before browser document closed";
+  await activePage.goto(fixtureUrl("assistant/basics"));
+  let panel = activePage.locator("extended-openai-management-panel");
+  const title = panel.locator('[data-config="__title"]');
+  await expect.poll(() => activePage.evaluate(() => {
+    const current = document.querySelector("extended-openai-management-panel");
+    return Boolean(current?._configData?.config && !current._busy);
+  })).toBe(true);
+
+  for (const stage of ["before-send", "request-sent", "committed-before-ack"]) {
+    if (stage !== "before-send") {
+      await title.fill(savedTitle);
+      await activePage.evaluate((currentStage) => {
+        const hass = window.browserHarness.hass;
+        const original = hass.callWS.bind(hass);
+        hass.callWS = async (request) => {
+          if (request.section !== "configuration" || request.action !== "update") {
+            return original(request);
+          }
+          const key = `eoc-document-operation-count-${currentStage}`;
+          const operations = Number(localStorage.getItem(key) || 0) + 1;
+          localStorage.setItem(key, String(operations));
+          if (currentStage === "request-sent") {
+            window.__eocDocumentStage = "request-sent";
+            await new Promise(() => {});
+          }
+          const result = await original(request);
+          window.__eocDocumentStage = "backend-committed-ack-held";
+          await new Promise(() => {});
+          return result;
+        };
+      }, stage);
+      await panel.getByRole("button", {name: "Save changes", exact: true}).click();
+      const expectedStage = stage === "request-sent" ? "request-sent" : "backend-committed-ack-held";
+      await expect.poll(() => activePage.evaluate(() => window.__eocDocumentStage || "")).toBe(expectedStage);
+    } else {
+      await title.fill("Draft never sent");
+    }
+
+    await activePage.close();
+    activePage = await context.newPage();
+    await activePage.goto(fixtureUrl("assistant/basics"));
+    panel = activePage.locator("extended-openai-management-panel");
+    await expect(panel.locator('[data-config="__title"]')).toHaveValue(
+      stage === "committed-before-ack" ? savedTitle : initialTitle,
+    );
+    const operationCount = await activePage.evaluate(
+      (currentStage) => Number(localStorage.getItem(`eoc-document-operation-count-${currentStage}`) || 0),
+      stage,
+    );
+    expect(operationCount).toBe(stage === "before-send" ? 0 : 1);
+    await expect(panel.getByRole("alert")).toHaveCount(0);
+    if (stage !== "committed-before-ack") await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
+  }
+  await activePage.close();
+});
+
+test("management remains usable when agent preference storage writes throw", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.addInitScript((failureName) => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "extended-openai-agent" || key === "extended-openai-entry") {
+        throw new DOMException("Agent preference storage is unavailable", failureName);
+      }
+      return original.call(this, key, value);
+    };
+  }, "QuotaExceededError");
+  await page.goto(fixtureUrl("assistant/basics", "&agents=2"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#agent")).toHaveValue("agent-1");
+  await panel.locator("#agent").selectOption("scale-agent-1");
+  await expect(panel.locator("#agent")).toHaveValue("scale-agent-1");
+  await panel.locator('[data-config="__title"]').fill("Works without local storage");
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
+  await expect.poll(() => page.evaluate(() => window.browserHarness.getState().configuration.title))
+    .toBe("Works without local storage");
+  await expectHarnessClean(page, pageErrors);
+});
+
+test("clearing browser storage while management is open does not interrupt editing", async ({page}) => {
+  const pageErrors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics", "&agents=2"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#agent")).toHaveValue("agent-1");
+  await page.evaluate(() => localStorage.clear());
+  await panel.locator("#agent").selectOption("scale-agent-1");
+  await expect(panel.locator("#agent")).toHaveValue("scale-agent-1");
+  await panel.locator('[data-config="__title"]').fill("Works after storage was cleared");
+  await panel.getByRole("button", {name: "Save changes", exact: true}).click();
+  await expect.poll(() => page.evaluate(() => window.browserHarness.getState().configuration.title))
+    .toBe("Works after storage was cleared");
+  await expectHarnessClean(page, pageErrors);
+});
+
 test("malformed backup import leaves persisted state untouched and a valid retry restores cleanly", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore"));

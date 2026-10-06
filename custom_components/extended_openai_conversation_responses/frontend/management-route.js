@@ -1,6 +1,7 @@
 import {updateRequestRuleEmptyState} from "./request-rule-empty-state.js";
 import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule, startOverviewDetailReads} from "./overview-page.js";
+import {readOptionalStorage, writeOptionalStorage} from "./browser-storage.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_TRACE_PREFIX = "extended-openai:config-read";
@@ -463,8 +464,8 @@ export function startStoredOverviewPrefetch(
   overviewAsset = ensureOverviewModule(),
 ) {
   if (panel._viewKey?.() !== "overview") return null;
-  const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
-  const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
+  const subentryId = preferredSubentryId || readOptionalStorage(AGENT_KEY);
+  const entryId = readOptionalStorage(ENTRY_KEY);
   if (!subentryId || !entryId) return null;
   panel._markColdLifecycle?.("overview-summary-start");
   const overviewPrimary = panel._hass.callWS({
@@ -501,8 +502,8 @@ export function startStoredConfigurationPrefetch(panel, preferredSubentryId) {
     ? "retention_get"
     : needsFullConfiguration(view) ? "get" : null;
   if (!action) return null;
-  const subentryId = preferredSubentryId || globalThis.localStorage?.getItem?.(AGENT_KEY);
-  const entryId = globalThis.localStorage?.getItem?.(ENTRY_KEY);
+  const subentryId = preferredSubentryId || readOptionalStorage(AGENT_KEY);
+  const entryId = readOptionalStorage(ENTRY_KEY);
   // Keep the last cold-read decision inspectable without logging expected misses.
   const diagnostics = panel._eocConfigurationReadDiagnostics ||= {};
   const detail = {entryId, subentryId, view, action, status: "started", requestStatus: "not-started", reason: null};
@@ -597,7 +598,7 @@ function applyPrefetchedConfiguration(panel, prefetch, configData) {
 export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   const initialToken = panel._loadToken;
   const previousAgentId = panel._agentId;
-  const saved = globalThis.localStorage?.getItem?.(AGENT_KEY);
+  const saved = readOptionalStorage(AGENT_KEY);
   const preferred = selectedId || saved;
   if (panel._viewKey?.() === "overview") panel._markColdLifecycle?.("overview-asset-start");
   const routeAsset = warmRouteAsset(panel._viewKey?.());
@@ -618,8 +619,8 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
     : agents[0]?.subentry_id;
 
   const selected = panel._selectedAgent?.();
-  if (panel._agentId) globalThis.localStorage?.setItem?.(AGENT_KEY, panel._agentId);
-  if (selected?.entry_id) globalThis.localStorage?.setItem?.(ENTRY_KEY, selected.entry_id);
+  if (panel._agentId) writeOptionalStorage(AGENT_KEY, panel._agentId);
+  if (selected?.entry_id) writeOptionalStorage(ENTRY_KEY, selected.entry_id);
   if (previousAgentId !== panel._agentId) panel._scopeId = null;
   panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
 
