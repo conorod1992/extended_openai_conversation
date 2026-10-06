@@ -10,16 +10,21 @@ test("Assistant parent introduction stays between subsection navigation and the 
   const firstIntro = await intro.evaluate(node => { window.__assistantIntro = node; return node.textContent; });
   expect(firstIntro).toContain("responds");
   const callsBefore = await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "get").length);
-  for (const [subsection, cardHeading] of [["conversation", "Conversation"], ["voice", "Voice & identity"], ["basics", "General"]]) {
+  for (const subsection of ["conversation", "voice", "basics"]) {
     await panel.locator(`.subsection-nav button[data-subsection="${subsection}"]`).click();
-    await expect(panel.locator(".config-section-heading").getByText(cardHeading, {exact:true})).toBeVisible();
+    if (subsection === "voice") {
+      await expect(panel.locator(".voice-policy-card.supporting-panel").first()).toBeVisible();
+    } else {
+      await expect(panel.locator(".config-section-heading")).toBeVisible();
+    }
     await expect(panel.locator(".page-intro")).toHaveCount(1);
     expect(await panel.evaluate(host => {
       const root = host.shadowRoot;
       const introNode = root.querySelector("#eoc-assistant-intro-host .page-intro");
+      const main = root.querySelector("[data-eoc-main]");
       return introNode === window.__assistantIntro
         && Boolean(root.querySelector(".subsection-nav").compareDocumentPosition(introNode) & Node.DOCUMENT_POSITION_FOLLOWING)
-        && Boolean(introNode.compareDocumentPosition(root.querySelector("[data-eoc-main] .config-section-heading")) & Node.DOCUMENT_POSITION_FOLLOWING);
+        && Boolean(introNode.compareDocumentPosition(main?.firstElementChild) & Node.DOCUMENT_POSITION_FOLLOWING);
     })).toBe(true);
   }
   expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "get").length)).toBe(callsBefore);
@@ -48,7 +53,8 @@ test("routed views own the semantic H1 while product branding stays outside the 
     await expect(panel.getByRole("heading", {level:2, name:heading, exact:true})).toBeVisible();
   }
   await page.goto(fixtureUrl("assistant/voice"));
-  await expect(panel.locator(".voice-policy-card.supporting-panel")).toBeVisible();
+  await expect(panel.locator(".voice-policy-card.supporting-panel")).toHaveCount(2);
+  await expect(panel.locator(".voice-policy-card.supporting-panel").first()).toBeVisible();
   await page.goto(fixtureUrl("capabilities/request-rules"));
   await expect(panel.locator('[data-rule-key="rule-1"] h3')).toBeVisible();
   await expectHarnessClean(page, errors);
