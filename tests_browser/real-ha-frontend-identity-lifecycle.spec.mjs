@@ -6,7 +6,7 @@ const backendA = process.env.REAL_HA_BACKEND_URL_A;
 const backendB = process.env.REAL_HA_BACKEND_URL_B;
 
 const fixture = (backend, route) =>
-  \`/tests_browser/real-ha-fixture.html?route=\${encodeURIComponent(route)}&backend=\${encodeURIComponent(backend)}\`;
+  `/tests_browser/real-ha-fixture.html?route=${encodeURIComponent(route)}&backend=${encodeURIComponent(backend)}`;
 
 async function openMemories(page, backend) {
   await page.goto(fixture(backend, "data-memory/memories"));
