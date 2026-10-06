@@ -322,3 +322,69 @@ test("stale Guest policy cannot weaken a newer genuine HA policy", async ({page,
     await other.close();
   }
 });
+
+
+test("a tab duplicated after an editor becomes dirty cannot overwrite a newer clone save", async ({page, context}, testInfo) => {
+  test.setTimeout(120_000);
+  const clone = await context.newPage();
+  const errorsOriginal = trackPageErrors(page);
+  const errorsClone = trackPageErrors(clone);
+  const trace = [];
+  try {
+    await page.goto(realFixtureUrl("capabilities/request-rules"));
+    const original = page.locator("extended-openai-management-panel");
+    await original.getByRole("button", {name: "Create rule", exact: true}).first().click();
+    await original.locator("#rule-name").fill("Duplicate-tab source rule");
+    await original.locator("#rule-phrases").fill("duplicate tab source");
+    await original.locator("#rule-action-type").selectOption("model_routing");
+    await original.locator("#rule-model").fill("gpt-5-mini");
+    await original.locator("#rule-save").click();
+    await expect(original.getByRole("heading", {name: "Duplicate-tab source rule", exact: true})).toBeVisible();
+
+    const originalCard = original.locator(".request-rule-card").filter({hasText: "Duplicate-tab source rule"});
+    await originalCard.locator(".rule-edit").click();
+    await original.locator("#rule-name").fill("Original dirty draft");
+    await expect(original.locator("#rule-dialog")).toHaveJSProperty("open", true);
+    trace.push("original tab held dirty draft before clone existed");
+
+    // A browser duplicate starts from the same URL/profile and therefore the same
+    // authoritative object revision, while the original tab keeps its dirty editor.
+    await clone.goto(page.url());
+    const cloned = clone.locator("extended-openai-management-panel");
+    const cloneCard = cloned.locator(".request-rule-card").filter({hasText: "Duplicate-tab source rule"});
+    await expect(cloneCard).toBeVisible();
+    await cloneCard.locator(".rule-edit").click();
+    await cloned.locator("#rule-name").fill("Clone committed revision");
+    await cloned.locator("#rule-save").click();
+    await expect(cloned.getByRole("heading", {name: "Clone committed revision", exact: true})).toBeVisible();
+    trace.push("clone committed newer revision");
+
+    await original.locator("#rule-save").click();
+    await expect(original.getByText(/changed in another tab/i).first()).toBeVisible();
+    await expect(original.locator("#rule-name")).toHaveValue("Original dirty draft");
+    trace.push("pre-existing original draft rejected and preserved");
+
+    await page.goto(realFixtureUrl("capabilities/request-rules"));
+    await expect(original.getByRole("heading", {name: "Clone committed revision", exact: true})).toBeVisible();
+    await expect(original.getByRole("heading", {name: "Original dirty draft", exact: true})).toHaveCount(0);
+    trace.push("fresh original tab view converged on clone revision");
+
+    await expectHarnessClean(clone, errorsClone);
+    expect(errorsOriginal).toHaveLength(0);
+    await expect.poll(() => errorsOriginal.consoleErrors).toEqual([
+      `Failed to load resource: the server responded with a status of 400 (Bad Request) (${backendUrl}?client=default:0)`,
+    ]);
+    expect(errorsOriginal.requestFailures).toEqual([]);
+    expect(errorsOriginal.badResponses).toEqual([`400 POST ${backendUrl}?client=default`]);
+    expect(await page.evaluate(() => ({
+      errors: browserHarness.windowErrors,
+      rejections: browserHarness.rejections,
+    }))).toEqual({errors: [], rejections: []});
+  } finally {
+    await testInfo.attach("duplicate-tab-mid-editor", {
+      body: JSON.stringify({trace}, null, 2),
+      contentType: "application/json",
+    });
+    await clone.close();
+  }
+});
