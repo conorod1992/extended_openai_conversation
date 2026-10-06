@@ -30,7 +30,7 @@ def test_haos_vm_workflow_boots_official_qcow2_with_supervisor_appliance_boundar
     assert "config.img" in text
     assert "authorized_keys" in text
     assert "usb-storage" in text
-    assert "hostfwd=tcp:127.0.0.1:8123-:8123" in text
+    assert "hostfwd=tcp:127.0.0.1:8123-:80" in text
     assert "hostfwd=tcp:127.0.0.1:22222-:22222" in text
 
 
