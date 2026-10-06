@@ -175,7 +175,7 @@ class IPv6OnlyEndpoint:
         site = web.TCPSite(self.runner, "::1", self.port)
         await site.start()
 
-        sockets = getattr(site._server, "sockets", None)  # noqa: SLF001 - test socket
+        sockets = getattr(site._server, "sockets", None)
         assert sockets and len(sockets) == 1
         assert sockets[0].family == socket.AF_INET6
         assert sockets[0].getsockname()[0] == "::1"
