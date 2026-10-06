@@ -1,5 +1,6 @@
 """Contracts for the strict IPv6-only acceptance lane."""
 
+import ast
 from pathlib import Path
 
 import yaml
@@ -42,6 +43,17 @@ def test_ipv6_journey_cannot_fall_back_to_ipv4() -> None:
     assert 'sock.connect_ex(("127.0.0.1", port)) != 0' in text
     assert 'f"http://[::1]:{port}/v1"' in text
     assert 'f"http://[::1]:{port}/fact"' in text
+
+
+def test_ipv6_journey_requests_the_real_socket_fixture() -> None:
+    module = ast.parse(JOURNEY.read_text(encoding="utf-8"))
+    journey = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "test_ipv6_only_provider_stream_rest_tool_and_failure_recovery"
+    )
+    assert "socket_enabled" in {argument.arg for argument in journey.args.args}
 
 
 def test_ipv6_journey_covers_provider_stream_rest_and_recovery() -> None:

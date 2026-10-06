@@ -225,6 +225,7 @@ async def _say(
 
 async def test_ipv6_only_provider_stream_rest_tool_and_failure_recovery(
     hass: HomeAssistant,
+    socket_enabled: Any,
 ) -> None:
     """EOAI must work when every tested remote endpoint is reachable only over IPv6."""
     port = _reserve_ipv6_port()
