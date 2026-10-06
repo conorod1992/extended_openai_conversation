@@ -76,6 +76,13 @@ test("clipboard denial reports a recoverable error without breaking the preview"
 
   await page.goto(fixtureUrl("assistant/prompt-context"));
   const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#preview-request")).toBeVisible();
+  await panel.evaluate(host => {
+    const original = host._call.bind(host);
+    host._call = (section, action, ...args) => action === "request_preview"
+      ? Promise.resolve({sections: [{label: "System prompt", content: "Clipboard denial probe", character_count: 22}], total_character_count: 22})
+      : original(section, action, ...args);
+  });
   await panel.locator("#preview-request").click();
   await expect(panel.locator("#prompt-preview-dialog")).toHaveJSProperty("open", true);
   const copy = panel.locator("#copy-prompt-preview");

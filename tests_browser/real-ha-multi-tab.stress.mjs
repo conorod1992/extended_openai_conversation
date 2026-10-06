@@ -371,9 +371,11 @@ test("a tab duplicated after an editor becomes dirty cannot overwrite a newer cl
 
     await expectHarnessClean(clone, errorsClone);
     expect(errorsOriginal).toHaveLength(0);
-    expect(errorsOriginal.consoleErrors).toEqual([]);
+    await expect.poll(() => errorsOriginal.consoleErrors).toEqual([
+      `Failed to load resource: the server responded with a status of 400 (Bad Request) (${backendUrl}?client=default:0)`,
+    ]);
     expect(errorsOriginal.requestFailures).toEqual([]);
-    expect(errorsOriginal.badResponses.every(item => item.startsWith("400 "))).toBe(true);
+    expect(errorsOriginal.badResponses).toEqual([`400 POST ${backendUrl}?client=default`]);
     expect(await page.evaluate(() => ({
       errors: browserHarness.windowErrors,
       rejections: browserHarness.rejections,
