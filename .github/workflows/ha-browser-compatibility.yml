@@ -131,7 +131,7 @@ jobs:
           RUN_REAL_HA_BROWSER_COMPATIBILITY: "1"
           HA_POINT: ${{ matrix.ha-version }}
           PYTHONPATH: ${{ github.workspace }}
-        run: pytest tests_real_ha/test_browser_compatibility_acceptance.py -v -s --asyncio-mode=auto --timeout=300 --tb=short
+        run: python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' tests_real_ha/test_browser_compatibility_acceptance.py -v -s --asyncio-mode=auto --timeout=300 --tb=short
       - name: Require native browser execution evidence
         if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:
@@ -199,7 +199,7 @@ jobs:
           RUN_REAL_HA_CROSS_BROWSER_HANDOFF: "1"
           PYTHONPATH: ${{ github.workspace }}
         run: >-
-          pytest tests_real_ha/test_browser_cross_engine_handoff_acceptance.py
+          python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' tests_real_ha/test_browser_cross_engine_handoff_acceptance.py
           -v -s --asyncio-mode=auto --timeout=600 --tb=short
       - name: Summarize handoff evidence
         if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')

@@ -84,7 +84,8 @@ test("complete management stylesheet failure leaves the critical shell navigable
   await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
 
   expect(errors).toHaveLength(0);
-  expect(errors.consoleErrors).toEqual([]);
+  // Chromium emits a resource diagnostic for the stylesheet deliberately aborted above.
+  expect(errors.consoleErrors.every(item => /^Failed to load resource: net::ERR_FAILED \(.*\/management(?:-[^/]+)?\.css:0\)$/.test(item))).toBe(true);
   expect(errors.badResponses).toEqual([]);
   expect(errors.requestFailures.length).toBeGreaterThanOrEqual(1);
   expect(errors.requestFailures.every(item => /management(?:-[^/]+)?\.css/.test(item))).toBe(true);
@@ -94,7 +95,7 @@ test("complete management stylesheet failure leaves the critical shell navigable
   }))).toEqual({errors: [], rejections: []});
 });
 
-test("very slow mutation disables only its owner while unrelated read-only navigation remains usable", async ({page}) => {
+test("very slow mutation protects its editor and resumes navigation after one save", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("data-memory/memories"));
   let panel = page.locator("extended-openai-management-panel");
@@ -121,13 +122,20 @@ test("very slow mutation disables only its owner while unrelated read-only navig
   await expect.poll(() => page.evaluate(() => window.__slowIsolation.started)).toBe(true);
   await expect(panel.locator("#memory-save")).toBeDisabled();
 
-  // A different read-only route remains usable while the mutation is held.
+  // Leaving an editor during an in-flight save is deliberately guarded.
+  await panel.evaluate(host => host._navigate("guide"));
+  await expect(panel.locator("#memory-dialog")).toHaveJSProperty("open", true);
+  await expect(panel.locator("#memory-content")).toHaveValue("Slow isolated mutation");
+  await expect(page).toHaveURL(/\/extended-openai\/data-memory\/memories$/);
+  await expect(panel.locator("#memory-save")).toBeDisabled();
+
+  await page.evaluate(() => window.__slowIsolation.release());
+  await expect(panel.locator("#memory-dialog")).not.toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__slowIsolation.calls)).toBe(1);
+  expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "memories" && call.action === "add").length)).toBe(1);
   await panel.evaluate(host => host._navigate("guide"));
   await expect(panel.getByRole("heading", {name: "Guide", exact: true})).toBeVisible();
   await expect(panel.locator("#guide-search")).toBeVisible();
-
-  await page.evaluate(() => window.__slowIsolation.release());
-  await expect.poll(() => page.evaluate(() => window.__slowIsolation.calls)).toBe(1);
 
   await panel.evaluate(host => host._navigate("data-memory", "memories"));
   await expect(panel.getByText("Slow isolated mutation", {exact: true})).toHaveCount(1);
