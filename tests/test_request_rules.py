@@ -1470,6 +1470,51 @@ def test_normalization_is_conservative_and_predictable() -> None:
     assert normalize_text("lights", without_forms) == "lights"
 
 
+@pytest.mark.parametrize(
+    ("stored_phrase", "spoken_text"),
+    [
+        ("café lights", "cafe\u0301 lights"),
+        ("straße", "STRASSE"),
+        ("ΟΣ", "ος"),
+        ("İSTANBUL", "istanbul"),
+    ],
+)
+async def test_request_rule_matching_has_explicit_unicode_equivalence_contract(
+    stored_phrase: str,
+    spoken_text: str,
+) -> None:
+    """Canonical Unicode and locale-neutral case folding match predictably."""
+    settings = {**DEFAULT_MATCHING, "word_forms": False, "wording_alternatives": False}
+    rules = await manager(
+        local_rule(
+            phrases=[stored_phrase],
+            matching=settings,
+            behavior="custom",
+        )
+    )
+
+    match = rules.match(spoken_text)
+
+    assert match is not None
+    assert match.phrase == stored_phrase
+    assert normalize_text(stored_phrase, settings) == normalize_text(
+        spoken_text, settings
+    )
+
+
+def test_unicode_normalization_distinguishes_dotless_i_from_ascii_i() -> None:
+    """Case folding is Unicode-aware but deliberately not locale-sensitive."""
+    settings = {
+        **DEFAULT_MATCHING,
+        "word_forms": False,
+        "wording_alternatives": False,
+    }
+
+    assert normalize_text("I", settings) == "i"
+    assert normalize_text("ı", settings) == "ı"
+    assert normalize_text("I", settings) != normalize_text("ı", settings)
+
+
 def test_session_identity_uses_continuity_or_actual_chat_log_id() -> None:
     assert request_rule_session_id("device:kitchen", "core-id") == (
         "continuity:device:kitchen"
