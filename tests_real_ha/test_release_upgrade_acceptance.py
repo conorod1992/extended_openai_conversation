@@ -640,9 +640,13 @@ async def _released_active_phase(hass: Any, config_dir: Path) -> None:
             "effects": len(effects),
             "durable_memory_marker": state["memory_marker"],
         }
-        (config_dir / _ACTIVE_CHECKPOINT_FILE).write_text(
+        checkpoint_path = config_dir / _ACTIVE_CHECKPOINT_FILE
+        pending_checkpoint_path = checkpoint_path.with_suffix(".tmp")
+        pending_checkpoint_path.write_text(
             json.dumps(checkpoint, sort_keys=True), encoding="utf-8"
         )
+        # The parent treats existence as readiness, so publish complete JSON only.
+        pending_checkpoint_path.replace(checkpoint_path)
 
         async with asyncio.timeout(60):
             while not (config_dir / _ACTIVE_SHUTDOWN_FILE).exists():
