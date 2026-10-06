@@ -469,6 +469,14 @@ async def _configure_and_seed(
         assert agent["entry_id"] == expected_entry_id
         entry_id = agent["entry_id"]
         subentry_id = agent["subentry_id"]
+        states = await ws.call("get_states")
+        conversation_agents = [
+            state["entity_id"]
+            for state in states
+            if state["entity_id"].startswith(f"conversation.{DOMAIN}")
+        ]
+        assert len(conversation_agents) == 1, conversation_agents
+        conversation_agent_id = conversation_agents[0]
 
         config = await ws.call(
             WS_COMMAND,
@@ -515,7 +523,7 @@ async def _configure_and_seed(
                 "After it returns, include its exact marker in your final answer."
             ),
             language="en",
-            agent_id=entry_id,
+            agent_id=conversation_agent_id,
         )
         speech = result["response"]["speech"]["plain"]["speech"]
         assert TOOL_MARKER in speech
@@ -526,6 +534,7 @@ async def _configure_and_seed(
     )
     return {
         "entry_id": entry_id,
+        "agent_id": conversation_agent_id,
         "subentry_id": subentry_id,
         "source_id": source_id,
     }
@@ -559,7 +568,7 @@ async def _verify_after_restart(
             "conversation/process",
             text=f"Call the {TOOL_NAME} tool again after the Supervisor restart.",
             language="en",
-            agent_id=identity["entry_id"],
+            agent_id=identity["agent_id"],
         )
         assert TOOL_MARKER in result["response"]["speech"]["plain"]["speech"]
 
