@@ -519,9 +519,9 @@ test("embedded Debug pins its assistant and binds paged view/copy once", async (
     debug._copyText = async (text) => { window.lazyDebugCopies.push(text); };
   });
   await debug.locator('[data-view="debug-one"]').click();
-  await expect(debug.locator("#debug-provider-status")).toHaveText("Provider requests 1â5 of 10");
+  await expect(debug.locator("#debug-provider-status")).toHaveText("Provider requests 1\u20135 of 10");
   await debug.locator("#debug-provider-next").click();
-  await expect(debug.locator("#debug-provider-status")).toHaveText("Provider requests 6â10 of 10");
+  await expect(debug.locator("#debug-provider-status")).toHaveText("Provider requests 6\u201310 of 10");
   await debug.locator("#copy-debug-log").click();
   await expect.poll(() => page.evaluate(() => window.lazyDebugCopies.length)).toBe(1);
   expect(await page.evaluate(() => JSON.parse(window.lazyDebugCopies[0]).page)).toBe(5);

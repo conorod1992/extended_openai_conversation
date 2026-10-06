@@ -15,7 +15,7 @@ test("Assistant parent introduction stays between subsection navigation and the 
     if (subsection === "voice") {
       await expect(panel.locator(".voice-policy-card.supporting-panel").first()).toBeVisible();
     } else {
-      await expect(panel.locator(".config-section-heading")).toBeVisible();
+      await expect(panel.locator(".config-section-heading").first()).toBeVisible();
     }
     await expect(panel.locator(".page-intro")).toHaveCount(1);
     expect(await panel.evaluate(host => {
