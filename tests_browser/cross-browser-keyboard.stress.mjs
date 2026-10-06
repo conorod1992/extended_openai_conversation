@@ -24,11 +24,11 @@ async function assertUsableFocus(page, allowBody = false) {
   await expect.poll(async () => (await state()).usable, {message: current.reason, timeout: 1500}).toBe(true);
 }
 
-async function tabTo(page, target, limit = 120) {
+async function tabTo(page, target, limit = 120, key = "Tab") {
   const visited = [];
   for (let index = 0; index < limit; index++) {
     if (await focused(target).catch(() => false)) return;
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(key);
     visited.push(await page.evaluate(() => {
       const root = document.querySelector("extended-openai-management-panel")?.shadowRoot;
       const active = root?.activeElement;
@@ -176,7 +176,7 @@ test("keyboard-only Request Rule journey creates, edits and deletes a routing ru
   await tabTo(page, panel.locator("#confirm-accept"));
   await page.keyboard.press("Enter");
   await expect(card).toHaveCount(0);
-  await tabTo(page, create);
+  await tabTo(page, create, 120, "Shift+Tab");
   await assertUsableFocus(page);
   operations.push("deleted");
 
@@ -229,7 +229,7 @@ test("keyboard-only Function Tool journey authors, edits and deletes YAML", asyn
   await tabTo(page, panel.locator("#confirm-accept"));
   await page.keyboard.press("Enter");
   await expect(card).toHaveCount(0);
-  await tabTo(page, panel.locator("#function-add"));
+  await tabTo(page, panel.locator("#function-add"), 120, "Shift+Tab");
   await assertUsableFocus(page);
   operations.push("deleted");
 
@@ -280,7 +280,7 @@ test("keyboard-only Knowledge journey creates, edits and deletes a source", asyn
   await tabTo(page, panel.locator("#confirm-accept"));
   await page.keyboard.press("Enter");
   await expect(card).toHaveCount(0);
-  await tabTo(page, panel.locator("#add-source"));
+  await tabTo(page, panel.locator("#add-source"), 120, "Shift+Tab");
   await assertUsableFocus(page);
   operations.push("deleted");
 
