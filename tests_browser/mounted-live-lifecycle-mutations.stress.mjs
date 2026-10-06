@@ -105,6 +105,37 @@ test("deleting the currently viewed HA user cannot leave its personal scope moun
       conversation_count: 0,
     }],
   }));
+  await page.evaluate(() => {
+    const hass = browserHarness.hass;
+    const original = hass.callWS.bind(hass);
+    hass.callWS = async message => {
+      const result = await original(message);
+      if (
+        message.type === "extended_openai_conversation_responses/management"
+        && message.section === "scopes"
+        && message.action === "catalog"
+      ) {
+        return {
+          scopes: [{
+            scope_id: "user:replacement-user",
+            scope_type: "user",
+            display_name: "Replacement User",
+            is_current_user: true,
+            memory_count: 0,
+            conversation_count: 0,
+          }],
+        };
+      }
+      if (
+        message.type === "extended_openai_conversation_responses/management"
+        && message.section === "memories"
+        && message.action === "list"
+      ) {
+        return {memories: [], total: 0};
+      }
+      return result;
+    };
+  });
 
   await panel.evaluate(host => host._loadAgents());
   await expect.poll(() => panel.evaluate(host => host._scopeId)).toBe("user:replacement-user");
@@ -227,7 +258,9 @@ test("mounted native selector receives entity device and area renames without lo
     browserHarness.panel.hass = hass;
   });
 
-  const sameNode = await selector.evaluate(element => element);
+  await selector.evaluate(element => {
+    window.__mountedLifecycleSelector = element;
+  });
   await page.evaluate(() => {
     const hass = browserHarness.hass;
     hass.states["light.rename_target"] = {
@@ -252,6 +285,6 @@ test("mounted native selector receives entity device and area renames without lo
     device: "Renamed device",
     area: "Renamed area",
   });
-  expect(await selector.evaluate((element, previous) => element === previous, sameNode)).toBe(true);
+  expect(await selector.evaluate(element => element === window.__mountedLifecycleSelector)).toBe(true);
   await expectHarnessClean(page, errors);
 });
