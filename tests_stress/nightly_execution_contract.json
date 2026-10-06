@@ -2095,7 +2095,7 @@
       "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
       "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
       "tests_browser/accessibility-layout.stress.mjs::chromium::accessibility-layout.stress.mjs::200% and 400% reflow keep primary controls reachable across management routes",
-      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser de-DE numeric configuration::decimal model settings remain numeric and never become tenfold values",
+      "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser de-DE numeric configuration::a decimal-comma value is rejected instead of silently becoming an integer",
       "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly exposed attribute preferences survive context disable and save",
       "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly model capability transitions and dedicated reset stay coherent",
       "tests_browser/assistant-advanced-dynamics.stress.mjs::chromium::assistant-advanced-dynamics.stress.mjs::nightly request preview ignores an older completion after a newer preview",

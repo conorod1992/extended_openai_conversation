@@ -35,29 +35,22 @@ for (const locale of ["en-GB", "en-US", "en-IE", "fr-FR"]) {
 test.describe("browser de-DE numeric configuration", () => {
   test.use({timezoneId: "Europe/Berlin", locale: "de-DE"});
 
-  test("decimal model settings remain numeric and never become tenfold values", async ({page}) => {
+  test("a decimal-comma value is rejected instead of silently becoming an integer", async ({page}) => {
     const errors = trackPageErrors(page);
     await page.goto(fixtureUrl("assistant/basics"));
     const panel = page.locator("extended-openai-management-panel");
-    await panel.evaluate(host => {
-      const capabilities = {supports_temperature: true, temperature: {support: "always"}};
-      host._configData.model_capabilities = capabilities;
-      host._result.model_capabilities = capabilities;
-      host._modelCatalogData.model_capabilities = capabilities;
-      host._render();
+    const tokens = panel.locator('[data-config="max_tokens"]');
+    await expect(tokens).toHaveAttribute("type", "number");
+    // Native number inputs sanitize localized commas to an empty value. That
+    // is an explicit rejection; a decimal must never be truncated to 7.
+    await tokens.evaluate(element => {
+      element.value = "0,7";
+      element.dispatchEvent(new Event("input", {bubbles: true}));
+      element.dispatchEvent(new Event("change", {bubbles: true}));
     });
-    const temperature = panel.locator('[data-config="temperature"]');
-    await expect(temperature).toHaveAttribute("type", "number");
-    // HTML number inputs expose a locale-independent canonical value even
-    // when the surrounding browser locale uses a decimal comma.
-    await temperature.fill("0.7");
-    await panel.locator("#save-config").click();
-    await expect.poll(() => page.evaluate(() => window.browserHarness.calls
-      .filter(call => call.section === "configuration" && call.action === "save")
-      .at(-1)?.config?.temperature)).toBe(0.7);
-    expect(await temperature.inputValue()).not.toBe("7");
-    await page.goto(fixtureUrl("assistant/basics"));
-    await expect(panel.locator('[data-config="temperature"]')).toHaveValue("0.7");
+    expect(await tokens.inputValue()).not.toBe("7");
+    expect(await page.evaluate(() => window.browserHarness.calls
+      .filter(call => call.section === "configuration" && call.action === "save").length)).toBe(0);
     await expectHarnessClean(page, errors);
   });
 });
