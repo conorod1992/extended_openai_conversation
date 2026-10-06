@@ -341,7 +341,7 @@ function renderUsageBar(panel, bucket, max) {
 }
 
 function usageWarnings(panel, result) {
-  return (result.load_errors || []).map((issue) => `<div class="notice"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
+  return (result.load_errors || []).map((issue) => `<div class="notice warning"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
 }
 
 function usageRecentRows(panel, result) {
