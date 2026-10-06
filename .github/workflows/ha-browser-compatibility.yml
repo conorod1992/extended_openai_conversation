@@ -10,6 +10,9 @@ on:
       - ".github/workflows/ha-browser-compatibility.yml"
       - "tests_browser/real-ha-compatibility.spec.mjs"
       - "tests_browser/real-ha-shell-helpers.mjs"
+      - "tests_browser/real-ha-cross-browser-handoff.spec.mjs"
+      - "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py"
+      - "playwright.real-ha-cross-browser.config.mjs"
       - "tests_real_ha/test_browser_compatibility_acceptance.py"
       - "tests_real_ha/test_browser_backend_acceptance.py"
 
@@ -144,6 +147,70 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ha-native-browser-${{ matrix.ha-version }}-${{ matrix.profile || 'chromium' }}
+          path: |
+            compatibility-evidence/
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+
+  cross-engine-handoff:
+    name: Cross-engine persisted-state handoff
+    runs-on: ubuntu-latest
+    needs: prepare
+    timeout-minutes: 45
+    env:
+      STRESS_CAMPAIGN: native-browser-cross-engine-handoff
+      STRESS_ARTIFACT_DIR: compatibility-evidence
+      ENHANCED_EXECUTION_EVIDENCE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '' }}
+      PYTEST_PLUGINS: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'ci.pytest_execution' || '' }}
+    steps:
+      - name: Checkout exact EOAI PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Set up stable Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+      - name: Install stable Home Assistant and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements_test.txt
+          if [ -n "${{ needs.prepare.outputs.stable-ha-version }}" ]; then
+            python -m pip install --upgrade "homeassistant==${{ needs.prepare.outputs.stable-ha-version }}" pytest-homeassistant-custom-component
+          else
+            python -m pip install --upgrade homeassistant pytest-homeassistant-custom-component
+          fi
+          python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          python -m pip check
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Install Playwright and all handoff engines
+        run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+          npx playwright install --with-deps chromium firefox webkit
+      - name: Run same-backend cross-engine round trips
+        env:
+          RUN_REAL_HA_CROSS_BROWSER_HANDOFF: "1"
+          PYTHONPATH: ${{ github.workspace }}
+        run: >-
+          pytest tests_real_ha/test_browser_cross_engine_handoff_acceptance.py
+          -v -s --asyncio-mode=auto --timeout=600 --tb=short
+      - name: Summarize handoff evidence
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+        run: python ci/enhanced_summary.py compatibility-evidence
+      - name: Upload cross-engine diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ha-native-browser-cross-engine-handoff
           path: |
             compatibility-evidence/
             playwright-report/
