@@ -249,6 +249,8 @@ async def test_native_history_against_external_recorder_database(
     """Enhanced/manual environments can certify EOAI against real external Recorder DBs."""
     db_url = os.getenv(env_name)
     if not db_url:
+        if os.getenv("EOAI_REQUIRE_EXTERNAL_RECORDER") == "1":
+            pytest.fail(f"{env_name} is required for external Recorder certification")
         pytest.skip(f"{env_name} is not configured")
     await _setup_recorder(hass, db_url)
     hass.states.async_set("sensor.recorder_acceptance", f"{backend}-recorded")
