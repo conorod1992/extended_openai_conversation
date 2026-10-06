@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from time import perf_counter
 
@@ -39,6 +40,7 @@ from tests_stress.test_function_groups_state_machine import _tool
 async def test_large_installation_survives_setup_management_backup_and_assist(
     hass: HomeAssistant,
     monkeypatch,
+    hass_ws_client,
     stress_scale: int,
     stress_trace: list[dict],
 ) -> None:
@@ -205,20 +207,54 @@ async def test_large_installation_survives_setup_management_backup_and_assist(
             )
 
         monkeypatch.setattr(agent, "_async_handle_chat_log", model)
+
+    # Exercise the mature installation as one workload: concurrent Assist
+    # requests, authenticated management reads, retrieval, and backup
+    # housekeeping all overlap while the stores contain their full scale data.
+    from tests_real_ha.test_management_backend_acceptance import (
+        _admin_client,
+        _management_call,
+    )
+
+    management_client = await _admin_client(hass, hass_ws_client)
+
+    async def assist_turn(entry_id: str) -> None:
         turn_started = perf_counter()
         result = await conversation.async_converse(
             hass=hass,
-            text="scale public probe",
+            text="scale public concurrent probe",
             conversation_id=None,
             context=Context(user_id="large-owner"),
             language="en",
-            agent_id=entry.entry_id,
+            agent_id=entry_id,
         )
         public_turn_ms.append(round((perf_counter() - turn_started) * 1000, 2))
         assert result.response.as_dict()["speech"]["plain"]["speech"] == "scale healthy"
-        assert model_calls == len(public_turn_ms), (
-            "One Assist turn must invoke its model handler once"
+
+    async def management_read() -> None:
+        listed = await _management_call(
+            management_client,
+            entry=primary,
+            section="knowledge",
+            action="list",
         )
+        assert len(listed["sources"]) == primary_knowledge_count
+
+    async def maintenance_and_retrieval() -> None:
+        await asyncio.gather(
+            backup.async_collect_backup_snapshot(hass, primary, subentry),
+            memory.async_list_page("large-owner", limit=25, offset=0),
+            knowledge.async_catalog(query="Knowledge body", limit=20),
+            rules.async_backup_data(),
+        )
+
+    await asyncio.gather(
+        *(assist_turn(entry.entry_id) for entry in entries),
+        management_read(),
+        maintenance_and_retrieval(),
+    )
+    assert model_calls == agents
+    assert len(public_turn_ms) == agents
     record(
         stress_trace,
         "summary",
@@ -230,6 +266,9 @@ async def test_large_installation_survives_setup_management_backup_and_assist(
         memory_records=memory_count,
         knowledge_sources=knowledge_count,
         public_turns=agents,
+        concurrent_management_reads=1,
+        concurrent_housekeeping_and_retrievals=4,
+        concurrent_assist_requests=agents,
         model_calls=model_calls,
         public_turn_ms=public_turn_ms,
         public_turn_max_ms=max(public_turn_ms),

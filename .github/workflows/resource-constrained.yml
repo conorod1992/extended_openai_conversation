@@ -1,6 +1,11 @@
 name: EOAI constrained resource acceptance
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/resource-constrained.yml"
+      - "tests_stress/test_large_installation.py"
+      - "tests_stress/test_responses_scale_fairness.py"
   schedule:
     - cron: "37 5 * * *"
   workflow_dispatch:
@@ -37,6 +42,7 @@ jobs:
           ulimit -v 1572864
           CPU="$(python -c 'import os; print(min(os.sched_getaffinity(0)))')"
           taskset -c "$CPU" pytest \
+            tests_stress/test_large_installation.py::test_large_installation_survives_setup_management_backup_and_assist \
             tests_stress/test_responses_scale_fairness.py::test_mixed_background_pressure_preserves_lightweight_progress \
             tests_stress/test_responses_scale_fairness.py::test_active_native_contention_preserves_assist_management_and_ha_progress \
             -v -s --asyncio-mode=auto --timeout=300 --tb=short
