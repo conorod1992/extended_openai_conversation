@@ -60,7 +60,7 @@ def test_ipv6_journey_cannot_fall_back_to_ipv4() -> None:
     assert 'f"http://[::1]:{port}/fact"' in text
 
 
-def test_ipv6_journey_requests_the_real_socket_fixture() -> None:
+def test_ipv6_journey_permits_only_loopback_socket_connections() -> None:
     module = ast.parse(JOURNEY.read_text(encoding="utf-8"))
     journey = next(
         node
@@ -69,6 +69,14 @@ def test_ipv6_journey_requests_the_real_socket_fixture() -> None:
         and node.name == "test_ipv6_only_provider_stream_rest_tool_and_failure_recovery"
     )
     assert "socket_enabled" in {argument.arg for argument in journey.args.args}
+    allowlist = next(
+        node
+        for node in ast.walk(journey)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "socket_allow_hosts"
+    )
+    assert set(ast.literal_eval(allowlist.args[0])) == {"::1", "127.0.0.1"}
 
 
 def test_ipv6_journey_covers_provider_stream_rest_and_recovery() -> None:
