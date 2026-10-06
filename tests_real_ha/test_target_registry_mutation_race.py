@@ -244,3 +244,66 @@ async def test_service_reload_does_not_dispatch_stale_request(
         blocking=True,
     )
     assert len(new_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_recreated_entity_with_same_friendly_name_and_new_id_stays_distinct(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A friendly-name collision must never substitute the deleted entity identity."""
+    registry = er.async_get(hass)
+    original = registry.async_get_or_create(
+        domain="light",
+        platform=_DOMAIN,
+        unique_id="friendly-name-original",
+        suggested_object_id="friendly_name_original",
+        original_name="Shared Friendly Name",
+    )
+    original_id = original.entity_id
+    hass.states.async_set(
+        original_id,
+        "off",
+        {"friendly_name": "Shared Friendly Name"},
+    )
+
+    registry.async_remove(original_id)
+    hass.states.async_remove(original_id)
+    replacement = registry.async_get_or_create(
+        domain="light",
+        platform=_DOMAIN,
+        unique_id="friendly-name-replacement",
+        suggested_object_id="friendly_name_replacement",
+        original_name="Shared Friendly Name",
+    )
+    assert replacement.entity_id != original_id
+    hass.states.async_set(
+        replacement.entity_id,
+        "off",
+        {"friendly_name": "Shared Friendly Name"},
+    )
+
+    calls: list[ServiceCall] = []
+    hass.services.async_register(_DOMAIN, _SERVICE, calls.append)
+    authorized: list[set[str]] = []
+
+    async def capture_permission(_hass, entity_ids, *, context=None):
+        del _hass, context
+        authorized.append(set(entity_ids))
+
+    monkeypatch.setattr(
+        ha_actions, "async_require_control_permission", capture_permission
+    )
+
+    await ha_actions.async_call_ha_action(
+        hass,
+        _DOMAIN,
+        _SERVICE,
+        data={ATTR_ENTITY_ID: replacement.entity_id},
+        blocking=True,
+    )
+
+    assert authorized == [{replacement.entity_id}]
+    assert len(calls) == 1
+    assert calls[0].data[ATTR_ENTITY_ID] == replacement.entity_id
+    assert original_id not in authorized[0]

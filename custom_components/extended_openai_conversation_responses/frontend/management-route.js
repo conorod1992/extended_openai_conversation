@@ -612,6 +612,10 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   const configurationPrefetch = startStoredConfigurationPrefetch(panel, preferred);
 
   panel._data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
+  // A fresh agent catalogue is an ownership boundary: cached user scopes may
+  // refer to users that have since been deleted.
+  panel._scopeCatalogCache.clear();
+  panel._eocScopeCatalogTimes?.clear();
   panel._baseScopes = panel._data.scopes || [];
   const agents = panel._data.agents || [];
   panel._agentId = agents.some((item) => item.subentry_id === preferred)
