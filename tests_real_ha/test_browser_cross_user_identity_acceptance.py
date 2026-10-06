@@ -211,7 +211,7 @@ async def test_cross_user_browser_identity_and_authorization_boundaries(
         await _run_playwright(
             repo_root=Path(__file__).resolve().parent.parent,
             spec=_SPEC,
-            config="playwright.config.mjs",
+            config="playwright.stress.config.mjs",
             env={
                 "REAL_HA_IDENTITY_SWITCH_BACKEND": switch_backend,
                 "REAL_HA_IDENTITY_SWITCH_CONTROL": switch_control,
