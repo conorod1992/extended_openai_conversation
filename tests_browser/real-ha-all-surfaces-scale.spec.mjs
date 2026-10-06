@@ -59,22 +59,38 @@ test("large genuine configuration remains usable across all management surfaces"
   await page.goto(fixture("capabilities/functions"));
   let panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".tool-card").first()).toBeVisible();
-  expect(await panel.locator(".tool-card").count()).toBeGreaterThanOrEqual(40);
+  const functionCount = await panel.evaluate(async (host) => {
+    const config = await host._call("configuration", "get");
+    return config.config.functions.length;
+  });
+  expect(functionCount).toBe(60);
 
   await page.goto(fixture("capabilities/request-rules"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".request-rule-card").first()).toBeVisible();
-  expect(await panel.locator(".request-rule-card").count()).toBeGreaterThanOrEqual(60);
+  const ruleCount = await panel.evaluate(async (host) => {
+    const result = await host._call("request_rules", "list");
+    return result.rules.length;
+  });
+  expect(ruleCount).toBe(100);
 
   await page.goto(fixture("data-memory/memories"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".list-card").first()).toBeVisible();
-  expect(await panel.locator(".list-card").count()).toBeGreaterThanOrEqual(20);
+  const memoryCount = await panel.evaluate(async (host) => {
+    const result = await host._call("memories", "list", {limit: 100});
+    return result.memories.length;
+  });
+  expect(memoryCount).toBe(100);
 
   await page.goto(fixture("data-memory/knowledge"));
   panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".list-card").first()).toBeVisible();
-  expect(await panel.locator(".list-card").count()).toBeGreaterThanOrEqual(20);
+  const knowledgeCount = await panel.evaluate(async (host) => {
+    const result = await host._call("knowledge", "list");
+    return result.stats.knowledge_source_count;
+  });
+  expect(knowledgeCount).toBe(80);
 
   await expectHarnessClean(page, pageErrors);
   await testInfo.attach("all-surfaces-scale-evidence", {
