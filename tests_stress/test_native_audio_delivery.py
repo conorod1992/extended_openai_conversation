@@ -348,6 +348,159 @@ async def test_recorded_audio_native_assist_delivery_recovers(
     )
 
 
+async def test_live_assist_language_change_reaches_same_satellite_session(
+    hass,
+    hass_client,
+    monkeypatch,
+    stress_trace,
+):
+    """A real Assist pipeline language change reaches STT, EOAI and TTS in place."""
+    from homeassistant.components.assist_pipeline import async_update_pipeline
+
+    owner = MockUser(
+        id="audio-language-owner", name="Audio language owner", is_owner=True
+    ).add_to_hass(hass)
+    agent = await _speech_agent(hass)
+    recording = _test_wav()
+    transcripts = {"en": "Say hello in English", "fr": "Répondez en français"}
+
+    class MultilingualSTT(_SoftwareSTT):
+        supported_languages: ClassVar[list] = ["en", "fr"]
+
+        def __init__(self, pcm):
+            super().__init__(pcm)
+            self.languages = []
+
+        async def async_process_audio_stream(self, metadata, stream):
+            assert self.check_metadata(metadata)
+            captured = b"".join([chunk async for chunk in stream])
+            assert captured == self.pcm
+            assert metadata.language in transcripts
+            self.languages.append(metadata.language)
+            return stt.SpeechResult(
+                transcripts[metadata.language], stt.SpeechResultState.SUCCESS
+            )
+
+    class MultilingualTTS(_SoftwareTTS):
+        _attr_supported_languages: ClassVar[list] = ["en", "fr"]
+
+        def __init__(self, audio):
+            super().__init__(audio)
+            self.deliveries = []
+
+        async def async_get_tts_audio(self, message, language, options=None):
+            self.deliveries.append((message, language))
+            return "wav", self.recording
+
+    speech = MultilingualSTT(recording)
+    tts = MultilingualTTS(recording)
+    satellite = _SoftwareSatellite()
+    entities, pcm = await _install_audio_entities(
+        hass, recording, speech=speech, tts=tts, satellites=[satellite]
+    )
+    assert entities["stt"] is speech
+
+    store = hass.data[KEY_ASSIST_PIPELINE].pipeline_store
+    pipeline = await store.async_create_item(
+        {
+            "name": "Live EOAI language change",
+            "language": "en",
+            "conversation_language": "*",
+            "conversation_engine": agent.entity_id,
+            "stt_engine": speech.entity_id,
+            "stt_language": "en",
+            "tts_engine": tts.entity_id,
+            "tts_language": "en",
+            "tts_voice": None,
+            "wake_word_entity": None,
+            "wake_word_id": None,
+            "prefer_local_intents": False,
+        }
+    )
+    store.async_set_preferred_item(pipeline.id)
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_text("Hello **there**."),
+            _chat_sse_text("Bonjour **tout le monde**."),
+        ],
+    )
+    user_inputs = []
+    process = agent.async_process
+
+    async def observe_input(user_input):
+        user_inputs.append(user_input)
+        return await process(user_input)
+
+    monkeypatch.setattr(agent, "async_process", observe_input)
+    http = await hass_client(hass)
+
+    async def send_turn(expected_transcript: str):
+        async def audio_stream():
+            for start in range(0, len(pcm), 640):
+                yield pcm[start : start + 640]
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(
+            satellite.async_accept_pipeline_from_satellite(
+                audio_stream(), context=Context(user_id=owner.id)
+            ),
+            15,
+        )
+        assert not [event for event in satellite.events if event.type.value == "error"]
+        event = next(
+            item
+            for item in reversed(satellite.events)
+            if item.type.value == "tts-end"
+        )
+        response = await http.get(urlsplit(event.data["tts_output"]["url"]).path)
+        assert response.status == 200
+        await response.read()
+        assert user_inputs[-1].text == expected_transcript
+        assert user_inputs[-1].context.user_id == owner.id
+        satellite.tts_response_finished()
+        satellite.events.clear()
+
+    await send_turn(transcripts["en"])
+    conversation_id = user_inputs[0].conversation_id
+    assert user_inputs[0].language == "en"
+
+    await async_update_pipeline(
+        hass,
+        pipeline,
+        language="fr",
+        stt_language="fr",
+        tts_language="fr",
+    )
+    await send_turn(transcripts["fr"])
+
+    assert speech.languages == ["en", "fr"]
+    assert [item.language for item in user_inputs] == ["en", "fr"]
+    assert [item.conversation_id for item in user_inputs] == [
+        conversation_id,
+        conversation_id,
+    ]
+    assert tts.deliveries == [
+        ("Hello there.", "en"),
+        ("Bonjour tout le monde.", "fr"),
+    ]
+    assert [request["body"]["messages"][-1]["content"] for request in wire.requests] == [
+        transcripts["en"],
+        transcripts["fr"],
+    ]
+    assert len(wire.requests) == 2
+    record(
+        stress_trace,
+        "summary",
+        journey="live_assist_language_change",
+        pipeline_language_changes=1,
+        same_conversation_id=True,
+        stt_languages=speech.languages,
+        tts_languages=[language for _, language in tts.deliveries],
+    )
+
+
 async def test_two_native_audio_journeys_interleave_without_cross_owned_output(
     hass,
     hass_client,
