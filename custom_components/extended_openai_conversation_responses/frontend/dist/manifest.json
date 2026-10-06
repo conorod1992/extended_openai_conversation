@@ -275,7 +275,7 @@
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js": {
-    "file": "assets/management-C76v68kv.js",
+    "file": "assets/management-BSBDNNMA.js",
     "name": "management",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/management-panel.js",
     "isEntry": true,
@@ -293,7 +293,7 @@
       "../custom_components/extended_openai_conversation_responses/frontend/exposed-attributes-ui.js"
     ],
     "assets": [
-      "assets/management-BMIoEEFg.css"
+      "assets/management-CIicwmzQ.css"
     ]
   },
   "../custom_components/extended_openai_conversation_responses/frontend/management-provider-credentials.js": {
@@ -303,7 +303,7 @@
     "isDynamicEntry": true
   },
   "../custom_components/extended_openai_conversation_responses/frontend/management.css": {
-    "file": "assets/management-BMIoEEFg.css",
+    "file": "assets/management-CIicwmzQ.css",
     "src": "../custom_components/extended_openai_conversation_responses/frontend/management.css"
   },
   "../custom_components/extended_openai_conversation_responses/frontend/memory-settings-ui.js": {
