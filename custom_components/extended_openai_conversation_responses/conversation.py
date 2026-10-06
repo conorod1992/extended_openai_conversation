@@ -1126,6 +1126,16 @@ class ExtendedOpenAIAgentEntity(
             runtime_reconciled=_ACTIVE_RUNTIME_RECONCILED.get(),
         )
         temporary_memories = await self._async_retrieve_temporary_memories()
+        retrieved_memories = (
+            await ExtendedOpenAIAgentEntity._async_revalidate_retrieved_memories(
+                self, llm_context, retrieved_memories
+            )
+        )
+        temporary_memories = (
+            ExtendedOpenAIAgentEntity._revalidate_temporary_memory_expiry(
+                self, temporary_memories
+            )
+        )
 
         # Build custom prompt with exposed entities
         system_prompt = self._build_system_prompt(
@@ -1586,6 +1596,34 @@ class ExtendedOpenAIAgentEntity(
                 )
             ordered[index] = list(item.embedding)
         return [ordered[index] for index in range(len(inputs))]
+
+    async def _async_revalidate_retrieved_memories(
+        self,
+        llm_context: llm.LLMContext,
+        records: list[MemoryRecord],
+    ) -> list[MemoryRecord]:
+        """Resolve selected Memory IDs against the current committed generation."""
+        if not records or self._memory is None:
+            return records
+        scope_ids = self._current_readable_memory_scope_ids(llm_context)
+        if not scope_ids:
+            return []
+        return await self._memory.async_get_many(
+            [(record.user_id, record.memory_id) for record in records],
+            scope_ids,
+        )
+
+    def _revalidate_temporary_memory_expiry(
+        self, records: list[TemporaryMemoryRecord]
+    ) -> list[TemporaryMemoryRecord]:
+        """Remove prefetched records that expired before prompt construction."""
+        if not records:
+            return records
+        scope_id = _ACTIVE_TEMPORARY_SCOPE.get()
+        owner = _owner_from_resolved_scope(_ACTIVE_SCOPE.get())
+        if scope_id is None or owner is None:
+            return []
+        return TemporaryMemory.select_active_snapshot(records, scope_id, owner)
 
     async def _async_retrieve_temporary_memories(self) -> list[TemporaryMemoryRecord]:
         """Consume one prefetch, checking live capability before exposing records."""
@@ -2279,6 +2317,9 @@ class ExtendedOpenAIAgentEntity(
                     }
             results = await self._knowledge.async_search(
                 query, sorted(allowed_ids) if allowed_ids else None, limit
+            )
+            results = await KnowledgeLibrary.async_revalidate_search_results(
+                self._knowledge, results
             )
             filter_requested = bool(source_ids)
             return knowledge_search_payload(
