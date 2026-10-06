@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import partial
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import voluptuous as vol
@@ -715,8 +715,12 @@ class NativeFunction(Function):
             raise entity_access_error(hass, unexposed)
 
         statistic_ids = set(raw_statistic_ids)
-        start_time = dt_util.as_utc(dt_util.parse_datetime(arguments["start_time"]))
-        end_time = dt_util.as_utc(dt_util.parse_datetime(arguments["end_time"]))
+        start_time = dt_util.as_utc(
+            cast(datetime, dt_util.parse_datetime(arguments["start_time"]))
+        )
+        end_time = dt_util.as_utc(
+            cast(datetime, dt_util.parse_datetime(arguments["end_time"]))
+        )
 
         return await recorder.get_instance(hass).async_add_executor_job(
             recorder.statistics.statistics_during_period,
