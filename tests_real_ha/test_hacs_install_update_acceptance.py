@@ -465,7 +465,10 @@ def _simulate_interrupted_candidate_overlay(config_dir: Path) -> dict[str, Any]:
             continue
         relative = candidate_path.relative_to(candidate)
         installed_path = installed / relative
-        if not installed_path.is_file() or installed_path.read_bytes() != candidate_path.read_bytes():
+        if (
+            not installed_path.is_file()
+            or installed_path.read_bytes() != candidate_path.read_bytes()
+        ):
             differing.append(relative)
     assert len(differing) >= 4, "candidate must differ materially from published release"
 
