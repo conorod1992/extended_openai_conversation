@@ -108,7 +108,9 @@ def test_supported_sdk_policy_matches_matrix_and_manifest_ceiling():
         for step in sdk["steps"]
         if step.get("uses", "").startswith("actions/checkout@")
     )
-    assert checkout["with"]["ref"] == "${{ github.sha }}"
+    assert checkout["with"]["ref"] == (
+        "${{ github.event.pull_request.head.sha || github.sha }}"
+    )
     manifest = json.loads(
         (
             ROOT
@@ -165,7 +167,7 @@ def test_official_container_workflow_binds_image_evidence_to_exact_candidate():
         for step in job["steps"]
         if step.get("uses", "").startswith("actions/upload-artifact@")
     )
-    assert upload["with"]["name"] == "official-ha-container-evidence"
+    assert upload["with"]["name"] == "official-ha-container-${{ matrix.arch }}-evidence"
     assert upload["with"]["if-no-files-found"] == "error"
 
 
