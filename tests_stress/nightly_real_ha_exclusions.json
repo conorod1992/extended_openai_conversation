@@ -7,7 +7,10 @@
     "tests_real_ha/test_backup_restore_delayed_tool_collision.py",
     "tests_real_ha/test_backup_restore_live_runtime_refresh.py",
     "tests_real_ha/test_backup_transfer_protocol.py",
+    "tests_real_ha/test_browser_all_surfaces_scale_acceptance.py",
     "tests_real_ha/test_browser_compatibility_acceptance.py",
+    "tests_real_ha/test_browser_cross_user_identity_acceptance.py",
+    "tests_real_ha/test_browser_identity_lifecycle_acceptance.py",
     "tests_real_ha/test_browser_process_restart_acceptance.py",
     "tests_real_ha/test_browser_refresh_boundary_acceptance.py",
     "tests_real_ha/test_browser_release_upgrade_acceptance.py",
@@ -23,17 +26,25 @@
     "tests_real_ha/test_entity_registry_disabled.py",
     "tests_real_ha/test_exposed_attribute_catalog_acceptance.py",
     "tests_real_ha/test_frontend_asset_registration.py",
+    "tests_real_ha/test_frontend_backend_version_skew_acceptance.py",
     "tests_real_ha/test_function_execution_composition.py",
     "tests_real_ha/test_ha_llm_tool_acceptance.py",
+    "tests_real_ha/test_ha_version_upgrade_acceptance.py",
+    "tests_real_ha/test_hacs_install_update_acceptance.py",
+    "tests_real_ha/test_https_proxy_acceptance.py",
+    "tests_real_ha/test_identity_isolation_matrix.py",
+    "tests_real_ha/test_ipv6_only_networking_acceptance.py",
     "tests_real_ha/test_knowledge_management_lifecycle.py",
     "tests_real_ha/test_knowledge_provider_wire_e2e.py",
     "tests_real_ha/test_lifecycle_concurrency.py",
+    "tests_real_ha/test_live_openai_full_e2e.py",
     "tests_real_ha/test_live_subentry_removal.py",
     "tests_real_ha/test_management_command_contracts.py",
     "tests_real_ha/test_management_history_runtime.py",
     "tests_real_ha/test_memory_provider_wire_e2e.py",
     "tests_real_ha/test_model_catalog.py",
     "tests_real_ha/test_multilayer_authorization_conflict.py",
+    "tests_real_ha/test_native_ha_backup_restore.py",
     "tests_real_ha/test_native_indirect_mixed_exposure.py",
     "tests_real_ha/test_native_indirect_target_resolution.py",
     "tests_real_ha/test_native_multi_indirect_target_union.py",
@@ -131,11 +142,29 @@
       "selector": "tests_real_ha/",
       "reason": "test_backup_transfer_protocol runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
+    "tests_real_ha/test_browser_all_surfaces_scale_acceptance.py": {
+      "workflow": "frontend.yml",
+      "job": "browser-real-ha",
+      "selector": "tests_real_ha/test_browser_all_surfaces_scale_acceptance.py",
+      "reason": "Requires the browser to genuine HA acceptance environment."
+    },
     "tests_real_ha/test_browser_compatibility_acceptance.py": {
       "workflow": "ha-browser-compatibility.yml",
       "job": "native-browser",
       "selector": "tests_real_ha/test_browser_compatibility_acceptance.py",
       "reason": "test_browser_compatibility_acceptance runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_browser_cross_user_identity_acceptance.py": {
+      "workflow": "frontend.yml",
+      "job": "browser-real-ha",
+      "selector": "tests_real_ha/test_browser_cross_user_identity_acceptance.py",
+      "reason": "Requires the browser to genuine HA acceptance environment."
+    },
+    "tests_real_ha/test_browser_identity_lifecycle_acceptance.py": {
+      "workflow": "frontend.yml",
+      "job": "browser-real-ha",
+      "selector": "tests_real_ha/test_browser_identity_lifecycle_acceptance.py",
+      "reason": "Requires the browser to genuine HA acceptance environment."
     },
     "tests_real_ha/test_browser_process_restart_acceptance.py": {
       "workflow": "frontend.yml",
@@ -227,6 +256,12 @@
       "selector": "tests_real_ha/",
       "reason": "test_frontend_asset_registration runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
+    "tests_real_ha/test_frontend_backend_version_skew_acceptance.py": {
+      "workflow": "frontend-backend-version-skew.yml",
+      "job": "version-skew",
+      "selector": "tests_real_ha/test_frontend_backend_version_skew_acceptance.py",
+      "reason": "Requires staged historical frontend assets and a genuine HA backend."
+    },
     "tests_real_ha/test_function_execution_composition.py": {
       "workflow": "real-ha.yml",
       "job": "stable",
@@ -238,6 +273,36 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_ha_llm_tool_acceptance runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_ha_version_upgrade_acceptance.py": {
+      "workflow": "ha-version-upgrade-acceptance.yml",
+      "job": "ha-version-upgrade",
+      "selector": "tests_real_ha/test_ha_version_upgrade_acceptance.py",
+      "reason": "Requires isolated historical and candidate HA runtimes."
+    },
+    "tests_real_ha/test_hacs_install_update_acceptance.py": {
+      "workflow": "hacs-install-update-acceptance.yml",
+      "job": "hacs-install-update",
+      "selector": "tests_real_ha/test_hacs_install_update_acceptance.py",
+      "reason": "Requires genuine HACS install and update staging."
+    },
+    "tests_real_ha/test_https_proxy_acceptance.py": {
+      "workflow": "deployment-recovery.yml",
+      "job": "deployment-recovery",
+      "selector": "tests_real_ha/test_https_proxy_acceptance.py",
+      "reason": "Requires the dedicated verified HTTPS proxy acceptance environment."
+    },
+    "tests_real_ha/test_identity_isolation_matrix.py": {
+      "workflow": "side-by-side-isolation.yml",
+      "job": "identity-isolation",
+      "selector": "tests_real_ha/test_identity_isolation_matrix.py",
+      "reason": "Requires the side-by-side integration installation environment."
+    },
+    "tests_real_ha/test_ipv6_only_networking_acceptance.py": {
+      "workflow": "ipv6-only-networking-acceptance.yml",
+      "job": "ipv6-only",
+      "selector": "tests_real_ha/test_ipv6_only_networking_acceptance.py",
+      "reason": "Requires the IPv6-only networking environment."
     },
     "tests_real_ha/test_knowledge_management_lifecycle.py": {
       "workflow": "real-ha.yml",
@@ -256,6 +321,12 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_lifecycle_concurrency runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_live_openai_full_e2e.py": {
+      "workflow": "live-openai-full-e2e.yml",
+      "job": "live-e2e",
+      "selector": "tests_real_ha/test_live_openai_full_e2e.py",
+      "reason": "Requires explicit live provider credentials and spending controls."
     },
     "tests_real_ha/test_live_subentry_removal.py": {
       "workflow": "real-ha.yml",
@@ -292,6 +363,12 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_multilayer_authorization_conflict runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_native_ha_backup_restore.py": {
+      "workflow": "deployment-recovery.yml",
+      "job": "deployment-recovery",
+      "selector": "tests_real_ha/test_native_ha_backup_restore.py",
+      "reason": "Requires the dedicated native HA backup and restore environment."
     },
     "tests_real_ha/test_native_indirect_mixed_exposure.py": {
       "workflow": "real-ha.yml",

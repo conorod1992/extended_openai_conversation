@@ -16,10 +16,13 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_API_VERSION,
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
+    CONF_MEMORY_MODE,
     CONF_REASONING_EFFORT,
     CONF_SKIP_AUTHENTICATION,
+    MEMORY_MODE_MANUAL,
 )
 from custom_components.extended_openai_conversation_responses.memory import (
+    _MEMORY_MANAGERS,
     HomeAssistantMemoryStorage,
 )
 from custom_components.extended_openai_conversation_responses.provider_credentials import (
@@ -28,8 +31,8 @@ from custom_components.extended_openai_conversation_responses.provider_credentia
 from homeassistant.components import conversation
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.const import CONF_API_KEY, CONF_NAME
-from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from tests_real_ha.test_config_flow import _make_entry, _setup_entry
 from tests_real_ha.test_cross_feature_acceptance import _agent
 from tests_real_ha.test_provider_wire_e2e import (
@@ -189,7 +192,10 @@ async def test_parent_provider_family_base_url_and_credentials_change_next_wire(
     assert request.url.host == "new-family.example"
     assert "/openai/deployments/gpt-5.6/chat/completions" in request.url.path
     assert request.headers["api-key"] == "rotated-key"
-    assert "authorization" not in request.headers
+    # SDK versions may also emit a Bearer header. Every credential must be the
+    # rotated key, never the old provider key.
+    if "authorization" in request.headers:
+        assert request.headers["authorization"] == "Bearer rotated-key"
     assert request.url.params["api-version"] == "2025-01-01-preview"
     record(
         stress_trace,
@@ -225,9 +231,13 @@ async def test_private_storage_unreadable_at_boot_recovers_without_overwriting_s
 
     real_load = HomeAssistantMemoryStorage.async_load
     real_save = HomeAssistantMemoryStorage.async_save
+    hass.data.pop(_MEMORY_MANAGERS, None)
+    loads = 0
     saves = 0
 
     async def denied_load(self):
+        nonlocal loads
+        loads += 1
         raise PermissionError("controlled private storage permission failure")
 
     async def observed_save(self, data):
@@ -237,13 +247,18 @@ async def test_private_storage_unreadable_at_boot_recovers_without_overwriting_s
 
     monkeypatch.setattr(HomeAssistantMemoryStorage, "async_load", denied_load)
     monkeypatch.setattr(HomeAssistantMemoryStorage, "async_save", observed_save)
-    loaded = await hass.config_entries.async_setup(entry.entry_id)
+    assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert loaded is False or entry.state is not ConfigEntryState.LOADED
+    failed_agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert failed_agent is not None
+    assert not failed_agent._agent_initialization_failed
+    assert failed_agent._memory is None
+    assert loads > 0
     assert saves == 0
 
     monkeypatch.setattr(HomeAssistantMemoryStorage, "async_load", real_load)
-    assert await hass.config_entries.async_setup(entry.entry_id)
+    hass.data.pop(_MEMORY_MANAGERS, None)
+    assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
     agent = conversation.async_get_agent(hass, entry.entry_id)
@@ -306,7 +321,7 @@ async def test_first_time_config_flow_reaches_loaded_agent_and_first_assist_requ
     }
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
-    wire = _install_wire(monkeypatch, agent, [_chat_sse_text("first setup answered")])
+    wire = _install_wire(monkeypatch, agent, [_responses_sse_text("first setup answered")])
     result = await _converse(hass, agent, "hello from a new installation")
     assert _speech(result) == "first setup answered"
     assert len(wire.requests) == 1

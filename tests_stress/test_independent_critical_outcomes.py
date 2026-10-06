@@ -19,11 +19,7 @@ from custom_components.extended_openai_conversation_responses.memory import (
 from homeassistant.components import conversation
 from homeassistant.core import Context
 from tests_real_ha.test_cross_feature_acceptance import _agent
-from tests_real_ha.test_provider_wire_e2e import (
-    _chat_sse_text,
-    _install_wire,
-    _speech,
-)
+from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire, _speech
 from tests_real_ha.test_request_rules_script_semantics import _local, _record_action
 from tests_stress.effect_ledger import assert_effect_ledger
 
@@ -116,11 +112,13 @@ async def test_rule_precedence_matches_ordered_native_effects_and_persisted_orde
         success="First",
     )
     first["continue_matching"] = True
+    first["order"] = 0
     second = _local(
         [{"action": "independent_probe.record", "data": {"message": "second"}}],
         phrase="priority witness",
         success="Second",
     )
+    second["order"] = 1
     first_rule = await agent._request_rules.async_create(first)
     second_rule = await agent._request_rules.async_create(second)
 

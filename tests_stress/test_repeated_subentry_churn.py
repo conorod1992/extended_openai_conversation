@@ -63,6 +63,7 @@ async def test_repeated_conversation_and_ai_task_churn_leaves_no_registry_accumu
         )
 
         assert hass.config_entries.async_add_subentry(entry, conversation_subentry)
+        await hass.async_block_till_done()
         assert hass.config_entries.async_add_subentry(entry, ai_subentry)
         await hass.async_block_till_done()
 
@@ -90,6 +91,7 @@ async def test_repeated_conversation_and_ai_task_churn_leaves_no_registry_accumu
         assert hass.config_entries.async_remove_subentry(
             entry, conversation_subentry.subentry_id
         )
+        await hass.async_block_till_done()
         assert hass.config_entries.async_remove_subentry(
             entry, ai_subentry.subentry_id
         )

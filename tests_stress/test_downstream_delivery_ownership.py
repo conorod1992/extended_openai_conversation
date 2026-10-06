@@ -743,11 +743,14 @@ async def test_removed_satellite_during_announcement_never_redirects_delivery(
 
         registry = er.async_get(hass)
         registry.async_remove(selected.entity_id)
-        await hass.async_block_till_done()
-        assert hass.states.get(selected.entity_id) is None
+        assert registry.async_get(selected.entity_id) is None
         assert not peer.announcements
+        # Removal and announcement completion are tracked HA tasks. Drain them
+        # only after releasing the deliberately held playback, otherwise this
+        # test waits for a task whose release it has not yet signalled.
         selected.announce_release.set()
         await hass.async_block_till_done()
+        assert hass.states.get(selected.entity_id) is None
 
         row = next(row for row in manager.history() if row["id"] == item["id"])
         assert row["deliveries"][selected.entity_id]["status"] == "delivered"
