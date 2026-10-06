@@ -377,6 +377,9 @@ async def test_configuration_save_rejects_model_incompatible_api_before_persiste
         config={"chat_model": "gpt-5-pro", "api_mode": "chat_completions"},
     )
     request.subentry.data[ui.CONF_FUNCTION_TOOLS] = []
+    request.message["revision"] = ui.persisted_config_projection(
+        request.subentry
+    ).revision
     result = await ui.async_configuration_command(request)
     assert result["valid"] is False
     assert result["errors"]
