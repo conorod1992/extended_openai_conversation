@@ -292,7 +292,7 @@
 @media(max-width:600px){.home-assistant-boundary{align-items:stretch;flex-direction:column}.home-assistant-boundary .compact-button{width:100%}@media(max-width:600px){.route-error-state{align-items:stretch;flex-direction:column}.route-error-state button{width:100%}}}
 
 /* Shared management hierarchy and Request Rules layout. */
-.config-section-heading .eyebrow{font-size:15px;letter-spacing:normal;text-transform:none}
+.config-section-heading .eyebrow{font-size:17px;font-weight:600;letter-spacing:normal;text-transform:none}
 .rule-page-intro{max-width:none;padding-bottom:20px;border-bottom:1px solid var(--divider-color)}
 .rule-page-intro p{max-width:none}
 .rule-collection{display:grid;gap:16px}
