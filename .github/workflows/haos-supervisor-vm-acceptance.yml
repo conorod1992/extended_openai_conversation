@@ -54,11 +54,11 @@ jobs:
           matches = [
               asset
               for asset in release.get("assets", [])
-              if "generic-x86-64" in asset.get("name", "")
+              if asset.get("name", "").startswith("haos_ova-")
               and asset.get("name", "").endswith(".qcow2.xz")
           ]
           if len(matches) != 1:
-              raise SystemExit(f"Expected one generic x86-64 qcow2.xz asset, got {len(matches)}")
+              raise SystemExit(f"Expected one HAOS OVA qcow2.xz asset, got {len(matches)}")
           print(release["tag_name"])
           print(matches[0]["browser_download_url"])
           print(matches[0]["name"])
