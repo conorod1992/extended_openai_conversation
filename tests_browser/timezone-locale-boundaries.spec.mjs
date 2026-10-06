@@ -32,6 +32,29 @@ for (const locale of ["en-GB", "en-US", "en-IE", "fr-FR"]) {
   });
 }
 
+test.describe("browser de-DE numeric configuration", () => {
+  test.use({timezoneId: "Europe/Berlin", locale: "de-DE"});
+
+  test("a decimal-comma value is rejected instead of silently becoming an integer", async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("assistant/basics"));
+    const panel = page.locator("extended-openai-management-panel");
+    const tokens = panel.locator('[data-config="max_tokens"]');
+    await expect(tokens).toHaveAttribute("type", "number");
+    // Native number inputs sanitize localized commas to an empty value. That
+    // is an explicit rejection; a decimal must never be truncated to 7.
+    await tokens.evaluate(element => {
+      element.value = "0,7";
+      element.dispatchEvent(new Event("input", {bubbles: true}));
+      element.dispatchEvent(new Event("change", {bubbles: true}));
+    });
+    expect(await tokens.inputValue()).not.toBe("7");
+    expect(await page.evaluate(() => window.browserHarness.calls
+      .filter(call => call.section === "configuration" && call.action === "save").length)).toBe(0);
+    await expectHarnessClean(page, errors);
+  });
+});
+
 test.describe("browser Kiritimati / HA Dublin wall clock", () => {
   test.use({timezoneId: "Pacific/Kiritimati", locale: "en-GB"});
 
