@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 459,
+  "expected_total_markers": 464,
   "viewports": [
     {
       "name": "small-phone",
@@ -31,16 +31,16 @@
     }
   ],
   "files": {
-    "agent-config-editor-base.js": 60,
+    "agent-config-editor-base.js": 61,
     "agent-config-help-content.js": 1,
     "agent-config-help.js": 2,
     "agent-config-sections-capabilities.js": 1,
     "agent-config-sections-media.js": 13,
-    "agent-config-sections-primary.js": 3,
+    "agent-config-sections-primary.js": 4,
     "agent-config-tools-base.js": 75,
     "backup-transfer-shell.js": 5,
     "backup-transfer-ui.js": 4,
-    "debug-panel.js": 11,
+    "debug-panel.js": 13,
     "exposed-attributes-ui.js": 6,
     "function-add-menu.js": 4,
     "guest-mode-ui.js": 11,
@@ -58,7 +58,7 @@
     "management-memory-feature.js": 7,
     "management-navigation-search.js": 3,
     "management-overview-health-clarity.js": 1,
-    "management-panel.js": 33,
+    "management-panel.js": 34,
     "management-provider-credentials.js": 6,
     "management-renderer.js": 3,
     "management-temporary-memory.js": 18,

@@ -36,7 +36,7 @@ assert.ok(toggle >= 0, "the primary local-handling control should render");
 assert.ok(warning > toggle, "the current-state warning should follow the primary control");
 assert.ok(help > warning, "background explanation should be secondary to the active warning");
 assert.ok(dependent > help, "dependent command choices should follow the guidance");
-assert.match(html, /class="notice local-handling-warning" role="status"/);
+assert.match(html, /class="notice warning local-handling-warning" role="status"/);
 assert.match(html, /<details class="local-handling-help">/);
 assert.doesNotMatch(html, /notice local-handling-explainer/);
 assert.match(html, /JarvisV2/);

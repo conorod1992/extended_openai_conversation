@@ -47,7 +47,7 @@ test("mounted management panel recovers after HA backend disconnect and reconnec
   await panel.locator('.top-nav button[data-page="capabilities"]').click();
 
   await expect(page).toHaveURL(/\/extended-openai\/capabilities\/home-assistant$/);
-  await expect(panel.getByRole("heading", {name: "Home Assistant access", exact: true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name: "Home Assistant & local handling", exact: true})).toBeVisible();
   await expect(panel.getByRole("alert")).toHaveCount(0);
 
   const recoveredState = await page.evaluate(() => ({
