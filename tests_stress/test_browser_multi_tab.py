@@ -46,7 +46,7 @@ async def test_two_tabs_reject_a_stale_rule_writer(
         "summary",
         layer="browser + real-ha",
         tabs=2,
-        multi_tab_conflicts=7,
+        multi_tab_conflicts=8,
         conflict_surfaces=[
             "Request Rules",
             "Assistant backup restore",
@@ -55,5 +55,6 @@ async def test_two_tabs_reject_a_stale_rule_writer(
             "Knowledge",
             "Memory",
             "Guest Mode",
+            "Duplicate-tab dirty editor",
         ],
     )
