@@ -26,6 +26,11 @@ _CHILD_PHASE_ENV = "UPGRADE_ACCEPTANCE_CHILD_PHASE"
 _CONFIG_DIR_ENV = "UPGRADE_ACCEPTANCE_CONFIG_DIR"
 _STATE_FILE = "upgrade-acceptance-state.json"
 _BACKUP_FILE = "upgrade-acceptance-current-backup.json"
+_ACTIVE_MODE_ENV = "UPGRADE_ACTIVE_MODE"
+_ACTIVE_TERMINATION_ENV = "UPGRADE_ACTIVE_TERMINATION"
+_ACTIVE_CHECKPOINT_FILE = "upgrade-active-checkpoint.json"
+_ACTIVE_SHUTDOWN_FILE = "upgrade-active-shutdown.request"
+_ACTIVE_EFFECT_FILE = "upgrade-active-effects.jsonl"
 
 if not os.environ.get(_CHILD_PHASE_ENV):
     # Standalone HA child processes do not depend on the parent's test framework.
@@ -173,6 +178,58 @@ def _unwrap_sdk_client(agent: Any) -> Any:
     while hasattr(client, "_delegate"):
         client = client._delegate
     return client
+
+
+class _ActiveUpgradeWire:
+    """Hold a published-release request at a reviewed interruption checkpoint."""
+
+    def __init__(self, mode: str, config_dir: Path) -> None:
+        self.mode = mode
+        self.config_dir = config_dir
+        self.blocked = asyncio.Event()
+        self.requests: list[str] = []
+
+    async def send(self, request: Any, *args: Any, **kwargs: Any) -> Any:
+        import httpx
+
+        del args, kwargs
+        self.requests.append(request.url.path)
+        if self.mode == "after_tool" and len(self.requests) == 1:
+            content = _chat_sse_tool_call(
+                "active-upgrade-effect",
+                "execute_services",
+                {
+                    "list": [
+                        {
+                            "domain": "upgrade_probe",
+                            "service": "record",
+                            "service_data": {
+                                "entity_id": ["switch.upgrade_probe_target"],
+                                "marker": "ACTIVE_UPGRADE_EFFECT",
+                            },
+                        }
+                    ]
+                },
+            )
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=content,
+                request=request,
+            )
+        self.blocked.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise
+        raise AssertionError("active upgrade provider gate unexpectedly resumed")
+
+
+def _active_effects(config_dir: Path) -> list[dict[str, Any]]:
+    path = config_dir / _ACTIVE_EFFECT_FILE
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
 async def _exercise_populated_provider_journey(
@@ -460,7 +517,9 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
         hass, entry.entry_id
     )
     assert agent is not None
-    owner = await hass.auth.async_create_user("Release upgrade owner")
+    owner = await hass.auth.async_create_user(
+        "Release upgrade owner", group_ids=["system-admin"]
+    )
     memory_marker = "RELEASE_MEMORY_MARKER release memory marker"
     knowledge_marker = "RELEASE_KNOWLEDGE_MARKER release knowledge marker"
     assert agent._memory is not None
@@ -519,6 +578,80 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
         assert state["released_runtime"]["homeassistant"] == expected_ha
     print(f"Published release runtime: {state['released_runtime']}", flush=True)
     (config_dir / _STATE_FILE).write_text(json.dumps(state), encoding="utf-8")
+
+
+async def _released_active_phase(hass: Any, config_dir: Path) -> None:
+    """Hold genuine published-release work active until the controller stops it."""
+    from homeassistant.components import conversation
+    from homeassistant.core import Context
+
+    state = json.loads((config_dir / _STATE_FILE).read_text(encoding="utf-8"))
+    entry = hass.config_entries.async_get_entry(state["entry_id"])
+    assert entry is not None
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert agent is not None
+    mode = os.environ[_ACTIVE_MODE_ENV]
+    assert mode in {"before_tool", "after_tool"}
+
+    effect_path = config_dir / _ACTIVE_EFFECT_FILE
+
+    from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+
+    target_entity = "switch.upgrade_probe_target"
+    hass.states.async_set(target_entity, "on", {"friendly_name": "Upgrade Probe Target"})
+    async_expose_entity(hass, conversation.DOMAIN, target_entity, True)
+
+    async def record_effect(call: Any) -> None:
+        assert call.data.get("entity_id") == [target_entity]
+        payload = {"marker": call.data.get("marker"), "context_id": call.context.id}
+        with effect_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    hass.services.async_register("upgrade_probe", "record", record_effect)
+    wire = _ActiveUpgradeWire(mode, config_dir)
+    raw = _unwrap_sdk_client(agent)
+    original_send = raw._client.send
+    raw._client.send = wire.send
+    request_task = hass.async_create_task(
+        conversation.async_converse(
+            hass=hass,
+            text=(
+                "Call the requested service, then continue the answer."
+                if mode == "after_tool"
+                else "Keep this provider request active during the upgrade."
+            ),
+            conversation_id=None,
+            context=Context(user_id=state["owner_id"]),
+            language="en",
+            agent_id=entry.entry_id,
+        )
+    )
+    try:
+        async with asyncio.timeout(20):
+            await wire.blocked.wait()
+        effects = _active_effects(config_dir)
+        expected_effects = 1 if mode == "after_tool" else 0
+        assert len(effects) == expected_effects, effects
+        checkpoint = {
+            "mode": mode,
+            "provider_requests": len(wire.requests),
+            "effects": len(effects),
+            "durable_memory_marker": state["memory_marker"],
+        }
+        (config_dir / _ACTIVE_CHECKPOINT_FILE).write_text(
+            json.dumps(checkpoint, sort_keys=True), encoding="utf-8"
+        )
+
+        async with asyncio.timeout(60):
+            while not (config_dir / _ACTIVE_SHUTDOWN_FILE).exists():
+                await asyncio.sleep(0.05)
+        await hass.async_stop()
+        await asyncio.gather(request_task, return_exceptions=True)
+        assert request_task.done()
+    finally:
+        raw._client.send = original_send
 
 
 async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
@@ -668,6 +801,9 @@ async def _child_main() -> None:
     )
     assert hass is not None
     await hass.async_start()
+    if phase == "released-active":
+        await _released_active_phase(hass, config_dir)
+        return
     try:
         if phase == "released":
             await _released_phase(hass, config_dir)
@@ -727,6 +863,111 @@ def test_published_release_upgrades_to_candidate_and_survives_restart(
 
     restarted = _run_child(config_dir, "candidate-restart")
     _assert_child_ok(restarted, "candidate-restart")
+
+
+def _run_active_upgrade_case(
+    tmp_path: Path,
+    unused_tcp_port: int,
+    mode: str,
+    termination: str,
+) -> None:
+    """Run one active published-release interruption checkpoint."""
+    from_component = Path(os.environ[_FROM_COMPONENT_ENV]).resolve()
+    to_component = Path(os.environ[_TO_COMPONENT_ENV]).resolve()
+    config_dir = tmp_path / f"ha-active-{mode}-{termination}"
+    config_dir.mkdir()
+    (config_dir / "configuration.yaml").write_text(
+        "homeassistant:\n  name: Active Release Upgrade Acceptance\n"
+        f"http:\n  server_host: 127.0.0.1\n  server_port: {unused_tcp_port}\n",
+        encoding="utf-8",
+    )
+
+    _install_component(from_component, config_dir)
+    released = _run_child(config_dir, "released")
+    _assert_child_ok(released, "released")
+
+    env = os.environ.copy()
+    env[_CHILD_PHASE_ENV] = "released-active"
+    env[_CONFIG_DIR_ENV] = str(config_dir)
+    env[_ACTIVE_MODE_ENV] = mode
+    env[_ACTIVE_TERMINATION_ENV] = termination
+    interpreter = os.environ.get("UPGRADE_RELEASED_PYTHON", sys.executable)
+    active = subprocess.Popen(
+        [interpreter, str(Path(__file__).resolve())],
+        cwd=config_dir,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        checkpoint_path = config_dir / _ACTIVE_CHECKPOINT_FILE
+        for _ in range(400):
+            if checkpoint_path.exists():
+                break
+            if active.poll() is not None:
+                output, _ = active.communicate()
+                raise AssertionError(
+                    f"published-release active phase exited before checkpoint:\n{output}"
+                )
+            import time
+
+            time.sleep(0.05)
+        else:
+            active.kill()
+            output, _ = active.communicate(timeout=10)
+            raise AssertionError(f"active upgrade checkpoint not reached:\n{output}")
+
+        checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        assert checkpoint["mode"] == mode
+        expected_effects = 1 if mode == "after_tool" else 0
+        assert checkpoint["effects"] == expected_effects
+        assert len(_active_effects(config_dir)) == expected_effects
+
+        if termination == "graceful":
+            (config_dir / _ACTIVE_SHUTDOWN_FILE).write_text("stop\n", encoding="utf-8")
+            output, _ = active.communicate(timeout=40)
+            assert active.returncode == 0, output
+        else:
+            active.kill()
+            active.wait(timeout=10)
+    finally:
+        if active.poll() is None:
+            active.kill()
+            active.wait(timeout=10)
+
+    _install_component(to_component, config_dir)
+    migrated = _run_child(config_dir, "candidate-migrate")
+    _assert_child_ok(migrated, "candidate-migrate")
+    assert len(_active_effects(config_dir)) == expected_effects
+
+    restarted = _run_child(config_dir, "candidate-restart")
+    _assert_child_ok(restarted, "candidate-restart")
+    assert len(_active_effects(config_dir)) == expected_effects
+
+
+def test_active_published_release_upgrade_recovers_without_replay(
+    socket_enabled,
+    tmp_path: Path,
+    unused_tcp_port: int,
+) -> None:
+    """Exercise graceful checkpoints plus a small abrupt-termination subset."""
+    del socket_enabled
+    import pytest
+
+    if os.environ.get("UPGRADE_ACTIVE_DISRUPTION") != "1":
+        pytest.skip("active disruption checkpoints run only on the latest-release lane")
+    for mode, termination in (
+        ("before_tool", "graceful"),
+        ("after_tool", "graceful"),
+        ("before_tool", "abrupt"),
+    ):
+        _run_active_upgrade_case(
+            tmp_path,
+            unused_tcp_port,
+            mode,
+            termination,
+        )
 
 
 if __name__ == "__main__" and os.environ.get(_CHILD_PHASE_ENV):

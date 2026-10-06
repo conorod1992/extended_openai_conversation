@@ -377,6 +377,13 @@ def test_delayed_tool_survives_process_restart_and_never_replays_execution_bound
     after_execution = _read_store(config_dir)
     assert after_execution["data"]["calls"] == []
 
+    # A completely fresh third process supplies an independent replay witness:
+    # durable scheduler state is empty and no second downstream effect appears.
+    replay_probe = _run_child(config_dir, "execute")
+    _assert_child_ok(replay_probe, "execute-replay-probe")
+    assert _read_store(config_dir)["data"]["calls"] == []
+    assert len(_read_executions(config_dir)) == 1
+
 
 if __name__ == "__main__" and os.environ.get(_CHILD_PHASE):
     asyncio.run(_child_main())
