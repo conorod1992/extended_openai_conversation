@@ -112,7 +112,14 @@ function identityFor(index, meta) {
 async function expandDetails(panel) {
   await panel.evaluate((host) => {
     host.shadowRoot.querySelectorAll("details").forEach((details) => {
-      details.open = true;
+      // Floating menus cover unrelated controls; discover and audit them separately.
+      const floating = Array.from(details.children).some((child) => {
+        if (child.tagName === "SUMMARY") return false;
+        return child.matches('[role="menu"]')
+          || ["absolute", "fixed"].includes(getComputedStyle(child).position);
+      });
+      details.toggleAttribute("data-reachability-menu", floating);
+      details.open = !floating;
     });
   });
 }
@@ -131,12 +138,14 @@ async function hiddenReason(control, width) {
     if (element.closest(".subsection-nav") && viewportWidth <= 800) return "mobile-subsection-nav";
     if (element.closest(".section-selector") && viewportWidth >= 801) return "desktop-section-selector";
     if (element.matches(".local-handling-review > summary")) return "conditional-review-summary";
+    if (element.matches("ha-selector, ha-yaml-editor")
+      && !customElements.get(element.localName)) return "unregistered-ha-element";
     return null;
   }, width);
 }
 
-async function auditControls(page, panel, label) {
-  await expandDetails(panel);
+async function auditControls(page, panel, label, scopeOverride = null) {
+  if (!scopeOverride) await expandDetails(panel);
 
   const viewport = page.viewportSize();
   expect(viewport, `${label}: viewport is unavailable`).not.toBeNull();
@@ -167,11 +176,12 @@ async function auditControls(page, panel, label) {
   }
 
   const openDialogs = panel.locator("dialog[open]");
-  const scope = await openDialogs.count() ? openDialogs.last() : panel;
+  const scope = scopeOverride || (await openDialogs.count() ? openDialogs.last() : panel);
   const controls = scope.locator(CONTROL_SELECTOR);
   const count = await controls.count();
   let audited = 0;
   let intentionallyHidden = 0;
+  let unavailableHostControls = 0;
 
   for (let index = 0; index < count; index++) {
     const control = controls.nth(index);
@@ -192,10 +202,12 @@ async function auditControls(page, panel, label) {
         `${label}: ${identity} is CSS-hidden without an explicit conditional/responsive contract`,
        ).not.toBeNull();
       intentionallyHidden++;
+      if (reason === "unregistered-ha-element") unavailableHostControls++;
       continue;
     }
 
     await control.scrollIntoViewIfNeeded();
+    await control.evaluate((element) => element.scrollIntoView({block: "center", inline: "nearest", behavior: "instant"}));
     const box = await control.boundingBox();
     expect(box, `${label}: ${identity} has no rendered box`).not.toBeNull();
     expect(box.width, `${label}: ${identity} has zero width`).toBeGreaterThan(0);
@@ -223,13 +235,15 @@ async function auditControls(page, panel, label) {
       meta.tag.startsWith("ha-")
       || (meta.tag === "input" && await control.getAttribute("type") === "file");
     if (!disabled && !trialExcluded) {
-      await control.click({trial: true, timeout: 3_000});
+      await test.step(`${label}: ${identity} receives pointer events`, async () => {
+        await control.click({trial: true, timeout: 3_000});
+      });
     }
     audited++;
   }
 
   expect(audited, `${label}: no rendered controls were audited`).toBeGreaterThan(0);
-  return {discovered: count, audited, intentionallyHidden};
+  return {discovered: count, audited, intentionallyHidden, unavailableHostControls};
 }
 
 async function openSurface(panel, surface) {
@@ -257,51 +271,61 @@ async function closeSurface(panel, surface) {
   await expect(panel.locator(surface.ready), `${surface.name}: surface did not close`).not.toBeVisible();
 }
 
-test("all rendered controls remain reachable across shipped routes and viewports", async ({page}, testInfo) => {
-  test.setTimeout(360_000);
-  const diagnostics = trackPageErrors(page);
-  const evidence = [];
-
+test.describe("all rendered controls remain reachable across shipped routes and viewports", () => {
+  test.describe.configure({mode: "parallel"});
   for (const viewport of reachabilityInventory.viewports) {
-    await page.setViewportSize({width: viewport.width, height: viewport.height});
+    test(`reachable controls: ${viewport.name}`, async ({page}, testInfo) => {
+      test.setTimeout(180_000);
+      const diagnostics = trackPageErrors(page);
+      const evidence = [];
+      await page.setViewportSize({width: viewport.width, height: viewport.height});
 
-    for (const route of Object.keys(routeInventory.routes)) {
-      const extra = ROUTE_EXTRAS[route] || "";
-      await page.goto(fixtureUrl(route, extra));
-      const panel = page.locator("extended-openai-management-panel");
-      await expect(panel).toHaveCount(1);
-      await expect.poll(
-        () => panel.evaluate((host) => host._viewKey?.()),
-        {message: `${viewport.name}/${route}: route did not settle`},
-      ).toBe(route);
+      try {
+        for (const route of Object.keys(routeInventory.routes)) {
+          const extra = ROUTE_EXTRAS[route] || "";
+          await page.goto(fixtureUrl(route, extra));
+          const panel = page.locator("extended-openai-management-panel");
+          await expect(panel).toHaveCount(1);
+          await expect.poll(
+            () => panel.evaluate((host) => host._viewKey?.()),
+            {message: `${viewport.name}/${route}: route did not settle`},
+          ).toBe(route);
 
-      const base = await auditControls(page, panel, `${viewport.name}/${route}`);
-      const surfaces = [];
-      for (const surface of SURFACES[route] || []) {
-        await openSurface(panel, surface);
-        const result = await auditControls(
-          page,
-          panel,
-          `${viewport.name}/${route}/${surface.name}`,
-        );
-        surfaces.push({name: surface.name, ...result});
-        await closeSurface(panel, surface);
+          const record = {
+            viewport: viewport.name, width: viewport.width, height: viewport.height,
+            route, status: "started", surfaces: [],
+          };
+          evidence.push(record);
+          Object.assign(record, await auditControls(page, panel, `${viewport.name}/${route}`));
+          const menus = panel.locator("details[data-reachability-menu]");
+          for (let index = 0; index < await menus.count(); index++) {
+            const menu = menus.nth(index);
+            const summary = menu.locator(":scope > summary");
+            if (!await summary.isVisible()) continue;
+            await summary.click();
+            await expect(menu.locator(":scope > :not(summary)").first()).toBeVisible();
+            const result = await auditControls(page, panel, `${viewport.name}/${route}/menu-${index}`, menu);
+            record.surfaces.push({name: `menu-${index}`, ...result});
+            await summary.click();
+            await expect(menu.locator(":scope > :not(summary)").first()).not.toBeVisible();
+          }
+          for (const surface of SURFACES[route] || []) {
+            await openSurface(panel, surface);
+            const result = await auditControls(page, panel, `${viewport.name}/${route}/${surface.name}`);
+            record.surfaces.push({name: surface.name, ...result});
+            await closeSurface(panel, surface);
+          }
+          record.status = "passed";
+        }
+        await expectHarnessClean(page, diagnostics);
+      } finally {
+        const evidencePath = testInfo.outputPath("control-reachability-evidence.json");
+        fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2));
+        await testInfo.attach("control-reachability-evidence", {
+          path: evidencePath,
+          contentType: "application/json",
+        });
       }
-
-      evidence.push({
-        viewport: viewport.name,
-        width: viewport.width,
-        height: viewport.height,
-        route,
-        ...base,
-        surfaces,
-      });
-    }
+    });
   }
-
-  await expectHarnessClean(page, diagnostics);
-  await testInfo.attach("control-reachability-evidence", {
-    body: JSON.stringify(evidence, null, 2),
-    contentType: "application/json",
-  });
 });

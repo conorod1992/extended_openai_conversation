@@ -265,7 +265,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
       :host([embedded]) main{max-width:none;padding:0;min-height:0}
       [hidden]{display:none!important}
       #debug-provider-status{margin-right:auto}
-      *{box-sizing:border-box}main{max-width:1450px;margin:0 auto;padding:24px;display:grid;gap:18px}
+      *{box-sizing:border-box}main{max-width:1450px;margin:0 auto;padding:24px;display:grid;grid-template-columns:minmax(0,1fr);gap:18px}
       h1,h2,p{margin:0}.heading{display:flex;justify-content:space-between;gap:20px;align-items:end}.heading p{margin-top:6px;color:var(--secondary-text-color);line-height:1.5}.page-intro{display:grid;gap:7px;max-width:780px}.page-intro h1,.page-intro p{margin:0}.page-intro p{color:var(--secondary-text-color);line-height:1.5}.debug-intro{display:flex;align-items:end;justify-content:space-between;gap:20px}
       .card-heading{display:flex;align-items:start;justify-content:space-between;gap:24px;margin:0 0 20px}.card-heading h2{margin:0;font-size:19px;font-weight:600;line-height:1.3}.card-heading p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}.card-heading + .table-wrap{margin-top:0}.card{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:12px;padding:24px}.warning{border-left:4px solid var(--warning-color,#ff9800)}
       .warning p{margin-top:7px;line-height:1.55}.controls{display:grid;grid-template-columns:minmax(220px,1fr) auto auto auto;gap:14px;align-items:end}

@@ -7,15 +7,17 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-FRONTEND = ROOT / "custom_components" / "extended_openai_conversation_responses" / "frontend"
+FRONTEND = (
+    ROOT / "custom_components" / "extended_openai_conversation_responses" / "frontend"
+)
 INVENTORY = ROOT / "tests_stress" / "frontend_control_reachability_inventory.json"
 ROUTES = ROOT / "tests_stress" / "frontend_route_inventory.json"
 SPEC = ROOT / "tests_browser" / "control-reachability.spec.mjs"
 STRESS_CONFIG = ROOT / "playwright.stress.config.mjs"
 
 INTERACTIVE_MARKER = re.compile(
-    r'<(?:button|input|select|textarea|summary|a)\b'
-    r'|<ha-selector\b'
+    r"<(?:button|input|select|textarea|summary|a)\b"
+    r"|<ha-selector\b"
     r"|role=[\"'](?:button|switch|checkbox|link|tab)[\"']"
 )
 
@@ -76,9 +78,14 @@ def test_reachability_campaign_covers_every_shipped_route_and_viewport_class() -
         assert marker in source
 
 
-def test_reachability_campaign_is_part_of_normal_and_nightly_browser_discovery() -> None:
+def test_reachability_campaign_is_part_of_normal_and_nightly_browser_discovery() -> (
+    None
+):
     """The .spec file is normal CI-discovered and explicitly retained nightly."""
     spec = SPEC.read_text(encoding="utf-8")
     stress = STRESS_CONFIG.read_text(encoding="utf-8")
-    assert 'test("all rendered controls remain reachable across shipped routes and viewports"' in spec
+    assert (
+        'test.describe("all rendered controls remain reachable across shipped routes and viewports"'
+        in spec
+    )
     assert '"control-reachability.spec.mjs"' in stress
