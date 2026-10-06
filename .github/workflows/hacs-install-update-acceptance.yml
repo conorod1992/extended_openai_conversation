@@ -1,0 +1,136 @@
+name: Genuine HACS install and update acceptance
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: genuine-hacs-install-update-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  hacs-install-update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --ipc=host
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Trust mounted checkout for Git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Download current HACS release
+        id: hacs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_JSON="${RUNNER_TEMP}/hacs-release.json"
+          curl -fsSL             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             "https://api.github.com/repos/hacs/integration/releases/latest"             > "$RELEASE_JSON"
+
+          HACS_VERSION="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["tag_name"])' "$RELEASE_JSON")"
+          HACS_ZIP="$(python - <<'PY' "$RELEASE_JSON"
+          import json
+          import sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          for asset in data.get("assets", []):
+              if asset.get("name") == "hacs.zip":
+                  print(asset["browser_download_url"])
+                  break
+          else:
+              raise SystemExit("latest HACS release has no hacs.zip asset")
+          PY
+          )"
+
+          HACS_ROOT="${RUNNER_TEMP}/hacs-component"
+          rm -rf "$HACS_ROOT"
+          mkdir -p "$HACS_ROOT"
+          curl -fsSL             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/octet-stream"             "$HACS_ZIP"             -o "${RUNNER_TEMP}/hacs.zip"
+          unzip -q "${RUNNER_TEMP}/hacs.zip" -d "$HACS_ROOT"
+
+          test -f "$HACS_ROOT/manifest.json"
+          echo "version=$HACS_VERSION" >> "$GITHUB_OUTPUT"
+          echo "component_dir=$HACS_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Reconcile current Home Assistant test environment
+        run: |
+          set -euo pipefail
+          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
+          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
+          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
+            pip install -r requirements_test.txt
+            pip install --upgrade homeassistant
+            python ci/install_ha_dependencies.py               --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          fi
+          pip check
+          python -c "from importlib.metadata import version; print('homeassistant=' + version('homeassistant'))"
+
+      - name: Run genuine HACS release install and candidate update
+        env:
+          HACS_ACCEPTANCE_COMPONENT_DIR: ${{ steps.hacs.outputs.component_dir }}
+          HACS_ACCEPTANCE_GITHUB_TOKEN: ${{ github.token }}
+          HACS_ACCEPTANCE_RELEASE: "6.8.3"
+          HACS_ACCEPTANCE_CANDIDATE_REF: ${{ github.sha }}
+          HACS_ACCEPTANCE_CANDIDATE_ROOT: ${{ github.workspace }}
+          HACS_ACCEPTANCE_EVIDENCE_FILE: ${{ runner.temp }}/hacs-install-update-evidence.json
+        run: |
+          pytest tests_real_ha/test_hacs_install_update_acceptance.py             -v --asyncio-mode=auto --timeout=420
+
+      - name: Record workflow metadata
+        if: always()
+        env:
+          EVIDENCE_PATH: ${{ runner.temp }}/hacs-install-update-evidence.json
+          HACS_VERSION: ${{ steps.hacs.outputs.version }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["EVIDENCE_PATH"])
+          payload = (
+              json.loads(path.read_text(encoding="utf-8"))
+              if path.exists()
+              else {}
+          )
+          payload.update(
+              {
+                  "candidate_sha": os.environ["GITHUB_SHA"],
+                  "hacs_version": os.environ.get("HACS_VERSION"),
+                  "job_status": os.environ["JOB_STATUS"],
+                  "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+                  "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              }
+          )
+          path.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload exact-candidate HACS evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hacs-install-update-${{ github.sha }}
+          path: ${{ runner.temp }}/hacs-install-update-evidence.json
+          if-no-files-found: error
+          retention-days: 30
