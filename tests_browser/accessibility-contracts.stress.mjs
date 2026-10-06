@@ -57,6 +57,9 @@ test("forced colours keep representative management controls visible and operabl
         await expect(control).toBeFocused();
       }
     }
+    // Let lazy module requests finish before navigating to the next document,
+    // so a deliberate navigation is not recorded as a failed asset request.
+    await page.waitForLoadState("networkidle");
   }
   await expectHarnessClean(page, errors);
 });
