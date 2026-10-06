@@ -619,7 +619,6 @@ jobs:
           python ci/run_sanitized.py stress-artifacts/browser-cross-engine-handoff.log --
           pytest tests_real_ha/test_browser_cross_engine_handoff_acceptance.py
           -v -s --asyncio-mode=auto --timeout=600
-          --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
       - name: Summarize engine evidence
         if: always()
         env:
