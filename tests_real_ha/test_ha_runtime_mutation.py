@@ -113,8 +113,9 @@ async def test_request_rule_condition_rebinds_after_entity_delete_and_same_id_re
     cached = agent._request_rules._condition_checkers
     assert conditioned["id"] in cached
 
-    # Delete both state and registry identity. The cached checker must treat the
-    # condition as false, skip this rule entirely and allow the next match.
+    # Delete both state and registry identity. Home Assistant cannot evaluate a
+    # state condition whose entity no longer exists, so EOAI must fail the
+    # Request Rule request safely without executing either matched rule.
     hass.states.async_remove(_HELPER_ENTITY_ID)
     registry.async_remove(_HELPER_ENTITY_ID)
     await hass.async_block_till_done()
@@ -122,8 +123,8 @@ async def test_request_rule_condition_rebinds_after_entity_delete_and_same_id_re
     assert registry.async_get(_HELPER_ENTITY_ID) is None
 
     missing = await _say(hass, agent, "run mutable rule")
-    assert _speech(missing) == "fallback"
-    assert calls == ["conditioned", "fallback"]
+    assert missing.response.error_code is not None
+    assert calls == ["conditioned"]
 
     # Recreate a different registry object with the exact same visible entity ID.
     replacement = registry.async_get_or_create(
@@ -139,7 +140,7 @@ async def test_request_rule_condition_rebinds_after_entity_delete_and_same_id_re
 
     recreated = await _say(hass, agent, "run mutable rule")
     assert _speech(recreated) == "conditioned"
-    assert calls == ["conditioned", "fallback", "conditioned"]
+    assert calls == ["conditioned", "conditioned"]
 
 
 def _script(marker: str) -> dict[str, Any]:
@@ -197,12 +198,8 @@ async def test_function_tool_uses_reloaded_native_script_body_without_agent_relo
     async def record(call) -> None:
         calls.append(call.data["message"])
 
-    hass.services.async_register("runtime_mutation_probe", "record", record)
-    assert await async_setup_component(hass, "script", {"script": initial})
-    await hass.async_block_till_done()
-    assert hass.states.get(_SCRIPT_ENTITY_ID) is not None
-    async_expose_entity(hass, conversation.DOMAIN, _SCRIPT_ENTITY_ID, True)
-
+    # Load EOAI first so its recorder/history dependencies establish their normal
+    # HA listeners before this test introduces a standalone script component.
     entry_options = {
         CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
         CONF_CHAT_MODEL: "gpt-5.6",
@@ -218,6 +215,12 @@ async def test_function_tool_uses_reloaded_native_script_body_without_agent_relo
     await _setup_entry(hass, entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
+
+    hass.services.async_register("runtime_mutation_probe", "record", record)
+    assert await async_setup_component(hass, "script", {"script": initial})
+    await hass.async_block_till_done()
+    assert hass.states.get(_SCRIPT_ENTITY_ID) is not None
+    async_expose_entity(hass, conversation.DOMAIN, _SCRIPT_ENTITY_ID, True)
 
     first_wire = _install_wire(
         monkeypatch,
