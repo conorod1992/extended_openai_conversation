@@ -40,6 +40,12 @@ protocol tests; no live OpenAI calls are required. Workflow policy unit tests re
 review when migration epochs, supported SDK lanes or manifest bounds change.
 Expired/missing artifacts fail closed and require a fresh exact-source run.
 
+Official Home Assistant Container certification is architecture-bound. The amd64
+lane runs daily and the native ARM64 lane runs weekly; a manual dispatch runs
+both. Release certification requires successful amd64 and ARM64 jobs plus their
+separate exact-source evidence artifacts on the release SHA, so a recent run on
+another commit or only one architecture cannot certify a release.
+
 # Performance regression contracts
 
 The browser suite checks Overview, configuration load, and save with 1 and 50

@@ -91,23 +91,34 @@ class FakeActions:
                     for campaign in MUTATION_CAMPAIGNS
                 ]
             elif filename == "official-ha-container.yml":
-                self.jobs[index] = [
-                    {"name": "Official HA Container runtime", "conclusion": "success"}
-                ]
-                self._artifact(
-                    index,
-                    "official-ha-container-evidence",
-                    {
-                        "candidate_sha": SOURCE,
-                        "passed": True,
-                        "official_container": True,
-                        "homeassistant": "2026.9.4",
-                        "image_id": "sha256:" + "c" * 64,
-                        "phases": ["seed", "recover", "entrypoint"],
-                        "retained_entry": True,
-                        "retained_entities": True,
-                    },
-                )
+                self.jobs[index] = []
+                for arch, machine, image_arch in (
+                    ("amd64", "x86_64", "amd64"),
+                    ("arm64", "aarch64", "arm64"),
+                ):
+                    self.jobs[index].append(
+                        {
+                            "name": f"Official HA Container runtime ({arch})",
+                            "conclusion": "success",
+                        }
+                    )
+                    self._artifact(
+                        index,
+                        f"official-ha-container-{arch}-evidence",
+                        {
+                            "candidate_sha": SOURCE,
+                            "passed": True,
+                            "official_container": True,
+                            "homeassistant": "2026.9.4",
+                            "image_id": "sha256:" + "c" * 64,
+                            "machine": machine,
+                            "container_machine": machine,
+                            "image_architecture": image_arch,
+                            "phases": ["seed", "recover", "entrypoint"],
+                            "retained_entry": True,
+                            "retained_entities": True,
+                        },
+                    )
 
     def _envelope(self, campaign, *, sdk="3.10.0"):
         identity = {
@@ -379,7 +390,16 @@ def test_release_requires_every_mutation_campaign():
 
 @pytest.mark.parametrize(
     "change",
-    ["missing", "candidate", "passed", "phases", "retention", "identity"],
+    [
+        "missing",
+        "missing_lane",
+        "candidate",
+        "passed",
+        "phases",
+        "retention",
+        "identity",
+        "architecture",
+    ],
 )
 def test_official_container_evidence_is_source_bound_and_complete(change):
     actions = FakeActions()
@@ -388,6 +408,12 @@ def test_official_container_evidence_is_source_bound_and_complete(change):
     proof = actions.contents[artifact["id"]]
     if change == "missing":
         actions.artifacts[run_id].clear()
+    elif change == "missing_lane":
+        actions.jobs[run_id] = [
+            job
+            for job in actions.jobs[run_id]
+            if job["name"] != "Official HA Container runtime (arm64)"
+        ]
     elif change == "candidate":
         proof["candidate_sha"] = PARENT
     elif change == "passed":
@@ -396,6 +422,8 @@ def test_official_container_evidence_is_source_bound_and_complete(change):
         proof["phases"].remove("entrypoint")
     elif change == "retention":
         proof["retained_entry"] = False
+    elif change == "architecture":
+        proof["container_machine"] = "wrong-arch"
     else:
         proof["image_id"] = ""
     with pytest.raises(RuntimeError, match="official-ha-container"):

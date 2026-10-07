@@ -52,4 +52,5 @@ TEST_PATHS=(
   tests_real_ha/test_user_permission_acceptance.py
 )
 
-pytest "${TEST_PATHS[@]}"   -v   --asyncio-mode=auto   --timeout=60   --durations=30   --junitxml=real-ha-junit.xml   2>&1 | tee real-ha-pytest.log
+# Initialize HA's HTTP client alias before pytest autoloads plugins.
+python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' "${TEST_PATHS[@]}"   -v   --asyncio-mode=auto   --timeout=60   --durations=30   --junitxml=real-ha-junit.xml   2>&1 | tee real-ha-pytest.log

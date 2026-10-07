@@ -148,13 +148,16 @@ def test_official_container_workflow_binds_image_evidence_to_exact_candidate():
         for step in job["steps"]
         if step.get("uses", "").startswith("actions/checkout@")
     )
-    assert checkout["with"]["ref"] == "${{ github.sha }}"
+    assert checkout["with"]["ref"] == (
+        "${{ github.event.pull_request.head.sha || github.sha }}"
+    )
     runner = next(
         step
         for step in job["steps"]
         if step.get("name") == "Exercise staged EOAI inside official runtime"
     )
     assert "--candidate-sha \"$CANDIDATE_SHA\"" in runner["run"]
+    assert runner["env"]["CANDIDATE_SHA"] == checkout["with"]["ref"]
     assert "ghcr.io/home-assistant/home-assistant:" in next(
         step["run"]
         for step in job["steps"]
@@ -165,7 +168,7 @@ def test_official_container_workflow_binds_image_evidence_to_exact_candidate():
         for step in job["steps"]
         if step.get("uses", "").startswith("actions/upload-artifact@")
     )
-    assert upload["with"]["name"] == "official-ha-container-evidence"
+    assert upload["with"]["name"] == "official-ha-container-${{ matrix.arch }}-evidence"
     assert upload["with"]["if-no-files-found"] == "error"
 
 

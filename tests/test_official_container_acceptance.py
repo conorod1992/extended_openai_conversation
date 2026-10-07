@@ -1,8 +1,33 @@
 """Unit contracts for the official Home Assistant Container acceptance harness."""
 
+from subprocess import CompletedProcess
+from urllib.error import HTTPError
+
 import pytest
 
+from ci import official_container_acceptance as container
 from ci.official_container_acceptance import _validate
+
+
+def test_normal_entrypoint_accepts_authenticated_api_readiness(monkeypatch, tmp_path):
+    commands = []
+
+    def docker(*args, **kwargs):
+        commands.append(args)
+        return CompletedProcess(args, 0, "true" if args[0] == "inspect" else "", "")
+
+    def api_request(url, **kwargs):
+        # The minimal config has no frontend root page. Its explicitly enabled
+        # API must be serving, even though this probe has no access token.
+        assert url == "http://127.0.0.1:8123/api/"
+        raise HTTPError(url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(container, "_docker", docker)
+    monkeypatch.setattr(container, "urlopen", api_request)
+    container._normal_entrypoint("official-image", tmp_path, tmp_path)
+    assert (tmp_path / "entrypoint.log").exists()
+    assert commands[-2][0] == "stop"
+    assert commands[-1][0] == "rm"
 
 
 def _proof(version="2026.10.0"):
