@@ -190,7 +190,13 @@ def matrix_envelope_errors(
     return errors
 
 
-def official_container_errors(item: dict, source_sha: str) -> list[str]:
+def official_container_errors(
+    item: dict,
+    source_sha: str,
+    *,
+    expected_machine: str,
+    expected_image_arch: str,
+) -> list[str]:
     """Require a source-bound proof from the published Home Assistant image."""
     errors = []
     if item.get("candidate_sha") != source_sha:
@@ -203,6 +209,18 @@ def official_container_errors(item: dict, source_sha: str) -> list[str]:
         errors.append("Official HA Container restart did not preserve runtime identity")
     if not item.get("homeassistant") or not item.get("image_id"):
         errors.append("Official HA Container environment identity is incomplete")
+    if item.get("machine") != expected_machine:
+        errors.append(
+            f"Official HA Container runner machine {item.get('machine')} != {expected_machine}"
+        )
+    if item.get("container_machine") != expected_machine:
+        errors.append(
+            f"Official HA Container runtime machine {item.get('container_machine')} != {expected_machine}"
+        )
+    if item.get("image_architecture") != expected_image_arch:
+        errors.append(
+            f"Official HA Container image architecture {item.get('image_architecture')} != {expected_image_arch}"
+        )
     return errors
 
 
@@ -387,21 +405,36 @@ def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
                                 + ", ".join(sorted(missing_jobs))
                             )
                     elif filename == "official-ha-container.yml":
-                        selected = [
-                            item
-                            for item in artifacts
-                            if item["name"] == "official-ha-container-evidence"
-                        ]
-                        if len(selected) != 1:
-                            errors = [
-                                "Exactly one official HA Container evidence artifact is required"
+                        errors = []
+                        architectures = {
+                            "amd64": ("x86_64", "amd64"),
+                            "arm64": ("aarch64", "arm64"),
+                        }
+                        for arch, (machine, image_arch) in architectures.items():
+                            job_name = f"Official HA Container runtime ({arch})"
+                            if job_name not in successful:
+                                errors.append(
+                                    f"Required successful architecture lane absent: {job_name}"
+                                )
+                            selected = [
+                                item
+                                for item in artifacts
+                                if item["name"] == f"official-ha-container-{arch}-evidence"
                             ]
-                        else:
-                            errors = official_container_errors(
-                                actions.artifact_json(
-                                    selected[0], "certification.json"
-                                ),
-                                source_sha,
+                            if len(selected) != 1:
+                                errors.append(
+                                    f"Exactly one official HA Container {arch} evidence artifact is required"
+                                )
+                                continue
+                            errors.extend(
+                                official_container_errors(
+                                    actions.artifact_json(
+                                        selected[0], "certification.json"
+                                    ),
+                                    source_sha,
+                                    expected_machine=machine,
+                                    expected_image_arch=image_arch,
+                                )
                             )
                     else:
                         kind = (
