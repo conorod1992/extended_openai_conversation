@@ -86,6 +86,9 @@ def test_ios_e2e_patcher_extends_the_upstream_onboarding_test():
     assert "verifyExtendedOpenAIAfterBackgroundResume()" in patcher
     assert "Companion app iOS saved title" in patcher
     assert "XCUIDevice.shared.press(.home)" in patcher
+    assert '"keyboard Done button"' in patcher
+    assert 'app.keyboards.firstMatch.waitForNonExistence' in patcher
+    assert patcher.index('keyboardDone.tap()') < patcher.index('tapWebElement(labelContaining: "save changes"')
     assert "-collect-test-diagnostics never" in patcher
     assert 'until: settings' in patcher
     assert "sidebarScrolls < 6" in patcher
