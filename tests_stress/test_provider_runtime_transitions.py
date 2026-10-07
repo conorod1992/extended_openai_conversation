@@ -333,3 +333,87 @@ async def test_first_time_config_flow_reaches_loaded_agent_and_first_assist_requ
         default_subentries=2,
         first_assist_requests=1,
     )
+
+
+@pytest.mark.asyncio
+async def test_parent_credential_rotation_isolated_from_sibling_parent_opening_client(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    stress_trace: list[dict],
+) -> None:
+    """A credential reload for one parent cannot contaminate another parent's client setup."""
+    import asyncio
+
+    import custom_components.extended_openai_conversation_responses as integration_module
+    from custom_components.extended_openai_conversation_responses import (
+        provider_credentials as credential_module,
+    )
+
+    parent_a = _make_entry(
+        "Credential race parent A",
+        data={
+            CONF_API_KEY: "parent-a-old",
+            CONF_SKIP_AUTHENTICATION: True,
+        },
+    )
+    await _setup_entry(hass, parent_a)
+    original_runtime_a = parent_a.runtime_data
+
+    parent_b = _make_entry(
+        "Credential race parent B",
+        data={
+            CONF_API_KEY: "parent-b-key",
+            CONF_SKIP_AUTHENTICATION: True,
+        },
+    )
+
+    b_started = asyncio.Event()
+    release_b = asyncio.Event()
+    observed_setup_keys: list[str] = []
+    observed_rotation_keys: list[str] = []
+
+    async def setup_client(**kwargs):
+        key = kwargs["api_key"]
+        observed_setup_keys.append(key)
+        if key == "parent-b-key":
+            b_started.set()
+            await release_b.wait()
+        return AsyncMock(api_key=key)
+
+    async def validate_rotation(**kwargs):
+        observed_rotation_keys.append(kwargs["api_key"])
+        return AsyncMock()
+
+    monkeypatch.setattr(integration_module, "get_authenticated_client", setup_client)
+    monkeypatch.setattr(
+        credential_module, "get_authenticated_client", validate_rotation
+    )
+
+    b_setup = asyncio.create_task(_setup_entry(hass, parent_b))
+    try:
+        await asyncio.wait_for(b_started.wait(), timeout=10)
+        rotated = await async_replace_api_key(hass, parent_a, "parent-a-new")
+        assert rotated["updated"] is True
+        assert parent_a.data[CONF_API_KEY] == "parent-a-new"
+        assert parent_b.data[CONF_API_KEY] == "parent-b-key"
+    finally:
+        release_b.set()
+        await asyncio.wait_for(b_setup, timeout=20)
+    await hass.async_block_till_done()
+
+    assert parent_b.state is ConfigEntryState.LOADED
+    assert observed_rotation_keys == ["parent-a-new"]
+    assert "parent-b-key" in observed_setup_keys
+    # Parent A legitimately reloads its own client after credential rotation.
+    assert "parent-a-new" in observed_setup_keys
+    assert parent_a.runtime_data.api_key == "parent-a-new"
+    assert parent_b.runtime_data.api_key == "parent-b-key"
+    assert parent_b.runtime_data is not parent_a.runtime_data
+    assert parent_b.runtime_data is not original_runtime_a
+
+    record(
+        stress_trace,
+        "summary",
+        parent_credential_rotation_during_peer_setup=1,
+        cross_parent_credential_leaks=0,
+    )

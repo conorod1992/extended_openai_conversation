@@ -39,7 +39,7 @@ _HOP_BY_HOP = {
 }
 
 
-def _server_tls(tmp_path: Path) -> ssl.SSLContext:
+def _certificate_files(tmp_path: Path, stem: str) -> tuple[Path, Path]:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name(
         [x509.NameAttribute(NameOID.COMMON_NAME, "EOAI HTTPS acceptance")]
@@ -64,8 +64,8 @@ def _server_tls(tmp_path: Path) -> ssl.SSLContext:
         )
         .sign(key, hashes.SHA256())
     )
-    cert = tmp_path / "proxy-cert.pem"
-    private = tmp_path / "proxy-key.pem"
+    cert = tmp_path / f"{stem}-cert.pem"
+    private = tmp_path / f"{stem}-key.pem"
     cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
     private.write_bytes(
         key.private_bytes(
@@ -74,6 +74,11 @@ def _server_tls(tmp_path: Path) -> ssl.SSLContext:
             serialization.NoEncryption(),
         )
     )
+    return cert, private
+
+
+def _server_tls(tmp_path: Path) -> ssl.SSLContext:
+    cert, private = _certificate_files(tmp_path, "proxy")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, private)
     return context
@@ -88,7 +93,12 @@ def _headers(source, *, request: bool) -> dict[str, str]:
     }
 
 
-async def _start_proxy(upstream: str, tmp_path: Path):
+async def _start_proxy(
+    upstream: str,
+    tmp_path: Path,
+    *,
+    tls_context: ssl.SSLContext | None = None,
+):
     session = ClientSession(auto_decompress=False)
     app = web.Application()
 
@@ -167,7 +177,7 @@ async def _start_proxy(upstream: str, tmp_path: Path):
         runner,
         "127.0.0.1",
         0,
-        ssl_context=_server_tls(tmp_path),
+        ssl_context=tls_context or _server_tls(tmp_path),
     )
     await site.start()
     assert site._server is not None
@@ -197,6 +207,56 @@ async def test_management_panel_survives_real_https_reverse_proxy(
                 "EOAI_HTTPS_PROXY": "1",
             },
             failure_label="Genuine HA HTTPS reverse-proxy acceptance failed",
+        )
+    finally:
+        await session.close()
+        await runner.cleanup()
+
+
+async def test_management_panel_survives_https_certificate_rotation_in_one_ha_lifetime(
+    real_ha_shell,
+    tmp_path: Path,
+) -> None:
+    """Replace the HA-facing TLS certificate without restarting the HA backend."""
+    shell = real_ha_shell
+    upstream = shell["env"]["REAL_HA_FRONTEND_URL"]
+    first_cert, first_key = _certificate_files(tmp_path, "rotation-first")
+    second_cert, second_key = _certificate_files(tmp_path, "rotation-second")
+    tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls_context.load_cert_chain(first_cert, first_key)
+
+    runner, session, proxy = await _start_proxy(
+        upstream,
+        tmp_path,
+        tls_context=tls_context,
+    )
+    auth = json.loads(shell["env"]["REAL_HA_FRONTEND_AUTH"])
+    auth["hassUrl"] = proxy
+    environment = {
+        **shell["env"],
+        "REAL_HA_FRONTEND_URL": proxy,
+        "REAL_HA_FRONTEND_AUTH": json.dumps(auth),
+        "EOAI_HTTPS_PROXY": "1",
+    }
+    try:
+        await _run_playwright(
+            repo_root=Path(__file__).resolve().parents[1],
+            spec="tests_browser/real-ha-https-proxy.spec.mjs",
+            config="playwright.real-ha-https-proxy.config.mjs",
+            env={**environment, "PLAYWRIGHT_ARTIFACT_SUFFIX": "tls-before-rotation"},
+            failure_label="Genuine HA HTTPS pre-rotation acceptance failed",
+        )
+
+        # OpenSSL applies the new chain to subsequent handshakes on this same
+        # listening SSLContext; neither HA nor the reverse proxy is restarted.
+        tls_context.load_cert_chain(second_cert, second_key)
+
+        await _run_playwright(
+            repo_root=Path(__file__).resolve().parents[1],
+            spec="tests_browser/real-ha-https-proxy.spec.mjs",
+            config="playwright.real-ha-https-proxy.config.mjs",
+            env={**environment, "PLAYWRIGHT_ARTIFACT_SUFFIX": "tls-after-rotation"},
+            failure_label="Genuine HA HTTPS post-rotation acceptance failed",
         )
     finally:
         await session.close()
