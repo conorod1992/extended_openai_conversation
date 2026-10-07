@@ -21,6 +21,7 @@ def test_full_validation_dispatches_both_companion_apps_and_appliance_lanes():
     assert {
         "android-companion-app.yml",
         "ios-companion-app.yml",
+        "frontend-latency-diagnostics.yml",
         "haos-supervisor-vm-acceptance.yml",
         "ha-version-upgrade-acceptance.yml",
         "enhanced-stress.yml",

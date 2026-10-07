@@ -606,9 +606,14 @@ def _wait_supervisor_job(ssh: HostSSH, job_id: str, *, timeout: float = 900) -> 
             # transport lives in that container, so resume polling once Core
             # returns; every other transport error remains a hard failure.
             message = str(err)
-            if "Error response from daemon: container " not in message or not (
-                " is not running" in message or " is restarting" in message
-            ):
+            core_unavailable = (
+                "Error response from daemon: No such container: homeassistant" in message
+                or (
+                    "Error response from daemon: container " in message
+                    and (" is not running" in message or " is restarting" in message)
+                )
+            )
+            if not core_unavailable:
                 raise
             time.sleep(5)
             continue

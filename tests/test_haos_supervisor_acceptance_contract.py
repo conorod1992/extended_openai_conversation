@@ -18,11 +18,19 @@ def _driver():
     return driver
 
 
-def test_restore_job_waits_through_core_shutdown(monkeypatch):
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Error response from daemon: container abc is not running",
+        "Error response from daemon: container abc is restarting",
+        "Error response from daemon: No such container: homeassistant",
+    ],
+)
+def test_restore_job_waits_through_core_shutdown(monkeypatch, message):
     driver = _driver()
     api = Mock(
         side_effect=[
-            AssertionError("Error response from daemon: container abc is not running"),
+            AssertionError(message),
             {"result": "ok", "data": {"done": False}},
             {"result": "ok", "data": {"done": True, "errors": []}},
         ]
@@ -39,6 +47,7 @@ def test_restore_job_waits_through_core_shutdown(monkeypatch):
     "failure",
     [
         AssertionError("SSH permission denied"),
+        AssertionError("Error response from daemon: No such container: unrelated"),
         {"result": "ok", "data": {"done": True, "errors": ["restore failed"]}},
     ],
 )

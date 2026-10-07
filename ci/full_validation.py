@@ -18,7 +18,7 @@ from urllib.request import Request, urlopen
 
 # These workflows own their environments and test selection. Keep this list in
 # sync with test-bearing workflow_dispatch workflows; live API acceptance,
-# release publishing, image publishing, diagnostics, and maintenance are
+# release publishing, image publishing, informational diagnostics, and maintenance are
 # intentionally separate from this validation run.
 TEST_WORKFLOWS = (
     ("ci.yml", {}),
@@ -37,6 +37,7 @@ TEST_WORKFLOWS = (
     ("ha-browser-compatibility.yml", {}),
     ("android-companion-app.yml", {}),
     ("ios-companion-app.yml", {}),
+    ("frontend-latency-diagnostics.yml", {"runs": "3", "diagnostic_picker": "false"}),
     ("haos-supervisor-vm-acceptance.yml", {}),
     ("official-ha-container.yml", {}),
     ("resource-constrained.yml", {}),
