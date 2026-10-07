@@ -17,6 +17,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 )
 from tests_real_ha.test_cross_feature_acceptance import _rule
 from tests_stress.conftest import record
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
 class _MemoryStorage:
@@ -91,15 +92,15 @@ async def test_dirty_memory_corpus_preserves_valid_and_orphaned_records() -> Non
                 _memory("orphan", "deleted-user-id", "Old owner durable preference"),
                 _memory("valid", "current-user", "Duplicate ID must lose"),
                 _memory(
-                    "duplicate-key",
-                    "current-user",
-                    "Duplicate key must lose",
-                    key="home.units",
-                ),
-                _memory(
                     "first-key",
                     "current-user",
                     "Canonical keyed preference",
+                    key="home.units",
+                ),
+                _memory(
+                    "duplicate-key",
+                    "current-user",
+                    "Duplicate key must lose",
                     key="home.units",
                 ),
                 {"memory_id": "malformed", "content": 123},
@@ -112,11 +113,11 @@ async def test_dirty_memory_corpus_preserves_valid_and_orphaned_records() -> Non
 
     current = await memory.async_list("current-user", limit=100)
     orphan = await memory.async_list("deleted-user-id", limit=100)
-    assert {item.memory_id for item in current} == {"valid", "duplicate-key"}
+    assert {item.memory_id for item in current} == {"valid", "first-key"}
     assert [item.memory_id for item in orphan] == ["orphan"]
     assert storage.saved, "dirty memory state should be rewritten to a canonical form"
     healed = storage.saved[-1]["memories"]
-    assert {item["memory_id"] for item in healed} == {"valid", "orphan", "duplicate-key"}
+    assert {item["memory_id"] for item in healed} == {"valid", "orphan", "first-key"}
     assert not any(
         key in item for item in healed for key in ("importance", "last_confirmed_at", "embedding")
     )
