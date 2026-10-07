@@ -20,18 +20,26 @@ MARKER = """    // MARK: - Helpers
 
 HELPERS = r'''
     private func openExtendedOpenAIAndEditAgent() {
-        let extendedOpenAI = webElement(labelContaining: "extended openai")
+        let settings = webElement(labelContaining: "settings")
         tapWebElement(
             labelContaining: "sidebar toggle",
-            until: extendedOpenAI,
+            until: settings,
             timeout: Timeout.frontend,
             "frontend sidebar"
         )
-        tapWebElement(
-            labelContaining: "extended openai",
-            timeout: Timeout.frontend,
-            "Extended OpenAI sidebar entry"
-        )
+
+        // A custom panel can be below the visible portion of the mobile drawer.
+        // Prove the drawer itself opened using the same Settings target as the
+        // upstream E2E test, then scroll the drawer until EOAI is hittable.
+        let extendedOpenAI = webElement(labelContaining: "extended openai")
+        wait(for: extendedOpenAI, timeout: Timeout.frontend, "Extended OpenAI sidebar entry")
+        var sidebarScrolls = 0
+        while !extendedOpenAI.isHittable, sidebarScrolls < 6 {
+            app.webViews.firstMatch.swipeUp()
+            sidebarScrolls += 1
+        }
+        XCTAssertTrue(extendedOpenAI.isHittable, "Extended OpenAI sidebar entry stayed off-screen")
+        extendedOpenAI.tap()
 
         let webView = app.webViews.firstMatch
         let heading = webView.descendants(matching: .any)
@@ -89,9 +97,24 @@ def main() -> None:
     text = text.replace(MARKER, HELPERS + MARKER, 1)
     target.write_text(text, encoding="utf-8")
 
+    testing_lane = args.checkout / "fastlane/lanes/testing.rb"
+    lane_text = testing_lane.read_text(encoding="utf-8")
+    e2e_anchor = """    result_bundle: true,
+    skip_package_dependencies_resolution: true,
+"""
+    e2e_replacement = """    result_bundle: true,
+    collect_test_diagnostics: "never",
+    skip_package_dependencies_resolution: true,
+"""
+    if e2e_anchor not in lane_text:
+        raise SystemExit("Pinned iOS E2E Fastlane lane no longer has the expected run_tests options")
+    lane_text = lane_text.replace(e2e_anchor, e2e_replacement, 1)
+    testing_lane.write_text(lane_text, encoding="utf-8")
+
     assert text.count("openExtendedOpenAIAndEditAgent()") == 2
     assert "Companion app iOS saved title" in text
-    print(f"Patched {target}")
+    assert 'collect_test_diagnostics: "never"' in lane_text
+    print(f"Patched {target} and {testing_lane}")
 
 
 if __name__ == "__main__":
