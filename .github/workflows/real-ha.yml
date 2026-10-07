@@ -156,11 +156,12 @@ jobs:
             python -m pip install 'pytest-homeassistant-custom-component==0.13.317'
             python -m pip install --pre "homeassistant==$MINIMUM"
           elif [[ "$HA_POINT" == stable ]]; then
-            if [ -n "${{ needs.prepare.outputs.stable-ha-version }}" ]; then
-              python -m pip install --upgrade "homeassistant==${{ needs.prepare.outputs.stable-ha-version }}" pytest-homeassistant-custom-component
-            else
-              python -m pip install --upgrade homeassistant pytest-homeassistant-custom-component
+            VERSION="${{ needs.prepare.outputs.stable-ha-version }}"
+            if [ -z "$VERSION" ]; then
+              VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json"))["info"]["version"])')"
             fi
+            PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
+            python ci/install_ha_test_plugin.py "$VERSION" "$PLUGIN_VERSION"
           else
             python -m pip install "git+https://github.com/home-assistant/core.git@$HA_DEV_SHA"
           fi
