@@ -22,12 +22,15 @@ TEST_PATHS=(
   tests_real_ha/test_exposed_attribute_catalog_acceptance.py
   tests_real_ha/test_frontend_asset_registration.py
   tests_real_ha/test_ha_llm_tool_acceptance.py
+  tests_real_ha/test_ha_runtime_mutation.py
   tests_real_ha/test_intercom_voice_acceptance.py
   tests_real_ha/test_management_backend_acceptance.py
   tests_real_ha/test_deleted_user_memory_edit.py
   tests_real_ha/test_native_indirect_mixed_exposure.py
   tests_real_ha/test_native_indirect_target_resolution.py
   tests_real_ha/test_native_multi_indirect_target_union.py
+  tests_real_ha/test_native_automation_acceptance.py
+  tests_real_ha/test_native_recorder_acceptance.py
   tests_real_ha/test_native_registry_state_disagreement.py
   tests_real_ha/test_native_service_disappearance.py
   tests_real_ha/test_native_service_schema_rejection.py
@@ -37,13 +40,17 @@ TEST_PATHS=(
   tests_real_ha/test_persistent_memory_runtime_recovery.py
   tests_real_ha/test_provider_input_history.py
   tests_real_ha/test_provider_boundary_contracts.py
+  tests_real_ha/test_request_rules_script_semantics.py
   tests_real_ha/test_runtime_reauthentication.py
   tests_real_ha/test_security_routing_boundaries.py
   tests_real_ha/test_state_transition_contracts.py
+  tests_real_ha/test_template_shutdown_acceptance.py
   tests_real_ha/test_service_registry_acceptance.py
   tests_real_ha/test_script_function_variables.py
   tests_real_ha/test_usage_period_statistics.py
+  tests_real_ha/test_user_ownership_privacy.py
   tests_real_ha/test_user_permission_acceptance.py
 )
 
-pytest "${TEST_PATHS[@]}"   -v   --asyncio-mode=auto   --timeout=60   --durations=30   --junitxml=real-ha-junit.xml   2>&1 | tee real-ha-pytest.log
+# Initialize HA's HTTP client alias before pytest autoloads plugins.
+python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' "${TEST_PATHS[@]}"   -v   --asyncio-mode=auto   --timeout=60   --durations=30   --junitxml=real-ha-junit.xml   2>&1 | tee real-ha-pytest.log

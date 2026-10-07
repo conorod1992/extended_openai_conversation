@@ -3,7 +3,14 @@ name: Official Home Assistant Container acceptance
 on:
   schedule:
     - cron: "7 6 * * *"
+    - cron: "17 6 * * 0"
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/official-ha-container.yml"
+      - "ci/official_container_acceptance.py"
+      - "ci/isolated_ha_runtime.py"
+      - "custom_components/extended_openai_conversation_responses/**"
 
 permissions:
   contents: read
@@ -14,44 +21,88 @@ concurrency:
 
 jobs:
   official-container:
-    name: Official HA Container runtime
-    runs-on: ubuntu-latest
+    name: Official HA Container runtime (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include: >-
+          ${{ fromJSON(
+            github.event_name == 'schedule' && github.event.schedule == '7 6 * * *'
+            && '[{"arch":"amd64","runner":"ubuntu-latest","machine":"x86_64","image_arch":"amd64"}]'
+            || '[{"arch":"amd64","runner":"ubuntu-latest","machine":"x86_64","image_arch":"amd64"},{"arch":"arm64","runner":"ubuntu-24.04-arm","machine":"aarch64","image_arch":"arm64"}]'
+          ) }}
+    if: >
+      github.event_name != 'pull_request' || github.event.pull_request.number == 1137
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Prove runner architecture
+        env:
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+        run: |
+          set -euo pipefail
+          ACTUAL="$(uname -m)"
+          echo "Runner machine: $ACTUAL"
+          test "$ACTUAL" = "$EXPECTED_MACHINE"
 
       - name: Resolve stable Home Assistant image
         id: ha
+        env:
+          EXPECTED_IMAGE_ARCH: ${{ matrix.image_arch }}
         run: |
           set -euo pipefail
           VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
           [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]
           IMAGE="ghcr.io/home-assistant/home-assistant:$VERSION"
           docker pull "$IMAGE"
+          IMAGE_ARCH="$(docker image inspect "$IMAGE" --format '{{.Architecture}}')"
+          test "$IMAGE_ARCH" = "$EXPECTED_IMAGE_ARCH"
           INSTALLED="$(docker run --rm "$IMAGE" python -c 'from importlib.metadata import version; print(version("homeassistant"))')"
+          CONTAINER_MACHINE="$(docker run --rm "$IMAGE" python -c 'import platform; print(platform.machine())')"
           test "$INSTALLED" = "$VERSION"
+          test "$CONTAINER_MACHINE" = "${{ matrix.machine }}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          echo "Official Home Assistant image: $IMAGE" >> "$GITHUB_STEP_SUMMARY"
+          echo "image_arch=$IMAGE_ARCH" >> "$GITHUB_OUTPUT"
+          echo "container_machine=$CONTAINER_MACHINE" >> "$GITHUB_OUTPUT"
+          {
+            echo "Official Home Assistant image: $IMAGE"
+            echo "Runner architecture: $(uname -m)"
+            echo "Image architecture: $IMAGE_ARCH"
+            echo "Container machine: $CONTAINER_MACHINE"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Exercise staged EOAI inside official runtime
         env:
           IMAGE: ${{ steps.ha.outputs.image }}
           HA_VERSION: ${{ steps.ha.outputs.version }}
-          CANDIDATE_SHA: ${{ github.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+          EXPECTED_IMAGE_ARCH: ${{ matrix.image_arch }}
         run: |
           set -euo pipefail
-          python ci/official_container_acceptance.py             --image "$IMAGE"             --expected-ha-version "$HA_VERSION"             --component custom_components/extended_openai_conversation_responses             --work "$RUNNER_TEMP/official-ha-container"             --candidate-sha "$CANDIDATE_SHA"
+          python ci/official_container_acceptance.py \
+            --image "$IMAGE" \
+            --expected-ha-version "$HA_VERSION" \
+            --expected-machine "$EXPECTED_MACHINE" \
+            --expected-image-arch "$EXPECTED_IMAGE_ARCH" \
+            --component custom_components/extended_openai_conversation_responses \
+            --work "$RUNNER_TEMP/official-ha-container" \
+            --candidate-sha "$CANDIDATE_SHA"
 
-      - name: Require exact candidate evidence
+      - name: Require exact candidate and architecture evidence
         env:
-          CANDIDATE_SHA: ${{ github.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           HA_VERSION: ${{ steps.ha.outputs.version }}
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+          EXPECTED_IMAGE_ARCH: ${{ matrix.image_arch }}
         run: |
-          python - "$RUNNER_TEMP/official-ha-container/evidence/certification.json" "$CANDIDATE_SHA" "$HA_VERSION" <<'PY'
+          python - "$RUNNER_TEMP/official-ha-container/evidence/certification.json" "$CANDIDATE_SHA" "$HA_VERSION" "$EXPECTED_MACHINE" "$EXPECTED_IMAGE_ARCH" <<'PY'
           import json
           import sys
           evidence = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -59,6 +110,9 @@ jobs:
           assert evidence["official_container"] is True
           assert evidence["candidate_sha"] == sys.argv[2]
           assert evidence["homeassistant"] == sys.argv[3]
+          assert evidence["machine"] == sys.argv[4]
+          assert evidence["container_machine"] == sys.argv[4]
+          assert evidence["image_architecture"] == sys.argv[5]
           assert set(evidence["phases"]) == {"seed", "recover", "entrypoint"}
           assert evidence["retained_entry"] and evidence["retained_entities"]
           PY
@@ -67,7 +121,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: official-ha-container-evidence
+          name: official-ha-container-${{ matrix.arch }}-evidence
           path: ${{ runner.temp }}/official-ha-container/evidence/
           if-no-files-found: error
           retention-days: 14
