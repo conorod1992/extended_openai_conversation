@@ -126,6 +126,7 @@ jobs:
       - name: Install the existing Playwright runner and selected browser
         run: |
           npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+          bash ci/prepare_playwright_host.sh
           npx playwright install --with-deps "${REAL_HA_BROWSER_PROFILE%-mobile}"
       - name: Run one genuine native shell compatibility journey
         env:
@@ -195,6 +196,7 @@ jobs:
       - name: Install Playwright and all handoff engines
         run: |
           npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
+          bash ci/prepare_playwright_host.sh
           npx playwright install --with-deps chromium firefox webkit
       - name: Run same-backend cross-engine round trips
         env:

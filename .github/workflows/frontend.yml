@@ -121,6 +121,9 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-chromium-1.63.0
 
+      - name: Prepare reliable Ubuntu package acquisition
+        run: bash ci/prepare_playwright_host.sh
+
       - name: Install Chromium and system dependencies
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
