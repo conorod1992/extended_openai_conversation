@@ -49,7 +49,7 @@ def test_home_assistant_semantic_contracts_used_by_eoai() -> None:
         (ConfigEntries.async_unload, ("entry_id",)),
         (ConfigEntries.async_reload, ("entry_id",)),
         (ConfigEntries.async_update_entry, ("entry",)),
-        (ConfigEntries.async_update_subentry, ("config_entry", "subentry")),
+        (ConfigEntries.async_update_subentry, ("entry", "subentry")),
     ):
         _require_parameters(method, *required)
 
@@ -81,4 +81,4 @@ def test_store_and_websocket_registration_contract_shapes() -> None:
     """Protect the small signature details most likely to break silently."""
     _require_parameters(Store.__init__, "hass", "version", "key")
     _require_parameters(Store.async_save, "data")
-    _require_parameters(websocket_api.async_register_command, "hass", "command")
+    _require_parameters(websocket_api.async_register_command, "hass", "command_or_handler")
