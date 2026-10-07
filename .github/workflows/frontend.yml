@@ -32,7 +32,7 @@ jobs:
         id: changes
         shell: bash
         run: |
-          python -m unittest ci.test_classify_frontend_changes ci.test_route_acceptance -v
+          python -m unittest ci.test_classify_frontend_changes ci.test_route_acceptance ci.test_frontend_quality_gate -v
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
