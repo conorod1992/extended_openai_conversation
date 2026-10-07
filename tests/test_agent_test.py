@@ -95,7 +95,7 @@ async def test_successful_agent_test() -> None:
         "API mode",
         "Function calling",
         "Web Search",
-        "Persistent memory",
+        "Long-term memory",
         "Exposed entities",
         "Skills",
         "Configuration",
@@ -244,7 +244,7 @@ async def test_memory_unavailable_is_reported() -> None:
     ):
         result = await async_test_agent(hass, entry, subentry)
 
-    memory = next(check for check in result.checks if check.name == "Persistent memory")
+    memory = next(check for check in result.checks if check.name == "Long-term memory")
     assert result.status == "Failed"
     assert memory.status == "Failed"
 
@@ -555,8 +555,8 @@ async def test_agent_test_reports_skill_and_memory_exceptions(
 
     checks = _coverage_checks(result)
     assert checks["Skills"].message == "groups broken"
-    assert checks["Persistent memory"].status == "Failed"
-    assert checks["Persistent memory"].message == "RuntimeError"
+    assert checks["Long-term memory"].status == "Failed"
+    assert checks["Long-term memory"].message == "RuntimeError"
 
 
 @pytest.mark.asyncio
@@ -930,7 +930,7 @@ async def test_successful_memory_check_reports_stored_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result, _usage = await _residual_run_agent(monkeypatch, memory_is_enabled=True)
-    memory = next(check for check in result.checks if check.name == "Persistent memory")
+    memory = next(check for check in result.checks if check.name == "Long-term memory")
 
     assert memory.status == "Passed"
     assert memory.message == "Available (4 stored)"
