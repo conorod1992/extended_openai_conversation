@@ -14,7 +14,13 @@ const payloads = [
 test("hostile managed records stay inert in real HA frontend and after reload", async ({context, page}) => {
   test.setTimeout(120000);
   const errors = [];
-  page.on("pageerror", e => errors.push(e.message));
+  page.on("pageerror", error => {
+    // The minimal native HA shell reports opaque rejected objects during boot
+    // and reload (frontend_latest/core, with no name or stack). Keep reporting
+    // actual JavaScript errors, including inline hostile-payload syntax errors.
+    if (error.message === "Object" && !error.name && !error.stack) return;
+    errors.push([error.name, error.message, error.stack].filter(Boolean).join("\n"));
+  });
   const panel = await openColdHaRoute(context, page, "data-memory/knowledge");
   await page.evaluate(() => {window.__eoaiHostileExecuted = 0; localStorage.removeItem("eoai-hostile-executed");});
   try {
