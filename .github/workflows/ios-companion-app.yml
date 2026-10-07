@@ -147,20 +147,6 @@ jobs:
             username:"$E2E_HOME_ASSISTANT_USERNAME" \
             password:"$E2E_HOME_ASSISTANT_PASSWORD"
 
-      - name: Save Bundler cache
-        if: always() && steps.ios-gems-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.IOS_DIR }}/vendor/bundle
-          key: ios-e2e-gems-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-ruby-4.0.7-xcode27
-
-      - name: Save iOS DerivedData cache
-        if: always() && steps.ios-deriveddata-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/Library/Developer/Xcode/DerivedData
-          key: ios-e2e-deriveddata-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-xcode27
-
       - name: Record source-bound iOS Companion evidence
         if: success()
         env:
@@ -249,3 +235,17 @@ jobs:
             ~/Library/Logs/scan/
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Save Bundler cache
+        if: always() && steps.ios-gems-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.IOS_DIR }}/vendor/bundle
+          key: ios-e2e-gems-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-ruby-4.0.7-xcode27
+
+      - name: Save iOS DerivedData cache
+        if: always() && steps.ios-deriveddata-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ios-e2e-deriveddata-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-xcode27

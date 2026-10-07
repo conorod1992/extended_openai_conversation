@@ -86,8 +86,21 @@ HELPERS = r'''
             XCTFail("Keyboard never came up for the EOAI Agent name")
             return
         }
-        nameField.typeKey("a", modifierFlags: .command)
+        // This simulator's command-A moves the caret to the beginning without
+        // selecting the WebKit value. Tap beyond the fixture's visible text,
+        // then delete the actual existing characters through the native input.
+        let existingName = nameField.value as? String ?? ""
+        nameField.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        nameField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existingName.count))
+        guard nameField.value as? String == "" else {
+            XCTFail("EOAI Agent name was not cleared: \(String(describing: nameField.value))")
+            return
+        }
         nameField.typeText("Companion app iOS saved title")
+        guard nameField.value as? String == "Companion app iOS saved title" else {
+            XCTFail("EOAI Agent name did not match before Save: \(String(describing: nameField.value))")
+            return
+        }
 
         // WebKit can report a covered Save button as hittable while the software
         // keyboard is up. Use the keyboard accessory's Done control first.
