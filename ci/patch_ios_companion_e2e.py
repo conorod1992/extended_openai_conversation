@@ -99,6 +99,9 @@ def main() -> None:
 
     testing_lane = args.checkout / "fastlane/lanes/testing.rb"
     lane_text = testing_lane.read_text(encoding="utf-8")
+    earlier_lanes, lane_marker, e2e_lane = lane_text.partition("lane :e2e do |options|")
+    if not lane_marker:
+        raise SystemExit("Pinned iOS Fastlane source no longer has the expected E2E lane")
     e2e_anchor = """    result_bundle: true,
     skip_package_dependencies_resolution: true,
 """
@@ -106,9 +109,9 @@ def main() -> None:
     collect_test_diagnostics: "never",
     skip_package_dependencies_resolution: true,
 """
-    if e2e_anchor not in lane_text:
+    if e2e_anchor not in e2e_lane:
         raise SystemExit("Pinned iOS E2E Fastlane lane no longer has the expected run_tests options")
-    lane_text = lane_text.replace(e2e_anchor, e2e_replacement, 1)
+    lane_text = earlier_lanes + lane_marker + e2e_lane.replace(e2e_anchor, e2e_replacement, 1)
     testing_lane.write_text(lane_text, encoding="utf-8")
 
     assert text.count("openExtendedOpenAIAndEditAgent()") == 2

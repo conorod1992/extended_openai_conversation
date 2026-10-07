@@ -66,6 +66,7 @@ jobs:
           set -euo pipefail
           READY="$RUNNER_TEMP/companion-ready.json"
           python ci/companion_app_server.py \
+            --classic-dashboard \
             --config "$RUNNER_TEMP/companion-ha" \
             --component custom_components/extended_openai_conversation_responses \
             --ready "$READY" \
