@@ -84,3 +84,40 @@ def test_ios_e2e_patcher_extends_the_upstream_onboarding_test():
     assert 'collect_test_diagnostics: "never"' in patcher
     assert 'until: settings' in patcher
     assert "sidebarScrolls < 6" in patcher
+
+
+def test_ios_companion_caches_expensive_build_state_across_retries():
+    job = _workflow()["jobs"]["companion"]
+    steps = job["steps"]
+
+    restore_derived = next(
+        step for step in steps if step.get("name") == "Restore iOS DerivedData cache"
+    )
+    assert restore_derived["uses"].startswith("actions/cache/restore@")
+    assert "IOS_SOURCE_SHA" in restore_derived["with"]["key"]
+    assert "github.sha" not in restore_derived["with"]["key"]
+
+    restore_gems = next(
+        step for step in steps if step.get("name") == "Restore Bundler cache"
+    )
+    assert restore_gems["uses"].startswith("actions/cache/restore@")
+    assert "IOS_SOURCE_SHA" in restore_gems["with"]["key"]
+
+    save_derived = next(
+        step for step in steps if step.get("name") == "Save iOS DerivedData cache"
+    )
+    assert save_derived["uses"].startswith("actions/cache/save@")
+    assert "always()" in save_derived["if"]
+
+    save_gems = next(
+        step for step in steps if step.get("name") == "Save Bundler cache"
+    )
+    assert save_gems["uses"].startswith("actions/cache/save@")
+    assert "always()" in save_gems["if"]
+
+    install = next(
+        step for step in steps
+        if step.get("name") == "Install pinned iOS build dependencies"
+    )
+    assert "steps.ios-gems-cache.outputs.cache-hit" in install["run"]
+    assert "xcodebuild -resolvePackageDependencies" in install["run"]
