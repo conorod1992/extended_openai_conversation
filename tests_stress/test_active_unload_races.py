@@ -21,6 +21,7 @@ from tests_real_ha.test_provider_wire_e2e import (
     _speech,
 )
 from tests_stress.conftest import record
+from tests_stress.race_jitter import race_yield
 
 
 async def _say(hass: HomeAssistant, entry_id: str, text: str) -> Any:
@@ -39,6 +40,7 @@ async def test_unload_cancels_blocked_provider_turn_and_new_runtime_recovers(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     stress_trace: list[dict],
+    stress_seed: int,
 ) -> None:
     """Unloading during an HTTP response leaves the recreated agent usable."""
     old_agent = await _agent(hass, API_MODE_CHAT_COMPLETIONS)
@@ -61,11 +63,13 @@ async def test_unload_cancels_blocked_provider_turn_and_new_runtime_recovers(
     try:
         await asyncio.wait_for(response_ready.wait(), timeout=10)
         assert len(wire.requests) == 1
+        await race_yield(stress_seed, 'provider-ready-before-unload', stress_trace)
         assert await asyncio.wait_for(
             hass.config_entries.async_unload(entry_id), timeout=10
         )
         assert conversation.async_get_agent(hass, entry_id) is None
     finally:
+        await race_yield(stress_seed, 'unloaded-before-release', stress_trace)
         turn.cancel()
         release.set()
         with suppress(asyncio.CancelledError):
