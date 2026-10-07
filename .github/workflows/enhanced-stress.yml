@@ -234,6 +234,7 @@ jobs:
       EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION: ${{ needs.prepare.outputs.ha_test_plugin_version }}
       EOAI_RELEASE_TAG: ${{ needs.prepare.outputs.published_release_tag }}
       EOAI_RELEASE_SHA: ${{ needs.prepare.outputs.published_release_sha }}
+      UPGRADE_ACTIVE_DISRUPTION: ${{ matrix.campaign == 'persistence' && '1' || '0' }}
       STRESS_ARTIFACT_DIR: stress-artifacts
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
