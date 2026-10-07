@@ -15,7 +15,6 @@ from typing import ClassVar
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
-
 DOMAIN = "extended_openai_conversation_responses"
 
 
@@ -250,7 +249,7 @@ def _normal_entrypoint(image: str, root: Path, evidence: Path) -> None:
             if state.returncode != 0 or state.stdout.strip() != "true":
                 break
             try:
-                with urlopen("http://127.0.0.1:18123/", timeout=2) as response:
+                with urlopen("http://127.0.0.1:18123/api/", timeout=2) as response:
                     ready = response.status < 500
                     if ready:
                         break
@@ -297,6 +296,7 @@ def main() -> None:
         "homeassistant:\n"
         "  name: Official Container Acceptance\n"
         "recorder:\n"
+        "api:\n"
         "http:\n"
         "  server_port: 18123\n",
         encoding="utf-8",
