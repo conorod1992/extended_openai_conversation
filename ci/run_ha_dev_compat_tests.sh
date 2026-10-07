@@ -49,4 +49,5 @@ TEST_PATHS=(
   tests/test_voice_identity_runtime.py
 )
 
-pytest "${TEST_PATHS[@]}"   -v   --asyncio-mode=auto   --timeout=30
+# Initialize HA's HTTP client alias before pytest autoloads plugins.
+python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' "${TEST_PATHS[@]}"   -v   --asyncio-mode=auto   --timeout=30
