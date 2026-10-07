@@ -81,3 +81,6 @@ def test_ios_e2e_patcher_extends_the_upstream_onboarding_test():
     assert "verifyExtendedOpenAIAfterBackgroundResume()" in patcher
     assert "Companion app iOS saved title" in patcher
     assert "XCUIDevice.shared.press(.home)" in patcher
+    assert 'collect_test_diagnostics: "never"' in patcher
+    assert 'until: settings' in patcher
+    assert "sidebarScrolls < 6" in patcher
