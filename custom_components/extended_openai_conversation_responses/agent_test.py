@@ -257,15 +257,15 @@ async def async_test_agent(
             memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
             checks.append(
                 _check(
-                    "Persistent memory",
+                    "Long-term memory",
                     "Passed",
                     f"Available ({memory.stats()['memory_count']} stored)",
                 )
             )
         except Exception as err:
-            checks.append(_check("Persistent memory", "Failed", type(err).__name__))
+            checks.append(_check("Long-term memory", "Failed", type(err).__name__))
     else:
-        checks.append(_check("Persistent memory", "Passed", "Disabled"))
+        checks.append(_check("Long-term memory", "Passed", "Disabled"))
 
     web_search = subentry.data.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH)
     with model_capability_snapshot(model, metadata):
