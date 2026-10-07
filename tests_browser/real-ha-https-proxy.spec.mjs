@@ -12,7 +12,9 @@ test("EOAI remains usable through the genuine HA frontend behind HTTPS", async (
   const panel = await openColdHaRoute(context, page, "assistant/basics");
   expect(new URL(page.url()).protocol).toBe("https:");
   const title = panel.locator('[data-config="__title"]');
-  const value = `HTTPS proxy acceptance ${process.env.STRESS_SEED || "0"}`;
+  // The rotation journey runs twice against one HA lifetime: each phase must
+  // make a real change rather than wait for a save button on an unchanged value.
+  const value = `HTTPS proxy acceptance ${process.env.STRESS_SEED || "0"} ${process.env.PLAYWRIGHT_ARTIFACT_SUFFIX || "baseline"}`;
   await title.fill(value);
   await panel.getByRole("button", {name:"Save changes", exact:true}).click();
   await expect(panel.getByText("Unsaved changes", {exact:true})).toHaveCount(0);
