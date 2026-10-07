@@ -2,7 +2,6 @@
 
 import importlib.util
 from pathlib import Path
-import subprocess
 from unittest.mock import Mock
 
 import pytest
@@ -19,81 +18,64 @@ def _driver():
     return driver
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "Error response from daemon: container abc is not running",
-        "Error response from daemon: container abc is restarting",
-        "Error response from daemon: No such container: homeassistant",
-        "FailedPrecondition: container abc init process is not running: failed precondition",
-    ],
-)
-def test_restore_job_waits_through_core_shutdown(monkeypatch, message):
+def _job_tree(job, nested=False):
+    jobs = [{"uuid": "parent", "child_jobs": [job]}] if nested else [job]
+    return {"result": "ok", "data": {"jobs": jobs}}
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_restore_poll_uses_independent_cli_and_waits_for_exact_job(monkeypatch, nested):
     driver = _driver()
-    api = Mock(
-        side_effect=[
-            AssertionError(message),
-            {"result": "ok", "data": {"done": False}},
-            {"result": "ok", "data": {"done": True, "errors": []}},
-        ]
-    )
-    monkeypatch.setattr(driver, "_supervisor_api", api)
+    pending = {"uuid": "restore-job", "done": False}
+    completed = {"uuid": "restore-job", "done": True, "errors": []}
+    ssh = Mock()
+    ssh.json.side_effect = [_job_tree(pending, nested), _job_tree(completed, nested)]
+    core_api = Mock(side_effect=AssertionError("Core is stopped during restore"))
+    monkeypatch.setattr(driver, "_supervisor_api", core_api)
     monkeypatch.setattr(driver.time, "sleep", lambda _: None)
-    result = driver._wait_supervisor_job(object(), "restore-job")
-    assert result == {"done": True, "errors": []}
-    assert api.call_count == 3
-    assert all(call.args[2] == "/jobs/restore-job" for call in api.call_args_list)
+    assert driver._wait_supervisor_job(ssh, "restore-job") == completed
+    core_api.assert_not_called()
+    assert ssh.json.call_count == 2
+    for call in ssh.json.call_args_list:
+        assert call.args == ("ha jobs info --no-progress --raw-json",)
+        assert call.kwargs == {"timeout": 30}
 
 
 @pytest.mark.parametrize(
     "failure",
     [
         AssertionError("SSH permission denied"),
-        AssertionError("Error response from daemon: No such container: unrelated"),
-        {"result": "ok", "data": {"done": True, "errors": ["restore failed"]}},
+        {"result": "error", "message": "Supervisor unavailable"},
+        _job_tree({"uuid": "restore-job", "done": True, "errors": ["restore failed"]}),
     ],
 )
-def test_restore_job_does_not_hide_transport_or_restore_errors(monkeypatch, failure):
+def test_restore_poll_does_not_hide_cli_or_restore_errors(failure):
     driver = _driver()
-    api = Mock(side_effect=[failure])
-    monkeypatch.setattr(driver, "_supervisor_api", api)
+    ssh = Mock()
+    ssh.json.side_effect = [failure]
     with pytest.raises(AssertionError):
-        driver._wait_supervisor_job(object(), "restore-job")
-    assert api.call_count == 1
+        driver._wait_supervisor_job(ssh, "restore-job")
+    assert ssh.json.call_count == 1
 
 
-@pytest.mark.parametrize("returncode", [137, 143])
-def test_restore_job_resumes_when_core_terminates_an_active_poll(
-    monkeypatch, returncode
-):
+def test_restore_poll_rejects_a_missing_job_instead_of_accepting_another_completion():
     driver = _driver()
-    interrupted = driver.SSHCommandError(
-        "docker exec homeassistant python -c ...",
-        subprocess.CompletedProcess([], returncode, stdout="", stderr=""),
-    )
-    api = Mock(side_effect=[interrupted, {"result": "ok", "data": {"done": True}}])
-    monkeypatch.setattr(driver, "_supervisor_api", api)
+    ssh = Mock()
+    ssh.json.return_value = _job_tree({"uuid": "unrelated-job", "done": True})
+    with pytest.raises(AssertionError, match="restore-job was missing"):
+        driver._wait_supervisor_job(ssh, "restore-job")
+
+
+def test_restore_poll_keeps_its_bounded_deadline(monkeypatch):
+    driver = _driver()
+    ssh = Mock()
+    ssh.json.return_value = _job_tree({"uuid": "restore-job", "done": False})
+    clock = iter([0, 0, 2])
+    monkeypatch.setattr(driver.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(driver.time, "sleep", lambda _: None)
-    assert driver._wait_supervisor_job(object(), "restore-job") == {"done": True}
-    assert api.call_count == 2
-
-
-@pytest.mark.parametrize(
-    "returncode,stdout", [(1, ""), (255, ""), (137, "partial JSON")]
-)
-def test_restore_job_rejects_other_remote_command_failures(
-    monkeypatch, returncode, stdout
-):
-    driver = _driver()
-    failure = driver.SSHCommandError(
-        "docker exec homeassistant python -c ...",
-        subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=""),
-    )
-    api = Mock(side_effect=[failure])
-    monkeypatch.setattr(driver, "_supervisor_api", api)
-    with pytest.raises(driver.SSHCommandError):
-        driver._wait_supervisor_job(object(), "restore-job")
-    assert api.call_count == 1
+    with pytest.raises(TimeoutError, match="restore-job did not finish"):
+        driver._wait_supervisor_job(ssh, "restore-job", timeout=1)
+    assert ssh.json.call_count == 1
 
 
 def test_haos_vm_workflow_runs_on_pr_weekly_and_manual() -> None:

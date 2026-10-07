@@ -608,38 +608,20 @@ def _wait_supervisor_job(ssh: HostSSH, job_id: str, *, timeout: float = 900) -> 
     deadline = time.monotonic() + timeout
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:
-        try:
-            response = _supervisor_api(ssh, "GET", f"/jobs/{job_id}", timeout=30)
-        except AssertionError as err:
-            # A full Supervisor restore deliberately stops Core. Its API
-            # transport lives in that container, so resume polling once Core
-            # returns; every other transport error remains a hard failure.
-            message = str(err)
-            core_unavailable = (
-                "Error response from daemon: No such container: homeassistant" in message
-                or (
-                    "Error response from daemon: container " in message
-                    and (" is not running" in message or " is restarting" in message)
-                )
-                or (
-                    "FailedPrecondition: container " in message
-                    and " init process is not running: failed precondition" in message
-                )
-                # Core may stop after docker exec has started. Docker then
-                # returns the terminated process's signal status, without a
-                # daemon error. Only an interrupted, empty poll is retryable.
-                or (
-                    isinstance(err, SSHCommandError)
-                    and err.returncode in {137, 143}
-                    and not err.stdout.strip()
-                )
-            )
-            if not core_unavailable:
-                raise
-            time.sleep(5)
-            continue
+        # Full restore stops and recreates Core. The supported host CLI uses
+        # the independent CLI container, so polling never starts a process in
+        # the container whose lifecycle the job is changing.
+        response = ssh.json("ha jobs info --no-progress --raw-json", timeout=30)
         assert response.get("result") == "ok", response
-        last = response.get("data", {})
+        pending = list(response["data"]["jobs"])
+        last = {}
+        while pending:
+            job = pending.pop()
+            if job["uuid"] == job_id:
+                last = job
+                break
+            pending.extend(job.get("child_jobs", []))
+        assert last, f"Supervisor job {job_id} was missing from the CLI job tree"
         if last.get("done"):
             assert not last.get("errors"), last
             return last
