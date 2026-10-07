@@ -17,7 +17,9 @@ permissions:
 
 concurrency:
   group: ios-companion-${{ github.ref }}
-  cancel-in-progress: true
+  # Finish native builds and save their branch-scoped cache before the next
+  # immutable candidate starts. Cancelling a cold build repeatedly loses it.
+  cancel-in-progress: false
 
 jobs:
   companion:
