@@ -178,7 +178,7 @@ function memoryCheck(facts) {
       state: "unknown",
       title: "Long-term memory",
       value: "Loading…",
-      detail: "Loading the current persistent-memory status.",
+      detail: "Loading the current long-term memory status.",
       action: action("data-memory", "memory-settings"),
     };
   }
