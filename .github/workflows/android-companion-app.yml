@@ -103,6 +103,9 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_6
+          cores: 4
+          ram-size: 4096M
+          heap-size: 512M
           disable-animations: true
           disable-linux-hw-accel: false
           script: |
@@ -111,7 +114,7 @@ jobs:
             adb shell settings put global window_animation_scale 0
             adb shell settings put global transition_animation_scale 0
             adb shell settings put global animator_duration_scale 0
-            maestro test tests_mobile/companion-app-smoke.yaml               -e HOME_ASSISTANT_URL=http://10.0.2.2:8123               -e HOME_ASSISTANT_USERNAME=eoai-companion               -e HOME_ASSISTANT_PASSWORD=eoai-companion-password
+            bash ci/run_android_companion.sh
 
       - name: Record source-bound Companion evidence
         if: success()
@@ -169,6 +172,7 @@ jobs:
           include-hidden-files: true
           path: |
             ${{ runner.temp }}/companion-ha.log
+            ${{ runner.temp }}/android-companion/
             ~/.maestro/tests/
           if-no-files-found: warn
           retention-days: 14

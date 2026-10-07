@@ -14,9 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _workflow():
     return yaml.safe_load(
-        (ROOT / ".github/workflows/ios-companion-app.yml").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / ".github/workflows/ios-companion-app.yml").read_text(encoding="utf-8")
     )
 
 
@@ -24,9 +22,7 @@ def test_ios_companion_workflow_pins_upstream_source_and_exact_candidate():
     data = _workflow()
     job = data["jobs"]["companion"]
     assert job["runs-on"] == "xcode-27"
-    assert job["env"]["IOS_SOURCE_SHA"] == (
-        "0a3002690caf19ab6267d7573390798199172146"
-    )
+    assert job["env"]["IOS_SOURCE_SHA"] == ("0a3002690caf19ab6267d7573390798199172146")
     checkout = next(
         step
         for step in job["steps"]
@@ -87,10 +83,12 @@ def test_ios_e2e_patcher_extends_the_upstream_onboarding_test():
     assert "Companion app iOS saved title" in patcher
     assert "XCUIDevice.shared.press(.home)" in patcher
     assert '"keyboard Done button"' in patcher
-    assert 'app.keyboards.firstMatch.waitForNonExistence' in patcher
-    assert patcher.index('keyboardDone.tap()') < patcher.index('tapWebElement(labelContaining: "save changes"')
+    assert "app.keyboards.firstMatch.waitForNonExistence" in patcher
+    assert patcher.index("keyboardDone.tap()") < patcher.index(
+        'tapWebElement(labelContaining: "save changes"'
+    )
     assert "-collect-test-diagnostics never" in patcher
-    assert 'until: settings' in patcher
+    assert "until: settings" in patcher
     assert "sidebarScrolls < 6" in patcher
     assert 'NSPredicate(format: "label == %@", "Page")' in patcher
     assert 'NSPredicate(format: "label == %@", "Assistant")' in patcher
@@ -120,14 +118,13 @@ def test_ios_companion_caches_expensive_build_state_across_retries():
     assert save_derived["uses"].startswith("actions/cache/save@")
     assert "always()" in save_derived["if"]
 
-    save_gems = next(
-        step for step in steps if step.get("name") == "Save Bundler cache"
-    )
+    save_gems = next(step for step in steps if step.get("name") == "Save Bundler cache")
     assert save_gems["uses"].startswith("actions/cache/save@")
     assert "always()" in save_gems["if"]
 
     install = next(
-        step for step in steps
+        step
+        for step in steps
         if step.get("name") == "Install pinned iOS build dependencies"
     )
     assert "steps.ios-gems-cache.outputs.cache-hit" in install["run"]
@@ -136,7 +133,11 @@ def test_ios_companion_caches_expensive_build_state_across_retries():
 
 def test_ios_fixture_uses_a_dashboard_with_an_unobstructed_header(tmp_path):
     job = _workflow()["jobs"]["companion"]
-    startup = next(step for step in job["steps"] if step.get("name") == "Start disposable Home Assistant")
+    startup = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Start disposable Home Assistant"
+    )
     assert "--classic-dashboard" in startup["run"]
     write_configuration(tmp_path, classic_dashboard=True)
     config = yaml.safe_load((tmp_path / "configuration.yaml").read_text())
@@ -147,7 +148,9 @@ def test_ios_fixture_uses_a_dashboard_with_an_unobstructed_header(tmp_path):
 
 def test_default_companion_fixture_keeps_its_existing_dashboard(tmp_path):
     write_configuration(tmp_path)
-    assert "lovelace" not in yaml.safe_load((tmp_path / "configuration.yaml").read_text())
+    assert "lovelace" not in yaml.safe_load(
+        (tmp_path / "configuration.yaml").read_text()
+    )
     assert not (tmp_path / "ui-lovelace.yaml").exists()
 
 
@@ -159,10 +162,22 @@ def test_diagnostics_patch_targets_e2e_instead_of_the_first_unit_lane(tmp_path):
     lane.parent.mkdir(parents=True)
     options = "    result_bundle: true,\n    skip_package_dependencies_resolution: true,\n    xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO',\n"
     unit_lane = "lane :test do\n" + options + "end\n"
-    lane.write_text(unit_lane + "lane :e2e do |options|\n" + options + "end\n", encoding="utf-8")
-    subprocess.run([sys.executable, str(ROOT / "ci/patch_ios_companion_e2e.py"), str(tmp_path)], check=True)
+    lane.write_text(
+        unit_lane
+        + 'lane :e2e do |options|\n  sh("xcrun simctl erase #{udid}")\n'
+        + options
+        + "end\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        [sys.executable, str(ROOT / "ci/patch_ios_companion_e2e.py"), str(tmp_path)],
+        check=True,
+    )
     patched = lane.read_text(encoding="utf-8")
     earlier, _, e2e = patched.partition("lane :e2e do |options|")
     assert earlier == unit_lane
     assert "-collect-test-diagnostics never" in e2e
-    assert 'collect_test_diagnostics:' not in patched
+    assert "collect_test_diagnostics:" not in patched
+    assert 'sh("xcrun simctl boot #{udid}")' in e2e
+    assert "'bootstatus', '#{udid}', '-b'" in e2e
+    assert "timeout=300" in e2e

@@ -156,11 +156,12 @@ jobs:
             python -m pip install 'pytest-homeassistant-custom-component==0.13.317'
             python -m pip install --pre "homeassistant==$MINIMUM"
           elif [[ "$HA_POINT" == stable ]]; then
-            if [ -n "${{ needs.prepare.outputs.stable-ha-version }}" ]; then
-              python -m pip install --upgrade "homeassistant==${{ needs.prepare.outputs.stable-ha-version }}" pytest-homeassistant-custom-component
-            else
-              python -m pip install --upgrade homeassistant pytest-homeassistant-custom-component
+            VERSION="${{ needs.prepare.outputs.stable-ha-version }}"
+            if [ -z "$VERSION" ]; then
+              VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json"))["info"]["version"])')"
             fi
+            PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
+            python ci/install_ha_test_plugin.py "$VERSION" "$PLUGIN_VERSION"
           else
             python -m pip install "git+https://github.com/home-assistant/core.git@$HA_DEV_SHA"
           fi
@@ -233,17 +234,12 @@ jobs:
 
       - name: Reconcile current test requirements
         run: |
-          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
-          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
-          if [ "$CURRENT_ENVIRONMENT_SHA" = "$BUILT_ENVIRONMENT_SHA" ]; then
-            echo "Prebuilt dependency environment matches this checkout; skipping reconciliation."
-          else
-            echo "Dependency declarations changed; reconciling prebuilt environment."
-            pip install -r requirements_test.txt
-            pip install --upgrade homeassistant pytest-homeassistant-custom-component
-            python ci/install_ha_dependencies.py \
-              --manifest custom_components/extended_openai_conversation_responses/manifest.json
-          fi
+          set -euo pipefail
+          VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json"))["info"]["version"])')"
+          PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
+          export EOAI_EXPECTED_HA_VERSION="$VERSION"
+          export EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION="$PLUGIN_VERSION"
+          bash ci/reconcile_stable_environment.sh
 
       - name: Verify stable test environment
         run: |

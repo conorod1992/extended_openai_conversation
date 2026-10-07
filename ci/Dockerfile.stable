@@ -18,10 +18,11 @@ RUN apt-get update \
 
 WORKDIR /opt/eoai-ci
 
+COPY ci/resolve_ha_test_plugin.py ci/install_ha_test_plugin.py /opt/eoai-ci/
 COPY requirements_test.txt /opt/eoai-ci/requirements_test.txt
 RUN python -m pip install --upgrade pip \
     && pip install --no-cache-dir -r /opt/eoai-ci/requirements_test.txt \
-    && pip install --no-cache-dir "pytest-homeassistant-custom-component==${HA_TEST_PLUGIN_VERSION}" \
+    && python /opt/eoai-ci/install_ha_test_plugin.py "${HOMEASSISTANT_VERSION}" "${HA_TEST_PLUGIN_VERSION}" \
     && pip install --no-cache-dir --no-deps --force-reinstall "homeassistant==${HOMEASSISTANT_VERSION}"
 
 COPY ci/install_ha_dependencies.py /opt/eoai-ci/install_ha_dependencies.py
@@ -81,6 +82,7 @@ RUN python /opt/eoai-ci/environment_fingerprint.py \
         --recipe /opt/eoai-ci/install_ha_media_dependencies.py \
         --recipe /opt/eoai-ci/environment_fingerprint.py \
         --recipe /opt/eoai-ci/resolve_ha_test_plugin.py \
+        --recipe /opt/eoai-ci/install_ha_test_plugin.py \
         --recipe /opt/eoai-ci/reconcile_stable_environment.sh \
         --recipe /opt/eoai-ci/write_playwright_environment_identity.sh \
         --recipe /opt/eoai-ci/verify_playwright_engine.mjs \

@@ -36,7 +36,12 @@ def test_companion_workflow_pins_released_app_and_exact_candidate():
         == "reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d"
     )
     assert "adb install -r" in emulator["with"]["script"]
-    assert "maestro test tests_mobile/companion-app-smoke.yaml" in emulator["with"]["script"]
+    assert "bash ci/run_android_companion.sh" in emulator["with"]["script"]
+    runner = (ROOT / "ci/run_android_companion.sh").read_text(encoding="utf-8")
+    assert "maestro test tests_mobile/companion-app-smoke.yaml" in runner
+    assert runner.index("adb shell pm clear") < runner.index("maestro test")
+    assert "adb wait-for-device" in runner
+    assert '[[ "$stable" == 5 ]]' in runner
 
 
 def test_companion_evidence_fails_closed_and_names_native_boundaries():
@@ -71,3 +76,4 @@ def test_companion_flow_uses_real_release_app_and_native_navigation_boundary():
     assert "Agent name" in flow
     assert 'inputText: "Companion app saved title"' in flow
     assert "pressKey: Home" in flow
+    assert "clearState: false" in flow

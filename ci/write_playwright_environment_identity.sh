@@ -19,6 +19,7 @@ python /opt/eoai-ci/environment_fingerprint.py \
   --recipe /opt/eoai-ci/install_ha_media_dependencies.py \
   --recipe /opt/eoai-ci/environment_fingerprint.py \
   --recipe /opt/eoai-ci/resolve_ha_test_plugin.py \
+  --recipe /opt/eoai-ci/install_ha_test_plugin.py \
   --recipe /opt/eoai-ci/reconcile_stable_environment.sh \
   --recipe /opt/eoai-ci/write_playwright_environment_identity.sh \
   --recipe /opt/eoai-ci/verify_playwright_engine.mjs \

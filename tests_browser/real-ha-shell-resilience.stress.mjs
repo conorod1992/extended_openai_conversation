@@ -1,4 +1,5 @@
 import {expect, test} from "@playwright/test";
+import {waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const originalAuth = process.env.REAL_HA_FRONTEND_AUTH;
@@ -11,13 +12,15 @@ async function openAssistant(page, context, auth = JSON.parse(originalAuth)) {
   }, auth);
   await page.goto(`${baseUrl}/extended-openai`, {waitUntil: "domcontentloaded"});
   const confirm = page.getByRole("button", {name: "Confirm", exact: true});
-  if (await confirm.isVisible().catch(() => false)) {
+  if (await confirm.waitFor({state: "visible", timeout: 2000}).then(() => true).catch(() => false)) {
     await confirm.click();
     await page.goto(`${baseUrl}/extended-openai`, {waitUntil: "domcontentloaded"});
   }
   const panel = page.locator("extended-openai-management-panel");
-  await expect(panel.getByRole("heading", {name: "Extended OpenAI", exact: true})).toBeVisible({timeout: 30_000});
+  await expect(panel.locator("#agent")).toBeEnabled({timeout: 30_000});
+  await waitForManagementRouteReady(page, {path: "overview"}, 30_000);
   await panel.getByRole("button", {name: "Assistant", exact: true}).click();
+  await waitForManagementRouteReady(page, {path: "assistant/basics"}, 30_000);
   const title = panel.locator('[data-config="__title"]');
   await expect(title).toBeVisible({timeout: 30_000});
   return {panel, title};

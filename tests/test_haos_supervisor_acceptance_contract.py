@@ -2,10 +2,88 @@
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "haos-supervisor-vm-acceptance.yml"
 DRIVER = ROOT / "ci" / "haos_supervisor_acceptance.py"
+
+
+def _driver():
+    spec = importlib.util.spec_from_file_location("haos_acceptance_driver", DRIVER)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    return driver
+
+
+def _job_tree(job, nested=False):
+    jobs = [{"uuid": "parent", "child_jobs": [job]}] if nested else [job]
+    return {"result": "ok", "data": {"jobs": jobs}}
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_restore_poll_uses_independent_cli_and_waits_for_exact_job(monkeypatch, nested):
+    driver = _driver()
+    pending = {"uuid": "restore-job", "done": False}
+    completed = {"uuid": "restore-job", "done": True, "errors": []}
+    ssh = Mock()
+    ssh.json.side_effect = [_job_tree(pending, nested), _job_tree(completed, nested)]
+    core_api = Mock(side_effect=AssertionError("Core is stopped during restore"))
+    monkeypatch.setattr(driver, "_supervisor_api", core_api)
+    monkeypatch.setattr(
+        driver,
+        "time",
+        SimpleNamespace(monotonic=driver.time.monotonic, sleep=lambda _: None),
+    )
+    assert driver._wait_supervisor_job(ssh, "restore-job") == completed
+    core_api.assert_not_called()
+    assert ssh.json.call_count == 2
+    for call in ssh.json.call_args_list:
+        assert call.args == ("ha jobs info --no-progress --raw-json",)
+        assert call.kwargs == {"timeout": 30}
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        AssertionError("SSH permission denied"),
+        {"result": "error", "message": "Supervisor unavailable"},
+        _job_tree({"uuid": "restore-job", "done": True, "errors": ["restore failed"]}),
+    ],
+)
+def test_restore_poll_does_not_hide_cli_or_restore_errors(failure):
+    driver = _driver()
+    ssh = Mock()
+    ssh.json.side_effect = [failure]
+    with pytest.raises(AssertionError):
+        driver._wait_supervisor_job(ssh, "restore-job")
+    assert ssh.json.call_count == 1
+
+
+def test_restore_poll_rejects_a_missing_job_instead_of_accepting_another_completion():
+    driver = _driver()
+    ssh = Mock()
+    ssh.json.return_value = _job_tree({"uuid": "unrelated-job", "done": True})
+    with pytest.raises(AssertionError, match="restore-job was missing"):
+        driver._wait_supervisor_job(ssh, "restore-job")
+
+
+def test_restore_poll_keeps_its_bounded_deadline(monkeypatch):
+    driver = _driver()
+    ssh = Mock()
+    ssh.json.return_value = _job_tree({"uuid": "restore-job", "done": False})
+    clock = iter([0, 0, 2])
+    monkeypatch.setattr(
+        driver,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda _: None),
+    )
+    with pytest.raises(TimeoutError, match="restore-job did not finish"):
+        driver._wait_supervisor_job(ssh, "restore-job", timeout=1)
+    assert ssh.json.call_count == 1
 
 
 def test_haos_vm_workflow_runs_on_pr_weekly_and_manual() -> None:
@@ -19,7 +97,9 @@ def test_haos_vm_workflow_runs_on_pr_weekly_and_manual() -> None:
     assert "release:" not in trigger_block
 
 
-def test_haos_vm_workflow_boots_official_qcow2_with_supervisor_appliance_boundaries() -> None:
+def test_haos_vm_workflow_boots_official_qcow2_with_supervisor_appliance_boundaries() -> (
+    None
+):
     text = WORKFLOW.read_text(encoding="utf-8")
 
     assert "home-assistant/operating-system/releases/latest" in text
@@ -52,7 +132,9 @@ def test_haos_driver_uses_public_ha_interfaces_and_supervisor_restart() -> None:
     assert "kill homeassistant" not in text
 
 
-def test_haos_driver_installs_candidate_into_real_core_config_and_retains_data() -> None:
+def test_haos_driver_installs_candidate_into_real_core_config_and_retains_data() -> (
+    None
+):
     text = DRIVER.read_text(encoding="utf-8")
 
     assert '.Destination \\"/config\\"' in text
