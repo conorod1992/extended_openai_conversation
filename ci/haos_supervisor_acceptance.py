@@ -227,6 +227,18 @@ class HAWebSocket:
             return response.get("result")
 
 
+class SSHCommandError(AssertionError):
+    """Keep the remote exit status so restore polling can recognize signals."""
+
+    def __init__(self, command: str, result: subprocess.CompletedProcess[str]) -> None:
+        self.returncode = result.returncode
+        self.stdout = result.stdout
+        super().__init__(
+            f"HA OS SSH command failed (exit {result.returncode}): {command}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+
+
 class HostSSH:
     """Root SSH into HA OS through the supported debug SSH port."""
 
@@ -263,10 +275,7 @@ class HostSSH:
             check=False,
         )
         if check and result.returncode != 0:
-            raise AssertionError(
-                f"HA OS SSH command failed: {command}\n"
-                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-            )
+            raise SSHCommandError(command, result)
         return result
 
     def json(self, command: str, *, timeout: float = 120) -> Any:
@@ -611,6 +620,14 @@ def _wait_supervisor_job(ssh: HostSSH, job_id: str, *, timeout: float = 900) -> 
                 or (
                     "Error response from daemon: container " in message
                     and (" is not running" in message or " is restarting" in message)
+                )
+                # Core may stop after docker exec has started. Docker then
+                # returns the terminated process's signal status, without a
+                # daemon error. Only an interrupted, empty poll is retryable.
+                or (
+                    isinstance(err, SSHCommandError)
+                    and err.returncode in {137, 143}
+                    and not err.stdout.strip()
                 )
             )
             if not core_unavailable:

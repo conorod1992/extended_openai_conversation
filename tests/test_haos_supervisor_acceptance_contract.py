@@ -2,6 +2,7 @@
 
 import importlib.util
 from pathlib import Path
+import subprocess
 from unittest.mock import Mock
 
 import pytest
@@ -56,6 +57,40 @@ def test_restore_job_does_not_hide_transport_or_restore_errors(monkeypatch, fail
     api = Mock(side_effect=[failure])
     monkeypatch.setattr(driver, "_supervisor_api", api)
     with pytest.raises(AssertionError):
+        driver._wait_supervisor_job(object(), "restore-job")
+    assert api.call_count == 1
+
+
+@pytest.mark.parametrize("returncode", [137, 143])
+def test_restore_job_resumes_when_core_terminates_an_active_poll(
+    monkeypatch, returncode
+):
+    driver = _driver()
+    interrupted = driver.SSHCommandError(
+        "docker exec homeassistant python -c ...",
+        subprocess.CompletedProcess([], returncode, stdout="", stderr=""),
+    )
+    api = Mock(side_effect=[interrupted, {"result": "ok", "data": {"done": True}}])
+    monkeypatch.setattr(driver, "_supervisor_api", api)
+    monkeypatch.setattr(driver.time, "sleep", lambda _: None)
+    assert driver._wait_supervisor_job(object(), "restore-job") == {"done": True}
+    assert api.call_count == 2
+
+
+@pytest.mark.parametrize(
+    "returncode,stdout", [(1, ""), (255, ""), (137, "partial JSON")]
+)
+def test_restore_job_rejects_other_remote_command_failures(
+    monkeypatch, returncode, stdout
+):
+    driver = _driver()
+    failure = driver.SSHCommandError(
+        "docker exec homeassistant python -c ...",
+        subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=""),
+    )
+    api = Mock(side_effect=[failure])
+    monkeypatch.setattr(driver, "_supervisor_api", api)
+    with pytest.raises(driver.SSHCommandError):
         driver._wait_supervisor_job(object(), "restore-job")
     assert api.call_count == 1
 
