@@ -75,6 +75,9 @@ jobs:
           python -m venv "${RUNNER_TEMP}/ha-oldest"
           "${RUNNER_TEMP}/ha-oldest/bin/python" -m pip install --upgrade pip wheel
           "${RUNNER_TEMP}/ha-oldest/bin/python" -m pip install --pre "homeassistant==${MINIMUM_HA}"
+          "${RUNNER_TEMP}/ha-oldest/bin/python" ci/install_ha_dependencies.py \
+            --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          "${RUNNER_TEMP}/ha-oldest/bin/python" -m pip check
 
           INSTALLED_OLDEST="$("${RUNNER_TEMP}/ha-oldest/bin/python" - <<'PY'
           from importlib.metadata import version
