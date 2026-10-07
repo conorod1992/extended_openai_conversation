@@ -91,3 +91,25 @@ async def test_hostile_memory_text_does_not_cross_existing_owner_boundary(hass):
     )
     assert any(hostile == item.content for item in own)
     assert all(hostile != item.content for item in foreign)
+
+
+async def test_unrelated_knowledge_source_does_not_change_retrieval_eligibility(hass):
+    """A source with disjoint tokens cannot make existing hits disappear."""
+    agent = await _agent(hass, knowledge_enabled=True)
+    library = agent._knowledge
+    assert library is not None
+    source = await library.async_create(
+        "Boiler calibration", "Heating manual",
+        "The boiler calibration value is seventy two units.",
+    )
+    original = await library.async_search("boiler calibration", limit=10)
+    assert [item.source_id for item in original] == [source.source_id]
+
+    await library.async_create(
+        "Astronomical observatory", "Independent topic",
+        "Galaxies orbit remote clusters of stars.",
+    )
+    after = await library.async_search("boiler calibration", limit=10)
+    assert [(item.source_id, item.excerpt) for item in after] == [
+        (item.source_id, item.excerpt) for item in original
+    ]
