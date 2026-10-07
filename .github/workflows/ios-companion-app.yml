@@ -98,6 +98,7 @@ jobs:
           set -euo pipefail
           python ci/patch_ios_companion_e2e.py "$IOS_DIR"
           grep -q "Companion app iOS saved title" "$IOS_DIR/Tests/UI/OnboardingE2ETests.swift"
+          grep -q 'collect_test_diagnostics: "never"' "$IOS_DIR/fastlane/lanes/testing.rb"
 
       - name: Set up Ruby 4.0.7
         uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
