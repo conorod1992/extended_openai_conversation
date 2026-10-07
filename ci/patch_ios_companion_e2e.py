@@ -102,13 +102,10 @@ def main() -> None:
     earlier_lanes, lane_marker, e2e_lane = lane_text.partition("lane :e2e do |options|")
     if not lane_marker:
         raise SystemExit("Pinned iOS Fastlane source no longer has the expected E2E lane")
-    e2e_anchor = """    result_bundle: true,
-    skip_package_dependencies_resolution: true,
-"""
-    e2e_replacement = """    result_bundle: true,
-    collect_test_diagnostics: "never",
-    skip_package_dependencies_resolution: true,
-"""
+    e2e_anchor = "xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO',"
+    # The pinned Fastlane predates its collect_test_diagnostics option. xcargs
+    # forwards the supported Xcode flag without requiring a Gemfile update.
+    e2e_replacement = "xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO -collect-test-diagnostics never',"
     if e2e_anchor not in e2e_lane:
         raise SystemExit("Pinned iOS E2E Fastlane lane no longer has the expected run_tests options")
     lane_text = earlier_lanes + lane_marker + e2e_lane.replace(e2e_anchor, e2e_replacement, 1)
@@ -116,7 +113,7 @@ def main() -> None:
 
     assert text.count("openExtendedOpenAIAndEditAgent()") == 2
     assert "Companion app iOS saved title" in text
-    assert 'collect_test_diagnostics: "never"' in lane_text
+    assert "-collect-test-diagnostics never" in lane_text
     print(f"Patched {target} and {testing_lane}")
 
 

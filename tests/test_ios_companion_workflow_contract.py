@@ -86,7 +86,7 @@ def test_ios_e2e_patcher_extends_the_upstream_onboarding_test():
     assert "verifyExtendedOpenAIAfterBackgroundResume()" in patcher
     assert "Companion app iOS saved title" in patcher
     assert "XCUIDevice.shared.press(.home)" in patcher
-    assert 'collect_test_diagnostics: "never"' in patcher
+    assert "-collect-test-diagnostics never" in patcher
     assert 'until: settings' in patcher
     assert "sidebarScrolls < 6" in patcher
 
@@ -151,11 +151,12 @@ def test_diagnostics_patch_targets_e2e_instead_of_the_first_unit_lane(tmp_path):
     target.write_text(CALLS + MARKER, encoding="utf-8")
     lane = tmp_path / "fastlane/lanes/testing.rb"
     lane.parent.mkdir(parents=True)
-    options = "    result_bundle: true,\n    skip_package_dependencies_resolution: true,\n"
+    options = "    result_bundle: true,\n    skip_package_dependencies_resolution: true,\n    xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO',\n"
     unit_lane = "lane :test do\n" + options + "end\n"
     lane.write_text(unit_lane + "lane :e2e do |options|\n" + options + "end\n", encoding="utf-8")
     subprocess.run([sys.executable, str(ROOT / "ci/patch_ios_companion_e2e.py"), str(tmp_path)], check=True)
     patched = lane.read_text(encoding="utf-8")
     earlier, _, e2e = patched.partition("lane :e2e do |options|")
     assert earlier == unit_lane
-    assert 'collect_test_diagnostics: "never"' in e2e
+    assert "-collect-test-diagnostics never" in e2e
+    assert 'collect_test_diagnostics:' not in patched
