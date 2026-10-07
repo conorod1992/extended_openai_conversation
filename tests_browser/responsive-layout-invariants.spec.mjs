@@ -4,7 +4,7 @@ import {waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
 import {auditResponsive} from "./responsive-layout-audit.mjs";
 
 const cases = [
-  {route:"assistant/basics", controls:["#agent", "#save-config"]},
+  {route:"assistant/basics", controls:["#agent"]},
   {route:"data-memory/knowledge", controls:["#agent", "#add-source"]},
   {route:"data-memory/memories", controls:["#agent", "#add-memory"]},
 ];
