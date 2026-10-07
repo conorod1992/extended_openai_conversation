@@ -1,0 +1,128 @@
+name: Multi-seed race amplification
+
+on:
+  schedule:
+    - cron: "41 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      base_seed:
+        description: "Optional unsigned 32-bit seed; empty generates a new one"
+        required: false
+        type: string
+      seeds:
+        description: "Number of independent seeds (1–64)"
+        required: false
+        default: "8"
+        type: string
+      intensity:
+        description: "Normal or heavy test scale"
+        required: false
+        default: normal
+        type: choice
+        options: [normal, heavy]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: race-amplification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  amplify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      PYTEST_PLUGINS: ci.pytest_execution
+      STRESS_ARTIFACT_DIR: stress-artifacts
+      ENHANCED_EXECUTION_EVIDENCE: "1"
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Reconcile test environment
+        run: bash ci/reconcile_stable_environment.sh
+      - name: Resolve reproducible campaign inputs
+        id: campaign
+        env:
+          REQUESTED_SEED: ${{ inputs.base_seed }}
+          REQUESTED_COUNT: ${{ inputs.seeds }}
+          REQUESTED_INTENSITY: ${{ inputs.intensity }}
+        run: |
+          set -euo pipefail
+          BASE="${REQUESTED_SEED:-$(python -c 'import secrets; print(secrets.randbits(32))')}"
+          COUNT="${REQUESTED_COUNT:-8}"
+          INTENSITY="${REQUESTED_INTENSITY:-normal}"
+          [[ "$BASE" =~ ^[0-9]+$ ]] || { echo "Invalid base seed" >&2; exit 2; }
+          [[ "$COUNT" =~ ^[0-9]+$ ]] || { echo "Invalid seed count" >&2; exit 2; }
+          [[ "$INTENSITY" == normal || "$INTENSITY" == heavy ]] || exit 2
+          mkdir -p race-results
+          python ci/race_amplification_seeds.py --base "$BASE" --count "$COUNT" > race-results/seeds.txt
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "intensity=$INTENSITY" >> "$GITHUB_OUTPUT"
+          echo "Race amplification: base=$BASE count=$COUNT intensity=$INTENSITY" >> "$GITHUB_STEP_SUMMARY"
+      - name: Run independently isolated seeds
+        id: amplify
+        env:
+          INTENSITY: ${{ steps.campaign.outputs.intensity }}
+        run: |
+          set -uo pipefail
+          failed=0
+          attempted=0
+          while IFS= read -r seed; do
+            attempted=$((attempted + 1))
+            echo "Running race seed $seed ($attempted)"
+            export STRESS_SEED="$seed"
+            export STRESS_INTENSITY="$INTENSITY"
+            # Separate interpreter processes also perturb hash ordering.
+            export PYTHONHASHSEED="$seed"
+            export PYTHONASYNCIODEBUG=1
+            export STRESS_ARTIFACT_DIR="race-results/seed-$seed"
+            mkdir -p "$STRESS_ARTIFACT_DIR"
+            pytest \
+              tests_stress/test_management_transaction_matrix.py::test_agent_config_aba_rejects_suspended_management_writer \
+              tests_stress/test_function_groups_state_machine.py \
+              tests_stress/test_runtime_soak.py::test_seeded_multi_entry_runtime_soak \
+              tests_stress/test_active_unload_races.py \
+              tests_stress/test_identity_generation_races.py \
+              -v -s --asyncio-mode=auto --timeout=600 \
+              --stress-seed="$seed" --stress-intensity="$INTENSITY" \
+              --show-capture=no --tb=short > race-raw.log 2>&1
+            result=$?
+            python ci/enhanced_evidence.py sanitize-log race-raw.log "$STRESS_ARTIFACT_DIR/pytest.log"
+            rm -f race-raw.log
+            printf '%s,%s\n' "$seed" "$result" >> race-results/outcomes.csv
+            if [ "$result" -ne 0 ]; then
+              failed=$((failed + 1))
+              echo "::error::Race seed $seed failed; reproduce with workflow_dispatch base_seed=$seed seeds=1"
+              tail -n 100 "$STRESS_ARTIFACT_DIR/pytest.log"
+            fi
+          done < race-results/seeds.txt
+          printf 'attempted=%s failed=%s\n' "$attempted" "$failed" > race-results/summary.txt
+          echo "Seed results: $attempted attempted, $failed failed" >> "$GITHUB_STEP_SUMMARY"
+          test "$failed" -eq 0
+      - name: Sanitize and upload per-seed evidence
+        if: always()
+        run: |
+          mkdir -p race-results
+          python ci/enhanced_evidence.py sanitize-dir race-results
+      - name: Upload race amplification traces
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: race-amplification-${{ github.sha }}-${{ github.run_attempt }}
+          path: race-results/
+          if-no-files-found: error
+          retention-days: 30
