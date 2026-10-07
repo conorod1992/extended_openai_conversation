@@ -1043,3 +1043,33 @@ test("cold Prompt entity editor switches immediately and saves through the nativ
   await panel.locator('[data-edit-exposed-entity="sensor.cold_attribute_hall"]').click();
   await expect(panel.locator('[data-exposed-attribute][data-attribute="battery_level"]')).toBeChecked();
 });
+
+
+test("real HA Local Handling shows live intents and persists selected routing", async ({context, page}) => {
+  await authenticate(context);
+  const panel = await openAssistantFromOverview(page);
+  await panel.evaluate(host => host._navigate("capabilities", "home-assistant"));
+  await expect(panel.getByText("Use Extended OpenAI local handling", {exact:true})).toBeVisible();
+
+  const enabled = panel.locator('[data-config="local_intents_enabled"]');
+  await expect(enabled).toBeVisible();
+  if (!(await enabled.isChecked())) await enabled.check();
+
+  const intent = panel.locator('[data-local-intent-exclusion][value="HassGetCurrentTime"]');
+  await expect(intent).toBeVisible({timeout:30_000});
+  await expect(intent).toBeEnabled();
+  if (!(await intent.isChecked())) await intent.check();
+
+  await panel.locator("#save-config").click();
+  await expect(panel.locator("#save-config")).toHaveCount(0);
+
+  const saved = await panel.evaluate(host => host._call("configuration", "get"));
+  expect(saved.config.local_intents_enabled).toBe(true);
+  expect(saved.config.local_intent_exclusions).toContain("HassGetCurrentTime");
+
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await panel.evaluate(host => host._navigate("capabilities", "home-assistant"));
+  const reloaded = panel.locator('[data-local-intent-exclusion][value="HassGetCurrentTime"]');
+  await expect(reloaded).toBeVisible();
+  await expect(reloaded).toBeChecked();
+});
