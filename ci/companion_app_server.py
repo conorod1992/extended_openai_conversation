@@ -74,7 +74,39 @@ class Provider(BaseHTTPRequestHandler):
         )
 
 
-async def main(config_dir: Path, component: Path, ready: Path) -> None:
+def write_configuration(config_dir: Path, *, classic_dashboard: bool = False) -> None:
+    config = (
+        "homeassistant:\n"
+        "  name: EOAI Companion Acceptance\n"
+        "http:\n"
+        "frontend:\n"
+        "api:\n"
+        "websocket_api:\n"
+        "mobile_app:\n"
+        "recorder:\n"
+        "onboarding:\n"
+    )
+    if classic_dashboard:
+        # The generated Overview welcome banner overlaps the sidebar control
+        # in the iOS WebView. Use an ordinary populated Lovelace dashboard for
+        # this fixture so the native journey can operate the visible HA shell.
+        config += "lovelace:\n  mode: yaml\n"
+        (config_dir / "ui-lovelace.yaml").write_text(
+            "title: Companion acceptance\n"
+            "views:\n"
+            "  - title: Home\n"
+            "    path: home\n"
+            "    cards:\n"
+            "      - type: markdown\n"
+            "        content: Welcome to Companion acceptance\n",
+            encoding="utf-8",
+        )
+    (config_dir / "configuration.yaml").write_text(config, encoding="utf-8")
+
+
+async def main(
+    config_dir: Path, component: Path, ready: Path, *, classic_dashboard: bool = False
+) -> None:
     from homeassistant import bootstrap, runner
     from homeassistant.auth.const import GROUP_ID_ADMIN
     from homeassistant.auth.providers.homeassistant import async_get_provider
@@ -87,18 +119,7 @@ async def main(config_dir: Path, component: Path, ready: Path) -> None:
     integration = config_dir / "custom_components" / DOMAIN
     integration.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(component, integration)
-    (config_dir / "configuration.yaml").write_text(
-        "homeassistant:\n"
-        "  name: EOAI Companion Acceptance\n"
-        "http:\n"
-        "frontend:\n"
-        "api:\n"
-        "websocket_api:\n"
-        "mobile_app:\n"
-        "recorder:\n"
-        "onboarding:\n",
-        encoding="utf-8",
-    )
+    write_configuration(config_dir, classic_dashboard=classic_dashboard)
 
     provider_server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     provider_thread = threading.Thread(
@@ -205,6 +226,7 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--component", type=Path, required=True)
     parser.add_argument("--ready", type=Path, required=True)
+    parser.add_argument("--classic-dashboard", action="store_true")
     args = parser.parse_args()
     args.config.mkdir(parents=True, exist_ok=True)
     asyncio.run(
@@ -212,5 +234,6 @@ if __name__ == "__main__":
             args.config.resolve(),
             args.component.resolve(),
             args.ready.resolve(),
+            classic_dashboard=args.classic_dashboard,
         )
     )
