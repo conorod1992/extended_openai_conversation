@@ -182,6 +182,7 @@ def _run_driver(image: str, root: Path, phase: str, endpoint: str, evidence: Pat
         "/config",
         phase,
         endpoint,
+        "--healthy-provider",
     )
     (evidence / f"{phase}.log").write_text(
         result.stdout + "\n" + result.stderr, encoding="utf-8"

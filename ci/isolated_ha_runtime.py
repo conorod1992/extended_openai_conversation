@@ -176,7 +176,7 @@ async def exercise(hass, entry, endpoint, expected):
     return memory, knowledge, sub
 
 
-async def main(root, phase, endpoint):
+async def main(root, phase, endpoint, *, healthy_provider=False):
     from homeassistant import bootstrap, runner
     from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 
@@ -236,7 +236,9 @@ async def main(root, phase, endpoint):
             assert result["type"] == "create_entry", result
         await until(lambda: len(hass.config_entries.async_entries(DOMAIN)) == 1)
         entry = hass.config_entries.async_entries(DOMAIN)[0]
-        if phase not in ("seed", "recover-provider-first"):
+        # The official Container restart keeps its provider healthy. Only the
+        # fault-injection controller expects a transient setup failure first.
+        if phase not in ("seed", "recover-provider-first") and not healthy_provider:
             expected = (
                 ConfigEntryState.SETUP_RETRY
                 if phase.startswith("recover")
@@ -360,4 +362,11 @@ def er_rows(hass, entry_id):
 
 
 if __name__ == "__main__":
-    asyncio.run(main(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3]))
+    asyncio.run(
+        main(
+            Path(sys.argv[1]).resolve(),
+            sys.argv[2],
+            sys.argv[3],
+            healthy_provider="--healthy-provider" in sys.argv[4:],
+        )
+    )
