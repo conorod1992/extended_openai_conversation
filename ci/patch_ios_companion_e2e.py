@@ -68,12 +68,39 @@ HELPERS = r'''
         grantNotificationPermission()
 
         let nameField = webView.textFields
-            .matching(NSPredicate(format: "value == %@", "Companion acceptance assistant"))
+            .matching(NSPredicate(format: "label == %@", "Agent name"))
             .firstMatch
         wait(for: nameField, timeout: Timeout.frontend, "EOAI Agent name field")
-        nameField.tap()
-        nameField.typeKey("a", modifierFlags: .command)
+        XCTAssertEqual(nameField.value as? String, "Companion acceptance assistant")
+
+        // The system permission alert can arrive after the in-app request
+        // sheet disappears. Its dismissal steals focus from the web field.
+        // Handle that specific alert, then establish keyboard focus again.
+        var focusAttempts = 0
+        repeat {
+            nameField.tap()
+            dismissLateNotificationAlert()
+            focusAttempts += 1
+        } while !app.keyboards.firstMatch.waitForExistence(timeout: Timeout.optional) && focusAttempts < 3
+        guard app.keyboards.firstMatch.exists else {
+            XCTFail("Keyboard never came up for the EOAI Agent name")
+            return
+        }
+        // This simulator's command-A moves the caret to the beginning without
+        // selecting the WebKit value. Tap beyond the fixture's visible text,
+        // then delete the actual existing characters through the native input.
+        let existingName = nameField.value as? String ?? ""
+        nameField.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        nameField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existingName.count))
+        guard nameField.value as? String == "" else {
+            XCTFail("EOAI Agent name was not cleared: \(String(describing: nameField.value))")
+            return
+        }
         nameField.typeText("Companion app iOS saved title")
+        guard nameField.value as? String == "Companion app iOS saved title" else {
+            XCTFail("EOAI Agent name did not match before Save: \(String(describing: nameField.value))")
+            return
+        }
 
         // WebKit can report a covered Save button as hittable while the software
         // keyboard is up. Use the keyboard accessory's Done control first.
@@ -92,6 +119,24 @@ HELPERS = r'''
             .matching(NSPredicate(format: "value == %@", "Companion app iOS saved title"))
             .firstMatch
         wait(for: savedField, timeout: Timeout.frontend, "saved EOAI Agent name")
+    }
+
+    private func dismissLateNotificationAlert() {
+        let alert = springboard.alerts
+            .matching(NSPredicate(format: "label CONTAINS[c] %@", "Would Like to Send You Notifications"))
+            .firstMatch
+        guard alert.waitForExistence(timeout: Timeout.optional) else { return }
+        let allow = alert.buttons["Allow"]
+        wait(for: allow, timeout: Timeout.screen, "notification permission Allow button")
+        allow.tap()
+        XCTAssertTrue(
+            alert.waitForNonExistence(timeout: Timeout.screen),
+            "Notification permission alert stayed on screen"
+        )
+        // The permission sheet may have consumed the original field tap.
+        app.webViews.firstMatch.textFields
+            .matching(NSPredicate(format: "label == %@", "Agent name"))
+            .firstMatch.tap()
     }
 
     private func verifyExtendedOpenAIAfterBackgroundResume() {
@@ -134,7 +179,15 @@ def main() -> None:
     e2e_replacement = "xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO -collect-test-diagnostics never',"
     if e2e_anchor not in e2e_lane:
         raise SystemExit("Pinned iOS E2E Fastlane lane no longer has the expected run_tests options")
-    lane_text = earlier_lanes + lane_marker + e2e_lane.replace(e2e_anchor, e2e_replacement, 1)
+    patched_e2e = e2e_lane.replace(e2e_anchor, e2e_replacement, 1)
+    boot_anchor = '  sh("xcrun simctl erase #{udid}")\n'
+    if boot_anchor not in e2e_lane:
+        raise SystemExit("Pinned iOS E2E lane no longer has the expected simulator erase")
+    boot_replacement = boot_anchor + r'''  # Finish first boot before compilation and XCTest's app launch handshake.
+  sh("xcrun simctl boot #{udid}")
+  sh("python3 -c \"import subprocess; subprocess.run(['xcrun', 'simctl', 'bootstatus', '#{udid}', '-b'], check=True, timeout=300)\"")
+'''
+    lane_text = earlier_lanes + lane_marker + patched_e2e.replace(boot_anchor, boot_replacement, 1)
     testing_lane.write_text(lane_text, encoding="utf-8")
 
     assert text.count("openExtendedOpenAIAndEditAgent()") == 2

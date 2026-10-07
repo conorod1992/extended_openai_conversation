@@ -156,15 +156,14 @@ async def _append_archive_history(hass: Any, entry_id: str, owner_id: str) -> di
 async def _schedule_durable_call(hass: Any, entry_id: str, owner_id: str) -> dict[str, Any]:
     from homeassistant.components import conversation
     from homeassistant.core import Context
-    from homeassistant.helpers import llm
-    from custom_components.extended_openai_conversation_responses import delayed_tools
+    from custom_components.extended_openai_conversation_responses import const, delayed_tools
 
     agent = conversation.async_get_agent(hass, entry_id)
     assert agent is not None
     tools = upgrade_helpers._tool_names
     del tools  # Document that the helper module owns the canonical tool parsing contract.
 
-    configured = _read_tools(agent.subentry.data.get("function_tools"))
+    configured = _read_tools(agent.subentry.data.get(const.CONF_FUNCTION_TOOLS))
     function_tool = next(
         item
         for item in configured

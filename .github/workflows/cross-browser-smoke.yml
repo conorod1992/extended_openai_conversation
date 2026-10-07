@@ -61,7 +61,9 @@ jobs:
         run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
 
       - name: Install Chromium, Firefox and WebKit
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: |
+          bash ci/prepare_playwright_host.sh
+          npx playwright install --with-deps chromium firefox webkit
 
       - name: Run critical functional smoke journeys
         env:

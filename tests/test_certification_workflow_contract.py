@@ -69,7 +69,9 @@ def test_enhanced_dispatch_can_run_the_scheduled_intensity_matrix():
     )
     assert 'INTENSITY" == all' in controls["run"]
     assert 'intensities=["normal","heavy"]' in controls["run"]
-    scheduled = next(line for line in controls["run"].splitlines() if "'') CAMPAIGNS=" in line)
+    scheduled = next(
+        line for line in controls["run"].splitlines() if "'') CAMPAIGNS=" in line
+    )
     assert '"long-lifetime"' in scheduled
     exclusion = jobs["python-campaigns"]["strategy"]["matrix"]["exclude"]
     assert "github.event_name == 'schedule'" in exclusion
@@ -156,7 +158,7 @@ def test_official_container_workflow_binds_image_evidence_to_exact_candidate():
         for step in job["steps"]
         if step.get("name") == "Exercise staged EOAI inside official runtime"
     )
-    assert "--candidate-sha \"$CANDIDATE_SHA\"" in runner["run"]
+    assert '--candidate-sha "$CANDIDATE_SHA"' in runner["run"]
     assert runner["env"]["CANDIDATE_SHA"] == checkout["with"]["ref"]
     assert "ghcr.io/home-assistant/home-assistant:" in next(
         step["run"]
@@ -275,7 +277,7 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     assert "sha256sum" in stable_reconciler
     assert "EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION" in stable_reconciler
     assert (
-        "pytest-homeassistant-custom-component==${EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION"
+        'python ci/install_ha_test_plugin.py "$EOAI_EXPECTED_HA_VERSION" "$EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION"'
         in stable_reconciler
     )
     stable_image_workflow = workflow("ci-image-stable.yml")["jobs"]["build"]
@@ -285,7 +287,7 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     )
     stable_dockerfile = Path("ci/Dockerfile.stable").read_text()
     assert (
-        "pytest-homeassistant-custom-component==${HA_TEST_PLUGIN_VERSION}"
+        'install_ha_test_plugin.py "${HOMEASSISTANT_VERSION}" "${HA_TEST_PLUGIN_VERSION}"'
         in stable_dockerfile
     )
     assert "homeassistant==${HOMEASSISTANT_VERSION}" in stable_dockerfile

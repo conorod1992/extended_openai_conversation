@@ -1,9 +1,67 @@
 import json
+import zipfile
 
 import pytest
 
 from ci.historical_runtime_identity import identity
-from ci.resolve_ha_test_plugin import resolve_ha_test_plugin
+from ci.install_ha_test_plugin import verify_wheel
+from ci.resolve_ha_test_plugin import (
+    CORE_SHA,
+    GENERATED_HA_VERSION,
+    GENERATED_PLUGIN_VERSION,
+    GENERATOR_SHA,
+    resolve_ha_test_plugin,
+)
+
+
+def test_release_day_bridge_yields_to_exact_published_fixtures():
+    project = {"releases": {"0.13.371": [{"yanked": False}]}}
+    assert (
+        resolve_ha_test_plugin(
+            GENERATED_HA_VERSION,
+            project,
+            lambda _: {"info": {"requires_dist": ["homeassistant==2026.10.0"]}},
+        )
+        == "0.13.371"
+    )
+    assert (
+        resolve_ha_test_plugin(
+            GENERATED_HA_VERSION,
+            project,
+            lambda _: {"info": {"requires_dist": ["homeassistant==2026.10.0b4"]}},
+        )
+        == GENERATED_PLUGIN_VERSION
+    )
+
+
+@pytest.mark.parametrize("drift", [None, "metadata", "fixtures", "provenance"])
+def test_generated_fixtures_reject_beta_relabeling_or_wrong_source(tmp_path, drift):
+    wheel = tmp_path / "fixtures.whl"
+    ha_pin = "2026.10.0b4" if drift == "metadata" else GENERATED_HA_VERSION
+    patch = "0b4" if drift == "fixtures" else "0"
+    provenance = {
+        "generator_sha": GENERATOR_SHA,
+        "core_sha": "a" * 40 if drift == "provenance" else CORE_SHA,
+        "homeassistant": GENERATED_HA_VERSION,
+    }
+    with zipfile.ZipFile(wheel, "w") as package:
+        package.writestr(
+            "fixtures.dist-info/METADATA",
+            f"Version: {GENERATED_PLUGIN_VERSION}\nRequires-Dist: homeassistant=={ha_pin}\n",
+        )
+        package.writestr(
+            "pytest_homeassistant_custom_component/const.py",
+            f'MAJOR_VERSION: Final = 2026\nMINOR_VERSION: Final = 10\nPATCH_VERSION: Final = "{patch}"\n',
+        )
+        package.writestr(
+            "pytest_homeassistant_custom_component/eoai_source_identity.json",
+            json.dumps(provenance),
+        )
+    if drift:
+        with pytest.raises(RuntimeError):
+            verify_wheel(wheel)
+    else:
+        verify_wheel(wheel)
 
 
 def test_ha_test_plugin_resolver_uses_newest_exact_ha_compatibility():
