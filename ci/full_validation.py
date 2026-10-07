@@ -36,6 +36,7 @@ TEST_WORKFLOWS = (
     ("ipv6-only-networking-acceptance.yml", {}),
     ("ha-browser-compatibility.yml", {}),
     ("android-companion-app.yml", {}),
+    ("ios-companion-app.yml", {}),
     ("haos-supervisor-vm-acceptance.yml", {}),
     ("official-ha-container.yml", {}),
     ("resource-constrained.yml", {}),

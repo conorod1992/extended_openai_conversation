@@ -52,6 +52,10 @@ jobs:
         id: runtimes
         run: |
           set -euo pipefail
+          # Historical HA pins may need native wheels built on this newer
+          # Python. The runtime image deliberately omits build tools.
+          apt-get update
+          apt-get install -y --no-install-recommends gcc
           MINIMUM_HA="$(python - <<'PY'
           import json
           print(json.load(open("hacs.json", encoding="utf-8"))["homeassistant"])
@@ -107,7 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           export HA_VERSION_UPGRADE_RUNTIMES="$(cat "$HA_VERSION_UPGRADE_RUNTIMES_FILE")"
-          pytest tests_real_ha/test_ha_version_upgrade_acceptance.py             -v --asyncio-mode=auto --timeout=300
+          python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' tests_real_ha/test_ha_version_upgrade_acceptance.py -v --asyncio-mode=auto --timeout=300
 
       - name: Record workflow metadata
         if: always()

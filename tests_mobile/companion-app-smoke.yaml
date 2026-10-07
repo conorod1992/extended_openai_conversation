@@ -1,7 +1,8 @@
 appId: io.homeassistant.companion.android
 ---
 - launchApp:
-    clearState: true
+    # The workflow clears state before Maestro opens its ADB/driver channels.
+    clearState: false
     permissions:
       all: allow
 

@@ -2,10 +2,53 @@
 
 import importlib.util
 from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "haos-supervisor-vm-acceptance.yml"
 DRIVER = ROOT / "ci" / "haos_supervisor_acceptance.py"
+
+
+def _driver():
+    spec = importlib.util.spec_from_file_location("haos_acceptance_driver", DRIVER)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    return driver
+
+
+def test_restore_job_waits_through_core_shutdown(monkeypatch):
+    driver = _driver()
+    api = Mock(
+        side_effect=[
+            AssertionError("Error response from daemon: container abc is not running"),
+            {"result": "ok", "data": {"done": False}},
+            {"result": "ok", "data": {"done": True, "errors": []}},
+        ]
+    )
+    monkeypatch.setattr(driver, "_supervisor_api", api)
+    monkeypatch.setattr(driver.time, "sleep", lambda _: None)
+    result = driver._wait_supervisor_job(object(), "restore-job")
+    assert result == {"done": True, "errors": []}
+    assert api.call_count == 3
+    assert all(call.args[2] == "/jobs/restore-job" for call in api.call_args_list)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        AssertionError("SSH permission denied"),
+        {"result": "ok", "data": {"done": True, "errors": ["restore failed"]}},
+    ],
+)
+def test_restore_job_does_not_hide_transport_or_restore_errors(monkeypatch, failure):
+    driver = _driver()
+    api = Mock(side_effect=[failure])
+    monkeypatch.setattr(driver, "_supervisor_api", api)
+    with pytest.raises(AssertionError):
+        driver._wait_supervisor_job(object(), "restore-job")
+    assert api.call_count == 1
 
 
 def test_haos_vm_workflow_runs_on_pr_weekly_and_manual() -> None:
@@ -19,7 +62,9 @@ def test_haos_vm_workflow_runs_on_pr_weekly_and_manual() -> None:
     assert "release:" not in trigger_block
 
 
-def test_haos_vm_workflow_boots_official_qcow2_with_supervisor_appliance_boundaries() -> None:
+def test_haos_vm_workflow_boots_official_qcow2_with_supervisor_appliance_boundaries() -> (
+    None
+):
     text = WORKFLOW.read_text(encoding="utf-8")
 
     assert "home-assistant/operating-system/releases/latest" in text
@@ -52,7 +97,9 @@ def test_haos_driver_uses_public_ha_interfaces_and_supervisor_restart() -> None:
     assert "kill homeassistant" not in text
 
 
-def test_haos_driver_installs_candidate_into_real_core_config_and_retains_data() -> None:
+def test_haos_driver_installs_candidate_into_real_core_config_and_retains_data() -> (
+    None
+):
     text = DRIVER.read_text(encoding="utf-8")
 
     assert '.Destination \\"/config\\"' in text

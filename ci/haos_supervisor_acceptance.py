@@ -599,7 +599,19 @@ def _wait_supervisor_job(ssh: HostSSH, job_id: str, *, timeout: float = 900) -> 
     deadline = time.monotonic() + timeout
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:
-        response = _supervisor_api(ssh, "GET", f"/jobs/{job_id}", timeout=30)
+        try:
+            response = _supervisor_api(ssh, "GET", f"/jobs/{job_id}", timeout=30)
+        except AssertionError as err:
+            # A full Supervisor restore deliberately stops Core. Its API
+            # transport lives in that container, so resume polling once Core
+            # returns; every other transport error remains a hard failure.
+            message = str(err)
+            if "Error response from daemon: container " not in message or not (
+                " is not running" in message or " is restarting" in message
+            ):
+                raise
+            time.sleep(5)
+            continue
         assert response.get("result") == "ok", response
         last = response.get("data", {})
         if last.get("done"):
