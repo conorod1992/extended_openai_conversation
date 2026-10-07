@@ -22,6 +22,7 @@ from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_ha_llm_tool_acceptance import AcceptanceAPI, AcceptanceEchoTool
 from tests_real_ha.test_provider_wire_e2e import _install_wire
 from tests_stress.conftest import record
+from tests_stress.race_jitter import race_yield
 
 
 @pytest.mark.parametrize("mutation", ["model_aba", "tool_delete_recreate", "model_tool_aba"])
@@ -30,6 +31,7 @@ async def test_catalogue_discovery_rejects_changed_config_generation(
     monkeypatch: pytest.MonkeyPatch,
     stress_trace: list[dict],
     mutation: str,
+    stress_seed: int,
 ) -> None:
     """An A→B→A edit during genuine HA discovery cannot publish stale work."""
     tool = AcceptanceEchoTool()
@@ -89,15 +91,18 @@ async def test_catalogue_discovery_rejects_changed_config_generation(
             data={**current.data, CONF_CHAT_MODEL: model, CONF_FUNCTION_TOOLS: tools},
         )
 
+    await race_yield(stress_seed, f'{mutation}-discovery-paused', stress_trace)
     if mutation == "model_aba":
         update(model="gpt-4.1-mini", tools=[configured])
     elif mutation == "tool_delete_recreate":
         update(model="gpt-5.6", tools=[])
     else:
         update(model="gpt-4.1-mini", tools=[])
+    await race_yield(stress_seed, f'{mutation}-between-config-generations', stress_trace)
     update(model="gpt-5.6", tools=[configured])
     current_data = next(item for item in entry.subentries.values() if item.subentry_type == "conversation").data
     assert current_data == original_data and current_data is not original_data
+    await race_yield(stress_seed, f'{mutation}-before-discovery-release', stress_trace)
     release.set()
     result = await asyncio.wait_for(pending, timeout=10)
     assert result.response.error_code is not None
