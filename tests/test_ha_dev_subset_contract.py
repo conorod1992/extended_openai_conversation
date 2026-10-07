@@ -18,7 +18,7 @@ REQUIRED_HA_DEV_BOUNDARIES = {
 def _selected_paths() -> set[str]:
     text = SCRIPT.read_text(encoding="utf-8")
     start = text.index("TEST_PATHS=(")
-    end = text.index(")\n\npytest", start)
+    end = text.index("\n)\n", start)
     block = text[start:end]
     return {
         line.strip()
