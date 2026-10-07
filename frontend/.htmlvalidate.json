@@ -1,9 +1,7 @@
 {
-  "extends": ["html-validate:recommended"],
+  "extends": [],
   "rules": {
-    "no-trailing-whitespace": "off",
-    "attr-quotes": "off",
-    "void-style": "off",
-    "wcag/h32": "off"
+    "no-dup-id": "error",
+    "element-permitted-content": "error"
   }
 }
