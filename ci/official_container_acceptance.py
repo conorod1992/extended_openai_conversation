@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 DOMAIN = "extended_openai_conversation_responses"
+HTTP_PORT = 8123
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -244,27 +245,35 @@ def _normal_entrypoint(image: str, root: Path, evidence: Path) -> None:
     try:
         deadline = time.monotonic() + 180
         ready = False
+        url = f"http://127.0.0.1:{HTTP_PORT}/api/"
+        last_response = "No response"
         while time.monotonic() < deadline:
             state = _docker("inspect", "-f", "{{.State.Running}}", name)
             if state.returncode != 0 or state.stdout.strip() != "true":
                 break
             try:
-                with urlopen("http://127.0.0.1:18123/api/", timeout=2) as response:
+                with urlopen(url, timeout=2) as response:
+                    last_response = f"HTTP {response.status}"
                     ready = response.status < 500
                     if ready:
                         break
             except HTTPError as error:
+                last_response = f"HTTP {error.code}"
                 # HA can legitimately answer an unauthenticated readiness request
                 # with 401/403 once its HTTP stack is fully serving.
                 if error.code in {401, 403}:
                     ready = True
                     break
-            except (URLError, TimeoutError):
-                pass
+            except (URLError, TimeoutError) as error:
+                last_response = str(error)
             time.sleep(1)
         logs = _docker("logs", name)
         (evidence / "entrypoint.log").write_text(
             logs.stdout + "\n" + logs.stderr, encoding="utf-8"
+        )
+        (evidence / "entrypoint-readiness.json").write_text(
+            json.dumps({"url": url, "ready": ready, "last_response": last_response}),
+            encoding="utf-8",
         )
         assert ready, "official HA image did not become HTTP-ready via normal entrypoint"
         lowered = (logs.stdout + logs.stderr).lower()
@@ -298,7 +307,9 @@ def main() -> None:
         "recorder:\n"
         "api:\n"
         "http:\n"
-        "  server_port: 18123\n",
+        # Keep HA's stable default port: a custom YAML port is an unconfirmed
+        # HTTP configuration trial that can revert during the recovery phase.
+        f"  server_port: {HTTP_PORT}\n",
         encoding="utf-8",
     )
 

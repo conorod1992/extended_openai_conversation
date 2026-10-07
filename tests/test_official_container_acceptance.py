@@ -19,7 +19,7 @@ def test_normal_entrypoint_accepts_authenticated_api_readiness(monkeypatch, tmp_
     def api_request(url, **kwargs):
         # The minimal config has no frontend root page. Its explicitly enabled
         # API must be serving, even though this probe has no access token.
-        assert url == "http://127.0.0.1:18123/api/"
+        assert url == "http://127.0.0.1:8123/api/"
         raise HTTPError(url, 401, "Unauthorized", {}, None)
 
     monkeypatch.setattr(container, "_docker", docker)
