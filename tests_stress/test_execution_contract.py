@@ -42,6 +42,24 @@ def test_complete_reviewed_execution_passes():
     assert check_execution(evidence(), contract()) == []
 
 
+def test_each_engine_requires_its_own_cross_browser_handoff():
+    policy = json.loads(CONTRACT.read_text())
+    prefix = (
+        "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py::"
+        "test_cross_browser_state_handoff_survives_true_ha_restart["
+    )
+    for engine in ("firefox", "webkit"):
+        required = {
+            node
+            for node in expected_cases(policy, f"browser-{engine}")
+            if node.startswith(prefix)
+        }
+        assert required == {f"{prefix}{engine}]"}
+    assert {f"{prefix}{engine}]" for engine in ("firefox", "webkit")} <= set(
+        policy["pytest"]
+    )
+
+
 @pytest.mark.parametrize(
     "outcome", ["skipped", "xfailed", "xpassed", "failed", "deselected", "incomplete"]
 )

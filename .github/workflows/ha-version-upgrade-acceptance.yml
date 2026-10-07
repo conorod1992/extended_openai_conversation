@@ -55,7 +55,7 @@ jobs:
           # Historical HA pins may need native wheels built on this newer
           # Python. The runtime image deliberately omits build tools.
           apt-get update
-          apt-get install -y --no-install-recommends build-essential
+          apt-get install -y --no-install-recommends build-essential ffmpeg libturbojpeg0
           MINIMUM_HA="$(python - <<'PY'
           import json
           print(json.load(open("hacs.json", encoding="utf-8"))["homeassistant"])
