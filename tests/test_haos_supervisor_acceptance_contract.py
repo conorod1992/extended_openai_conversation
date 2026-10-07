@@ -25,6 +25,7 @@ def _driver():
         "Error response from daemon: container abc is not running",
         "Error response from daemon: container abc is restarting",
         "Error response from daemon: No such container: homeassistant",
+        "FailedPrecondition: container abc init process is not running: failed precondition",
     ],
 )
 def test_restore_job_waits_through_core_shutdown(monkeypatch, message):

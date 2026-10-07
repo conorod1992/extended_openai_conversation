@@ -621,6 +621,10 @@ def _wait_supervisor_job(ssh: HostSSH, job_id: str, *, timeout: float = 900) -> 
                     "Error response from daemon: container " in message
                     and (" is not running" in message or " is restarting" in message)
                 )
+                or (
+                    "FailedPrecondition: container " in message
+                    and " init process is not running: failed precondition" in message
+                )
                 # Core may stop after docker exec has started. Docker then
                 # returns the terminated process's signal status, without a
                 # daemon error. Only an interrupted, empty poll is retryable.
