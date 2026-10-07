@@ -317,3 +317,17 @@ async def test_shipped_browser_frontend_loads_inside_real_home_assistant_shell(r
         env=real_ha_shell["env"],
         failure_label="Playwright genuine Home Assistant frontend-shell acceptance failed",
     )
+
+
+@pytest.mark.asyncio
+async def test_shipped_frontend_treats_hostile_knowledge_and_memory_as_text(
+    real_ha_shell,
+) -> None:
+    """Run hostile managed-content rendering through native HA authentication."""
+    await _run_playwright(
+        repo_root=Path(__file__).resolve().parent.parent,
+        spec="tests_browser/real-ha-adversarial-content.spec.mjs",
+        config="playwright.real-ha-shell.config.mjs",
+        env=real_ha_shell["env"],
+        failure_label="Genuine HA hostile-content rendering failed",
+    )
