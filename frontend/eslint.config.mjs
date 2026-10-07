@@ -1,7 +1,7 @@
 // Deliberately narrow bug-catching rules for the shipped plain-JavaScript frontend.
 // Styling, naming and TypeScript migration are intentionally out of scope.
 export default [{
-  files: ["../custom_components/extended_openai_conversation_responses/frontend/*.js"],
+  files: ["**/*.js"],
   languageOptions: {ecmaVersion: 2022, sourceType: "module"},
   rules: {
     "no-dupe-args": "error",
