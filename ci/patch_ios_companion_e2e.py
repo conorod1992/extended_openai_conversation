@@ -47,7 +47,18 @@ HELPERS = r'''
             .firstMatch
         wait(for: heading, timeout: Timeout.frontend, "Extended OpenAI management panel")
 
-        tapWebElement(labelContaining: "assistant", timeout: Timeout.frontend, "EOAI Assistant section")
+        // Mobile navigation is a native select named Page. A loose "assistant"
+        // match instead opens the separate Editing assistant select on Overview.
+        let pageSelector = webView.buttons
+            .matching(NSPredicate(format: "label == %@", "Page"))
+            .firstMatch
+        wait(for: pageSelector, timeout: Timeout.frontend, "EOAI Page selector")
+        pageSelector.tap()
+        let assistantPage = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Assistant"))
+            .firstMatch
+        wait(for: assistantPage, timeout: Timeout.frontend, "EOAI Assistant page option")
+        assistantPage.tap()
         let basics = webElement(labelContaining: "basics")
         if basics.waitForExistence(timeout: Timeout.optional) && basics.isHittable {
             basics.tap()
