@@ -103,6 +103,9 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_6
+          cores: 4
+          ram-size: 4096M
+          heap-size: 512M
           disable-animations: true
           disable-linux-hw-accel: false
           script: |

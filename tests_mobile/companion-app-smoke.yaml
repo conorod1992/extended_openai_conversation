@@ -6,6 +6,14 @@ appId: io.homeassistant.companion.android
     permissions:
       all: allow
 
+# A slow first emulator boot can leave a Pixel Launcher ANR over the app.
+# Recover that specific system dialog before exercising Companion onboarding.
+- runFlow:
+    when:
+      visible: "Pixel Launcher isn.t responding"
+    commands:
+      - tapOn: "Close app"
+
 - tapOn:
     text: '(?s)Connect to my Home.*Assistant server'
     retryTapIfNoChange: true

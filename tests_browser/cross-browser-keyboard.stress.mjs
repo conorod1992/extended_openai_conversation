@@ -125,8 +125,12 @@ test("malformed browser-local state cannot prevent a fresh management load", asy
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
   await expect(panel.locator("#agent")).toHaveValue("agent-1");
+  // Finish this document's lazy imports before deliberately replacing it;
+  // WebKit reports an interrupted asset download as a failed request.
+  await page.waitForLoadState("networkidle");
   await page.goto(fixtureUrl("data-memory/memories"));
   await expect(panel.getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
+  await page.waitForLoadState("networkidle");
   await expectHarnessClean(page, errors);
 });
 
