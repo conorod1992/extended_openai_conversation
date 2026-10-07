@@ -89,6 +89,7 @@ jobs:
             # Separate interpreter processes also perturb hash ordering.
             export PYTHONHASHSEED="$seed"
             export PYTHONASYNCIODEBUG=1
+            export EOAI_RACE_JITTER=1
             export STRESS_ARTIFACT_DIR="race-results/seed-$seed"
             mkdir -p "$STRESS_ARTIFACT_DIR"
             pytest \
