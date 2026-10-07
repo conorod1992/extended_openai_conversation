@@ -166,9 +166,9 @@ function memoryCheck(facts) {
     return {
       id: "memory",
       state: "neutral",
-      title: "Persistent memory",
+      title: "Long-term memory",
       value: "Off by choice",
-      detail: "Persistent memory is optional and is currently disabled.",
+      detail: "Long-term memory is optional and is currently disabled.",
       action: action("data-memory", "memory-settings"),
     };
   }
@@ -176,7 +176,7 @@ function memoryCheck(facts) {
     return {
       id: "memory",
       state: "unknown",
-      title: "Persistent memory",
+      title: "Long-term memory",
       value: "Loading…",
       detail: "Loading the current persistent-memory status.",
       action: action("data-memory", "memory-settings"),
@@ -186,18 +186,18 @@ function memoryCheck(facts) {
     return {
       id: "memory",
       state: "unknown",
-      title: "Persistent memory",
+      title: "Long-term memory",
       value: "Unable to determine",
-      detail: "Persistent memory is enabled, but Overview could not load its current status.",
+      detail: "Long-term memory is enabled, but Overview could not load its current status.",
       action: action("data-memory", "memory-settings"),
     };
   }
   return {
     id: "memory",
     state: "ready",
-    title: "Persistent memory",
+    title: "Long-term memory",
     value: titleCase(mode),
-    detail: "Persistent memory is enabled for this assistant.",
+    detail: "Long-term memory is enabled for this assistant.",
     action: action("data-memory", "memory-settings"),
   };
 }
