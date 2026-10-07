@@ -64,6 +64,9 @@ HELPERS = r'''
             basics.tap()
         }
 
+        // Simulator startup can delay the native notification sheet until here.
+        grantNotificationPermission()
+
         let nameField = webView.textFields
             .matching(NSPredicate(format: "value == %@", "Companion acceptance assistant"))
             .firstMatch
@@ -71,6 +74,18 @@ HELPERS = r'''
         nameField.tap()
         nameField.typeKey("a", modifierFlags: .command)
         nameField.typeText("Companion app iOS saved title")
+
+        // WebKit can report a covered Save button as hittable while the software
+        // keyboard is up. Use the keyboard accessory's Done control first.
+        let keyboardDone = app.buttons
+            .matching(NSPredicate(format: "label == %@", "Done"))
+            .firstMatch
+        wait(for: keyboardDone, timeout: Timeout.screen, "keyboard Done button")
+        keyboardDone.tap()
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForNonExistence(timeout: Timeout.screen),
+            "Keyboard stayed on screen before saving the EOAI Agent"
+        )
 
         tapWebElement(labelContaining: "save changes", timeout: Timeout.frontend, "EOAI Save changes")
         let savedField = webView.textFields
