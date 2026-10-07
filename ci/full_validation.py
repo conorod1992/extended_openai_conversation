@@ -1,4 +1,4 @@
-"""Dispatch the repository's complete non-live acceptance workflow set."""
+"""Dispatch the repository's required non-live acceptance workflow set."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from urllib.request import Request, urlopen
 
 # These workflows own their environments and test selection. Keep this list in
 # sync with test-bearing workflow_dispatch workflows; live API acceptance,
-# release publishing, image publishing, informational diagnostics, and maintenance are
-# intentionally separate from this validation run.
+# release publishing, image publishing, informational diagnostics, optional iOS
+# native diagnostics, and maintenance are separate from this validation run.
 TEST_WORKFLOWS = (
     ("ci.yml", {}),
     ("frontend.yml", {}),
@@ -36,7 +36,6 @@ TEST_WORKFLOWS = (
     ("ipv6-only-networking-acceptance.yml", {}),
     ("ha-browser-compatibility.yml", {}),
     ("android-companion-app.yml", {}),
-    ("ios-companion-app.yml", {}),
     ("frontend-latency-diagnostics.yml", {"runs": "3", "diagnostic_picker": "false"}),
     ("haos-supervisor-vm-acceptance.yml", {}),
     ("official-ha-container.yml", {}),
@@ -87,15 +86,8 @@ def api(method: str, endpoint: str, payload: dict | None = None) -> dict:
         raise RuntimeError(f"GitHub API request failed: {error.reason}") from error
 
 
-def workflow_ref(workflow: str) -> str:
-    # GitHub caches are branch-scoped. Keep the expensive pinned iOS build on
-    # the source branch so later full runs can reuse it. Run discovery below
-    # still requires TARGET_SHA; an advancing source branch fails closed.
-    return TARGET_REF if workflow == "ios-companion-app.yml" else REF_NAME
-
-
 def wait_for_run(workflow: str, dispatched_at: datetime) -> dict:
-    query = urlencode({"branch": workflow_ref(workflow), "event": "workflow_dispatch", "per_page": 100})
+    query = urlencode({"branch": REF_NAME, "event": "workflow_dispatch", "per_page": 100})
     endpoint = f"actions/workflows/{workflow}/runs?{query}"
     cutoff = dispatched_at - timedelta(seconds=30)
     deadline = time.monotonic() + 180
@@ -115,7 +107,7 @@ def wait_for_run(workflow: str, dispatched_at: datetime) -> dict:
 
 
 def dispatch(workflow: str, inputs: dict[str, str]) -> dict:
-    payload = {"ref": workflow_ref(workflow), "inputs": inputs}
+    payload = {"ref": REF_NAME, "inputs": inputs}
     if workflow == "enhanced-stress.yml":
         payload["inputs"]["seed"] = STRESS_SEED
     dispatched_at = datetime.now(UTC)

@@ -1,4 +1,4 @@
-"""Keep expensive native lanes in the immutable full-validation campaign."""
+"""Keep required validation lanes complete and isolated from optional diagnostics."""
 
 import ast
 from datetime import UTC, datetime
@@ -32,7 +32,7 @@ def _driver(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("workflow", "expected_ref"),
     [
-        ("ios-companion-app.yml", "candidate-branch"),
+        ("android-companion-app.yml", "full-validation-123-1"),
         ("ci.yml", "full-validation-123-1"),
     ],
 )
@@ -53,7 +53,7 @@ def test_dispatch_and_discovery_use_same_ref_and_exact_candidate(
     assert f"branch={expected_ref}" in api.call_args_list[1].args[1]
 
 
-def test_ios_discovery_rejects_an_advancing_source_branch(monkeypatch, tmp_path):
+def test_run_discovery_rejects_an_unexpected_candidate(monkeypatch, tmp_path):
     driver = _driver(monkeypatch, tmp_path)
     api = Mock(
         return_value={
@@ -73,10 +73,10 @@ def test_ios_discovery_rejects_an_advancing_source_branch(monkeypatch, tmp_path)
         SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda _: None),
     )
     with pytest.raises(RuntimeError, match="did not create the dispatched run"):
-        driver.wait_for_run("ios-companion-app.yml", datetime.now(UTC))
+        driver.wait_for_run("ci.yml", datetime.now(UTC))
 
 
-def test_full_validation_dispatches_both_companion_apps_and_appliance_lanes():
+def test_full_validation_dispatches_required_lanes_and_excludes_optional_ios():
     root = Path(__file__).resolve().parents[1]
     tree = ast.parse((root / "ci/full_validation.py").read_text(encoding="utf-8"))
     assignment = next(
@@ -90,9 +90,12 @@ def test_full_validation_dispatches_both_companion_apps_and_appliance_lanes():
     )
     workflows = [name for name, _ in ast.literal_eval(assignment.value)]
     assert len(workflows) == len(set(workflows))
+    assert "ios-companion-app.yml" not in workflows
+    ios = (root / ".github/workflows/ios-companion-app.yml").read_text()
+    assert "workflow_dispatch:" in ios
+    assert 'cron: "17 4 * * 1"' in ios
     assert {
         "android-companion-app.yml",
-        "ios-companion-app.yml",
         "frontend-latency-diagnostics.yml",
         "haos-supervisor-vm-acceptance.yml",
         "ha-version-upgrade-acceptance.yml",
