@@ -1,6 +1,8 @@
 """Contract checks for official Home Assistant Container architecture coverage."""
 
+import json
 from pathlib import Path
+import re
 
 import yaml
 
@@ -17,7 +19,11 @@ def _workflow():
 
 def test_official_container_matrix_covers_native_amd64_and_arm64():
     job = _workflow()["jobs"]["official-container"]
-    include = job["strategy"]["matrix"]["include"]
+    daily, include = [
+        json.loads(value)
+        for value in re.findall(r"'(\[.*?\])'", job["strategy"]["matrix"]["include"])
+    ]
+    assert daily == [include[0]]
     assert {
         (
             item["arch"],
@@ -65,8 +71,6 @@ def test_official_container_evidence_is_architecture_bound():
     assert '"image_architecture": image_arch.stdout.strip()' in source
     assert "platform.machine() == args.expected_machine" in source
 
-
-
 def test_official_container_cadence_is_daily_amd64_weekly_arm64_and_manual_both():
     data = _workflow()
     triggers = data.get("on", data.get(True))
@@ -74,8 +78,15 @@ def test_official_container_cadence_is_daily_amd64_weekly_arm64_and_manual_both(
         "7 6 * * *",
         "17 6 * * 0",
     }
-    condition = data["jobs"]["official-container"]["if"]
-    assert "matrix.arch == 'amd64'" in condition
-    assert "github.event.schedule == '17 6 * * 0'" in condition
-    assert "github.event_name == 'workflow_dispatch'" in condition
+    job = data["jobs"]["official-container"]
+    condition = job["if"]
+    # Job conditions are evaluated before matrix expansion, so matrix cannot
+    # be referenced here. Daily schedule selection belongs in the matrix.
+    assert "matrix." not in condition
+    assert "github.event_name != 'pull_request'" in condition
     assert "github.event.pull_request.number == 1137" in condition
+    include = job["strategy"]["matrix"]["include"]
+    assert "github.event_name == 'schedule' && github.event.schedule == '7 6 * * *'" in include
+    daily, both = [json.loads(value) for value in re.findall(r"'(\[.*?\])'", include)]
+    assert [row["arch"] for row in daily] == ["amd64"]
+    assert [row["arch"] for row in both] == ["amd64", "arm64"]
