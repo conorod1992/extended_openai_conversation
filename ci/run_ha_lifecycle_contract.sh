@@ -5,6 +5,7 @@ set +e
 # Initialize HA's httpx alias before pytest autoloads HTTP-related plugins.
 python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' \
   tests_stress/test_lifecycle_matrix.py tests_real_ha/test_public_version_journeys.py \
+  tests_real_ha/test_ha_semantic_contract.py \
   -v -s --asyncio-mode=auto --timeout=600 \
   --stress-seed="$STRESS_SEED" --stress-intensity=normal \
   --show-capture=no --tb=short > enhanced-raw.log 2>&1
