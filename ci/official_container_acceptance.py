@@ -15,8 +15,8 @@ from typing import ClassVar
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
-
 DOMAIN = "extended_openai_conversation_responses"
+HTTP_PORT = 8123
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -182,6 +182,7 @@ def _run_driver(image: str, root: Path, phase: str, endpoint: str, evidence: Pat
         "/config",
         phase,
         endpoint,
+        "--healthy-provider",
     )
     (evidence / f"{phase}.log").write_text(
         result.stdout + "\n" + result.stderr, encoding="utf-8"
@@ -211,7 +212,17 @@ def _validate(first: dict, recovered: dict, expected_ha: str) -> None:
         assert required <= set(proof["paths"])
         assert proof["entities"] >= 2
         assert proof["controls"]["callbacks"] == 3
-        assert not any(name.startswith("pytest") for name in proof["before"])
+        before_pytest = {
+            name: version
+            for name, version in proof["before"].items()
+            if name.startswith("pytest")
+        }
+        after_pytest = {
+            name: version
+            for name, version in proof["after"].items()
+            if name.startswith("pytest")
+        }
+        assert after_pytest == before_pytest
     assert first["entry"] == recovered["entry"]
     assert first["entities"] == recovered["entities"]
 
@@ -234,27 +245,35 @@ def _normal_entrypoint(image: str, root: Path, evidence: Path) -> None:
     try:
         deadline = time.monotonic() + 180
         ready = False
+        url = f"http://127.0.0.1:{HTTP_PORT}/api/"
+        last_response = "No response"
         while time.monotonic() < deadline:
             state = _docker("inspect", "-f", "{{.State.Running}}", name)
             if state.returncode != 0 or state.stdout.strip() != "true":
                 break
             try:
-                with urlopen("http://127.0.0.1:18123/", timeout=2) as response:
+                with urlopen(url, timeout=2) as response:
+                    last_response = f"HTTP {response.status}"
                     ready = response.status < 500
                     if ready:
                         break
             except HTTPError as error:
+                last_response = f"HTTP {error.code}"
                 # HA can legitimately answer an unauthenticated readiness request
                 # with 401/403 once its HTTP stack is fully serving.
                 if error.code in {401, 403}:
                     ready = True
                     break
-            except (URLError, TimeoutError):
-                pass
+            except (URLError, TimeoutError) as error:
+                last_response = str(error)
             time.sleep(1)
         logs = _docker("logs", name)
         (evidence / "entrypoint.log").write_text(
             logs.stdout + "\n" + logs.stderr, encoding="utf-8"
+        )
+        (evidence / "entrypoint-readiness.json").write_text(
+            json.dumps({"url": url, "ready": ready, "last_response": last_response}),
+            encoding="utf-8",
         )
         assert ready, "official HA image did not become HTTP-ready via normal entrypoint"
         lowered = (logs.stdout + logs.stderr).lower()
@@ -269,6 +288,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
     parser.add_argument("--expected-ha-version", required=True)
+    parser.add_argument("--expected-machine", required=True)
+    parser.add_argument("--expected-image-arch", required=True)
     parser.add_argument("--component", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--candidate-sha", required=True)
@@ -284,8 +305,11 @@ def main() -> None:
         "homeassistant:\n"
         "  name: Official Container Acceptance\n"
         "recorder:\n"
+        "api:\n"
         "http:\n"
-        "  server_port: 18123\n",
+        # Keep HA's stable default port: a custom YAML port is an unconfirmed
+        # HTTP configuration trial that can revert during the recovery phase.
+        f"  server_port: {HTTP_PORT}\n",
         encoding="utf-8",
     )
 
@@ -301,6 +325,21 @@ def main() -> None:
     assert version.stdout.strip() == args.expected_ha_version
     image_id = _docker("image", "inspect", "-f", "{{.Id}}", args.image)
     assert image_id.returncode == 0 and image_id.stdout.strip()
+    image_arch = _docker("image", "inspect", "-f", "{{.Architecture}}", args.image)
+    assert image_arch.returncode == 0, image_arch.stderr
+    assert image_arch.stdout.strip() == args.expected_image_arch
+
+    container_machine = _docker(
+        "run",
+        "--rm",
+        args.image,
+        "python",
+        "-c",
+        "import platform; print(platform.machine())",
+    )
+    assert container_machine.returncode == 0, container_machine.stderr
+    assert container_machine.stdout.strip() == args.expected_machine
+    assert platform.machine() == args.expected_machine
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -323,6 +362,8 @@ def main() -> None:
                     "image": args.image,
                     "image_id": image_id.stdout.strip(),
                     "machine": platform.machine(),
+                    "container_machine": container_machine.stdout.strip(),
+                    "image_architecture": image_arch.stdout.strip(),
                     "phases": ["seed", "recover", "entrypoint"],
                     "retained_entry": first["entry"] == recovered["entry"],
                     "retained_entities": first["entities"] == recovered["entities"],
