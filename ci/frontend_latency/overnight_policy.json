@@ -1,7 +1,7 @@
 {
   "schema": "eoai-overnight-frontend-policy/v1",
   "baseline_sha": "8e4c4fc6b7c12054414fe48a2e96c36ae37b743d",
-  "baseline_review": "Develop before PRs 1136–1139, after the zstandard dependency addition; dependency inputs match the candidate. Same-run measurements must validate this baseline before merging.",
+  "baseline_review": "Develop before PRs 1136–1139, after the zstandard dependency addition; matching dependency inputs and successful same-run latency/accessibility measurements reviewed in run 37637075200.",
   "performance_mode": "reporting-only",
   "ready_regression": {
     "absolute_ms": 1000,
