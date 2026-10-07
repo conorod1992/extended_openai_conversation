@@ -180,11 +180,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements_test.txt
-          if [ -n "${{ needs.prepare.outputs.stable-ha-version }}" ]; then
-            python -m pip install --upgrade "homeassistant==${{ needs.prepare.outputs.stable-ha-version }}" pytest-homeassistant-custom-component
-          else
-            python -m pip install --upgrade homeassistant pytest-homeassistant-custom-component
+          VERSION="${{ needs.prepare.outputs.stable-ha-version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json"))["info"]["version"])')"
           fi
+          PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
+          python ci/install_ha_test_plugin.py "$VERSION" "$PLUGIN_VERSION"
           python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
           python -m pip check
       - name: Set up Node.js
