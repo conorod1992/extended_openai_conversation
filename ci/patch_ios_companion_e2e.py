@@ -68,10 +68,24 @@ HELPERS = r'''
         grantNotificationPermission()
 
         let nameField = webView.textFields
-            .matching(NSPredicate(format: "value == %@", "Companion acceptance assistant"))
+            .matching(NSPredicate(format: "label == %@", "Agent name"))
             .firstMatch
         wait(for: nameField, timeout: Timeout.frontend, "EOAI Agent name field")
-        nameField.tap()
+        XCTAssertEqual(nameField.value as? String, "Companion acceptance assistant")
+
+        // The system permission alert can arrive after the in-app request
+        // sheet disappears. Its dismissal steals focus from the web field.
+        // Handle that specific alert, then establish keyboard focus again.
+        var focusAttempts = 0
+        repeat {
+            nameField.tap()
+            dismissLateNotificationAlert()
+            focusAttempts += 1
+        } while !app.keyboards.firstMatch.waitForExistence(timeout: Timeout.optional) && focusAttempts < 3
+        guard app.keyboards.firstMatch.exists else {
+            XCTFail("Keyboard never came up for the EOAI Agent name")
+            return
+        }
         nameField.typeKey("a", modifierFlags: .command)
         nameField.typeText("Companion app iOS saved title")
 
@@ -92,6 +106,24 @@ HELPERS = r'''
             .matching(NSPredicate(format: "value == %@", "Companion app iOS saved title"))
             .firstMatch
         wait(for: savedField, timeout: Timeout.frontend, "saved EOAI Agent name")
+    }
+
+    private func dismissLateNotificationAlert() {
+        let alert = springboard.alerts
+            .matching(NSPredicate(format: "label CONTAINS[c] %@", "Would Like to Send You Notifications"))
+            .firstMatch
+        guard alert.waitForExistence(timeout: Timeout.optional) else { return }
+        let allow = alert.buttons["Allow"]
+        wait(for: allow, timeout: Timeout.screen, "notification permission Allow button")
+        allow.tap()
+        XCTAssertTrue(
+            alert.waitForNonExistence(timeout: Timeout.screen),
+            "Notification permission alert stayed on screen"
+        )
+        // The permission sheet may have consumed the original field tap.
+        app.webViews.firstMatch.textFields
+            .matching(NSPredicate(format: "label == %@", "Agent name"))
+            .firstMatch.tap()
     }
 
     private func verifyExtendedOpenAIAfterBackgroundResume() {
