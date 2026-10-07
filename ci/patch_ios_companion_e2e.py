@@ -166,7 +166,15 @@ def main() -> None:
     e2e_replacement = "xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO -collect-test-diagnostics never',"
     if e2e_anchor not in e2e_lane:
         raise SystemExit("Pinned iOS E2E Fastlane lane no longer has the expected run_tests options")
-    lane_text = earlier_lanes + lane_marker + e2e_lane.replace(e2e_anchor, e2e_replacement, 1)
+    patched_e2e = e2e_lane.replace(e2e_anchor, e2e_replacement, 1)
+    boot_anchor = '  sh("xcrun simctl erase #{udid}")\n'
+    if boot_anchor not in e2e_lane:
+        raise SystemExit("Pinned iOS E2E lane no longer has the expected simulator erase")
+    boot_replacement = boot_anchor + r'''  # Finish first boot before compilation and XCTest's app launch handshake.
+  sh("xcrun simctl boot #{udid}")
+  sh("python3 -c \"import subprocess; subprocess.run(['xcrun', 'simctl', 'bootstatus', '#{udid}', '-b'], check=True, timeout=300)\"")
+'''
+    lane_text = earlier_lanes + lane_marker + patched_e2e.replace(boot_anchor, boot_replacement, 1)
     testing_lane.write_text(lane_text, encoding="utf-8")
 
     assert text.count("openExtendedOpenAIAndEditAgent()") == 2
