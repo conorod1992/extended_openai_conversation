@@ -64,3 +64,18 @@ def test_official_container_evidence_is_architecture_bound():
     assert '"container_machine": container_machine.stdout.strip()' in source
     assert '"image_architecture": image_arch.stdout.strip()' in source
     assert "platform.machine() == args.expected_machine" in source
+
+
+
+def test_official_container_cadence_is_daily_amd64_weekly_arm64_and_manual_both():
+    data = _workflow()
+    triggers = data.get("on", data.get(True))
+    assert {item["cron"] for item in triggers["schedule"]} == {
+        "7 6 * * *",
+        "17 6 * * 0",
+    }
+    condition = data["jobs"]["official-container"]["if"]
+    assert "matrix.arch == 'amd64'" in condition
+    assert "github.event.schedule == '17 6 * * 0'" in condition
+    assert "github.event_name == 'workflow_dispatch'" in condition
+    assert "github.event.pull_request.number == 1137" in condition
