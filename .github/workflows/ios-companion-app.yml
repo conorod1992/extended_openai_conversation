@@ -93,6 +93,16 @@ jobs:
           test "$(git -C "$IOS_DIR" rev-parse HEAD)" = "$IOS_SOURCE_SHA"
           echo "IOS_DIR=$IOS_DIR" >> "$GITHUB_ENV"
 
+      - name: Restore iOS DerivedData cache
+        id: ios-deriveddata-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ios-e2e-deriveddata-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-xcode27
+          restore-keys: |
+            ios-e2e-deriveddata-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-
+            ios-e2e-deriveddata-${{ runner.os }}-
+
       - name: Patch pinned iOS E2E journey for EOAI
         run: |
           set -euo pipefail
@@ -105,12 +115,24 @@ jobs:
         with:
           ruby-version: "4.0.7"
 
+      - name: Restore Bundler cache
+        id: ios-gems-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.IOS_DIR }}/vendor/bundle
+          key: ios-e2e-gems-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-ruby-4.0.7-xcode27
+          restore-keys: |
+            ios-e2e-gems-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-ruby-4.0.7-
+            ios-e2e-gems-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-
+
       - name: Install pinned iOS build dependencies
         working-directory: ${{ env.IOS_DIR }}
         run: |
           set -euo pipefail
           bundle config set path vendor/bundle
-          bundle install --jobs 4 --retry 3
+          if [[ "${{ steps.ios-gems-cache.outputs.cache-hit }}" != "true" ]]; then
+            bundle install --jobs 4 --retry 3
+          fi
           xcodebuild -resolvePackageDependencies \
             -project HomeAssistant.xcodeproj \
             -scheme Tests-UI
@@ -123,6 +145,20 @@ jobs:
             url:"$E2E_HOME_ASSISTANT_URL" \
             username:"$E2E_HOME_ASSISTANT_USERNAME" \
             password:"$E2E_HOME_ASSISTANT_PASSWORD"
+
+      - name: Save Bundler cache
+        if: always() && steps.ios-gems-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.IOS_DIR }}/vendor/bundle
+          key: ios-e2e-gems-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-ruby-4.0.7-xcode27
+
+      - name: Save iOS DerivedData cache
+        if: always() && steps.ios-deriveddata-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ios-e2e-deriveddata-${{ runner.os }}-${{ env.IOS_SOURCE_SHA }}-xcode27
 
       - name: Record source-bound iOS Companion evidence
         if: success()
