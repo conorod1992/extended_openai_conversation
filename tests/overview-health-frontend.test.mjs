@@ -28,6 +28,8 @@ assert.equal(defaultChecks.instructions.value, "Starter instructions");
 assert.equal(defaultChecks.home_assistant_exposure.value, "1 entity exposed to Assist");
 assert.equal(defaultChecks.memory.state, "neutral");
 assert.equal(defaultChecks.memory.value, "Off by choice");
+assert.equal(defaultChecks.memory.title, "Long-term memory");
+assert.doesNotMatch(defaultChecks.memory.detail, /Persistent memory/);
 assert.equal(defaultChecks.knowledge.state, "neutral");
 assert.equal(defaultChecks.web_search.state, "neutral");
 
