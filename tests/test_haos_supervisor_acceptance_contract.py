@@ -2,6 +2,7 @@
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -32,7 +33,11 @@ def test_restore_poll_uses_independent_cli_and_waits_for_exact_job(monkeypatch, 
     ssh.json.side_effect = [_job_tree(pending, nested), _job_tree(completed, nested)]
     core_api = Mock(side_effect=AssertionError("Core is stopped during restore"))
     monkeypatch.setattr(driver, "_supervisor_api", core_api)
-    monkeypatch.setattr(driver.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        driver,
+        "time",
+        SimpleNamespace(monotonic=driver.time.monotonic, sleep=lambda _: None),
+    )
     assert driver._wait_supervisor_job(ssh, "restore-job") == completed
     core_api.assert_not_called()
     assert ssh.json.call_count == 2
@@ -71,8 +76,11 @@ def test_restore_poll_keeps_its_bounded_deadline(monkeypatch):
     ssh = Mock()
     ssh.json.return_value = _job_tree({"uuid": "restore-job", "done": False})
     clock = iter([0, 0, 2])
-    monkeypatch.setattr(driver.time, "monotonic", lambda: next(clock))
-    monkeypatch.setattr(driver.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        driver,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda _: None),
+    )
     with pytest.raises(TimeoutError, match="restore-job did not finish"):
         driver._wait_supervisor_job(ssh, "restore-job", timeout=1)
     assert ssh.json.call_count == 1
