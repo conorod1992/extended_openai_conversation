@@ -20,6 +20,7 @@ ARGS=(
   --recipe ci/install_ha_media_dependencies.py
   --recipe ci/environment_fingerprint.py
   --recipe ci/resolve_ha_test_plugin.py
+  --recipe ci/install_ha_test_plugin.py
   --recipe ci/reconcile_stable_environment.sh
   --recipe ci/write_playwright_environment_identity.sh
   --recipe ci/verify_playwright_engine.mjs
@@ -49,7 +50,7 @@ fi
 
 echo "Prebuilt environment identity differs; reconciling declared dependencies."
 python -m pip install -r requirements_test.txt
-python -m pip install "pytest-homeassistant-custom-component==${EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION:?expected compatible Home Assistant test plugin version is required}"
+python ci/install_ha_test_plugin.py "$EOAI_EXPECTED_HA_VERSION" "$EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION"
 python -m pip install --no-deps --force-reinstall "homeassistant==${EOAI_EXPECTED_HA_VERSION:?expected stable Home Assistant version is required}"
 python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
 python -m pip check

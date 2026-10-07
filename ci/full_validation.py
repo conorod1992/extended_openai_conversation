@@ -1,4 +1,4 @@
-"""Dispatch the repository's complete non-live acceptance workflow set."""
+"""Dispatch the repository's required non-live acceptance workflow set."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from urllib.request import Request, urlopen
 
 # These workflows own their environments and test selection. Keep this list in
 # sync with test-bearing workflow_dispatch workflows; live API acceptance,
-# release publishing, image publishing, diagnostics, and maintenance are
-# intentionally separate from this validation run.
+# release publishing, image publishing, informational diagnostics, optional iOS
+# native diagnostics, and maintenance are separate from this validation run.
 TEST_WORKFLOWS = (
     ("ci.yml", {}),
     ("frontend.yml", {}),
@@ -36,6 +36,7 @@ TEST_WORKFLOWS = (
     ("ipv6-only-networking-acceptance.yml", {}),
     ("ha-browser-compatibility.yml", {}),
     ("android-companion-app.yml", {}),
+    ("frontend-latency-diagnostics.yml", {"runs": "3", "diagnostic_picker": "false"}),
     ("haos-supervisor-vm-acceptance.yml", {}),
     ("official-ha-container.yml", {}),
     ("resource-constrained.yml", {}),

@@ -9,7 +9,6 @@
     "tests_real_ha/test_backup_transfer_protocol.py",
     "tests_real_ha/test_browser_all_surfaces_scale_acceptance.py",
     "tests_real_ha/test_browser_compatibility_acceptance.py",
-    "tests_real_ha/test_browser_cross_user_identity_acceptance.py",
     "tests_real_ha/test_browser_identity_lifecycle_acceptance.py",
     "tests_real_ha/test_browser_process_restart_acceptance.py",
     "tests_real_ha/test_browser_refresh_boundary_acceptance.py",
@@ -153,12 +152,6 @@
       "job": "native-browser",
       "selector": "tests_real_ha/test_browser_compatibility_acceptance.py",
       "reason": "test_browser_compatibility_acceptance runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
-    },
-    "tests_real_ha/test_browser_cross_user_identity_acceptance.py": {
-      "workflow": "frontend.yml",
-      "job": "browser-real-ha",
-      "selector": "tests_real_ha/test_browser_cross_user_identity_acceptance.py",
-      "reason": "Requires the browser to genuine HA acceptance environment."
     },
     "tests_real_ha/test_browser_identity_lifecycle_acceptance.py": {
       "workflow": "frontend.yml",

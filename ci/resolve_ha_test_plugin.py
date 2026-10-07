@@ -9,6 +9,14 @@ import sys
 from typing import Any
 from urllib.request import Request, urlopen
 
+# Release-day bridge: the upstream daily generator has not published fixtures
+# for this Core release yet. Regenerate from these immutable upstream sources;
+# never relabel beta fixtures or silently select an older stable runtime.
+GENERATED_HA_VERSION = "2026.10.0"
+GENERATOR_SHA = "aacf4b5e11e16da8f6ccc67fe3729441a51c282e"
+CORE_SHA = "6a811d3359c7b2076dc9e1cf900843a129c044af"
+GENERATED_PLUGIN_VERSION = "0.13.370+eoai.ha2026.10.0.gaacf4b5e.c6a811d33"
+
 
 def _numeric_version(value: str) -> tuple[int, ...] | None:
     if not re.fullmatch(r"\d+(?:\.\d+)+", value):
@@ -50,6 +58,9 @@ def resolve_ha_test_plugin(
             )
             if match and match.group(1) == ha_version:
                 return version
+
+    if ha_version == GENERATED_HA_VERSION:
+        return GENERATED_PLUGIN_VERSION
 
     raise RuntimeError(
         f"No published pytest-homeassistant-custom-component release pins "

@@ -20,6 +20,9 @@ def test_ha_version_upgrade_workflow_is_nightly_and_manual_only() -> None:
     assert 'json.load(open("hacs.json"' in text
     assert '"oldest-supported"' in text
     assert '"current-stable"' in text
+    # The historical virtualenv cannot inherit EOAI dependencies from the
+    # surrounding stable image before the child imports the integration.
+    assert '"${RUNNER_TEMP}/ha-oldest/bin/python" ci/install_ha_dependencies.py' in text
 
 
 def test_ha_version_upgrade_journey_keeps_eoai_fixed_and_checks_durable_state() -> None:

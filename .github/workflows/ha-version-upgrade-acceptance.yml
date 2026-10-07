@@ -39,19 +39,20 @@ jobs:
       - name: Reconcile current stable Home Assistant environment
         run: |
           set -euo pipefail
-          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
-          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
-          if [ "$CURRENT_ENVIRONMENT_SHA" != "$BUILT_ENVIRONMENT_SHA" ]; then
-            pip install -r requirements_test.txt
-            python ci/install_ha_dependencies.py               --manifest custom_components/extended_openai_conversation_responses/manifest.json
-          fi
-          pip install --upgrade homeassistant
-          pip check
+          VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json"))["info"]["version"])')"
+          PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
+          export EOAI_EXPECTED_HA_VERSION="$VERSION"
+          export EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION="$PLUGIN_VERSION"
+          bash ci/reconcile_stable_environment.sh
 
       - name: Build oldest-supported Home Assistant runtime
         id: runtimes
         run: |
           set -euo pipefail
+          # Historical HA pins may need native wheels built on this newer
+          # Python. The runtime image deliberately omits build tools.
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ffmpeg libturbojpeg0
           MINIMUM_HA="$(python - <<'PY'
           import json
           print(json.load(open("hacs.json", encoding="utf-8"))["homeassistant"])
@@ -71,6 +72,11 @@ jobs:
           python -m venv "${RUNNER_TEMP}/ha-oldest"
           "${RUNNER_TEMP}/ha-oldest/bin/python" -m pip install --upgrade pip wheel
           "${RUNNER_TEMP}/ha-oldest/bin/python" -m pip install --pre "homeassistant==${MINIMUM_HA}"
+          "${RUNNER_TEMP}/ha-oldest/bin/python" ci/install_ha_dependencies.py \
+            --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          # Match the oldest-HA public journey's existing dependency policy:
+          # EOAI explicitly uses voluptuous-openapi 0.4.1 over Core's older pin.
+          # Verify compatibility by booting and exercising the populated runtime.
 
           INSTALLED_OLDEST="$("${RUNNER_TEMP}/ha-oldest/bin/python" - <<'PY'
           from importlib.metadata import version
@@ -107,7 +113,7 @@ jobs:
         run: |
           set -euo pipefail
           export HA_VERSION_UPGRADE_RUNTIMES="$(cat "$HA_VERSION_UPGRADE_RUNTIMES_FILE")"
-          pytest tests_real_ha/test_ha_version_upgrade_acceptance.py             -v --asyncio-mode=auto --timeout=300
+          python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' tests_real_ha/test_ha_version_upgrade_acceptance.py -v --asyncio-mode=auto --timeout=300
 
       - name: Record workflow metadata
         if: always()

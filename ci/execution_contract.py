@@ -37,6 +37,17 @@ def python_selections(workflow=None):
                 )
             )
         )
+    # Each engine job collects its own handoff parameter. The independently
+    # reviewed catalog still requires both parameters across the two jobs.
+    handoff = "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py"
+    for engine in ("firefox", "webkit"):
+        campaign = f"browser-{engine}"
+        selections[campaign] = sorted(
+            [selector for selector in selections[campaign] if selector != handoff]
+            + [
+                f"{handoff}::test_cross_browser_state_handoff_survives_true_ha_restart[{engine}]"
+            ]
+        )
     lifecycle_runner = (ROOT / "ci/run_ha_lifecycle_contract.sh").read_text(
         encoding="utf-8"
     )

@@ -45,7 +45,7 @@ jobs:
           VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
           PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
           pip install -r requirements_test.txt
-          pip install "pytest-homeassistant-custom-component==$PLUGIN_VERSION" "homeassistant==$VERSION"
+          python ci/install_ha_test_plugin.py "$VERSION" "$PLUGIN_VERSION"
           python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
           python -m pip check
           echo "EOAI_EXPECTED_HA_VERSION=$VERSION" >> "$GITHUB_ENV"

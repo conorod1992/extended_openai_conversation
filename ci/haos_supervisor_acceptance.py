@@ -227,6 +227,18 @@ class HAWebSocket:
             return response.get("result")
 
 
+class SSHCommandError(AssertionError):
+    """Keep the remote exit status so restore polling can recognize signals."""
+
+    def __init__(self, command: str, result: subprocess.CompletedProcess[str]) -> None:
+        self.returncode = result.returncode
+        self.stdout = result.stdout
+        super().__init__(
+            f"HA OS SSH command failed (exit {result.returncode}): {command}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+
+
 class HostSSH:
     """Root SSH into HA OS through the supported debug SSH port."""
 
@@ -263,10 +275,7 @@ class HostSSH:
             check=False,
         )
         if check and result.returncode != 0:
-            raise AssertionError(
-                f"HA OS SSH command failed: {command}\n"
-                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-            )
+            raise SSHCommandError(command, result)
         return result
 
     def json(self, command: str, *, timeout: float = 120) -> Any:
@@ -599,9 +608,20 @@ def _wait_supervisor_job(ssh: HostSSH, job_id: str, *, timeout: float = 900) -> 
     deadline = time.monotonic() + timeout
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:
-        response = _supervisor_api(ssh, "GET", f"/jobs/{job_id}", timeout=30)
+        # Full restore stops and recreates Core. The supported host CLI uses
+        # the independent CLI container, so polling never starts a process in
+        # the container whose lifecycle the job is changing.
+        response = ssh.json("ha jobs info --no-progress --raw-json", timeout=30)
         assert response.get("result") == "ok", response
-        last = response.get("data", {})
+        pending = list(response["data"]["jobs"])
+        last = {}
+        while pending:
+            job = pending.pop()
+            if job["uuid"] == job_id:
+                last = job
+                break
+            pending.extend(job.get("child_jobs", []))
+        assert last, f"Supervisor job {job_id} was missing from the CLI job tree"
         if last.get("done"):
             assert not last.get("errors"), last
             return last
