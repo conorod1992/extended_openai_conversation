@@ -66,6 +66,19 @@ jobs:
             | xargs -0 -n1 node --check
           node scripts/run-frontend-standalone-tests.mjs
 
+      - name: Install pinned frontend quality tools
+        working-directory: frontend
+        run: npm install --no-save --package-lock=false --no-audit --no-fund eslint@9.39.1 stylelint@16.25.0 html-validate@10.5.0
+
+      - name: Lint shipped JavaScript
+        run: ./frontend/node_modules/.bin/eslint -c frontend/eslint.config.mjs custom_components/extended_openai_conversation_responses/frontend/*.js
+
+      - name: Validate source CSS
+        run: ./frontend/node_modules/.bin/stylelint --config frontend/.stylelintrc.json custom_components/extended_openai_conversation_responses/frontend/management.css
+
+      - name: Validate static HTML fixtures
+        run: ./frontend/node_modules/.bin/html-validate --config frontend/.htmlvalidate.json tests_browser/fixture.html tests_browser/real-ha-fixture.html
+
       - name: Type check
         working-directory: frontend
         run: npm run check
