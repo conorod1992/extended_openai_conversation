@@ -1230,6 +1230,11 @@ class ExtendedOpenAIAgentEntity(
                 ),
                 request_options=request_options,
             )
+        except asyncio.CancelledError:
+            # A completed effect remains ambiguous even when Assist cancels the
+            # provider continuation. Preserve replay protection and cancellation.
+            remember_unacknowledged_calls(self, chat_log, existing_content_ids)
+            raise
         except (OpenAIError, HomeAssistantError, httpx.RequestError) as err:
             remember_unacknowledged_calls(self, chat_log, existing_content_ids)
             return _conversation_error_result(

@@ -93,3 +93,5 @@ Native `add_automation`, `get_energy`, and `get_user_from_user_id` are unavailab
 because their effects or results cannot be reliably reduced to the guest entity
 set. Execution restrictions cannot retract model context already transmitted to
 a provider; the next user turn receives the fully rebuilt Guest context.
+
+Script Functions with templated variables or action data are unavailable in Guest Mode because those templates can read data outside their action targets. Static Script Functions remain eligible; owner execution is unchanged.
