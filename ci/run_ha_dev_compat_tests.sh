@@ -19,6 +19,7 @@ TEST_PATHS=(
   tests/test_config_flow_coverage.py
   tests/test_configuration_lifecycle_hardening.py
   tests/test_conversation_entry_ownership.py
+  tests/test_conversation_orchestration.py
   tests/test_conversation_lifecycle.py
   tests/test_conversation_runtime_coverage.py
   tests/test_conversation_security_boundaries.py
