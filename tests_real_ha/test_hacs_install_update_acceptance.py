@@ -15,6 +15,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+# Imported helpers are also used by a standalone historical HA child.
+if os.environ.get("HACS_ACCEPTANCE_CHILD_PHASE"):
+    os.environ.setdefault("UPGRADE_ACCEPTANCE_CHILD_PHASE", "hacs-helper")
+
 from tests_real_ha import test_release_upgrade_acceptance as upgrade_helpers
 
 DOMAIN = "extended_openai_conversation_responses"
