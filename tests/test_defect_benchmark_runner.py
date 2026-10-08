@@ -64,6 +64,7 @@ def test_general_reachability_distinguishes_misses_from_unexecuted_code(tmp_path
     )
     assert coverage_state(report, target, 8) == "executed"
     assert coverage_state(report, target, 9) == "not-executed"
+    assert coverage_state(report, "other/never_imported.py", 3) == "not-executed"
     assert coverage_state(report, target, 0) == "unknown"
     assert coverage_state(tmp_path / "missing.json", target, 8) == "unknown"
 
