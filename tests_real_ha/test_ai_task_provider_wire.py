@@ -34,6 +34,8 @@ from tests_real_ha.test_provider_wire_e2e import (
     _responses_sse_tool_call,
 )
 
+from tests.strict_provider_contract import validate_request
+
 MODES = (API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES)
 
 
@@ -80,6 +82,8 @@ def _truncated_reply(mode: str) -> bytes:
 def _assert_paths(wire: Any, mode: str, count: int) -> None:
     endpoint = "/v1/responses" if mode == API_MODE_RESPONSES else "/v1/chat/completions"
     assert [request["path"] for request in wire.requests] == [endpoint] * count
+    for request in wire.requests:
+        validate_request(request["path"], request["body"])
 
 
 def _input_text(body: dict[str, Any]) -> str:

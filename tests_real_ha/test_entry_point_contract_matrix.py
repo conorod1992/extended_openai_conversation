@@ -236,7 +236,7 @@ async def test_failure_semantics_survive_every_conversation_doorway(
         assert len(wire.requests) == 1
 
 
-@pytest.mark.parametrize("route", ["native", "script", "nested_script"])
+@pytest.mark.parametrize("route", ["native", "script", "nested_script", "request_rule"])
 @pytest.mark.parametrize("allowed", [False, True])
 async def test_action_routes_share_actual_user_control_boundary(hass, route, allowed):
     user = _restricted_user()
@@ -255,6 +255,21 @@ async def test_action_routes_share_actual_user_control_boundary(hass, route, all
     exposed = [{"entity_id": entity_id}]
 
     async def execute():
+        if route == "request_rule":
+            agent = await _contract_agent(hass)
+            await agent._request_rules.async_create(_rule("local_action", {
+                "actions": [{"action": "light.turn_off", "target": {"entity_id": entity_id}}],
+                "success_response": "Done", "failure_response": "Denied",
+            }, phrase="contract control"))
+            result = await conversation.async_converse(
+                hass=hass, text="contract control", conversation_id=None,
+                context=context, language="en", agent_id=agent.entry.entry_id,
+            )
+            assert len(effects) == (1 if allowed else 0), result.response.as_dict()
+            if not allowed:
+                assert "Denied" in str(result.response.as_dict())
+                raise HomeAssistantError("Request Rule denied control")
+            return result
         with bind_active_ha_context(context), propagate_function_execution_errors():
             if route == "native":
                 return await native.NativeFunction().execute_service_single(

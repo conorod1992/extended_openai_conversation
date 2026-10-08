@@ -67,3 +67,51 @@ def test_text_only_capability_and_attachment_oracle(responses):
     else:
         with pytest.raises(AssertionError, match="selected API"):
             validate_request(path, body, function_apis=("responses",))
+
+
+@pytest.mark.parametrize("responses", [False, True])
+@pytest.mark.parametrize(
+    "fault",
+    [None, "open_object", "missing_required", "long_name", "wrong_api", "tool_budget"],
+)
+def test_external_provider_constraints_detect_deliberately_invalid_payloads(
+    responses, fault
+):
+    path = "/v1/responses" if responses else "/v1/chat/completions"
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    format = {
+        "type": "json_schema",
+        "name": "valid_name",
+        "strict": True,
+        "schema": schema,
+    }
+    body = {
+        "input" if responses else "messages": [
+            {"role": "user", "content": "Contract probe"}
+        ]
+    }
+    body["text" if responses else "response_format"] = {
+        "format" if responses else "json_schema": format
+    }
+    if fault == "open_object":
+        schema["additionalProperties"] = True
+    elif fault == "missing_required":
+        schema["required"] = []
+    elif fault == "long_name":
+        format["name"] = "a" * 65
+    elif fault == "wrong_api":
+        body["messages" if responses else "input"] = []
+    elif fault == "tool_budget":
+        body["tools"] = [{"type": "function"}] * 129
+    if fault is None or fault == "tool_budget" and responses:
+        validate_request(path, body, provider="azure")
+    else:
+        with pytest.raises(AssertionError):
+            validate_request(path, body, provider="azure")
+    if fault == "tool_budget":
+        validate_request(path, body, provider="openai")

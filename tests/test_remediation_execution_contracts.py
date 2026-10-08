@@ -119,3 +119,29 @@ def test_advertised_long_statistics_periods_are_accepted(period):
             "period": period,
         }
     )
+
+
+def _check_advertised_statistics_contract():
+    from custom_components.extended_openai_conversation_responses.built_in_functions import built_in_function_catalog
+    preset = next(item for item in built_in_function_catalog() if item["implementation"] == "get_statistics")
+    properties = preset["tool"]["spec"]["parameters"]["properties"]
+    # Exercise the public advertisement, independently of the validator's table.
+    for period in properties["period"]["enum"]:
+        result = _normalized_statistics_arguments({
+            "start_time": "2026-01-01T00:00:00+00:00",
+            "end_time": "2026-01-01T01:00:00+00:00", "period": period,
+        })
+        assert result["period"] == period
+
+
+def test_every_advertised_statistics_period_is_accepted():
+    _check_advertised_statistics_contract()
+
+
+def test_advertisement_oracle_detects_missing_runtime_option(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import safety_hardening
+    broken = dict(safety_hardening.MAX_STATISTIC_SPAN_BY_PERIOD)
+    del broken["week"]
+    monkeypatch.setattr(safety_hardening, "MAX_STATISTIC_SPAN_BY_PERIOD", broken)
+    with pytest.raises(HomeAssistantError, match="Unsupported statistics period"):
+        _check_advertised_statistics_contract()

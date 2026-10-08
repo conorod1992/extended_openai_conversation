@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, exerciseConfigurationDraftTransition, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 import {waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
 
 const seeds = [7319, 20260930, 0x5eed];
@@ -100,6 +100,10 @@ for (const seed of seeds) {
           await expect(panel.locator(knowledge ? "[data-source-id]:visible" : "[data-memory-id]:visible")).toHaveCount(owned.length);
           await panel.evaluate(host => host._loadSection(true));
           await expect(panel.locator(knowledge ? "[data-source-id]:visible" : "[data-memory-id]:visible")).toHaveCount(owned.length);
+        }
+        if (index % 6 === 1) {
+          history.push({operation:"draft-immediate-save-failure-reload", index});
+          await exerciseConfigurationDraftTransition(page, `Seed ${seed} prompt ${index}`);
         }
         await checkpoint();
         if (index % 6 === 2) {

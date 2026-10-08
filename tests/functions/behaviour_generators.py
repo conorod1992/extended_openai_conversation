@@ -200,3 +200,43 @@ def script_cases(seed):
                 },
             ]
         yield sequence, expected, {"count": 0, "flag": False, "empty": []}, marker
+
+
+@dataclass(frozen=True)
+class ExecutionCase:
+    value: object
+    failure: str
+    continuation: bool
+    guest: str
+    unretained: bool
+    reverse: bool
+
+    @property
+    def effects(self):
+        """Independent literal execution model, never invoke production helpers."""
+        if self.guest == "denied" or self.guest != "off" and self.failure != "none":
+            return []
+        inner = ["inner-last", "inner-first"] if self.reverse else ["inner-first", "inner-last"]
+        if self.failure == "before":
+            inner = []
+        elif self.failure == "after":
+            inner = inner[:1]
+        return ["outer-first", *inner, *(["outer-last"] if self.failure == "none" or self.continuation else [])]
+
+
+def execution_cases(seed, count=8):
+    """Small reviewed witnesses, then seeded combinations for the nightly lane."""
+    from itertools import product
+    values = [{"count": 0, "flag": False}, [], "Grüße 東京", 0, 0.5, False, None]
+    witnesses = [
+        ExecutionCase(values[0], "none", False, "off", False, False),
+        ExecutionCase(values[1], "before", False, "off", False, False),
+        ExecutionCase(values[2], "after", True, "off", True, True),
+        ExecutionCase(values[3], "none", False, "denied", False, False),
+        ExecutionCase(values[4], "none", False, "allowed", False, True),
+        ExecutionCase(values[5], "none", False, "off", True, False),
+        ExecutionCase(values[6], "none", False, "off", False, True),
+    ]
+    combinations = [ExecutionCase(*fields) for fields in product(values, ("none", "before", "after"), (False, True), ("off", "allowed", "denied"), (False, True), (False, True))]
+    random.Random(seed).shuffle(combinations)
+    return (witnesses + combinations)[:count]
