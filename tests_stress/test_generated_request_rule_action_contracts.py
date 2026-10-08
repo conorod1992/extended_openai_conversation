@@ -113,3 +113,18 @@ async def test_generated_request_rule_failure_isolated_from_healthy_siblings(
     recovered = await _say(hass, agent, "case 5")
     assert _speech(recovered) == "ok-5"
     assert effects[-1] == "case-5"
+
+
+async def test_generated_execution_privacy_transitions(
+    hass, monkeypatch, stress_seed, stress_scale, stress_trace
+):
+    """Expand the same PR witnesses using the existing reproducible nightly seed."""
+    from tests.functions.behaviour_generators import execution_cases
+    from tests_real_ha.test_generated_execution_privacy_workflows import run_execution_workflows
+    from tests_stress.conftest import record
+
+    cases = execution_cases(stress_seed, 24 * stress_scale)
+    evidence = await run_execution_workflows(hass, monkeypatch, cases)
+    for outcome in evidence:
+        record(stress_trace, "execution_privacy_transition", **outcome)
+    assert len(evidence) == len(cases)

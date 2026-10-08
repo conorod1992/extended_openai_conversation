@@ -39,6 +39,7 @@ from .const import (
     DOMAIN,
     SERVICE_CALL_FUNCTION,
 )
+from .functions.script import _AuthorizedScriptHass
 from .guest_mode import (
     GUEST_MODE_UNAVAILABLE,
     GuestCapabilityPolicy,
@@ -2893,7 +2894,19 @@ async def _async_evaluate_matched_rule(
             if commit_execution_snapshot is not None:
                 commit_execution_snapshot()
             script = Script(
-                hass,
+                cast(
+                    HomeAssistant,
+                    _AuthorizedScriptHass(
+                        hass,
+                        None,
+                        [],
+                        frozenset(
+                            {(DOMAIN, _GUARD_SERVICE), (DOMAIN, SERVICE_CALL_FUNCTION)}
+                        ),
+                    ),
+                )
+                if context is not None and context.user_id
+                else hass,
                 validated_actions,
                 f"Request Rule {rule['id']}",
                 DOMAIN,

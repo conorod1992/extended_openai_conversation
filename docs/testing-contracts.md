@@ -39,3 +39,45 @@ The nightly `memory-knowledge` campaign adds 300 operations (1,200 at heavy inte
 The journeys combine corrected pre-dispatch arguments with a one-execution budget, an executed action followed by a lost continuation and equivalent replay, text-only production plus diagnostic requests, and historical image/PDF follow-ups. The attachment journey uses Core's AI Task entity interface with a retained ChatSession: the public AI Task action creates a new session and does not itself expose a conversation ID parameter. Text-only capability expectations come from the fixture, not EOAI's catalogue.
 
 The nightly mutation workflow adds `contract-sensitivity`: four reviewed mutations omit authorization, skip request validation, misreport a failed result, and discard an unavailable control's restoration baseline. Each selected genuine HA test must pass unmodified and fail by assertion after mutation. Collection, import, fixture, timeout and skipped outcomes cannot count as kills. The runner uses an isolated archive of the exact Git commit, restores the shadow source after each case, and publishes SHA, baseline/mutation JUnit and logs. A survivor or stale/ambiguous mutation anchor fails the campaign. This is a small guarantee check; it does not claim exhaustive mutation coverage.
+
+
+## Remediation invariants and transitions
+
+The PR suite and Enhanced nightly campaigns share the existing Function behavior
+case generator and real-HA execution helper. Seven reviewed PR witnesses combine
+Request Rules, Composite Functions, native script actions, disabled Bash failures,
+result capture (including whole-data templates and native result types), Guest
+Mode, explicit unretained identity, Memory and active conversation transitions.
+The expected side effects and personal-data visibility are defined independently
+of production validators. Native `continue_on_error` is exercised without reading
+a nonexistent result from a failed service. The nightly Request Rules campaign
+expands these witnesses to 24 cases (96 at heavy intensity), using its recorded seed
+and privacy-safe operation evidence.
+
+The shared provider wire oracle validates actual SDK payloads from AI Task tests
+in both API modes: strict closed objects and required properties, bounded names,
+mode-specific fields and the Azure Chat tool budget. Deliberately invalid payloads
+prove rejection; OpenAI and Azure Responses are checked without the Chat-specific
+limit. A separate advertisement oracle exercises every advertised statistics
+period and proves it detects a deliberately removed runtime option.
+
+Browser witnesses and the seeded frontend state machine share a configuration
+transition helper. It compares rendered inputs, drafts and saved configuration
+across navigation, immediate Knowledge saves, a failed full save, retry and reload.
+Existing reset and exposed-attribute regressions cover page-specific resets and
+authoritative empty selections. Browser failures attach the seed and fixture state.
+
+Real HA permission tests compare native, script, nested script and Request Rule
+control effects using actual restricted users; local intent tests separately
+exercise genuine READ permissions. The parity test exposed a Request Rule bypass:
+native rules now use the same Script-local service authorization adapter as script
+tools, without imposing model-tool exposure rules on administrator-authored rules.
+
+Idle lifecycle tests advance HA time without another request at 1-, 7- and 30-day
+Usage retention settings and exercise disabled archive collection through reload,
+expiry and restart recovery. The feature-crossroads nightly lane includes them.
+Actual Assist pipeline tests compare progressive speech and final transcripts for
+conditional answers with zero/text preambles, already streamed answers and one/two
+tool rounds. Existing partial-stream and multi-turn endurance coverage remains in
+the same nightly lane. No additional test framework or live billable provider
+acceptance is required by these deterministic checks.

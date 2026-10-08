@@ -18,10 +18,11 @@ from tests_real_ha.test_entry_point_contract_matrix import _management
 from homeassistant.components import conversation
 
 
-async def test_usage_expires_without_another_run(hass, freezer):
+@pytest.mark.parametrize("retention", [1, 7, 30])
+async def test_usage_expires_without_another_run(hass, freezer, retention):
     await hass.async_start()
     usage = await async_get_usage(hass, "idle-entry", "idle-agent")
-    usage.request_retention_days = usage.run_retention_days = 1
+    usage.request_retention_days = usage.run_retention_days = retention
     now = dt_util.utcnow()
     async with usage.async_run():
         await usage.async_record_request(
@@ -31,7 +32,7 @@ async def test_usage_expires_without_another_run(hass, freezer):
     if usage._prune_task is not None:
         await usage._prune_task
     assert usage.runs and usage.requests
-    freezer.move_to(now + timedelta(days=8, seconds=1))
+    freezer.move_to(now + timedelta(days=retention + 1, seconds=1))
     async_fire_time_changed(hass, fire_all=True)
     await hass.async_block_till_done(wait_background_tasks=True)
     if usage._prune_task is not None:

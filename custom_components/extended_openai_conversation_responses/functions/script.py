@@ -25,12 +25,14 @@ class _AuthorizedScriptServices:
     def __init__(
         self,
         hass: HomeAssistant,
-        function: Function,
+        function: Function | None,
         exposed_entities: list[dict[str, Any]],
+        internal_services: frozenset[tuple[str, str]] = frozenset(),
     ) -> None:
         self._hass = hass
         self._function = function
         self._exposed_entities = exposed_entities
+        self._internal_services = internal_services
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._hass.services, name)
@@ -45,17 +47,21 @@ class _AuthorizedScriptServices:
         target: Any = None,
         return_response: bool = False,
     ) -> Any:
-        targets = await ha_actions.async_authorize_ha_action(
-            self._hass,
-            domain,
-            service,
-            data=service_data,
-            target=target,
-            context=context,
-        )
-        self._function.validate_entity_ids(
-            self._hass, sorted(targets), self._exposed_entities
-        )
+        # Internal rule guards/dispatchers enforce their own active-execution policy.
+        targets = set()
+        if (domain, service) not in self._internal_services:
+            targets = await ha_actions.async_authorize_ha_action(
+                self._hass,
+                domain,
+                service,
+                data=service_data,
+                target=target,
+                context=context,
+            )
+        if self._function is not None:
+            self._function.validate_entity_ids(
+                self._hass, sorted(targets), self._exposed_entities
+            )
         # Preserve HA's response variables, blocking and cancellation semantics.
         return await self._hass.services.async_call(
             domain,
@@ -74,11 +80,14 @@ class _AuthorizedScriptHass:
     def __init__(
         self,
         hass: HomeAssistant,
-        function: Function,
+        function: Function | None,
         exposed_entities: list[dict[str, Any]],
+        internal_services: frozenset[tuple[str, str]] = frozenset(),
     ) -> None:
         self._hass = hass
-        self.services = _AuthorizedScriptServices(hass, function, exposed_entities)
+        self.services = _AuthorizedScriptServices(
+            hass, function, exposed_entities, internal_services
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._hass, name)

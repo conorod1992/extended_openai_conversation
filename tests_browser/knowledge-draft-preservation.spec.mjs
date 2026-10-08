@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {exerciseConfigurationDraftTransition, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 test("Knowledge immediate save preserves prompt and name drafts through navigation, full save and reload", async ({page}) => {
   const errors=trackPageErrors(page);
@@ -21,3 +21,20 @@ test("Knowledge immediate save preserves prompt and name drafts through navigati
   await expect(panel.locator('[data-config="prompt"]')).toHaveValue("Preserved unsaved prompt");
   await expectHarnessClean(page,errors);
 });
+
+
+for (const seed of [7319, 20261008]) {
+  test(`display, draft and persistence agree through failed save and reload seed=${seed}`, async ({page}, testInfo) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("assistant/prompt-context"));
+    try {
+      await exerciseConfigurationDraftTransition(page, `Draft transition ${seed}`);
+      await expectHarnessClean(page, errors);
+    } finally {
+      await testInfo.attach("configuration-transition", {
+        body: JSON.stringify({seed, state:await page.evaluate(() => window.browserHarness?.getState() || {url:location.href})}),
+        contentType:"application/json",
+      });
+    }
+  });
+}
