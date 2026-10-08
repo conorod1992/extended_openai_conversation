@@ -108,6 +108,7 @@ def execute(snapshot: Path, output: Path, label: str, selector: str, baseline: b
     if coverage_path:
         command.extend((
             f"--cov={coverage_path}", f"--cov-report=json:{cov_report}",
+            "--cov-fail-under=0",
             "--cov-branch",
         ))
     command.append(selector)
