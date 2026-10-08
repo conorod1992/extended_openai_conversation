@@ -69,24 +69,58 @@ def classify_suite(code: int | None, report: Path, *, baseline: bool) -> str:
     return "invalid"
 
 
-def execute(snapshot: Path, output: Path, label: str, selector: str, baseline: bool, timeout: int) -> str:
+def mutated_line(source: str, challenge: Challenge) -> int:
+    """Locate a unique changed statement, rejecting ambiguous mutations."""
+    before = source.splitlines()
+    after = mutate(source, challenge).splitlines()
+    if len(before) != len(after):
+        # Multi-line injections are still valid but cannot safely be assessed
+        # with a single line-coverage marker.
+        return 0
+    changed = [index + 1 for index, (old, new) in enumerate(zip(before, after)) if old != new]
+    return changed[0] if len(changed) == 1 else 0
+
+
+def coverage_state(report: Path, path: str, line: int) -> str:
+    """Report whether pytest reached the defective statement at all."""
+    if not line or not report.is_file():
+        return "unknown"
+    try:
+        data = json.loads(report.read_text(encoding="utf-8"))
+        for filename, item in data.get("files", {}).items():
+            if filename.replace("\\\\", "/").endswith(path):
+                return "executed" if line in item.get("executed_lines", []) else "not-executed"
+    except (ValueError, OSError, TypeError):
+        pass
+    return "unknown"
+
+
+def execute(snapshot: Path, output: Path, label: str, selector: str, baseline: bool, timeout: int,
+            coverage_path: str | None = None) -> tuple[str, str]:
     report = output / f"{label}.xml"
     log_path = output / f"{label}.log"
+    cov_report = output / f"{label}-coverage.json"
+    command = [
+        sys.executable, "-m", "pytest", "-q",
+        "--tb=short", "--timeout=60", "-p", "no:cacheprovider",
+        f"--junitxml={report}",
+    ]
+    if coverage_path:
+        command.extend((
+            f"--cov={coverage_path}", f"--cov-report=json:{cov_report}",
+            "--cov-branch",
+        ))
+    command.append(selector)
     with log_path.open("w", encoding="utf-8") as log:
         try:
             completed = subprocess.run(
-                [
-                    sys.executable, "-m", "pytest", "-q",
-                    "--tb=short", "--timeout=60", "-p", "no:cacheprovider",
-                    f"--junitxml={report}", selector,
-                ],
-                cwd=snapshot, stdout=log, stderr=subprocess.STDOUT,
+                command, cwd=snapshot, stdout=log, stderr=subprocess.STDOUT,
                 timeout=timeout, check=False,
             )
             code = completed.returncode
         except subprocess.TimeoutExpired:
             code = None
-    return classify_suite(code, report, baseline=baseline)
+    return classify_suite(code, report, baseline=baseline), str(cov_report)
 
 
 def evaluate(snapshot: Path, output: Path, case: Challenge, lane: str, timeout: int) -> dict:
@@ -98,15 +132,27 @@ def evaluate(snapshot: Path, output: Path, case: Challenge, lane: str, timeout: 
         mutated = mutate(original, case)
     except ValueError as error:
         return {"baseline": "not-run", "mutation": "invalid", "reason": str(error)}
-    baseline = execute(snapshot, output, label + "-baseline", selector, True, timeout)
+    target_line = mutated_line(original, case)
+    baseline, _ = execute(snapshot, output, label + "-baseline", selector, True, timeout)
     outcome = "not-run"
+    reach = "unknown"
     if baseline == "pass":
         try:
             source_path.write_text(mutated, encoding="utf-8")
-            outcome = execute(snapshot, output, label + "-mutation", selector, False, timeout)
+            outcome, report = execute(
+                snapshot, output, label + "-mutation", selector, False, timeout,
+                coverage_path=case.path if lane == "general" else None,
+            )
+            if lane == "general":
+                reach = coverage_state(Path(report), case.path, target_line)
+                if outcome == "missed" and reach == "not-executed":
+                    outcome = "not-exercised"
         finally:
             source_path.write_text(original, encoding="utf-8")
-    return {"baseline": baseline, "mutation": outcome}
+    result = {"baseline": baseline, "mutation": outcome}
+    if lane == "general":
+        result.update({"reach": reach, "changed_line": target_line})
+    return result
 
 
 def run(repo: Path, output: Path, names: set[str] | None, lanes: tuple[str, ...], timeout: int) -> dict:
@@ -152,7 +198,7 @@ def main():
     lanes = ("dedicated", "general") if args.lane == "both" else (args.lane,)
     result = run(Path(__file__).resolve().parent.parent, args.output.resolve(), set(args.case) or None, lanes, args.timeout)
     print("Defect challenges evaluated:", len(result["results"]))
-    print("Exploratory misses are reported and do not fail CI; established critical enforcement remains in run_contract_sensitivity.py")
+    print("Unreached injections are classified separately from genuine observed misses; exploratory outcomes do not fail CI")
 
 
 if __name__ == "__main__":
