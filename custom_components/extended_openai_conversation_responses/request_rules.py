@@ -1270,6 +1270,7 @@ class RequestRuleRuntime:
 
     def __init__(self) -> None:
         self._conversation_overrides: dict[str, tuple[dict[str, str], float, int]] = {}
+        self._requests: dict[object, str] = {}
 
     def get(
         self,
@@ -1280,7 +1281,10 @@ class RequestRuleRuntime:
         for key, (_, last_used, stored_timeout) in list(
             self._conversation_overrides.items()
         ):
-            if now - last_used >= max(1, stored_timeout) * 60:
+            if (
+                key not in self._requests.values()
+                and now - last_used >= max(1, stored_timeout) * 60
+            ):
                 self._conversation_overrides.pop(key, None)
         entry = self._conversation_overrides.get(session_id)
         if entry is None:
@@ -1292,6 +1296,21 @@ class RequestRuleRuntime:
             max(1, timeout_minutes),
         )
         return dict(values)
+
+    def begin_request(self, session_id: str, timeout_minutes: int) -> object:
+        """Resolve idle expiration before protecting an active request."""
+        self.get(session_id, timeout_minutes)
+        token = object()
+        self._requests[token] = session_id
+        return token
+
+    def finish_request(self, token: object, *, successful: bool) -> None:
+        """Refresh surviving overrides after a successful request."""
+        session_id = self._requests.pop(token, None)
+        entry = self._conversation_overrides.get(session_id) if session_id else None
+        if successful and session_id is not None and entry is not None:
+            values, _, timeout = entry
+            self._conversation_overrides[session_id] = (values, monotonic(), timeout)
 
     def set(
         self,
@@ -1308,6 +1327,11 @@ class RequestRuleRuntime:
 
     def reset(self, session_id: str) -> None:
         self._conversation_overrides.pop(session_id, None)
+        self._requests = {
+            token: active
+            for token, active in self._requests.items()
+            if active != session_id
+        }
 
     def effective_options(
         self,

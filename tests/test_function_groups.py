@@ -522,3 +522,48 @@ def test_group_round_trip_and_reserved_loader_name(hass) -> None:
                 "function_groups": [_group("tools", ["one"])],
             }
         )
+
+
+@pytest.mark.parametrize("successful", [True, False])
+def test_active_group_request_survives_sweeps_then_obeys_idle_expiration(
+    monkeypatch, successful
+):
+    from custom_components.extended_openai_conversation_responses import function_groups
+
+    now = 0.0
+    monkeypatch.setattr(function_groups, "time", SimpleNamespace(monotonic=lambda: now))
+    runtime = FunctionGroupRuntime()
+    session = runtime.begin("active", 1)
+    session.loaded_group_ids.add("bedtime")
+    first = runtime.begin_request(session)
+    second = runtime.begin_request(session)
+    now = 120.0
+    runtime.begin("other", 1)
+    assert runtime._sessions["active"] is session
+    runtime.finish_request(first, successful=successful)
+    runtime.begin("other", 1)
+    assert session.loaded_group_ids == {"bedtime"}
+    runtime.finish_request(second, successful=successful)
+    now = 121.0
+    runtime.begin("other", 1)
+    assert ("active" in runtime._sessions) is successful
+    now = 181.0
+    runtime.begin("other", 1)
+    assert "active" not in runtime._sessions
+    assert runtime._requests == {}
+
+
+def test_group_reset_invalidates_old_completion(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import function_groups
+
+    now = 0.0
+    monkeypatch.setattr(function_groups, "time", SimpleNamespace(monotonic=lambda: now))
+    runtime = FunctionGroupRuntime()
+    old = runtime.begin("same", 1)
+    token = runtime.begin_request(old)
+    assert runtime.end("same")
+    replacement = runtime.begin("same", 1)
+    now = 120.0
+    runtime.finish_request(token, successful=True)
+    assert replacement.last_active == 0.0
+    assert runtime._requests == {}

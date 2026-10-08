@@ -84,13 +84,16 @@ class FunctionGroupRuntime:
     def __init__(self) -> None:
         self._sessions: dict[str, FunctionGroupSession] = {}
         self._last_request: dict[str, Any] = {}
+        self._requests: dict[object, FunctionGroupSession] = {}
 
     def begin(self, session_key: str, timeout_minutes: int) -> FunctionGroupSession:
         """Resolve a session and prune inactive conversation state."""
         now = time.monotonic()
         cutoff = now - max(1, timeout_minutes) * 60
         for key, current_session in list(self._sessions.items()):
-            if current_session.last_active < cutoff:
+            if current_session.last_active < cutoff and not any(
+                active is current_session for active in self._requests.values()
+            ):
                 del self._sessions[key]
         session = self._sessions.get(session_key)
         if session is None:
@@ -99,6 +102,22 @@ class FunctionGroupRuntime:
         else:
             session.last_active = now
         return session
+
+    def begin_request(self, session: FunctionGroupSession) -> object:
+        """Protect a resolved session while a conversation request is active."""
+        token = object()
+        self._requests[token] = session
+        return token
+
+    def finish_request(self, token: object, *, successful: bool) -> None:
+        """Refresh activity on success without reviving an ended conversation."""
+        session = self._requests.pop(token, None)
+        if (
+            successful
+            and session is not None
+            and self._sessions.get(session.session_key) is session
+        ):
+            session.last_active = time.monotonic()
 
     def record_request(self, assembly: FunctionToolAssembly) -> None:
         """Retain only non-sensitive schema counts for diagnostics."""
@@ -114,7 +133,13 @@ class FunctionGroupRuntime:
 
     def end(self, session_key: str) -> bool:
         """Discard loaded groups when one logical conversation ends."""
-        return self._sessions.pop(session_key, None) is not None
+        session = self._sessions.pop(session_key, None)
+        self._requests = {
+            token: active
+            for token, active in self._requests.items()
+            if active is not session
+        }
+        return session is not None
 
     def stats(self) -> dict[str, Any]:
         """Return non-sensitive runtime diagnostics."""

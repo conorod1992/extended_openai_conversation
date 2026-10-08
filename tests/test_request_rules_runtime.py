@@ -276,7 +276,9 @@ def test_total_pattern_state_validation_handles_inactive_and_mismatched_rules() 
     )
 
 
-def test_legacy_action_migration_covers_unknown_source_and_home_assistant_type() -> None:
+def test_legacy_action_migration_covers_unknown_source_and_home_assistant_type() -> (
+    None
+):
     """Legacy actions reject unknown bindings and strip the HA type wrapper."""
     with pytest.raises(ValueError, match="unknown function action fields"):
         rr._validate_local_action(
@@ -312,7 +314,9 @@ def test_legacy_action_migration_covers_unknown_source_and_home_assistant_type()
     }
 
 
-def test_legacy_slot_migration_recurses_and_slot_discovery_ignores_native_actions() -> None:
+def test_legacy_slot_migration_recurses_and_slot_discovery_ignores_native_actions() -> (
+    None
+):
     """Legacy slot syntax is migrated recursively without misclassifying native actions."""
     assert rr._migrate_slot_templates(
         {
@@ -383,7 +387,10 @@ def test_script_iterator_skips_malformed_nested_shapes_and_bounds_depth() -> Non
 def test_sensitive_action_detection_handles_nonlocal_and_cover_controls() -> None:
     """Sensitivity detection distinguishes routing rules from security-relevant cover control."""
     assert not rr.rule_has_sensitive_actions(
-        {"action_type": "route_to_ai", "action": {"actions": [{"action": "lock.unlock"}]}}
+        {
+            "action_type": "route_to_ai",
+            "action": {"actions": [{"action": "lock.unlock"}]},
+        }
     )
     assert rr.rule_has_sensitive_actions(
         {
@@ -496,7 +503,9 @@ async def test_local_action_failure_unloads_script_and_clears_active_executor() 
 
 
 @pytest.mark.asyncio
-async def test_guest_authorization_exception_fails_closed_before_script_creation() -> None:
+async def test_guest_authorization_exception_fails_closed_before_script_creation() -> (
+    None
+):
     """Unexpected Guest preflight errors deny execution rather than bypassing policy."""
     rule = {
         "id": "guest-preflight",
@@ -512,7 +521,9 @@ async def test_guest_authorization_exception_fails_closed_before_script_creation
     policy = SimpleNamespace(guest_active=True)
 
     with (
-        patch.object(rr, "_resolve_guest_slot_templates", side_effect=RuntimeError("bad")),
+        patch.object(
+            rr, "_resolve_guest_slot_templates", side_effect=RuntimeError("bad")
+        ),
         patch.object(rr, "Script") as script_cls,
     ):
         result = await rr.async_evaluate_rule(
@@ -528,3 +539,46 @@ async def test_guest_authorization_exception_fails_closed_before_script_creation
     assert result.successful is False
     assert result.response == rr.GUEST_MODE_UNAVAILABLE
     script_cls.assert_not_called()
+
+
+@pytest.mark.parametrize("successful", [True, False])
+def test_active_route_request_survives_sweeps_then_obeys_idle_expiration(
+    monkeypatch, successful
+):
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    now = 0.0
+    monkeypatch.setattr(request_rules, "monotonic", lambda: now)
+    runtime = request_rules.RequestRuleRuntime()
+    runtime.set("active", {"model": "gpt-6-astra"}, 1)
+    first = runtime.begin_request("active", 1)
+    second = runtime.begin_request("active", 1)
+    now = 120.0
+    assert runtime.get("other", 1) == {}
+    assert runtime._conversation_overrides["active"][0]["model"] == "gpt-6-astra"
+    runtime.finish_request(first, successful=successful)
+    runtime.get("other", 1)
+    assert "active" in runtime._conversation_overrides
+    runtime.finish_request(second, successful=successful)
+    now = 121.0
+    runtime.get("other", 1)
+    assert ("active" in runtime._conversation_overrides) is successful
+    now = 181.0
+    assert runtime.get("active", 1) == {}
+    assert runtime._requests == {}
+
+
+def test_route_reset_invalidates_old_completion(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    now = 0.0
+    monkeypatch.setattr(request_rules, "monotonic", lambda: now)
+    runtime = request_rules.RequestRuleRuntime()
+    runtime.set("same", {"model": "old"}, 1)
+    token = runtime.begin_request("same", 1)
+    runtime.reset("same")
+    runtime.set("same", {"model": "new"}, 1)
+    now = 120.0
+    runtime.finish_request(token, successful=True)
+    assert runtime.get("same", 1) == {}
+    assert runtime._requests == {}

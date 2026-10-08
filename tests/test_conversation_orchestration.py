@@ -41,6 +41,7 @@ from custom_components.extended_openai_conversation_responses.local_intents impo
     LocalIntentResult,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
+    RequestRuleRuntime,
     RuleEvaluation,
     RuleMatch,
 )
@@ -49,6 +50,14 @@ from homeassistant.components import conversation
 from homeassistant.core import Context
 from homeassistant.helpers import intent
 from homeassistant.util import dt as dt_util
+
+
+def _rule_runtime(**overrides):
+    """Keep actual request ownership while isolating option assembly in tests."""
+    runtime = RequestRuleRuntime()
+    for name, value in overrides.items():
+        setattr(runtime, name, value)
+    return runtime
 
 
 class _UsageRecorder:
@@ -148,7 +157,7 @@ async def test_consumed_request_rule_bypasses_local_intent_and_provider(
         entity._usage = _UsageRecorder()
         entity._usage.mark_current_run_failed = MagicMock()
     entity._request_rules = object()
-    entity._request_rule_runtime = SimpleNamespace(effective_options=MagicMock())
+    entity._request_rule_runtime = _rule_runtime(effective_options=MagicMock())
 
     evaluation = RuleEvaluation(
         match=RuleMatch(
@@ -178,6 +187,7 @@ async def test_consumed_request_rule_bypasses_local_intent_and_provider(
     try_local_intent.assert_not_awaited()
     entity._async_handle_message_with_ha_tools.assert_not_awaited()
     assert entity._continuity.async_record_success.await_count == int(successful)
+    assert entity._request_rule_runtime._requests == {}
     payload = entity.hass.bus.async_fire.call_args.args[1]
     assert payload["status"] == ("local" if successful else "error")
     assert result.response.error_code == (
@@ -190,7 +200,7 @@ async def test_consumed_request_rule_bypasses_local_intent_and_provider(
 async def test_native_terminal_rule_never_calls_provider(monkeypatch, native_response):
     entity, _, _, _, process = _pipeline_fixture(monkeypatch)
     entity._request_rules = object()
-    entity._request_rule_runtime = SimpleNamespace(effective_options=MagicMock())
+    entity._request_rule_runtime = _rule_runtime(effective_options=MagicMock())
     evaluation = RuleEvaluation(
         RuleMatch(
             {"id": "native", "name": "Native", "action": {"continue_to_ai": True}},
@@ -215,7 +225,7 @@ async def test_successful_local_rule_continuation_calls_provider_once(monkeypatc
         monkeypatch, text="check the battery"
     )
     entity._request_rules = object()
-    entity._request_rule_runtime = SimpleNamespace(
+    entity._request_rule_runtime = _rule_runtime(
         effective_options=MagicMock(return_value={})
     )
     evaluation = RuleEvaluation(
@@ -252,7 +262,7 @@ async def test_routing_rule_hands_captured_provider_input_to_ai(monkeypatch):
         monkeypatch, text="ask why the sky is blue"
     )
     entity._request_rules = object()
-    entity._request_rule_runtime = SimpleNamespace(
+    entity._request_rule_runtime = _rule_runtime(
         effective_options=MagicMock(return_value={})
     )
     evaluation = RuleEvaluation(
@@ -435,7 +445,7 @@ async def test_rejected_request_rule_does_not_continue_in_always_mode(monkeypatc
     entity, _, _, _, process = _pipeline_fixture(monkeypatch)
     entity.subentry.data[CONF_CONTINUE_CONVERSATION] = CONTINUE_CONVERSATION_ALWAYS
     entity._request_rules = object()
-    entity._request_rule_runtime = SimpleNamespace(effective_options=MagicMock())
+    entity._request_rule_runtime = _rule_runtime(effective_options=MagicMock())
     monkeypatch.setattr(
         conversation_module,
         "async_evaluate_rule",
@@ -708,7 +718,7 @@ async def test_direct_assist_returns_consumed_rule_metadata(monkeypatch):
     """Direct callers receive the routing decision alongside the local response."""
     entity, invoke, _, _ = _assist_fixture(monkeypatch)
     entity._request_rules = object()
-    entity._request_rule_runtime = SimpleNamespace(
+    entity._request_rule_runtime = _rule_runtime(
         effective_options=MagicMock(return_value={})
     )
     evaluation = RuleEvaluation(

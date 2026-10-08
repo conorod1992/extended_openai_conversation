@@ -866,6 +866,19 @@ class ExtendedOpenAIAgentEntity(
             function_group_token = _ACTIVE_FUNCTION_GROUP_SESSION.set(
                 function_group_session
             )
+            group_runtime = self._function_groups_runtime
+            rule_runtime = self._request_rule_runtime
+            group_request = (
+                group_runtime.begin_request(function_group_session)
+                if group_runtime is not None and function_group_session is not None
+                else None
+            )
+            rule_request = (
+                rule_runtime.begin_request(rule_session_key, timeout_minutes)
+                if rule_runtime is not None
+                else None
+            )
+            request_successful = False
             lifecycle_token = begin_conversation_lifecycle()
             if resolution.history and len(chat_log.content) <= 2:
                 # Core chat logs expire independently after five minutes. Restore the
@@ -918,7 +931,7 @@ class ExtendedOpenAIAgentEntity(
                     }
                     metadata["captured_values"] = dict(evaluation.match.slots)
                 if evaluation is not None and evaluation.consume:
-                    return await self._async_complete_local_rule(
+                    result = await self._async_complete_local_rule(
                         user_input,
                         chat_log,
                         evaluation.response or "Done",
@@ -928,6 +941,8 @@ class ExtendedOpenAIAgentEntity(
                         source_device_id,
                         successful=evaluation.successful,
                     )
+                    request_successful = evaluation.successful
+                    return result
                 if evaluation is not None and evaluation.provider_input is not None:
                     current_user = chat_log.content[-1]
                     if not isinstance(current_user, conversation.UserContent):
@@ -965,6 +980,7 @@ class ExtendedOpenAIAgentEntity(
                         await continuity.async_record_success(
                             resolution.key, resolution.claim_token, chat_log.content
                         )
+                    request_successful = result.response.error_code is None
                     return result
                 async with self._usage.async_run(
                     home_assistant_conversation_id=user_input.conversation_id,
@@ -988,6 +1004,7 @@ class ExtendedOpenAIAgentEntity(
                         await continuity.async_record_success(
                             resolution.key, resolution.claim_token, chat_log.content
                         )
+                    request_successful = run.successful
                     return result
             finally:
                 reset_request = requested_conversation_reset()
@@ -1005,6 +1022,14 @@ class ExtendedOpenAIAgentEntity(
                             )
                         )
                 finally:
+                    if group_runtime is not None and group_request is not None:
+                        group_runtime.finish_request(
+                            group_request, successful=request_successful
+                        )
+                    if rule_runtime is not None and rule_request is not None:
+                        rule_runtime.finish_request(
+                            rule_request, successful=request_successful
+                        )
                     end_conversation_lifecycle(lifecycle_token)
                     _ACTIVE_FUNCTION_GROUP_SESSION.reset(function_group_token)
                     _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)

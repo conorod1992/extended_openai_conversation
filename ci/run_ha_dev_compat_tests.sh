@@ -5,6 +5,8 @@ TEST_PATHS=(
   tests/test_conversation_archive.py
   tests/test_memory.py
   tests/test_knowledge.py
+  tests/test_function_groups.py
+  tests/test_request_rules_runtime.py
   tests/test_ai_task.py
   tests/test_ai_task_migration.py
   tests/test_ai_task_model_options.py
@@ -17,6 +19,7 @@ TEST_PATHS=(
   tests/test_config_flow_coverage.py
   tests/test_configuration_lifecycle_hardening.py
   tests/test_conversation_entry_ownership.py
+  tests/test_conversation_orchestration.py
   tests/test_conversation_lifecycle.py
   tests/test_conversation_runtime_coverage.py
   tests/test_conversation_security_boundaries.py
