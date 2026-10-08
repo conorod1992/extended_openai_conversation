@@ -180,7 +180,16 @@ def run(repo: Path, output: Path, names: set[str] | None, lanes: tuple[str, ...]
             results.append(row)
             print(json.dumps(row), flush=True)
             (output / "results.json").write_text(json.dumps({"sha": sha, "results": results}, indent=2) + "\n", encoding="utf-8")
-    return {"sha": sha, "results": results}
+    summary = {}
+    for lane in lanes:
+        counts = {}
+        for row in results:
+            outcome = row[lane]["mutation"]
+            counts[outcome] = counts.get(outcome, 0) + 1
+        summary[lane] = counts
+    evidence = {"sha": sha, "results": results, "summary": summary}
+    (output / "results.json").write_text(json.dumps(evidence, indent=2) + "\\n", encoding="utf-8")
+    return evidence
 
 
 def main():
@@ -197,7 +206,7 @@ def main():
         return
     lanes = ("dedicated", "general") if args.lane == "both" else (args.lane,)
     result = run(Path(__file__).resolve().parent.parent, args.output.resolve(), set(args.case) or None, lanes, args.timeout)
-    print("Defect challenges evaluated:", len(result["results"]))
+    print("Defect challenges evaluated:", len(result["results"]))\n    print("Outcome summary:", json.dumps(result["summary"], sort_keys=True))
     print("Unreached injections are classified separately from genuine observed misses; exploratory outcomes do not fail CI")
 
 
