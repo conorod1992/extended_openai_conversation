@@ -7,6 +7,8 @@ import asyncio
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+
+from custom_components.extended_openai_conversation_responses.scope import user_scope
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -175,7 +177,7 @@ def runtime_agent():
     )
     agent._effective_guest_policy = GuestCapabilityPolicy.unrestricted
     scope = owner._ACTIVE_SCOPE.set(
-        SimpleNamespace(scope_type="user", scope_id="user:alice", user_id="alice")
+        user_scope("alice", source="test")
     )
     temporary = owner._ACTIVE_TEMPORARY_SCOPE.set("session")
     archive = owner._ACTIVE_ARCHIVE.set(("session", "id"))

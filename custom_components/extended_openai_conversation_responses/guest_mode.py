@@ -844,14 +844,10 @@ def _resolve_legacy_entity_ids(
             if registry_entry is not None and registry_entry.device_id
             else None
         )
-        entity_areas = {
-            value
-            for value in (
-                getattr(registry_entry, "area_id", None),
-                getattr(device, "area_id", None),
-            )
-            if value
-        }
+        effective_area = getattr(registry_entry, "area_id", None) or getattr(
+            device, "area_id", None
+        )
+        entity_areas = {effective_area} if effective_area else set()
         entity_labels = set(getattr(registry_entry, "labels", ()) or ()) | set(
             getattr(device, "labels", ()) or ()
         )
@@ -900,14 +896,10 @@ def resolve_guest_selector_entity_ids(
             if registry_entry is not None and registry_entry.device_id
             else None
         )
-        entity_areas = {
-            value
-            for value in (
-                getattr(registry_entry, "area_id", None),
-                getattr(device, "area_id", None),
-            )
-            if value
-        }
+        effective_area = getattr(registry_entry, "area_id", None) or getattr(
+            device, "area_id", None
+        )
+        entity_areas = {effective_area} if effective_area else set()
         entity_labels = set(getattr(registry_entry, "labels", ()) or ()) | set(
             getattr(device, "labels", ()) or ()
         )

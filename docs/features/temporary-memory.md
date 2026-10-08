@@ -28,3 +28,5 @@ protections also apply to temporary memory. Current user statements override sto
 temporary facts. The Memories page has Long-term and Short-term views. **+ Add memory** on either tab opens one dialog with Memory, Type, Category and Owner; Short-term also asks for Expires using Home Assistant local date/time. The type defaults to the current tab and is fixed when editing.
 
 Manual short-term creation uses an explicit privacy policy and records `source: manual`; model-created records retain `source: automatic` and automatic sensitivity restrictions. Both reject secrets and credentials. Expiry must include a timezone internally, remain in the future, and be within one year. The configured automatic mode does not prevent manual creation.
+
+Category metadata follows the same privacy policy as the memory content, including when editing or loading existing records.

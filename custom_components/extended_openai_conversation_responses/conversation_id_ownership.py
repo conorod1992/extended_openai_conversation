@@ -33,7 +33,7 @@ def claim_conversation_id(
     owners: dict[str, tuple[str, str]] = hass.data.setdefault(
         _CONVERSATION_ID_OWNERS, {}
     )
-    owner = (agent_id, "guest" if guest_active else scope.scope_id)
+    owner = (agent_id, f"guest:{scope.scope_id}" if guest_active else scope.scope_id)
     existing = owners.get(conversation_id)
 
     if existing is None:

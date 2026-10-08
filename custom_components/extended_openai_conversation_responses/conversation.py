@@ -814,6 +814,27 @@ class ExtendedOpenAIAgentEntity(
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
         ):
+            # HA allocates a ChatLog ID when the initial request has no ID.
+            # Claim that actual ID before any processing can retain its history.
+            subentry_id = getattr(getattr(self, "subentry", None), "subentry_id", None)
+            claimed_id = chat_log.conversation_id
+            if claimed_id is not None and isinstance(subentry_id, str):
+                claim_conversation_id(
+                    self.hass,
+                    subentry_id,
+                    scope,
+                    claimed_id,
+                    guest_active=request_policy.guest_active,
+                )
+                claim_owner = (
+                    subentry_id,
+                    f"guest:{scope.scope_id}"
+                    if request_policy.guest_active
+                    else scope.scope_id,
+                )
+                register_conversation_id_cleanup(
+                    session, self.hass, claimed_id, claim_owner
+                )
             context_id = getattr(getattr(llm_context, "context", None), "id", None)
             session_key = (
                 f"continuity:{resolution.key}"
@@ -835,19 +856,6 @@ class ExtendedOpenAIAgentEntity(
             memory_session_token = _ACTIVE_MEMORY_SESSION.set(
                 (session_key, timeout_minutes if resolution.key else 5)
             )
-            subentry_id = getattr(getattr(self, "subentry", None), "subentry_id", None)
-            claimed_id = resolution.conversation_id
-            if claimed_id is not None and isinstance(subentry_id, str):
-                claim_owner = (
-                    subentry_id,
-                    "guest" if request_policy.guest_active else scope.scope_id,
-                )
-                register_conversation_id_cleanup(
-                    session,
-                    getattr(self, "hass", None),
-                    claimed_id,
-                    claim_owner,
-                )
             rule_session_key = request_rule_session_id(
                 resolution.key, chat_log.conversation_id
             )
@@ -2605,8 +2613,22 @@ class ExtendedOpenAIAgentEntity(
                 )
             ):
                 raise ValueError("memory_id and at least one valid update are required")
+            # Legacy manual callers remain explicit; unspecified proactive updates
+            # must obey the current operation's automatic sensitivity policy.
+            source = arguments.get(
+                "source",
+                "implicit"
+                if automatic_memory_enabled(self.subentry.data)
+                else "explicit",
+            )
+            if source not in ("explicit", "implicit"):
+                raise ValueError("source must be explicit or implicit")
+            if source == "implicit" and not automatic_memory_enabled(
+                self.subentry.data
+            ):
+                raise ValueError("automatic memory creation is disabled")
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"), llm_context, source="explicit"
+                arguments.get("scope"), llm_context, source=source
             )
             memory = await self._memory.async_update(
                 write_scope_id,
@@ -2615,7 +2637,7 @@ class ExtendedOpenAIAgentEntity(
                 category,
                 **metadata,
                 clear_fields=clear_fields,
-                source="explicit",
+                source=source,
             )
             return {
                 "status": "updated",
@@ -2671,6 +2693,9 @@ class ExtendedOpenAIAgentEntity(
         self, llm_context: llm.LLMContext | None = None
     ) -> list[str]:
         """Compose personal and enabled household scopes without crossing users."""
+        scope = _ACTIVE_SCOPE.get()
+        if scope is not None and not scope.allows_retention:
+            return []
         policy = self._effective_guest_policy()
         if policy.guest_active:
             return (

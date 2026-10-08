@@ -109,6 +109,7 @@ class TemporaryMemory:
                     else:
                         self.expired_pruned += 1
                 except TypeError, ValueError:
+                    self._normalization_pending = True
                     continue
             self._initialized = True
             if self.expired_pruned:
@@ -200,6 +201,7 @@ class TemporaryMemory:
         content = _clean(content, MAX_CONTENT_LENGTH, "content")
         category = _clean(category, MAX_CATEGORY_LENGTH, "category")
         validate_memory_privacy(content, automatic=source == "automatic")
+        validate_memory_privacy(category, automatic=source == "automatic")
         expiry = _parse_future_expiry(expires_at)
         async with async_storage_lock(self, self._lock):
             await self._async_initialize_locked()
@@ -281,6 +283,14 @@ class TemporaryMemory:
             validate_memory_privacy(
                 new_content, automatic=effective_source == "automatic"
             )
+            new_category = (
+                _clean(category, MAX_CATEGORY_LENGTH, "category")
+                if category is not None
+                else current.category
+            )
+            validate_memory_privacy(
+                new_category, automatic=effective_source == "automatic"
+            )
             new_expiry = (
                 _parse_future_expiry(expires_at).isoformat()
                 if expires_at is not None
@@ -290,9 +300,7 @@ class TemporaryMemory:
                 current.memory_id,
                 current.scope_id,
                 new_content,
-                _clean(category, MAX_CATEGORY_LENGTH, "category")
-                if category is not None
-                else current.category,
+                new_category,
                 effective_source,
                 new_expiry,
                 current.created_at,
@@ -697,7 +705,9 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
             and (scope_id.startswith("user:") or scope_id.startswith("shared:"))
             else None
         )
-    return TemporaryMemoryRecord(**values)
+    record = TemporaryMemoryRecord(**values)
+    validate_memory_privacy(record.category, automatic=record.source == "automatic")
+    return record
 
 
 def _matches_owner(
