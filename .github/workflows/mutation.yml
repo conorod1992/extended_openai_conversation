@@ -16,6 +16,7 @@ on:
           - request-rules
           - function-groups
           - contract-sensitivity
+          - defect-benchmark
       target:
         description: Optional Mutmut target override
         required: false
@@ -37,11 +38,11 @@ jobs:
   mutation:
     name: Mutation campaign (${{ matrix.campaign }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        campaign: ${{ fromJSON((github.event_name == 'schedule' || inputs.campaign == 'all') && '["function-tools","guest-security","ha-permissions","request-rules","function-groups","contract-sensitivity"]' || format('["{0}"]', inputs.campaign)) }}
+        campaign: ${{ fromJSON((github.event_name == 'schedule' || inputs.campaign == 'all') && '["function-tools","guest-security","ha-permissions","request-rules","function-groups","contract-sensitivity","defect-benchmark"]' || format('["{0}"]', inputs.campaign)) }}
 
     steps:
       - name: Checkout repository
@@ -85,11 +86,11 @@ jobs:
           pip install "mutmut==3.7.0"
 
       - name: Install transitive dependencies for genuine HA contract tests
-        if: matrix.campaign == 'contract-sensitivity'
+        if: matrix.campaign == 'contract-sensitivity' || matrix.campaign == 'defect-benchmark'
         run: python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
 
       - name: Run baseline and targeted mutation campaign
-        if: matrix.campaign != 'contract-sensitivity'
+        if: matrix.campaign != 'contract-sensitivity' && matrix.campaign != 'defect-benchmark'
         env:
           CAMPAIGN: ${{ matrix.campaign }}
           TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
@@ -106,6 +107,21 @@ jobs:
         if: matrix.campaign == 'contract-sensitivity'
         run: python scripts/report_contract_effectiveness.py contract-sensitivity-artifacts/results.json --output contract-sensitivity-artifacts/effectiveness.json
 
+      - name: Run 25-challenge historical defect benchmark
+        if: matrix.campaign == 'defect-benchmark'
+        run: |
+          python scripts/run_defect_benchmark.py \
+            --output defect-benchmark-artifacts
+
+      - name: Upload historical defect evidence
+        if: always() && matrix.campaign == 'defect-benchmark'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: defect-benchmark-evidence
+          path: defect-benchmark-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Upload contract sensitivity evidence
         if: always() && matrix.campaign == 'contract-sensitivity'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -116,7 +132,7 @@ jobs:
           retention-days: 14
 
       - name: Upload mutation diagnostics
-        if: always() && matrix.campaign != 'contract-sensitivity'
+        if: always() && matrix.campaign != 'contract-sensitivity' && matrix.campaign != 'defect-benchmark'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mutation-${{ matrix.campaign }}-diagnostics
