@@ -102,6 +102,10 @@ jobs:
         if: matrix.campaign == 'contract-sensitivity'
         run: python scripts/run_contract_sensitivity.py
 
+      - name: Report established contract detection
+        if: matrix.campaign == 'contract-sensitivity'
+        run: python scripts/report_contract_effectiveness.py contract-sensitivity-artifacts/results.json --output contract-sensitivity-artifacts/effectiveness.json
+
       - name: Upload contract sensitivity evidence
         if: always() && matrix.campaign == 'contract-sensitivity'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
