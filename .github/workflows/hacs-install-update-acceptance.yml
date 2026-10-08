@@ -95,6 +95,21 @@ jobs:
           pip check
           python -c "from importlib.metadata import version; print('homeassistant=' + version('homeassistant'))"
 
+      - name: Build isolated runtime for the published release
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ffmpeg libturbojpeg0
+          # 6.8.3 pins OpenAI 2.45.0, matching HA 2026.9.0. Keep that
+          # release environment separate from the candidate's current SDK.
+          git show 6.8.3:custom_components/extended_openai_conversation_responses/manifest.json > "$RUNNER_TEMP/hacs-released-manifest.json"
+          python -m venv "$RUNNER_TEMP/hacs-released-runtime"
+          "$RUNNER_TEMP/hacs-released-runtime/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/hacs-released-runtime/bin/python" -m pip install homeassistant==2026.9.0
+          "$RUNNER_TEMP/hacs-released-runtime/bin/python" ci/install_ha_dependencies.py --manifest "$RUNNER_TEMP/hacs-released-manifest.json"
+          "$RUNNER_TEMP/hacs-released-runtime/bin/python" ci/install_ha_dependencies.py --manifest "${{ steps.hacs.outputs.component_dir }}/manifest.json"
+          echo "HACS_ACCEPTANCE_RELEASED_PYTHON=$RUNNER_TEMP/hacs-released-runtime/bin/python" >> "$GITHUB_ENV"
+
       - name: Run genuine HACS release install and candidate update
         env:
           HACS_ACCEPTANCE_COMPONENT_DIR: ${{ steps.hacs.outputs.component_dir }}

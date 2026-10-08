@@ -407,8 +407,13 @@ def _run_child(config_dir: Path, phase: str) -> subprocess.CompletedProcess[str]
         roots.extend(existing.split(os.pathsep))
     env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(roots))
 
+    interpreter = (
+        os.environ.get("HACS_ACCEPTANCE_RELEASED_PYTHON", sys.executable)
+        if phase in {"install-release", "populate-release", "hacs-update"}
+        else sys.executable
+    )
     return subprocess.run(
-        [sys.executable, str(Path(__file__).resolve())],
+        [interpreter, str(Path(__file__).resolve())],
         cwd=config_dir,
         env=env,
         text=True,

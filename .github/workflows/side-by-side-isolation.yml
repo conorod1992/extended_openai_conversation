@@ -48,6 +48,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Trust mounted checkout for Git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Reconcile stable Home Assistant test environment
         run: |
           VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json"))["info"]["version"])')"
