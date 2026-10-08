@@ -247,5 +247,6 @@ def test_programme_uses_this_runs_verified_environment(monkeypatch, tmp_path, de
             "candidate_sha": driver.TARGET_SHA,
             "ha_version": "2026.10.0",
             "full_architecture": "true",
+            "validation_ref": driver.REF_NAME,
         }
     artifacts.assert_called_once_with(42)

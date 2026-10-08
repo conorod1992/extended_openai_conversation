@@ -6,6 +6,8 @@ mutation campaigns, HACS/hassfest validation, and the heavy enhanced campaign.
 After every test workflow succeeds, it dispatches nightly programme certification
 with both official Container architectures required. The stable HA version comes
 from that run's enhanced certification artifact, rather than another version lookup.
+Certification selects evidence only from that Full Validation cohort's branch;
+a newer daily run of the same commit cannot replace its architecture evidence.
 Certification failure fails Full validation. Temporary candidate refs are removed
 by the parent workflow's cleanup job after certification finishes.
 

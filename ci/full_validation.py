@@ -217,6 +217,7 @@ def programme_inputs(results: list[tuple[dict, dict]]) -> dict[str, str]:
         "candidate_sha": TARGET_SHA,
         "ha_version": version,
         "full_architecture": "true",
+        "validation_ref": REF_NAME,
     }
 
 

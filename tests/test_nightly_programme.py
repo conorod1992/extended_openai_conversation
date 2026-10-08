@@ -136,3 +136,27 @@ def test_official_collector_rejects_invalid_evidence(monkeypatch, fault):
     else:
         with pytest.raises(RuntimeError):
             nightly_programme.collect(actions, SOURCE)
+
+
+def test_full_validation_cohort_ignores_newer_daily_evidence(monkeypatch):
+    from ci import nightly_programme
+    from tests.test_release_certification import FakeActions, SOURCE
+
+    actions = FakeActions()
+    workflow = "official-ha-container.yml"
+    full = actions.runs[workflow][0]
+    full["head_branch"] = "full-validation-123-1"
+    daily = {**full, "id": 999, "head_branch": "develop", "event": "schedule"}
+    actions.runs[workflow].insert(0, daily)
+    actions.artifacts[999] = [item for item in actions.artifacts[full["id"]]
+                              if "-amd64-" in item["name"]]
+    actions.jobs[999] = actions.jobs[full["id"]]
+    monkeypatch.setattr(nightly_programme, "WORKFLOWS", (workflow,))
+    evidence = nightly_programme.collect(actions, SOURCE, validation_ref=full["head_branch"])
+    assert evidence[workflow]["run"]["id"] == full["id"]
+    assert not nightly_programme.programme_errors(
+        SOURCE, "2026.9.4", [workflow], evidence, full_architecture=True
+    )
+    assert not nightly_programme.collect(actions, SOURCE, validation_ref="missing-cohort")
+    daily_evidence = nightly_programme.collect(actions, SOURCE)
+    assert set(daily_evidence[workflow]["official"]) == {"amd64"}
