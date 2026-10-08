@@ -14,18 +14,6 @@ FRONTEND = ROOT / "tests_browser" / "real-ha-backend.spec.mjs"
 NIGHTLY_FRONTEND = ROOT / "tests_browser" / "real-ha-nightly-management.spec.mjs"
 SEEDED_FRONTEND = ROOT / "tests_browser" / "real-ha-seeded-management.spec.mjs"
 REPAIR_FRONTEND = ROOT / "tests_browser" / "real-ha-function-repair.spec.mjs"
-MANAGEMENT = (
-    ROOT
-    / "custom_components"
-    / "extended_openai_conversation_responses"
-    / "management_ui.py"
-)
-TRANSFER = (
-    ROOT
-    / "custom_components"
-    / "extended_openai_conversation_responses"
-    / "backup_transfer.py"
-)
 EXPECTED_JOURNEYS = {
     "configuration",
     "configuration_extended",
@@ -143,20 +131,21 @@ def test_reviewed_browser_payloads_are_accepted_by_websocket_schemas() -> None:
         }
     )
 
-    management = MANAGEMENT.read_text(encoding="utf-8")
-    management_schema = management.split("async def websocket_management(", 1)[
-        0
-    ].rsplit("@websocket_api.websocket_command(", 1)[1]
-    management_keys = set(
-        re.findall(r'vol\.(?:Optional|Required)\("([^"]+)"', management_schema)
+    from custom_components.extended_openai_conversation_responses.backup_transfer import (
+        websocket_backup_transfer,
     )
-    transfer = TRANSFER.read_text(encoding="utf-8")
-    transfer_schema = transfer.split("async def websocket_backup_transfer(", 1)[
-        0
-    ].rsplit("@websocket_api.websocket_command(", 1)[1]
-    transfer_keys = set(
-        re.findall(r'vol\.(?:Optional|Required)\("([^"]+)"', transfer_schema)
+    from custom_components.extended_openai_conversation_responses.management_ui import (
+        websocket_management,
     )
+
+    # Inspect the schemas actually compiled by HA. The registered command
+    # contract is independent of decorator spelling and compatibility adapters.
+    management_keys = {
+        str(key) for key in websocket_management._ws_schema.schema
+    }
+    transfer_keys = {
+        str(key) for key in websocket_backup_transfer._ws_schema.schema
+    }
     assert "groups" in management_keys  # Regression for the original browser rejection.
     for item in actions:
         assert item["keys"] and len(item["keys"]) == len(set(item["keys"])), item

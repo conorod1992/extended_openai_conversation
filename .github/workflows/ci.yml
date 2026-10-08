@@ -358,7 +358,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          pytest tests/ \
+          pytest tests/ tests_stress/test_management_ws_contract.py \
             -n 2 \
             --dist=loadscope \
             -v \
