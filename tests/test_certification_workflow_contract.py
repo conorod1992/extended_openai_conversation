@@ -333,3 +333,23 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
         if step.get("name") == "Resolve reproducible run controls"
     )
     assert 'intensities=["normal","heavy"]' in schedule_campaigns["run"]
+
+
+def test_active_release_upgrade_builds_a_verified_historical_runtime():
+    steps = workflow("upgrade-acceptance.yml")["jobs"]["upgrade"]["steps"]
+    historical = next(
+        step
+        for step in steps
+        if "active published-release journey" in step.get("name", "")
+    )
+    assert historical["if"] == "steps.payloads.outputs.from_version == '6.8.3'"
+    assert historical["env"]["HISTORICAL_HA_VERSION"] == "2026.9.4"
+    assert "bash ci/prepare_historical_runtime.sh" in historical["run"]
+    assert (
+        "UPGRADE_RELEASED_PYTHON=$HISTORICAL_RUNTIME_DIR/bin/python"
+        in historical["run"]
+    )
+    assert (
+        historical["env"]["HISTORICAL_RELEASE_SHA"]
+        == "${{ steps.payloads.outputs.from_sha }}"
+    )
