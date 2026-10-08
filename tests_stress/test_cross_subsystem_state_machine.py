@@ -205,6 +205,7 @@ async def test_seeded_cross_subsystem_management_state_machine(
                 section="knowledge",
                 action="delete",
                 source_id=source_id,
+                confirm=True,
             )
             model["knowledge"].pop(source_id)
 

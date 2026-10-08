@@ -3,6 +3,7 @@
   "excluded": [
     "tests_real_ha/test_acceptance_lifecycle.py",
     "tests_real_ha/test_acceptance_seams.py",
+    "tests_real_ha/test_archive_record_integrity.py",
     "tests_real_ha/test_backup_restore_atomicity.py",
     "tests_real_ha/test_backup_restore_delayed_tool_collision.py",
     "tests_real_ha/test_backup_restore_live_runtime_refresh.py",
@@ -19,6 +20,7 @@
     "tests_real_ha/test_config_update_inflight_request.py",
     "tests_real_ha/test_configuration_preview_validation.py",
     "tests_real_ha/test_conversation_entry_ownership.py",
+    "tests_real_ha/test_conversation_runtime_lifecycle.py",
     "tests_real_ha/test_cross_entry_inflight_lifecycle.py",
     "tests_real_ha/test_cross_feature_acceptance.py",
     "tests_real_ha/test_cross_feature_interaction_matrix.py",
@@ -85,7 +87,8 @@
     },
     "tests_real_ha/test_browser_backend_acceptance.py": {
       "nodes": [
-        "test_shipped_browser_frontend_talks_to_real_management_websocket"
+        "test_shipped_browser_frontend_talks_to_real_management_websocket",
+        "test_shipped_frontend_treats_hostile_knowledge_and_memory_as_text"
       ],
       "remaining_evidence": "The genuine HA frontend shell runs in ordinary frontend CI; enhanced nightly repeats the management WebSocket bridge."
     },
@@ -536,6 +539,18 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_user_permission_acceptance runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_archive_record_integrity.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "test_archive_record_integrity executes in genuine HA acceptance, including Full validation; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_conversation_runtime_lifecycle.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "test_conversation_runtime_lifecycle executes in genuine HA acceptance, including Full validation; Enhanced retains its separate targeted stress campaigns."
     }
   }
 }
