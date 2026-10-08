@@ -416,7 +416,7 @@ class PersistentMemory:
         valid_from = _clean_timestamp(valid_from, "valid_from")
         if source not in {"explicit", "implicit"}:
             raise ValueError("source must be explicit or implicit")
-        _validate_privacy(content, source)
+        _validate_privacy_fields(source, content, category, subject, key)
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             if key and (user_id, key) in self._key_index:
@@ -485,7 +485,9 @@ class PersistentMemory:
         )
         if source not in {"explicit", "implicit"}:
             raise ValueError("source must be explicit or implicit")
-        _validate_privacy(content, source)
+        _validate_privacy_fields(
+            source, content, category, cleaned_subject, cleaned_key
+        )
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
             timestamp = dt_util.utcnow().isoformat()
@@ -880,7 +882,6 @@ class PersistentMemory:
                 _clean_category(category) if category is not None else current.category
             )
             effective_source = source or current.source
-            _validate_privacy(new_content, effective_source)
             new_key = (
                 None
                 if "key" in clear
@@ -910,6 +911,19 @@ class PersistentMemory:
                     else current.valid_from
                 ),
             }
+            _validate_privacy_fields(
+                effective_source, new_content, new_category, changes["subject"], new_key
+            )
+            if current.source == "explicit" and source == "implicit":
+                if any(
+                    value != getattr(current, field)
+                    for field, value in changes.items()
+                    if field != "source"
+                ):
+                    raise ValueError(
+                        "implicit updates cannot replace an explicitly confirmed memory"
+                    )
+                return current
             _set_updated_at_if_substantive(current, changes, timestamp)
             updated = self._replace_record(current, **changes)
             await self._async_save_locked()
@@ -1596,11 +1610,12 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_update",
-                "description": "Correct or replace an existing memory for the current user.",
+                "description": "Correct or replace an existing memory. Use explicit only for a user-requested update; use implicit for proactive changes.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "memory_id": {"type": "string"},
+                        "source": {"type": "string", "enum": ["explicit", "implicit"]},
                         "content": {"type": "string"},
                         "category": {"type": "string"},
                         **_memory_metadata_schema(include_scope=True),
@@ -1864,6 +1879,7 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
     _clean_category(record.category)
     _clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH)
     _clean_key(record.key)
+    _validate_privacy_fields(record.source, record.category, record.subject, record.key)
     if (
         dt_util.parse_datetime(record.created_at) is None
         or dt_util.parse_datetime(record.updated_at) is None
@@ -1966,6 +1982,13 @@ def _set_updated_at_if_substantive(
         for field in substantive
     ):
         changes["updated_at"] = timestamp
+
+
+def _validate_privacy_fields(source: str, *values: object) -> None:
+    """Treat retained metadata as untrusted text under the same write policy."""
+    for value in values:
+        if isinstance(value, str):
+            _validate_privacy(value, source)
 
 
 def _validate_privacy(content: str, source: str) -> None:

@@ -374,10 +374,16 @@ class RestFunction(Function):
         """Execute REST API call."""
         rest_data = get_rest_data(hass, function_config, arguments)
 
-        await rest_data.async_update()
-        if (error := getattr(rest_data, "last_exception", None)) is not None:
+        try:
+            await rest_data.async_update()
+        except (aiohttp.ClientError, TimeoutError) as transport_error:
             raise HomeAssistantError(
-                f"REST request failed: {type(error).__name__}: {error}"
+                f"REST request failed: {type(transport_error).__name__}"
+            ) from transport_error
+        if (error := getattr(rest_data, "last_exception", None)) is not None:
+            # Transport exceptions can contain private endpoint URLs/credentials.
+            raise HomeAssistantError(
+                f"REST request failed: {type(error).__name__}"
             ) from error
         value = rest_data.data_without_xml()
         value_template = function_config.get(CONF_VALUE_TEMPLATE)

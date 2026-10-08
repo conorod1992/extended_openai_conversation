@@ -76,7 +76,7 @@ def test_claim_reuses_same_owner_but_isolates_scope_agent_and_guest(
     assert owners["shared-id"] == ("agent-a", "user:a")
     assert owners[other_scope] == ("agent-a", "user:b")
     assert owners[other_agent] == ("agent-b", "user:a")
-    assert owners[guest] == ("agent-a", "guest")
+    assert owners[guest] == ("agent-a", "guest:user:a")
 
 
 def test_release_only_removes_matching_owner_and_tolerates_missing_storage() -> None:

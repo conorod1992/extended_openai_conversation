@@ -88,10 +88,9 @@ class ConversationContinuity:
         }:
             if device_id:
                 key, label = f"device:{device_id}", "Assist device"
-                if namespace is None:
-                    # A physical device can change privacy owner while this cache
-                    # remains warm. All continuity-owned state must follow that owner.
-                    key = f"{scope.scope_id}:{key}"
+                # Guest namespaces separate policy, not authenticated owners.
+                # A shared device must never resume another owner's cached history.
+                key = f"{scope.scope_id}:{key}"
             else:
                 key, label = None, "Home Assistant default"
         else:

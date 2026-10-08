@@ -307,7 +307,7 @@ async def test_consecutive_guest_turns_resume_guest_history() -> None:
         namespace=GUEST_CONTINUITY_NAMESPACE,
     )
 
-    assert first.key == "guest:device:kitchen"
+    assert first.key == "guest:unretained:device:kitchen"
     assert resumed.conversation_id == first.conversation_id
     assert resumed.history == history
     assert resumed.resumed is True
@@ -332,7 +332,7 @@ async def test_owner_to_guest_never_inherits_owner_history() -> None:
     )
 
     assert owner.key == "unretained:device:kitchen"
-    assert guest.key == "guest:device:kitchen"
+    assert guest.key == "guest:unretained:device:kitchen"
     assert guest.conversation_id != owner.conversation_id
     assert guest.history == []
 
