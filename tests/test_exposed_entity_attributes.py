@@ -78,7 +78,8 @@ def _empty_prompt_metadata(_hass, _entity_id) -> SimpleNamespace:
     return SimpleNamespace(area_id=None, aliases=())
 
 
-def test_agent_config_stores_only_stable_references_and_attribute_names() -> None:
+@pytest.mark.asyncio
+async def test_agent_config_stores_only_stable_references_and_attribute_names(hass) -> None:
     normalized = normalize_agent_config(
         {
             CONF_EXPOSED_ENTITY_ATTRIBUTES: {
@@ -111,7 +112,8 @@ def test_invalid_or_mutable_preferences_are_rejected(value) -> None:
         _validate_preferences(value)
 
 
-def test_import_export_round_trip_preserves_preferences_without_live_values() -> None:
+@pytest.mark.asyncio
+async def test_import_export_round_trip_preserves_preferences_without_live_values(hass) -> None:
     data = agent_config_defaults()
     data[CONF_EXPOSED_ENTITY_ATTRIBUTES] = {
         "registry:stable": ["brightness", "color_temp"]
