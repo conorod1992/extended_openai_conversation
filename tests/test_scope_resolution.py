@@ -180,10 +180,10 @@ def test_legacy_anonymous_scope_uses_legacy_memory_owner() -> None:
 
 
 @pytest.mark.parametrize("mapped_scope", ["unretained", UNRETAINED_SCOPE_ID])
-def test_unretained_device_mapping_falls_back_to_unmapped_policy(
+def test_unretained_device_mapping_overrides_unmapped_policy(
     mapped_scope: str,
 ) -> None:
-    """Unretained mapping sentinels defer to the configured unmapped policy."""
+    """Explicit privacy denial overrides a permissive fallback."""
     context = SimpleNamespace(context=None, device_id="device-1")
     options = {
         CONF_VOICE_SCOPE_POLICY: VOICE_POLICY_DEVICE_MAPPING,
@@ -193,7 +193,7 @@ def test_unretained_device_mapping_falls_back_to_unmapped_policy(
 
     scope = resolve_data_scope(context, options)
 
-    assert scope.scope_id == SHARED_HOUSEHOLD_SCOPE_ID
-    assert scope.scope_type == "shared"
-    assert scope.source == "shared_voice_policy"
+    assert scope.scope_id == UNRETAINED_SCOPE_ID
+    assert scope.scope_type == "unretained"
+    assert scope.source == "unretained_policy"
     assert scope.device_id == "device-1"

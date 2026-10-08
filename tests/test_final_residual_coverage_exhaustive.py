@@ -428,7 +428,7 @@ async def test_usage_prune_old_done_callback_does_not_clear_new_task(
     ("mapping", "expected"),
     [
         ("shared", frozenset()),
-        ("unretained", frozenset({"default"})),
+        ("unretained", frozenset()),
         ("user:missing", frozenset({"default"})),
     ],
 )

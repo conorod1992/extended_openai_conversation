@@ -14,6 +14,7 @@ from homeassistant.components.conversation import ChatLog, ConversationInput
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er, intent as ha_intent
 
+from .ha_permissions import async_local_entity_reads_allowed
 from .intercom import (
     async_get_intercom,
     is_targeted_broadcast_request,
@@ -172,10 +173,20 @@ async def async_try_handle_local_intent(
         )
     )
     accepted_intent: str | None = None
+    entity_reads_allowed = await async_local_entity_reads_allowed(
+        hass, getattr(user_input, "context", None)
+    )
 
     def intent_filter(result: RecognizeResult) -> bool:
         """Return True when Home Assistant should reject this local intent match."""
         nonlocal accepted_intent
+        if not entity_reads_allowed and (
+            result.intent.name in {"HassGetState", "HassClimateGetTemperature"}
+            or {"name", "domain", "device_class", "area", "floor"}.intersection(
+                result.entities
+            )
+        ):
+            return True
         if block_whole_home_broadcast and result.intent.name == "HassBroadcast":
             return True
         if not should_handle_locally(result, excluded, delayed_commands_to_ai):

@@ -816,3 +816,56 @@ async def test_unretained_request_has_no_active_temporary_memory_scope(monkeypat
         _ACTIVE_TEMPORARY_SCOPE.reset(token)
 
     active.assert_not_awaited()
+
+
+async def test_model_update_cannot_inherit_manual_sensitive_permission(monkeypatch):
+    from custom_components.extended_openai_conversation_responses.conversation import (
+        _ACTIVE_SCOPE,
+    )
+    from custom_components.extended_openai_conversation_responses.scope import (
+        user_scope,
+    )
+
+    memory = TemporaryMemory(Storage())
+    created = await memory.async_add(
+        "user:alice",
+        "Visitors arrive tomorrow",
+        future(),
+        owner_scope_id="user:alice",
+        source="manual",
+    )
+    agent = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
+    agent.subentry = SimpleNamespace(data={"temporary_memory": "conversation"})
+    agent._temporary_memory = memory
+    monkeypatch.setattr(
+        ExtendedOpenAIAgentEntity,
+        "_effective_guest_policy",
+        lambda self: SimpleNamespace(temporary_memory=True),
+    )
+    scope_token = _ACTIVE_SCOPE.set(user_scope("alice", source="authenticated_user"))
+    temporary_token = _ACTIVE_TEMPORARY_SCOPE.set("user:alice")
+    try:
+        with pytest.raises(ValueError, match="explicit user request"):
+            await agent._async_execute_temporary_memory_tool(
+                "update",
+                {
+                    "memory_id": created["memory"]["memory_id"],
+                    "content": "My medical diagnosis is diabetes",
+                },
+            )
+        records = await memory.async_active("user:alice", owner_scope_id="user:alice")
+        assert records[0].content == "Visitors arrive tomorrow"
+        assert records[0].source == "manual"
+        updated = await agent._async_execute_temporary_memory_tool("update", {
+            "memory_id": created["memory"]["memory_id"], "content": "Visitors arrive Friday",
+        })
+        assert updated["memory"]["source"] == "automatic"
+        explicit = await memory.async_update("user:alice", created["memory"]["memory_id"],
+            "My medical diagnosis is diabetes", None, None, owner_scope_id="user:alice", source="manual")
+        assert explicit.source == "manual"
+    finally:
+        _ACTIVE_SCOPE.reset(scope_token)
+        _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
+    records = await memory.async_active("user:alice", owner_scope_id="user:alice")
+    assert records[0].content == "My medical diagnosis is diabetes"
+    assert records[0].source == "manual"

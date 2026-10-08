@@ -147,6 +147,8 @@ def resolve_data_scope(context: Any, options: Mapping[str, Any]) -> ResolvedData
         and isinstance(mappings, Mapping)
     ):
         mapped = mappings.get(device_id)
+        if mapped == UNRETAINED_SCOPE_ID:
+            return unretained_scope(device_id=device_id)
         if isinstance(mapped, str) and mapped:
             if mapped in (VOICE_POLICY_SHARED, SHARED_HOUSEHOLD_SCOPE_ID):
                 return shared_scope(source="device_mapping", device_id=device_id)

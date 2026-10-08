@@ -18,7 +18,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 
 @pytest.mark.parametrize("version", [1, 2, CONFIG_ENTRY_VERSION])
 @pytest.mark.parametrize(
-    "stock_prompt", LEGACY_DEFAULT_PROMPTS, ids=["6.8.3", "previous"]
+    "stock_prompt", LEGACY_DEFAULT_PROMPTS, ids=["device-area", "6.8.3", "previous"]
 )
 async def test_startup_migrates_only_exact_stock_conversation_prompts(
     version,

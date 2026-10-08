@@ -1467,7 +1467,11 @@ class ExtendedOpenAIAgentEntity(
             self.hass,
             self.subentry.data,
             exposed_entities=exposed_entities,
-            current_device_id=None if policy.guest_active else llm_context.device_id,
+            current_device_id=(
+                None
+                if policy.guest_active
+                else llm_context.device_id or getattr(user_input, "satellite_id", None)
+            ),
             user_input=user_input,
             skills=self._get_enabled_skills(),
             memories=memories,
@@ -2757,6 +2761,7 @@ class ExtendedOpenAIAgentEntity(
                     arguments.get("content"),
                     arguments.get("expires_at"),
                     arguments.get("category"),
+                    source="automatic",
                 )
                 return {
                     "status": "updated",

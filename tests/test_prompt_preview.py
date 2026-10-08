@@ -145,6 +145,43 @@ def _setup_area_template_registries(hass) -> None:
     hass.data[er.DATA_REGISTRY] = SimpleNamespace(async_get=lambda _value: None)
 
 
+def test_default_prompt_uses_satellite_area_override(hass):
+    _setup_area_template_registries(hass)
+    hass.data[dr.DATA_REGISTRY] = SimpleNamespace(
+        async_get=lambda value: (
+            SimpleNamespace(area_id="hall") if value == "device" else None
+        )
+    )
+    hass.data[er.DATA_REGISTRY] = SimpleNamespace(
+        async_get=lambda value: (
+            SimpleNamespace(area_id="kitchen", device_id="device")
+            if value == "assist_satellite.kitchen"
+            else None
+        )
+    )
+    for key in (
+        "template.environment",
+        "template.environment_limited",
+        "template.environment_strict",
+    ):
+        hass.data[key].globals["extended_openai"] = {
+            "working_directory": lambda: "/config"
+        }
+    options = agent_config_defaults()
+    options[CONF_CURRENT_DATETIME_ENABLED] = False
+    options[CONF_EXPOSED_ENTITIES_ENABLED] = False
+    result = render_effective_prompt(
+        hass,
+        options,
+        exposed_entities=[],
+        current_device_id="device",
+        user_input=SimpleNamespace(satellite_id="assist_satellite.kitchen"),
+        skills=[],
+    )
+    assert "Current area: kitchen" in result.text
+    assert "Current area: hall" not in result.text
+
+
 @pytest.mark.parametrize(
     ("skills", "device_id", "workspace", "extra_system_prompt"),
     [

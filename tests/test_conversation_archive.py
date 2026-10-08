@@ -1484,3 +1484,43 @@ async def test_loaded_private_session_cannot_retain_or_back_up_inconsistent_turn
     assert "PRIVATE_RECORD_MARKER" not in str(await archive.async_backup_data())
     assert "PRIVATE_RECORD_MARKER" not in str(storage.partitions)
     assert (await _coverage_archive(storage)).stats()["turn_count"] == 0
+
+
+@pytest.mark.parametrize("private", [False, True])
+async def test_enabling_household_retention_starts_future_boundary(private):
+    archive = await _archive()
+    storage = archive._storage
+    options = dict(
+        archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30
+    )
+    scope = shared_scope(source="device_mapping")
+    first = await archive.async_begin_session("key", scope, "chat", **options)
+    assert (
+        await archive.async_record_turn(
+            first.session_id,
+            run_id=None,
+            user_text="private old content",
+            assistant_text="old reply",
+            successful=True,
+        )
+        is None
+    )
+    if private:
+        await archive.async_make_private(first.session_id)
+    options["shared_archive_enabled"] = True
+    second = await archive.async_begin_session("key", scope, "chat", **options)
+    if private:
+        assert second.session_id == first.session_id
+        assert second.retention_state == "private"
+    else:
+        assert second.session_id != first.session_id
+        assert second.retention_state == "retained"
+        await archive.async_record_turn(
+            second.session_id,
+            run_id=None,
+            user_text="future content",
+            assistant_text="future reply",
+            successful=True,
+        )
+        assert archive.stats()["turn_count"] == 1
+    assert "private old content" not in str(storage.metadata) + str(storage.partitions)
