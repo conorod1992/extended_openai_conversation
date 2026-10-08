@@ -90,6 +90,8 @@ def coverage_state(report: Path, path: str, line: int) -> str:
         for filename, item in data.get("files", {}).items():
             if filename.replace("\\\\", "/").endswith(path):
                 return "executed" if line in item.get("executed_lines", []) else "not-executed"
+        if data.get("files"):
+            return "not-executed"
     except (ValueError, OSError, TypeError):
         pass
     return "unknown"
@@ -107,7 +109,8 @@ def execute(snapshot: Path, output: Path, label: str, selector: str, baseline: b
     ]
     if coverage_path:
         command.extend((
-            f"--cov={coverage_path}", f"--cov-report=json:{cov_report}",
+            "--cov=custom_components.extended_openai_conversation_responses",
+            f"--cov-report=json:{cov_report}",
             "--cov-fail-under=0",
             "--cov-branch",
         ))
