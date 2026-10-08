@@ -92,12 +92,14 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
 
     async def remove() -> None:
         with gate.recovery_work():
+            from .backup_transfer import async_remove_agent_transfers
             from .delayed_tools import DATA_DELAYED_TOOL_MANAGER
             from .model_lifecycle import clear_retirement_failure
 
             delayed = hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
             if delayed is not None:
                 await delayed.async_remove_agent(entry_id, subentry_id)
+            await async_remove_agent_transfers(hass, entry_id, subentry_id)
             key = (entry_id, subentry_id)
             stores = []
             for suffix in _MANAGER_KEYS:
@@ -117,6 +119,8 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                     task.cancel()
                 if pending:
                     await asyncio.gather(*pending, return_exceptions=True)
+                if suffix in {"usage_managers", "volatile_usage_managers"}:
+                    manager.dispose_maintenance()
                 if hasattr(manager, "_stopping"):
                     manager._stopping = True
                 stores.extend(_owned_stores(manager))

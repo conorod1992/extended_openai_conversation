@@ -21,6 +21,8 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_USAGE_REQUEST_RETENTION_DAYS,
+    CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DOMAIN,
@@ -281,6 +283,7 @@ class UsageManager:
         self._stopping = False
         self._shutdown_lock = asyncio.Lock()
         self._shutdown_registered = False
+        self._cancel_stop: Callable[[], None] | None = None
         self._cancel_retention: Callable[[], None] | None = None
         self._last_prune_date: str | None = None
         self._next_prune_retry = 0.0
@@ -396,11 +399,23 @@ class UsageManager:
             finally:
                 self._active_runs.pop(run.run_id, None)
 
-    async def async_shutdown(self, _event: Any = None) -> None:
-        """Cancel active request owners and durably flush their normal finalizers."""
+    def dispose_maintenance(self) -> None:
+        """Release callbacks without flushing data during permanent deletion."""
+        self._stopping = True
+        self._cancel_maintenance()
+
+    def _cancel_maintenance(self) -> None:
+        """Release timer and stop listeners without changing recovery state."""
         if self._cancel_retention is not None:
             self._cancel_retention()
             self._cancel_retention = None
+        if self._cancel_stop is not None:
+            self._cancel_stop()
+            self._cancel_stop = None
+
+    async def async_shutdown(self, _event: Any = None) -> None:
+        """Cancel active request owners and durably flush their normal finalizers."""
+        self._cancel_maintenance()
         gate = (
             self._storage._recovery_gate
             if isinstance(self._storage, RecoveryGuardedStore)
@@ -636,6 +651,8 @@ class UsageManager:
 
     async def _async_prune_usage_if_due(self) -> None:
         """Schedule bounded daily retention maintenance outside the response path."""
+        if self._stopping:
+            return
         today = dt_util.utcnow().date().isoformat()
         if self._last_prune_date == today:
             return
@@ -1269,8 +1286,29 @@ def _register_usage_maintenance(hass: HomeAssistant, manager: UsageManager) -> N
     manager._cancel_retention = async_track_time_interval(
         hass, prune, timedelta(days=1)
     )
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, manager.async_shutdown)
+    manager._cancel_stop = hass.bus.async_listen_once(
+        EVENT_HOMEASSISTANT_STOP, manager.async_shutdown
+    )
     manager._shutdown_registered = True
+
+
+def _saved_retention(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> dict[str, int]:
+    """Resolve authoritative policy before any caller loads durable detail."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    subentry = entry.subentries.get(subentry_id) if entry is not None else None
+    options = subentry.data if subentry is not None else {}
+    return {
+        "request_retention_days": int(
+            options.get(
+                CONF_USAGE_REQUEST_RETENTION_DAYS, DEFAULT_USAGE_REQUEST_RETENTION_DAYS
+            )
+        ),
+        "run_retention_days": int(
+            options.get(CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS)
+        ),
+    }
 
 
 async def async_get_durable_usage(
@@ -1303,6 +1341,7 @@ async def async_get_durable_usage(
                 serialize_in_event_loop=False,
             ).bind_agent(entry_id, subentry_id),
             agent_subentry_id=subentry_id,
+            **_saved_retention(hass, entry_id, subentry_id),
         )
         # Publish before the first await so every concurrent caller initializes and
         # retains the same authoritative manager instance.
@@ -1351,6 +1390,7 @@ async def async_get_usage(
                 _VolatileUsageStorage(),
                 _VolatileUsageStorage(),
                 agent_subentry_id=subentry_id,
+                **_saved_retention(hass, entry_id, subentry_id),
             )
             await manager.async_initialize()
             fallbacks[key] = manager

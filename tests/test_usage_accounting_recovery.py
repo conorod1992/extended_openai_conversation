@@ -97,7 +97,7 @@ async def test_concurrent_usage_acquisition_publishes_one_manager(monkeypatch) -
 
     monkeypatch.setattr(usage_module, "_UsageStore", BlockingStore)
     monkeypatch.setattr(usage_module, "async_track_time_interval", lambda *args: lambda: None)
-    hass = SimpleNamespace(data={}, bus=SimpleNamespace(async_listen_once=lambda *args: None))
+    hass = SimpleNamespace(data={}, config_entries=SimpleNamespace(async_get_entry=lambda _entry_id: None), bus=SimpleNamespace(async_listen_once=lambda *args: None))
 
     first = asyncio.create_task(async_get_usage(hass, "entry-1", "agent-1"))
     await asyncio.wait_for(started.wait(), timeout=1)
@@ -369,7 +369,7 @@ async def test_failed_initialization_replaces_published_manager_with_shared_fall
 ) -> None:
     """A failed published persistent manager cannot survive beside the fallback."""
     monkeypatch.setattr(usage_module, "async_track_time_interval", lambda *args: lambda: None)
-    hass = SimpleNamespace(data={}, bus=SimpleNamespace(async_listen_once=lambda *args: None))
+    hass = SimpleNamespace(data={}, config_entries=SimpleNamespace(async_get_entry=lambda _entry_id: None), bus=SimpleNamespace(async_listen_once=lambda *args: None))
     key = ("entry", "agent")
     published_manager = object()
     calls = 0

@@ -662,6 +662,7 @@ async def test_export_chunk_wraps_staged_file_oserror(monkeypatch):
     backup_transfer._exports(hass)[session.session_id] = session
     hass.async_add_executor_job = AsyncMock(side_effect=OSError("gone"))
     monkeypatch.setattr(backup_transfer, "_async_cleanup_expired", AsyncMock())
+    monkeypatch.setattr(backup_transfer, "async_call_later", lambda *args: lambda: None)
 
     with pytest.raises(
         backup.BackupError, match="staged backup archive is unavailable"
