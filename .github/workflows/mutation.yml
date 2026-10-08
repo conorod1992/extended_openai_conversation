@@ -110,7 +110,7 @@ jobs:
       - name: Run 25-challenge historical defect benchmark
         if: matrix.campaign == 'defect-benchmark'
         run: |
-          python scripts/run_defect_benchmark.py \
+          python -m scripts.run_defect_benchmark \
             --output defect-benchmark-artifacts
 
       - name: Upload historical defect evidence
