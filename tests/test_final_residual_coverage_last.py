@@ -226,7 +226,7 @@ async def test_agent_test_generic_probe_failure_reports_web_search(
             agent_test.CONF_API_MODE: agent_test.API_MODE_RESPONSES,
         },
     )
-    monkeypatch.setattr(agent_test, "model_metadata", Mock(return_value={}))
+    monkeypatch.setattr(agent_test, "model_metadata", Mock(return_value={"reasoning": {"supported": False}}))
     monkeypatch.setattr(agent_test, "model_capability_snapshot", snapshot)
     monkeypatch.setattr(agent_test, "get_api_mode", Mock(return_value=agent_test.API_MODE_RESPONSES))
     monkeypatch.setattr(agent_test, "capability_allowed", Mock(return_value=True))

@@ -252,6 +252,9 @@ test("real browser creates, groups, edits, reloads, and deletes a Request Rule t
   await groupRow.locator(".rule-group-rename").click();
   groupRow = groupManager.locator(".rule-group-row").last();
   await expect(groupRow.locator(".rule-group-name")).toHaveValue("Real HA browser rule group edited");
+  // The edited input is optimistic; wait for the saved rename before Delete.
+  await expect.poll(() => panel.evaluate(async host => (await host._call("request_rules", "get")).groups.map(group => group.name))).toContain("Real HA browser rule group edited");
+  await expect(groupManager).not.toHaveAttribute("data-eoc-mutation-pending", "true");
   await groupRow.locator(".rule-group-delete").click();
   await acceptConfirmation(panel);
   await expect(groupManager.locator(".rule-group-row")).toHaveCount(0);
