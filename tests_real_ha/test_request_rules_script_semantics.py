@@ -368,6 +368,7 @@ async def test_failing_ha_action_stops_without_replaying_previous_steps(
         ("{battery.items.0.level}", 73),
         ("{battery.map.0.level}", 84),
         ("{{ battery['current']['level'] }}", 62),
+        ("whole-data-template", 62),
     ],
 )
 async def test_nested_function_results_agree_in_native_action_and_speech(
@@ -403,11 +404,14 @@ async def test_nested_function_results_agree_in_native_action_and_speech(
             "result_alias": "battery",
         },
     }
+    action = _record_action(reference)
+    if reference == "whole-data-template":
+        action["data"] = "{{ {'message': battery['current']['level']} }}"
     response = (
         reference if reference.startswith("{battery.") else "{battery.current.level}"
     )
     await agent._request_rules.async_create(
-        _local([capture, _record_action(reference)], success="Battery " + response)
+        _local([capture, action], success="Battery " + response)
     )
     assert _speech(await _say(hass, agent, "run rule")) == f"Battery {expected}"
     assert calls == [expected]

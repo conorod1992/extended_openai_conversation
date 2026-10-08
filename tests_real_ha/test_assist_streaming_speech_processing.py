@@ -8,6 +8,8 @@ import json
 import threading
 from typing import Any
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     CONF_API_MODE,
@@ -57,7 +59,39 @@ def _chat_sse_deltas(parts: list[str]) -> bytes:
     return "".join(events).encode()
 
 
-async def _speech_agent(hass: HomeAssistant) -> Any:
+@pytest.mark.parametrize("preamble", ["", "Let me check. "])
+@pytest.mark.parametrize("final_text", [False, True])
+async def test_conditional_final_answer_reaches_actual_assist_progress(hass, hass_ws_client, monkeypatch, preamble, final_text):
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_CONTINUE_CONVERSATION, CONTINUE_CONVERSATION_CONDITIONAL,
+    )
+    tool = {"spec": {"name": "check_door", "description": "Check door",
+            "parameters": {"type": "object", "properties": {}}},
+            "function": {"type": "template", "value_template": "unlocked"}}
+    agent = await _speech_agent(hass, **{CONF_CONTINUE_CONVERSATION: CONTINUE_CONVERSATION_CONDITIONAL,
+                                        CONF_FUNCTION_TOOLS: [tool]})
+    assert await async_setup_component(hass, "assist_pipeline", {})
+    question = "The door is unlocked. Would you like me to lock it?"
+
+    def tool_sse(name, arguments, text=""):
+        chunk = {"id": "chatcmpl-followup", "object": "chat.completion.chunk", "created": 0,
+            "model": "gpt-5.6", "choices": [{"index": 0, "delta": {"role": "assistant",
+            "content": text, "tool_calls": [{"index": 0, "id": "call-" + name,
+            "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]},
+            "finish_reason": "tool_calls"}]}
+        return f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode()
+
+    _install_wire(monkeypatch, agent, [tool_sse("check_door", {}, preamble),
+        tool_sse("set_continue_conversation", {"continue_conversation": True, "response": question}, question if final_text else "")])
+    events = await _run_assist(await hass_ws_client(hass), pipeline_id=agent.entity_id,
+                               conversation_id="conditional-followup")
+    spoken = _progressive_text(events)
+    assert question in spoken
+    assert spoken.count(question) == 1
+    assert _final_speech(events) == question
+
+
+async def _speech_agent(hass: HomeAssistant, **options) -> Any:
     """Create a real conversation entity with progressive speech cleanup enabled."""
     tool = deepcopy(DEFAULT_CONF_FUNCTION_TOOLS[0])
     entry = _make_entry(
@@ -71,6 +105,7 @@ async def _speech_agent(hass: HomeAssistant) -> Any:
             CONF_SPEECH_STRIP_MARKDOWN: True,
             CONF_SPEECH_STRIP_URLS: True,
             CONF_SPEECH_REGEX_REPLACEMENTS: [],
+            **options,
         },
     )
     await _setup_entry(hass, entry)

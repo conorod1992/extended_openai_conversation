@@ -12,6 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .capabilities import resolve_effective_capabilities
 from .const import (
+    API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_API_PROVIDER,
@@ -95,6 +96,15 @@ CONTINUE_CONVERSATION_TOOL = {
 }
 
 START_FRESH_CONVERSATION_TOOL_NAME = "start_fresh_conversation"
+
+
+def provider_tool_limit(provider: str | None, api_mode: str) -> int | None:
+    """Return only a known applicable provider/API tool-array limit."""
+    return (
+        128 if provider == "azure" and api_mode == API_MODE_CHAT_COMPLETIONS else None
+    )
+
+
 START_FRESH_CONVERSATION_TOOL = {
     "spec": {
         "name": START_FRESH_CONVERSATION_TOOL_NAME,

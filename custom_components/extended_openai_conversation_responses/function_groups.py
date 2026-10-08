@@ -389,6 +389,8 @@ def load_function_groups(
     function_tools_supported: bool = True,
     group_loader_supported: bool = True,
     tool_available: ToolAvailabilityPredicate | None = None,
+    max_tools: int | None = None,
+    extra_tool_count: int = 0,
 ) -> dict[str, Any]:
     """Validate and apply one model-requested group load operation."""
     _available_names, on_demand, always = _available_group_sets(
@@ -415,6 +417,7 @@ def load_function_groups(
         }
 
     loaded: list[str] = []
+    previous = set(session.loaded_group_ids)
     already_loaded: list[str] = []
     already_available: list[str] = []
     unknown: list[str] = []
@@ -429,6 +432,22 @@ def load_function_groups(
         else:
             unknown.append(group_id)
     session.last_active = time.monotonic()
+    if max_tools is not None and configured_tools is not None:
+        effective = assemble_function_tools(
+            configured_tools,
+            groups,
+            set(session.loaded_group_ids),
+            function_tools_supported=function_tools_supported,
+            group_loader_supported=group_loader_supported,
+            tool_available=tool_available,
+        )
+        if len(effective.tools) + extra_tool_count > max_tools:
+            session.loaded_group_ids.clear()
+            session.loaded_group_ids.update(previous)
+            return {
+                "status": "error",
+                "error": f"Loading these groups exceeds the provider's {max_tools}-tool limit",
+            }
     return {
         "status": "success" if not unknown else "partial" if loaded else "error",
         "loaded": loaded,

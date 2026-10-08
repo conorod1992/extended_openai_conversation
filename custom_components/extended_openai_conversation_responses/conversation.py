@@ -193,7 +193,11 @@ from .operational_errors import log_handled_failure
 from .prompt import render_effective_prompt
 from .prompt_cache import _PROMPT_CACHE_CONTEXT, prompt_cache_context
 from .regex_execution import async_process_speech_text
-from .request import assemble_integration_function_tools
+from .request import (
+    assemble_integration_function_tools,
+    build_provider_request_snapshot,
+    provider_tool_limit,
+)
 from .request_diagnostics import (
     record_exposed_entities,
     record_prompt_render,
@@ -1883,14 +1887,33 @@ class ExtendedOpenAIAgentEntity(
             configured_tools, groups = self._filter_guest_tools_and_groups(
                 configured_tools, groups, policy
             )
+            entry_data = getattr(getattr(self, "entry", None), "data", {})
+            limit = None
+            if entry_data.get("api_provider") == "azure":
+                snapshot = build_provider_request_snapshot(
+                    self.subentry.data, entry_data, tools_required=True
+                )
+                limit = provider_tool_limit("azure", snapshot.api_mode)
+            extra = 0
+            available_tools = tools_for_available_skills(
+                configured_tools, policy.skills
+            )
+            if limit is not None:
+                current = assemble_function_tools(
+                    available_tools, groups, set(session.loaded_group_ids)
+                )
+                extra = len(self._get_function_tools()) - len(current.tools)
+                extra += int(
+                    _get_continue_conversation_mode(self.subentry.data)
+                    == CONTINUE_CONVERSATION_CONDITIONAL
+                )
             return load_function_groups(
                 session,
                 requested,
                 groups,
-                tools_for_available_skills(
-                    configured_tools,
-                    policy.skills,
-                ),
+                available_tools,
+                max_tools=limit,
+                extra_tool_count=extra,
             )
 
     @staticmethod

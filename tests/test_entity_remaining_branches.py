@@ -202,8 +202,9 @@ async def test_responses_stream_ignores_empty_events_and_normalizes_metadata() -
         (API_MODE_CHAT_COMPLETIONS, "response_format"),
     ],
 )
+@pytest.mark.parametrize("structure_name", ["Test Result", "Descriptive inventory task " * 5, "!!!"])
 async def test_structured_output_is_sent_in_each_provider_format(
-    hass, monkeypatch, api_mode, format_key
+    hass, monkeypatch, api_mode, format_key, structure_name
 ) -> None:
     """Structured schemas reach each provider API in its required envelope."""
     response_stream = _Stream(
@@ -266,12 +267,16 @@ async def test_structured_output_is_sent_in_each_provider_format(
         chat_log,
         [],
         [],
-        structure_name="Test Result",
+        structure_name=structure_name,
         structure=object(),
     )
 
     create = responses_create if api_mode == API_MODE_RESPONSES else chat_create
     assert format_key in create.await_args.kwargs
+    envelope = create.await_args.kwargs[format_key]
+    name = envelope["format"]["name"] if api_mode == API_MODE_RESPONSES else envelope["json_schema"]["name"]
+    assert 1 <= len(name) <= 64
+    assert all(character.isascii() and (character.isalnum() or character in "_-") for character in name)
     formatted.assert_called_once()
     entity._truncate_message_history.assert_awaited_once()
 

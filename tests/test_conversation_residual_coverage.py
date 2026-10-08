@@ -366,7 +366,7 @@ def test_function_group_loader_requires_session_and_routes_active_request(
         assert Agent._load_function_groups(agent, ["group-1"]) is expected
     finally:
         conversation_module._ACTIVE_FUNCTION_GROUP_SESSION.reset(token)
-    loader.assert_called_once_with(session, ["group-1"], groups, configured)
+    loader.assert_called_once_with(session, ["group-1"], groups, configured, max_tools=None, extra_tool_count=0)
 
 
 @pytest.mark.asyncio
