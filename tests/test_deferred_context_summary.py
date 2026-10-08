@@ -539,3 +539,29 @@ def test_history_signature_tolerates_all_supported_native_serializers(monkeypatc
 
     assert first == second
     assert len(first) == 64
+
+
+async def test_summary_failure_hides_chained_private_exception(caplog):
+    import logging
+
+    async def fail(*args, **kwargs):
+        try:
+            raise ValueError("PRIVATE_SUMMARY_CAUSE")
+        except ValueError as cause:
+            raise RuntimeError("PRIVATE_SUMMARY_WRAPPER") from cause
+
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.entry = SimpleNamespace(data={}, runtime_data=SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fail))))
+    entity._usage = None
+    with caplog.at_level(logging.DEBUG):
+        assert await entity._async_summarize_history(_history(), "gpt-5.6", "chat_completions") is None
+        result = await DeferredContextSummaryManager._async_build_result(
+            _history(), ([], _history()), model="gpt-5.6", api_mode="chat_completions",
+            summarize=fail, fallback=_history(),
+        )
+    assert result is not None
+    formatted = "\n".join(logging.Formatter().format(record) for record in caplog.records)
+    assert "Unable to summarize" in formatted
+    assert "Deferred conversation summarization failed" in formatted
+    assert "PRIVATE_SUMMARY" not in formatted

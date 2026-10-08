@@ -7,15 +7,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-import voluptuous as vol
-
-try:
-    from probatio.error import Invalid as ProbatioInvalid
-except ImportError:  # pragma: no cover - compatibility with older HA releases
-    _SERVICE_SCHEMA_ERRORS: tuple[type[Exception], ...] = (vol.Invalid,)
-else:
-    _SERVICE_SCHEMA_ERRORS = (vol.Invalid, ProbatioInvalid)
-
 from homeassistant.const import (
     ATTR_AREA_ID,
     ATTR_DEVICE_ID,
@@ -32,6 +23,7 @@ from homeassistant.helpers import (
 )
 
 from .ha_permissions import async_require_control_permission, get_active_ha_context
+from .schema_errors import SCHEMA_ERRORS as _SERVICE_SCHEMA_ERRORS
 
 ActionTargetRevalidator = Callable[[HomeAssistant, set[str]], None]
 _ACTIVE_ACTION_TARGET_REVALIDATOR: ContextVar[ActionTargetRevalidator | None] = (

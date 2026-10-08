@@ -1367,9 +1367,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 content_value = delta.content
                 if not isinstance(content_value, str):
                     _LOGGER.warning(
-                        "Received non-string content from API: %s (type: %s)",
-                        content_value,
-                        type(content_value),
+                        "Received non-string content from API; type=%s",
+                        type(content_value).__name__,
                     )
                     content_value = str(content_value) if content_value else ""
                 if content_value:
@@ -1380,9 +1379,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 refusal_seen = True
                 if not isinstance(refusal_value, str):
                     _LOGGER.warning(
-                        "Received non-string refusal from API: %s (type: %s)",
-                        refusal_value,
-                        type(refusal_value),
+                        "Received non-string refusal from API; type=%s",
+                        type(refusal_value).__name__,
                     )
                     refusal_value = str(refusal_value)
                 if refusal_value:
@@ -2033,7 +2031,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     request_stage="context_summary",
                     error_type=type(err).__name__,
                 )
-            _LOGGER.exception("Unable to summarize older conversation context")
+            log_handled_failure(
+                _LOGGER, "Unable to summarize older conversation context", err
+            )
             if isinstance(err, asyncio.CancelledError):
                 raise
             return None

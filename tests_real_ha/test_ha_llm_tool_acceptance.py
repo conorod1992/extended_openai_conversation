@@ -188,3 +188,41 @@ async def test_real_ha_llm_tool_catalog_add_reload_and_dispatch(
     assert tool.calls[0][0].tool_name == tool.name
     assert tool.calls[0][0].external is False
     assert tool.calls[0][1].context.user_id == ADMIN_ID
+
+
+@pytest.mark.parametrize("arguments", [{}, {"value": 42}])
+async def test_public_assist_invalid_native_arguments_settle_and_recover(hass, monkeypatch, arguments):
+    import json
+    from custom_components.extended_openai_conversation_responses.const import CONF_FUNCTION_TOOLS
+    from custom_components.extended_openai_conversation_responses.ha_llm_tools import new_reference_tool
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _say, _speech
+
+    tool = AcceptanceEchoTool()
+    api = AcceptanceAPI(hass, tool)
+    llm.async_register_api(hass, api)
+    reference = {
+        "type": "ha_llm", "source_type": "api", "api_id": api.id,
+        "source_id": f"{type(tool).__module__}.{type(tool).__qualname__}",
+        "tool_name": tool.name,
+    }
+    saved = new_reference_tool(reference, set())
+    agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: [saved]})
+    sent = _provider(monkeypatch, agent, [
+        {"index": 0, "id": "invalid-native", "type": "function", "function": {
+            "name": saved["spec"]["name"], "arguments": json.dumps(arguments)}},
+        "Please supply a valid value.",
+        {"index": 0, "id": "valid-native", "type": "function", "function": {
+            "name": saved["spec"]["name"], "arguments": '{"value":"recovered"}'}},
+        "Recovered.",
+    ])
+    first = await _say(hass, agent, "Call the native tool")
+    assert _speech(first) == "Please supply a valid value."
+    assert not tool.calls
+    results = [item for item in sent[1]["messages"] if item["role"] == "tool"]
+    assert [item["tool_call_id"] for item in results] == ["invalid-native"]
+    assert "arguments do not match" in results[0]["content"]
+    second = await _say(hass, agent, "Try a valid value", first.conversation_id)
+    assert _speech(second) == "Recovered."
+    assert len(tool.calls) == 1
+    assert tool.calls[0][0].tool_args["value"] == "recovered"
+    assert len([item for item in sent[3]["messages"] if item["role"] == "tool" and item["tool_call_id"] == "invalid-native"]) == 1
