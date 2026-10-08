@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "block-no-empty": true,
+    "color-no-invalid-hex": true,
+    "declaration-block-no-duplicate-properties": [true, {"ignore": ["consecutive-duplicates-with-different-values"]}],
+    "function-calc-no-unspaced-operator": true,
+    "no-duplicate-selectors": null,
+    "property-no-unknown": [true, {"ignoreProperties": ["scrollbar-width"]}],
+    "selector-pseudo-class-no-unknown": [true, {"ignorePseudoClasses": ["host", "host-context", "global", "deep"]}],
+    "selector-pseudo-element-no-unknown": [true, {"ignorePseudoElements": ["part", "slotted"]}]
+  }
+}

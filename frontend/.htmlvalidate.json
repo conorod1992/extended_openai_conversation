@@ -1,0 +1,7 @@
+{
+  "extends": [],
+  "rules": {
+    "no-dup-id": "error",
+    "element-permitted-content": "error"
+  }
+}

@@ -32,7 +32,7 @@ jobs:
         id: changes
         shell: bash
         run: |
-          python -m unittest ci.test_classify_frontend_changes ci.test_route_acceptance -v
+          python -m unittest ci.test_classify_frontend_changes ci.test_route_acceptance ci.test_frontend_quality_gate -v
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
@@ -65,6 +65,19 @@ jobs:
             -maxdepth 1 -type f -name '*.js' -print0 \
             | xargs -0 -n1 node --check
           node scripts/run-frontend-standalone-tests.mjs
+
+      - name: Install pinned frontend quality tools
+        working-directory: frontend
+        run: npm install --prefix .quality-tools --no-save --package-lock=false --no-audit --no-fund eslint@9.39.1 stylelint@16.25.0 html-validate@10.5.0
+
+      - name: Lint shipped JavaScript
+        run: ./frontend/.quality-tools/node_modules/.bin/eslint -c frontend/eslint.config.mjs custom_components/extended_openai_conversation_responses/frontend/*.js
+
+      - name: Validate source CSS
+        run: ./frontend/.quality-tools/node_modules/.bin/stylelint --config frontend/.stylelintrc.json custom_components/extended_openai_conversation_responses/frontend/management.css
+
+      - name: Validate static HTML fixtures
+        run: ./frontend/.quality-tools/node_modules/.bin/html-validate --config frontend/.htmlvalidate.json tests_browser/fixture.html tests_browser/real-ha-fixture.html
 
       - name: Type check
         working-directory: frontend
