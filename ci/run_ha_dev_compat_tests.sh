@@ -5,6 +5,8 @@ TEST_PATHS=(
   tests/test_conversation_archive.py
   tests/test_memory.py
   tests/test_knowledge.py
+  tests/test_function_groups.py
+  tests/test_request_rules_runtime.py
   tests/test_ai_task.py
   tests/test_ai_task_migration.py
   tests/test_ai_task_model_options.py

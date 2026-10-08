@@ -544,3 +544,199 @@ async def test_instrumented_stops_preserve_native_nested_scope(
     assert calls == (
         ["inside", "outside"] if ending == "disabled-condition" else ["inside"]
     )
+
+
+async def test_nested_repeat_condition_stop_matches_uninstrumented_native_script(
+    hass, monkeypatch
+):
+    from copy import deepcopy
+
+    from homeassistant.helpers import config_validation as cv
+    from homeassistant.helpers.script import Script, async_validate_actions_config
+
+    calls = []
+
+    async def record(call):
+        calls.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "record", record)
+    actions = [
+        {"variables": {"outer": "root"}},
+        {
+            "repeat": {
+                "count": 3,
+                "sequence": [
+                    {"variables": {"outer_index": "{{ repeat.index }}"}},
+                    {
+                        "repeat": {
+                            "for_each": ["alpha", "beta"],
+                            "sequence": [
+                                {
+                                    "condition": "template",
+                                    "value_template": "{{ repeat.item in ['alpha', 'beta'] }}",
+                                },
+                                _record_action(
+                                    "{{ outer }}:{{ outer_index }}:{{ repeat.item }}"
+                                ),
+                            ],
+                        }
+                    },
+                    {
+                        "choose": [
+                            {
+                                "conditions": [
+                                    {
+                                        "condition": "template",
+                                        "value_template": "{{ outer_index == 2 }}",
+                                    }
+                                ],
+                                "sequence": [{"stop": "finished"}],
+                            }
+                        ]
+                    },
+                ],
+            }
+        },
+        _record_action("unreachable"),
+    ]
+    await Script(
+        hass,
+        await async_validate_actions_config(hass, cv.SCRIPT_SCHEMA(deepcopy(actions))),
+        "baseline",
+        "rule_probe",
+    ).async_run({}, Context())
+    baseline = list(calls)
+    assert baseline == ["root:1:alpha", "root:1:beta", "root:2:alpha", "root:2:beta"]
+    calls.clear()
+    agent = await _agent(hass)
+    _provider(monkeypatch, agent, [])
+    await agent._request_rules.async_create(_local(actions))
+    assert _speech(await _say(hass, agent, "run rule")) == "Done"
+    assert calls == baseline
+
+
+async def test_parallel_branches_and_variables_match_native_script_with_event_barriers(
+    hass, monkeypatch
+):
+    from copy import deepcopy
+
+    from homeassistant.helpers import config_validation as cv
+    from homeassistant.helpers.script import Script, async_validate_actions_config
+
+    calls = []
+    entered = [asyncio.Event(), asyncio.Event()]
+
+    async def barrier(call):
+        index = call.data["index"]
+        entered[index].set()
+        await entered[1 - index].wait()
+
+    async def record(call):
+        calls.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "barrier", barrier)
+    hass.services.async_register("rule_probe", "record", record)
+    actions = [
+        {"variables": {"marker": "parent"}},
+        {
+            "parallel": [
+                {
+                    "sequence": [
+                        {"variables": {"branch_" + name: name}},
+                        {"action": "rule_probe.barrier", "data": {"index": index}},
+                        _record_action("{{ branch_" + name + " }}:first"),
+                        {
+                            "condition": "template",
+                            "value_template": "{{ branch_" + name + " != 'parent' }}",
+                        },
+                        _record_action("{{ branch_" + name + " }}:second"),
+                    ]
+                }
+                for index, name in enumerate(["alpha", "beta"])
+            ]
+        },
+        _record_action("{{ marker }}:after"),
+    ]
+    await asyncio.wait_for(
+        Script(
+            hass,
+            await async_validate_actions_config(
+                hass, cv.SCRIPT_SCHEMA(deepcopy(actions))
+            ),
+            "baseline",
+            "rule_probe",
+        ).async_run({}, Context()),
+        3,
+    )
+    baseline = list(calls)
+    assert sorted(baseline) == [
+        "alpha:first",
+        "alpha:second",
+        "beta:first",
+        "beta:second",
+        "parent:after",
+    ]
+    calls.clear()
+    entered = [asyncio.Event(), asyncio.Event()]
+    agent = await _agent(hass)
+    _provider(monkeypatch, agent, [])
+    await agent._request_rules.async_create(_local(actions))
+    assert _speech(await asyncio.wait_for(_say(hass, agent, "run rule"), 3)) == "Done"
+    assert sorted(calls) == sorted(baseline)
+    assert calls[-1] == "parent:after"
+    for name in ("alpha", "beta"):
+        assert calls.index(name + ":first") < calls.index(name + ":second")
+
+
+async def test_cancelled_event_wait_removes_listener_and_next_public_request_recovers(
+    hass, monkeypatch
+):
+    agent = await _agent(hass)
+    _provider(monkeypatch, agent, [])
+    calls = []
+
+    async def record(call):
+        calls.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "record", record)
+    event_type = "rule_probe_release"
+    entered = asyncio.Event()
+    bus_type = type(hass.bus)
+    listen = bus_type.async_listen
+
+    def observe(bus, event_name, listener, *args, **kwargs):
+        remove = listen(bus, event_name, listener, *args, **kwargs)
+        if event_name == event_type:
+            entered.set()
+        return remove
+
+    monkeypatch.setattr(bus_type, "async_listen", observe)
+    baseline_count = hass.bus.async_listeners().get(event_type, 0)
+    await agent._request_rules.async_create(
+        _local(
+            [
+                {"variables": {"marker": "never after cancellation"}},
+                {"wait_for_trigger": [{"trigger": "event", "event_type": event_type}]},
+                _record_action("{{ marker }}"),
+            ],
+            phrase="wait for event",
+        )
+    )
+    await agent._request_rules.async_create(
+        _local([_record_action("healthy")], phrase="healthy")
+    )
+    task = asyncio.create_task(_say(hass, agent, "wait for event"))
+    await asyncio.wait_for(entered.wait(), 3)
+    assert hass.bus.async_listeners().get(event_type, 0) > baseline_count
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await hass.async_block_till_done()
+    assert hass.bus.async_listeners().get(event_type, 0) == baseline_count
+    assert not agent._function_groups_runtime._requests
+    assert not agent._request_rule_runtime._requests
+    hass.bus.async_fire(event_type)
+    await hass.async_block_till_done()
+    assert calls == []
+    assert _speech(await _say(hass, agent, "healthy")) == "Done"
+    assert calls == ["healthy"]

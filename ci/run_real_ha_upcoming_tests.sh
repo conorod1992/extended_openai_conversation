@@ -4,6 +4,8 @@ set -o pipefail
 
 TEST_PATHS=(
   tests_real_ha/test_archive_record_integrity.py
+  tests_real_ha/test_conversation_runtime_lifecycle.py
+  tests_real_ha/test_archive_private_activity.py
   tests_real_ha/test_acceptance_lifecycle.py
   tests_real_ha/test_action_failure_safety.py
   tests_real_ha/test_action_target_safety.py
