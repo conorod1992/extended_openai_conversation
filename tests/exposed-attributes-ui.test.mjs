@@ -42,6 +42,7 @@ const basePanel = () => ({
     exposed_entity_attributes: {
       "registry:current": ["brightness", "missing"],
       "registry:inactive": ["color_temp"],
+      "registry:deleted": ["old_attribute"],
     },
   },
   _result: {
@@ -172,4 +173,15 @@ const basePanel = () => ({
   assert.ok(choice);
   assert.doesNotMatch(choice,/checked/);
   assert.doesNotMatch(html,/data-exposed-configured-reference="registry:current"/);
+}
+
+
+{
+  const panel = basePanel();
+  panel._draft.exposed_entity_attributes = {};
+  const html = renderExposedAttributeSettings(panel);
+  assert.doesNotMatch(html, /data-saved-exposed-reference=/, "authoritative empty draft must hide saved inactive/deleted preferences");
+  assert.doesNotMatch(html, /Saved preferences not currently exposed/);
+  delete panel._draft.exposed_entity_attributes;
+  assert.match(renderExposedAttributeSettings(panel), /data-saved-exposed-reference=/, "uninitialized draft may use the saved catalogue");
 }

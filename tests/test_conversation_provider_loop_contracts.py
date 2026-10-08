@@ -162,6 +162,8 @@ def _provider_fixture(
     continuity = SimpleNamespace(
         async_resolve=AsyncMock(
             return_value=SimpleNamespace(
+                resumed=False,
+                extra_system_prompt=None,
                 conversation_id="conversation-1",
                 key="device:kitchen",
                 claim_token="claim-token",
@@ -225,6 +227,7 @@ def _provider_fixture(
     monkeypatch.setattr(conversation_module, "async_get_chat_log", new_log)
 
     request = SimpleNamespace(
+        extra_system_prompt=None,
         text="hello",
         language="en",
         conversation_id=None,

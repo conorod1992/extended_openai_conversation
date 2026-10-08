@@ -4,6 +4,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses.entity import (
     _adjust_schema,
@@ -152,7 +153,7 @@ def test_adjust_schema_handles_compositions_arrays_and_explicit_settings() -> No
     _adjust_schema(schema)
     assert item_schema["required"] == ["label"]
 
-    # Nested oneOf/allOf branches and composed optional properties must be
+    # Nested oneOf/anyOf branches and composed optional properties must be
     # normalized without adding a second null wrapper on repeat passes.
     nested = {
         "type": "object",
@@ -163,12 +164,12 @@ def test_adjust_schema_handles_compositions_arrays_and_explicit_settings() -> No
                 "items": {
                     "oneOf": [
                         {"type": "object", "properties": {"name": {"type": "string"}}},
-                        {"allOf": [{"type": "object", "properties": {"count": {"type": "integer"}}}]},
+                        {"anyOf": [{"type": "object", "properties": {"count": {"type": "integer"}}}]},
                     ]
                 },
             },
             "composed": {
-                "allOf": [{"type": "object", "properties": {"flag": {"type": "boolean"}}}]
+                "anyOf": [{"type": "object", "properties": {"flag": {"type": "boolean"}}}]
             },
         },
     }
@@ -183,11 +184,11 @@ def test_adjust_schema_handles_compositions_arrays_and_explicit_settings() -> No
     variants = properties["entries"]["items"]["oneOf"]
     assert variants[0]["required"] == ["name"]
     assert variants[0]["properties"]["name"]["type"] == ["string", "null"]
-    all_of_object = variants[1]["allOf"][0]
-    assert all_of_object["required"] == ["count"]
-    assert all_of_object["properties"]["count"]["type"] == ["integer", "null"]
+    any_of_object = variants[1]["anyOf"][0]
+    assert any_of_object["required"] == ["count"]
+    assert any_of_object["properties"]["count"]["type"] == ["integer", "null"]
     assert properties["composed"]["anyOf"][-1] == {"type": "null"}
-    composed_object = properties["composed"]["anyOf"][0]["allOf"][0]
+    composed_object = properties["composed"]["anyOf"][0]["anyOf"][0]
     assert composed_object["required"] == ["flag"]
     assert composed_object["properties"]["flag"]["type"] == ["boolean", "null"]
 
@@ -281,3 +282,18 @@ def test_openapi_nullable_is_adapted_to_json_schema_null():
     assert "nullable" not in schema
     assert Draft202012Validator(schema).is_valid(None)
     assert not Draft202012Validator(schema).is_valid("other")
+
+
+@pytest.mark.parametrize("location", ["property", "array", "definition", "union"])
+def test_adjust_schema_rejects_nested_intersections(location):
+    bad={"allOf":[{"type":"string"}]}
+    if location=="property":
+        schema={"type":"object","properties":{"value":bad}}
+    elif location=="array":
+        schema={"type":"array","items":bad}
+    elif location=="definition":
+        schema={"type":"object","$defs":{"value":bad}}
+    else:
+        schema={"anyOf":[bad,{"type":"integer"}]}
+    with pytest.raises(HomeAssistantError, match="allOf compositions"):
+        _adjust_schema(schema)

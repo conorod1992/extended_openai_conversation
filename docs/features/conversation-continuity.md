@@ -56,6 +56,8 @@ it after five minutes. The integration uses the supported conversation entity,
 `async_get_chat_session`, and `async_get_chat_log` interfaces and keeps a bounded local
 history copy for the configured active timeout.
 
+Satellite-initiated task background (`extra_system_prompt`) stays available on follow-up turns in the same owned conversation, including when Core recreates its ChatLog within the configured continuity timeout. A current-turn background overrides it. Ending/resetting the conversation or crossing an ownership/privacy boundary clears that context; it is not persisted across restart. Custom prompts continue to control whether the background is rendered.
+
 ## Management
 
 The Conversations page offers a compact administrator action to end a named active

@@ -266,8 +266,18 @@ def _make_schema_nullable(schema: dict[str, Any]) -> None:
     schema["anyOf"] = [original, {"type": "null"}]
 
 
-def _adjust_schema(schema: dict[str, Any]) -> None:
+def _adjust_schema(schema: dict[str, Any], *, root: bool = False) -> None:
     """Adjust the schema to be compatible with OpenAI API."""
+    if root and (schema.get("type") != "object" or "anyOf" in schema):
+        raise HomeAssistantError(
+            "Strict structured outputs require a root object without anyOf; "
+            "place alternatives inside a named field"
+        )
+    if "allOf" in schema:
+        raise HomeAssistantError(
+            "Strict structured outputs cannot represent allOf compositions; "
+            "use a structure without intersections"
+        )
     if schema.pop("nullable", False):
         _make_schema_nullable(schema)
     for keyword in _SCHEMA_COMPOSITION_KEYS:
@@ -276,6 +286,13 @@ def _adjust_schema(schema: dict[str, Any]) -> None:
             for variant in variants:
                 if isinstance(variant, dict):
                     _adjust_schema(variant)
+
+    for keyword in ("$defs", "definitions"):
+        definitions = schema.get(keyword)
+        if isinstance(definitions, dict):
+            for definition in definitions.values():
+                if isinstance(definition, dict):
+                    _adjust_schema(definition)
 
     schema_type = schema.get("type")
     schema_types = (
@@ -334,7 +351,7 @@ def _format_structured_output(
 ) -> dict[str, Any]:
     """Adapt a fresh caller schema to the provider's strict contract."""
     result = _serialize_structured_output(schema, llm_api)
-    _adjust_schema(result)
+    _adjust_schema(result, root=True)
     return result
 
 
@@ -679,7 +696,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                 else:
                     structured_schema = deepcopy(structure_schema)
-                    _adjust_schema(structured_schema)
+                    _adjust_schema(structured_schema, root=True)
                 output_format = {
                     "type": "json_schema",
                     "name": _provider_schema_name(structure_name),
@@ -1139,6 +1156,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         updated_content: list[conversation.Content] = []
         already_delivered = False
         for content in chat_log.content:
+            if (
+                id(content) not in existing_content_ids
+                and isinstance(content, conversation.AssistantContent)
+                and content.content == response_text
+                and response_text
+            ):
+                already_delivered = True
             if (
                 id(content) in existing_content_ids
                 or not isinstance(content, conversation.AssistantContent)

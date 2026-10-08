@@ -32,6 +32,7 @@ class ContinuityResolution:
     history: list[conversation.Content]
     resumed: bool
     claim_token: str | None = None
+    extra_system_prompt: str | None = None
 
 
 @dataclass(slots=True)
@@ -45,6 +46,7 @@ class ActiveConversation:
     history: list[conversation.Content]
     in_flight: bool = False
     claim_token: str | None = None
+    extra_system_prompt: str | None = None
 
 
 @dataclass(slots=True)
@@ -224,6 +226,7 @@ class ConversationContinuity:
                     active.history.copy(),
                     True,
                     claim_token=claim_token,
+                    extra_system_prompt=active.extra_system_prompt,
                 )
             # A non-ULID caller-selected ID is explicitly supported by HA's
             # chat-session helper and remains stable if Core recreates its log.
@@ -253,6 +256,7 @@ class ConversationContinuity:
                 conversation_id=conversation_id,
                 history=[],
                 resumed=False,
+                extra_system_prompt=None,
                 claim_token=token,
             )
         async with self._lock:
@@ -261,9 +265,14 @@ class ConversationContinuity:
                 if conversation_id is not None:
                     active.conversation_id = conversation_id
                 active.history = []
+                active.extra_system_prompt = None
                 self._memory_bundles.pop(f"continuity:{resolution.key}", None)
         return replace(
-            resolution, conversation_id=conversation_id, history=[], resumed=False
+            resolution,
+            conversation_id=conversation_id,
+            history=[],
+            resumed=False,
+            extra_system_prompt=None,
         )
 
     async def _async_claim_ha_default_conversation(self, conversation_id: str) -> str:
@@ -335,6 +344,8 @@ class ConversationContinuity:
         key: str | None,
         claim_token: str | None,
         content: list[conversation.Content],
+        *,
+        extra_system_prompt: str | None = None,
     ) -> None:
         """Record a successful turn only for the request that owns the claim."""
         if key is None or claim_token is None:
@@ -347,6 +358,7 @@ class ConversationContinuity:
                 self._remove_session_locked(key)
                 return
             active.history = content.copy()
+            active.extra_system_prompt = extra_system_prompt
             active.last_active = dt_util.utcnow()
             active.in_flight = False
             active.claim_token = None

@@ -835,6 +835,16 @@ class ExtendedOpenAIAgentEntity(
                 register_conversation_id_cleanup(
                     session, self.hass, claimed_id, claim_owner
                 )
+            # HA consumes satellite context on its first pipeline invocation.
+            # Keep only that raw background for this owned logical conversation;
+            # current-turn input still overrides it, including an explicit empty value.
+            if user_input.extra_system_prompt is None:
+                user_input.extra_system_prompt = (
+                    resolution.extra_system_prompt
+                    if resolution.resumed
+                    else chat_log.extra_system_prompt
+                )
+            chat_log.extra_system_prompt = user_input.extra_system_prompt
             context_id = getattr(getattr(llm_context, "context", None), "id", None)
             session_key = (
                 f"continuity:{resolution.key}"
@@ -948,7 +958,9 @@ class ExtendedOpenAIAgentEntity(
                     result = await self._async_complete_local_rule(
                         user_input,
                         chat_log,
-                        evaluation.response or "Done",
+                        evaluation.response
+                        if evaluation.response is not None
+                        else "Done",
                         archive_session,
                         resolution.key,
                         resolution.claim_token,
@@ -992,7 +1004,10 @@ class ExtendedOpenAIAgentEntity(
                         )
                     ):
                         await continuity.async_record_success(
-                            resolution.key, resolution.claim_token, chat_log.content
+                            resolution.key,
+                            resolution.claim_token,
+                            chat_log.content,
+                            extra_system_prompt=chat_log.extra_system_prompt,
                         )
                     request_successful = result.response.error_code is None
                     return result
@@ -1016,7 +1031,10 @@ class ExtendedOpenAIAgentEntity(
                     )
                     if run.successful:
                         await continuity.async_record_success(
-                            resolution.key, resolution.claim_token, chat_log.content
+                            resolution.key,
+                            resolution.claim_token,
+                            chat_log.content,
+                            extra_system_prompt=chat_log.extra_system_prompt,
                         )
                     request_successful = run.successful
                     return result
@@ -1440,7 +1458,10 @@ class ExtendedOpenAIAgentEntity(
         assert self._continuity is not None
         if successful:
             await self._continuity.async_record_success(
-                continuity_key, continuity_claim_token, chat_log.content
+                continuity_key,
+                continuity_claim_token,
+                chat_log.content,
+                extra_system_prompt=chat_log.extra_system_prompt,
             )
         return result
 

@@ -115,3 +115,16 @@ def test_external_provider_constraints_detect_deliberately_invalid_payloads(
             validate_request(path, body, provider="azure")
     if fault == "tool_budget":
         validate_request(path, body, provider="openai")
+
+
+@pytest.mark.parametrize("fault", ["root_union", "nested_intersection"])
+def test_schema_oracle_detects_invalid_compositions(fault):
+    from tests.strict_provider_contract import validate_strict_schema
+    root={"type":"object","properties":{"allOf":{"type":"string"}},"required":["allOf"],"additionalProperties":False}
+    validate_strict_schema(root) # literal field names are not schema keywords
+    if fault=="root_union":
+        root={"anyOf":[root]}
+    else:
+        root["properties"]["allOf"]={"allOf":[{"type":"string"}]}
+    with pytest.raises(AssertionError, match="strict root|allOf is unsupported"):
+        validate_strict_schema(root)
