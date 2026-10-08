@@ -115,11 +115,11 @@ async function openInvalidToolEditor(panel, item) {
 export async function refreshAfterRepair(panel, message, saved) {
   const selectedId = panel._agentId;
   if (!saved?.config) saved = await panel._call("configuration", "get");
-  synchronizePersistedConfigurationFields(panel, saved, ["functions", "function_groups"]);
   if (panel._configData) {
     panel._configData = {...panel._configData, function_repair:saved.function_repair};
-    panel._result = panel._configData;
   }
+  synchronizePersistedConfigurationFields(panel, saved, ["functions", "function_groups"]);
+  if (panel._configData) panel._result = panel._configData;
   await panel._loadAgents(selectedId);
   panel._toast(message);
 }
