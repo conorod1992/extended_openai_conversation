@@ -175,7 +175,7 @@ async def test_required_startup_failure_propagates_before_optional_work(startup)
     assert startup.scheduled == []
 
 
-async def test_disabled_archive_skips_io_but_search_only_initializes(startup):
+async def test_disabled_archive_prunes_without_enabling_collection_and_search_only_initializes(startup):
     agent = startup.agent
     agent.subentry.data = {
         **agent.subentry.data,
@@ -184,7 +184,9 @@ async def test_disabled_archive_skips_io_but_search_only_initializes(startup):
     }
     await agent._async_initialize_archive(False)
     assert agent._archive is None
-    startup.getters["archive"].assert_not_awaited()
+    startup.getters["archive"].assert_awaited_once()
+    startup.getters["archive"].return_value.async_prune.assert_awaited_once()
+    startup.getters["archive"].reset_mock()
     agent.subentry.data = {**agent.subentry.data, "archive_model_search_enabled": True}
     await agent._async_initialize_archive(False)
     startup.getters["archive"].assert_awaited_once()

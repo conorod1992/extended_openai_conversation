@@ -164,6 +164,7 @@ async def test_repeated_setup_preserves_runtime_identity(hass, monkeypatch):
 @pytest.fixture
 def runtime_agent():
     agent = object.__new__(owner.ExtendedOpenAIAgentEntity)
+    agent.entry = SimpleNamespace(data={})
     agent.subentry = SimpleNamespace(
         data={
             "memory_mode": "automatic",
@@ -218,7 +219,7 @@ async def test_live_memory_gate_and_embedding_provider(runtime_agent):
     }
     await agent._async_retrieve_memories(None, "query")
     agent._memory.set_embedding_provider.assert_called_with(
-        MemoryEmbeddingProvider(agent._async_create_embeddings, "changed"), "changed"
+        MemoryEmbeddingProvider(agent._async_create_embeddings, "changed"), "changed", space_id=agent._memory.set_embedding_provider.call_args.kwargs["space_id"]
     )
 
 

@@ -53,3 +53,5 @@ Removing the final EOAI provider entry also stops Quiet Hours and Broadcast call
 Upserting an existing memory with `source: explicit` promotes its provenance to explicit confirmation. A later implicit write cannot downgrade that provenance; implicit writes still pass their own sensitive-data checks. Search pagination applies `offset` after ranking, so successive pages return different results.
 
 Implicit writes cannot replace or reclassify an explicitly confirmed fact. A different inferred fact for the same canonical key requires conflict resolution; an implicit duplicate leaves the confirmed record unchanged.
+
+Hybrid embedding caches are bound to the configured provider, endpoint, API version and embedding model. Changing that space rebuilds affected vectors when needed. Older caches without this identity regenerate safely; stored memory facts are preserved.

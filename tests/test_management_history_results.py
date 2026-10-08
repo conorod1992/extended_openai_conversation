@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 from custom_components.extended_openai_conversation_responses import (
     management_history_queries,
@@ -39,6 +40,7 @@ from custom_components.extended_openai_conversation_responses.management_result_
     MANAGEMENT_USAGE_BREAKDOWN_KEYS,
 )
 from custom_components.extended_openai_conversation_responses.usage import (
+    UsageManager,
     UsageRequest,
     UsageRun,
 )
@@ -72,6 +74,8 @@ class _TrackedRuns:
 
 
 class _Usage:
+    request_retention_days = run_retention_days = 30
+    detail_is_current = UsageManager.detail_is_current
     def __init__(self, *, runs=None, daily=None, details=None):
         self.runs = runs if runs is not None else []
         self.requests = []
@@ -132,7 +136,7 @@ def _day(date: str, *, providers=None, models=None, modes=None):
 
 
 def _run(index: int) -> UsageRun:
-    timestamp = f"2026-01-01T00:{index:02d}:00+00:00"
+    timestamp = (dt_util.utcnow() + timedelta(minutes=index)).isoformat()
     return UsageRun(
         run_id=f"run-{index}",
         started_at=timestamp,
@@ -409,7 +413,7 @@ def _edge_request(request_id: str, run_id: str, details: dict[object, object]) -
     return UsageRequest(
         request_id=request_id,
         run_id=run_id,
-        timestamp="2026-01-01T00:00:00+00:00",
+        timestamp=dt_util.utcnow().isoformat(),
         agent_subentry_id="agent",
         provider="openai",
         model="test-model",
@@ -451,6 +455,8 @@ def test_usage_requests_page_filters_and_bounds_request_details() -> None:
         ]
     )
 
+    manager.request_retention_days = manager.run_retention_days = 30
+    manager.detail_is_current = UsageManager.detail_is_current.__get__(manager)
     result = usage_requests_page(manager, "run-1", limit=50, offset=0)
 
     assert [item["request_id"] for item in result["requests"]] == ["wanted"]

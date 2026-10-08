@@ -26,7 +26,10 @@ export function removeExposedAttributePreference(preferences, reference) {
 
 const selectedFor = (panel, reference, fallback = []) => {
   const configured = panel?._draft?.[CONFIG_KEY];
-  return Array.isArray(configured?.[reference]) ? configured[reference] : fallback;
+  if (configured && typeof configured === "object" && !Array.isArray(configured)) {
+    return Array.isArray(configured[reference]) ? configured[reference] : [];
+  }
+  return fallback;
 };
 
 const catalogFor = (panel) => panel?._result?.exposed_attribute_catalog

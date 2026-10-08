@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import {bindConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js";
+let reset;
+const root={querySelector:selector=>selector==="#reset-model-parameters" ? {addEventListener:(_,fn)=>reset=fn}:null, querySelectorAll:()=>[],addEventListener:()=>{}};
+const defaults={temperature:1,top_p:1,reasoning_effort:"low",service_tier:"auto",shorten_tool_call_id:false,memory_auto_retrieve_limit:5,memory_retrieval_mode:"lexical",memory_embedding_model:"default"};
+const panel={shadowRoot:root,_draft:{...defaults,chat_model:"gpt-5-pro",api_mode:"responses",reasoning_effort:"high",memory_auto_retrieve_limit:12,memory_retrieval_mode:"hybrid",memory_embedding_model:"custom"},_result:{defaults,model_capabilities:{reasoning:{supported:true,efforts:["high"],by_api:{responses:{efforts:["high"]}}},recommended_profile:{reasoning_effort:"high"}}},_setConfigDirty:()=>{}};
+bindConfiguration(panel);
+reset();
+assert.equal(panel._draft.memory_auto_retrieve_limit,12);
+assert.equal(panel._draft.memory_retrieval_mode,"hybrid");
+assert.equal(panel._draft.memory_embedding_model,"custom");
+assert.equal(panel._draft.reasoning_effort,"high");

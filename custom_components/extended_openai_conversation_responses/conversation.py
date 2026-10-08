@@ -237,7 +237,7 @@ from .temporary_memory import (
     temporary_memory_as_dict,
 )
 from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledged_calls
-from .usage import async_get_usage
+from .usage import async_get_usage, extract_usage
 from .voice_identity_runtime import voice_identity_scope, voice_source_device_id
 
 _TEMPORARY_MEMORY_PREFETCH: ContextVar[asyncio.Task[Any] | None] = ContextVar(
@@ -529,11 +529,12 @@ class ExtendedOpenAIAgentEntity(
         self, _now: datetime | None = None
     ) -> None:
         """Apply live retention settings independently of conversation traffic."""
-        if self._archive is None:
-            return
         try:
             async with conversation_request_lease(self):
-                await self._archive.async_prune(
+                archive = self._archive or await async_get_archive(
+                    self.hass, self.entry.entry_id, self.subentry.subentry_id
+                )
+                await archive.async_prune(
                     int(
                         self.subentry.data.get(
                             CONF_ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS
@@ -552,6 +553,7 @@ class ExtendedOpenAIAgentEntity(
         ):
             self._archive = None
             self._set_subsystem_status("archive", False)
+            await self._async_prune_archive_retention()
             return
         self._set_subsystem_status("archive", configured)
         try:
@@ -1606,29 +1608,56 @@ class ExtendedOpenAIAgentEntity(
         self, inputs: list[str], *, model: str | None = None
     ) -> list[list[float]]:
         """Create embedding vectors without an LLM/classifier retrieval call."""
-        response = await self._client.embeddings.create(
-            model=model
+        selected_model = (
+            model
             if model is not None
             else self.subentry.data.get(
                 CONF_MEMORY_EMBEDDING_MODEL, DEFAULT_MEMORY_EMBEDDING_MODEL
-            ),
-            input=inputs,
+            )
         )
-        if len(response.data) != len(inputs):
-            raise ValueError("embedding response returned the wrong number of entries")
-        ordered: dict[int, list[float]] = {}
-        for item in response.data:
-            index = item.index
-            if (
-                type(index) is not int
-                or not 0 <= index < len(inputs)
-                or index in ordered
-            ):
+        response = None
+        started = time.monotonic()
+        successful = False
+        error_type = None
+        try:
+            response = await self._client.embeddings.create(
+                model=selected_model, input=inputs
+            )
+            if len(response.data) != len(inputs):
                 raise ValueError(
-                    "embedding response returned an invalid or duplicate index"
+                    "embedding response returned the wrong number of entries"
                 )
-            ordered[index] = list(item.embedding)
-        return [ordered[index] for index in range(len(inputs))]
+            ordered: dict[int, list[float]] = {}
+            for item in response.data:
+                index = item.index
+                if (
+                    type(index) is not int
+                    or not 0 <= index < len(inputs)
+                    or index in ordered
+                ):
+                    raise ValueError(
+                        "embedding response returned an invalid or duplicate index"
+                    )
+                ordered[index] = list(item.embedding)
+            successful = True
+            return [ordered[index] for index in range(len(inputs))]
+        except BaseException as err:
+            error_type = type(err).__name__
+            raise
+        finally:
+            if self._usage is not None:
+                await self._usage.async_record_request(
+                    successful=successful,
+                    usage=extract_usage(getattr(response, "usage", None)),
+                    provider=getattr(self.entry, "data", {}).get(
+                        "api_provider", "openai"
+                    ),
+                    model=selected_model,
+                    api_mode="embeddings",
+                    request_stage="embeddings",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    error_type=error_type,
+                )
 
     async def _async_revalidate_retrieved_memories(
         self,

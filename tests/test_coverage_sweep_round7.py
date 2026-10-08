@@ -962,6 +962,7 @@ def test_usage_daily_series_clamps_limit_and_date_range() -> None:
     from custom_components.extended_openai_conversation_responses import usage
 
     manager = usage.UsageManager.__new__(usage.UsageManager)
+    manager.request_retention_days = manager.run_retention_days = 30
     manager.daily = {
         "2026-10-01": {"date": "2026-10-01", "total_tokens": 1},
         "2026-10-02": {"date": "2026-10-02", "total_tokens": 2},
@@ -978,6 +979,7 @@ def test_usage_recent_runs_filters_and_clamps_paging() -> None:
     from custom_components.extended_openai_conversation_responses import usage
 
     manager = usage.UsageManager.__new__(usage.UsageManager)
+    manager.request_retention_days = manager.run_retention_days = 30
     manager.runs = [
         usage.UsageRun(
             run_id="one",
@@ -1013,6 +1015,7 @@ def test_usage_requests_for_run_filters_and_paginates() -> None:
     from custom_components.extended_openai_conversation_responses import usage
 
     manager = usage.UsageManager.__new__(usage.UsageManager)
+    manager.request_retention_days = manager.run_retention_days = 30
     manager.requests = [
         usage.UsageRequest(
             request_id="one",

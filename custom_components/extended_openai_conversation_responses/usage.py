@@ -17,6 +17,7 @@ from uuid import uuid4
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -280,6 +281,7 @@ class UsageManager:
         self._stopping = False
         self._shutdown_lock = asyncio.Lock()
         self._shutdown_registered = False
+        self._cancel_retention: Callable[[], None] | None = None
         self._last_prune_date: str | None = None
         self._next_prune_retry = 0.0
         self._prune_attempt_date: str | None = None
@@ -396,6 +398,9 @@ class UsageManager:
 
     async def async_shutdown(self, _event: Any = None) -> None:
         """Cancel active request owners and durably flush their normal finalizers."""
+        if self._cancel_retention is not None:
+            self._cancel_retention()
+            self._cancel_retention = None
         gate = (
             self._storage._recovery_gate
             if isinstance(self._storage, RecoveryGuardedStore)
@@ -693,13 +698,21 @@ class UsageManager:
             if start_date <= key <= end_date
         ][: max(1, min(limit, 366))]
 
+    def detail_is_current(self, timestamp: str, *, request: bool = False) -> bool:
+        """Do not expose expired details between periodic maintenance runs."""
+        days = self.request_retention_days if request else self.run_retention_days
+        return days > 0 and _parse_time(timestamp) >= dt_util.utcnow() - timedelta(
+            days=days
+        )
+
     def recent_runs(
         self, *, limit: int = 50, offset: int = 0, successful: bool | None = None
     ) -> dict[str, Any]:
         items = [
             r
             for r in reversed(self.runs)
-            if successful is None or r.successful == successful
+            if self.detail_is_current(r.started_at)
+            and (successful is None or r.successful == successful)
         ]
         limit = max(1, min(limit, MAX_RECENT_LIMIT))
         page = items[max(0, offset) : max(0, offset) + limit]
@@ -713,7 +726,11 @@ class UsageManager:
     def requests_for_run(
         self, run_id: str, *, limit: int = 100, offset: int = 0
     ) -> dict[str, Any]:
-        items = [r for r in self.requests if r.run_id == run_id]
+        items = [
+            r
+            for r in self.requests
+            if r.run_id == run_id and self.detail_is_current(r.timestamp, request=True)
+        ]
         limit = max(1, min(limit, MAX_RECENT_LIMIT))
         page = items[max(0, offset) : max(0, offset) + limit]
         return {
@@ -747,7 +764,14 @@ class UsageManager:
 
     @property
     def latest_run(self) -> UsageRun | None:
-        return self.runs[-1] if self.runs else None
+        return next(
+            (
+                run
+                for run in reversed(self.runs)
+                if self.detail_is_current(run.started_at)
+            ),
+            None,
+        )
 
     def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.add(listener)
@@ -1234,6 +1258,21 @@ def _parse_time(value: Any) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_util.UTC)
 
 
+def _register_usage_maintenance(hass: HomeAssistant, manager: UsageManager) -> None:
+    """Keep detail expiry independent from run completion."""
+    if manager._shutdown_registered:
+        return
+
+    async def prune(_now: datetime) -> None:
+        await manager._async_prune_usage_if_due()
+
+    manager._cancel_retention = async_track_time_interval(
+        hass, prune, timedelta(days=1)
+    )
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, manager.async_shutdown)
+    manager._shutdown_registered = True
+
+
 async def async_get_durable_usage(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> UsageManager:
@@ -1269,9 +1308,7 @@ async def async_get_durable_usage(
         # retains the same authoritative manager instance.
         managers[key] = manager
     await manager.async_initialize()
-    if not manager._shutdown_registered:
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, manager.async_shutdown)
-        manager._shutdown_registered = True
+    _register_usage_maintenance(hass, manager)
     return manager
 
 
@@ -1317,4 +1354,5 @@ async def async_get_usage(
             )
             await manager.async_initialize()
             fallbacks[key] = manager
+            _register_usage_maintenance(hass, manager)
             return manager

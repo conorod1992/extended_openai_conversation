@@ -162,3 +162,14 @@ const basePanel = () => ({
   assert.match(html, /Unable to load exposed entity attributes/);
   assert.doesNotMatch(html, /No entities are currently exposed to Assist/);
 }
+
+{
+  const panel=basePanel();
+  panel._exposedAttributeEntityId="light.kitchen";
+  panel._draft.exposed_entity_attributes={};
+  const html=renderExposedAttributeSettings(panel);
+  const choice=html.match(/<input[^>]*data-attribute="brightness"[^>]*>/)?.[0];
+  assert.ok(choice);
+  assert.doesNotMatch(choice,/checked/);
+  assert.doesNotMatch(html,/data-exposed-configured-reference="registry:current"/);
+}

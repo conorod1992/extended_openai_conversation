@@ -56,7 +56,7 @@ export function modelFieldPresentation(panel, key, value) {
     const efforts = reasoning.by_api?.[api]?.efforts || reasoning.efforts || [];
     const options = efforts.map((effort) => ({value:effort, label:String(effort).replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())}));
     if (selected && !efforts.includes(selected)) options.push({value:selected, label:`${selected} (inactive)`});
-    return {visible:Boolean(reasoning.supported), value:selected, options};
+    return {visible:Boolean(reasoning.supported), value:selected, options, efforts};
   }
   if (key === "temperature" || key === "top_p") {
     const state = parameterControlState(metadata[key], config.reasoning_effort, config[key]);

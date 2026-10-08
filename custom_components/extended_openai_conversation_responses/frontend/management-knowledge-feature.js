@@ -83,7 +83,17 @@ async function saveKnowledgeAvailability(panel, input) {
         feature_status: result.feature_status,
       };
     }
-    panel._clearConfigDraft?.();
+    // Immediate saves update the baseline without discarding other page edits.
+    if (panel._configData?.config) {
+      panel._configData.config.knowledge_enabled = result.knowledge_enabled;
+      panel._configData.revision = result.revision;
+      panel._configDataStale = false;
+      panel._rememberCleanConfiguration?.(panel._configData);
+    }
+    if (panel._draft && panel._draftAgentId === agentId) {
+      panel._draft.knowledge_enabled = result.knowledge_enabled;
+      panel._syncConfigDirty?.();
+    }
     panel._render();
     panel._toast(`Knowledge ${result.knowledge_enabled ? "enabled" : "disabled"}`);
   } catch (err) {
