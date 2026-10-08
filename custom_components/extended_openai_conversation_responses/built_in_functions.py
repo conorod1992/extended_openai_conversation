@@ -6,7 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 from .resource_limits import MAX_NATIVE_SERVICE_ACTIONS
-from .safety_hardening import MAX_HISTORY_ENTITY_IDS
+from .safety_hardening import MAX_HISTORY_ENTITY_IDS, MAX_STATISTIC_SPAN_BY_PERIOD
 
 _SERVICE_DATA_DESCRIPTION = (
     "Any valid Home Assistant service data accepted by the selected service. Include "
@@ -15,7 +15,7 @@ _SERVICE_DATA_DESCRIPTION = (
     "color_name, color_temp_kelvin, rgb_color, temperature, hvac_mode, transition, "
     "effect, or volume_level."
 )
-_STATISTICS_PERIODS = ["5minute", "hour", "day", "week", "month", "year"]
+_STATISTICS_PERIODS = list(MAX_STATISTIC_SPAN_BY_PERIOD)
 _STATISTICS_TYPES = [
     "change",
     "last_reset",

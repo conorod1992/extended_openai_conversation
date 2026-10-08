@@ -24,6 +24,8 @@ Web Search uses the same provider path as conversation agents and remains disabl
 
 This works with both free-text and structured AI Task output, so an automation can ask for current information and still receive its normal requested result shape.
 
+Structured output requires objects with named fields. A free-form object selector that accepts arbitrary keys is rejected before contacting the provider, because strict Structured Outputs cannot preserve that contract. The integration does not silently discard arbitrary keys by closing the object schema.
+
 ## Features not available in AI Task options
 
 The AI Task configuration does not expose conversation-specific controls such as:

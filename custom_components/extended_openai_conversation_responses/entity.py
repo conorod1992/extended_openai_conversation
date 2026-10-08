@@ -7,6 +7,7 @@ import base64
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import replace
+from hashlib import sha256
 import json
 import logging
 import mimetypes
@@ -116,6 +117,7 @@ from .request import (
     CONTINUE_CONVERSATION_TOOL_NAME,
     build_provider_request_snapshot,
     format_function_tools,
+    provider_tool_limit,
 )
 from .request_static_cache import cached_format_tools
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
@@ -285,6 +287,11 @@ def _adjust_schema(schema: dict[str, Any]) -> None:
     )
 
     if "object" in schema_types:
+        if schema.get("additionalProperties", False) is not False:
+            raise HomeAssistantError(
+                "Strict structured outputs cannot represent free-form objects; "
+                "use a structure with named fields"
+            )
         schema.setdefault("strict", True)
         schema.setdefault("additionalProperties", False)
         properties = schema.get("properties")
@@ -329,6 +336,15 @@ def _format_structured_output(
     result = _serialize_structured_output(schema, llm_api)
     _adjust_schema(result)
     return result
+
+
+def _provider_schema_name(name: str | None) -> str:
+    """Keep short names stable and disambiguate bounded long identifiers."""
+    name = name or "result"
+    identifier = slugify(name) or "result"
+    if len(identifier) <= 64:
+        return identifier
+    return identifier[:51] + "_" + sha256(name.encode()).hexdigest()[:12]
 
 
 def _convert_content_to_param(
@@ -666,7 +682,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     _adjust_schema(structured_schema)
                 output_format = {
                     "type": "json_schema",
-                    "name": slugify(structure_name),
+                    "name": _provider_schema_name(structure_name),
                     "strict": True,
                     "schema": structured_schema,
                 }
@@ -762,6 +778,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     else formatted_function_tools
                 )
                 tool_kwargs: dict[str, Any] = {}
+                limit = provider_tool_limit(
+                    getattr(self.entry, "data", {}).get("api_provider"), api_mode
+                )
+                if limit is not None and len(tools) > limit:
+                    raise HomeAssistantError(
+                        f"Provider request exceeds the {limit}-tool limit"
+                    )
                 if tools:
                     tool_kwargs["tools"] = tools
                     tool_kwargs["tool_choice"] = (
@@ -1010,11 +1033,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # A finalizer emitted beside an action tool is premature. Remove it
                     # from history and wait for the post-tool response to decide.
                     is_final = not pending_tool_calls and not loader_calls
-                    self._consume_continue_conversation_tool(
-                        chat_log,
-                        existing_content_ids,
-                        response_text if is_final else None,
-                    )
+                    with async_streaming_speech_cleanup(chat_log, options):
+                        await self._consume_continue_conversation_tool(
+                            chat_log,
+                            existing_content_ids,
+                            response_text if is_final else None,
+                        )
                     if is_final:
                         continuation_decision = decision
                         if draft_content_ids:
@@ -1105,14 +1129,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             return continuation_decision
 
-    @staticmethod
-    def _consume_continue_conversation_tool(
+    async def _consume_continue_conversation_tool(
+        self,
         chat_log: conversation.ChatLog,
         existing_content_ids: set[int],
         response_text: str | None,
     ) -> None:
         """Convert the internal finalizer tool call into normal assistant content."""
         updated_content: list[conversation.Content] = []
+        already_delivered = False
         for content in chat_log.content:
             if (
                 id(content) in existing_content_ids
@@ -1132,7 +1157,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if tool_call.tool_name != CONTINUE_CONVERSATION_TOOL_NAME
             ]
             replacement_content = (
-                response_text if not remaining_calls else content.content
+                response_text
+                if not remaining_calls and content.content == response_text
+                else content.content
+                if remaining_calls
+                else None
+            )
+            already_delivered = already_delivered or bool(
+                replacement_content == response_text and response_text
             )
             if replacement_content or remaining_calls or content.native:
                 updated_content.append(
@@ -1144,6 +1176,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
 
         chat_log.content[:] = updated_content
+        if response_text and not already_delivered:
+
+            async def final_response():
+                yield {"role": "assistant", "content": response_text}
+
+            async for _ in chat_log.async_add_delta_content_stream(
+                self.entity_id, final_response()
+            ):
+                pass
 
     async def _async_add_attachments(
         self,

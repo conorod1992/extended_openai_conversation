@@ -2389,7 +2389,8 @@ def _native_result_sequence(
     sequence: list[dict[str, Any]] = []
     for step in actions:
         rendered = native_templates(step)
-        alias = step.get("data", {}).get("result_alias")
+        data = step.get("data")
+        alias = data.get("result_alias") if isinstance(data, Mapping) else None
         if alias:
             response_name = f"__eoai_result_{alias}"
             rendered["response_variable"] = response_name

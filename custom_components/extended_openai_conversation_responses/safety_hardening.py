@@ -18,7 +18,9 @@ MAX_STATISTIC_SPAN_BY_PERIOD: dict[str, timedelta] = {
     "5minute": timedelta(days=7),
     "hour": timedelta(days=90),
     "day": timedelta(days=366 * 5),
+    "week": timedelta(days=366 * 20),
     "month": timedelta(days=366 * 20),
+    "year": timedelta(days=366 * 100),
 }
 
 

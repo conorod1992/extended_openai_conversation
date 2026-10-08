@@ -141,13 +141,16 @@ def test_adjust_schema_handles_compositions_arrays_and_explicit_settings() -> No
         ]
     }
 
-    _adjust_schema(schema)
+    from homeassistant.exceptions import HomeAssistantError
 
+    with pytest.raises(HomeAssistantError, match="free-form"):
+        _adjust_schema(schema)
     item_schema = schema["anyOf"][0]["items"]
-    assert item_schema["strict"] is False
     assert item_schema["additionalProperties"] is True
+    # Reject the unsupported contract rather than silently closing its keys.
+    item_schema["additionalProperties"] = False
+    _adjust_schema(schema)
     assert item_schema["required"] == ["label"]
-    assert item_schema["properties"]["label"] == {"type": ["string", "null"]}
 
     # Nested oneOf/allOf branches and composed optional properties must be
     # normalized without adding a second null wrapper on repeat passes.
@@ -278,4 +281,3 @@ def test_openapi_nullable_is_adapted_to_json_schema_null():
     assert "nullable" not in schema
     assert Draft202012Validator(schema).is_valid(None)
     assert not Draft202012Validator(schema).is_valid("other")
-

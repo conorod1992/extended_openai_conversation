@@ -278,13 +278,11 @@ class BashFunction(Function):
     ):
         """Execute an explicitly enabled shell command."""
         if function_config.get("allow_unsafe_shell") is not True:
-            return {
-                "error": (
-                    "Bash execution is disabled. Set allow_unsafe_shell: true in "
-                    "the Function Tool configuration to explicitly allow arbitrary "
-                    "shell commands with Home Assistant's OS privileges."
-                )
-            }
+            return backend_failure(
+                "Bash execution is disabled. Set allow_unsafe_shell: true in "
+                "the Function Tool configuration to explicitly allow arbitrary "
+                "shell commands with Home Assistant's OS privileges."
+            )
 
         command_template = function_config.get("command")
         command = command_template.async_render(arguments, parse_result=False)
@@ -308,9 +306,9 @@ class BashFunction(Function):
         try:
             timeout = float(raw_timeout)
         except TypeError, ValueError:
-            return {"error": "Timeout must be a number"}
+            return backend_failure("Timeout must be a number")
         if timeout <= 0:
-            return {"error": "Timeout must be greater than zero"}
+            return backend_failure("Timeout must be greater than zero")
         timeout = min(timeout, float(SHELL_TIMEOUT))
 
         allow_patterns = function_config.get("allow_patterns", [])
@@ -324,7 +322,7 @@ class BashFunction(Function):
                 allow_patterns=allow_patterns,
             )
         except ValueError as err:
-            return {"error": str(err)}
+            return backend_failure(str(err), err)
 
         try:
             process = await asyncio.create_subprocess_shell(
