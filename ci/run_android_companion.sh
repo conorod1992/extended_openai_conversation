@@ -34,7 +34,7 @@ collect_diagnostics() {
 }
 trap collect_diagnostics EXIT
 
-maestro test tests_mobile/companion-app-smoke.yaml \
+maestro test tests_mobile/companion-app-smoke.yaml --format junit --output "$RUNNER_TEMP/companion-tests.xml" \
   -e HOME_ASSISTANT_URL=http://10.0.2.2:8123 \
   -e HOME_ASSISTANT_USERNAME=eoai-companion \
   -e HOME_ASSISTANT_PASSWORD=eoai-companion-password

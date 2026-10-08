@@ -13,10 +13,12 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from zipfile import ZipFile
 
 try:
+    from .specialist_evidence import collect_specialist
     from .candidate_evidence import check_candidate, valid_sha
     from .enhanced_evidence import SCHEMA
     from .execution_contract import CONTRACT, check_execution
 except ImportError:
+    from specialist_evidence import collect_specialist
     from candidate_evidence import check_candidate, valid_sha
     from enhanced_evidence import SCHEMA
     from execution_contract import CONTRACT, check_execution
@@ -357,7 +359,7 @@ def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
             )
         ]
         validation_errors = []
-        if filename in {
+        if filename in {*SPECIALIST_CERTIFICATION_WORKFLOWS,
             "enhanced-stress.yml",
             "upgrade-acceptance.yml",
             "openai-sdk-compatibility.yml",
@@ -374,7 +376,10 @@ def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
                         if job.get("conclusion") == "success"
                     }
                     artifacts = actions.run_artifacts(run["id"])
-                    if filename == "enhanced-stress.yml":
+                    if filename in SPECIALIST_CERTIFICATION_WORKFLOWS:
+                        collect_specialist(actions, artifacts, jobs, filename, source_sha, run)
+                        errors = []
+                    elif filename == "enhanced-stress.yml":
                         if not complete_heavy_nightly(run, jobs):
                             raise RuntimeError("Full heavy nightly jobs are required")
                         selected = [

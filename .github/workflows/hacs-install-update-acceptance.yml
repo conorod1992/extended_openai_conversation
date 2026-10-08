@@ -1,6 +1,10 @@
 name: Genuine HACS install and update acceptance
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/hacs-install-update-acceptance.yml"
+      - "ci/specialist_evidence.py"
   schedule:
     - cron: "23 5 * * *"
   workflow_dispatch:
@@ -8,6 +12,9 @@ on:
 concurrency:
   group: genuine-hacs-install-update-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 permissions:
   contents: read
@@ -30,7 +37,7 @@ jobs:
       - name: Checkout exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Trust mounted checkout for Git
@@ -93,11 +100,11 @@ jobs:
           HACS_ACCEPTANCE_COMPONENT_DIR: ${{ steps.hacs.outputs.component_dir }}
           HACS_ACCEPTANCE_GITHUB_TOKEN: ${{ github.token }}
           HACS_ACCEPTANCE_RELEASE: "6.8.3"
-          HACS_ACCEPTANCE_CANDIDATE_REF: ${{ github.sha }}
+          HACS_ACCEPTANCE_CANDIDATE_REF: ${{ github.event.pull_request.head.sha || github.sha }}
           HACS_ACCEPTANCE_CANDIDATE_ROOT: ${{ github.workspace }}
           HACS_ACCEPTANCE_EVIDENCE_FILE: ${{ runner.temp }}/hacs-install-update-evidence.json
         run: |
-          pytest tests_real_ha/test_hacs_install_update_acceptance.py             -v --asyncio-mode=auto --timeout=420
+          pytest tests_real_ha/test_hacs_install_update_acceptance.py             -v --asyncio-mode=auto --timeout=420 --junitxml=specialist-tests.xml
 
       - name: Record workflow metadata
         if: always()
@@ -119,7 +126,7 @@ jobs:
           )
           payload.update(
               {
-                  "candidate_sha": os.environ["GITHUB_SHA"],
+                  "candidate_sha": os.environ["CANDIDATE_SHA"],
                   "hacs_version": os.environ.get("HACS_VERSION"),
                   "job_status": os.environ["JOB_STATUS"],
                   "workflow_run_id": os.environ["GITHUB_RUN_ID"],
@@ -138,5 +145,21 @@ jobs:
         with:
           name: hacs-install-update-${{ github.sha }}
           path: ${{ runner.temp }}/hacs-install-update-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Record specialist execution evidence
+        if: success()
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 ci/specialist_evidence.py --workflow hacs-install-update-acceptance.yml --report specialist-tests.xml
+
+      - name: Upload specialist execution certificate
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: specialist-execution-evidence
+          path: specialist-execution.json
           if-no-files-found: error
           retention-days: 30

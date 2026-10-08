@@ -16,6 +16,9 @@ on:
     - cron: "37 4 * * 0"
   workflow_dispatch:
 
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 permissions:
   contents: read
 
@@ -42,6 +45,8 @@ jobs:
     steps:
       - name: Checkout candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Reconcile stable Home Assistant test environment
         run: |
@@ -94,4 +99,20 @@ jobs:
           python -m pip check
           python -m pytest -q \
             tests_real_ha/test_identity_isolation_matrix.py \
-            tests/test_side_by_side_identity_contract.py
+            tests/test_side_by_side_identity_contract.py --junitxml=specialist-tests.xml
+
+      - name: Record specialist execution evidence
+        if: success()
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 ci/specialist_evidence.py --workflow side-by-side-isolation.yml --report specialist-tests.xml
+
+      - name: Upload specialist execution certificate
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: specialist-execution-evidence
+          path: specialist-execution.json
+          if-no-files-found: error
+          retention-days: 30

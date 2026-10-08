@@ -15,6 +15,9 @@ concurrency:
   group: frontend-backend-version-skew-${{ github.ref }}-${{ inputs.from_version || '6.8.3' }}
   cancel-in-progress: true
 
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 permissions:
   contents: read
   packages: read
@@ -36,7 +39,7 @@ jobs:
       - name: Checkout exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Trust mounted checkout for Git
@@ -97,7 +100,7 @@ jobs:
           VERSION_SKEW_OLD_VERSION: ${{ steps.released.outputs.version }}
           PLAYWRIGHT_ARTIFACT_SUFFIX: frontend-backend-version-skew
         run: |
-          pytest tests_real_ha/test_frontend_backend_version_skew_acceptance.py             -v --asyncio-mode=auto --timeout=300
+          pytest tests_real_ha/test_frontend_backend_version_skew_acceptance.py             -v --asyncio-mode=auto --timeout=300 --junitxml=specialist-tests.xml
 
       - name: Record exact-source skew evidence
         if: always()
@@ -116,7 +119,7 @@ jobs:
               .read_text(encoding="utf-8")
           )
           payload = {
-              "candidate_sha": os.environ["GITHUB_SHA"],
+              "candidate_sha": os.environ["CANDIDATE_SHA"],
               "candidate_manifest_version": manifest["version"],
               "released_frontend_version": os.environ.get("RELEASED_VERSION"),
               "released_frontend_source_sha": os.environ.get("RELEASED_SOURCE_SHA"),
@@ -150,3 +153,19 @@ jobs:
             test-results/
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Record specialist execution evidence
+        if: success()
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 ci/specialist_evidence.py --workflow frontend-backend-version-skew.yml --report specialist-tests.xml
+
+      - name: Upload specialist execution certificate
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: specialist-execution-evidence
+          path: specialist-execution.json
+          if-no-files-found: error
+          retention-days: 30

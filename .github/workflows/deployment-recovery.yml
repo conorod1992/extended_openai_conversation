@@ -11,8 +11,13 @@ on:
       - "tests_browser/real-ha-https-proxy.spec.mjs"
       - "tests_real_ha/test_https_proxy_acceptance.py"
       - "tests_real_ha/test_native_ha_backup_restore.py"
-      - "custom_components/extended_openai_conversation_responses/**"
+      - "custom_components/extended_openai_conversation_responses/restore_recovery.py"
+      - "custom_components/extended_openai_conversation_responses/backup.py"
       - "requirements_test.txt"
+      - "ci/specialist_evidence.py"
+
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 permissions:
   contents: read
@@ -24,7 +29,6 @@ concurrency:
 jobs:
   deployment-recovery:
     name: Native HA backup + HTTPS proxy
-    if: github.event_name != 'pull_request' || github.event.pull_request.number == 1090
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -69,7 +73,7 @@ jobs:
           pytest \
             tests_real_ha/test_native_ha_backup_restore.py \
             tests_real_ha/test_https_proxy_acceptance.py \
-            -v -s --asyncio-mode=auto --timeout=300 --tb=short
+            -v -s --asyncio-mode=auto --timeout=300 --tb=short --junitxml=specialist-tests.xml
 
       - name: Record source-bound deployment evidence
         if: success()
@@ -115,3 +119,19 @@ jobs:
             test-results/
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Record specialist execution evidence
+        if: success()
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 ci/specialist_evidence.py --workflow deployment-recovery.yml --report specialist-tests.xml
+
+      - name: Upload specialist execution certificate
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: specialist-execution-evidence
+          path: specialist-execution.json
+          if-no-files-found: error
+          retention-days: 30

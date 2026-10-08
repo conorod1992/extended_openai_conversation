@@ -120,6 +120,18 @@ class FakeActions:
                         },
                     )
 
+            elif filename in SPECIALIST_CERTIFICATION_WORKFLOWS:
+                from ci.specialist_evidence import REQUIRED_SOURCES
+                self.runs[filename][0]["run_attempt"] = 1
+                self.jobs[index] = [{"conclusion": "success", "steps": [{"name": "Record specialist execution evidence", "conclusion": "success"}]}]
+                cases = [f"{source}.test_acceptance" for source in REQUIRED_SOURCES[filename]] or ["companion-app-smoke"]
+                if filename == "haos-supervisor-vm-acceptance.yml":
+                    cases = ["supervisor_core_restart", "supervisor_full_backup_restore_reboot"]
+                self._artifact(index, "specialist-execution-evidence", {
+                    "candidate_sha": SOURCE, "workflow": filename, "passed": True,
+                    "run_id": index, "run_attempt": 1, "executed_cases": cases,
+                })
+
     def _envelope(self, campaign, *, sdk="3.10.0"):
         identity = {
             "python": "3.14.0",
@@ -200,6 +212,7 @@ class FakeActions:
             "workflow-evidence.json",
             "certification-final.json",
             "certification.json",
+            "specialist-execution.json",
         }
         return deepcopy(self.contents[artifact["id"]])
 
@@ -538,3 +551,68 @@ def test_missing_or_failed_specialist_workflow_blocks_release(workflow):
     actions.runs[workflow] = []
     with pytest.raises(RuntimeError, match=workflow.replace(".", r"\.")):
         certify(actions, SOURCE)
+
+
+@pytest.mark.parametrize("workflow", SPECIALIST_CERTIFICATION_WORKFLOWS)
+@pytest.mark.parametrize("fault", ["missing", "empty", "expired", "skipped-job", "skipped-step", "zero-tests", "wrong-tests", "candidate", "run", "attempt"])
+def test_specialist_execution_evidence_is_mandatory(workflow, fault):
+    actions = FakeActions()
+    run_id = actions.runs[workflow][0]["id"]
+    artifact = actions.artifacts[run_id][0]
+    item = actions.contents[artifact["id"]]
+    if fault == "missing": actions.artifacts[run_id] = []
+    elif fault == "empty": artifact["size_in_bytes"] = 0
+    elif fault == "expired": artifact["expired"] = True
+    elif fault == "skipped-job": actions.jobs[run_id][0]["conclusion"] = "skipped"
+    elif fault == "skipped-step": actions.jobs[run_id][0]["steps"][0]["conclusion"] = "skipped"
+    elif fault == "zero-tests": item["executed_cases"] = []
+    elif fault == "wrong-tests":
+        if workflow == "android-companion-app.yml": item["executed_cases"] = []
+        else: item["executed_cases"] = ["unrelated.test"]
+    elif fault == "candidate": item["candidate_sha"] = PARENT
+    elif fault == "run": item["run_id"] = 99999
+    else: item["run_attempt"] = 99999
+    with pytest.raises(RuntimeError, match=workflow): certify(actions, SOURCE)
+
+
+@pytest.mark.parametrize("xml", ["<testsuites/>", '<testsuite><testcase name="skipped"><skipped/></testcase></testsuite>', '<testsuite><testcase name="failed"><failure/></testcase></testsuite>'])
+def test_specialist_report_rejects_zero_execution(tmp_path, xml):
+    from ci.specialist_evidence import execution_cases
+    path = tmp_path / "report.xml"
+    path.write_text(xml)
+    if "skipped" in xml:
+        assert execution_cases(path) == []
+    else:
+        with pytest.raises(ValueError): execution_cases(path)
+
+
+def test_specialist_report_records_only_executed_cases(tmp_path):
+    from ci.specialist_evidence import execution_cases
+    path = tmp_path / "report.xml"
+    path.write_text('<testsuites><testsuite><testcase classname="tests_real_ha.test_acceptance" name="public_path"/><testcase name="skipped"><skipped/></testcase></testsuite></testsuites>')
+    assert execution_cases(path) == ["tests_real_ha.test_acceptance.public_path"]
+
+
+@pytest.mark.parametrize("workflow", SPECIALIST_CERTIFICATION_WORKFLOWS)
+def test_specialist_producer_emits_candidate_bound_executed_report(tmp_path, monkeypatch, workflow):
+    import sys
+    from ci import specialist_evidence as producer
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CANDIDATE_SHA", SOURCE)
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    monkeypatch.setattr(producer.subprocess, "check_output", lambda *a, **k: SOURCE)
+    if workflow == "haos-supervisor-vm-acceptance.yml":
+        report = tmp_path / "proof.json"
+        report.write_text(json.dumps({"candidate_sha": SOURCE, "provider_calls": 5, "tool_marker": "verified", "supervisor_core_restart": True, "supervisor_full_backup_restore_reboot": True}))
+        args = ["--haos-proof", str(report)]
+    else:
+        report = tmp_path / "tests.xml"
+        report.write_text('<testsuite>' + ''.join(f'<testcase classname="acceptance" name="{name}"/>' for name in producer.REQUIRED_SOURCES[workflow]) + '</testsuite>')
+        args = ["--report", str(report)]
+    monkeypatch.setattr(sys, "argv", ["producer", "--workflow", workflow, *args])
+    producer.main()
+    item = json.loads((tmp_path / "specialist-execution.json").read_text())
+    assert not producer.specialist_errors(item, workflow, SOURCE, {"id": 42, "run_attempt": 2})
+    assert producer.specialist_errors(item, workflow, PARENT, {"id": 42, "run_attempt": 2})
