@@ -6,12 +6,12 @@ Keep that compatibility localized without changing validators or exception types
 """
 
 from collections.abc import Callable
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import voluptuous as vol
 
-from homeassistant.components import websocket_api
-from homeassistant.components.websocket_api.const import WebSocketCommandHandler
+if TYPE_CHECKING:
+    from homeassistant.components.websocket_api.const import WebSocketCommandHandler
 
 
 class SchemaValidator(Protocol):
@@ -35,4 +35,6 @@ def websocket_command(
     schema: dict[Any, Any] | vol.All,
 ) -> Callable[[WebSocketCommandHandler], WebSocketCommandHandler]:
     """Retain HA's real compiler for commands using legacy schema markers."""
+    from homeassistant.components import websocket_api
+
     return websocket_api.websocket_command(cast(Any, schema))
