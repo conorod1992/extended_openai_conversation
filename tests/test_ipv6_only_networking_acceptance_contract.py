@@ -24,13 +24,14 @@ def test_ipv6_workflow_environment_keys_are_unique_ignoring_case() -> None:
         assert len(keys) == len(set(keys)), "Actions env keys ignore case"
 
 
-def test_ipv6_workflow_is_nightly_manual_only() -> None:
+def test_ipv6_workflow_is_nightly_manual_and_focused_pr() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     trigger_block = text.split("concurrency:", 1)[0]
 
     assert "schedule:" in trigger_block
     assert "workflow_dispatch:" in trigger_block
-    assert "pull_request:" not in trigger_block
+    assert "pull_request:" in trigger_block
+    assert '"ci/specialist_evidence.py"' in trigger_block
     assert "push:" not in trigger_block
     assert 'RUN_IPV6_ONLY_ACCEPTANCE: "1"' in text
     assert 'NO_PROXY: "::1,127.0.0.1,localhost"' in text

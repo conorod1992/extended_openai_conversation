@@ -1,6 +1,11 @@
 name: IPv6-only networking acceptance
 
 on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - ".github/workflows/ipv6-only-networking-acceptance.yml"
+      - "ci/specialist_evidence.py"
   schedule:
     - cron: "47 5 * * *"
   workflow_dispatch:
@@ -37,6 +42,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Trust container checkout for candidate verification
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Reconcile current stable test environment
         run: |

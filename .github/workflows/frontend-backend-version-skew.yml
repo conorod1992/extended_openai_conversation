@@ -1,6 +1,11 @@
 name: Frontend backend version-skew acceptance
 
 on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - ".github/workflows/frontend-backend-version-skew.yml"
+      - "ci/specialist_evidence.py"
   schedule:
     - cron: "53 4 * * *"
   workflow_dispatch:
