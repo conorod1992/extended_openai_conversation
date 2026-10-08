@@ -580,6 +580,28 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     (config_dir / _STATE_FILE).write_text(json.dumps(state), encoding="utf-8")
 
 
+async def _wait_for_active_checkpoint(
+    blocked: asyncio.Event, request_task: asyncio.Task[Any], *, timeout: float = 20
+) -> None:
+    """Expose an early conversation failure instead of masking it as a timeout."""
+    checkpoint_task = asyncio.create_task(blocked.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {checkpoint_task, request_task},
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if request_task in done:
+            result = await request_task
+            raise AssertionError(
+                f"published-release conversation completed before checkpoint: {result}"
+            )
+        assert checkpoint_task in done, "provider checkpoint timed out"
+    finally:
+        checkpoint_task.cancel()
+        await asyncio.gather(checkpoint_task, return_exceptions=True)
+
+
 async def _released_active_phase(hass: Any, config_dir: Path) -> None:
     """Hold genuine published-release work active until the controller stops it."""
     from homeassistant.components import conversation
@@ -629,8 +651,7 @@ async def _released_active_phase(hass: Any, config_dir: Path) -> None:
         )
     )
     try:
-        async with asyncio.timeout(20):
-            await wire.blocked.wait()
+        await _wait_for_active_checkpoint(wire.blocked, request_task)
         effects = _active_effects(config_dir)
         expected_effects = 1 if mode == "after_tool" else 0
         assert len(effects) == expected_effects, effects
@@ -906,7 +927,9 @@ def _run_active_upgrade_case(
     )
     try:
         checkpoint_path = config_dir / _ACTIVE_CHECKPOINT_FILE
-        for _ in range(400):
+        # Allow HA startup plus the child's 20-second provider deadline so
+        # genuine conversation failures reach the parent with their traceback.
+        for _ in range(1200):
             if checkpoint_path.exists():
                 break
             if active.poll() is not None:

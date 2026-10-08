@@ -131,6 +131,21 @@ jobs:
           npx playwright --version
           test -d "${PLAYWRIGHT_BROWSERS_PATH}"
 
+      - name: Build compatible runtime for the active published-release journey
+        if: steps.payloads.outputs.from_version == '6.8.3'
+        env:
+          HISTORICAL_RUNTIME_DIR: ${{ runner.temp }}/upgrade-released-runtime
+          HISTORICAL_MANIFEST: ${{ steps.payloads.outputs.from_component }}/manifest.json
+          HISTORICAL_RELEASE_TAG: ${{ steps.payloads.outputs.from_version }}
+          HISTORICAL_RELEASE_SHA: ${{ steps.payloads.outputs.from_sha }}
+          HISTORICAL_HA_VERSION: "2026.9.4"
+          HISTORICAL_BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ffmpeg libturbojpeg0
+          bash ci/prepare_historical_runtime.sh
+          echo "UPGRADE_RELEASED_PYTHON=$HISTORICAL_RUNTIME_DIR/bin/python" >> "$GITHUB_ENV"
+
       - name: Install requirements for both integration payloads
         env:
           FROM_COMPONENT: ${{ steps.payloads.outputs.from_component }}
