@@ -110,7 +110,7 @@ async def test_management_runtime_and_durable_state_reconcile(
 
     # Management and active runtime must describe the same configuration.
     assert agent_config.normalize_agent_config(config_ws["config"]) == (
-        agent_config.normalize_agent_config(subentry.data)
+        agent_config.normalize_agent_config(dict(subentry.data))
     )
 
     memory_id = memory_result["memory"]["memory_id"]

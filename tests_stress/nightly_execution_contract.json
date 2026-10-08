@@ -2142,7 +2142,49 @@
     "tests_stress/test_usage_retention_endurance.py::test_concurrent_usage_writes_survive_retention_jumps_and_reload",
     "tests_stress/test_usage_retention_endurance.py::test_mixed_foreground_failure_detached_summary_accounting_survives_prune_reload",
     "tests_stress/test_valid_configuration_transitions.py::test_generated_configuration_transitions_remain_live_and_reversible",
-    "tests_stress/test_voice_household_campaign.py::test_voice_household_scopes_survive_concurrency_mapping_edits_and_reload"
+    "tests_stress/test_voice_household_campaign.py::test_voice_household_scopes_survive_concurrency_mapping_edits_and_reload",
+    "tests/test_conversation_archive.py::test_archive_canonical_unicode_search_preserves_original_content[NFC]",
+    "tests/test_conversation_archive.py::test_archive_canonical_unicode_search_preserves_original_content[NFD]",
+    "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[last_activity_at-8]",
+    "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[last_message_at-2020-01-01T00:00:00+00:00]",
+    "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[last_message_at-not-a-date]",
+    "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[retention_state-unknown]",
+    "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[session_id-value0]",
+    "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[started_at-None]",
+    "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[title-value1]",
+    "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[turn_count-1]",
+    "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[turn_count-True]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[assistant_text-value3]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[run_id-value5]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[session_id-unknown]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[session_id-value1]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[successful-yes]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[timestamp-2026-08-01T00:00:00+00:00]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[timestamp-None]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[turn_id-value0]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[user_text-42]",
+    "tests/test_conversation_archive.py::test_loaded_private_session_cannot_retain_or_back_up_inconsistent_turns",
+    "tests/test_conversation_archive.py::test_record_repair_partition_failure_replays_durable_journal_without_partial_publication",
+    "tests_real_ha/test_adversarial_metamorphic_coexistence.py::test_disabled_unrelated_rule_is_behaviorally_inert",
+    "tests_real_ha/test_adversarial_metamorphic_coexistence.py::test_hostile_memory_text_does_not_cross_existing_owner_boundary",
+    "tests_real_ha/test_adversarial_metamorphic_coexistence.py::test_unrelated_knowledge_source_does_not_change_retrieval_eligibility",
+    "tests_real_ha/test_adversarial_metamorphic_coexistence.py::test_unrelated_service_owner_survives_eoai_unload_and_reload",
+    "tests_real_ha/test_ai_task_runtime.py::test_invalid_structured_task_is_controlled_and_next_task_recovers[{\"answer\":\"PRIVATE_TASK_INVALID\"}]",
+    "tests_real_ha/test_ai_task_runtime.py::test_invalid_structured_task_is_controlled_and_next_task_recovers[{}]",
+    "tests_real_ha/test_archive_private_activity.py::test_public_archive_privacy_resume_delete_survives_reload_and_preserves_other_session",
+    "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_frontend_treats_hostile_knowledge_and_memory_as_text",
+    "tests_real_ha/test_ha_semantic_contract.py::test_home_assistant_semantic_contracts_used_by_eoai",
+    "tests_real_ha/test_ha_semantic_contract.py::test_store_and_websocket_registration_contract_shapes",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_cancelled_event_wait_removes_listener_and_next_public_request_recovers",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_nested_repeat_condition_stop_matches_uninstrumented_native_script",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_parallel_branches_and_variables_match_native_script_with_event_barriers",
+    "tests_stress/test_cross_subsystem_reconciliation.py::test_management_runtime_and_durable_state_reconcile",
+    "tests_stress/test_cross_subsystem_state_machine.py::test_seeded_cross_subsystem_management_state_machine",
+    "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_knowledge_corpus_ignores_bad_and_duplicate_siblings",
+    "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_memory_corpus_preserves_valid_and_orphaned_records",
+    "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_request_rule_corpus_self_heals_without_losing_opaque_fields",
+    "tests_stress/test_environment_edge_contracts.py::test_sqlite_lock_deadline_then_recovery",
+    "tests_stress/test_environment_edge_contracts.py::test_unicode_filename_atomic_roundtrip_and_path_identity"
   ],
   "browser": {
     "browser": [
@@ -3137,7 +3179,8 @@
       "tests_stress/test_browser_management_contract.py",
       "tests_stress/test_browser_multi_tab.py",
       "tests_stress/test_generated_editor_journey.py",
-      "tests_stress/test_management_ws_contract.py"
+      "tests_stress/test_management_ws_contract.py",
+      "tests_real_ha/test_browser_backend_acceptance.py::test_shipped_frontend_treats_hostile_knowledge_and_memory_as_text"
     ],
     "browser-firefox": [
       "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py::test_cross_browser_state_handoff_survives_true_ha_restart[firefox]",
@@ -3179,7 +3222,10 @@
       "tests_stress/test_streaming_speech_endurance.py",
       "tests_stress/test_usage_retention_endurance.py",
       "tests_stress/test_valid_configuration_transitions.py",
-      "tests_real_ha/test_usage_period_statistics.py"
+      "tests_real_ha/test_usage_period_statistics.py",
+      "tests_real_ha/test_adversarial_metamorphic_coexistence.py",
+      "tests_stress/test_cross_subsystem_reconciliation.py",
+      "tests_stress/test_cross_subsystem_state_machine.py"
     ],
     "functions": [
       "tests/functions",
@@ -3208,7 +3254,8 @@
       "tests_stress/test_native_broadcast_authorization.py",
       "tests_stress/test_native_history_automation_lifecycle.py",
       "tests_stress/test_request_rules_provider_wire.py::test_function_execution_failure_stops_rule_independently_of_capture",
-      "tests_real_ha/test_ha_runtime_mutation.py"
+      "tests_real_ha/test_ha_runtime_mutation.py",
+      "tests_stress/test_environment_edge_contracts.py"
     ],
     "guest-security": [
       "tests_real_ha/test_management_authorization_matrix.py",
@@ -3250,7 +3297,8 @@
     ],
     "lifecycle-matrix": [
       "tests_real_ha/test_public_version_journeys.py",
-      "tests_stress/test_lifecycle_matrix.py"
+      "tests_stress/test_lifecycle_matrix.py",
+      "tests_real_ha/test_ha_semantic_contract.py"
     ],
     "long-lifetime": [
       "tests_stress/test_process_resource_soak.py",
@@ -3312,7 +3360,8 @@
       "tests_stress/test_published_downgrade_boundary.py",
       "tests_stress/test_restore_recovery_process.py",
       "tests_stress/test_restore_recovery_safety.py",
-      "tests_stress/test_store_structure_recovery.py"
+      "tests_stress/test_store_structure_recovery.py",
+      "tests_stress/test_dirty_legacy_state_corpus.py"
     ],
     "process-chaos": [
       "tests_real_ha/test_active_request_shutdown_recovery.py",
