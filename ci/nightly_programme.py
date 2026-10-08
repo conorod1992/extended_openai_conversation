@@ -84,11 +84,11 @@ def programme_errors(candidate_sha, stable_version, required, evidence, *, full_
     return errors
 
 
-def collect(actions, candidate_sha):
+def collect(actions, candidate_sha, *, validation_ref=None):
     evidence = {}
     for workflow in WORKFLOWS:
         workflow_id, runs = actions.workflow_runs(workflow, candidate_sha)
-        candidates = [run for run in runs if run.get("workflow_id") == workflow_id and run.get("head_sha") == candidate_sha and run.get("status") == "completed" and run.get("conclusion") == "success" and run.get("event") in {"push", "schedule", "workflow_dispatch"}]
+        candidates = [run for run in runs if run.get("workflow_id") == workflow_id and run.get("head_sha") == candidate_sha and run.get("status") == "completed" and run.get("conclusion") == "success" and run.get("event") in {"push", "schedule", "workflow_dispatch"} and (not validation_ref or run.get("head_branch") == validation_ref)]
         if not candidates:
             continue
         run = candidates[0]
@@ -172,11 +172,12 @@ def main():
     parser.add_argument("--candidate", required=True)
     parser.add_argument("--ha-version", required=True)
     parser.add_argument("--full-architecture", action="store_true")
+    parser.add_argument("--validation-ref")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     actions = GitHubActions(os.environ["GITHUB_REPOSITORY"], os.environ["GH_TOKEN"])
     try:
-        evidence = collect(actions, args.candidate)
+        evidence = collect(actions, args.candidate, validation_ref=args.validation_ref)
         errors = programme_errors(args.candidate, args.ha_version, WORKFLOWS, evidence, full_architecture=args.full_architecture)
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         evidence, errors = {}, [str(error)]

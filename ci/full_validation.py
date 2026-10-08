@@ -15,11 +15,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-
 # These workflows own their environments and test selection. Keep this list in
 # sync with test-bearing workflow_dispatch workflows; live API acceptance,
-# release publishing, image publishing, informational diagnostics, optional iOS
-# native diagnostics, and maintenance are separate from this validation run.
+# release publishing, image publishing, supplementary race amplification,
+# and maintenance are separate from this validation run.
 TEST_WORKFLOWS = (
     ("ci.yml", {}),
     ("frontend.yml", {}),
@@ -36,6 +35,9 @@ TEST_WORKFLOWS = (
     ("ipv6-only-networking-acceptance.yml", {}),
     ("ha-browser-compatibility.yml", {}),
     ("android-companion-app.yml", {}),
+    ("ios-companion-app.yml", {}),
+    ("mutation.yml", {"campaign": "all"}),
+    ("hacs.yaml", {}),
     ("frontend-latency-diagnostics.yml", {"runs": "3", "diagnostic_picker": "false"}),
     ("haos-supervisor-vm-acceptance.yml", {}),
     ("official-ha-container.yml", {}),
@@ -45,6 +47,7 @@ TEST_WORKFLOWS = (
     ("openai-sdk-compatibility.yml", {}),
     ("version-check.yml", {}),
 )
+CERTIFICATION_WORKFLOW = "nightly-programme.yml"
 
 API_URL = os.environ["GH_API_URL"].rstrip("/")
 REPOSITORY = os.environ["GH_REPOSITORY"]
@@ -87,7 +90,9 @@ def api(method: str, endpoint: str, payload: dict | None = None) -> dict:
 
 
 def wait_for_run(workflow: str, dispatched_at: datetime) -> dict:
-    query = urlencode({"branch": REF_NAME, "event": "workflow_dispatch", "per_page": 100})
+    query = urlencode(
+        {"branch": REF_NAME, "event": "workflow_dispatch", "per_page": 100}
+    )
     endpoint = f"actions/workflows/{workflow}/runs?{query}"
     cutoff = dispatched_at - timedelta(seconds=30)
     deadline = time.monotonic() + 180
@@ -122,27 +127,8 @@ def run_status(item: dict) -> tuple[dict, dict]:
     return item, run
 
 
-def main() -> int:
-    print(
-        f"Running {len(TEST_WORKFLOWS)} test workflows for {TARGET_SHA} "
-        f"on isolated ref {REF_NAME}; enhanced stress seed={STRESS_SEED}",
-        flush=True,
-    )
-    api(
-        "POST",
-        "git/refs",
-        {"ref": f"refs/heads/{REF_NAME}", "sha": TARGET_SHA},
-    )
-
-    launched: list[dict] = []
-    launch_errors: list[tuple[str, str]] = []
-    for workflow, inputs in TEST_WORKFLOWS:
-        try:
-            launched.append(dispatch(workflow, dict(inputs)))
-        except Exception as error:  # Continue so one unavailable lane doesn't hide others.
-            launch_errors.append((workflow, str(error)))
-            print(f"Could not dispatch {workflow}: {error}", file=sys.stderr, flush=True)
-
+def wait_for_workflows(launched: list[dict]) -> list[tuple[dict, dict]]:
+    """Wait for a cohort before dispatching any dependent certification."""
     pending = {item["run_id"]: item for item in launched}
     results: list[tuple[dict, dict]] = []
     with ThreadPoolExecutor(max_workers=min(16, max(1, len(pending)))) as pool:
@@ -157,7 +143,9 @@ def main() -> int:
                 try:
                     item, run = future.result(timeout=45)
                 except Exception as error:
-                    print(f"Status refresh failed: {error}", file=sys.stderr, flush=True)
+                    print(
+                        f"Status refresh failed: {error}", file=sys.stderr, flush=True
+                    )
                     item = pending[run_id]
                     status_errors[run_id] = status_errors.get(run_id, 0) + 1
                     if status_errors[run_id] >= 5:
@@ -184,6 +172,82 @@ def main() -> int:
                 pending.pop(run_id, None)
             if pending:
                 time.sleep(30)
+    return results
+
+
+def programme_inputs(results: list[tuple[dict, dict]]) -> dict[str, str]:
+    """Use the HA version actually certified by this cohort, never a new lookup."""
+    try:
+        from ci.release_certification import GitHubActions
+    except ModuleNotFoundError:
+        from release_certification import GitHubActions
+
+    item = next(
+        item for item, _ in results if item["workflow"] == "enhanced-stress.yml"
+    )
+    actions = GitHubActions(REPOSITORY, TOKEN)
+    indexes = [
+        artifact
+        for artifact in actions.run_artifacts(item["run_id"])
+        if artifact["name"].startswith("certification-index-")
+    ]
+    if (
+        len(indexes) != 1
+        or indexes[0].get("expired")
+        or indexes[0].get("size_in_bytes", 0) <= 0
+    ):
+        raise RuntimeError(
+            "Exactly one nonempty Enhanced certification index is required"
+        )
+    index = actions.artifact_json(indexes[0], "certification-final.json")
+    if (
+        index.get("passed") is not True
+        or index.get("candidate_sha") != TARGET_SHA
+        or index.get("selected") != "all"
+        or index.get("identity_errors")
+        or index.get("execution_errors")
+    ):
+        raise RuntimeError(
+            "Enhanced certification does not prove this complete candidate"
+        )
+    version = index.get("expected_stable_ha_version")
+    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise RuntimeError("Enhanced certification did not record a stable HA version")
+    return {
+        "candidate_sha": TARGET_SHA,
+        "ha_version": version,
+        "full_architecture": "true",
+        "validation_ref": REF_NAME,
+    }
+
+
+def main() -> int:
+    print(
+        f"Running {len(TEST_WORKFLOWS)} test workflows for {TARGET_SHA} "
+        f"on isolated ref {REF_NAME}; enhanced stress seed={STRESS_SEED}",
+        flush=True,
+    )
+    api("POST", "git/refs", {"ref": f"refs/heads/{REF_NAME}", "sha": TARGET_SHA})
+    launched: list[dict] = []
+    launch_errors: list[tuple[str, str]] = []
+    for workflow, inputs in TEST_WORKFLOWS:
+        try:
+            launched.append(dispatch(workflow, dict(inputs)))
+        except Exception as error:
+            launch_errors.append((workflow, str(error)))
+            print(
+                f"Could not dispatch {workflow}: {error}", file=sys.stderr, flush=True
+            )
+    results = wait_for_workflows(launched)
+    if not launch_errors and all(
+        run.get("conclusion") == "success" for _, run in results
+    ):
+        try:
+            certification = dispatch(CERTIFICATION_WORKFLOW, programme_inputs(results))
+            results.extend(wait_for_workflows([certification]))
+        except Exception as error:
+            launch_errors.append((CERTIFICATION_WORKFLOW, str(error)))
+            print(f"Could not certify programme: {error}", file=sys.stderr, flush=True)
 
     failures = [
         (item["workflow"], run.get("conclusion", "unknown"), item["url"])
@@ -198,19 +262,25 @@ def main() -> int:
         f"Commit: `{TARGET_SHA}`",
         f"Enhanced stress seed: `{STRESS_SEED}` (heavy)",
         f"Test workflows: {len(TEST_WORKFLOWS)}",
+        "Nightly programme certification runs after all test workflows succeed.",
         "Live OpenAI acceptance is intentionally separate because it calls paid external APIs.",
         "",
         "| Workflow | Result | Run |",
         "|---|---|---|",
     ]
     result_by_name = {item["workflow"]: (run, item) for item, run in results}
-    for workflow, _ in TEST_WORKFLOWS:
+    for workflow, _ in (*TEST_WORKFLOWS, (CERTIFICATION_WORKFLOW, {})):
         if workflow in result_by_name:
             run, item = result_by_name[workflow]
-            lines.append(f"| `{workflow}` | {run.get('conclusion')} | [view run]({item['url']}) |")
+            lines.append(
+                f"| `{workflow}` | {run.get('conclusion')} | [view run]({item['url']}) |"
+            )
         else:
-            error = next((message for name, message in launch_errors if name == workflow), "not reported")
-            lines.append(f"| `{workflow}` | dispatch failed | {error} |")
+            error = next(
+                (message for name, message in launch_errors if name == workflow),
+                "prerequisites did not all succeed",
+            )
+            lines.append(f"| `{workflow}` | not dispatched | {error} |")
     lines.extend(["", f"Temporary ref `{REF_NAME}` is removed by the cleanup job."])
     SUMMARY_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return 1 if failures else 0
