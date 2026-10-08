@@ -815,6 +815,7 @@ async def test_async_get_durable_usage_publishes_single_manager_before_initializ
     listeners = []
     hass = SimpleNamespace(
         data={},
+        config_entries=SimpleNamespace(async_get_entry=lambda _entry_id: None),
         bus=SimpleNamespace(async_listen_once=lambda *args: listeners.append(args)),
     )
 

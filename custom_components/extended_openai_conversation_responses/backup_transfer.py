@@ -26,6 +26,7 @@ from homeassistant.components import websocket_api
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_call_later
 
 from . import backup, transfer
 from .agent_maintenance import get_agent_maintenance_gate
@@ -51,6 +52,7 @@ _IMPORTS_KEY = f"{DOMAIN}.backup_transfer_imports"
 _REGISTRY_LOCK_KEY = f"{DOMAIN}.backup_transfer_registry_lock"
 _START_LOCK_KEY = f"{DOMAIN}.backup_transfer_start_lock"
 _WS_SETUP_KEY = f"{DOMAIN}.backup_transfer_ws_setup"
+_EXPIRY_CANCEL_KEY = f"{DOMAIN}.backup_transfer_expiry_cancel"
 _LATEST_PREVIEW_KEY = f"{DOMAIN}.backup_transfer_latest_previews"
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -171,6 +173,47 @@ async def _async_delete_sessions(
         raise cancellation
 
 
+def _schedule_expiry(hass: HomeAssistant) -> None:
+    """Maintain one cancellable deadline for the bounded transfer registry."""
+    if cancel := hass.data.pop(_EXPIRY_CANCEL_KEY, None):
+        cancel()
+    sessions: list[ExportSession | ImportSession] = [
+        *_exports(hass).values(),
+        *_imports(hass).values(),
+    ]
+    if not sessions:
+        return
+    delay = max(0, min(session.expires_at for session in sessions) - time.monotonic())
+
+    async def expire(_now: Any) -> None:
+        hass.data.pop(_EXPIRY_CANCEL_KEY, None)
+        await _async_cleanup_expired(hass)
+
+    hass.data[_EXPIRY_CANCEL_KEY] = async_call_later(hass, delay, expire)
+
+
+async def async_remove_agent_transfers(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> None:
+    """Erase staged private files for a permanently deleted assistant."""
+    removed: list[ExportSession | ImportSession] = []
+    async with _registry_lock(hass):
+        sessions: list[ExportSession | ImportSession] = [
+            *_exports(hass).values(),
+            *_imports(hass).values(),
+        ]
+        for session in sessions:
+            if (session.entry_id, session.subentry_id) == (entry_id, subentry_id):
+                if isinstance(session, ImportSession):
+                    _imports(hass).pop(session.session_id)
+                    _forget_preview(hass, session)
+                else:
+                    _exports(hass).pop(session.session_id)
+                removed.append(session)
+        _schedule_expiry(hass)
+    await _async_delete_sessions(hass, removed)
+
+
 async def _async_cleanup_expired(hass: HomeAssistant) -> None:
     """Discard abandoned transfer files without a perpetual cleanup task."""
     now = time.monotonic()
@@ -187,6 +230,7 @@ async def _async_cleanup_expired(hass: HomeAssistant) -> None:
                 expired.append(import_session)
                 imports.pop(import_session_id, None)
                 _forget_preview(hass, import_session)
+    _schedule_expiry(hass)
     await _async_delete_sessions(hass, expired)
 
 
@@ -601,6 +645,7 @@ async def _async_load_prepared_restore(
 async def _discard_export(hass: HomeAssistant, session_id: str) -> bool:
     async with _registry_lock(hass):
         session = _exports(hass).pop(session_id, None)
+        _schedule_expiry(hass)
     if session is None:
         return False
     await _async_delete_session_file(hass, session)
@@ -610,6 +655,7 @@ async def _discard_export(hass: HomeAssistant, session_id: str) -> bool:
 async def _discard_import(hass: HomeAssistant, session_id: str) -> bool:
     async with _registry_lock(hass):
         session = _imports(hass).pop(session_id, None)
+        _schedule_expiry(hass)
         if session is not None:
             _forget_preview(hass, session)
     if session is None:
@@ -681,6 +727,7 @@ async def _start_export(
                 # Existing sessions can only disappear while _start_lock is held;
                 # the earlier worst-case reservation therefore remains sufficient.
                 _exports(hass)[session_id] = session
+                _schedule_expiry(hass)
         except BaseException:
             await _async_remove_path(hass, session.path)
             raise
@@ -719,6 +766,7 @@ async def _export_chunk(
         if _exports(hass).get(session_id) is not session:
             raise backup.BackupError("The backup transfer has expired or was cancelled")
         session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+        _schedule_expiry(hass)
         chunk_count = math.ceil(session.size / BACKUP_CHUNK_BYTES)
         if index >= chunk_count:
             raise backup.BackupError("The backup chunk index is out of range")
@@ -798,6 +846,7 @@ async def _start_import(
         try:
             async with _registry_lock(hass):
                 _imports(hass)[session_id] = session
+                _schedule_expiry(hass)
         except BaseException:
             await _async_remove_path(hass, path)
             raise
@@ -842,6 +891,7 @@ async def _import_chunk(
                     "The backup upload has expired or was cancelled"
                 )
             session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+            _schedule_expiry(hass)
             if index != session.next_index:
                 raise backup.BackupError(
                     f"Expected backup chunk {session.next_index}, received {index}"
@@ -936,6 +986,7 @@ async def _inspect_import(
                 session.preview_sections = tuple(preview["selected_sections"])
                 session.preview_user_scope_mappings = None
                 session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+                _schedule_expiry(hass)
             token = None
         else:
             mapped = transfer.apply_user_scope_mappings(
@@ -964,6 +1015,7 @@ async def _inspect_import(
                     sorted(mapping_plan["resolved"].items())
                 )
                 session.expires_at = time.monotonic() + TRANSFER_TTL_SECONDS
+                _schedule_expiry(hass)
                 _latest_previews(hass)[(entry_id, subentry_id)] = (
                     session.session_id,
                     token,
@@ -1141,6 +1193,8 @@ async def _async_cleanup_all(hass: HomeAssistant) -> None:
         ]
         _exports(hass).clear()
         _imports(hass).clear()
+        _latest_previews(hass).clear()
+        _schedule_expiry(hass)
     await _async_delete_sessions(hass, sessions)
 
     from .transfer_staging import async_close_transfer_staging

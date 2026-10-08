@@ -50,6 +50,7 @@ TEST_PATHS=(
   tests_real_ha/test_template_shutdown_acceptance.py
   tests_real_ha/test_service_registry_acceptance.py
   tests_real_ha/test_script_function_variables.py
+  tests_real_ha/test_persistence_lifecycle_remediation.py
   tests_real_ha/test_usage_period_statistics.py
   tests_real_ha/test_user_ownership_privacy.py
   tests_real_ha/test_privacy_ownership_remediation.py
