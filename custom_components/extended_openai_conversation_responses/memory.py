@@ -158,6 +158,7 @@ class EmbeddingCacheEntry:
     model: str
     fingerprint: str
     vector: list[float]
+    space_id: str = ""
 
 
 @dataclass(slots=True)
@@ -275,6 +276,7 @@ class PersistentMemory:
         self._key_index: dict[tuple[str, str], str] = {}
         self._embedding_provider: EmbeddingProvider | None = None
         self._embedding_model = "default"
+        self._embedding_space_id = ""
         self._embedding_cache_storage = embedding_cache_storage
         self._embedding_cache: dict[str, EmbeddingCacheEntry] = {}
         self._embedding_cache_dirty = False
@@ -369,15 +371,24 @@ class PersistentMemory:
                 raise
 
     def set_embedding_provider(
-        self, provider: EmbeddingProvider | None, model: str = "default"
+        self,
+        provider: EmbeddingProvider | None,
+        model: str = "default",
+        *,
+        space_id: str = "",
     ) -> None:
         """Configure the optional provider used only by hybrid retrieval."""
         # Unchanged live configuration must preserve diagnostics and avoid prewarming.
-        if self._embedding_provider == provider and self._embedding_model == model:
+        if (
+            self._embedding_provider == provider
+            and self._embedding_model == model
+            and self._embedding_space_id == space_id
+        ):
             return
         model = str(model).strip() or "default"
         self._embedding_provider = provider
         self._embedding_model = model
+        self._embedding_space_id = space_id
         self._set_hybrid_status(
             "ready" if provider is not None else "lexical_fallback",
             None if provider is not None else "provider_not_configured",
@@ -1154,6 +1165,7 @@ class PersistentMemory:
                     model=entry.model,
                     fingerprint=entry.fingerprint,
                     vector=list(entry.vector),
+                    space_id=entry.space_id,
                 )
                 for memory_id, entry in self._embedding_cache.items()
             },
@@ -1169,6 +1181,7 @@ class PersistentMemory:
                 model=entry.model,
                 fingerprint=entry.fingerprint,
                 vector=list(entry.vector),
+                space_id=entry.space_id,
             )
             for memory_id, entry in snapshot.embedding_cache.items()
         }
@@ -1179,6 +1192,7 @@ class PersistentMemory:
         if provider is None:
             return False
         model = self._embedding_model
+        space_id = self._embedding_space_id
         allowed_scopes = set(scope_ids)
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
@@ -1200,6 +1214,7 @@ class PersistentMemory:
                 if (
                     self._embedding_provider is not provider
                     or self._embedding_model != model
+                    or self._embedding_space_id != space_id
                 ):
                     return False
                 for memory, vector in zip(batch, vectors, strict=True):
@@ -1213,6 +1228,7 @@ class PersistentMemory:
                         continue
                     self._embedding_cache[memory.memory_id] = EmbeddingCacheEntry(
                         model=model,
+                        space_id=space_id,
                         fingerprint=_embedding_fingerprint(memory),
                         vector=_clean_embedding(vector),
                     )
@@ -1279,6 +1295,7 @@ class PersistentMemory:
         if (
             entry is None
             or entry.model != self._embedding_model
+            or entry.space_id != self._embedding_space_id
             or entry.fingerprint != _embedding_fingerprint(memory)
         ):
             return None
@@ -1308,6 +1325,9 @@ class PersistentMemory:
                 self._embedding_cache[memory_id] = EmbeddingCacheEntry(
                     model=model,
                     fingerprint=fingerprint,
+                    space_id=raw.get("space_id", "")
+                    if isinstance(raw.get("space_id", ""), str)
+                    else "",
                     vector=_clean_embedding(raw.get("vector")),
                 )
         except Exception as err:

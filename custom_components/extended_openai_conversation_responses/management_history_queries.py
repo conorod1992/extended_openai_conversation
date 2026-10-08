@@ -141,7 +141,8 @@ def usage_runs_page(
     matching = (
         run
         for run in reversed(manager.runs)
-        if successful is None or run.successful == successful
+        if manager.detail_is_current(run.started_at)
+        and (successful is None or run.successful == successful)
     )
     page, has_more = page_from_iterable(matching, offset=safe_offset, limit=safe_limit)
     runs = [asdict(run) for run in page]
@@ -166,7 +167,12 @@ def usage_requests_page(
     """Page one run's requests without first copying every matching request."""
     safe_limit = max(1, min(int(limit), MANAGEMENT_USAGE_PAGE_MAX))
     safe_offset = max(0, int(offset))
-    matching = (request for request in manager.requests if request.run_id == run_id)
+    matching = (
+        request
+        for request in manager.requests
+        if request.run_id == run_id
+        and manager.detail_is_current(request.timestamp, request=True)
+    )
     page, has_more = page_from_iterable(matching, offset=safe_offset, limit=safe_limit)
     requests: list[dict[str, Any]] = []
     for request in page:

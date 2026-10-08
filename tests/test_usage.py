@@ -786,6 +786,7 @@ def test_time_day_and_merge_helpers_cover_edge_cases() -> None:
 
 
 async def test_async_get_durable_usage_publishes_single_manager_before_initialization(monkeypatch) -> None:
+    monkeypatch.setattr(usage, "async_track_time_interval", lambda *args: lambda: None)
     created = []
 
     class FakeStore(CoverageMemoryStorage):

@@ -5,20 +5,27 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+import hashlib
+import json
 import logging
 from typing import Any
 
 from .const import (
+    CONF_API_PROVIDER,
+    CONF_API_VERSION,
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
+    CONF_BASE_URL,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_EMBEDDING_MODEL,
     CONF_MEMORY_RETRIEVAL_MODE,
     CONF_TEMPORARY_MEMORY,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
+    DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
+    DEFAULT_CONF_BASE_URL,
     DEFAULT_KNOWLEDGE_ENABLED,
     DEFAULT_MEMORY_EMBEDDING_MODEL,
     DEFAULT_MEMORY_RETRIEVAL_MODE,
@@ -64,7 +71,24 @@ def sync_memory_embedding_provider(entity: Any) -> None:
         options.get(CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE)
         == MEMORY_RETRIEVAL_HYBRID
     ):
-        setter(MemoryEmbeddingProvider(entity._async_create_embeddings, model), model)
+        entry_data = getattr(entity.entry, "data", {})
+        # Persist only an opaque identity, never credentials or endpoint text.
+        space_id = hashlib.sha256(
+            json.dumps(
+                {
+                    "provider": entry_data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+                    "endpoint": entry_data.get(CONF_BASE_URL, DEFAULT_CONF_BASE_URL),
+                    "api_version": entry_data.get(CONF_API_VERSION),
+                    "model": model,
+                },
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        setter(
+            MemoryEmbeddingProvider(entity._async_create_embeddings, model),
+            model,
+            space_id=space_id,
+        )
     else:
         # The manager is shared per agent and can outlive one entity instance. Clear
         # a provider left by a previous Hybrid configuration/entity when Lexical is

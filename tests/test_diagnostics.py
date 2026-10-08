@@ -240,8 +240,9 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
     dependencies.archive.async_prune.assert_awaited_once_with(21)
     assert dependencies.memory.set_embedding_provider.call_count == 2
     dependencies.memory.set_embedding_provider.assert_called_with(
-        MemoryEmbeddingProvider(entity._async_create_embeddings, "text-embedding-test"), "text-embedding-test"
+        MemoryEmbeddingProvider(entity._async_create_embeddings, "text-embedding-test"), "text-embedding-test", space_id=dependencies.memory.set_embedding_provider.call_args.kwargs["space_id"]
     )
+    assert len(dependencies.memory.set_embedding_provider.call_args.kwargs["space_id"]) == 64
     statuses = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent")]
     assert statuses == {
         "temporary_memory": {"configured": True, "status": "healthy"},

@@ -21,3 +21,23 @@ assert.doesNotMatch(source, /_call\("configuration", "get"\)/);
 assert.doesNotMatch(source, /_call\("configuration", "validate"/);
 assert.doesNotMatch(source, /_loadAgents\(panel\._agentId\)/);
 assert.doesNotMatch(source, /_loadSection\(true\)/);
+
+const {bindKnowledgeAvailability} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-knowledge-feature.js");
+{
+  let change;
+  const input={checked:false, addEventListener:(_,handler)=>{change=handler;}};
+  const panel={_agentId:"one", _loadToken:1, _viewKey:()=>"data-memory/knowledge",
+    shadowRoot:{querySelector:()=>input}, _configData:{config:{prompt:"saved",knowledge_enabled:true},revision:"old"},
+    _draft:{prompt:"unsaved",knowledge_enabled:true}, _draftTitle:"Unsaved name", _draftAgentId:"one", _configDirty:true,
+    _call:async()=>({knowledge_enabled:false,revision:"new"}), _selectedAgent:()=>({}), _render:()=>{}, _toast:()=>{},
+    _clearConfigDraft(){this._draft=null;this._configDirty=false;}, _syncConfigDirty(){}
+  };
+  bindKnowledgeAvailability(panel);
+  await change();
+  assert.equal(panel._draft?.prompt,"unsaved");
+  assert.equal(panel._draftTitle,"Unsaved name");
+  assert.equal(panel._draft.knowledge_enabled,false);
+  assert.equal(panel._configData.config.knowledge_enabled,false);
+  assert.equal(panel._configData.revision,"new");
+  assert.equal(panel._configDirty,true);
+}

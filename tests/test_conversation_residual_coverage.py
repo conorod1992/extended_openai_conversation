@@ -200,6 +200,7 @@ async def test_embedding_and_temporary_retrieval_success_paths() -> None:
     )
     agent = _agent(data={conversation_module.CONF_MEMORY_EMBEDDING_MODEL: "embed-v1"})
     agent._client = SimpleNamespace(embeddings=embeddings)
+    agent._usage = None
 
     assert await Agent._async_create_embeddings(agent, ["one", "two"]) == [
         [0.1, 0.2],

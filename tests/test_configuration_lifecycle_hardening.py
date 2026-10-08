@@ -66,6 +66,7 @@ class FakeEntity:
 
     def __init__(self, memory: PersistentMemory, mode: str, model: str) -> None:
         self._memory = memory
+        self.entry = SimpleNamespace(data={})
         self.subentry = SimpleNamespace(
             data={
                 CONF_MEMORY_RETRIEVAL_MODE: mode,
