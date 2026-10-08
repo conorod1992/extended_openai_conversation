@@ -73,6 +73,7 @@ from .const import (
     SERVICE_RELOAD_SKILLS,
 )
 from .guest_mode import async_get_guest_mode
+from .ha_schema import schema_for_ha
 from .ha_tool_result_compat import tool_result_data
 from .helpers import get_api_mode, get_authenticated_client
 from .live_subentry_updates import update_live_subentry
@@ -947,100 +948,100 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         DOMAIN,
         SERVICE_PROCESS,
         process,
-        schema=PROCESS_SCHEMA,
+        schema=schema_for_ha(PROCESS_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_CALL_FUNCTION,
         call_function,
-        schema=CALL_FUNCTION_SCHEMA,
+        schema=schema_for_ha(CALL_FUNCTION_SCHEMA),
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_QUERY_IMAGE,
         query_image,
-        schema=QUERY_IMAGE_SCHEMA,
+        schema=schema_for_ha(QUERY_IMAGE_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
         "change_config",
         change_config,
-        schema=CHANGE_CONFIG_SCHEMA,
+        schema=schema_for_ha(CHANGE_CONFIG_SCHEMA),
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_RELOAD_SKILLS,
         reload_skills,
-        schema=RELOAD_SKILLS_SCHEMA,
+        schema=schema_for_ha(RELOAD_SKILLS_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_DOWNLOAD_SKILL,
         download_skill,
-        schema=DOWNLOAD_SKILL_SCHEMA,
+        schema=schema_for_ha(DOWNLOAD_SKILL_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_MEMORY_LIST,
         memory_list,
-        schema=MEMORY_LIST_SCHEMA,
+        schema=schema_for_ha(MEMORY_LIST_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_MEMORY_DELETE,
         memory_delete,
-        schema=MEMORY_DELETE_SCHEMA,
+        schema=schema_for_ha(MEMORY_DELETE_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_MEMORY_CLEAR,
         memory_clear,
-        schema=MEMORY_CLEAR_SCHEMA,
+        schema=schema_for_ha(MEMORY_CLEAR_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_ENABLE_FUNCTION_TOOLS,
         enable_function_tools,
-        schema=FUNCTION_TOOL_STATE_SCHEMA,
+        schema=schema_for_ha(FUNCTION_TOOL_STATE_SCHEMA),
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_DISABLE_FUNCTION_TOOLS,
         disable_function_tools,
-        schema=FUNCTION_TOOL_STATE_SCHEMA,
+        schema=schema_for_ha(FUNCTION_TOOL_STATE_SCHEMA),
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_ENABLE_FUNCTION_GROUPS,
         enable_function_groups,
-        schema=FUNCTION_GROUP_STATE_SCHEMA,
+        schema=schema_for_ha(FUNCTION_GROUP_STATE_SCHEMA),
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_DISABLE_FUNCTION_GROUPS,
         disable_function_groups,
-        schema=FUNCTION_GROUP_STATE_SCHEMA,
+        schema=schema_for_ha(FUNCTION_GROUP_STATE_SCHEMA),
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_GUEST_MODE_UPDATE,
         guest_mode_update,
-        schema=GUEST_MODE_UPDATE_SCHEMA,
+        schema=schema_for_ha(GUEST_MODE_UPDATE_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_GUEST_MODE_DISABLE,
         guest_mode_disable,
-        schema=GUEST_MODE_DISABLE_SCHEMA,
+        schema=schema_for_ha(GUEST_MODE_DISABLE_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
 

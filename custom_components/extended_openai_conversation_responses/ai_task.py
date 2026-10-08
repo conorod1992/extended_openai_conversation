@@ -10,7 +10,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from openai import OpenAIError
-import voluptuous as vol
 
 from homeassistant.components import ai_task, conversation
 from homeassistant.components.ai_task.const import DEFAULT_SYSTEM_PROMPT
@@ -28,6 +27,7 @@ from .entity import (
     _serialize_structured_output,
 )
 from .ha_llm_tools import ToolSnapshot, caller_api_tools, tool_snapshot_scope
+from .ha_schema import SchemaValidator
 from .provider_errors import log_provider_failure, request_reauthentication
 from .schema_errors import SCHEMA_ERRORS
 
@@ -148,7 +148,7 @@ def _omit_optional_nulls(data: Any, schema: dict[str, Any]) -> Any:
 
 def parse_ai_task_structured_response(
     text: str,
-    structure: vol.Schema | None = None,
+    structure: SchemaValidator | None = None,
     *,
     original_schema: dict[str, Any] | None = None,
 ) -> Any:
@@ -163,7 +163,7 @@ def parse_ai_task_structured_response(
     return _validate_structured_response(data, structure)
 
 
-def _validate_structured_response(data: Any, structure: vol.Schema | None) -> Any:
+def _validate_structured_response(data: Any, structure: SchemaValidator | None) -> Any:
     """Keep the caller's authoritative HA validation on the event loop."""
     if structure is not None:
         try:

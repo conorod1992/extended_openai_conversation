@@ -19,6 +19,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
 from .const import CONF_CHAT_MODEL, CONF_REASONING_EFFORT, DEFAULT_CHAT_MODEL, DOMAIN
+from .ha_schema import websocket_command as ha_websocket_command
 from .model_capabilities import frontend_capabilities
 from .model_catalog import (
     BUNDLED_CATALOG,
@@ -522,7 +523,7 @@ class ModelCatalogManager:
             return self.status()
 
 
-@websocket_api.websocket_command(
+@ha_websocket_command(
     {
         vol.Required("type"): WS_CATALOG,
         vol.Optional("action", default="lookup"): vol.In(
