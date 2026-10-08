@@ -1,3 +1,4 @@
+import {readOptionalStorage, writeOptionalStorage} from "./browser-storage.js";
 import {DEBUG_PROVIDER_PAGE_LIMIT, debugPageText, providerPageLabel, providerPageMeta, sessionLabel} from "./debug-management.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/request_debug";
@@ -14,6 +15,10 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     this._loading = false;
     this._error = "";
     this._toastTimer = null;
+    this._revision = 0;
+    this._readToken = 0;
+    this._agentLoadToken = 0;
+    this._mutationTail = Promise.resolve();
   }
 
   set hass(value) {
@@ -32,75 +37,111 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
       .replaceAll("'", "&#039;");
   }
 
-  async _call(action, extra = {}) {
+  async _call(action, extra = {}, agent = this._agent) {
     return await this._hass.callWS({
       type: WS_TYPE,
       action,
-      ...(this._agent ? {
-        entry_id: this._agent.entry_id,
-        subentry_id: this._agent.subentry_id,
+      ...(agent ? {
+        entry_id: agent.entry_id,
+        subentry_id: agent.subentry_id,
       } : {}),
       ...extra,
     });
   }
 
+  disconnectedCallback() {
+    this._revision++;
+    this._agentLoadToken++;
+    this._readToken++;
+    this._eocDebugRunLoadToken = (this._eocDebugRunLoadToken || 0) + 1;
+    this._cancelClear?.();
+    clearTimeout(this._toastTimer);
+  }
+
   async _loadAgents() {
+    const token = ++this._agentLoadToken;
+    const revision = this._revision;
     this._loading = true;
     this._render();
     try {
       const result = await this._call("agents");
+      if (token !== this._agentLoadToken || revision !== this._revision) return;
       this._agents = result.agents || [];
       const saved = (this.hasAttribute("embedded") && this._managementAgentId)
-        || localStorage.getItem("extended-openai-debug-agent");
-      this._agent = this._agents.find((item) => item.subentry_id === saved)
-        || this._agents[0]
-        || null;
-      if (this._agent) {
-        localStorage.setItem("extended-openai-debug-agent", this._agent.subentry_id);
-        await this._loadRuns();
-      }
+        || readOptionalStorage("extended-openai-debug-agent");
+      const agent = this._agents.find(item => item.subentry_id === saved) || this._agents[0];
+      if (agent) await this._selectAgent(agent.subentry_id);
+      else { this._agent = null; this._status = null; this._runs = []; }
+    } catch (err) {
+      if (token === this._agentLoadToken && revision === this._revision) this._error = err.message || String(err);
+    } finally {
+      if (token === this._agentLoadToken && revision === this._revision) { this._loading = false; this._render(); }
+    }
+  }
+
+  async _fetchRuns(agent, revision) {
+    const token = ++this._readToken;
+    const current = () => token === this._readToken && revision === this._revision && agent === this._agent;
+    try {
+      const result = await this._call("runs", {}, agent);
+      if (!current()) return;
+      this._status = result;
+      this._runs = result.runs || [];
       this._error = "";
     } catch (err) {
-      this._error = err.message || String(err);
+      if (current()) this._error = err.message || String(err);
     } finally {
-      this._loading = false;
-      this._render();
+      if (current()) { this._loading = false; this._render(); }
     }
   }
 
   async _loadRuns() {
-    if (!this._agent) return;
-    const result = await this._call("runs");
-    this._status = result;
-    this._runs = result.runs || [];
+    const agent = this._agent;
+    const revision = this._revision;
+    if (!agent) return;
+    await this._mutationTail;
+    if (agent === this._agent && revision === this._revision) await this._fetchRuns(agent, revision);
   }
 
   async _selectAgent(subentryId) {
-    this._agent = this._agents.find((item) => item.subentry_id === subentryId) || null;
-    if (!this._agent) return;
-    localStorage.setItem("extended-openai-debug-agent", this._agent.subentry_id);
+    this._revision++;
+    this._eocDebugRunLoadToken = (this._eocDebugRunLoadToken || 0) + 1;
+    this._cancelClear?.();
+    this._agent = this._agents.find(item => item.subentry_id === subentryId) || null;
+    this._status = null;
+    this._runs = [];
+    this._error = "";
+    if (!this._agent) { this._loading = false; this._render(); return; }
+    writeOptionalStorage("extended-openai-debug-agent", this._agent.subentry_id);
     this._loading = true;
     this._render();
-    try {
-      await this._loadRuns();
-      this._error = "";
-    } catch (err) {
-      this._error = err.message || String(err);
-    } finally {
-      this._loading = false;
-      this._render();
-    }
+    await this._loadRuns();
+  }
+
+  _mutate(action, extra, agent = this._agent) {
+    if (!agent) return Promise.resolve();
+    const revision = ++this._revision;
+    const current = () => revision === this._revision && agent === this._agent;
+    const operation = this._mutationTail.then(async () => {
+      try {
+        const result = await this._call(action, extra, agent);
+        if (current()) {
+          await this._fetchRuns(agent, revision);
+          if (current()) this._toast(action === "clear" ? "Debug captures cleared" : result.enabled ? "Request debugging enabled" : "Request debugging disabled");
+        }
+      } catch (err) {
+        if (current()) {
+          await this._fetchRuns(agent, revision);
+          if (current()) this._toast(`Unable to update debugging: ${err.message || String(err)}`, true);
+        }
+      }
+    });
+    this._mutationTail = operation.catch(() => {});
+    return operation;
   }
 
   async _configure(extra) {
-    try {
-      this._status = await this._call("configure", extra);
-      await this._loadRuns();
-      this._render();
-      this._toast(this._status.enabled ? "Request debugging enabled" : "Request debugging disabled");
-    } catch (err) {
-      this._toast(`Unable to update debugging: ${err.message || String(err)}`, true);
-    }
+    await this._mutate("configure", extra);
   }
 
   _confirmClear() {
@@ -110,12 +151,14 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     if (!dialog || !cancel || !accept) return Promise.resolve(false);
     return new Promise((resolve) => {
       const finish = (value) => {
+        this._cancelClear = null;
         cancel.onclick = null;
         accept.onclick = null;
         dialog.oncancel = null;
         if (dialog.open) dialog.close();
         resolve(value);
       };
+      this._cancelClear = () => finish(false);
       cancel.onclick = () => finish(false);
       accept.onclick = () => finish(true);
       dialog.oncancel = (event) => { event.preventDefault(); finish(false); };
@@ -125,15 +168,10 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _clear() {
-    if (!await this._confirmClear()) return;
-    try {
-      await this._call("clear", {confirm: true});
-      await this._loadRuns();
-      this._render();
-      this._toast("Debug captures cleared");
-    } catch (err) {
-      this._toast(`Unable to clear debug captures: ${err.message || String(err)}`, true);
-    }
+    const agent = this._agent;
+    const revision = this._revision;
+    if (!await this._confirmClear() || agent !== this._agent || revision !== this._revision) return;
+    await this._mutate("clear", {confirm: true}, agent);
   }
 
   async _getRun(debugId, providerOffset = 0) {
@@ -154,6 +192,8 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     const previous = this.shadowRoot.querySelector("#debug-provider-previous");
     const next = this.shadowRoot.querySelector("#debug-provider-next");
     const status = this.shadowRoot.querySelector("#debug-provider-status");
+    const agent = this._agent;
+    const revision = this._revision;
     const token = (this._eocDebugRunLoadToken || 0) + 1;
     this._eocDebugRunLoadToken = token;
     this._eocDebugId = debugId;
@@ -166,7 +206,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     if (!dialog.open) dialog.showModal();
     try {
       const result = await this._getRun(debugId, providerOffset);
-      if (this._eocDebugRunLoadToken !== token || !dialog.open) return;
+      if (this._eocDebugRunLoadToken !== token || !dialog.open || agent !== this._agent || revision !== this._revision) return;
       const trace = result.trace || {};
       const meta = providerPageMeta(trace);
       const text = this.hasAttribute("embedded") ? debugPageText(trace) : result.copy_text;
@@ -188,7 +228,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
         next.dataset.offset = String(meta.next_offset ?? (this._eocDebugProviderOffset + (Number(meta.returned) || 0)));
       }
     } catch (err) {
-      if (this._eocDebugRunLoadToken !== token || !dialog.open) return;
+      if (this._eocDebugRunLoadToken !== token || !dialog.open || agent !== this._agent || revision !== this._revision) return;
       title.textContent = "Unable to load debug run";
       body.textContent = err.message || String(err);
       if (status) status.textContent = "";
@@ -303,6 +343,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
 
   _render() {
     if (!this.shadowRoot) return;
+    this._cancelClear?.();
     const embedded = this.hasAttribute("embedded");
     const status = this._status || {enabled:false,limit:10,count:0,allowed_limits:[5,10,25,50]};
     const agentOptions = this._agents.map((agent) => `<option value="${this._e(agent.subentry_id)}" ${agent.subentry_id === this._agent?.subentry_id ? "selected" : ""}>${this._e(agent.title)}</option>`).join("");
