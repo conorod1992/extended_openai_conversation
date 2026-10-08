@@ -12,6 +12,11 @@ on:
         type: string
         required: true
 
+      full_architecture:
+        description: Require both official Container architecture lanes
+        type: boolean
+        default: false
+
 permissions:
   contents: read
   actions: read
@@ -27,8 +32,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FULL_ARCHITECTURE: ${{ inputs.full_architecture }}
           HA_VERSION: ${{ inputs.ha_version }}
-        run: python -m ci.nightly_programme --candidate "$CANDIDATE_SHA" --ha-version "$HA_VERSION" --output nightly-programme.json
+        run: |
+          args=()
+          if [[ "$FULL_ARCHITECTURE" == "true" ]]; then args+=(--full-architecture); fi
+          python -m ci.nightly_programme --candidate "$CANDIDATE_SHA" --ha-version "$HA_VERSION" --output nightly-programme.json "${args[@]}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

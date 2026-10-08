@@ -14,6 +14,7 @@ from ci.release_certification import (
     HEAVY_CAMPAIGNS,
     MUTATION_CAMPAIGNS,
     REQUIRED_WORKFLOWS,
+    SPECIALIST_CERTIFICATION_WORKFLOWS,
     SUPPORTED_SDK_LANES,
     UPGRADE_EPOCHS,
     GitHubActions,
@@ -21,10 +22,12 @@ from ci.release_certification import (
     official_container_errors,
 )
 
+from ci.specialist_evidence import collect_specialist, specialist_errors
+
 WORKFLOWS = REQUIRED_WORKFLOWS
 
 
-def programme_errors(candidate_sha, stable_version, required, evidence):
+def programme_errors(candidate_sha, stable_version, required, evidence, *, full_architecture=False):
     """Reject missing workflows, stale candidates and independently drifting HA."""
     errors = []
     if not valid_sha(candidate_sha) or not stable_version:
@@ -45,17 +48,19 @@ def programme_errors(candidate_sha, stable_version, required, evidence):
                     errors.append("Isolated runtime candidate/environment/result differs")
                 if set(proof.get("phases", [])) != {"seed", "recover", "recover-recorder-first", "recover-provider-first", "auth"}:
                     errors.append("Isolated runtime cold-start evidence is incomplete")
+        if workflow in SPECIALIST_CERTIFICATION_WORKFLOWS:
+            errors += specialist_errors(row.get("specialist", {}), workflow, candidate_sha, run)
         if workflow == "official-ha-container.yml":
-            proof = row.get("official")
-            if not isinstance(proof, dict):
-                errors.append("Official HA Container evidence is missing")
+            proofs = row.get("official", {})
+            expected = {"amd64", "arm64"} if full_architecture else {"amd64"}
+            if not isinstance(proofs, dict) or not expected <= set(proofs) or set(proofs) - {"amd64", "arm64"}:
+                errors.append("Official HA Container architecture evidence is missing")
             else:
-                errors += [
-                    f"{workflow}: {error}"
-                    for error in official_container_errors(proof, candidate_sha)
-                ]
-                if proof.get("homeassistant") != stable_version:
-                    errors.append("Official HA Container did not exercise resolved stable HA")
+                for arch, proof in proofs.items():
+                    errors += [f"{workflow}/{arch}: {error}" for error in official_container_errors(
+                        proof, candidate_sha, expected_machine="x86_64" if arch == "amd64" else "aarch64", expected_image_arch=arch)]
+                    if proof.get("homeassistant") != stable_version:
+                        errors.append("Official HA Container did not exercise resolved stable HA")
         for envelope in row.get("envelopes", []):
             if envelope.get("status") != "success":
                 errors.append(f"{workflow}: unsuccessful evidence envelope")
@@ -90,7 +95,8 @@ def collect(actions, candidate_sha):
         artifacts = actions.run_artifacts(run["id"])
         envelopes = []
         isolated = []
-        official = None
+        official = {}
+        specialist = None
         if workflow == "mutation.yml":
             jobs = actions.run_jobs(run["id"])
             successful = {
@@ -138,20 +144,25 @@ def collect(actions, candidate_sha):
                 if len(selected) != 1:
                     raise RuntimeError(f"Missing isolated runtime evidence for {architecture}")
                 isolated.append(actions.artifact_json(selected[0], "certification.json"))
+        if workflow in SPECIALIST_CERTIFICATION_WORKFLOWS:
+            specialist = collect_specialist(actions, artifacts, actions.run_jobs(run["id"]), workflow, candidate_sha, run)
         if workflow == "official-ha-container.yml":
-            selected = [
-                artifact
-                for artifact in artifacts
-                if artifact["name"] == "official-ha-container-evidence"
-            ]
-            if len(selected) != 1:
-                raise RuntimeError("Missing official HA Container evidence")
-            official = actions.artifact_json(selected[0], "certification.json")
+            jobs = actions.run_jobs(run["id"])
+            for arch in ("amd64", "arm64"):
+                selected = [artifact for artifact in artifacts if artifact["name"] == f"official-ha-container-{arch}-evidence"]
+                if arch == "arm64" and not selected:
+                    continue
+                if len(selected) != 1 or selected[0].get("expired") or selected[0].get("size_in_bytes", 1) <= 0:
+                    raise RuntimeError(f"Missing official HA Container evidence for {arch}")
+                if not any(job.get("name") == f"Official HA Container runtime ({arch})" and job.get("conclusion") == "success" for job in jobs):
+                    raise RuntimeError(f"Official HA Container {arch} job did not succeed")
+                official[arch] = actions.artifact_json(selected[0], "certification.json")
         evidence[workflow] = {
             "run": run,
             "envelopes": envelopes,
             "isolated": isolated,
             "official": official,
+            "specialist": specialist,
         }
     return evidence
 
@@ -160,12 +171,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", required=True)
     parser.add_argument("--ha-version", required=True)
+    parser.add_argument("--full-architecture", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     actions = GitHubActions(os.environ["GITHUB_REPOSITORY"], os.environ["GH_TOKEN"])
     try:
         evidence = collect(actions, args.candidate)
-        errors = programme_errors(args.candidate, args.ha_version, WORKFLOWS, evidence)
+        errors = programme_errors(args.candidate, args.ha_version, WORKFLOWS, evidence, full_architecture=args.full_architecture)
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         evidence, errors = {}, [str(error)]
     args.output.write_text(json.dumps({"candidate_sha": args.candidate, "ha_version": args.ha_version, "passed": not errors, "errors": errors, "workflows": evidence}, indent=2) + "\n", encoding="utf-8")

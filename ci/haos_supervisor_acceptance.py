@@ -794,7 +794,7 @@ async def _run(args: argparse.Namespace) -> None:
         assert deleted.get("result") == "ok", deleted
 
     evidence = {
-        "candidate_sha": os.environ.get("GITHUB_SHA"),
+        "candidate_sha": os.environ.get("CANDIDATE_SHA", os.environ.get("GITHUB_SHA")),
         "installation_type": installation["installation_type"],
         "haos": os_info,
         "supervisor": supervisor_info,

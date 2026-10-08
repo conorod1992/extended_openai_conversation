@@ -15,6 +15,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+# Imported helpers are also used by a standalone historical HA child.
+if os.environ.get("HACS_ACCEPTANCE_CHILD_PHASE"):
+    os.environ.setdefault("UPGRADE_ACCEPTANCE_CHILD_PHASE", "hacs-helper")
+
 from tests_real_ha import test_release_upgrade_acceptance as upgrade_helpers
 
 DOMAIN = "extended_openai_conversation_responses"
@@ -407,8 +411,13 @@ def _run_child(config_dir: Path, phase: str) -> subprocess.CompletedProcess[str]
         roots.extend(existing.split(os.pathsep))
     env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(roots))
 
+    interpreter = (
+        os.environ.get("HACS_ACCEPTANCE_RELEASED_PYTHON", sys.executable)
+        if phase in {"install-release", "populate-release", "hacs-update"}
+        else sys.executable
+    )
     return subprocess.run(
-        [sys.executable, str(Path(__file__).resolve())],
+        [interpreter, str(Path(__file__).resolve())],
         cwd=config_dir,
         env=env,
         text=True,

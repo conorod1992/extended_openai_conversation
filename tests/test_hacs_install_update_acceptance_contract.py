@@ -7,13 +7,14 @@ WORKFLOW = ROOT / ".github" / "workflows" / "hacs-install-update-acceptance.yml"
 JOURNEY = ROOT / "tests_real_ha" / "test_hacs_install_update_acceptance.py"
 
 
-def test_hacs_acceptance_workflow_is_nightly_manual_only() -> None:
+def test_hacs_acceptance_workflow_has_focused_pr_gate() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     trigger_block = text.split("concurrency:", 1)[0]
 
     assert "schedule:" in trigger_block
     assert "workflow_dispatch:" in trigger_block
-    assert "pull_request:" not in trigger_block
+    assert "pull_request:" in trigger_block
+    assert "ci/specialist_evidence.py" in trigger_block
     assert "push:" not in trigger_block
     assert "hacs/integration/releases/latest" in text
     assert "hacs.zip" in text

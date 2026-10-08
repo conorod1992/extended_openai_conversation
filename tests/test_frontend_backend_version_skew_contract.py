@@ -21,7 +21,8 @@ def test_skew_workflow_is_nightly_manual_and_uses_release_assets() -> None:
 
     assert "schedule:" in trigger_block
     assert "workflow_dispatch:" in trigger_block
-    assert "pull_request:" not in trigger_block
+    assert "pull_request:" in trigger_block
+    assert '"ci/specialist_evidence.py"' in trigger_block
     assert "push:" not in trigger_block
     assert "releases/latest" in text
     assert 'git archive "$FROM_VERSION"' in text

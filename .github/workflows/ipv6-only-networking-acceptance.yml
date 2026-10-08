@@ -1,6 +1,11 @@
 name: IPv6-only networking acceptance
 
 on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - ".github/workflows/ipv6-only-networking-acceptance.yml"
+      - "ci/specialist_evidence.py"
   schedule:
     - cron: "47 5 * * *"
   workflow_dispatch:
@@ -8,6 +13,9 @@ on:
 concurrency:
   group: ipv6-only-networking-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 permissions:
   contents: read
@@ -33,7 +41,10 @@ jobs:
       - name: Checkout exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Trust container checkout for candidate verification
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Reconcile current stable test environment
         run: |
@@ -64,7 +75,7 @@ jobs:
 
       - name: Run strict IPv6-only acceptance
         run: |
-          pytest tests_real_ha/test_ipv6_only_networking_acceptance.py             -v --asyncio-mode=auto --timeout=180
+          pytest tests_real_ha/test_ipv6_only_networking_acceptance.py             -v --asyncio-mode=auto --timeout=180 --junitxml=specialist-tests.xml
 
       - name: Record exact-candidate IPv6 evidence
         if: always()
@@ -81,7 +92,7 @@ jobs:
               .read_text(encoding="utf-8")
           )
           payload = {
-              "candidate_sha": os.environ["GITHUB_SHA"],
+              "candidate_sha": os.environ["CANDIDATE_SHA"],
               "candidate_manifest_version": manifest["version"],
               "job_status": os.environ["JOB_STATUS"],
               "workflow_run_id": os.environ["GITHUB_RUN_ID"],
@@ -102,5 +113,21 @@ jobs:
         with:
           name: ipv6-only-networking-${{ github.sha }}
           path: ipv6-only-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Record specialist execution evidence
+        if: success()
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 ci/specialist_evidence.py --workflow ipv6-only-networking-acceptance.yml --report specialist-tests.xml
+
+      - name: Upload specialist execution certificate
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: specialist-execution-evidence
+          path: specialist-execution.json
           if-no-files-found: error
           retention-days: 30

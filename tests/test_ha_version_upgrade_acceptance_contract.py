@@ -8,13 +8,14 @@ JOURNEY = ROOT / "tests_real_ha" / "test_ha_version_upgrade_acceptance.py"
 RELEASE_HELPERS = ROOT / "tests_real_ha" / "test_release_upgrade_acceptance.py"
 
 
-def test_ha_version_upgrade_workflow_is_nightly_and_manual_only() -> None:
+def test_ha_version_upgrade_workflow_has_focused_pr_gate() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     trigger_block = text.split("concurrency:", 1)[0]
 
     assert "schedule:" in trigger_block
     assert "workflow_dispatch:" in trigger_block
-    assert "pull_request:" not in trigger_block
+    assert "pull_request:" in trigger_block
+    assert "ci/specialist_evidence.py" in trigger_block
     assert "push:" not in trigger_block
     assert "tests_real_ha/test_ha_version_upgrade_acceptance.py" in text
     assert 'json.load(open("hacs.json"' in text

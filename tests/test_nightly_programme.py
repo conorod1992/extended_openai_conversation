@@ -90,3 +90,49 @@ def test_enhanced_nightly_requires_real_mariadb_and_postgresql_recorder():
     )
     assert "github.event_name == 'schedule'" in workflow
     assert "inputs.campaign == 'all'" in workflow
+
+
+@pytest.mark.parametrize("arches", [["amd64"], ["amd64", "arm64"]])
+def test_collector_reads_current_official_artifacts_and_architecture_policy(monkeypatch, arches):
+    from ci import nightly_programme
+    from tests.test_release_certification import FakeActions, SOURCE
+
+    actions = FakeActions()
+    workflow = "official-ha-container.yml"
+    run_id = actions.runs[workflow][0]["id"]
+    actions.artifacts[run_id] = [item for item in actions.artifacts[run_id] if any(f"-{arch}-" in item["name"] for arch in arches)]
+    monkeypatch.setattr(nightly_programme, "WORKFLOWS", (workflow,))
+    evidence = nightly_programme.collect(actions, SOURCE)
+    assert set(evidence[workflow]["official"]) == set(arches)
+    assert not nightly_programme.programme_errors(SOURCE, "2026.9.4", [workflow], evidence)
+    assert bool(nightly_programme.programme_errors(SOURCE, "2026.9.4", [workflow], evidence, full_architecture=True)) == (len(arches) == 1)
+    evidence[workflow]["official"]["amd64"]["machine"] = "aarch64"
+    assert nightly_programme.programme_errors(SOURCE, "2026.9.4", [workflow], evidence)
+
+
+@pytest.mark.parametrize("fault", ["missing", "expired", "empty", "skipped", "candidate"])
+def test_official_collector_rejects_invalid_evidence(monkeypatch, fault):
+    from ci import nightly_programme
+    from tests.test_release_certification import FakeActions, SOURCE
+
+    actions = FakeActions()
+    workflow = "official-ha-container.yml"
+    run_id = actions.runs[workflow][0]["id"]
+    artifact = actions.artifacts[run_id][0]
+    if fault == "missing":
+        actions.artifacts[run_id] = []
+    elif fault == "expired":
+        artifact["expired"] = True
+    elif fault == "empty":
+        artifact["size_in_bytes"] = 0
+    elif fault == "skipped":
+        actions.jobs[run_id][0]["conclusion"] = "skipped"
+    else:
+        actions.contents[artifact["id"]]["candidate_sha"] = "a" * 40
+    monkeypatch.setattr(nightly_programme, "WORKFLOWS", (workflow,))
+    if fault == "candidate":
+        evidence = nightly_programme.collect(actions, SOURCE)
+        assert nightly_programme.programme_errors(SOURCE, "2026.9.4", [workflow], evidence)
+    else:
+        with pytest.raises(RuntimeError):
+            nightly_programme.collect(actions, SOURCE)
