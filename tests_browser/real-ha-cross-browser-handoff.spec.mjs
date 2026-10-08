@@ -153,6 +153,8 @@ test("browser engines hand persisted state across one HA backend", async () => {
     await panel.locator("#tool-validate").click();
     await expect(panel.locator("#tool-error")).toHaveClass(/valid/);
     await panel.locator("#tool-save").click();
+    // Navigation is intentionally blocked while this mutation is pending.
+    await expect(panel.locator("#tool-dialog")).not.toHaveJSProperty("open", true);
 
     await panel.evaluate(host => host._navigate("data-memory", "memories"));
     await expect(panel.locator(".memory-list")).toContainText("Éire 東京 first writer");
