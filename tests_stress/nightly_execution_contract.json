@@ -2370,6 +2370,7 @@
       "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours satellite overrides clear to pending automatic resolution and preserve other drafts",
       "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours schedule controls round-trip through save, route reopen, and fresh load",
       "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours surfaces unavailable and changing satellite candidates while editing",
+      "tests_browser/real-ha-adversarial-content.spec.mjs::chromium::real-ha-adversarial-content.spec.mjs::hostile managed records stay inert in real HA frontend and after reload",
       "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::Guest Mode activation respects the explicit end choice through genuine HA",
       "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::Guest Mode interval update respects the explicit end choice through genuine HA",
       "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::real browser creates, edits, and deletes Knowledge through genuine HA",
