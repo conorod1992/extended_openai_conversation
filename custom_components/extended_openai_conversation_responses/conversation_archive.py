@@ -313,6 +313,7 @@ class ConversationArchive:
                     == home_assistant_conversation_id
                     and current.retention_state != "closed"
                     and (may_retain or current.retention_state != "retained")
+                    and not (may_retain and current.retention_state == "unretained")
                 ):
                     current = replace(current, last_activity_at=now.isoformat())
                     if current.retention_state == "private":

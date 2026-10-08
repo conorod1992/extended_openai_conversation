@@ -78,7 +78,7 @@ no natural reason for an immediate reply.
 Do not call set_continue_conversation while another tool is still needed. Never
 mention this control mechanism in the response.
 """
-DEFAULT_PROMPT = """You are a helpful, friendly and concise Home Assistant voice assistant. Be proactive when it clearly helps fulfil the user's request.
+LEGACY_DEFAULT_PROMPT_DEVICE_AREA = """You are a helpful, friendly and concise Home Assistant voice assistant. Be proactive when it clearly helps fulfil the user's request.
 
 ## Guidelines
 - Respond in plain text, preferably in one sentence. Do not use symbols or parentheses.
@@ -93,7 +93,11 @@ DEFAULT_PROMPT = """You are a helpful, friendly and concise Home Assistant voice
 
 {{ user_input.extra_system_prompt | default('', true) }}
 """
-LEGACY_DEFAULT_PROMPT_WITH_SKILLS = DEFAULT_PROMPT.replace(
+DEFAULT_PROMPT = LEGACY_DEFAULT_PROMPT_DEVICE_AREA.replace(
+    "area_id(current_device_id)",
+    "(area_id(user_input.satellite_id | default(none)) or area_id(current_device_id)) if current_device_id else none",
+)
+LEGACY_DEFAULT_PROMPT_WITH_SKILLS = LEGACY_DEFAULT_PROMPT_DEVICE_AREA.replace(
     "\n## Context",
     """\n{%- if skills %}
 ## Skills
@@ -154,6 +158,7 @@ When a skill file references a relative path, resolve it against the skill's loc
 """
 
 LEGACY_DEFAULT_PROMPTS = (
+    LEGACY_DEFAULT_PROMPT_DEVICE_AREA,
     LEGACY_DEFAULT_PROMPT_6_8_3,
     LEGACY_DEFAULT_PROMPT_WITH_SKILLS,
 )

@@ -63,6 +63,25 @@ def get_active_ha_context() -> Context | None:
     return _ACTIVE_HA_CONTEXT.get()
 
 
+async def async_local_entity_reads_allowed(
+    hass: HomeAssistant, context: Context | None
+) -> bool:
+    """Allow native entity intents only when HA can read every possible target.
+
+    Native intent handlers resolve their own targets and some omit READ checks.
+    Restricted callers use the existing permission-filtered model/tool path.
+    Voice ownership mappings never supply this authorization context.
+    """
+    if context is None or not context.user_id:
+        return True
+    user = await hass.auth.async_get_user(context.user_id)
+    return bool(
+        user is not None
+        and user.is_active
+        and user.permissions.access_all_entities(POLICY_READ)
+    )
+
+
 async def async_setup_ha_permissions(hass: HomeAssistant) -> None:
     """Cache user objects needed by the synchronous prompt exposure path."""
     # Request context binding belongs to the conversation entry point. Setup only

@@ -23,6 +23,8 @@ The Voice & identity page lets you configure:
 
 A device mapped to a user can use that user's eligible personal memories, temporary context and retained conversation scope according to the agent's other settings. Shared-household and no-personal-data scopes keep personal information from being attached merely because a request came from a voice device.
 
+An explicit no-retained-data assignment overrides the unmapped-device fallback. It cannot retrieve saved memories or conversations or retain new ones. Missing assignments and stale/inactive user assignments follow the configured fallback; they do not select the unavailable user.
+
 ## Shared devices
 
 Do not map a genuinely shared kitchen or living-room satellite to one person simply because that person configured it. Doing so can make every speaker at that device appear to be the same user for retained-data purposes.

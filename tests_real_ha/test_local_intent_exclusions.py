@@ -25,6 +25,65 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import intent as ha_intent
 
 
+@pytest.mark.parametrize("caller", ["restricted", "owner", "voice"])
+async def test_local_state_query_respects_real_ha_read_permissions(hass, monkeypatch, caller):
+    from homeassistant.auth.models import Group
+    from homeassistant.auth.permissions.const import CAT_ENTITIES, POLICY_READ
+    from homeassistant.auth.permissions.entities import ENTITY_ENTITY_IDS
+    from homeassistant.components.homeassistant.exposed_entities import (
+        async_expose_entity,
+    )
+    from pytest_homeassistant_custom_component.common import MockUser
+
+    user = MockUser(
+        is_owner=False,
+        groups=[
+            Group(
+                id="read-boundary",
+                name="Read boundary",
+                policy={
+                    CAT_ENTITIES: {
+                        ENTITY_ENTITY_IDS: {"light.allowed": {POLICY_READ: True}}
+                    }
+                },
+            )
+        ],
+    )
+    user.add_to_hass(hass)
+    if caller == "owner":
+        user = MockUser(is_owner=True)
+        user.add_to_hass(hass)
+    entry = _make_entry()
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    hass.states.async_set("light.private", "on", {"friendly_name": "Private light"})
+    async_expose_entity(hass, "conversation", "light.private", True)
+
+    async def fallback(user_input, chat_log, request_options):
+        response = ha_intent.IntentResponse(language="en")
+        response.async_set_speech("Permission-filtered fallback")
+        return conversation.ConversationResult(
+            response=response, conversation_id="permission"
+        )
+
+    provider = AsyncMock(side_effect=fallback)
+    monkeypatch.setattr(agent, "_async_handle_message_with_ha_tools", provider)
+    result = await conversation.async_converse(
+        hass=hass,
+        text="is the private light on",
+        conversation_id=None,
+        context=Context(user_id=None if caller == "voice" else user.id),
+        language="en",
+        agent_id=entry.entry_id,
+    )
+    if caller == "restricted":
+        provider.assert_awaited_once()
+        assert result.response.as_dict()["speech"]["plain"]["speech"] == "Permission-filtered fallback"
+    else:
+        provider.assert_not_awaited()
+        assert result.response.as_dict()["speech"]["plain"]["speech"]
+
+
 def _subentry(data: dict) -> dict:
     """Return storage-shaped conversation subentry data."""
     return {

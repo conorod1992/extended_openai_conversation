@@ -53,6 +53,8 @@ async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str
         if not device_id or not isinstance(mappings, Mapping):
             return frozenset()
         mapped = mappings.get(device_id)
+        if mapped == UNRETAINED_SCOPE_ID:
+            return frozenset()
         if isinstance(mapped, str) and mapped:
             if mapped in (VOICE_POLICY_SHARED, SHARED_HOUSEHOLD_SCOPE_ID):
                 return frozenset()
@@ -60,7 +62,7 @@ async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str
                 mapped_user = mapped.removeprefix("user:")
                 if mapped_user and await _user_is_active(agent, mapped_user):
                     return frozenset({mapped_user})
-        # Missing, explicit-unretained, malformed, deleted, or inactive mappings
+        # Missing, malformed, deleted, or inactive mappings
         # are all treated exactly like an unmapped source device.
         policy = str(
             options.get(CONF_VOICE_UNMAPPED_POLICY, DEFAULT_VOICE_UNMAPPED_POLICY)

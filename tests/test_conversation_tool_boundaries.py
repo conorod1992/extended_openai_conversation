@@ -190,6 +190,7 @@ async def test_temporary_memory_dispatcher_uses_request_scope_for_all_mutations(
         "The oven is ready.",
         "2026-09-11T22:30:00+00:00",
         "activity",
+        source="automatic",
     )
     entity._temporary_memory.async_delete.assert_awaited_once_with(
         "conversation:test", ["temporary-1"]

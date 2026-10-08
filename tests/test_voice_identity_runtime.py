@@ -209,8 +209,10 @@ async def test_active_mapped_user_is_the_only_bound_identity() -> None:
 
 
 @pytest.mark.asyncio
-async def test_explicit_unretained_mapping_uses_configured_unmapped_fallback() -> None:
-    """Unretained mappings do not become user IDs and follow the fallback policy."""
+async def test_explicit_unretained_mapping_denies_configured_unmapped_fallback() -> (
+    None
+):
+    """An explicit privacy choice wins over a permissive fallback."""
     auth_lookup = AsyncMock(return_value=SimpleNamespace(is_active=True))
     agent = SimpleNamespace(
         hass=SimpleNamespace(auth=SimpleNamespace(async_get_user=auth_lookup)),
@@ -227,8 +229,12 @@ async def test_explicit_unretained_mapping_uses_configured_unmapped_fallback() -
 
     active = await voice_identity_runtime._active_configured_users(agent, user_input)
 
-    assert active == frozenset({"default-user"})
-    auth_lookup.assert_awaited_once_with("default-user")
+    assert active == frozenset()
+    auth_lookup.assert_not_awaited()
+    async with voice_identity_runtime.voice_identity_scope(agent, user_input):
+        scope = resolve_data_scope(user_input, agent.subentry.data)
+    assert scope.scope_type == "unretained"
+    assert not scope.allows_retention
 
 
 @pytest.mark.asyncio
