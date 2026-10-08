@@ -26,6 +26,8 @@ This works with both free-text and structured AI Task output, so an automation c
 
 Structured output requires objects with named fields. A free-form object selector that accepts arbitrary keys is rejected before contacting the provider, because strict Structured Outputs cannot preserve that contract. The integration does not silently discard arbitrary keys by closing the object schema.
 
+Strict output also requires an object at the root, without root-level `anyOf`, and does not support `allOf` intersections. These caller schemas are rejected before contacting the provider; nested `anyOf` alternatives inside named fields remain supported. See [OpenAI’s Structured Outputs schema contract](https://developers.openai.com/api/docs/guides/structured-outputs).
+
 ## Features not available in AI Task options
 
 The AI Task configuration does not expose conversation-specific controls such as:

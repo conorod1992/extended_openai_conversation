@@ -89,12 +89,14 @@ def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
     entity._async_handle_message_with_ha_tools = AsyncMock()
 
     user_input = SimpleNamespace(
+        extra_system_prompt=None,
         text=text,
         language="en",
         conversation_id=None,
         context=Context(user_id="alice"),
     )
     chat_log = SimpleNamespace(
+        extra_system_prompt=None,
         content=[
             conversation.SystemContent(content="system"),
             conversation.UserContent(content=text),
@@ -102,6 +104,8 @@ def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
         conversation_id="conversation-1",
     )
     resolution = SimpleNamespace(
+        resumed=False,
+        extra_system_prompt=None,
         conversation_id="conversation-1",
         key="device:kitchen",
         claim_token="claim-token",
@@ -399,6 +403,7 @@ async def test_provider_result_records_usage_archive_and_successful_continuity(
             "device:kitchen",
             "claim-token",
             chat_log.content,
+            extra_system_prompt=None,
         )
     else:
         entity._continuity.async_record_success.assert_not_awaited()
@@ -483,6 +488,7 @@ def _assist_fixture(monkeypatch):
 
     def new_log(_hass, _session, user_input):
         log = SimpleNamespace(
+            extra_system_prompt=None,
             content=[
                 conversation.SystemContent(content="system"),
                 conversation.UserContent(content=user_input.text),
@@ -515,6 +521,7 @@ def _assist_fixture(monkeypatch):
         direct=False,
     ):
         request = SimpleNamespace(
+            extra_system_prompt=None,
             text=text,
             language="en",
             conversation_id=incoming,

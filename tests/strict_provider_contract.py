@@ -76,20 +76,24 @@ def validate_request(
         assert attachment in serialized, "historical attachment missing"
 
 
-def validate_strict_schema(schema):
-    """Recursively enforce the closed-object contract without adapting semantics."""
-    if isinstance(schema, list):
-        for item in schema:
-            validate_strict_schema(item)
-    elif isinstance(schema, dict):
-        kind = schema.get("type")
-        if kind == "object" or isinstance(kind, list) and "object" in kind:
-            assert schema.get("additionalProperties") is False, (
-                "strict object must be closed"
-            )
-            assert set(schema.get("required", [])) == set(
-                schema.get("properties", {})
-            ), "strict object must require all properties"
-        for value in schema.values():
-            if isinstance(value, (dict, list)):
-                validate_strict_schema(value)
+def validate_strict_schema(schema, *, root=True):
+    """Enforce provider schema rules independently, visiting only schema nodes."""
+    assert isinstance(schema, dict), "schema must be an object"
+    if root:
+        assert schema.get("type") == "object" and "anyOf" not in schema, (
+            "strict root must be an object without anyOf"
+        )
+    assert "allOf" not in schema, "allOf is unsupported in strict schemas"
+    kind = schema.get("type")
+    if kind == "object" or isinstance(kind, list) and "object" in kind:
+        assert schema.get("additionalProperties") is False, "strict object must be closed"
+        assert set(schema.get("required", [])) == set(schema.get("properties", {})), (
+            "strict object must require all properties"
+        )
+    for keyword in ("properties", "$defs", "definitions"):
+        for child in schema.get(keyword, {}).values():
+            validate_strict_schema(child, root=False)
+    if isinstance(schema.get("items"), dict):
+        validate_strict_schema(schema["items"], root=False)
+    for child in schema.get("anyOf", []):
+        validate_strict_schema(child, root=False)

@@ -90,7 +90,8 @@ export function renderExposedAttributeSettings(panel) {
   const catalog = catalogFor(panel);
   const catalogAvailable = catalog && typeof catalog === "object";
   const entities = Array.isArray(catalog?.entities) ? catalog.entities : [];
-  const saved = Array.isArray(catalog?.saved_unexposed) ? catalog.saved_unexposed : [];
+  const saved = (Array.isArray(catalog?.saved_unexposed) ? catalog.saved_unexposed : [])
+    .filter((item) => selectedFor(panel, item.reference, item.selected_attributes || []).length);
   const configured = entities.filter((entity) => selectedFor(panel, entity.reference, entity.selected_attributes || []).length);
   const editorEntity = entities.find((entity) => entity.entity_id === panel?._exposedAttributeEntityId) || null;
   const automaticContextEnabled = panel?._draft?.exposed_entities_enabled === true;

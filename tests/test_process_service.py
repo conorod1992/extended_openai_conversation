@@ -389,6 +389,7 @@ def _message_entity_and_input():
         as_llm_context=lambda _: SimpleNamespace(context=SimpleNamespace()),
     )
     chat_log = SimpleNamespace(
+        extra_system_prompt=None,
         content=[conversation.UserContent(content="hello")],
         conversation_id="conversation",
         continue_conversation=None,
