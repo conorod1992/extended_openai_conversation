@@ -19,6 +19,7 @@ from .context import (
     partition_history,
     select_summary_history,
 )
+from .operational_errors import log_handled_failure
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -194,8 +195,10 @@ class DeferredContextSummaryManager:
             summary = await summarize(summary_source or older, model, api_mode)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            _LOGGER.exception("Deferred conversation summarization failed")
+        except Exception as err:
+            log_handled_failure(
+                _LOGGER, "Deferred conversation summarization failed", err
+            )
             summary = None
 
         if summary:

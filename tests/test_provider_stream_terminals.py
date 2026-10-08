@@ -366,3 +366,19 @@ async def test_responses_failed_terminal_is_provider_error() -> None:
 
     assert exc_info.value.code == "server_error"
     assert exc_info.value.response_id == "resp_failed"
+
+
+@pytest.mark.parametrize("field", ["content", "refusal"])
+async def test_malformed_stream_values_are_not_logged(field, caplog):
+    import logging
+
+    stream = FakeStream([
+        _chat_chunk(**{field: {"private": "PRIVATE_STREAM_MARKER"}}),
+        _chat_chunk(finish_reason="stop"),
+    ])
+    deltas = [delta async for delta in _entity()._transform_chat_stream(SimpleNamespace(), stream)]
+    assert any("PRIVATE_STREAM_MARKER" in str(delta) for delta in deltas)
+    assert "non-string" in caplog.text
+    assert "PRIVATE_STREAM_MARKER" not in "\n".join(
+        logging.Formatter().format(record) for record in caplog.records
+    )

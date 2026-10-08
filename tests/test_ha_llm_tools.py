@@ -432,12 +432,15 @@ async def test_conversation_discovers_configured_ha_tools_for_the_request(hass):
     )
 
 
-async def test_source_schema_validates_before_side_effect(hass):
+@pytest.mark.parametrize("arguments", [{}, {"value": 42}])
+async def test_source_schema_validates_before_side_effect(hass, arguments):
     api = register(hass, TestAPI(hass))
     live = next(iter((await async_discover(hass, context())).tools.values()))
-    with pytest.raises(vol.Invalid):
-        await live.async_call(llm.ToolInput(tool_name="echo", tool_args={"value": 123}))
+    with pytest.raises(HomeAssistantError, match="arguments do not match") as error:
+        await live.async_call(llm.ToolInput(tool_name="echo", tool_args=arguments))
     assert not api.tools[0].calls
+    assert error.value.__cause__ is None
+    assert error.value.__suppress_context__
 
 
 async def test_mixed_group_prompt_tracks_actual_provider_rounds(hass):

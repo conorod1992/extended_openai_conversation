@@ -38,3 +38,14 @@ def test_invalid_structure_does_not_expose_validation_values(caplog):
     assert "PRIVATE_TASK_MARKER" not in str(error.value)
     assert error.value.__cause__ is None
     assert error.value.__suppress_context__
+
+
+@pytest.mark.parametrize("engine", ["voluptuous", "probatio"])
+def test_supported_schema_engines_hide_invalid_values(engine, caplog):
+    module = pytest.importorskip(engine)
+    schema = module.Schema({module.Required("answer"): int})
+    with pytest.raises(HomeAssistantError, match="does not match") as error:
+        parse_ai_task_structured_response('{"answer":"PRIVATE_INVALID_VALUE"}', schema)
+    formatted = "\n".join(logging.Formatter().format(record) for record in caplog.records)
+    assert "PRIVATE_INVALID_VALUE" not in formatted
+    assert error.value.__suppress_context__

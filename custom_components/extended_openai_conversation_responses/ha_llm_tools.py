@@ -27,6 +27,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
 from .ha_tool_result_compat import execution_tool_result
+from .schema_errors import SCHEMA_ERRORS
 
 _LOGGER = logging.getLogger(__name__)
 TOOL_TYPE = "ha_llm"
@@ -153,7 +154,12 @@ class LiveTool:
         matches = [tool for tool in self.instance.tools if tool.name == self.tool.name]
         if len(matches) != 1 or matches[0] is not self.tool:
             raise HomeAssistantError("HA tool changed before dispatch")
-        args = self.tool.parameters(deepcopy(tool_input.tool_args))
+        try:
+            args = self.tool.parameters(deepcopy(tool_input.tool_args))
+        except SCHEMA_ERRORS:
+            raise HomeAssistantError(
+                "Home Assistant tool arguments do not match the requested schema"
+            ) from None
         result = await self.instance.async_call_tool(
             llm.ToolInput(tool_name=self.tool.name, tool_args=args, id=tool_input.id)
         )

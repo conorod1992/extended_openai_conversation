@@ -420,3 +420,25 @@ async def test_malformed_provider_stream_fails_through_public_ai_task_api(
             entity_id=entity_id,
             instructions="This provider response is intentionally incomplete.",
         )
+
+
+@pytest.mark.parametrize("body", ['{}', '{"answer":"PRIVATE_TASK_INVALID"}'])
+@pytest.mark.asyncio
+async def test_invalid_structured_task_is_controlled_and_next_task_recovers(hass, body):
+    _entry_obj, entity_id, client = await _setup_entry(hass, [body, '{"answer":2}'])
+    # Use the schema engine of the installed Home Assistant release.
+    from homeassistant.components.ai_task import task as task_module
+    engine = getattr(task_module, "probatio", vol)
+    structure = engine.Schema({engine.Required("answer"): int})
+    with pytest.raises(HomeAssistantError, match="does not match") as error:
+        await ai_task.async_generate_data(
+            hass, task_name="Invalid task", entity_id=entity_id,
+            instructions="Return an integer", structure=structure,
+        )
+    assert "PRIVATE_TASK_INVALID" not in str(error.value)
+    result = await ai_task.async_generate_data(
+        hass, task_name="Valid task", entity_id=entity_id,
+        instructions="Return an integer", structure=structure,
+    )
+    assert result.data == {"answer": 2}
+    assert len(client.completions.calls) == 2

@@ -29,6 +29,7 @@ from .entity import (
 )
 from .ha_llm_tools import ToolSnapshot, caller_api_tools, tool_snapshot_scope
 from .provider_errors import log_provider_failure, request_reauthentication
+from .schema_errors import SCHEMA_ERRORS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ def _validate_structured_response(data: Any, structure: vol.Schema | None) -> An
     if structure is not None:
         try:
             return structure(data)
-        except vol.Invalid:
+        except SCHEMA_ERRORS:
             # Selector errors may include model output. Expose a stable task
             # failure and keep validation details out of logs and public errors.
             raise HomeAssistantError(
