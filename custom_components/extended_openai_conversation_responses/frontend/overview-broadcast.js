@@ -87,7 +87,7 @@ function broadcastMarkup(panel, snapshot) {
             }).join("") || `<p class="empty">No announcement-capable Assist satellites are available.</p>`}
           </div></div>`}
         </fieldset>
-        <div class="actions broadcast-actions"><button id="broadcast-refresh" type="button" class="secondary compact-button">Refresh devices</button><button id="broadcast-send" type="button" ${!satellites.length ? "disabled" : ""}>Send broadcast</button></div>
+        <div class="actions broadcast-actions"><button id="broadcast-refresh" type="button" class="secondary compact-button">Refresh devices</button><button id="broadcast-send" type="button" ${!satellites.length || panel._broadcastSending ? "disabled" : ""}>Send broadcast</button></div>
       </div>` : ""}
     <div class="broadcast-history">
       <h3>Recent broadcasts</h3>
@@ -115,7 +115,7 @@ function bindBroadcastControls(panel, snapshot) {
       await loadBroadcast(panel);
     }
   });
-  root.querySelector("#broadcast-message")?.addEventListener("input", (event) => { panel._broadcastMessage = event.target.value; });
+  root.querySelector("#broadcast-message")?.addEventListener("input", (event) => { panel._broadcastMessage = event.target.value; panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1; });
   root.querySelectorAll('input[name="broadcast-destination"]').forEach((input) => input.addEventListener("change", (event) => {
     if (!event.target.checked) return;
     panel._broadcastWholeHome = event.target.value === "whole";
@@ -131,12 +131,15 @@ function bindBroadcastControls(panel, snapshot) {
   }));
   root.querySelector("#broadcast-refresh")?.addEventListener("click", () => loadBroadcast(panel));
   root.querySelector("#broadcast-send")?.addEventListener("click", async (event) => {
+    if (panel._broadcastSending) return;
     const button = event.currentTarget;
+    const draftRevision = panel._broadcastDraftRevision || 0;
     const message = String(panel._broadcastMessage || "").trim();
     const selected = [...(panel._broadcastSelected || new Set())];
     const wholeHome = Boolean(panel._broadcastWholeHome);
     if (!message) return panel._toast("Enter a message to broadcast.", true);
     if (!wholeHome && !selected.length) return panel._toast("Choose at least one Assist satellite or Whole home.", true);
+    panel._broadcastSending = true;
     button.disabled = true;
     try {
       await panel._hass.callWS({
@@ -146,12 +149,15 @@ function bindBroadcastControls(panel, snapshot) {
         whole_home: wholeHome,
         entity_ids: selected,
       });
-      panel._broadcastMessage = "";
+      if ((panel._broadcastDraftRevision || 0) === draftRevision) panel._broadcastMessage = "";
       await loadBroadcast(panel);
       panel._toast("Broadcast queued");
     } catch (err) {
       panel._toast(`Unable to send Broadcast: ${err.message || String(err)}`, true);
-      button.disabled = false;
+    } finally {
+      panel._broadcastSending = false;
+      const currentButton = panel.shadowRoot.querySelector("#broadcast-send");
+      if (currentButton) currentButton.disabled = !(panel._eocBroadcastSnapshot?.catalog?.satellites || []).length;
     }
   });
 }
@@ -174,8 +180,9 @@ function applyBroadcastSnapshot(panel, snapshot) {
       view:"overview", delay:() => Date.now() - started < 30000 ? 1000 : 5000, maxRefreshes:800,
       refresh: async current => {
         const epoch = panel._eocBroadcastEpoch;
+        const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
         const result = await panel._hass.callWS({type:WS_BROADCAST, action:"snapshot"});
-        if (!current() || panel._eocBroadcastEpoch !== epoch) return;
+        if (!current() || panel._eocBroadcastEpoch !== epoch || panel._eocBroadcastReadToken !== token) return;
         panel._eocBroadcastSnapshot = result;
         // Preserve the message draft, selection and focus while status settles.
         const currentHost = panel.shadowRoot.querySelector("#broadcast-card");
@@ -198,19 +205,21 @@ function applyBroadcastError(panel, err) {
 }
 
 async function loadBroadcast(panel) {
+  const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   try {
     const snapshot = await panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
-    applyBroadcastSnapshot(panel, snapshot);
+    if (panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
   } catch (err) {
-    applyBroadcastError(panel, err);
+    if (panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
   }
 }
 
 export function bindBroadcast(panel, broadcastPromise) {
   ensureRouteStyle(panel);
+  const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   return Promise.resolve(broadcastPromise)
-    .then((snapshot) => applyBroadcastSnapshot(panel, snapshot))
-    .catch((err) => applyBroadcastError(panel, err))
+    .then((snapshot) => { if (panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot); })
+    .catch((err) => { if (panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err); })
     .finally(() => {
       if (panel._eocOverviewBroadcastPromise === broadcastPromise) panel._eocOverviewBroadcastPromise = null;
     });
