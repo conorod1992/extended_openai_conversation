@@ -13,6 +13,7 @@ import math
 import re
 from types import MappingProxyType
 from typing import Any, Protocol
+import unicodedata
 from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
@@ -786,15 +787,18 @@ class PersistentMemory:
             self._ensure_initialized()
             limit = max(1, min(limit, MAX_LIST_LIMIT))
             offset = max(0, offset)
-            folded_query = str(query).casefold()
+            folded_query = unicodedata.normalize("NFC", str(query)).casefold()
             memories = [
                 memory
                 for memory in self._memories.values()
                 if memory.user_id == user_id
                 and folded_query
-                in " ".join(
-                    str(value or "")
-                    for value in (memory.content, memory.category, memory.source)
+                in unicodedata.normalize(
+                    "NFC",
+                    " ".join(
+                        str(value or "")
+                        for value in (memory.content, memory.category, memory.source)
+                    ),
                 ).casefold()
             ]
             memories.sort(key=lambda memory: memory.updated_at, reverse=True)
@@ -1646,7 +1650,9 @@ def _memory_metadata_schema(*, include_scope: bool) -> dict[str, Any]:
 def _token_list(value: str) -> list[str]:
     return [
         _stem(token)
-        for token in _TOKEN_PATTERN.findall(value.casefold())
+        for token in _TOKEN_PATTERN.findall(
+            unicodedata.normalize("NFC", value).casefold()
+        )
         if len(token) > 1 and token not in _STOP_WORDS
     ]
 
@@ -1864,7 +1870,9 @@ def _migrate_raw_record(raw: Mapping[str, Any]) -> dict[str, Any]:
 
 @lru_cache(maxsize=20_000)
 def _normalize(value: str) -> str:
-    return " ".join(_TOKEN_PATTERN.findall(value.casefold()))
+    return " ".join(
+        _TOKEN_PATTERN.findall(unicodedata.normalize("NFC", value).casefold())
+    )
 
 
 def _clean_content(value: str) -> str:

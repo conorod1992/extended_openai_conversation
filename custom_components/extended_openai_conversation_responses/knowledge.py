@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 import logging
 import re
 from typing import Any, Protocol, cast
+import unicodedata
 from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
@@ -979,12 +980,18 @@ def _clean_content(value: str) -> str:
 
 def _tokens(value: str) -> set[str]:
     return {
-        token for token in _TOKEN_PATTERN.findall(value.casefold()) if len(token) > 1
+        token
+        for token in _TOKEN_PATTERN.findall(
+            unicodedata.normalize("NFC", value).casefold()
+        )
+        if len(token) > 1
     }
 
 
 def _normalize(value: str) -> str:
-    return " ".join(_TOKEN_PATTERN.findall(value.casefold()))
+    return " ".join(
+        _TOKEN_PATTERN.findall(unicodedata.normalize("NFC", value).casefold())
+    )
 
 
 def _split_chunks(content: str) -> list[tuple[int, str]]:

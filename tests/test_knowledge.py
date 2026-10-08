@@ -1060,3 +1060,23 @@ def test_split_chunks_uses_line_boundary_when_paragraph_is_unavailable() -> None
     assert len(chunks) >= 2
     assert chunks[0][1] == "A" * 1750
     assert chunks[1][0] <= 1751
+
+
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+async def test_knowledge_canonical_unicode_scores_edits_and_reconstruction(form):
+    import unicodedata
+    storage = FakeStorage()
+    library = await _library(storage)
+    original = unicodedata.normalize(form, "The café serves crème brûlée.")
+    source = await library.async_create(unicodedata.normalize(form, "Café menu"), "Desserts", original)
+    await library.async_create("Other café", "", "The café serves lunch")
+    queries = ["café crème brûlée", unicodedata.normalize("NFD", "café crème brûlée")]
+    first, second = [await library.async_search(query) for query in queries]
+    assert [(item.source_id, item.score) for item in first] == [(item.source_id, item.score) for item in second]
+    assert first[0].source_id == source.source_id
+    assert (await library.async_get(source.source_id)).content == original
+    fresh = await _library(storage)
+    assert [(item.source_id,item.score) for item in await fresh.async_search(queries[1])] == [(item.source_id,item.score) for item in first]
+    assert await fresh.async_search("creme brulee") == []
+    await fresh.async_update(source.source_id, content=unicodedata.normalize(form, "Pâtisserie menu"))
+    assert [item.source_id for item in await fresh.async_search(unicodedata.normalize("NFD", "pâtisserie"))] == [source.source_id]

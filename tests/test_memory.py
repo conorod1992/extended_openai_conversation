@@ -686,3 +686,27 @@ def test_memory_agent_resolves_readable_entity_and_legacy_subentry(
         "entry-1",
         "subentry-1",
     )
+
+
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+async def test_memory_canonical_unicode_ranking_dedup_and_reload(form):
+    import unicodedata
+    storage = FakeStorage()
+    memory = await _memory(storage)
+    original = unicodedata.normalize(form, "The café serves crème brûlée.")
+    created = await memory.async_add("owner", original, "preferences", "explicit")
+    ident = created["memory"]["memory_id"]
+    await memory.async_add("owner", "The café serves lunch.", "preferences", "explicit")
+    queries = ["café crème brûlée", unicodedata.normalize("NFD", "café crème brûlée")]
+    for query in queries:
+        assert [item.memory_id for item in await memory.async_search("owner", query)][0] == ident
+    duplicate = await memory.async_add("owner", unicodedata.normalize("NFC" if form=="NFD" else "NFD", original), "preferences", "explicit")
+    assert duplicate["status"] == "duplicate"
+    assert (await memory.async_get_many([("owner", ident)], ["owner"]))[0].content == original
+    fresh = await _memory(storage)
+    assert [item.memory_id for item in await fresh.async_search("owner", queries[1])][0] == ident
+    distinct = await fresh.async_add("owner", "The cafe serves creme brulee.", "preferences", "explicit")
+    assert distinct["status"] == "created"
+    updated = unicodedata.normalize(form, "The café serves pâtisserie.")
+    await fresh.async_update("owner", ident, updated)
+    assert [item.memory_id for item in await fresh.async_search("owner", unicodedata.normalize("NFD", "pâtisserie"))] == [ident]
