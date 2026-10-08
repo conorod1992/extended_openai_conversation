@@ -402,6 +402,10 @@ class UsageManager:
     def dispose_maintenance(self) -> None:
         """Release callbacks without flushing data during permanent deletion."""
         self._stopping = True
+        self._cancel_maintenance()
+
+    def _cancel_maintenance(self) -> None:
+        """Release timer and stop listeners without changing recovery state."""
         if self._cancel_retention is not None:
             self._cancel_retention()
             self._cancel_retention = None
@@ -411,7 +415,7 @@ class UsageManager:
 
     async def async_shutdown(self, _event: Any = None) -> None:
         """Cancel active request owners and durably flush their normal finalizers."""
-        self.dispose_maintenance()
+        self._cancel_maintenance()
         gate = (
             self._storage._recovery_gate
             if isinstance(self._storage, RecoveryGuardedStore)
