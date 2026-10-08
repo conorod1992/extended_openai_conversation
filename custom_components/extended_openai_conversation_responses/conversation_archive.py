@@ -9,6 +9,7 @@ from datetime import date, datetime, time, timedelta, tzinfo
 import logging
 import re
 from typing import Any, Protocol
+import unicodedata
 from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
@@ -190,12 +191,17 @@ class ConversationArchive:
             staged_sessions: dict[str, ArchiveSession] = {}
             staged_turns: dict[str, list[ArchiveTurn]] = defaultdict(list)
             private_titles = False
+            normalized_records = False
+            seen_turn_ids: set[str] = set()
             sessions = data.get("sessions")
             for raw in sessions if isinstance(sessions, list) else []:
                 try:
-                    session = ArchiveSession(**raw)
+                    session = _validated_session(raw)
+                    if session.session_id in staged_sessions:
+                        raise ValueError("duplicate session identifier")
                 except TypeError, ValueError:
                     _LOGGER.warning("Ignoring malformed conversation archive session")
+                    normalized_records = True
                     continue
                 if session.retention_state == "private" and session.title:
                     session = replace(session, title="")
@@ -203,9 +209,11 @@ class ConversationArchive:
                 staged_sessions[session.session_id] = session
             active = data.get("active")
             staged_active = {
-                str(key): str(value)
+                key: value
                 for key, value in (active if isinstance(active, dict) else {}).items()
-                if isinstance(value, str) and value in staged_sessions
+                if isinstance(key, str)
+                and isinstance(value, str)
+                and value in staged_sessions
             }
             partitions = data.get("partitions")
             staged_partitions = {
@@ -219,15 +227,49 @@ class ConversationArchive:
                 turns = payload.get("turns") if isinstance(payload, dict) else None
                 for raw in turns if isinstance(turns, list) else []:
                     try:
-                        turn = ArchiveTurn(**raw)
+                        turn = _validated_turn(raw)
+                        if (
+                            turn.turn_id in seen_turn_ids
+                            or turn.timestamp[:7] != partition
+                            or turn.session_id not in staged_sessions
+                            or staged_sessions[turn.session_id].retention_state
+                            == "private"
+                        ):
+                            raise ValueError("archive turn association is invalid")
                     except TypeError, ValueError:
                         _LOGGER.warning("Ignoring malformed conversation archive turn")
+                        normalized_records = True
                         continue
-                    if turn.session_id in staged_sessions:
-                        staged_turns[turn.session_id].append(turn)
+                    seen_turn_ids.add(turn.turn_id)
+                    staged_turns[turn.session_id].append(turn)
+            for session_id, session in staged_sessions.items():
+                if session.turn_count != len(staged_turns[session_id]):
+                    staged_sessions[session_id] = replace(
+                        session, turn_count=len(staged_turns[session_id])
+                    )
+                    normalized_records = True
             # Retry/cancellation must never expose a partially loaded generation.
             # Persist legacy private-title cleanup before publishing normalized state.
-            if private_titles:
+            if normalized_records:
+                # Commit repair through the same metadata journal boundary before
+                # exposing it. Failed repair is retried from durable intent.
+                repaired_partitions = {
+                    partition: self._partition_payload_for_state(
+                        partition, staged_turns
+                    )
+                    for partition in sorted(staged_partitions)
+                }
+                await self._storage.async_save_metadata(
+                    self._metadata_payload_for_state(
+                        staged_sessions,
+                        staged_active,
+                        staged_partitions,
+                        repaired_partitions,
+                    )
+                )
+                for partition, payload in repaired_partitions.items():
+                    await self._storage.async_save_partition(partition, payload)
+            if private_titles or normalized_records:
                 await self._storage.async_save_metadata(
                     self._metadata_payload_for_state(
                         staged_sessions, staged_active, staged_partitions
@@ -714,49 +756,8 @@ class ConversationArchive:
             if not isinstance(raw, dict):
                 raise ValueError("archive session must be an object")
             raw = {**raw, "agent_subentry_id": target_agent_id}
-            try:
-                session = ArchiveSession(**raw)
-            except TypeError as err:
-                raise ValueError("archive session is invalid") from err
-            string_values = (
-                session.session_id,
-                session.agent_subentry_id,
-                session.scope_id,
-                session.scope_type,
-                session.scope_source,
-                session.started_at,
-                session.last_message_at,
-                session.title,
-                session.retention_state,
-            )
-            optional_values = (
-                session.home_assistant_conversation_id,
-                session.source_device_id,
-                session.last_activity_at,
-            )
-            if not all(isinstance(value, str) for value in string_values) or not all(
-                value is None or isinstance(value, str) for value in optional_values
-            ):
-                raise ValueError("archive session fields have invalid types")
-            if (
-                not session.session_id
-                or len(session.session_id) > 128
-                or session.session_id in session_ids
-                or session.retention_state not in {"retained", "private"}
-                or not isinstance(session.turn_count, int)
-                or isinstance(session.turn_count, bool)
-                or session.turn_count < 0
-                or len(session.title) > MAX_TITLE_LENGTH
-                or _parse_time(session.started_at)
-                == datetime.min.replace(tzinfo=dt_util.UTC)
-                or _parse_time(session.last_message_at)
-                == datetime.min.replace(tzinfo=dt_util.UTC)
-                or (
-                    session.last_activity_at is not None
-                    and _parse_time(session.last_activity_at)
-                    == datetime.min.replace(tzinfo=dt_util.UTC)
-                )
-            ):
+            session = _validated_session(raw)
+            if session.session_id in session_ids:
                 raise ValueError("archive session metadata is invalid")
             session_ids.add(session.session_id)
             sessions.append(
@@ -771,32 +772,8 @@ class ConversationArchive:
         for raw in data["turns"]:
             if not isinstance(raw, dict):
                 raise ValueError("archive turn must be an object")
-            try:
-                turn = ArchiveTurn(**raw)
-            except TypeError as err:
-                raise ValueError("archive turn is invalid") from err
-            if (
-                not all(
-                    isinstance(value, str)
-                    for value in (
-                        turn.turn_id,
-                        turn.session_id,
-                        turn.timestamp,
-                        turn.user_text,
-                        turn.assistant_text,
-                    )
-                )
-                or (turn.run_id is not None and not isinstance(turn.run_id, str))
-                or not isinstance(turn.successful, bool)
-                or not turn.turn_id
-                or len(turn.turn_id) > 128
-                or turn.turn_id in turn_ids
-                or turn.session_id not in session_ids
-                or len(turn.user_text) > MAX_TEXT_LENGTH
-                or len(turn.assistant_text) > MAX_TEXT_LENGTH
-                or _parse_time(turn.timestamp)
-                == datetime.min.replace(tzinfo=dt_util.UTC)
-            ):
+            turn = _validated_turn(raw)
+            if turn.turn_id in turn_ids or turn.session_id not in session_ids:
                 raise ValueError("archive turn metadata is invalid")
             turn_ids.add(turn.turn_id)
             per_session[turn.session_id] += 1
@@ -1279,12 +1256,99 @@ def _clean_text(value: str) -> str:
     return value
 
 
+def _validated_session(raw: Any) -> ArchiveSession:
+    """Validate one record before it can enter an archive generation."""
+    if not isinstance(raw, dict):
+        raise ValueError("archive session must be an object")
+    try:
+        session = ArchiveSession(**raw)
+    except TypeError as err:
+        raise ValueError("archive session is invalid") from err
+    string_values = (
+        session.session_id,
+        session.agent_subentry_id,
+        session.scope_id,
+        session.scope_type,
+        session.scope_source,
+        session.started_at,
+        session.last_message_at,
+        session.title,
+        session.retention_state,
+    )
+    optional_values = (
+        session.home_assistant_conversation_id,
+        session.source_device_id,
+        session.last_activity_at,
+    )
+    if not all(isinstance(value, str) for value in string_values) or not all(
+        value is None or isinstance(value, str) for value in optional_values
+    ):
+        raise ValueError("archive session fields have invalid types")
+    if (
+        not session.session_id
+        or len(session.session_id) > 128
+        or session.retention_state not in {"retained", "private"}
+        or not isinstance(session.turn_count, int)
+        or isinstance(session.turn_count, bool)
+        or session.turn_count < 0
+        or len(session.title) > MAX_TITLE_LENGTH
+        or _parse_time(session.started_at) == datetime.min.replace(tzinfo=dt_util.UTC)
+        or _parse_time(session.last_message_at)
+        == datetime.min.replace(tzinfo=dt_util.UTC)
+        or (
+            session.last_activity_at is not None
+            and _parse_time(session.last_activity_at)
+            == datetime.min.replace(tzinfo=dt_util.UTC)
+        )
+    ):
+        raise ValueError("archive session metadata is invalid")
+    if _parse_time(session.last_message_at) < _parse_time(session.started_at) or (
+        session.last_activity_at is not None
+        and _parse_time(session.last_activity_at) < _parse_time(session.started_at)
+    ):
+        raise ValueError("archive session times are inconsistent")
+    return session
+
+
+def _validated_turn(raw: Any) -> ArchiveTurn:
+    """Validate fields independently of session ownership and partition layout."""
+    if not isinstance(raw, dict):
+        raise ValueError("archive turn must be an object")
+    try:
+        turn = ArchiveTurn(**raw)
+    except TypeError as err:
+        raise ValueError("archive turn is invalid") from err
+    if (
+        not all(
+            isinstance(value, str)
+            for value in (
+                turn.turn_id,
+                turn.session_id,
+                turn.timestamp,
+                turn.user_text,
+                turn.assistant_text,
+            )
+        )
+        or (turn.run_id is not None and not isinstance(turn.run_id, str))
+        or not isinstance(turn.successful, bool)
+        or not turn.turn_id
+        or len(turn.turn_id) > 128
+        or len(turn.user_text) > MAX_TEXT_LENGTH
+        or len(turn.assistant_text) > MAX_TEXT_LENGTH
+        or _parse_time(turn.timestamp) == datetime.min.replace(tzinfo=dt_util.UTC)
+    ):
+        raise ValueError("archive turn metadata is invalid")
+    return turn
+
+
 def _title(value: str) -> str:
     return _SPACE_PATTERN.sub(" ", value).strip()[:MAX_TITLE_LENGTH]
 
 
 def _normalize(value: str) -> str:
-    return " ".join(_TOKEN_PATTERN.findall(value.casefold()))
+    return " ".join(
+        _TOKEN_PATTERN.findall(unicodedata.normalize("NFC", value).casefold())
+    )
 
 
 def _stem(token: str) -> str:
@@ -1300,13 +1364,15 @@ def _stem(token: str) -> str:
 def _tokens(value: str) -> set[str]:
     return {
         _stem(token)
-        for token in _TOKEN_PATTERN.findall(value.casefold())
+        for token in _TOKEN_PATTERN.findall(
+            unicodedata.normalize("NFC", value).casefold()
+        )
         if len(token) > 1 and token not in _STOP_WORDS
     }
 
 
 def _excerpt(value: str, query: str) -> str:
-    normalized = _SPACE_PATTERN.sub(" ", value).strip()
+    normalized = _SPACE_PATTERN.sub(" ", unicodedata.normalize("NFC", value)).strip()
     lower = normalized.casefold()
     needle = _normalize(query)
     index = lower.find(needle) if needle else 0

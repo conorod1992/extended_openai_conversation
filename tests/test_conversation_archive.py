@@ -1398,3 +1398,89 @@ async def test_legacy_private_title_cleanup_failure_retries_without_publication(
     assert archive._sessions["private"].title == ""
     assert archive._sessions["retained"].title == retained.title
     assert "LEGACY_PRIVATE_MARKER" not in str(storage.metadata)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("session_id", []), ("title", {}), ("turn_count", "1"), ("turn_count", True),
+    ("started_at", None), ("last_message_at", "not-a-date"),
+    ("last_activity_at", 8), ("retention_state", "unknown"),
+    ("last_message_at", "2020-01-01T00:00:00+00:00"),
+])
+async def test_complete_invalid_session_does_not_poison_healthy_records(field, value):
+    storage = CoverageArchiveStorage()
+    malformed = asdict(_session("invalid")) | {field: value}
+    storage.metadata = {"sessions": [malformed, asdict(_session())], "active": {"browser": "session-1"}, "partitions": ["2026-09"]}
+    storage.partitions["2026-09"] = {"turns": [asdict(_turn())]}
+    archive = await _coverage_archive(storage)
+    assert archive.stats()["session_count"] == 1
+    assert (await archive.async_search("user:alice", "running shoes"))["results"][0]["turn_id"] == "turn-1"
+    backup = await archive.async_backup_data()
+    ConversationArchive.validate_backup_data(backup, "agent-1")
+    fresh = await _coverage_archive(storage)
+    assert await fresh.async_backup_data() == backup
+    await fresh.async_prune(36500)
+    await fresh.async_delete_session("user:alice", "session-1")
+    assert (await _coverage_archive(storage)).stats()["session_count"] == 0
+
+
+@pytest.mark.parametrize("field,value", [
+    ("turn_id", []), ("session_id", {}), ("user_text", 42), ("assistant_text", []),
+    ("successful", "yes"), ("run_id", {}), ("timestamp", None),
+    ("timestamp", "2026-08-01T00:00:00+00:00"), ("session_id", "unknown"),
+])
+async def test_invalid_turns_counts_and_duplicates_are_repaired_durably(field, value):
+    storage = CoverageArchiveStorage()
+    storage.metadata = {"sessions": [asdict(_session(turn_count=99)), asdict(_session()) | {"title": "Duplicate loses"}], "active": {"browser": "session-1"}, "partitions": ["2026-09"]}
+    storage.partitions["2026-09"] = {"turns": [asdict(_turn(turn_id="invalid")) | {field:value}, asdict(_turn()), asdict(_turn()) | {"user_text":"Duplicate loses"}]}
+    archive = await _coverage_archive(storage)
+    session = archive.active_session("browser")
+    assert session.turn_count == 1 and session.title == "Archive title"
+    assert archive.stats()["turn_count"] == 1
+    backup = await archive.async_backup_data()
+    ConversationArchive.validate_backup_data(backup, "agent-1")
+    assert (await _coverage_archive(storage)).stats()["turn_count"] == 1
+    assert (await archive.async_search("user:alice", "Duplicate loses"))["results"] == []
+
+
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+async def test_archive_canonical_unicode_search_preserves_original_content(form):
+    import unicodedata
+    storage = CoverageArchiveStorage()
+    content = unicodedata.normalize(form, "Café résumé at the station")
+    storage.metadata = {"sessions": [asdict(_session())], "partitions": ["2026-09"]}
+    storage.partitions["2026-09"] = {"turns": [asdict(_turn(user_text=content, assistant_text="Saved"))]}
+    archive = await _coverage_archive(storage)
+    first = await archive.async_search("user:alice", "café résumé")
+    second = await archive.async_search("user:alice", unicodedata.normalize("NFD", "café résumé"))
+    assert [row["turn_id"] for row in first["results"]] == [row["turn_id"] for row in second["results"]] == ["turn-1"]
+    assert not (await archive.async_search("user:alice", "cafe resume"))["results"]
+    assert (await archive.async_backup_data())["turns"][0]["user_text"] == content
+    fresh = await _coverage_archive(storage)
+    assert (await fresh.async_search("user:alice", "café résumé"))["results"]
+
+
+async def test_record_repair_partition_failure_replays_durable_journal_without_partial_publication():
+    storage = _RecoveringArchiveStorage()
+    storage.metadata = {"sessions": [asdict(_session(turn_count=5))], "partitions": ["2026-09"]}
+    storage.partitions["2026-09"] = {"turns": [asdict(_turn()), asdict(_turn())]}
+    storage.fail_next_partition = True
+    archive = ConversationArchive(storage, "agent-1")
+    with pytest.raises(OSError):
+        await archive.async_initialize()
+    assert not archive._initialized and not archive._sessions
+    assert "pending_partitions" in storage.metadata
+    await archive.async_initialize()
+    assert archive.stats()["turn_count"] == 1
+    assert "pending_partitions" not in storage.metadata
+    assert len(storage.partitions["2026-09"]["turns"]) == 1
+
+
+async def test_loaded_private_session_cannot_retain_or_back_up_inconsistent_turns():
+    storage = CoverageArchiveStorage()
+    storage.metadata = {"sessions": [asdict(_session(retention_state="private"))], "partitions": ["2026-09"]}
+    storage.partitions["2026-09"] = {"turns": [asdict(_turn(user_text="PRIVATE_RECORD_MARKER"))]}
+    archive = await _coverage_archive(storage)
+    assert archive.stats()["turn_count"] == 0
+    assert "PRIVATE_RECORD_MARKER" not in str(await archive.async_backup_data())
+    assert "PRIVATE_RECORD_MARKER" not in str(storage.partitions)
+    assert (await _coverage_archive(storage)).stats()["turn_count"] == 0
