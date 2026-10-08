@@ -70,8 +70,14 @@ async def schedule_backlog(hass, agent, user, function_tool):
         )
         if index % 5 not in {0, 1}:
             expected.append(marker)
+    # Settle the initial configuration save before applying revocation. This makes
+    # the cold-process check independent of HA's delayed-save timing.
+    await hass.config_entries._store.async_save(hass.config_entries._data_to_save())
     await hass.auth.async_remove_user(revoked)
     disabled["enabled"] = False
+    # HA retains a view of the supplied mapping. Mutating it in place makes its
+    # equality check miss the update and can leave the saved tool enabled.
+    options = dict(agent.subentry.data)
     options[const.CONF_FUNCTION_TOOLS] = yaml.safe_dump([base._tool_config(), disabled])
     hass.config_entries.async_update_subentry(agent.entry, agent.subentry, data=options)
     assert len(manager._records) == count
@@ -216,9 +222,12 @@ async def recover(root):
         async with asyncio.timeout(60):
             while manager._records or manager._tasks:
                 await asyncio.sleep(0.05)
-        assert Counter(
-            item["marker"] for item in base._read_executions(root)
-        ) == Counter(expected["markers"])
+        actual_markers = Counter(item["marker"] for item in base._read_executions(root))
+        expected_markers = Counter(expected["markers"])
+        assert actual_markers == expected_markers, {
+            "missing": expected_markers - actual_markers,
+            "unexpected": actual_markers - expected_markers,
+        }
         assert all(
             item["user_id"] == expected["user_id"]
             for item in base._read_executions(root)
@@ -326,6 +335,24 @@ def test_overdue_backlog_drains_once_across_two_restarts(
             continue
         base._assert_child_ok(result, phase)
         if phase == "schedule":
+            entries = json.loads(
+                (root / ".storage" / "core.config_entries").read_text()
+            )
+            entry = next(
+                item
+                for item in entries["data"]["entries"]
+                if item["domain"] == base.DOMAIN
+            )
+            subentry = next(
+                item
+                for item in entry["subentries"]
+                if item["subentry_type"] == "conversation"
+            )
+            tools = yaml.safe_load(subentry["data"]["functions"])
+            disabled = next(
+                tool for tool in tools if tool["spec"]["name"].endswith("_disabled")
+            )
+            assert disabled["enabled"] is False
             payload = base._read_store(root)
             assert len(payload["data"]["calls"]) == count
             for call in payload["data"]["calls"]:
