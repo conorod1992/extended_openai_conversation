@@ -21,7 +21,6 @@ from openai.types.chat import (
     ChatCompletionMessageParam,
 )
 import orjson
-import voluptuous as vol
 
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigSubentry
@@ -95,6 +94,7 @@ from .function_tool_recovery import (
 )
 from .functions import get_function
 from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, reference_key
+from .ha_schema import SchemaValidator
 from .ha_tool_result_compat import (
     HAToolResultError,
     is_tool_result_content,
@@ -307,7 +307,7 @@ def _adjust_schema(schema: dict[str, Any]) -> None:
 
 
 def _serialize_structured_output(
-    schema: vol.Schema, llm_api: llm.APIInstance | None
+    schema: SchemaValidator, llm_api: llm.APIInstance | None
 ) -> dict[str, Any]:
     """Serialize the caller contract without provider adaptation."""
     from .ha_llm_tools import compatible_to_openapi
@@ -323,7 +323,7 @@ def _serialize_structured_output(
 
 
 def _format_structured_output(
-    schema: vol.Schema, llm_api: llm.APIInstance | None
+    schema: SchemaValidator, llm_api: llm.APIInstance | None
 ) -> dict[str, Any]:
     """Adapt a fresh caller schema to the provider's strict contract."""
     result = _serialize_structured_output(schema, llm_api)
@@ -547,7 +547,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         exposed_entities: list[dict[str, Any]],
         llm_context: llm.LLMContext | None = None,
         structure_name: str | None = None,
-        structure: vol.Schema | None = None,
+        structure: SchemaValidator | None = None,
         conditional_continue: bool = False,
         function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
         function_group_loader: Callable[[Any], dict[str, Any]] | None = None,

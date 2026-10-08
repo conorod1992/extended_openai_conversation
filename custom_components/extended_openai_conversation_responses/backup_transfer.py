@@ -30,6 +30,7 @@ from homeassistant.exceptions import HomeAssistantError
 from . import backup, transfer
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import DOMAIN
+from .ha_schema import websocket_command as ha_websocket_command
 
 WS_BACKUP_TRANSFER = f"{DOMAIN}/management/backup_transfer"
 ARCHIVE_FORMAT = "extended_openai_conversation_backup_archive"
@@ -1107,7 +1108,7 @@ async def async_backup_transfer_command(
     raise backup.BackupError("Unsupported export/import transfer action")
 
 
-@websocket_api.websocket_command(
+@ha_websocket_command(
     {
         vol.Required("type"): WS_BACKUP_TRANSFER,
         vol.Required("action"): str,

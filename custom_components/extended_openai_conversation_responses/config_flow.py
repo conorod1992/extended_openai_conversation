@@ -75,6 +75,7 @@ from .const import (
     DEFAULT_WEB_SEARCH,
     DOMAIN,
 )
+from .ha_schema import schema_for_ha
 from .helpers import get_authenticated_client
 from .model_capabilities import (
     get_model_capabilities,
@@ -189,12 +190,15 @@ class ExtendedOpenAIOptionsFlow(OptionsFlow):
             return await self.async_step_init()
         return self.async_show_form(
             step_id="manage_memory",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        "panel_path", default="/extended-openai/data-memory/memories"
-                    ): TextSelector(TextSelectorConfig(read_only=True))
-                }
+            data_schema=schema_for_ha(
+                vol.Schema(
+                    {
+                        vol.Optional(
+                            "panel_path",
+                            default="/extended-openai/data-memory/memories",
+                        ): TextSelector(TextSelectorConfig(read_only=True))
+                    }
+                )
             ),
         )
 
@@ -206,12 +210,15 @@ class ExtendedOpenAIOptionsFlow(OptionsFlow):
             return await self.async_step_init()
         return self.async_show_form(
             step_id="manage_knowledge",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        "panel_path", default="/extended-openai/data-memory/knowledge"
-                    ): TextSelector(TextSelectorConfig(read_only=True))
-                }
+            data_schema=schema_for_ha(
+                vol.Schema(
+                    {
+                        vol.Optional(
+                            "panel_path",
+                            default="/extended-openai/data-memory/knowledge",
+                        ): TextSelector(TextSelectorConfig(read_only=True))
+                    }
+                )
             ),
         )
 
@@ -227,15 +234,17 @@ class ExtendedOpenAIOptionsFlow(OptionsFlow):
             return await self.async_step_test_result()
         return self.async_show_form(
             step_id="test_agent",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("agent_id"): SelectSelector(
-                        SelectSelectorConfig(
-                            options=self._agent_options(),
-                            mode=SelectSelectorMode.DROPDOWN,
+            data_schema=schema_for_ha(
+                vol.Schema(
+                    {
+                        vol.Required("agent_id"): SelectSelector(
+                            SelectSelectorConfig(
+                                options=self._agent_options(),
+                                mode=SelectSelectorMode.DROPDOWN,
+                            )
                         )
-                    )
-                }
+                    }
+                )
             ),
         )
 
@@ -247,12 +256,14 @@ class ExtendedOpenAIOptionsFlow(OptionsFlow):
             return await self.async_step_init()
         return self.async_show_form(
             step_id="test_result",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional("report", default=self._test_report): TextSelector(
-                        TextSelectorConfig(multiline=True, read_only=True)
-                    )
-                }
+            data_schema=schema_for_ha(
+                vol.Schema(
+                    {
+                        vol.Optional("report", default=self._test_report): TextSelector(
+                            TextSelectorConfig(multiline=True, read_only=True)
+                        )
+                    }
+                )
             ),
         )
 
@@ -330,7 +341,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         """Choose the provider before showing provider-specific credentials."""
         if user_input is None:
             return self.async_show_form(
-                step_id="user", data_schema=STEP_USER_DATA_SCHEMA
+                step_id="user", data_schema=schema_for_ha(STEP_USER_DATA_SCHEMA)
             )
 
         # Keep accepting the old one-step payload for in-progress/restored flows and
@@ -358,7 +369,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is None:
             return self.async_show_form(
                 step_id="openai_credentials",
-                data_schema=STEP_OPENAI_CREDENTIALS_SCHEMA,
+                data_schema=schema_for_ha(STEP_OPENAI_CREDENTIALS_SCHEMA),
                 description_placeholders={
                     "api_key_guide_url": "https://conorod1992.github.io/extended_openai_conversation/getting-started/api-key/",
                     "openai_api_keys_url": "https://platform.openai.com/api-keys",
@@ -386,7 +397,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is None:
             return self.async_show_form(
                 step_id="openai_advanced",
-                data_schema=STEP_OPENAI_ADVANCED_SCHEMA,
+                data_schema=schema_for_ha(STEP_OPENAI_ADVANCED_SCHEMA),
             )
 
         data = {**self._setup_data, **user_input}
@@ -406,7 +417,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is None:
             return self.async_show_form(
                 step_id="azure_credentials",
-                data_schema=STEP_AZURE_CREDENTIALS_SCHEMA,
+                data_schema=schema_for_ha(STEP_AZURE_CREDENTIALS_SCHEMA),
             )
 
         data = {**self._setup_data, **user_input}
@@ -460,7 +471,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id=step_id,
-            data_schema=data_schema,
+            data_schema=schema_for_ha(data_schema),
             errors=errors,
         )
 
@@ -507,7 +518,7 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
         return self.async_show_form(
             step_id="reauth_confirm",
-            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
+            data_schema=schema_for_ha(vol.Schema({vol.Required(CONF_API_KEY): str})),
             errors=errors,
         )
 
@@ -576,19 +587,27 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         if self._is_new:
             return self.async_show_form(
                 step_id="init",
-                data_schema=vol.Schema(
-                    {vol.Required(CONF_NAME, default=DEFAULT_CONVERSATION_NAME): str}
+                data_schema=schema_for_ha(
+                    vol.Schema(
+                        {
+                            vol.Required(
+                                CONF_NAME, default=DEFAULT_CONVERSATION_NAME
+                            ): str
+                        }
+                    )
                 ),
             )
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        "management_panel",
-                        default="Open Extended OpenAI in the sidebar to configure this agent.",
-                    ): TextSelector(TextSelectorConfig(read_only=True))
-                }
+            data_schema=schema_for_ha(
+                vol.Schema(
+                    {
+                        vol.Optional(
+                            "management_panel",
+                            default="Open Extended OpenAI in the sidebar to configure this agent.",
+                        ): TextSelector(TextSelectorConfig(read_only=True))
+                    }
+                )
             ),
         )
 
@@ -713,8 +732,10 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             step_id="init",
             errors=errors,
             description_placeholders={"reason": validation_error},
-            data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(schema), self.options
+            data_schema=schema_for_ha(
+                self.add_suggested_values_to_schema(
+                    schema_for_ha(vol.Schema(schema)), self.options
+                )
             ),
         )
 
@@ -837,7 +858,9 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             step_id="advanced",
             errors=errors,
             description_placeholders={"reason": validation_error},
-            data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(schema), self.options
+            data_schema=schema_for_ha(
+                self.add_suggested_values_to_schema(
+                    schema_for_ha(vol.Schema(schema)), self.options
+                )
             ),
         )

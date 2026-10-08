@@ -15,6 +15,7 @@ from homeassistant.helpers import llm
 
 from ..exceptions import EntityNotFound, InvalidFunction
 from ..ha_permissions import entity_access_error
+from ..ha_schema import ExtendableSchema
 
 
 class _RuntimeFunctionConfig(dict[str, Any]):
@@ -86,7 +87,7 @@ def copy_runtime_function_config(value: Any) -> Any:
 
 
 class Function(ABC):
-    def __init__(self, data_schema: vol.Schema = vol.Schema({})) -> None:
+    def __init__(self, data_schema: ExtendableSchema = vol.Schema({})) -> None:
         """Initialize tool."""
         self.data_schema = data_schema.extend({vol.Required("type"): str})
 

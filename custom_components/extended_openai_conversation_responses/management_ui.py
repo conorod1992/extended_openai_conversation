@@ -94,6 +94,7 @@ from .ha_llm_tools import (
     reference_key,
     validate_reference,
 )
+from .ha_schema import websocket_command as ha_websocket_command
 from .helpers import get_exposed_entities
 from .knowledge import async_get_knowledge, knowledge_source_as_dict
 from .live_subentry_updates import (
@@ -2816,7 +2817,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
     return {key: normalized[key] for key in settings}
 
 
-@websocket_api.websocket_command(
+@ha_websocket_command(
     {
         vol.Required("type"): WS_COMMAND,
         vol.Required("action"): str,

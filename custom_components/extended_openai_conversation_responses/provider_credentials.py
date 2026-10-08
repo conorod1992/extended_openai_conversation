@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_SKIP_AUTHENTICATION,
     DOMAIN,
 )
+from .ha_schema import websocket_command as ha_websocket_command
 from .helpers import get_authenticated_client
 from .operational_errors import log_handled_failure
 from .provider_errors import classify_config_provider_error
@@ -143,7 +144,7 @@ async def _async_update_api_key_command(
     return await async_replace_api_key(hass, entry, message["api_key"])
 
 
-@websocket_api.websocket_command(
+@ha_websocket_command(
     {
         vol.Required("type"): WS_UPDATE_API_KEY,
         vol.Required("entry_id"): str,

@@ -14,6 +14,7 @@ from .const import DOMAIN
 from .debug import get_debug_manager
 from .debug_management_projection import debug_run_summaries, debug_trace_page
 from .frontend_assets import async_register_frontend_assets
+from .ha_schema import websocket_command as ha_websocket_command
 from .management_result_limits import (
     MANAGEMENT_DEBUG_PROVIDER_PAGE_DEFAULT,
     MANAGEMENT_DEBUG_PROVIDER_PAGE_MAX,
@@ -53,7 +54,7 @@ def _manager(hass: HomeAssistant, msg: dict[str, Any]):
     return get_debug_manager(hass, entry_id, subentry_id)
 
 
-@websocket_api.websocket_command(
+@ha_websocket_command(
     {
         vol.Required("type"): DEBUG_WS_COMMAND,
         vol.Required("action"): str,

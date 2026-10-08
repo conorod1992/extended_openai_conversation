@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
+from .ha_schema import websocket_command as ha_websocket_command
 from .intercom import async_get_intercom
 from .intercom_permissions import async_authorized_broadcast_targets
 
@@ -18,7 +19,7 @@ WS_BROADCAST = f"{DOMAIN}/broadcast"
 _SETUP_KEY = f"{DOMAIN}.broadcast_api_setup"
 
 
-@websocket_api.websocket_command(
+@ha_websocket_command(
     {
         vol.Required("type"): WS_BROADCAST,
         vol.Required("action"): vol.In(["snapshot", "send", "set_enabled"]),

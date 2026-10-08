@@ -15,6 +15,7 @@ from homeassistant.core import (
 from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
+from .ha_schema import schema_for_ha
 from .intercom import DEFAULT_TTL_SECONDS, async_get_intercom
 from .intercom_panel import async_setup_broadcast_api
 from .intercom_permissions import async_authorized_broadcast_targets
@@ -82,6 +83,6 @@ async def async_setup_intercom_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_BROADCAST,
         broadcast,
-        schema=BROADCAST_SCHEMA,
+        schema=schema_for_ha(BROADCAST_SCHEMA),
         supports_response=SupportsResponse.OPTIONAL,
     )
