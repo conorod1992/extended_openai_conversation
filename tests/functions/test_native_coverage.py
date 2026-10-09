@@ -331,9 +331,9 @@ def test_homeassistant_turn_on_filters_indirect_targets_by_domain_service(
     )
     function.validate_entity_ids.assert_called_once_with(
         hass,
-        ["homeassistant.internal", "light.living_room", "sensor.temperature"],
+        ["light.living_room", "sensor.temperature"],
         exposed_entities,
-        availability_entity_ids={"light.living_room", "sensor.temperature"},
+        require_available=True,
     )
 
 
@@ -366,7 +366,7 @@ def test_explicit_service_restricts_indirect_participating_entities(
             hass,
             ["light.living_room"],
             exposed_entities,
-            availability_entity_ids={"light.living_room"},
+            require_available=True,
         )
     else:
         with pytest.raises(HomeAssistantError, match="participating entities"):

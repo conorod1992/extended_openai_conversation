@@ -12,6 +12,12 @@ from tests.test_quiet_hours_restoration_regressions import _active
 from tests.test_quiet_hours_runtime import _stateful_public_manager
 
 
+@pytest.fixture(autouse=True)
+def loaded_entity_registry(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import quiet_hours
+    monkeypatch.setattr(quiet_hours.er, "async_get", lambda _hass: SimpleNamespace(async_get=lambda _id: None))
+
+
 def _state(context_id: str, *, state: str = "idle", volume: float = 0.8):
     return SimpleNamespace(
         state=state,

@@ -96,13 +96,18 @@ async def test_indirect_target_ignores_unrelated_unavailable_sensor(
             hass, {"name": "execute_service"}, arguments, None, exposed
         )
     hass.states.async_set(light.entity_id, "off")
+    # Unrelated sensors do not participate in the light service.
+    await NativeFunction().execute(
+        hass, {"name": "execute_service"}, arguments, None,
+        [{"entity_id": light.entity_id}],
+    )
     with pytest.raises(HomeAssistantError):
         await NativeFunction().execute(
             hass,
             {"name": "execute_service"},
             arguments,
             None,
-            [{"entity_id": light.entity_id}],
+            [{"entity_id": sensor.entity_id}],
         )
 
 

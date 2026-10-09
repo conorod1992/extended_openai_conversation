@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests_real_ha.entity_service_probe import register_entity_service_probe
+
 from copy import deepcopy
 import json
 from typing import Any
@@ -176,7 +178,7 @@ async def test_guest_tool_policy_and_ha_permissions_resolve_conflicts_stably(
     async def turn_off(call: Any) -> None:
         calls.append(call)
 
-    hass.services.async_register("light", "turn_off", turn_off)
+    register_entity_service_probe(hass, "light", "turn_off", turn_off)
     for entity_id in (_HA_DENIED, _GUEST_DENIED, _FULLY_ALLOWED):
         hass.states.async_set(entity_id, "on")
         async_expose_entity(hass, conversation.DOMAIN, entity_id, True)

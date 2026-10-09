@@ -65,9 +65,10 @@ async def test_legitimate_unknown_and_recovery_targets_dispatch(hass, domain, se
     hass.services.async_call.assert_awaited_once()
 
 
-async def test_explicit_incompatible_target_cannot_report_success(hass):
+async def test_explicit_incompatible_target_cannot_report_success(hass, monkeypatch):
     hass.states.get.return_value = State("switch.public", "on")
     hass.services.async_services_for_domain.return_value = {}
+    monkeypatch.setattr(native, "_service_participants", lambda *_: set())
     with pytest.raises(HomeAssistantError, match="participating"):
         await native.NativeFunction().execute_service_single(hass, {}, {"domain":"light", "service":"turn_on", "entity_id":"switch.public"}, None, [{"entity_id":"switch.public"}])
     hass.services.async_call.assert_not_awaited()

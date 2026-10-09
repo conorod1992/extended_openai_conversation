@@ -1932,6 +1932,10 @@ class FakeServices:
     def has_service(self, domain, service):
         return True
 
+    def async_services_for_domain(self, domain):
+        from tests.entity_service_fixtures import registered_entity_service
+        return {"turn_on": registered_entity_service(), "turn_off": registered_entity_service()}
+
     async def async_call(self, domain, service, **kwargs):
         self.calls.append((domain, service, kwargs))
         if self.fail:

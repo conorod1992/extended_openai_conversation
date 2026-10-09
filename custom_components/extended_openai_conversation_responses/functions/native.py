@@ -441,12 +441,6 @@ class NativeFunction(Function):
                 candidates = _service_participants(hass, domain, service, participating)
                 if candidates is not None:
                     participating.intersection_update(candidates)
-                elif domain != "homeassistant":
-                    participating = {
-                        entity_id
-                        for entity_id in participating
-                        if entity_id.partition(".")[0] == domain
-                    }
             if not participating:
                 raise HomeAssistantError(
                     "Service target does not resolve to any participating entities"
