@@ -233,9 +233,9 @@ class FileFunction(Function):
         # Add custom allow_dir if specified.
         if allow_dirs:
             template_arguments = {
+                **arguments,
                 "config_dir": hass.config.config_dir,
             }
-            template_arguments.update(arguments)
             custom_dirs = [
                 template.async_render(template_arguments, parse_result=False)
                 for template in allow_dirs

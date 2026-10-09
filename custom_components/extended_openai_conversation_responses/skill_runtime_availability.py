@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from .agent_config import validate_function_groups
@@ -17,6 +18,27 @@ from .const import (
 from .function_groups import function_tool_runtime_scope
 from .skill_availability import effective_skill_loader_status, is_canonical_skill_loader
 from .skills import SkillManager
+
+_ACTIVE_SELECTED_SKILLS: ContextVar[frozenset[str] | None] = ContextVar(
+    "eoai_selected_skills", default=None
+)
+
+
+def require_selected_skill(name: str) -> None:
+    """Authorize helper lookups against the active agent's selected Skills."""
+    selected = _ACTIVE_SELECTED_SKILLS.get()
+    if selected is not None and name not in selected:
+        raise ValueError("Skill is not selected for this agent")
+
+
+@contextmanager
+def selected_skill_scope(options: Mapping[str, Any]) -> Iterator[None]:
+    """Bind selection during execution, independently of tool advertisement."""
+    token = _ACTIVE_SELECTED_SKILLS.set(frozenset(options.get(CONF_SKILLS, []) or []))
+    try:
+        yield
+    finally:
+        _ACTIVE_SELECTED_SKILLS.reset(token)
 
 
 def _installed_skill_names(manager: SkillManager | None) -> tuple[str, ...]:
@@ -66,4 +88,8 @@ def effective_tool_runtime_scope(
         group_loader_supported=group_loader_supported,
         tool_available=tool_available,
     ):
-        yield
+        token = _ACTIVE_SELECTED_SKILLS.set(frozenset(selected_names))
+        try:
+            yield
+        finally:
+            _ACTIVE_SELECTED_SKILLS.reset(token)

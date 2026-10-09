@@ -783,6 +783,14 @@ class QuietHoursManager:
                 }
             if entity_id in controls and raw.get("restoration_pending") is True:
                 controls[entity_id]["restoration_pending"] = True
+            identity = raw.get("registry_identity")
+            if (
+                entity_id in controls
+                and isinstance(identity, list)
+                and len(identity) == 3
+                and all(isinstance(item, str) and item for item in identity)
+            ):
+                controls[entity_id]["registry_identity"] = list(identity)
         return {
             "period_started_at": started.isoformat(),
             "period_ends_at": ended.isoformat(),

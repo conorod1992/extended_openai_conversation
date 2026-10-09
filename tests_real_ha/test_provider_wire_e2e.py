@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests_real_ha.entity_service_probe import register_entity_service_probe
+
 import asyncio
 from copy import deepcopy
 import json
@@ -407,7 +409,7 @@ async def test_provider_argument_shapes_gate_real_ha_service(
     async def turn_on(call: Any) -> None:
         calls.append(call)
 
-    hass.services.async_register("light", "turn_on", turn_on)
+    register_entity_service_probe(hass, "light", "turn_on", turn_on)
     hass.states.async_set(_ENTITY_ID, "off")
     async_expose_entity(hass, conversation.DOMAIN, _ENTITY_ID, True)
     arguments = {
@@ -454,7 +456,7 @@ async def _prepare_service(hass: HomeAssistant) -> list[Any]:
     async def turn_off(call: Any) -> None:
         calls.append(call)
 
-    hass.services.async_register("light", "turn_off", turn_off)
+    register_entity_service_probe(hass, "light", "turn_off", turn_off)
     hass.states.async_set(_ENTITY_ID, "on", {"friendly_name": "Provider Wire"})
     async_expose_entity(hass, conversation.DOMAIN, _ENTITY_ID, True)
     return calls
@@ -624,7 +626,7 @@ async def test_provider_tool_cannot_use_stale_guest_entity_exposure(
     async def turn_off(call: Any) -> None:
         calls.append(call)
 
-    hass.services.async_register("light", "turn_off", turn_off)
+    register_entity_service_probe(hass, "light", "turn_off", turn_off)
     provider_entered = asyncio.Event()
     release_provider = asyncio.Event()
     permission_entered = asyncio.Event()
@@ -743,7 +745,7 @@ async def test_lost_tool_ack_replay_does_not_reuse_revoked_guest_exposure(
     async def turn_off(call: Any) -> None:
         calls.append(call)
 
-    hass.services.async_register("light", "turn_off", turn_off)
+    register_entity_service_probe(hass, "light", "turn_off", turn_off)
     requests: list[dict[str, Any]] = []
 
     async def send(request: httpx.Request, *args: Any, **kwargs: Any) -> httpx.Response:
@@ -771,7 +773,7 @@ async def test_lost_tool_ack_replay_does_not_reuse_revoked_guest_exposure(
             )
         if index == 3:
             replay_result = _tool_result_from_chat_request(requests[3]["body"])
-            assert replay_result["result"][0]["success"] is False
+            assert json.loads(replay_result["result"])["reason"] == "guest_mode"
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
@@ -801,7 +803,7 @@ async def test_lost_tool_ack_replay_does_not_reuse_revoked_guest_exposure(
     await hass.async_block_till_done()
 
     replay = await turn("Retry the interrupted action")
-    assert replay.response.error_code is not None
+    assert replay.response.error_code is None
     assert len(calls) == 1
     recovered = await turn("Continue without repeating that action")
     assert _speech(recovered) == "Recovered without repeating the action."

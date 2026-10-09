@@ -29,6 +29,8 @@ from homeassistant.core import Context, HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import condition as ha_condition, config_validation as cv
 from homeassistant.helpers.script import Script, async_validate_actions_config
+from homeassistant.helpers.script_variables import ScriptVariables
+from homeassistant.helpers.template import Template
 from homeassistant.helpers.typing import UNDEFINED
 
 from .const import (
@@ -2504,6 +2506,8 @@ def _guest_script_allowed(
     slots: Mapping[str, str] | None = None,
 ) -> bool:
     """Authorize effects without interpreting native wait/condition templates."""
+    if not _guest_template_reads_allowed(hass, sequence, policy, slots or {}):
+        return False
     for item in _iter_script_actions(sequence):
         if slots is not None and any(
             key in item for key in ("action", "service", "scene")
@@ -2536,6 +2540,107 @@ def _guest_script_allowed(
         elif any(key in item for key in ("device_id", "event", "event_type")):
             return False
     return True
+
+
+def _guest_template_reads_allowed(
+    hass: HomeAssistant,
+    value: Any,
+    policy: GuestCapabilityPolicy,
+    slots: Mapping[str, str],
+) -> bool:
+    """Authorize the state dependencies of every local-rule template."""
+    from jinja2 import meta
+
+    from homeassistant.helpers.template import Template, TemplateEnvironment
+
+    if isinstance(value, Mapping):
+        return all(
+            _guest_template_reads_allowed(hass, item, policy, slots)
+            for item in value.values()
+        )
+    if isinstance(value, (list, tuple)):
+        return all(
+            _guest_template_reads_allowed(hass, item, policy, slots) for item in value
+        )
+    source = value.template if isinstance(value, Template) else value
+    if not isinstance(source, str) or ("{{" not in source and "{%" not in source):
+        return True
+    template = Template(source, hass)
+    environment = TemplateEnvironment(hass, limited=False, strict=False)
+    unknown = (
+        meta.find_undeclared_variables(environment.parse(source))
+        - set(slots)
+        - {"request"}
+    )
+    if unknown:
+        # Native-local variables/results may select a different entity at runtime.
+        # Do not certify reads that cannot be resolved in this preflight scope.
+        return False
+    info = template.async_render_to_info({**slots, "request": {"slots": dict(slots)}})
+    if info.exception is not None:
+        return False
+    return _guest_render_info_allowed(hass, info, policy)
+
+
+def _guest_render_info_allowed(
+    hass: HomeAssistant, info: Any, policy: GuestCapabilityPolicy
+) -> bool:
+    """Check the dependencies observed in one actual template evaluation."""
+    if not all(policy.allows_entity_read(entity_id) for entity_id in info.entities):
+        return False
+    return not (
+        (info.all_states or info.domains)
+        and any(
+            not policy.allows_entity_read(state.entity_id)
+            for state in hass.states.async_all()
+            if info.all_states or state.domain in info.domains
+        )
+    )
+
+
+class _GuestTemplateDenied(ValueError):
+    """A fatal privacy violation, including inside recoverable native actions."""
+
+
+class _GuestReadTemplate(Template):
+    """Authorize rendered reads before HA can consume the template's result."""
+
+    def __init__(self, source: Template, policy: Callable[[], GuestCapabilityPolicy]):
+        super().__init__(source.template, source.hass)
+        self._source = source
+        self._policy = policy
+
+    def async_render_to_info(self, *args: Any, **kwargs: Any) -> Any:
+        policy = self._policy()
+        info = self._source.async_render_to_info(*args, **kwargs)
+        if policy.guest_active and not _guest_render_info_allowed(
+            self.hass, info, policy
+        ):
+            # ValueError deliberately bypasses HA's ConditionError fallback and
+            # continue_on_error handling for ordinary HomeAssistantError values.
+            raise _GuestTemplateDenied(GUEST_MODE_UNAVAILABLE)
+        return info
+
+    def async_render(self, *args: Any, **kwargs: Any) -> Any:
+        return self.async_render_to_info(*args, **kwargs).result()
+
+
+def _guard_template_reads(
+    value: Any, policy: Callable[[], GuestCapabilityPolicy]
+) -> Any:
+    """Wrap validated templates, including native-local variable containers."""
+    if isinstance(value, Template):
+        return _GuestReadTemplate(value, policy)
+    if isinstance(value, ScriptVariables):
+        return ScriptVariables(_guard_template_reads(value.as_dict(), policy))
+    if isinstance(value, Mapping):
+        return {
+            _guard_template_reads(key, policy): _guard_template_reads(item, policy)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_guard_template_reads(item, policy) for item in value]
+    return value
 
 
 def _guard_native_actions(actions: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -2886,6 +2991,17 @@ async def _async_evaluate_matched_rule(
             validated_actions = await async_validate_actions_config(
                 hass, schema_actions
             )
+
+            def current_policy() -> GuestCapabilityPolicy:
+                nonlocal policy
+                if live_guest_policy is not None:
+                    policy = policy.restricted_by(live_guest_policy())
+                return policy
+
+            if policy.guest_active or live_guest_policy is not None:
+                validated_actions = _guard_template_reads(
+                    validated_actions, current_policy
+                )
             if require_matching_revision is not None:
                 require_matching_revision()
             # Once the validated native script starts, its frozen actions may
@@ -2973,7 +3089,7 @@ async def _async_evaluate_matched_rule(
                     await unload()
                 else:
                     await script.async_stop()
-        except GuestModeDenied:
+        except GuestModeDenied, _GuestTemplateDenied:
             return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
         except Exception:
             if require_matching_revision is not None:

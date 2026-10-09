@@ -240,7 +240,8 @@ async def test_populated_assist_feature_effects_and_real_oracle_canaries(
         )
         hass.states.async_set(_TARGET, "off")
 
-    hass.services.async_register("light", "turn_off", turn_off)
+    from tests_real_ha.entity_service_probe import register_entity_service_probe
+    register_entity_service_probe(hass, "light", "turn_off", turn_off)
     call = _responses_sse_tool_call if api_mode == "responses" else _chat_sse_tool_call
     text_reply = _responses_sse_text if api_mode == "responses" else _chat_sse_text
     evidence = []

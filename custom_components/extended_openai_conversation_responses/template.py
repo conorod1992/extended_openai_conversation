@@ -126,6 +126,9 @@ class ExtendedOpenAITemplateManager:
         Raises:
             ValueError: If the skill is not found
         """
+        from .skill_runtime_availability import require_selected_skill
+
+        require_selected_skill(name)
         manager = SkillManager._instance
         if manager is None:
             raise ValueError("SkillManager not initialized")

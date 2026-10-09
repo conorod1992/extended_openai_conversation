@@ -231,6 +231,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         async with self._lock:
             if not self._initialized:
                 return
+            self._migrate_control_entity_ids()
             period = (
                 quiet_period_for(now, self._config.start, self._config.end)
                 if self._config.enabled
@@ -487,12 +488,26 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 await self._async_save_control_state_locked()
                 return None
         else:
+            try:
+                entry = er.async_get(self.hass).async_get(entity_id)
+            except TypeError:
+                entry = None
+            identity = [
+                entity_id.partition(".")[0],
+                getattr(entry, "platform", None),
+                getattr(entry, "unique_id", None),
+            ]
             intent = {
                 "kind": kind,
                 "satellite_entity_id": satellite_entity_id,
                 "original_value": original,
                 "quiet_value": desired,
                 "baseline_context_id": self._control_context_id(entity_id),
+                **(
+                    {"registry_identity": identity}
+                    if all(isinstance(item, str) and item for item in identity)
+                    else {}
+                ),
             }
             observed.append(entity_id)
         if needs_action:
@@ -535,6 +550,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         )
 
     async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
+        self._migrate_control_entity_ids()
         if self._active is not None:
             controls = self._active.get("controls", {})
             for entity_id, control in list(controls.items()):
@@ -551,6 +567,30 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                     # unacknowledged intent happens to match an independent effect.
                     controls.pop(entity_id)
         await super()._async_restore_locked(pending_only=pending_only)
+
+    def _migrate_control_entity_ids(self) -> None:
+        """Follow registry identities when owned speakers or switches are renamed."""
+        if self._active is None:
+            return
+        for key in ("controls", "pending_controls"):
+            controls = self._active.get(key, {})
+            for old_id, control in list(controls.items()):
+                identity = control.get("registry_identity")
+                if not isinstance(identity, list) or len(identity) != 3:
+                    continue
+                registry = er.async_get(self.hass)
+                new_id = registry.async_get_entity_id(*identity)
+                if (
+                    not isinstance(new_id, str)
+                    or new_id == old_id
+                    or new_id in controls
+                ):
+                    continue
+                controls[new_id] = controls.pop(old_id)
+                self._active["observed_controls"] = [
+                    new_id if entity_id == old_id else entity_id
+                    for entity_id in self._active.get("observed_controls", [])
+                ]
 
     async def _async_set_switch(self, entity_id: str, enabled: bool) -> None:
         await self._async_call_control_service(

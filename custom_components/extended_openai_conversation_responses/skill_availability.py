@@ -30,7 +30,8 @@ def is_canonical_skill_loader(tool: dict[str, Any]) -> bool:
     return bool(
         spec.get("name") == SKILL_LOADER_TOOL_NAME
         and function.get("type") == "read_file"
-        and function.get("path") == CANONICAL_SKILL_LOADER_PATH
+        and getattr(function.get("path"), "template", function.get("path"))
+        == CANONICAL_SKILL_LOADER_PATH
     )
 
 

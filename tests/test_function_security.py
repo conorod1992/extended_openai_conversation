@@ -255,10 +255,14 @@ def test_generic_wrapper_arguments_are_explicitly_indirect() -> None:
 
 
 def _execution_entity(tool: dict, policy: GuestCapabilityPolicy):
+    from tests.entity_service_fixtures import registered_entity_service
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.entry = SimpleNamespace(entry_id="entry")
     entity.subentry = SimpleNamespace(subentry_id="agent", data={})
     entity.hass = SimpleNamespace(
+        services=SimpleNamespace(async_services_for_domain=lambda _domain: {
+            name: registered_entity_service() for name in ("turn_on", "turn_off", "unlock")
+        }),
         config_entries=SimpleNamespace(
             async_get_entry=lambda _entry_id: SimpleNamespace(
                 subentries={"agent": SimpleNamespace(data={})}

@@ -102,7 +102,8 @@ async def run_execution_workflows(hass, monkeypatch, cases):
         else:
             effects.append(call.data["message"])
 
-    hass.services.async_register("light", "turn_on", observe)
+    from tests_real_ha.entity_service_probe import register_entity_service_probe
+    register_entity_service_probe(hass, "light", "turn_on", observe)
 
     async def say(text, conversation_id=None):
         return await conversation.async_converse(
