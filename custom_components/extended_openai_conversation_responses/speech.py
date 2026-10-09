@@ -479,8 +479,6 @@ class _SpeechDeltaListener:
         if "role" in delta:
             self.flush(chat_log)
             self._sanitizer = self._new_sanitizer()
-            self._listener(chat_log, delta)
-            return
         content = delta.get("content")
         if not isinstance(content, str):
             self._listener(chat_log, delta)

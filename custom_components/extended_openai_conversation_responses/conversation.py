@@ -2031,6 +2031,8 @@ class ExtendedOpenAIAgentEntity(
         successful = False
         content: Any = None
         try:
+            from .tool_replay_guard import record_dispatch
+
             # A provider response may arrive after HA exposure changes. Native
             # actions must use the current Assist-visible set at dispatch.
             if function_tool.get("function", {}).get("type") == "native" and isinstance(
@@ -2042,13 +2044,24 @@ class ExtendedOpenAIAgentEntity(
             with selected_skill_scope(
                 getattr(getattr(self, "subentry", None), "data", {})
             ):
+                record_dispatch(self, tool_input)
                 content = await self._async_dispatch_function_tool(
                     function_tool, tool_input, llm_context, exposed_entities
                 )
             payload = tool_result_data(content)
-            if isinstance(payload, dict) and isinstance(payload.get("result"), str):
-                payload["result"] = bounded_tool_result_text(payload["result"])
             content = _compact_json_result_content(content)
+            if isinstance(payload, dict) and "result" in payload:
+                value = payload["result"]
+                serialized = (
+                    value
+                    if isinstance(value, str)
+                    else json.dumps(
+                        value, ensure_ascii=False, separators=(",", ":"), default=str
+                    )
+                )
+                bounded = bounded_tool_result_text(serialized)
+                if isinstance(value, str) or bounded != serialized:
+                    payload["result"] = bounded
             successful = True
             return cast(conversation.ToolResultContent, content)
         finally:

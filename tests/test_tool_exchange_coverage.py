@@ -372,6 +372,8 @@ async def test_failed_tool_result_remains_ambiguous_with_fresh_call_id(monkeypat
     log.conversation_id = "ambiguous"
     execute = AsyncMock()
     entity = SimpleNamespace(entity_id="agent", _execute_function_tool=execute)
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import record_dispatch
+    record_dispatch(entity, original)
     remember_unacknowledged_calls(entity, log, set())
     retry = _call("fresh-provider-id")
     assert was_unacknowledged_equivalent(entity, log, retry)
@@ -430,6 +432,8 @@ def test_replay_guard_bounds_ambiguous_conversation_ledger(monkeypatch) -> None:
             ]
         )
         log.conversation_id = f"conversation-{index}"
+        from custom_components.extended_openai_conversation_responses.tool_replay_guard import record_dispatch
+        record_dispatch(entity, log.content[0].tool_calls[0])
         remember_unacknowledged_calls(entity, log, set())
 
     ledger = entity._unacknowledged_tool_calls

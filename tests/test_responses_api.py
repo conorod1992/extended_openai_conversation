@@ -1184,6 +1184,8 @@ async def test_conditional_continue_retries_ordinary_text_with_finalizer(hass) -
     entity.hass = hass
     entity.entity_id = "conversation.test"
     chat_log = conversation.ChatLog(hass, "conversation-id")
+    heard = []
+    chat_log.delta_listener = lambda _log, delta: heard.append(delta)
     chat_log.async_add_user_content(conversation.UserContent(content="Help me"))
 
     result = await entity._async_handle_chat_log(
@@ -1206,6 +1208,8 @@ async def test_conditional_continue_retries_ordinary_text_with_finalizer(hass) -
         for content in chat_log.content
     )
     assert chat_log.content[-1].content == "Which room did you mean?"
+    assert "Draft answer" not in "".join(delta.get("content", "") for delta in heard)
+    assert "Which room did you mean?" in "".join(delta.get("content", "") for delta in heard)
 
 
 async def test_conditional_continue_finalization_retry_is_bounded(hass) -> None:
