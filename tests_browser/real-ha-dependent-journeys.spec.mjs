@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {acceptConfirmation, browserToolYaml, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
+import {browserToolYaml, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 
 const backendUrl = process.env.REAL_HA_BACKEND_URL;
 test.skip(!backendUrl, "requires genuine HA management backend");
@@ -65,8 +65,6 @@ test("unsaved prompt draft cannot overwrite saved independent memory mutation", 
   const original = await panel.evaluate(async host => (await host._call("configuration", "get")).config.prompt);
   const draft = "Uncommitted prompt from dependent journey";
   await panel.locator('[data-config="prompt"]').fill(draft);
-  await panel.getByRole("button", {name:"Capabilities",exact:true}).click();
-  await panel.getByRole("button", {name:"Memory",exact:true}).click().catch(() => {});
   // Navigate in the still-mounted panel so the draft and committed data coexist.
   await panel.evaluate(host => host._navigate("data-memory", "memories"));
   await panel.locator("#add-memory").click();
@@ -111,9 +109,8 @@ test("browser memory edit detects external backend mutation instead of overwriti
     host._call("memories","list",{scope_id:"__anonymous__"}));
   const current = final.memories.find(row => row.memory_id === memory.memory_id);
   expect(current).toBeTruthy();
-  // Either reject the stale edit, or explicitly use last-writer-wins semantics.
-  // It may never silently lose the record altogether.
-  expect(["Externally updated memory","Stale browser attempt"]).toContain(current.content);
+  // An editor based on an older revision must not silently overwrite newer data.
+  expect(current.content).toBe("Externally updated memory");
   await expectHarnessClean(page, errors);
 });
 
