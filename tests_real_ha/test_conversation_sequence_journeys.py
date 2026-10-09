@@ -5,15 +5,13 @@ between operations or inspect coverage as a proxy for actual behaviour.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import json
-
-import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_CONVERSATION_CONTINUITY, CONVERSATION_CONTINUITY_DEVICE,
-    CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS, DEFAULT_CONF_FUNCTION_TOOLS,
 )
-from homeassistant.components import conversation
 from tests_real_ha.test_cross_feature_acceptance import (
     _agent, _say, _speech, _rule, _provider,
 )
@@ -117,7 +115,7 @@ async def test_successful_tool_then_provider_failure_does_not_repeat_on_later_tu
     hass, monkeypatch
 ):
     """Real service side effect remains once across failed completion and recovery."""
-    agent = await _agent(hass)
+    agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: [deepcopy(DEFAULT_CONF_FUNCTION_TOOLS[0])]})
     effects = []
     async def record(call):
         effects.append(call.data["marker"])
