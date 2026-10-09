@@ -1087,7 +1087,7 @@ def normalize_agent_config(
     result[CONF_SPEECH_REGEX_REPLACEMENTS] = validate_speech_regex_replacements(
         result.get(CONF_SPEECH_REGEX_REPLACEMENTS, [])
     )
-    mode = get_memory_mode(result)
+    mode = get_memory_mode(data if CONF_MEMORY_MODE not in data else result)
     result[CONF_MEMORY_MODE] = mode
     result[CONF_MEMORY_ENABLED] = mode != "off"
     result[CONF_MEMORY_AUTO_CREATE] = mode == "automatic"

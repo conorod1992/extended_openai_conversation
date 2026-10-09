@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 import re
@@ -17,11 +17,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from . import backup
-from .agent_config import (
-    agent_config_snapshot,
-    configured_function_tools_from_data,
-    validate_agent_title,
-)
+from .agent_config import configured_function_tools_from_data, validate_agent_title
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
     CONF_VOICE_DEFAULT_USER_ID,
@@ -253,7 +249,7 @@ def transfer_user_scope_ids(
         mappings = prepared.config.get(CONF_VOICE_DEVICE_MAPPINGS, {})
         if isinstance(mappings, Mapping):
             for owner in mappings.values():
-                if user_id := _portable_user_id(owner, prefixed_only=True):
+                if user_id := _portable_user_id(owner):
                     user_ids.add(user_id)
 
     return frozenset(user_ids)
@@ -354,6 +350,14 @@ def apply_user_scope_mappings(
             replace(record, user_id=str(_map_owner_value(record.user_id, mapping)))
             for record in mapped.memories
         ]
+        try:
+            PersistentMemory.validate_backup_data(
+                {"memories": [asdict(record) for record in mapped.memories]}
+            )
+        except ValueError as err:
+            raise backup.BackupError(
+                f"User ownership mapping is invalid: {err}"
+            ) from err
 
     if (
         SECTION_TEMPORARY_MEMORY in selected_set
@@ -1016,7 +1020,8 @@ def _prepared_restore_from_selection(
         title = imported.title
         if imported.raw_configuration is not None:
             raw, kept, absent = _restore_section_secrets(
-                imported.raw_configuration, agent_config_snapshot(current.config)
+                imported.raw_configuration,
+                backup.private_configuration_snapshot(current.config),
             )
             preserved.extend(f"configuration.{path}" for path in kept)
             missing.extend(f"configuration.{path}" for path in absent)

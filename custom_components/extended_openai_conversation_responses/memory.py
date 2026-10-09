@@ -75,8 +75,11 @@ _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
 _MEMORY_KEY_PATTERN = re.compile(r"^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$")
 _SECRET_PATTERN = re.compile(
+    # Accept separators and camelCase label starts; keep case transitions
+    # case-sensitive even though credential names themselves ignore case.
+    r"(?:(?<![^\W_])|(?<=(?-i:[a-z]))(?=(?-i:[A-Z])))"
     r"(?:password|passcode|api[_ -]?key|access[_ -]?token|auth[_ -]?token|"
-    r"security[_ -]?code|secret|pin)\s*(?:is|:|=)\s*\S+|"
+    r"security[_ -]?code|secret|pin)\b\s*(?:is|:|=)\s*\S+|"
     r"\bsk-[A-Za-z0-9_-]{12,}\b",
     re.IGNORECASE,
 )
@@ -1096,11 +1099,11 @@ class PersistentMemory:
         Word overlap identifies related facts in _find_related_candidate; it
         cannot establish equivalence (preferences, negation and numbers matter).
         """
-        normalized = _normalize(content)
+        normalized = _fact_equality(content)
         for memory in self._memories.values():
             if memory.user_id != user_id:
                 continue
-            if _normalize(memory.content) == normalized:
+            if _fact_equality(memory.content) == normalized:
                 return memory
         return None
 
@@ -1879,7 +1882,9 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
     _clean_category(record.category)
     _clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH)
     _clean_key(record.key)
-    _validate_privacy_fields(record.source, record.category, record.subject, record.key)
+    _validate_privacy_fields(
+        record.source, record.content, record.category, record.subject, record.key
+    )
     if (
         dt_util.parse_datetime(record.created_at) is None
         or dt_util.parse_datetime(record.updated_at) is None
@@ -1902,6 +1907,13 @@ def _migrate_raw_record(raw: Mapping[str, Any]) -> dict[str, Any]:
     result.setdefault("valid_from", None)
     result.pop("embedding", None)
     return result
+
+
+def _fact_equality(value: str) -> str:
+    """Fold case and whitespace without erasing meaning-bearing punctuation."""
+    return " ".join(unicodedata.normalize("NFC", value).casefold().split()).rstrip(
+        ".!?"
+    )
 
 
 @lru_cache(maxsize=20_000)

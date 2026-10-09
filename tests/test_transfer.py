@@ -557,7 +557,7 @@ def test_section_selection_rejects_ambiguous_types(sections, message) -> None:
 
 async def test_custom_snapshot_collects_every_selected_manager(hass, monkeypatch) -> None:
     entry, subentry = _entry_and_subentry()
-    monkeypatch.setattr(transfer, "agent_config_snapshot", lambda value: dict(value))
+    monkeypatch.setattr(backup, "export_configuration_snapshot", lambda value: dict(value))
     payloads = {
         "async_get_request_rules": _rules_backup(),
         "async_get_memory": {"memories": []},

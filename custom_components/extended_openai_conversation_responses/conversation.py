@@ -432,7 +432,12 @@ class ExtendedOpenAIAgentEntity(
                 CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
             )
         )
-        await self._usage.async_prune_details()
+        try:
+            await self._usage.async_prune_details()
+        except Exception:
+            _LOGGER.exception(
+                "Usage retention maintenance failed; initialization continues"
+            )
         self._continuity = async_get_continuity(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )

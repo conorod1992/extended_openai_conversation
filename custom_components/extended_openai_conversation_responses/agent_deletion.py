@@ -97,12 +97,17 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
     async def remove() -> None:
         with gate.recovery_work():
             from .backup_transfer import async_remove_agent_transfers
-            from .delayed_tools import DATA_DELAYED_TOOL_MANAGER
+            from .delayed_tools import (
+                DATA_DELAYED_TOOL_MANAGER,
+                async_remove_stored_agent_calls,
+            )
             from .model_lifecycle import clear_retirement_failure
 
             delayed = hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
             if delayed is not None:
                 await delayed.async_remove_agent(entry_id, subentry_id)
+            else:
+                await async_remove_stored_agent_calls(hass, entry_id, subentry_id)
             await async_remove_agent_transfers(hass, entry_id, subentry_id)
             key = (entry_id, subentry_id)
             stores = []

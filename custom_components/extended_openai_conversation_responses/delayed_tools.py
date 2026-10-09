@@ -32,11 +32,12 @@ from .persistence_hardening import (
     _async_repair_private_store_mode,
     _async_settle_transactional_save,
 )
-from .strict_store import PropagatingWriteStore
+from .strict_store import PropagatingWriteStore, _async_settle_store_io
 
 _LOGGER = logging.getLogger(__name__)
 
 DATA_DELAYED_TOOL_MANAGER = "delayed_tool_manager"
+_DATA_DELAYED_STORE_LOCK = "delayed_tool_store_lock"
 DELAYED_TOOL_STORAGE_VERSION = 1
 DELAYED_TOOL_STORAGE_KEY = f"{DOMAIN}.delayed_tools"
 _AGENT_RETRY_SECONDS = 30
@@ -148,6 +149,57 @@ def _delay_as_timedelta(value: Any) -> timedelta:
     return delay
 
 
+async def async_remove_stored_agent_calls(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> None:
+    """Erase unloaded-agent arguments without arming any scheduled execution."""
+    async with _delayed_store_lock(hass):
+        # Setup may have published a manager while this deletion waited. Its
+        # in-memory generation must participate in the same store transaction.
+        manager = hass.data.get(DOMAIN, {}).get(DATA_DELAYED_TOOL_MANAGER)
+        if isinstance(manager, DelayedToolManager):
+            await manager._async_remove_agent_locked(entry_id, subentry_id)
+        else:
+            await _async_remove_stored_agent_calls_locked(hass, entry_id, subentry_id)
+
+
+def _delayed_store_lock(hass: HomeAssistant) -> asyncio.Lock:
+    """Serialize every owner of the shared delayed-call storage generation."""
+    lock: asyncio.Lock = hass.data.setdefault(DOMAIN, {}).setdefault(
+        _DATA_DELAYED_STORE_LOCK, asyncio.Lock()
+    )
+    return lock
+
+
+async def _async_remove_stored_agent_calls_locked(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> None:
+    """Read and replace stored calls while retaining shared-store ownership."""
+    store = PropagatingWriteStore(
+        hass,
+        DELAYED_TOOL_STORAGE_VERSION,
+        DELAYED_TOOL_STORAGE_KEY,
+        private=True,
+        atomic_writes=True,
+    )
+    data = await _async_settle_store_io(store.async_load())
+    if data is None:
+        return
+    if not isinstance(data, dict) or not isinstance(data.get("calls"), list):
+        raise ValueError("persisted delayed Function Tools are malformed")
+    survivors = [
+        raw
+        for raw in data["calls"]
+        if not (
+            isinstance(raw, dict)
+            and raw.get("entry_id") == entry_id
+            and raw.get("subentry_id") == subentry_id
+        )
+    ]
+    if len(survivors) != len(data["calls"]):
+        await _async_settle_store_io(store.async_save({**data, "calls": survivors}))
+
+
 class DelayedToolManager:
     """Persist, recover, and execute delayed configured Function Tools."""
 
@@ -164,7 +216,7 @@ class DelayedToolManager:
         self._records: dict[str, DelayedToolCall] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._invalidated_tasks: set[asyncio.Task[None]] = set()
-        self._lock = asyncio.Lock()
+        self._lock = _delayed_store_lock(hass)
         self._setup_lock = asyncio.Lock()
         self._started = False
         self._setup_complete = False
@@ -191,44 +243,51 @@ class DelayedToolManager:
                     task for task in settling if task.done()
                 )
 
-            raw_data = await self._store.async_load() or {}
-            raw_calls = raw_data.get("calls", []) if isinstance(raw_data, dict) else []
-            dirty = not isinstance(raw_calls, list)
-            recovered: dict[str, DelayedToolCall] = {}
-            for raw in raw_calls if isinstance(raw_calls, list) else []:
-                try:
-                    record = DelayedToolCall.from_dict(raw)
-                except ValueError as err:
-                    dirty = True
-                    _LOGGER.warning(
-                        "Ignoring invalid persisted delayed Function Tool: %s", err
-                    )
-                    continue
-                if record.status == _EXECUTING:
-                    # A previous process persisted the execution boundary before
-                    # invoking the tool. Replaying it could duplicate a side effect.
-                    dirty = True
-                    _LOGGER.warning(
-                        "Not replaying interrupted delayed Function Tool `%s`; its "
-                        "prior execution outcome is indeterminate",
-                        record.tool_name,
-                    )
-                    continue
-                recovered[record.call_id] = record
+            async with self._lock:
+                await self._async_load_locked()
 
-            if dirty:
-                await self._store.async_save(self._storage_payload(recovered))
-            self._records = recovered
-
-            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self._handle_stop)
-            running = self.hass.state == CoreState.running
-            if not running:
-                self.hass.bus.async_listen_once(
-                    EVENT_HOMEASSISTANT_STARTED, self._handle_started
+    async def _async_load_locked(self) -> None:
+        """Publish startup recovery without overlapping another store owner."""
+        raw_data = await _async_settle_store_io(self._store.async_load()) or {}
+        raw_calls = raw_data.get("calls", []) if isinstance(raw_data, dict) else []
+        dirty = not isinstance(raw_calls, list)
+        recovered: dict[str, DelayedToolCall] = {}
+        for raw in raw_calls if isinstance(raw_calls, list) else []:
+            try:
+                record = DelayedToolCall.from_dict(raw)
+            except ValueError as err:
+                dirty = True
+                _LOGGER.warning(
+                    "Ignoring invalid persisted delayed Function Tool: %s", err
                 )
-            self._setup_complete = True
-            if running:
-                self._handle_started()
+                continue
+            if record.status == _EXECUTING:
+                # A previous process persisted the execution boundary before
+                # invoking the tool. Replaying it could duplicate a side effect.
+                dirty = True
+                _LOGGER.warning(
+                    "Not replaying interrupted delayed Function Tool `%s`; its "
+                    "prior execution outcome is indeterminate",
+                    record.tool_name,
+                )
+                continue
+            recovered[record.call_id] = record
+
+        if dirty:
+            await _async_settle_store_io(
+                self._store.async_save(self._storage_payload(recovered))
+            )
+        self._records = recovered
+
+        self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self._handle_stop)
+        running = self.hass.state == CoreState.running
+        if not running:
+            self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED, self._handle_started
+            )
+        self._setup_complete = True
+        if running:
+            self._handle_started()
 
     async def async_schedule(
         self,
@@ -274,24 +333,35 @@ class DelayedToolManager:
     async def async_remove_agent(self, entry_id: str, subentry_id: str) -> None:
         """Erase scheduled arguments belonging to a deleted assistant."""
         async with self._lock:
-            removed = {
-                call_id
-                for call_id, record in self._records.items()
-                if record.entry_id == entry_id and record.subentry_id == subentry_id
-            }
-            if not removed:
-                return
-            await self._async_save_records_transactionally(
-                {
-                    call_id: record
-                    for call_id, record in self._records.items()
-                    if call_id not in removed
-                }
+            await self._async_remove_agent_locked(entry_id, subentry_id)
+
+    async def _async_remove_agent_locked(self, entry_id: str, subentry_id: str) -> None:
+        """Erase one agent from the current authoritative storage generation."""
+        if not self._setup_complete:
+            # A published manager may still be awaiting setup or recovery. Its
+            # empty in-memory records are not evidence that storage is empty.
+            await _async_remove_stored_agent_calls_locked(
+                self.hass, entry_id, subentry_id
             )
-            for call_id in removed:
-                task = self._tasks.pop(call_id, None)
-                if task is not None:
-                    task.cancel()
+            return
+        removed = {
+            call_id
+            for call_id, record in self._records.items()
+            if record.entry_id == entry_id and record.subentry_id == subentry_id
+        }
+        if not removed:
+            return
+        await self._async_save_records_transactionally(
+            {
+                call_id: record
+                for call_id, record in self._records.items()
+                if call_id not in removed
+            }
+        )
+        for call_id in removed:
+            task = self._tasks.pop(call_id, None)
+            if task is not None:
+                task.cancel()
 
     async def _async_reconcile_failed_save(self) -> None:
         """Reload validated calls after a failed write acknowledgement."""

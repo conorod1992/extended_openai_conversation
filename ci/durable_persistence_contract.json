@@ -124,7 +124,7 @@
       {
         "module": "delayed_tools.py",
         "constructor": "PropagatingWriteStore",
-        "count": 1
+        "count": 2
       }
     ],
     "evidence": [

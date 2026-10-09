@@ -48,13 +48,14 @@ def test_load_journal_rejects_corrupt_envelope(mutate) -> None:
         restore_recovery._load_journal(mutate(_journal()), "entry-1", "agent-new")
 
 
-def test_load_journal_rejects_invalid_embedded_backup() -> None:
+def test_load_journal_allows_valid_rollback_for_invalid_uncommitted_target() -> None:
     journal = _journal()
     journal["target"] = {"not": "a valid backup"}
 
-    with pytest.raises(
-        backup.BackupError, match="Pending restore transaction is corrupted"
-    ):
+    _, target, rollback = restore_recovery._load_journal(journal, "entry-1", "agent-new")
+    assert target == rollback
+    journal["phase"] = "committed"
+    with pytest.raises(backup.BackupError, match="corrupted"):
         restore_recovery._load_journal(journal, "entry-1", "agent-new")
 
 

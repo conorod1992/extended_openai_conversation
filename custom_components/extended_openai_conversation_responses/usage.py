@@ -275,6 +275,7 @@ class UsageManager:
         self._lock = asyncio.Lock()
         self._initialize_lock = asyncio.Lock()
         self._initialized = False
+        self._detail_retention_dirty = False
         self._current_run: ContextVar[UsageRun | None] = ContextVar(
             f"usage_run_{id(self)}", default=None
         )
@@ -336,6 +337,7 @@ class UsageManager:
                         continue
 
             now = dt_util.utcnow()
+            loaded_detail_count = len(staged_requests) + len(staged_runs)
             request_cutoff = now - timedelta(days=max(0, self.request_retention_days))
             run_cutoff = now - timedelta(days=max(0, self.run_retention_days))
             staged_requests = [
@@ -355,6 +357,9 @@ class UsageManager:
             self.daily = staged_daily
             self.requests = staged_requests
             self.runs = staged_runs
+            self._detail_retention_dirty = loaded_detail_count != (
+                len(staged_requests) + len(staged_runs)
+            )
             self._initialized = True
 
     async def async_record_conversation(self) -> None:
@@ -625,8 +630,13 @@ class UsageManager:
         """Apply retention transactionally, persisting survivors before publication."""
         async with async_storage_lock(self._storage, self._lock):
             requests, runs, result = self._pruned_detail_state()
-            if save:
+            if save and (
+                self._detail_retention_dirty
+                or requests != self.requests
+                or runs != self.runs
+            ):
                 await self._async_persist_detail_state(requests, runs)
+                self._detail_retention_dirty = False
             self.requests = requests
             self.runs = runs
             self._last_prune_date = dt_util.utcnow().date().isoformat()
@@ -807,6 +817,10 @@ class UsageManager:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return all persisted usage categories without in-flight run state."""
+        if isinstance(self._storage, _VolatileUsageStorage):
+            raise RuntimeError(
+                "Usage storage is unavailable; volatile accounting cannot provide a complete backup"
+            )
         async with async_storage_lock(self._storage, self._lock):
             if not self._initialized:
                 raise RuntimeError("usage statistics have not been initialized")

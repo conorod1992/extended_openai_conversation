@@ -120,7 +120,7 @@ def _manager_needs_recovery(entity: Any, attribute: str) -> bool:
 def _runtime_needs_recovery(entity: Any) -> bool:
     return any(
         _manager_needs_recovery(entity, attribute)
-        for attribute in ("_memory", "_temporary_memory", "_knowledge")
+        for attribute in ("_memory", "_temporary_memory", "_knowledge", "_archive")
     )
 
 
@@ -297,7 +297,10 @@ async def async_reconcile_runtime_configuration(
             options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
         )
         archive_required = _archive_runtime_required(options)
-        if archive_required and getattr(entity, "_archive", None) is None:
+        if archive_required and (
+            getattr(entity, "_archive", None) is None
+            or _manager_needs_recovery(entity, "_archive")
+        ):
             initializer = getattr(entity, "_async_initialize_archive", None)
             if callable(initializer):
                 await initializer(archive_enabled)
@@ -312,9 +315,15 @@ async def async_reconcile_runtime_configuration(
                         "Unable to initialize conversation archive after live "
                         "configuration change"
                     )
-            if getattr(entity, "_archive", None) is None:
+            if getattr(entity, "_archive", None) is None or _manager_needs_recovery(
+                entity, "_archive"
+            ):
                 retry = True
-        if archive_required and getattr(entity, "_archive", None) is not None:
+        if (
+            archive_required
+            and getattr(entity, "_archive", None) is not None
+            and not _manager_needs_recovery(entity, "_archive")
+        ):
             _set_subsystem_status(entity, "archive", archive_enabled, healthy=True)
 
         knowledge_enabled = bool(

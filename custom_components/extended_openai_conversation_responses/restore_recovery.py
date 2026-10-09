@@ -174,12 +174,25 @@ def _load_journal(
         raise backup.BackupError("Pending restore transaction is corrupted")
     journal = dict(value)
     try:
-        target = backup.inspect_backup(
-            value["target"], subentry_id, max_bytes=backup.MAX_BACKUP_BYTES
-        )
         rollback = backup.inspect_backup(
-            value["rollback"], subentry_id, max_bytes=backup.MAX_BACKUP_BYTES
+            value["rollback"],
+            subentry_id,
+            max_bytes=backup.MAX_BACKUP_BYTES,
+            private_journal=True,
         )
+        try:
+            target = backup.inspect_backup(
+                value["target"],
+                subentry_id,
+                max_bytes=backup.MAX_BACKUP_BYTES,
+                private_journal=True,
+            )
+        except HomeAssistantError:
+            if phase != _PHASE_APPLYING:
+                raise
+            # An uncommitted target is never replayed. A valid rollback must
+            # remain recoverable even if an older release journaled bad input.
+            target = rollback
     except HomeAssistantError as err:
         raise backup.BackupError("Pending restore transaction is corrupted") from err
     return journal, target, rollback
