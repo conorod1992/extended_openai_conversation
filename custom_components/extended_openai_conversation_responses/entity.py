@@ -1160,19 +1160,19 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         ]
                     if chat_log.delta_listener:
                         with async_streaming_speech_cleanup(chat_log, options):
-                            for content in chat_log.content:
+                            for finalizer_content in chat_log.content:
                                 if (
-                                    id(content) not in existing_content_ids
+                                    id(finalizer_content) not in existing_content_ids
                                     and isinstance(
-                                        content, conversation.AssistantContent
+                                        finalizer_content, conversation.AssistantContent
                                     )
-                                    and content.content
+                                    and finalizer_content.content
                                 ):
                                     chat_log.delta_listener(
                                         chat_log,
                                         {
                                             "role": "assistant",
-                                            "content": content.content,
+                                            "content": finalizer_content.content,
                                         },
                                     )
 
