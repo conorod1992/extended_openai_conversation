@@ -43,6 +43,7 @@ async def test_delayed_remove_agent_cancels_matching_waiter(hass) -> None:
     from custom_components.extended_openai_conversation_responses import delayed_tools
 
     manager = delayed_tools.DelayedToolManager(hass)
+    manager._setup_complete = True
     manager._records = {
         "remove": SimpleNamespace(entry_id="entry", subentry_id="agent"),
         "keep": SimpleNamespace(entry_id="entry", subentry_id="other"),

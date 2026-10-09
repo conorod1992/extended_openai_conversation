@@ -165,9 +165,10 @@ async def async_remove_stored_agent_calls(
 
 def _delayed_store_lock(hass: HomeAssistant) -> asyncio.Lock:
     """Serialize every owner of the shared delayed-call storage generation."""
-    return hass.data.setdefault(DOMAIN, {}).setdefault(
+    lock: asyncio.Lock = hass.data.setdefault(DOMAIN, {}).setdefault(
         _DATA_DELAYED_STORE_LOCK, asyncio.Lock()
     )
+    return lock
 
 
 async def _async_remove_stored_agent_calls_locked(
