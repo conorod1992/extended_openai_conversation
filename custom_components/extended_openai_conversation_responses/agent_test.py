@@ -10,6 +10,7 @@ import yaml
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import configured_function_tools_from_data, validate_function_groups
 from .const import (
@@ -146,8 +147,33 @@ async def async_test_agent(
         )
         return AgentTestResult(_overall(checks), checks)
     metadata = model_metadata(model)
-    with model_capability_snapshot(model, metadata):
-        api_mode = get_api_mode(configured_mode, model)
+    try:
+        with model_capability_snapshot(model, metadata):
+            effort = (
+                (
+                    subentry.data.get("reasoning_effort")
+                    or recommended_reasoning_effort(model)
+                )
+                if metadata["reasoning"]["supported"]
+                else None
+            )
+            api_mode = get_api_mode(
+                configured_mode,
+                model,
+                getattr(subentry, "subentry_type", "conversation") == "conversation"
+                and conversation_tools_required(subentry.data),
+                effort,
+                bool(subentry.data.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH)),
+            )
+    except (HomeAssistantError, ValueError) as err:
+        checks.append(
+            _check(
+                "Web Search" if subentry.data.get(CONF_WEB_SEARCH) else "API mode",
+                "Failed",
+                str(err),
+            )
+        )
+        return AgentTestResult(_overall(checks), checks)
     checks.append(_check("API mode", "Passed", api_mode.replace("_", " ").title()))
     usage_provider = str(entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER))
     usage_model = str(model)

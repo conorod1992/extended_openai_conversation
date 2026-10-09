@@ -108,6 +108,16 @@ async def test_successful_agent_test() -> None:
     )
 
 
+async def test_auto_web_search_probes_production_responses_path():
+    hass, entry, subentry, client, usage = _objects({CONF_API_MODE: "auto", CONF_WEB_SEARCH: True})
+    client.responses = SimpleNamespace(create=AsyncMock(return_value=SimpleNamespace(status="completed", error=None, usage=None)))
+    with patch.object(agent_test, "get_exposed_entities", return_value=[{"entity_id": "light.test"}]), patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)):
+        result = await async_test_agent(hass, entry, subentry)
+    assert result.status == "Passed"
+    client.responses.create.assert_awaited_once()
+    client.chat.completions.create.assert_not_awaited()
+
+
 async def test_invalid_authentication() -> None:
     hass, entry, subentry, client, usage = _objects()
     request = MagicMock()
@@ -223,7 +233,7 @@ async def test_web_search_incompatibility_is_specific_failure() -> None:
     assert result.status == "Failed"
     web = next(check for check in result.checks if check.name == "Web Search")
     assert web.status == "Failed"
-    assert "does not support" in web.message
+    assert "Responses API" in web.message
 
 
 async def test_memory_unavailable_is_reported() -> None:

@@ -172,9 +172,9 @@ def test_large_array_builds_plan_once(monkeypatch):
     original = ai_task._optional_null_plan
     calls = []
 
-    def track(schema):
+    def track(schema, **kwargs):
         calls.append(schema)
-        return original(schema)
+        return original(schema, **kwargs)
 
     monkeypatch.setattr(ai_task, "_optional_null_plan", track)
     schema = {"type": "array", "items": _alternative_schema()}

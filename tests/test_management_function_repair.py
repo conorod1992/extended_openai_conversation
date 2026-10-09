@@ -32,6 +32,18 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.config_entries import ConfigEntryState
 
 
+@pytest.fixture(autouse=True)
+async def retained_rules(monkeypatch):
+    from tests.test_request_rules import MemoryStore
+    from custom_components.extended_openai_conversation_responses.request_rules import RequestRules
+    manager = RequestRules(MemoryStore())
+    await manager.async_initialize()
+    async def load(*args):
+        return manager
+    monkeypatch.setattr(management_ui, "async_get_request_rules", load)
+    return manager
+
+
 class _FakeConfigEntries:
     def __init__(self) -> None:
         self.updates = 0
@@ -536,9 +548,16 @@ async def test_function_repair_rejects_invalid_or_stale_single_tool_index(
 @pytest.mark.asyncio
 async def test_save_one_repairs_and_renames_group_reference_without_touching_sibling(
     monkeypatch: pytest.MonkeyPatch,
+    retained_rules,
 ) -> None:
     data, mixed, valid_tool = _mixed_legacy_tool_data()
     old_name = mixed[1]["spec"]["name"]
+    from tests.test_request_rules import local_rule
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    rule = local_rule()
+    rule["action"]["actions"] = [{"action": f"{DOMAIN}.call_function", "data": {"function": old_name, "arguments": {}}}]
+    await retained_rules.async_create(rule)
+    data["guest_allowed_function_names"] = [old_name]
     data[CONF_FUNCTION_GROUPS] = [
         {
             "id": "repair-group",
@@ -594,6 +613,8 @@ async def test_save_one_repairs_and_renames_group_reference_without_touching_sib
     ]
     assert result["function_repair"]["invalid_count"] == 0
     assert result["agent"] == {"id": "agent-1"}
+    assert subentry.data["guest_allowed_function_names"] == ["repaired_tool"]
+    assert retained_rules.snapshot()["rules"][0]["action"]["actions"][0]["data"]["function"] == "repaired_tool"
 
 
 @pytest.mark.asyncio

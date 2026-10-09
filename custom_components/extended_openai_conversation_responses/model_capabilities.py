@@ -241,6 +241,8 @@ def normalize_output_token_limit(
         raise ModelCapabilityError("Output token limit must be an integer.") from err
     if value <= 0:
         raise ModelCapabilityError("Output token limit must be greater than zero.")
+    if api == API_MODE_RESPONSES and value < 16:
+        raise ModelCapabilityError("Responses output token limit must be at least 16.")
     capabilities = _request_capabilities(model)
     ceiling = capabilities["limits"]["max_output_tokens"]
     if value > ceiling:
@@ -256,7 +258,7 @@ def normalize_output_token_limit(
 def sampling_value_is_configured(
     parameter: str, value: Any, legacy_default: Any
 ) -> bool:
-    """Treat legacy default-valued sampling options as omitted after v1 migration."""
+    """Respect supplied sampling values, including former application defaults."""
     if parameter not in {"temperature", "top_p"}:
         raise ModelCapabilityError(f"Unknown sampling parameter: {parameter}")
-    return value is not None and value != legacy_default
+    return value is not None

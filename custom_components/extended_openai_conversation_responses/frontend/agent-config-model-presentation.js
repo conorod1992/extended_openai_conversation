@@ -18,14 +18,15 @@ export function webSearchControlState(panel) {
     ? metadata.auto_paths?.[`${effort}:${Number(functions)}:1`] : config.api_mode;
   const allowed = api && metadata.evaluations?.[api]?.[String(effort)]?.web_search;
   return allowed ? {disabled:false, note:""} : {
-    disabled:true,
+    disabled:!config.web_search,
     note:`Web Search is unavailable for this API and reasoning effort${config.web_search ? "; the saved setting is retained. Choose a compatible effort or disable Web Search before sending." : "."}`,
   };
 }
 
 function toolsRequired(config) {
-  return Boolean(config.functions?.length || config.function_groups?.length)
-    || ["memory_enabled", "knowledge_enabled", "archive_enabled", "guest_mode_enabled"].some((key) => Boolean(config[key]));
+  return Number(config.max_function_calls_per_conversation ?? 10) !== 0
+    || config.continue_conversation === "conditional"
+    || (Array.isArray(config.function_groups) && config.function_groups.some((group) => group.enabled !== false && group.loading_mode === "on_demand"));
 }
 
 // Presentation only: the catalogue and backend still own capability semantics.

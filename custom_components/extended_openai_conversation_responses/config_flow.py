@@ -144,6 +144,7 @@ STEP_OPENAI_CREDENTIALS_SCHEMA = vol.Schema(
 
 STEP_OPENAI_ADVANCED_SCHEMA = vol.Schema(
     {
+        vol.Optional(CONF_API_KEY): str,
         vol.Optional(CONF_BASE_URL, default=DEFAULT_CONF_BASE_URL): str,
         vol.Optional(CONF_ORGANIZATION): str,
         vol.Optional(
@@ -666,6 +667,10 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 return await self.async_step_advanced()
 
             candidate = {**self.options, **user_input}
+            if candidate.get(CONF_CHAT_MODEL) != self.options.get(CONF_CHAT_MODEL):
+                candidate[CONF_REASONING_EFFORT] = recommended_reasoning_effort(
+                    candidate[CONF_CHAT_MODEL]
+                )
             from .request import build_provider_request_snapshot
 
             try:

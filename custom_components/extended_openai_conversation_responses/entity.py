@@ -268,6 +268,9 @@ def _make_schema_nullable(schema: dict[str, Any]) -> None:
 
 def _adjust_schema(schema: dict[str, Any], *, root: bool = False) -> None:
     """Adjust the schema to be compatible with OpenAI API."""
+    # HA selectors emit domain-specific annotations outside strict provider schemas.
+    schema.pop("format", None)
+    schema.pop("uniqueItems", None)
     if root and (schema.get("type") != "object" or "anyOf" in schema):
         raise HomeAssistantError(
             "Strict structured outputs require a root object without anyOf; "

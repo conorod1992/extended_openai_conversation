@@ -700,6 +700,9 @@ def persist_valid_function_configuration(
         candidate,
     )
     normalization_ms = (perf_counter() - phase) * 1000
+    from .management_ui import _validated_model_request
+
+    _validated_model_request(normalized, entry.data)
     phase = perf_counter()
     update_live_subentry(hass, entry, subentry, data=normalized)
     subentry_update_ms = (perf_counter() - phase) * 1000
@@ -837,6 +840,7 @@ def _persist_raw_tools(
     subentry: Any,
     tools: list[Any],
     groups: Any,
+    extra_updates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist a partially invalid collection without normalizing untouched siblings."""
     persisted = dict(subentry.data)
@@ -844,6 +848,11 @@ def _persist_raw_tools(
         tools, sort_keys=False, allow_unicode=True
     )
     persisted[CONF_FUNCTION_GROUPS] = deepcopy(groups)
+    if extra_updates:
+        persisted.update(deepcopy(extra_updates))
+    from .management_ui import _validated_model_request
+
+    _validated_model_request(safe_function_configuration(persisted), entry.data)
     update_live_subentry(hass, entry, subentry, data=persisted)
     return persisted
 
@@ -928,6 +937,7 @@ async def async_function_repair(
             )
         )
         if result["valid"]:
+            management_ui._validated_model_request(result["config"], entry.data)
             result["model_capabilities"] = management_ui.model_capabilities(
                 result["config"][management_ui.CONF_CHAT_MODEL]
             )
@@ -961,6 +971,7 @@ async def async_function_repair(
         if not validation.get("valid"):
             return validation
         normalized = validation["config"]
+        management_ui._validated_model_request(normalized, entry.data)
         persisted = preserve_legacy_guest_policy(
             dict(subentry.data), deepcopy(normalized)
         )
@@ -978,10 +989,11 @@ async def async_function_repair(
             persisted.pop(CONF_FUNCTION_GROUPS, None)
 
         requested_title = message.get("title")
-        if requested_title is not None and (
-            not isinstance(requested_title, str) or not requested_title.strip()
-        ):
-            return {"valid": False, "errors": {"title": "must not be empty"}}
+        if requested_title is not None:
+            try:
+                requested_title = management_ui.validate_agent_title(requested_title)
+            except HomeAssistantError as err:
+                return {"valid": False, "errors": {"title": str(err)}}
         saved_title = (
             requested_title.strip()
             if isinstance(requested_title, str)
@@ -1049,6 +1061,14 @@ async def async_function_repair(
         groups = subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
 
         if action == "delete_one":
+            if old_name:
+                _rules, references = await management_ui._function_reference_state(
+                    hass, entry_id, subentry_id, subentry.data, old_name
+                )
+                if references["request_rules"] or references["guest_mode"]:
+                    raise HomeAssistantError(
+                        management_ui._function_reference_error(old_name, references)
+                    )
             editable.pop(index)
             persisted = _persist_raw_tools(
                 hass,
@@ -1070,13 +1090,36 @@ async def async_function_repair(
                 if isinstance(spec, dict) and spec.get("name") == new_name:
                     raise HomeAssistantError(f"Function Tool {new_name} already exists")
             editable[index] = validated_tool
+            original_data = deepcopy(dict(subentry.data))
+            rules = None
+            extra_updates = {}
+            if old_name and old_name != new_name:
+                rules, _references = await management_ui._function_reference_state(
+                    hass, entry_id, subentry_id, subentry.data, old_name
+                )
+                rules_revision = rules.revision()
+                extra_updates[management_ui.CONF_GUEST_ALLOWED_FUNCTION_NAMES] = [
+                    new_name if name == old_name else name
+                    for name in subentry.data.get(
+                        management_ui.CONF_GUEST_ALLOWED_FUNCTION_NAMES, []
+                    )
+                ]
             persisted = _persist_raw_tools(
                 hass,
                 entry,
                 subentry,
                 editable,
                 _replace_group_function_name(groups, old_name, new_name),
+                extra_updates,
             )
+            if rules is not None:
+                try:
+                    await rules.async_rename_function_reference(
+                        old_name, new_name, expected_revision=rules_revision
+                    )
+                except Exception:
+                    update_live_subentry(hass, entry, subentry, data=original_data)
+                    raise
 
         payload = _safe_configuration_payload(
             hass, management_ui, management_loading_performance, entry, subentry
@@ -1102,6 +1145,10 @@ async def async_function_repair(
     persisted = dict(subentry.data)
     persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         validated_tools, sort_keys=False, allow_unicode=True
+    )
+    management_ui._validated_model_request(persisted, entry.data)
+    await management_ui._async_validate_configuration_dependencies(
+        hass, entry, subentry, persisted
     )
     update_live_subentry(hass, entry, subentry, data=persisted)
     return {
