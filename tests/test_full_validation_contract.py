@@ -110,7 +110,8 @@ def test_full_validation_includes_specialists_and_accounts_for_all_workflows():
     }
     ios = (root / ".github/workflows/ios-companion-app.yml").read_text()
     assert "workflow_dispatch:" in ios
-    assert 'cron: "17 4 * * 1"' in ios
+    assert "schedule:" not in ios
+    assert "pull_request:" not in ios
     assert {
         "android-companion-app.yml",
         "frontend-latency-diagnostics.yml",
