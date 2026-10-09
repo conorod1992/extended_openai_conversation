@@ -990,6 +990,8 @@ async def async_function_repair(
 
         requested_title = message.get("title")
         if requested_title is not None:
+            if not isinstance(requested_title, str) or not requested_title.strip():
+                return {"valid": False, "errors": {"title": "must not be empty"}}
             try:
                 requested_title = management_ui.validate_agent_title(requested_title)
             except HomeAssistantError as err:

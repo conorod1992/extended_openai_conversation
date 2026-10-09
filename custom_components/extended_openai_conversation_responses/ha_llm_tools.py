@@ -242,7 +242,8 @@ def caller_api_tools(
 ) -> tuple[ToolSnapshot, list[dict[str, Any]]]:
     """Adapt an AI Task caller's already assembled API without registering it."""
     snapshot = ToolSnapshot(
-        caller_provided=True, caller_prompt=instance.api_prompt or ""
+        caller_provided=True,
+        caller_prompt=(instance.api_prompt or "") if not instance.tools else "",
     )
     _add_tools(
         snapshot,

@@ -1086,6 +1086,8 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     entry, subentry = request.entry, request.subentry
     title = message.get("title")
     if title is not None:
+        if not isinstance(title, str) or not title.strip():
+            return {"valid": False, "errors": {"title": "must not be empty"}}
         try:
             title = validate_agent_title(title)
         except HomeAssistantError as err:
