@@ -29,7 +29,14 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Reconcile stable environment
-        run: bash ci/reconcile_stable_environment.sh
+        run: |
+          set -euo pipefail
+          VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json", timeout=30))["info"]["version"])')"
+          [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]
+          PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
+          export EOAI_EXPECTED_HA_VERSION="$VERSION"
+          export EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION="$PLUGIN_VERSION"
+          bash ci/reconcile_stable_environment.sh
       - name: Run stable public smoke
         env:
           PYTHONPATH: ${{ github.workspace }}
