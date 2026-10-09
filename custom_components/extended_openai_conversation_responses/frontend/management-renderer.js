@@ -164,6 +164,7 @@ function bindDynamicBase(panel) {
       panel._unsavedState?.scopes.clear();
       panel._agentId = nextAgent;
       writeOptionalStorage("extended-openai-agent", panel._agentId);
+      writeOptionalStorage("extended-openai-agent-entry", panel._selectedAgent()?.entry_id);
       panel._clearConfigDraft();
       panel._scopeId = null;
       panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
