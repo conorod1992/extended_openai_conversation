@@ -213,6 +213,7 @@ async def _run_assist(
     *,
     pipeline_id: str,
     conversation_id: str,
+    text: str = "Give me the streaming speech test response",
 ) -> list[dict[str, Any]]:
     """Run the public HA Assist websocket pipeline and collect its real events."""
     await client.send_json_auto_id(
@@ -221,7 +222,7 @@ async def _run_assist(
             "start_stage": "intent",
             "end_stage": "intent",
             "pipeline": pipeline_id,
-            "input": {"text": "Give me the streaming speech test response"},
+            "input": {"text": text},
             "conversation_id": conversation_id,
             "device_id": "assist-streaming-speech-device",
         }
