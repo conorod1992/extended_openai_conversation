@@ -36,7 +36,7 @@ from .parallel_tool_execution import (
     async_execute_parallel_safe_batch_outcomes,
     resolve_parallel_safe_batch,
 )
-from .tool_replay_guard import was_unacknowledged_equivalent
+from .tool_replay_guard import bind_dispatch_origin, was_unacknowledged_equivalent
 
 _MAX_ERROR_TEXT = 512
 
@@ -265,9 +265,11 @@ async def _execute_bound(
     llm_context: llm.LLMContext | None,
     exposed_entities: list[dict[str, Any]],
     recovery_state: ToolRecoveryState,
+    retained_tool_input: llm.ToolInput,
 ) -> conversation.ToolResultContent:
     """Execute one prepared call with strict runtime-failure semantics bound."""
     with (
+        bind_dispatch_origin(tool_input, retained_tool_input),
         bind_tool_recovery_state(recovery_state),
         validated_function_call(tool_input, function_tool.get("spec", {})),
     ):
@@ -326,6 +328,7 @@ async def _async_execute_with_recovery(
 
     if parallel_batch is not None:
         prepared: list[tuple[dict[str, Any], llm.ToolInput]] = []
+        retained_calls: dict[int, llm.ToolInput] = {}
         recovery_results: dict[str, conversation.ToolResultContent] = {}
         validating_call: llm.ToolInput | None = None
         try:
@@ -349,6 +352,7 @@ async def _async_execute_with_recovery(
                     )
                 else:
                     prepared.append((function_tool, validation_outcome))
+                    retained_calls[id(validation_outcome)] = tool_input
         except BaseException as err:
             append_unresolved_tool_results(
                 chat_log,
@@ -391,6 +395,7 @@ async def _async_execute_with_recovery(
                         llm_context,
                         exposed_entities,
                         recovery_state,
+                        retained_calls[id(tool_input)],
                     ),
                 )
             except BaseException as err:
@@ -458,6 +463,7 @@ async def _async_execute_with_recovery(
                 llm_context,
                 exposed_entities,
                 recovery_state,
+                tool_input,
             )
         except BaseException as err:
             append_unresolved_tool_results(

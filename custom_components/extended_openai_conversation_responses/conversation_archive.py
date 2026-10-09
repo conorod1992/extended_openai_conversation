@@ -775,15 +775,16 @@ class ConversationArchive:
         turns: list[ArchiveTurn] = []
         turn_ids: set[str] = set()
         per_session: dict[str, int] = defaultdict(int)
+        private_session_ids = {
+            session.session_id
+            for session in sessions
+            if session.retention_state == "private"
+        }
         for raw in data["turns"]:
             if not isinstance(raw, dict):
                 raise ValueError("archive turn must be an object")
             turn = _validated_turn(raw)
-            if any(
-                session.session_id == turn.session_id
-                and session.retention_state == "private"
-                for session in sessions
-            ):
+            if turn.session_id in private_session_ids:
                 raise ValueError("private archive sessions cannot contain turns")
             if turn.turn_id in turn_ids or turn.session_id not in session_ids:
                 raise ValueError("archive turn metadata is invalid")
@@ -1400,7 +1401,23 @@ def _tokens(value: str) -> set[str]:
 def _excerpt(value: str, query: str) -> str:
     normalized = _SPACE_PATTERN.sub(" ", unicodedata.normalize("NFC", value)).strip()
     lower = normalized.casefold()
-    matches = [lower.find(token) for token in _tokens(query)]
+    raw_query = unicodedata.normalize("NFC", query).casefold()
+    terms = _tokens(query)
+    matches = [lower.find(raw_query)] if raw_query.strip() else []
+    if not any(position >= 0 for position in matches):
+        matches = [
+            lower.find(token)
+            for token in _TOKEN_PATTERN.findall(raw_query)
+            if len(token) > 1 and token not in _STOP_WORDS
+        ]
+    if not any(position >= 0 for position in matches):
+        matches.extend(lower.find(token) for token in terms)
+    if not any(position >= 0 for position in matches):
+        matches.extend(
+            match.start()
+            for match in _TOKEN_PATTERN.finditer(normalized)
+            if _stem(match.group().casefold()) in terms
+        )
     index = min((position for position in matches if position >= 0), default=0)
     start = max(0, index - MAX_EXCERPT_LENGTH // 3) if index >= 0 else 0
     excerpt = normalized[start : start + MAX_EXCERPT_LENGTH]
