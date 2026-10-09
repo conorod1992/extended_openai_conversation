@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 from typing import Any
 
@@ -11,6 +14,21 @@ from homeassistant.helpers import llm
 from .ha_tool_result_compat import is_tool_result_content, tool_result_data
 
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
+_dispatch_origin: ContextVar[tuple[llm.ToolInput, llm.ToolInput] | None] = ContextVar(
+    "tool_dispatch_origin", default=None
+)
+
+
+@contextmanager
+def bind_dispatch_origin(
+    dispatched: llm.ToolInput, retained: llm.ToolInput
+) -> Iterator[None]:
+    """Link a validated copy to its retained call only during this execution."""
+    token = _dispatch_origin.set((dispatched, retained))
+    try:
+        yield
+    finally:
+        _dispatch_origin.reset(token)
 
 
 def record_dispatch(entity: Any, tool_input: llm.ToolInput) -> None:
@@ -19,6 +37,9 @@ def record_dispatch(entity: Any, tool_input: llm.ToolInput) -> None:
     if not isinstance(dispatched, dict):
         dispatched = entity._dispatched_tool_inputs = {}
     dispatched[id(tool_input)] = tool_input
+    origin = _dispatch_origin.get()
+    if origin is not None and origin[0] is tool_input:
+        dispatched[id(origin[1])] = origin[1]
     while len(dispatched) > 4096:
         dispatched.pop(next(iter(dispatched)))
 
