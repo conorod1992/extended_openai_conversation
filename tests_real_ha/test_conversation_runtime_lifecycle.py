@@ -118,8 +118,9 @@ async def test_public_start_fresh_discards_transient_state_preserves_stores_and_
     agent._request_rule_runtime.set(
         state_key, {"chat_model": "gpt-5-mini", "reasoning_effort": "low"}, 5
     )
+    memory_key = state_key.rsplit(":conversation:", 1)[0] if state_key.startswith("continuity:") else state_key
     await agent._continuity.async_set_memory_bundle(
-        state_key, {"remembered-id": "prior"}, 5
+        memory_key, {"remembered-id": "prior"}, 5
     )
     await agent._temporary_memory.async_add(
         "user:lifecycle-owner",
@@ -149,7 +150,7 @@ async def test_public_start_fresh_discards_transient_state_preserves_stores_and_
     assert sent[2]["model"] == "gpt-5-mini"
     assert state_key not in agent._function_groups_runtime._sessions
     assert agent._request_rule_runtime.get(state_key, 5) == {}
-    assert await agent._continuity.async_get_memory_bundle(state_key, 5) is None
+    assert await agent._continuity.async_get_memory_bundle(memory_key, 5) is None
     assert not agent._function_groups_runtime._requests
     assert not agent._request_rule_runtime._requests
     assert snapshots == [

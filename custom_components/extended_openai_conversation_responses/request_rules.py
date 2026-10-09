@@ -2378,7 +2378,9 @@ def _native_result_sequence(
                 else repr(part)
             )
             expression += f"[{index}]"
-        return "{{ " + expression + " }}"
+        # HA's logging Undefined can otherwise become an empty service argument.
+        # Raise during this expression's evaluation, after native branch selection.
+        return "{{ " + expression + " if " + expression + " is defined else (1 / 0) }}"
 
     def native_templates(value: Any) -> Any:
         if isinstance(value, str):

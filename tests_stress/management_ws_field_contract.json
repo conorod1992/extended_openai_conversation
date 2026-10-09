@@ -261,6 +261,10 @@
       "required": false,
       "kind": "boolean"
     },
+    "target_rule_id": {
+      "required": false,
+      "kind": "string"
+    },
     "target_scope_id": {
       "required": false,
       "kind": "string"
