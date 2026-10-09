@@ -115,3 +115,14 @@ def test_aggregate_inventory_matches_reusable_lanes_and_needs():
         assert "workflow_call" in child_triggers
         assert "pull_request" not in child_triggers
         assert "github.workflow" not in child.get("concurrency", {}).get("group", "")
+
+
+def test_post_merge_smoke_resolves_required_environment_before_reconciliation():
+    workflow = yaml.safe_load(Path(".github/workflows/post-merge-smoke.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["smoke"]["steps"]
+    setup = next(step["run"] for step in steps if step.get("name") == "Reconcile stable environment")
+    reconcile = setup.index("bash ci/reconcile_stable_environment.sh")
+    for name in ("EOAI_EXPECTED_HA_VERSION", "EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION"):
+        assert setup.index("export " + name + "=") < reconcile
+    assert "https://pypi.org/pypi/homeassistant/json" in setup
+    assert 'ci/resolve_ha_test_plugin.py "$VERSION"' in setup
