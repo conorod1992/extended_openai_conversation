@@ -40,13 +40,13 @@ async def test_provider_action_updates_real_brightness_entity(
     hass: HomeAssistant, monkeypatch, level
 ):
     """Actual light service schema and entity handler, not a mocked service call."""
+    agent = await _agent(hass, API_MODE_CHAT_COMPLETIONS)
     component = EntityComponent(logging.getLogger(__name__), "light", hass)
     entity = DimmableProbe()
     await component.async_add_entities([entity])
     component.async_register_entity_service("turn_on", {"brightness": int}, "async_turn_on")
     assert entity.entity_id
     async_expose_entity(hass, conversation.DOMAIN, entity.entity_id, True)
-    agent = await _agent(hass, API_MODE_CHAT_COMPLETIONS)
     _install_wire(
         monkeypatch, agent,
         [
