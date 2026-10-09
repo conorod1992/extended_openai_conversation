@@ -2050,10 +2050,10 @@ def _mask_script_templates(
     """Permit context-free schema validation while preserving stored templates."""
     if isinstance(value, str) and ("{{" in value or "{%" in value or "{#" in value):
         # Home Assistant's script schema natively accepts templates for dynamic
-        # durations/timeouts and repeat iteration sources. Keep those templates
-        # intact so type-aware validation sees a template instead of an arbitrary
-        # placeholder string that is invalid for the field.
-        if key in {"delay", "timeout", "for_each"} or parent_key in {
+        # durations/timeouts, repeat iteration sources and shorthand conditions.
+        # Keep those templates intact so type-aware validation sees a template
+        # instead of an arbitrary placeholder string that is invalid for the field.
+        if key in {"delay", "timeout", "for_each", "conditions"} or parent_key in {
             "delay",
             "timeout",
         }:
