@@ -155,6 +155,14 @@ def _configuration_snapshot_preserving_quarantine(
         for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
             if key in raw:
                 snapshot[key] = deepcopy(raw[key])
+                if frontend_shape and isinstance(snapshot[key], str):
+                    # Redaction must see mappings, including quarantined siblings.
+                    try:
+                        snapshot[key] = yaml.safe_load(snapshot[key])
+                    except yaml.YAMLError as err:
+                        raise BackupError(
+                            "Repair malformed Function YAML before exporting configuration"
+                        ) from err
             else:
                 snapshot.pop(key, None)
         return snapshot
@@ -259,6 +267,7 @@ def inspect_backup(
     target_agent_id: str,
     *,
     max_bytes: int = MAX_LEGACY_EXPORT_BYTES,
+    private_journal: bool = False,
 ) -> PreparedRestore:
     """Parse and validate every category without mutating agent state."""
     if isinstance(value, PreparedRestore):
@@ -347,7 +356,11 @@ def inspect_backup(
     ):
         raise BackupError("The backup agent identity is invalid")
     try:
-        raw_config = restore_redacted_secrets(agent["config"])
+        raw_config = (
+            deepcopy(agent["config"])
+            if private_journal
+            else restore_redacted_secrets(agent["config"])
+        )
         if not isinstance(raw_config, dict):
             raise ValueError("agent config must be an object")
         config = recoverable_configuration_snapshot(raw_config)
@@ -368,7 +381,9 @@ def inspect_backup(
             else None
         )
         request_rules = RequestRules.validate_backup_data(
-            restore_redacted_secrets(
+            deepcopy(value.get("request_rules", {"defaults": {}, "rules": []}))
+            if private_journal
+            else restore_redacted_secrets(
                 value.get("request_rules", {"defaults": {}, "rules": []})
             )
         )
@@ -397,12 +412,17 @@ async def async_restore_backup(
     hass: HomeAssistant, entry: Any, subentry: Any, value: Any
 ) -> dict[str, Any]:
     """Replace all durable categories, rolling back if a commit step fails."""
-    from .restore_recovery import async_restore_backup_recoverably
+    from .restore_recovery import (
+        async_finish_restore_reload,
+        async_restore_backup_recoverably,
+    )
 
     gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)
-    return await _async_run_exclusive_operation(
+    result = await _async_run_exclusive_operation(
         gate, lambda: async_restore_backup_recoverably(hass, entry, subentry, value)
     )
+    await async_finish_restore_reload(hass, entry, subentry)
+    return result
 
 
 async def _managers(hass: HomeAssistant, entry_id: str, subentry_id: str):

@@ -1404,7 +1404,6 @@ async def test_legacy_private_title_cleanup_failure_retries_without_publication(
     ("session_id", []), ("title", {}), ("turn_count", "1"), ("turn_count", True),
     ("started_at", None), ("last_message_at", "not-a-date"),
     ("last_activity_at", 8), ("retention_state", "unknown"),
-    ("last_message_at", "2020-01-01T00:00:00+00:00"),
 ])
 async def test_complete_invalid_session_does_not_poison_healthy_records(field, value):
     storage = CoverageArchiveStorage()

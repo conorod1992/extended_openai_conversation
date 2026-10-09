@@ -979,13 +979,15 @@ def _clean_content(value: str) -> str:
 
 
 def _tokens(value: str) -> set[str]:
+    from .retrieval_text import cjk_terms
+
     return {
         token
         for token in _TOKEN_PATTERN.findall(
             unicodedata.normalize("NFC", value).casefold()
         )
         if len(token) > 1
-    }
+    } | cjk_terms(value)
 
 
 def _normalize(value: str) -> str:

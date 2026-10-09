@@ -274,6 +274,25 @@ class TemporaryMemory:
             await self._async_initialize_locked()
             await self._async_prune_locked()
             current = self._owned(scope_id, memory_id, owner_scope_id)
+            if (
+                source == "automatic"
+                and current.source == "manual"
+                and (
+                    content is None
+                    or _clean(content, MAX_CONTENT_LENGTH, "content") == current.content
+                )
+                and (
+                    category is None
+                    or _clean(category, MAX_CATEGORY_LENGTH, "category")
+                    == current.category
+                )
+                and (
+                    expires_at is None
+                    or _parse_future_expiry(expires_at).isoformat()
+                    == current.expires_at
+                )
+            ):
+                return current
             new_content = (
                 _clean(content, MAX_CONTENT_LENGTH, "content")
                 if content is not None
@@ -706,6 +725,9 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
             else None
         )
     record = TemporaryMemoryRecord(**values)
+    if not isinstance(record.content, str):
+        raise ValueError("temporary memory fields must be strings")
+    validate_memory_privacy(record.content, automatic=record.source == "automatic")
     validate_memory_privacy(record.category, automatic=record.source == "automatic")
     return record
 

@@ -57,9 +57,9 @@ def test_export_snapshot_preserves_raw_quarantined_function_fields() -> None:
 
     snapshot = backup.export_configuration_snapshot(config)
 
-    assert snapshot[CONF_FUNCTION_TOOLS] == config[CONF_FUNCTION_TOOLS]
+    assert snapshot[CONF_FUNCTION_TOOLS] == yaml.safe_load(config[CONF_FUNCTION_TOOLS])
     assert snapshot[CONF_FUNCTION_GROUPS] == config[CONF_FUNCTION_GROUPS]
-    assert yaml.safe_load(snapshot[CONF_FUNCTION_TOOLS])[1]["function"]["name"] == (
+    assert snapshot[CONF_FUNCTION_TOOLS][1]["function"]["name"] == (
         "reminders.unavailable"
     )
 
@@ -99,7 +99,7 @@ async def test_full_backup_collection_succeeds_with_quarantined_function(
     )
 
     exported = snapshot["agent"]["config"]
-    assert exported[CONF_FUNCTION_TOOLS] == config[CONF_FUNCTION_TOOLS]
+    assert exported[CONF_FUNCTION_TOOLS] == yaml.safe_load(config[CONF_FUNCTION_TOOLS])
     assert exported[CONF_FUNCTION_GROUPS] == config[CONF_FUNCTION_GROUPS]
 
 
@@ -124,7 +124,7 @@ async def test_setup_export_collection_succeeds_with_quarantined_function(
     )
 
     exported = document["sections"][transfer.SECTION_CONFIGURATION]
-    assert exported[CONF_FUNCTION_TOOLS] == config[CONF_FUNCTION_TOOLS]
+    assert exported[CONF_FUNCTION_TOOLS] == yaml.safe_load(config[CONF_FUNCTION_TOOLS])
     assert exported[CONF_FUNCTION_GROUPS] == config[CONF_FUNCTION_GROUPS]
 
 

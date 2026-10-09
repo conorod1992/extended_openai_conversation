@@ -148,6 +148,35 @@ def _delay_as_timedelta(value: Any) -> timedelta:
     return delay
 
 
+async def async_remove_stored_agent_calls(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> None:
+    """Erase unloaded-agent arguments without arming any scheduled execution."""
+    store = PropagatingWriteStore(
+        hass,
+        DELAYED_TOOL_STORAGE_VERSION,
+        DELAYED_TOOL_STORAGE_KEY,
+        private=True,
+        atomic_writes=True,
+    )
+    data = await store.async_load()
+    if data is None:
+        return
+    if not isinstance(data, dict) or not isinstance(data.get("calls"), list):
+        raise ValueError("persisted delayed Function Tools are malformed")
+    survivors = [
+        raw
+        for raw in data["calls"]
+        if not (
+            isinstance(raw, dict)
+            and raw.get("entry_id") == entry_id
+            and raw.get("subentry_id") == subentry_id
+        )
+    ]
+    if len(survivors) != len(data["calls"]):
+        await store.async_save({**data, "calls": survivors})
+
+
 class DelayedToolManager:
     """Persist, recover, and execute delayed configured Function Tools."""
 

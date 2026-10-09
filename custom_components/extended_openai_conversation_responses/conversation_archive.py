@@ -161,6 +161,11 @@ class ConversationArchive:
         self._lock = asyncio.Lock()
         self._initialized = False
 
+    @property
+    def initialized(self) -> bool:
+        """Expose failed-generation recovery state to live reconciliation."""
+        return self._initialized
+
     async def async_initialize(self) -> None:
         async with self._lock:
             if self._initialized:
@@ -563,7 +568,7 @@ class ConversationArchive:
             targets = {
                 session.session_id
                 for session in self._sessions.values()
-                if session.scope_id == scope_id
+                if session.scope_id == scope_id and session.retention_state != "private"
             }
             if not targets:
                 return {"deleted_sessions": 0, "deleted_turns": 0}
@@ -774,6 +779,12 @@ class ConversationArchive:
             if not isinstance(raw, dict):
                 raise ValueError("archive turn must be an object")
             turn = _validated_turn(raw)
+            if any(
+                session.session_id == turn.session_id
+                and session.retention_state == "private"
+                for session in sessions
+            ):
+                raise ValueError("private archive sessions cannot contain turns")
             if turn.turn_id in turn_ids or turn.session_id not in session_ids:
                 raise ValueError("archive turn metadata is invalid")
             turn_ids.add(turn.turn_id)
@@ -790,6 +801,13 @@ class ConversationArchive:
         self, sessions: list[ArchiveSession], turns: list[ArchiveTurn]
     ) -> None:
         """Replace durable archive data through the same restart-safe journal."""
+        sessions, turns = self.validate_backup_data(
+            {
+                "sessions": [asdict(session) for session in sessions],
+                "turns": [asdict(turn) for turn in turns],
+            },
+            self._agent_subentry_id,
+        )
         async with self._lock:
             self._ensure_initialized()
             session_map = {
@@ -1303,11 +1321,16 @@ def _validated_session(raw: Any) -> ArchiveSession:
         )
     ):
         raise ValueError("archive session metadata is invalid")
-    if _parse_time(session.last_message_at) < _parse_time(session.started_at) or (
-        session.last_activity_at is not None
-        and _parse_time(session.last_activity_at) < _parse_time(session.started_at)
-    ):
-        raise ValueError("archive session times are inconsistent")
+    # Wall clocks can move backwards; valid records must remain recoverable.
+    earliest = min(
+        (
+            session.started_at,
+            session.last_message_at,
+            session.last_activity_at or session.started_at,
+        ),
+        key=_parse_time,
+    )
+    session = replace(session, started_at=earliest)
     return session
 
 
@@ -1363,20 +1386,22 @@ def _stem(token: str) -> str:
 
 
 def _tokens(value: str) -> set[str]:
+    from .retrieval_text import cjk_terms
+
     return {
         _stem(token)
         for token in _TOKEN_PATTERN.findall(
             unicodedata.normalize("NFC", value).casefold()
         )
         if len(token) > 1 and token not in _STOP_WORDS
-    }
+    } | cjk_terms(value)
 
 
 def _excerpt(value: str, query: str) -> str:
     normalized = _SPACE_PATTERN.sub(" ", unicodedata.normalize("NFC", value)).strip()
     lower = normalized.casefold()
-    needle = _normalize(query)
-    index = lower.find(needle) if needle else 0
+    matches = [lower.find(token) for token in _tokens(query)]
+    index = min((position for position in matches if position >= 0), default=0)
     start = max(0, index - MAX_EXCERPT_LENGTH // 3) if index >= 0 else 0
     excerpt = normalized[start : start + MAX_EXCERPT_LENGTH]
     return (

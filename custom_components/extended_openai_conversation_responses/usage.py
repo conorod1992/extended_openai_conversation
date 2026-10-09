@@ -625,7 +625,7 @@ class UsageManager:
         """Apply retention transactionally, persisting survivors before publication."""
         async with async_storage_lock(self._storage, self._lock):
             requests, runs, result = self._pruned_detail_state()
-            if save:
+            if save and (requests != self.requests or runs != self.runs):
                 await self._async_persist_detail_state(requests, runs)
             self.requests = requests
             self.runs = runs
@@ -807,6 +807,10 @@ class UsageManager:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return all persisted usage categories without in-flight run state."""
+        if isinstance(self._storage, _VolatileUsageStorage):
+            raise RuntimeError(
+                "Usage storage is unavailable; volatile accounting cannot provide a complete backup"
+            )
         async with async_storage_lock(self._storage, self._lock):
             if not self._initialized:
                 raise RuntimeError("usage statistics have not been initialized")
