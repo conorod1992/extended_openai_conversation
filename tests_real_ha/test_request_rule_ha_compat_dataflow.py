@@ -54,15 +54,16 @@ async def test_saved_rule_condition_matches_native_ha_execution(
                   success="Matched.")
     rule["conditions"] = [condition]
     await agent._request_rules.async_create(rule)
+    await agent._request_rules.async_create(
+        _local([_record_action("fallback")], phrase="check condition",
+               success="Fallback.")
+    )
     assert await hass.config_entries.async_reload(agent.entry.entry_id)
     await hass.async_block_till_done()
     refreshed = await _agent_after_reload(hass, agent.entry.entry_id)
     result = await _say(hass, refreshed, "check condition")
-    if expected:
-        assert _speech(result) == "Matched."
-        assert calls == ["condition-matched"]
-    else:
-        assert calls == []
+    assert _speech(result) == ("Matched." if expected else "Fallback.")
+    assert calls == (["condition-matched"] if expected else ["fallback"])
 
 
 async def _agent_after_reload(hass, entry_id):
