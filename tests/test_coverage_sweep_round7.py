@@ -405,6 +405,7 @@ async def test_delayed_tool_remove_agent_noop_and_cancels_matching_tasks(
         {**_valid_delayed_call(), "call_id": "other", "entry_id": "other-entry"}
     )
     manager._records = {"call": one, "other": two}
+    manager._setup_complete = True
     task = Mock()
     manager._tasks = {"call": task}
     save = AsyncMock(side_effect=lambda records: setattr(manager, "_records", records))
