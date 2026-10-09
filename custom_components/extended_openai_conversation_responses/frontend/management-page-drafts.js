@@ -1,4 +1,5 @@
 import {saveConfiguration, synchronizePersistedConfigurationFields} from "./management-actions.js";
+import {formatWordingAlternatives, parseWordingAlternatives} from "./wording-alternatives.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {UnsavedState, clone, same, draftScope, saveBarMarkup} from "./unsaved-state.js";
 import {NAVIGATION} from "./frontend-navigation.js";
@@ -157,7 +158,7 @@ export function readRuleSettings(panel) {
     },
     wording_groups: [...root.querySelectorAll(".wording-group")].map((row) => ({
       canonical: row.querySelector(".wording-canonical").value.trim(),
-      alternatives: row.querySelector(".wording-alternatives").value.split(",").map((value) => value.trim()).filter(Boolean),
+      alternatives: parseWordingAlternatives(row.querySelector(".wording-alternatives").value),
     })),
   };
 }
@@ -206,7 +207,7 @@ function syncRequestRulesSavedDom(panel) {
     const canonical = row.querySelector(".wording-canonical");
     const alternatives = row.querySelector(".wording-alternatives");
     if (canonical) canonical.value = group.canonical || "";
-    if (alternatives) alternatives.value = (group.alternatives || []).join(", ");
+    if (alternatives) alternatives.value = formatWordingAlternatives(group.alternatives || []);
   });
   return true;
 }

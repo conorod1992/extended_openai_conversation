@@ -29,6 +29,7 @@ from homeassistant.core import Context, HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import condition as ha_condition, config_validation as cv
 from homeassistant.helpers.script import Script, async_validate_actions_config
+from homeassistant.helpers.trace import StopReason, script_execution_cv
 from homeassistant.helpers.typing import UNDEFINED
 
 from .const import (
@@ -55,6 +56,7 @@ from .persistence_hardening import (
 )
 from .request_rule_patterns import (
     MAX_AGENT_PATTERN_STATES,
+    RESERVED_CAPTURE_NAMES,
     CompiledSentencePattern,
     MatchBudget,
     PreparedSentenceText,
@@ -92,7 +94,7 @@ RESERVED_RESULT_ALIASES = {
     "this",
     "repeat",
     "wait",
-}
+} | RESERVED_CAPTURE_NAMES
 MAX_RESULT_BYTES = 16384
 MAX_RESULT_DEPTH = 8
 JINJA_SLOT_REFERENCE = re.compile(
@@ -1356,7 +1358,7 @@ class RequestRuleRuntime:
 def request_rule_session_id(continuity_key: str | None, conversation_id: str) -> str:
     """Use the resolved continuity identity, or Core's actual ChatLog identity."""
     return (
-        f"continuity:{continuity_key}"
+        f"continuity:{continuity_key}:conversation:{conversation_id}"
         if continuity_key
         else f"conversation:{conversation_id}"
     )
@@ -1635,6 +1637,7 @@ def _stored_slot_names(value: Mapping[str, Any]) -> list[str]:
             isinstance(slot, Mapping)
             and isinstance(slot.get("name"), str)
             and SLOT_NAME.fullmatch(str(slot["name"]))
+            and slot["name"] not in RESERVED_CAPTURE_NAMES
         ):
             result.append(str(slot["name"]))
     return sorted(set(result))
@@ -1927,7 +1930,8 @@ def _assign_missing_result_step_ids(value: Any) -> Any:
             continue
         data = step.get("data")
         if (
-            step.get("action") == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+            step.get("action", step.get("service"))
+            == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
             and isinstance(data, dict)
             and data.get("result_alias")
             and not data.get("step_id")
@@ -2001,9 +2005,9 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
                 + ", ".join(sorted(missing))
             )
         data = step.get("data", {})
-        if step.get("action") != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}" or not isinstance(
-            data, Mapping
-        ):
+        if step.get(
+            "action", step.get("service")
+        ) != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}" or not isinstance(data, Mapping):
             continue
         alias = data.get("result_alias")
         if alias is None:
@@ -2053,7 +2057,15 @@ def _mask_script_templates(
         # durations/timeouts, repeat iteration sources and shorthand conditions.
         # Keep those templates intact so type-aware validation sees a template
         # instead of an arbitrary placeholder string that is invalid for the field.
-        if key in {"delay", "timeout", "for_each", "conditions"} or parent_key in {
+        if key in {
+            "delay",
+            "timeout",
+            "for_each",
+            "conditions",
+            "if",
+            "while",
+            "until",
+        } or parent_key in {
             "delay",
             "timeout",
         }:
@@ -2242,8 +2254,6 @@ async def async_call_active_function(
             with suppress(json.JSONDecodeError):
                 payload = json.loads(payload)
         results[result_alias] = _bounded_function_result(payload)
-        for reference in (_ACTIVE_RESULT_PATHS.get() or {}).get(result_alias, set()):
-            resolve_result_values(reference, {}, results)
         return results[result_alias]
     return result
 
@@ -2397,7 +2407,12 @@ def _native_result_sequence(
             rendered["response_variable"] = response_name
             sequence.append(rendered)
             sequence.append(
-                {"variables": {alias: "{{ " + response_name + ".result }}"}}
+                {
+                    "if": "{{ " + response_name + " is defined }}",
+                    "then": [
+                        {"variables": {alias: "{{ " + response_name + ".result }}"}}
+                    ],
+                }
             )
         else:
             sequence.append(rendered)
@@ -2906,9 +2921,11 @@ async def _async_evaluate_matched_rule(
                 )
             except GuestModeDenied:
                 allowed = False
-            except Exception:
-                _LOGGER.exception(
-                    "Guest authorization failed for Request Rule %s", rule["id"]
+            except Exception as err:
+                _LOGGER.error(
+                    "Guest authorization failed for Request Rule %s (%s)",
+                    rule["id"],
+                    type(err).__name__,
                 )
                 allowed = False
             if not allowed:
@@ -2986,14 +3003,20 @@ async def _async_evaluate_matched_rule(
             paths_token = _ACTIVE_RESULT_PATHS.set(
                 _result_paths_by_alias(executable_actions)
             )
+            execution = StopReason()
+            execution_token = script_execution_cv.set(execution)
             try:
                 run_result = await script.async_run(
                     {**match.slots, "request": {"slots": dict(match.slots)}},
                     context,
                 )
                 variables = run_result.variables if run_result is not None else {}
-                if run_result is None or not (
-                    variables.get(completion_marker) or variables.get(stop_marker)
+                if (
+                    execution.script_execution in {"aborted", "error", "cancelled"}
+                    or run_result is None
+                    or not (
+                        variables.get(completion_marker) or variables.get(stop_marker)
+                    )
                 ):
                     return RuleEvaluation(
                         match,
@@ -3013,6 +3036,7 @@ async def _async_evaluate_matched_rule(
                     variables.get(stop_marker)
                 )
             finally:
+                script_execution_cv.reset(execution_token)
                 _ACTIVE_RESULT_PATHS.reset(paths_token)
                 _ACTIVE_FUNCTION_RESULTS.reset(result_token)
                 _ACTIVE_FUNCTION_EXECUTOR.reset(token)
@@ -3026,14 +3050,15 @@ async def _async_evaluate_matched_rule(
                     await script.async_stop()
         except GuestModeDenied:
             return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
-        except Exception:
+        except Exception as err:
             if require_matching_revision is not None:
                 require_matching_revision()
-            _LOGGER.exception(
+            _LOGGER.error(
                 "Request Rule '%s' failed while running its local Home Assistant "
                 "action. Review the rule's actions and referenced entities/services "
-                "in Extended OpenAI > Request Rules",
+                "in Extended OpenAI > Request Rules (%s)",
                 rule.get("name") or rule["id"],
+                type(err).__name__,
             )
             return RuleEvaluation(
                 match,
