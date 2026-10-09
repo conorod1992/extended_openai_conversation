@@ -108,41 +108,70 @@ def _optional_null_plan(
     root: dict[str, Any] | None = None,
     memo: dict[int, _OptionalNullPlan] | None = None,
     validator: Any = None,
+    resolver: Any = None,
 ) -> _OptionalNullPlan:
     from jsonschema.validators import validator_for
+    from referencing import Registry, Resource
+    from referencing.jsonschema import DRAFT202012, specification_with
 
     root = schema if root is None else root
     memo = {} if memo is None else memo
     if id(schema) in memo:
         return memo[id(schema)]
     validator = validator_for(root)(root) if validator is None else validator
+    specification = specification_with(root.get("$schema", ""), default=DRAFT202012)
+    if resolver is None:
+        resolver = Registry().resolver_with_root(
+            Resource.from_contents(root, default_specification=specification)
+        )
+
+    class ScopedValidator:
+        """Validate a branch with the same resource scope used by its plan."""
+
+        def is_valid(self, data):
+            return (
+                next(validator.descend(data, schema, resolver=resolver), None) is None
+            )
+
+    def child(value, *, resolved_scope=None):
+        child_resolver = (
+            resolved_scope
+            if resolved_scope is not None
+            else resolver.in_subresource(
+                Resource.from_contents(value, default_specification=specification)
+            )
+        )
+        return _optional_null_plan(
+            value, root=root, memo=memo, validator=validator, resolver=child_resolver
+        )
+
+    def allows_null(value):
+        child_resolver = resolver.in_subresource(
+            Resource.from_contents(value, default_specification=specification)
+        )
+        return (
+            next(validator.descend(None, value, resolver=child_resolver), None) is None
+        )
+
     properties, required = _caller_object_fields(schema)
     plan = _OptionalNullPlan(
         optional_nonnullable=frozenset(
             key
             for key, value in properties.items()
-            if key not in required and not validator.evolve(schema=value).is_valid(None)
+            if key not in required and not allows_null(value)
         ),
         properties={},
         items=None,
     )
     memo[id(schema)] = plan
 
-    def child(value):
-        return _optional_null_plan(value, root=root, memo=memo, validator=validator)
-
     reference = schema.get("$ref")
-    if isinstance(reference, str) and reference.startswith("#/"):
-        from urllib.parse import unquote
-
-        resolved = root
-        for part in unquote(reference[2:]).split("/"):
-            key = part.replace("~1", "/").replace("~0", "~")
-            resolved = (
-                resolved[int(key)] if isinstance(resolved, list) else resolved[key]
-            )
-        if isinstance(resolved, dict):
-            plan.reference = child(resolved)
+    if isinstance(reference, str) and reference.startswith("#"):
+        # A local pointer belongs to the nearest resource, which can be a nested
+        # $id. lookup also retains that scope when a pointer enters a resource.
+        resolved = resolver.lookup(reference)
+        if isinstance(resolved.contents, dict):
+            plan.reference = child(resolved.contents, resolved_scope=resolved.resolver)
     plan.properties = {key: child(value) for key, value in properties.items()}
     if isinstance(schema.get("items"), dict):
         plan.items = child(schema["items"])
@@ -151,7 +180,7 @@ def _optional_null_plan(
             plan.alternatives.append(child(branch))
     if plan.alternatives or "allOf" in schema:
         # Imported only for composed AI Task schemas, never ordinary tool calls.
-        plan.validator = validator.evolve(schema=schema)
+        plan.validator = ScopedValidator()
     return plan
 
 

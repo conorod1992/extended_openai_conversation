@@ -33,6 +33,7 @@ from homeassistant.helpers.script_variables import ScriptVariables
 from homeassistant.helpers.template import Template
 from homeassistant.helpers.trace import StopReason, script_execution_cv
 from homeassistant.helpers.typing import UNDEFINED
+from homeassistant.util.async_ import create_eager_task
 
 from .const import (
     CONF_CHAT_MODEL,
@@ -2655,10 +2656,16 @@ def _guard_template_reads(
 class _ResultReferenceTemplate(Template):
     """Keep lazy result failures fatal even inside native if/choose conditions."""
 
-    def __init__(self, source: Template, helper: str) -> None:
+    def __init__(
+        self,
+        source: Template,
+        helper: str,
+        on_error: Callable[[RuleResponseValueError], None],
+    ) -> None:
         super().__init__(source.template, source.hass)
         self._source = source
         self._helper = helper
+        self._on_error = on_error
 
     def async_render_to_info(self, variables=None, **kwargs):
         scope = dict(variables or {})
@@ -2668,6 +2675,9 @@ class _ResultReferenceTemplate(Template):
         seen = set()
         while error is not None and id(error) not in seen:
             if isinstance(error, RuleResponseValueError):
+                # Tracked wait templates render in HA event callbacks. Raising
+                # there alone cannot stop the owning script.
+                self._on_error(error)
                 # Outside Jinja this remains a ValueError. HA must not convert a
                 # reached invalid reference into a false condition or continue.
                 raise error
@@ -2679,16 +2689,24 @@ class _ResultReferenceTemplate(Template):
         return self.async_render_to_info(*args, **kwargs).result()
 
 
-def _guard_result_references(value: Any) -> Any:
+def _guard_result_references(
+    value: Any, on_error: Callable[[RuleResponseValueError], None]
+) -> Any:
     if isinstance(value, Template):
         helper = re.search(r"\b__eoai_result_value_[0-9a-f]{32}\b", value.template)
-        return _ResultReferenceTemplate(value, helper.group()) if helper else value
+        return (
+            _ResultReferenceTemplate(value, helper.group(), on_error)
+            if helper
+            else value
+        )
     if isinstance(value, ScriptVariables):
-        return ScriptVariables(_guard_result_references(value.as_dict()))
+        return ScriptVariables(_guard_result_references(value.as_dict(), on_error))
     if isinstance(value, Mapping):
-        return {key: _guard_result_references(item) for key, item in value.items()}
+        return {
+            key: _guard_result_references(item, on_error) for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [_guard_result_references(item) for item in value]
+        return [_guard_result_references(item, on_error) for item in value]
     return value
 
 
@@ -3042,8 +3060,21 @@ async def _async_evaluate_matched_rule(
             validated_actions = await async_validate_actions_config(
                 hass, schema_actions
             )
+            result_reference_error: RuleResponseValueError | None = None
+            result_reference_stop: asyncio.Task[None] | None = None
+
+            def stop_on_result_error(error: RuleResponseValueError) -> None:
+                nonlocal result_reference_error, result_reference_stop
+                if result_reference_error is None:
+                    result_reference_error = error
+                    # Start eagerly so HA's stop signal is set in this callback,
+                    # before a ready wait timeout can advance to another action.
+                    result_reference_stop = create_eager_task(script.async_stop())
+
             if captures_results:
-                validated_actions = _guard_result_references(validated_actions)
+                validated_actions = _guard_result_references(
+                    validated_actions, stop_on_result_error
+                )
 
             def current_policy() -> GuestCapabilityPolicy:
                 nonlocal policy
@@ -3111,6 +3142,8 @@ async def _async_evaluate_matched_rule(
                     {**match.slots, "request": {"slots": dict(match.slots)}},
                     context,
                 )
+                if result_reference_error is not None:
+                    raise result_reference_error
                 variables = run_result.variables if run_result is not None else {}
                 if (
                     execution.script_execution in {"aborted", "error", "cancelled"}
@@ -3142,6 +3175,8 @@ async def _async_evaluate_matched_rule(
                 _ACTIVE_FUNCTION_RESULTS.reset(result_token)
                 _ACTIVE_FUNCTION_EXECUTOR.reset(token)
                 _ACTIVE_ACTION_GUARD.reset(guard_token)
+                if result_reference_stop is not None:
+                    await result_reference_stop
                 # Script.async_unload was added after our minimum supported HA.
                 # Older Script releases expose async_stop for the same final
                 # run cleanup; keep using async_unload where it is available.
