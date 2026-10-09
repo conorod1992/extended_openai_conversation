@@ -37,6 +37,10 @@ _MANAGER_KEYS = (
     "request_rule_managers",
     "request_rule_runtimes",
     "function_group_runtimes",
+    "continuity_managers",
+    "usage_getter_locks",
+    "backup_locks",
+    "subsystem_status",
 )
 
 
