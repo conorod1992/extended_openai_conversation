@@ -111,25 +111,47 @@ async def test_bare_unavailable_alias_does_not_become_empty_service_data(hass, m
     assert not result.successful
 
 
-async def test_unreached_jinja_branch_does_not_resolve_missing_reference(hass):
-    from tests.test_audit_request_rules import evaluate_functions, function_step
+async def test_unreached_jinja_branch_does_not_resolve_missing_reference(tmp_path):
+    from tests.test_audit_request_rules import function_step
+
+    hass = HomeAssistant(str(tmp_path))
+
+    async def capture(call):
+        return {
+            "result": await rules.async_call_active_function(
+                call.data["function"], {}, call.data.get("result_alias")
+            )
+        }
+
+    hass.services.async_register(
+        DOMAIN, "call_function", capture, supports_response=SupportsResponse.ONLY
+    )
 
     async def execute(*_):
         return {"0": ["OK"]}
 
-    result = await evaluate_functions(
-        hass,
-        [
-            function_step(),
-            {
-                "if": "{{ false }}",
-                "then": [{"set_conversation_response": "{lookup.missing}"}],
-                "else": [{"set_conversation_response": "{lookup.0.0}"}],
-            },
-        ],
-        execute,
-    )
-    assert result.successful and result.response == "OK"
+    rule = local_rule(phrases=["run"])
+    rule["action"]["actions"] = [
+        function_step(),
+        {
+            "if": "{{ false }}",
+            "then": [{"set_conversation_response": "{lookup.missing}"}],
+            "else": [{"set_conversation_response": "{lookup.0.0}"}],
+        },
+    ]
+    try:
+        result = await rules.async_evaluate_rule(
+            hass,
+            await manager(rule),
+            rules.RequestRuleRuntime(),
+            "run",
+            "session",
+            function_executor=execute,
+            context=Context(),
+        )
+        assert result.successful and result.response == "OK"
+    finally:
+        await hass.async_stop(force=True)
 
 
 @pytest.mark.parametrize("timeout", [None, {"milliseconds": 150}])
