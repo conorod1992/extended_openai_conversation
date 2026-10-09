@@ -512,7 +512,7 @@ async def async_execute_tool_exchange(
     if any(call.id in prior_results for call in pending_tool_calls):
         # Remove the newly retained duplicate occurrence; the original call/result
         # pair must remain intact and must not gain a second result with that ID.
-        for content in reversed(chat_log.content):
+        for content in reversed(list(chat_log.content)):
             if (
                 isinstance(content, conversation.AssistantContent)
                 and content.tool_calls
@@ -527,7 +527,6 @@ async def async_execute_tool_exchange(
                 ]
                 if not content.tool_calls and not getattr(content, "content", None):
                     chat_log.content.remove(content)
-                break
         error = HomeAssistantError("Provider repeated a completed tool call id")
         append_unresolved_tool_results(
             chat_log, entity.entity_id, pending_tool_calls, error=error

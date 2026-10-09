@@ -597,6 +597,29 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # double-counting live conversation runs.
                     await self._usage.async_record_conversation()
             options = request_options or self.subentry.data
+            from .context_usage_hardening import estimate_provider_input_tokens
+
+            threshold = int(
+                options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
+            )
+            estimated_input = estimate_provider_input_tokens(
+                _convert_content_to_responses_param(chat_log.content)
+            )
+            if (
+                estimated_input > threshold
+                and len(partition_history(chat_log.content).turns) > 1
+            ):
+                await self._truncate_message_history(
+                    chat_log, observed_input_tokens=estimated_input
+                )
+                # A background summary cannot rescue this immediate request.
+                if (
+                    estimate_provider_input_tokens(
+                        _convert_content_to_responses_param(chat_log.content)
+                    )
+                    > threshold
+                ):
+                    keep_recent_messages(chat_log.content, estimated_input, threshold)
             # Prepare retained attachment bytes before assembling the live tool set.
             # Responses content provides a lossless intermediate for images and PDFs.
             messages: Any = _convert_content_to_responses_param(chat_log.content)
@@ -896,15 +919,23 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         bind_tool_recovery_state(recovery_state),
                         async_streaming_speech_cleanup(chat_log, options),
                     ):
-                        async for content in chat_log.async_add_delta_content_stream(
-                            self.entity_id, transformed_stream
-                        ):
-                            if isinstance(content, conversation.AssistantContent):
-                                native = getattr(content, "native", None)
-                                if getattr(native, "type", "") == "web_search_call":
-                                    web_search_used = True
-                                if content.tool_calls:
-                                    pending_tool_calls.extend(content.tool_calls)
+                        listener = getattr(chat_log, "delta_listener", None)
+                        if conditional_continue:
+                            chat_log.delta_listener = None
+                        try:
+                            async for (
+                                content
+                            ) in chat_log.async_add_delta_content_stream(
+                                self.entity_id, transformed_stream
+                            ):
+                                if isinstance(content, conversation.AssistantContent):
+                                    native = getattr(content, "native", None)
+                                    if getattr(native, "type", "") == "web_search_call":
+                                        web_search_used = True
+                                    if content.tool_calls:
+                                        pending_tool_calls.extend(content.tool_calls)
+                        finally:
+                            chat_log.delta_listener = listener
                 except BaseException as err:
                     append_unresolved_tool_results(
                         chat_log,
@@ -1127,6 +1158,23 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             for content in chat_log.content
                             if id(content) not in draft_content_ids
                         ]
+                    if chat_log.delta_listener:
+                        with async_streaming_speech_cleanup(chat_log, options):
+                            for content in chat_log.content:
+                                if (
+                                    id(content) not in existing_content_ids
+                                    and isinstance(
+                                        content, conversation.AssistantContent
+                                    )
+                                    and content.content
+                                ):
+                                    chat_log.delta_listener(
+                                        chat_log,
+                                        {
+                                            "role": "assistant",
+                                            "content": content.content,
+                                        },
+                                    )
 
                 if not chat_log.unresponded_tool_results:
                     break
@@ -1200,6 +1248,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
 
         chat_log.content[:] = updated_content
+        if response_text and already_delivered and chat_log.delta_listener:
+            chat_log.delta_listener(
+                chat_log, {"role": "assistant", "content": response_text}
+            )
         if response_text and not already_delivered:
 
             async def final_response():
@@ -1389,6 +1441,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         first_chunk = True
         refusal_seen = False
         terminal_finish_seen = False
+        token_limit_reached = False
         event_count = 0
 
         async for chunk in normalized_chat_stream(chat_log, result, request_usage):
@@ -1522,9 +1575,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             if finish_reason in {"stop", "tool_calls", "function_call"}:
                 terminal_finish_seen = True
             if finish_reason == "length":
-                raise TokenLengthExceededError(
-                    self.subentry.data.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
-                )
+                token_limit_reached = True
+                terminal_finish_seen = True
             if finish_reason == "content_filter":
                 if not refusal_seen:
                     raise HomeAssistantError(
@@ -1535,6 +1587,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             # Keep consuming after the stop chunk so providers that honor
             # stream_options.include_usage can deliver their final usage-only chunk.
 
+        if token_limit_reached:
+            raise TokenLengthExceededError(
+                self.subentry.data.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
+            )
         if not terminal_finish_seen:
             raise HomeAssistantError(
                 "OpenAI Chat Completions stream ended before a terminal finish reason"

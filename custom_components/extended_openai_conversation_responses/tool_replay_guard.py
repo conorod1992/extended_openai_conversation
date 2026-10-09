@@ -13,6 +13,16 @@ from .ha_tool_result_compat import is_tool_result_content, tool_result_data
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
 
 
+def record_dispatch(entity: Any, tool_input: llm.ToolInput) -> None:
+    """Keep trusted dispatch provenance separately from model-facing outcomes."""
+    dispatched = getattr(entity, "_dispatched_tool_inputs", None)
+    if not isinstance(dispatched, dict):
+        dispatched = entity._dispatched_tool_inputs = {}
+    dispatched[id(tool_input)] = tool_input
+    while len(dispatched) > 4096:
+        dispatched.pop(next(iter(dispatched)))
+
+
 def _signature(tool_input: llm.ToolInput) -> str:
     return json.dumps(
         [tool_input.tool_name, tool_input.tool_args],
@@ -49,6 +59,8 @@ def remember_unacknowledged_calls(
         if isinstance(content, conversation.AssistantContent) and content.tool_calls
         for tool_input in content.tool_calls
         if tool_input.id in completed_ids
+        and getattr(entity, "_dispatched_tool_inputs", {}).get(id(tool_input))
+        is tool_input
     }
     if not signatures:
         return

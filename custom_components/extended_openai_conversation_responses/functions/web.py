@@ -98,19 +98,20 @@ def _decode_zstd(body: bytes, max_bytes: int) -> bytes:
     if not body:
         raise aiohttp.ClientPayloadError("Empty compressed response")
     if _ZSTD_COMPAT is not None:
-        import io
-
         decoded = bytearray()
         try:
-            with _ZSTD_COMPAT.ZstdDecompressor().stream_reader(
-                io.BytesIO(body), read_size=_DECODE_CHUNK_BYTES, read_across_frames=True
-            ) as reader:
-                while chunk := reader.read(
-                    min(_DECODE_CHUNK_BYTES, max_bytes + 1 - len(decoded))
-                ):
-                    if len(chunk) > max_bytes - len(decoded):
-                        raise _response_limit_error(max_bytes)
-                    decoded.extend(chunk)
+            decoder = _ZSTD_COMPAT.ZstdDecompressor().decompressobj()
+            for offset in range(len(body)):
+                if decoder.eof:
+                    decoder = _ZSTD_COMPAT.ZstdDecompressor().decompressobj()
+                # One input byte cannot complete more than one Zstd block.
+                # Bound expansion per call and explicitly require frame EOF.
+                chunk = decoder.decompress(body[offset : offset + 1])
+                if len(chunk) > max_bytes - len(decoded):
+                    raise _response_limit_error(max_bytes)
+                decoded.extend(chunk)
+            if not decoder.eof:
+                raise aiohttp.ClientPayloadError("Incomplete compressed response")
         except _ZSTD_COMPAT.ZstdError as err:
             message = str(err).lower()
             reason = (
@@ -341,7 +342,12 @@ def _render_value(
     value_template: Template, value: Any, arguments: dict[str, Any]
 ) -> Any:
     """Expose value/value_json while propagating HA template errors."""
-    variables = {**arguments, "value": value}
+    variables = {
+        key: item
+        for key, item in arguments.items()
+        if key not in {"value", "value_json"}
+    }
+    variables["value"] = value
     with suppress(*JSON_DECODE_EXCEPTIONS):
         variables["value_json"] = json_loads(value)
     # HA's async_render_with_possible_json_value silently returns a fallback
