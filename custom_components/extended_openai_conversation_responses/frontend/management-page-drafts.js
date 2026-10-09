@@ -128,6 +128,8 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
 }
 
 async function saveRuleSettings(panel, submitted, scope) {
+  const invalid = submitted.wording_groups.find((group) => group.validation_error);
+  if (invalid) throw new Error(invalid.validation_error);
   const result = await panel._call("request_rules", "settings", {
     defaults: submitted.defaults,
     wording_groups: submitted.wording_groups,
@@ -148,6 +150,7 @@ async function saveRuleSettings(panel, submitted, scope) {
 export function readRuleSettings(panel) {
   if (panel._viewKey?.() !== RULES || !panel._rulesSettingsDraft) return;
   const root = panel.shadowRoot, q = (selector) => root.querySelector(selector);
+  if (!root?.querySelector) return;
   if (!q("#rules-default-word-forms")) return;
   panel._rulesSettingsDraft = {
     defaults: {
@@ -156,10 +159,22 @@ export function readRuleSettings(panel) {
       fuzzy: q("#rules-default-fuzzy").checked,
       fuzzy_threshold: Number(q("#rules-default-threshold").value),
     },
-    wording_groups: [...root.querySelectorAll(".wording-group")].map((row) => ({
-      canonical: row.querySelector(".wording-canonical").value.trim(),
-      alternatives: parseWordingAlternatives(row.querySelector(".wording-alternatives").value),
-    })),
+    wording_groups: [...root.querySelectorAll(".wording-group")].map((row) => {
+      const canonical = row.querySelector(".wording-canonical").value.trim();
+      const input = row.querySelector(".wording-alternatives");
+      let group;
+      try { group = {canonical, alternatives: parseWordingAlternatives(input.value)}; }
+      catch (err) { group = {canonical, alternatives: [], alternatives_raw: input.value, validation_error: err.message || String(err)}; }
+      input.setCustomValidity?.(group.validation_error || "");
+      input.setAttribute?.("aria-invalid", String(Boolean(group.validation_error)));
+      let error = row.querySelector(".wording-error");
+      if (group.validation_error && !error) {
+        input.insertAdjacentHTML?.("afterend", '<small class="wording-error" role="alert"></small>');
+        error = row.querySelector(".wording-error");
+      }
+      if (error) error.textContent = group.validation_error || "";
+      return group;
+    }),
   };
 }
 
@@ -167,7 +182,8 @@ export function refreshPageSaveBar(panel) {
   const scope = currentPageScope(panel), root = panel.shadowRoot;
   if (!scope || !root?.querySelector) return;
   const dirty = scope.dirty();
-  if (!enhancementChanged(panel, "page-save-bar", [scope, dirty, scope.pending])) return;
+  const invalid = panel._viewKey?.() === RULES && panel._rulesSettingsDraft?.wording_groups.some((group) => group.validation_error);
+  if (!enhancementChanged(panel, "page-save-bar", [scope, dirty, scope.pending, invalid])) return;
   let bar = root.querySelector(".save-bar");
   if (!dirty) { bar?.remove(); root.dispatchEvent?.(new Event("eoc-config-dirty-changed")); return; }
   if (!bar) {
@@ -175,7 +191,7 @@ export function refreshPageSaveBar(panel) {
     bar = root.querySelector(".save-bar");
   }
   const save = bar?.querySelector("#save-page"), discard = bar?.querySelector("#discard-page");
-  if (save) { save.disabled = scope.pending; save.textContent = scope.pending ? "Saving…" : "Save changes"; }
+  if (save) { save.disabled = scope.pending || invalid; save.textContent = scope.pending ? "Saving…" : "Save changes"; }
   if (discard) discard.disabled = scope.pending;
   root.dispatchEvent?.(new Event("eoc-config-dirty-changed"));
 }
@@ -207,7 +223,7 @@ function syncRequestRulesSavedDom(panel) {
     const canonical = row.querySelector(".wording-canonical");
     const alternatives = row.querySelector(".wording-alternatives");
     if (canonical) canonical.value = group.canonical || "";
-    if (alternatives) alternatives.value = formatWordingAlternatives(group.alternatives || []);
+    if (alternatives) alternatives.value = group.alternatives_raw ?? formatWordingAlternatives(group.alternatives || []);
   });
   return true;
 }
@@ -271,6 +287,9 @@ function renderDiscardedDraft(panel) {
 }
 
 export async function savePageChanges(panel) {
+  // Read the visible form synchronously, including edits whose input microtask
+  // has not run yet. Invalid raw wording remains a dirty, unsavable draft.
+  readRuleSettings(panel);
   const scope = currentPageScope(panel);
   if (!scope || scope.pending || !scope.dirty()) return false;
   const operation = scope.save();

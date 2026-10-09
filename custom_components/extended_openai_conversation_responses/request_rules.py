@@ -29,6 +29,8 @@ from homeassistant.core import Context, HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import condition as ha_condition, config_validation as cv
 from homeassistant.helpers.script import Script, async_validate_actions_config
+from homeassistant.helpers.script_variables import ScriptVariables
+from homeassistant.helpers.template import Template
 from homeassistant.helpers.trace import StopReason, script_execution_cv
 from homeassistant.helpers.typing import UNDEFINED
 
@@ -2301,30 +2303,29 @@ class RuleResponseValueError(ValueError):
     """An unavailable, validated variable/path in a rule's final response."""
 
 
+def _lookup_result_value(token: str, results: Mapping[str, Any]) -> Any:
+    """Traverse only mapping keys and list indices, never attributes or scalars."""
+    alias, *path = token.split(".")
+    if alias not in results:
+        raise RuleResponseValueError(f"Function result {alias} is unavailable")
+    current = results[alias]
+    for part in path:
+        if isinstance(current, Mapping) and part in current:
+            current = current[part]
+        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+            current = current[int(part)]
+        else:
+            raise RuleResponseValueError(f"Function result path {token} is unavailable")
+    return current
+
+
 def resolve_result_values(
     value: Any, slots: Mapping[str, str], results: Mapping[str, Any]
 ) -> Any:
     """Resolve exact result paths, keeping captures in their own namespace."""
 
     def lookup(token: str) -> Any:
-        alias, *path = token.split(".")
-        if alias not in results:
-            raise RuleResponseValueError(f"Function result {alias} is unavailable")
-        current = results[alias]
-        for part in path:
-            if isinstance(current, Mapping) and part in current:
-                current = current[part]
-            elif (
-                isinstance(current, list)
-                and part.isdigit()
-                and int(part) < len(current)
-            ):
-                current = current[int(part)]
-            else:
-                raise RuleResponseValueError(
-                    f"Function result path {token} is unavailable"
-                )
-        return current
+        return _lookup_result_value(token, results)
 
     if isinstance(value, str):
         exact = re.fullmatch(
@@ -2364,32 +2365,25 @@ def _native_result_sequence(
         for step in actions
         if isinstance(step.get("data"), Mapping) and step["data"].get("result_alias")
     }
+    # Each frozen script owns its helper; captured/native names cannot shadow it.
+    lookup_name = f"__eoai_result_value_{uuid4().hex}"
 
     def result_template(match: re.Match[str]) -> str:
-        alias, *path = match.group(0)[1:-1].split(".")
-        expression = alias
-        for part in path:
-            # Bracket lookup avoids dict methods (for example ``items``).
-            # Numeric segments index lists but retain string keys in mappings,
-            # exactly as the final-response resolver does.
-            index = (
-                f"({part!r} if {expression} is mapping else {int(part)})"
-                if part.isdigit()
-                else repr(part)
-            )
-            expression += f"[{index}]"
-        # HA's logging Undefined can otherwise become an empty service argument.
-        # Raise during this expression's evaluation, after native branch selection.
-        return "{{ " + expression + " if " + expression + " is defined else (1 / 0) }}"
+        token = match.group(0)[1:-1]
+        return "{{ " + lookup_name + "(" + repr(token) + ") }}"
 
     def native_templates(value: Any) -> Any:
         if isinstance(value, str):
             value = RESULT_REFERENCE.sub(result_template, value)
             return SLOT_REFERENCE.sub(
                 lambda match: (
-                    "{{ " + match.group(1) + " }}"
-                    if match.group(1) in aliases or match.group(1) in slots
-                    else match.group(0)
+                    result_template(match)
+                    if match.group(1) in aliases
+                    else (
+                        "{{ " + match.group(1) + " }}"
+                        if match.group(1) in slots
+                        else match.group(0)
+                    )
                 ),
                 value,
             )
@@ -2594,6 +2588,13 @@ def _guest_template_reads_allowed(
     info = template.async_render_to_info({**slots, "request": {"slots": dict(slots)}})
     if info.exception is not None:
         return False
+    return _guest_render_info_allowed(hass, info, policy)
+
+
+def _guest_render_info_allowed(
+    hass: HomeAssistant, info: Any, policy: GuestCapabilityPolicy
+) -> bool:
+    """Check the dependencies observed in one actual template evaluation."""
     if not all(policy.allows_entity_read(entity_id) for entity_id in info.entities):
         return False
     return not (
@@ -2604,6 +2605,91 @@ def _guest_template_reads_allowed(
             if info.all_states or state.domain in info.domains
         )
     )
+
+
+class _GuestTemplateDenied(ValueError):
+    """A fatal privacy violation, including inside recoverable native actions."""
+
+
+class _GuestReadTemplate(Template):
+    """Authorize rendered reads before HA can consume the template's result."""
+
+    def __init__(self, source: Template, policy: Callable[[], GuestCapabilityPolicy]):
+        super().__init__(source.template, source.hass)
+        self._source = source
+        self._policy = policy
+
+    def async_render_to_info(self, *args: Any, **kwargs: Any) -> Any:
+        policy = self._policy()
+        info = self._source.async_render_to_info(*args, **kwargs)
+        if policy.guest_active and not _guest_render_info_allowed(
+            self.hass, info, policy
+        ):
+            # ValueError deliberately bypasses HA's ConditionError fallback and
+            # continue_on_error handling for ordinary HomeAssistantError values.
+            raise _GuestTemplateDenied(GUEST_MODE_UNAVAILABLE)
+        return info
+
+    def async_render(self, *args: Any, **kwargs: Any) -> Any:
+        return self.async_render_to_info(*args, **kwargs).result()
+
+
+def _guard_template_reads(
+    value: Any, policy: Callable[[], GuestCapabilityPolicy]
+) -> Any:
+    """Wrap validated templates, including native-local variable containers."""
+    if isinstance(value, Template):
+        return _GuestReadTemplate(value, policy)
+    if isinstance(value, ScriptVariables):
+        return ScriptVariables(_guard_template_reads(value.as_dict(), policy))
+    if isinstance(value, Mapping):
+        return {
+            _guard_template_reads(key, policy): _guard_template_reads(item, policy)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_guard_template_reads(item, policy) for item in value]
+    return value
+
+
+class _ResultReferenceTemplate(Template):
+    """Keep lazy result failures fatal even inside native if/choose conditions."""
+
+    def __init__(self, source: Template, helper: str) -> None:
+        super().__init__(source.template, source.hass)
+        self._source = source
+        self._helper = helper
+
+    def async_render_to_info(self, variables=None, **kwargs):
+        scope = dict(variables or {})
+        scope[self._helper] = lambda token: _lookup_result_value(token, variables or {})
+        info = self._source.async_render_to_info(scope, **kwargs)
+        error = info.exception
+        seen = set()
+        while error is not None and id(error) not in seen:
+            if isinstance(error, RuleResponseValueError):
+                # Outside Jinja this remains a ValueError. HA must not convert a
+                # reached invalid reference into a false condition or continue.
+                raise error
+            seen.add(id(error))
+            error = error.__cause__ or error.__context__
+        return info
+
+    def async_render(self, *args, **kwargs):
+        return self.async_render_to_info(*args, **kwargs).result()
+
+
+def _guard_result_references(value: Any) -> Any:
+    if isinstance(value, Template):
+        helper = re.search(r"\b__eoai_result_value_[0-9a-f]{32}\b", value.template)
+        return _ResultReferenceTemplate(value, helper.group()) if helper else value
+    if isinstance(value, ScriptVariables):
+        return ScriptVariables(_guard_result_references(value.as_dict()))
+    if isinstance(value, Mapping):
+        return {key: _guard_result_references(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_guard_result_references(item) for item in value]
+    return value
 
 
 def _guard_native_actions(actions: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -2956,6 +3042,19 @@ async def _async_evaluate_matched_rule(
             validated_actions = await async_validate_actions_config(
                 hass, schema_actions
             )
+            if captures_results:
+                validated_actions = _guard_result_references(validated_actions)
+
+            def current_policy() -> GuestCapabilityPolicy:
+                nonlocal policy
+                if live_guest_policy is not None:
+                    policy = policy.restricted_by(live_guest_policy())
+                return policy
+
+            if policy.guest_active or live_guest_policy is not None:
+                validated_actions = _guard_template_reads(
+                    validated_actions, current_policy
+                )
             if require_matching_revision is not None:
                 require_matching_revision()
             # Once the validated native script starts, its frozen actions may
@@ -3050,7 +3149,7 @@ async def _async_evaluate_matched_rule(
                     await unload()
                 else:
                     await script.async_stop()
-        except GuestModeDenied:
+        except GuestModeDenied, _GuestTemplateDenied:
             return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
         except Exception as err:
             if require_matching_revision is not None:
