@@ -1,0 +1,182 @@
+name: PR checks
+
+# Always create the required check, including documentation-only PRs.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pr-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: Select PR workflows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+      - name: Select changed-file coverage
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.base_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --no-renames --name-only "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/pr-files.txt"
+          python ci/pr_validation.py select "$RUNNER_TEMP/pr-files.txt" --base "$BASE_REF" --output "$GITHUB_OUTPUT"
+
+  android-companion-app:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['android-companion-app'] }}
+    uses: ./.github/workflows/android-companion-app.yml
+
+  ci-image-dev:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['ci-image-dev'] }}
+    uses: ./.github/workflows/ci-image-dev.yml
+
+  ci-image-stable:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['ci-image-stable'] }}
+    uses: ./.github/workflows/ci-image-stable.yml
+
+  ci:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['ci'] }}
+    uses: ./.github/workflows/ci.yml
+
+  cross-browser-smoke:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['cross-browser-smoke'] }}
+    uses: ./.github/workflows/cross-browser-smoke.yml
+
+  deployment-recovery:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['deployment-recovery'] }}
+    uses: ./.github/workflows/deployment-recovery.yml
+
+  docs:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['docs'] }}
+    uses: ./.github/workflows/docs.yml
+
+  frontend-backend-version-skew:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['frontend-backend-version-skew'] }}
+    uses: ./.github/workflows/frontend-backend-version-skew.yml
+
+  frontend:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['frontend'] }}
+    uses: ./.github/workflows/frontend.yml
+
+  ha-browser-compatibility:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['ha-browser-compatibility'] }}
+    uses: ./.github/workflows/ha-browser-compatibility.yml
+
+  ha-version-upgrade-acceptance:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['ha-version-upgrade-acceptance'] }}
+    uses: ./.github/workflows/ha-version-upgrade-acceptance.yml
+
+  hacs-install-update-acceptance:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['hacs-install-update-acceptance'] }}
+    uses: ./.github/workflows/hacs-install-update-acceptance.yml
+
+  hacs:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['hacs'] }}
+    uses: ./.github/workflows/hacs.yaml
+
+  haos-supervisor-vm-acceptance:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['haos-supervisor-vm-acceptance'] }}
+    uses: ./.github/workflows/haos-supervisor-vm-acceptance.yml
+
+  ipv6-only-networking-acceptance:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['ipv6-only-networking-acceptance'] }}
+    uses: ./.github/workflows/ipv6-only-networking-acceptance.yml
+
+  official-ha-container:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['official-ha-container'] }}
+    uses: ./.github/workflows/official-ha-container.yml
+
+  real-ha:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['real-ha'] }}
+    uses: ./.github/workflows/real-ha.yml
+
+  release-smoke:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['release-smoke'] }}
+    uses: ./.github/workflows/release-smoke.yml
+
+  resource-constrained:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['resource-constrained'] }}
+    uses: ./.github/workflows/resource-constrained.yml
+
+  side-by-side-isolation:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['side-by-side-isolation'] }}
+    uses: ./.github/workflows/side-by-side-isolation.yml
+
+  upgrade-acceptance:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['upgrade-acceptance'] }}
+    uses: ./.github/workflows/upgrade-acceptance.yml
+
+  version-check:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['version-check'] }}
+    uses: ./.github/workflows/version-check.yml
+
+  validation:
+    name: PR validation
+    if: always()
+    needs: [select, android-companion-app, ci-image-dev, ci-image-stable, ci, cross-browser-smoke, deployment-recovery, docs, frontend-backend-version-skew, frontend, ha-browser-compatibility, ha-version-upgrade-acceptance, hacs-install-update-acceptance, hacs, haos-supervisor-vm-acceptance, ipv6-only-networking-acceptance, official-ha-container, real-ha, release-smoke, resource-constrained, side-by-side-isolation, upgrade-acceptance, version-check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+      - name: Require selected work and intentional skips
+        env:
+          PR_PLAN: ${{ needs.select.outputs.plan }}
+          PR_NEEDS: ${{ toJSON(needs) }}
+        run: python ci/pr_validation.py check
+      - name: Reject a base that changed during validation
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.base_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT_BASE="$(git ls-remote --exit-code origin "refs/heads/$BASE_REF" | cut -f1)"
+          if [[ "$CURRENT_BASE" != "$BASE_SHA" ]]; then
+            echo "develop/base advanced during validation. Update this PR branch and run its checks again." >&2
+            exit 1
+          fi

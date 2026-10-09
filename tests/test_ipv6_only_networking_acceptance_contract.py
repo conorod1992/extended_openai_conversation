@@ -1,6 +1,7 @@
 """Contracts for the strict IPv6-only acceptance lane."""
 
 import ast
+import json
 from pathlib import Path
 
 import httpx
@@ -24,14 +25,16 @@ def test_ipv6_workflow_environment_keys_are_unique_ignoring_case() -> None:
         assert len(keys) == len(set(keys)), "Actions env keys ignore case"
 
 
-def test_ipv6_workflow_is_nightly_manual_and_focused_pr() -> None:
+def test_ipv6_workflow_is_weekly_manual_and_focused_pr() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     trigger_block = text.split("concurrency:", 1)[0]
 
     assert "schedule:" in trigger_block
     assert "workflow_dispatch:" in trigger_block
-    assert "pull_request:" in trigger_block
-    assert '"ci/specialist_evidence.py"' in trigger_block
+    assert "workflow_call:" in trigger_block
+    policy = json.loads((ROOT / "ci/pr_workflows.json").read_text(encoding="utf-8"))
+    paths = policy["ipv6-only-networking-acceptance"]["paths"]
+    assert "ci/specialist_evidence.py" in paths
     assert "push:" not in trigger_block
     assert 'RUN_IPV6_ONLY_ACCEPTANCE: "1"' in text
     assert 'NO_PROXY: "::1,127.0.0.1,localhost"' in text

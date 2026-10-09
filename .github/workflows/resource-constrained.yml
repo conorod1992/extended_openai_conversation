@@ -1,13 +1,9 @@
 name: EOAI constrained resource acceptance
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/resource-constrained.yml"
-      - "tests_stress/test_large_installation.py"
-      - "tests_stress/test_responses_scale_fairness.py"
+  workflow_call:
   schedule:
-    - cron: "37 5 * * *"
+    - cron: "37 5 * * 6"
   workflow_dispatch:
 
 permissions:

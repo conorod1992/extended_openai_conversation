@@ -67,12 +67,9 @@ def test_enhanced_dispatch_can_run_the_scheduled_intensity_matrix():
         for step in jobs["prepare"]["steps"]
         if step.get("name") == "Resolve reproducible run controls"
     )
-    assert 'INTENSITY" == all' in controls["run"]
-    assert 'intensities=["normal","heavy"]' in controls["run"]
-    scheduled = next(
-        line for line in controls["run"].splitlines() if "'') CAMPAIGNS=" in line
-    )
-    assert '"long-lifetime"' in scheduled
+    assert 'python ci/actions_schedule.py' in controls["run"]
+    assert '--intensity "$INTENSITY"' in controls["run"]
+    assert '--schedule "$RUN_SCHEDULE"' in controls["run"]
     exclusion = jobs["python-campaigns"]["strategy"]["matrix"]["exclude"]
     assert "github.event_name == 'schedule'" in exclusion
     assert '{"campaign":"long-lifetime","intensity":"heavy"}' in exclusion
@@ -91,7 +88,7 @@ def test_existing_historical_matrix_supports_complete_dispatch_and_exact_checkou
     )
     assert (
         checkout["with"]["ref"]
-        == "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+        == "${{ github.sha }}"
     )
     assert any(
         step.get("with", {}).get("name")
@@ -151,7 +148,7 @@ def test_official_container_workflow_binds_image_evidence_to_exact_candidate():
         if step.get("uses", "").startswith("actions/checkout@")
     )
     assert checkout["with"]["ref"] == (
-        "${{ github.event.pull_request.head.sha || github.sha }}"
+        "${{ github.sha }}"
     )
     runner = next(
         step
@@ -332,7 +329,7 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
         for step in jobs["prepare"]["steps"]
         if step.get("name") == "Resolve reproducible run controls"
     )
-    assert 'intensities=["normal","heavy"]' in schedule_campaigns["run"]
+    assert "python ci/actions_schedule.py" in schedule_campaigns["run"]
 
 
 def test_active_release_upgrade_builds_a_verified_historical_runtime():

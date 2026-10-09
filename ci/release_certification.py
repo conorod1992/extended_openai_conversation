@@ -13,15 +13,17 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from zipfile import ZipFile
 
 try:
-    from .specialist_evidence import collect_specialist
     from .candidate_evidence import check_candidate, valid_sha
     from .enhanced_evidence import SCHEMA
     from .execution_contract import CONTRACT, check_execution
+    from .specialist_evidence import collect_specialist
+    from .validation_inventory import CERTIFICATION_WORKFLOW, TEST_WORKFLOWS
 except ImportError:
-    from specialist_evidence import collect_specialist
     from candidate_evidence import check_candidate, valid_sha
     from enhanced_evidence import SCHEMA
     from execution_contract import CONTRACT, check_execution
+    from specialist_evidence import collect_specialist
+    from validation_inventory import CERTIFICATION_WORKFLOW, TEST_WORKFLOWS
 
 SPECIALIST_CERTIFICATION_WORKFLOWS = (
     "android-companion-app.yml",
@@ -107,13 +109,13 @@ HEAVY_JOBS = frozenset(
 
 
 def qualifying_run(
-    run: dict, *, workflow_id: int, source_sha: str, events=None
+    run: dict, *, workflow_id: int, source_sha: str, events=None, branch="develop"
 ) -> bool:
     """Reject ancestors, other workflows, unfinished and non-successful runs."""
     return (
         run.get("workflow_id") == workflow_id
         and run.get("head_sha") == source_sha
-        and run.get("head_branch") == "develop"
+        and run.get("head_branch") == branch
         and run.get("event") in (events or {"push", "workflow_dispatch"})
         and run.get("status") == "completed"
         and run.get("conclusion") == "success"
@@ -332,15 +334,148 @@ class GitHubActions:
             return json.loads(zipped.read(matching[0]))
 
 
+def full_validation_cohort(actions: GitHubActions, source_sha: str) -> dict | None:
+    """Bind release evidence to one successful develop parent and exact child attempts."""
+    workflow_id, runs = actions.workflow_runs("full-validation.yml", source_sha)
+    parents = [
+        run
+        for run in runs
+        if qualifying_run(
+            run,
+            workflow_id=workflow_id,
+            source_sha=source_sha,
+            events={"workflow_dispatch"},
+        )
+    ]
+    errors = []
+    for parent in parents:
+        try:
+            artifacts = [
+                item
+                for item in actions.run_artifacts(parent["id"])
+                if item["name"] == "full-validation-cohort"
+            ]
+            if (
+                len(artifacts) != 1
+                or artifacts[0].get("expired")
+                or artifacts[0].get("size_in_bytes", 1) <= 0
+            ):
+                raise RuntimeError(
+                    "Exactly one live Full Validation cohort artifact is required"
+                )
+            proof = actions.artifact_json(artifacts[0], "full-validation-cohort.json")
+            ref = f"full-validation-{parent['id']}-{parent['run_attempt']}"
+            if (
+                proof.get("schema") != 1
+                or proof.get("passed") is not True
+                or proof.get("candidate_sha") != source_sha
+                or proof.get("validation_ref") != ref
+                or str(proof.get("run_id")) != str(parent["id"])
+                or str(proof.get("run_attempt")) != str(parent["run_attempt"])
+            ):
+                raise RuntimeError(
+                    "Full Validation candidate, parent or attempt differs"
+                )
+            rows = proof.get("runs", [])
+            by_name = {row["workflow"]: row for row in rows}
+            expected = {name for name, _ in TEST_WORKFLOWS} | {CERTIFICATION_WORKFLOW}
+            if (
+                set(by_name) != expected
+                or len(rows) != len(expected)
+                or len({row["run_id"] for row in rows}) != len(rows)
+            ):
+                raise RuntimeError("Full Validation child inventory differs")
+            children = {}
+            ids = {}
+            for name, row in by_name.items():
+                child_workflow_id, candidates = actions.workflow_runs(name, source_sha)
+                matching = [
+                    run
+                    for run in candidates
+                    if qualifying_run(
+                        run,
+                        workflow_id=child_workflow_id,
+                        source_sha=source_sha,
+                        events={"workflow_dispatch"},
+                        branch=ref,
+                    )
+                    and run.get("id") == row.get("run_id")
+                    and run.get("run_attempt") == row.get("run_attempt")
+                ]
+                if len(matching) != 1:
+                    raise RuntimeError(
+                        f"{name}: recorded child attempt is absent, stale or unsuccessful"
+                    )
+                children[name] = matching[0]
+                ids[name] = child_workflow_id
+            programme = children[CERTIFICATION_WORKFLOW]
+            artifacts = [
+                item
+                for item in actions.run_artifacts(programme["id"])
+                if item["name"] == f"nightly-programme-{source_sha}"
+            ]
+            if (
+                len(artifacts) != 1
+                or artifacts[0].get("expired")
+                or artifacts[0].get("size_in_bytes", 1) <= 0
+            ):
+                raise RuntimeError(
+                    "Full Validation programme certificate is missing or expired"
+                )
+            certificate = actions.artifact_json(artifacts[0], "nightly-programme.json")
+            if (
+                certificate.get("candidate_sha") != source_sha
+                or certificate.get("passed") is not True
+                or certificate.get("errors") != []
+            ):
+                raise RuntimeError("Full Validation programme certificate failed")
+            evidence = certificate.get("workflows", {})
+            for name in REQUIRED_WORKFLOWS:
+                run = evidence.get(name, {}).get("run", {})
+                if (
+                    run.get("id") != children[name]["id"]
+                    or run.get("run_attempt") != children[name]["run_attempt"]
+                    or run.get("head_branch") != ref
+                ):
+                    raise RuntimeError(
+                        f"{name}: programme evidence escaped its recorded cohort"
+                    )
+            # Recheck stable/dev identity, executed cases and both native architectures.
+            try:
+                from .nightly_programme import programme_errors
+            except ImportError:
+                from nightly_programme import programme_errors
+            rejected = programme_errors(
+                source_sha,
+                certificate.get("ha_version"),
+                REQUIRED_WORKFLOWS,
+                evidence,
+                full_architecture=True,
+            )
+            if rejected:
+                raise RuntimeError("; ".join(rejected))
+            return {"ref": ref, "runs": children, "workflow_ids": ids}
+        except (RuntimeError, KeyError, TypeError, ValueError) as error:
+            errors.append(f"parent {parent['id']}: {error}")
+    if errors:
+        raise RuntimeError("Full Validation cohort rejected: " + "; ".join(errors))
+    return None
+
+
 def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
     """Return evidence URLs or fail closed with the missing check classes."""
     if not valid_sha(source_sha):
         raise RuntimeError("Release source must be one full immutable commit SHA")
+    cohort = full_validation_cohort(actions, source_sha)
     evidence = {}
     missing = []
     for filename in REQUIRED_WORKFLOWS:
         try:
-            workflow_id, runs = actions.workflow_runs(filename, source_sha)
+            if cohort:
+                workflow_id = cohort["workflow_ids"][filename]
+                runs = [cohort["runs"][filename]]
+            else:
+                workflow_id, runs = actions.workflow_runs(filename, source_sha)
         except Exception as exc:
             missing.append(
                 f"{filename}: expected successful workflow run; metadata could not be verified ({exc})"
@@ -353,6 +488,7 @@ def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
                 run,
                 workflow_id=workflow_id,
                 source_sha=source_sha,
+                branch=cohort["ref"] if cohort else "develop",
                 events={"workflow_dispatch", "schedule"}
                 if filename in SCHEDULED_CERTIFICATION_WORKFLOWS
                 else None,

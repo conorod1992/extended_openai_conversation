@@ -75,16 +75,17 @@ def test_official_container_cadence_is_daily_amd64_weekly_arm64_and_manual_both(
     data = _workflow()
     triggers = data.get("on", data.get(True))
     assert {item["cron"] for item in triggers["schedule"]} == {
-        "7 6 * * *",
+        "7 6 * * 1-6",
         "17 6 * * 0",
     }
     job = data["jobs"]["official-container"]
+    policy = json.loads((ROOT / "ci/pr_workflows.json").read_text(encoding="utf-8"))
     # PR path filters select meaningful Container changes; no one-off PR bypass.
     assert "if" not in job
-    assert "ci/nightly_programme.py" in triggers["pull_request"]["paths"]
-    assert "ci/release_certification.py" in triggers["pull_request"]["paths"]
+    assert "ci/nightly_programme.py" in policy["official-ha-container"]["paths"]
+    assert "ci/release_certification.py" in policy["official-ha-container"]["paths"]
     include = job["strategy"]["matrix"]["include"]
-    assert "github.event_name == 'schedule' && github.event.schedule == '7 6 * * *'" in include
+    assert "github.event_name == 'schedule' && github.event.schedule == '7 6 * * 1-6'" in include
     daily, both = [json.loads(value) for value in re.findall(r"'(\[.*?\])'", include)]
     assert [row["arch"] for row in daily] == ["amd64"]
     assert [row["arch"] for row in both] == ["amd64", "arm64"]

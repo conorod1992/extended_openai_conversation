@@ -1,6 +1,7 @@
 """Contracts for the genuine Home Assistant OS + Supervisor VM lane."""
 
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -92,7 +93,9 @@ def test_haos_vm_workflow_runs_on_pr_weekly_and_manual() -> None:
 
     assert 'cron: "17 6 * * 0"' in trigger_block
     assert "workflow_dispatch:" in trigger_block
-    assert "pull_request:" in trigger_block
+    assert "workflow_call:" in trigger_block
+    policy = json.loads((ROOT / "ci/pr_workflows.json").read_text(encoding="utf-8"))
+    assert ".github/workflows/haos-supervisor-vm-acceptance.yml" in policy["haos-supervisor-vm-acceptance"]["paths"]
     assert "push:" not in trigger_block
     assert "release:" not in trigger_block
 

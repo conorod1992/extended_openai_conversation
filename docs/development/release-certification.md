@@ -2,31 +2,28 @@
 
 Release a commit that already contains its final `X.Y.Z` version in the manifest
 and generated frontend version metadata. Merge that version change to `develop`,
-allow ordinary workflows to finish, and run **Enhanced nightly acceptance and
-stress** with `campaign=all` and `intensity=heavy` on the exact `develop` SHA.
-Also dispatch **Release Upgrade Acceptance** with `from_version=all` and
-**OpenAI SDK Compatibility** on that same candidate. Then dispatch **Release**
-from `develop` with the same version. The release
-workflow runs its upgrade, packaged-install, and Firefox/WebKit validations
-before creating a tag on that same source SHA. It does not create a version
-commit. There is no emergency certification override.
+run **Full validation** on that exact `develop` SHA. After it succeeds,
+dispatch **Release** from `develop` with the same version. Full Validation runs
+all non-live acceptance workflows, complete historical upgrades, supported SDKs,
+heavy Enhanced campaigns, native mobile journeys, and both architectures, then
+certifies that cohort. The release workflow performs its own packaged-install,
+upgrade, and Firefox/WebKit checks before tagging the same source SHA. It does
+not create a version commit, and there is no certification override.
 
-`ci/release_certification.py` checks GitHub Actions metadata for successful runs
-on the exact source SHA from `ci.yml`, `frontend.yml`,
-`cross-browser-smoke.yml`, `real-ha.yml`, `release-smoke.yml`, and
-`enhanced-stress.yml`, `upgrade-acceptance.yml`, and
-`openai-sdk-compatibility.yml`. Runs must identify `develop` and the exact source;
-an ancestor, descendant or another branch cannot substitute. The nightly run must
-be an explicit workflow dispatch
-with every heavy campaign, browser engine, HA lifecycle point, and consolidated
-certification job successful. A passing parent SHA or a diagnostic-only run does
-not qualify. Frontend and cross-browser checks run on every `develop` push so
-the release gate can bind their results to the release source.
+`ci/release_certification.py` requires a successful exact-source Full Validation
+parent on `develop` and rechecks its recorded child run IDs and attempts. Children
+must have succeeded on that parent's temporary candidate ref. The programme
+certificate must refer to those same runs and pass environment and execution
+checks. Cleanup of the temporary ref does not invalidate the recorded evidence.
+A different candidate, missing workflow, expired artifact, or stale child attempt
+fails closed. The previous exact-source individual `develop` dispatch route
+remains supported when no successful Full Validation parent exists; routine
+post-merge workflows no longer provide comprehensive release evidence.
 
 The gate also downloads and rechecks the enhanced final certificate, including
 source-bound case ledgers, reviewed mandatory cases and semantic minimums. Green
 job names alone are insufficient. Required upgrade lanes are `latest`, `6.8.2`,
-`6.5.0`, `6.3.1` and `6.2.0`, using the existing released-payload migration
+`6.7.0`, `6.5.0`, `6.3.1` and `6.2.0`, using the existing released-payload migration
 journeys. Each successful lane must publish exact-candidate evidence and the
 actual released source version/commit. The existing 6.2.0 specialised Function
 Tool omission remains documented in the workflow; its config-flow/Assist/browser

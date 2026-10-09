@@ -22,7 +22,7 @@ def test_deployment_recovery_checks_out_exact_candidate_and_runs_both_boundaries
         for step in job["steps"]
         if step.get("uses", "").startswith("actions/checkout@")
     )
-    assert checkout["with"]["ref"] == "${{ github.event.pull_request.head.sha || github.sha }}"
+    assert checkout["with"]["ref"] == "${{ github.sha }}"
     run = next(
         step["run"]
         for step in job["steps"]

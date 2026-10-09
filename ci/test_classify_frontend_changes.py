@@ -1,10 +1,13 @@
+from pathlib import Path
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from ci.classify_frontend_changes import (
-    COMPONENT, management_dependencies, needs_frontend,
+    COMPONENT,
+    management_dependencies,
+    needs_frontend,
+    needs_mocked_browser,
 )
 
 
@@ -23,6 +26,13 @@ class FrontendClassifierTests(unittest.TestCase):
         self.assertFalse(needs_frontend("docs/README.md", dependencies))
         self.assertTrue(needs_frontend("tests_browser/new-journey.spec.mjs", dependencies))
         self.assertTrue(needs_frontend((COMPONENT / "frontend" / "management-panel.js").as_posix(), dependencies))
+
+    def test_backend_management_selects_genuine_but_not_mocked_browser(self):
+        path = (COMPONENT / "management_permissions.py").as_posix()
+        self.assertTrue(needs_frontend(path, management_dependencies(Path.cwd())))
+        self.assertFalse(needs_mocked_browser(path))
+        for path in ("frontend/src/main.js", "tests_browser/new.spec.mjs", "ci/Dockerfile.stable"):
+            self.assertTrue(needs_mocked_browser(path), path)
 
     def test_new_transitive_management_helper_is_classified_without_workflow_edit(self):
         with tempfile.TemporaryDirectory() as directory:

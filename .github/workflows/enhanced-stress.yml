@@ -2,7 +2,8 @@ name: Enhanced nightly acceptance and stress
 
 on:
   schedule:
-    - cron: "15 3 * * *"
+    - cron: "15 3 * * 1-6"
+    - cron: "15 3 * * 0"
   workflow_dispatch:
     inputs:
       campaign:
@@ -86,6 +87,8 @@ jobs:
         env:
           REQUESTED_SEED: ${{ inputs.seed }}
           REQUESTED_INTENSITY: ${{ inputs.intensity }}
+          REQUESTED_CAMPAIGN: ${{ inputs.campaign }}
+          RUN_SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
           if [ -n "$REQUESTED_SEED" ]; then
@@ -96,20 +99,9 @@ jobs:
           fi
           INTENSITY="${REQUESTED_INTENSITY:-normal}"
           echo "seed=$SEED" >> "$GITHUB_OUTPUT"
-          if [[ "${{ github.event_name }}" == schedule || "$INTENSITY" == all ]]; then
-            echo 'intensities=["normal","heavy"]' >> "$GITHUB_OUTPUT"
-          else
-            echo "intensities=[\"$INTENSITY\"]" >> "$GITHUB_OUTPUT"
-          fi
-          case "${{ inputs.campaign }}" in
-            '') CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos","long-lifetime"]' ;;
-            all|browser) CAMPAIGNS='["runtime","lifecycle","ai-task","voice-intercom","archive","feature-crossroads","setup","backup","backup-transfer","persistence","request-rules","guest-security","quiet-hours","functions","provider-resilience","memory-knowledge","large-installation","chaos","process-chaos","long-lifetime"]' ;;
-            browser-engines) CAMPAIGNS='[]' ;;
-            long-lifetime) CAMPAIGNS='["long-lifetime"]' ;;
-            runtime|lifecycle|ai-task|voice-intercom|archive|feature-crossroads|setup|backup|backup-transfer|persistence|request-rules|guest-security|quiet-hours|functions|provider-resilience|memory-knowledge|large-installation|chaos|process-chaos|diagnostics) CAMPAIGNS="[\"${{ inputs.campaign }}\"]" ;;
-            *) echo 'Unknown campaign' >&2; exit 1 ;;
-          esac
-          echo "campaigns=$CAMPAIGNS" >> "$GITHUB_OUTPUT"
+          python ci/actions_schedule.py \
+            --event "$GITHUB_EVENT_NAME" --schedule "$RUN_SCHEDULE" \
+            --campaign "$REQUESTED_CAMPAIGN" --intensity "$INTENSITY" >> "$GITHUB_OUTPUT"
           echo "ENHANCED STRESS SEED=$SEED INTENSITY=$INTENSITY"
           {
             echo '## Enhanced acceptance run'
