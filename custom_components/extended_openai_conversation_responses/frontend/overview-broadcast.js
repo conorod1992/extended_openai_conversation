@@ -120,8 +120,9 @@ function bindBroadcastControls(panel, snapshot) {
     if (!event.target.checked) return;
     panel._broadcastWholeHome = event.target.value === "whole";
     const host = root.querySelector("#broadcast-card");
-    if (host) host.innerHTML = broadcastMarkup(panel, snapshot);
-    bindBroadcastControls(panel, snapshot);
+    const latest = panel._eocBroadcastSnapshot || snapshot;
+    if (host) host.innerHTML = broadcastMarkup(panel, latest);
+    bindBroadcastControls(panel, latest);
   }));
   root.querySelectorAll("[data-broadcast-entity]").forEach((box) => box.addEventListener("change", (event) => {
     panel._broadcastSelected ||= new Set();

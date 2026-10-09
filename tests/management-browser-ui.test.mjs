@@ -28,3 +28,16 @@ assert.match(source, /MEMORY_SEARCH_DEBOUNCE_MS = 250/);
 assert.match(source, /id="load-more-memories"/);
 assert.doesNotMatch(source, /load-more-conversations|decorateConversations/);
 assert.match(source, /memories", action/);
+
+// Search membership is authoritative after mutations, including Unicode casefold.
+{
+  const memory = {memory_id:"unicode", content:"Sonnenstraße", category:"place", source:"user"};
+  const searched = {...panel, _query:"strasse", _result:{memories:[memory], total:1},
+    shadowRoot:{querySelector:() => null}, _render() {}, _toast() {},
+    _call:async () => ({memories:[{...memory, category:"home"}], total:1})};
+  await ui.finishMemoryBrowserLoad(searched);
+  await ui.applyPersistentMemoryMutation(searched, {scope_id:searched._scopeId, memory:{...memory, category:"home"}});
+  assert.equal(searched._result.total, 1);
+  assert.equal(searched._result.memories[0].memory_id, "unicode");
+  assert.match(ui.renderPersistentMemories(searched), /data-memory-id="unicode" >/);
+}
