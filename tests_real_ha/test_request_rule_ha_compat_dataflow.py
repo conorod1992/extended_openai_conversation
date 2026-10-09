@@ -55,8 +55,8 @@ async def test_saved_rule_condition_matches_native_ha_execution(
     rule["conditions"] = [condition]
     await agent._request_rules.async_create(rule)
     await agent._request_rules.async_create(
-        _local([_record_action("fallback")], phrase="check condition",
-               success="Fallback.")
+        {**_local([_record_action("fallback")], phrase="check condition",
+                  success="Fallback."), "order": 1}
     )
     assert await hass.config_entries.async_reload(agent.entry.entry_id)
     await hass.async_block_till_done()
@@ -132,8 +132,7 @@ async def test_result_path_agrees_across_later_action_and_spoken_response(
     expected = _lookup(_DATA, path)
     result = await _say(hass, agent, "run rule")
     assert _speech(result) == f"Result: {expected}"
-    assert calls == [expected if isinstance(expected, str) else str(expected).lower()
-                     if isinstance(expected, bool) else str(expected)]
+    assert calls == [expected]
 
 
 @pytest.mark.parametrize("missing_path", ["reading.absent", "reading.rows.99.level", "reading.rows.0.absent"])
@@ -190,4 +189,4 @@ async def test_generated_two_step_dataflow_preserves_nested_value(
     ))
     result = await _say(hass, agent, "run rule")
     assert _speech(result) == "Result: " + expected
-    assert seen == [expected]
+    assert seen == [int(expected) if expected.isdigit() else expected == "True"]
