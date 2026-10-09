@@ -56,6 +56,8 @@ async def test_background_pruning_and_maintenance_have_bounded_settlement(
     else:
         store = RecoveryGuardedStore(hass, 1, "race").bind_agent("entry", "agent")
         manager = UsageManager(store, detail_storage=store)
+        # Model expired rows filtered during initialization but not yet committed.
+        manager._detail_retention_dirty = True
     admitted = asyncio.Event()
     attempted = asyncio.Event()
     original_shared = gate.shared

@@ -31,9 +31,10 @@ def test_restore_journal_uses_scalable_backup_limit(monkeypatch) -> None:
     target = object()
     rollback = object()
 
-    def inspect(value, subentry_id, *, max_bytes):
+    def inspect(value, subentry_id, *, max_bytes, private_journal):
+        assert private_journal is True
         calls.append((value, subentry_id, max_bytes))
-        return target if len(calls) == 1 else rollback
+        return target if value["large"] == "target" else rollback
 
     monkeypatch.setattr(backup, "inspect_backup", inspect)
     journal = {
@@ -54,8 +55,8 @@ def test_restore_journal_uses_scalable_backup_limit(monkeypatch) -> None:
     assert loaded_target is target
     assert loaded_rollback is rollback
     assert calls == [
-        (journal["target"], "agent-1", backup.MAX_BACKUP_BYTES),
         (journal["rollback"], "agent-1", backup.MAX_BACKUP_BYTES),
+        (journal["target"], "agent-1", backup.MAX_BACKUP_BYTES),
     ]
 
 

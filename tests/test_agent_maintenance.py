@@ -295,6 +295,7 @@ class RecordingGate:
     def __init__(self) -> None:
         self.shared_entries = 0
         self.exclusive_entries = 0
+        self._writer_active = False
 
     @asynccontextmanager
     async def shared(self):
@@ -304,7 +305,11 @@ class RecordingGate:
     @asynccontextmanager
     async def exclusive(self):
         self.exclusive_entries += 1
-        yield
+        self._writer_active = True
+        try:
+            yield
+        finally:
+            self._writer_active = False
 
 
 async def test_exclusive_operation_propagates_operation_cancellation_and_releases_gate() -> (
@@ -393,12 +398,17 @@ async def test_backup_guards_use_exclusive_gate_and_update_management_aliases(
         events.append("restore")
         return {"restored": value}
 
+    async def finish_reload(_hass, _entry, _subentry):
+        assert not gate._writer_active
+        events.append("reload")
+
     monkeypatch.setattr(backup, "async_collect_backup_snapshot", collect)
     monkeypatch.setattr(backup, "finalize_backup_snapshot", finalize)
     monkeypatch.setattr(
         restore_recovery, "async_restore_backup_recoverably", original_restore
     )
     monkeypatch.setattr(backup, "get_agent_maintenance_gate", lambda *_args: gate)
+    monkeypatch.setattr(restore_recovery, "async_finish_restore_reload", finish_reload)
 
     entry = SimpleNamespace(entry_id="entry")
     subentry = SimpleNamespace(subentry_id="agent")
@@ -408,7 +418,7 @@ async def test_backup_guards_use_exclusive_gate_and_update_management_aliases(
 
     assert created == {"finalized": {"snapshot": True}}
     assert restored == {"restored": {"x": 1}}
-    assert events == ["collect", "finalize", "restore"]
+    assert events == ["collect", "finalize", "restore", "reload"]
     assert gate.exclusive_entries == 2
     assert management_ui.async_create_backup is backup.async_create_backup
     assert management_ui.async_restore_backup is backup.async_restore_backup
