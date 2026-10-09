@@ -159,6 +159,8 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
     """Chromium CRUD journeys must satisfy the genuine HA management contract."""
     entry = _entry("Browser Backend Acceptance")
     await _setup_entry(hass, entry)
+    # Both assistants are genuine loaded entries; identity coverage must not skip.
+    await _setup_entry(hass, _entry("Dependent Journey"))
     client = await _admin_client(hass, hass_ws_client)
     runner, backend_url = await _start_ws_bridge(client)
 
