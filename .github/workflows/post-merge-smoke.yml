@@ -1,0 +1,39 @@
+name: Post-merge stable smoke
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: post-merge-stable-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Stable public setup, Assist and tool journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Reconcile stable environment
+        run: bash ci/reconcile_stable_environment.sh
+      - name: Run stable public smoke
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: >-
+          python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())'
+          tests_real_ha/test_public_version_journeys.py
+          -q --asyncio-mode=auto --timeout=120 --tb=short

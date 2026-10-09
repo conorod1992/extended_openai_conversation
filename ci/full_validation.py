@@ -15,39 +15,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-# These workflows own their environments and test selection. Keep this list in
-# sync with test-bearing workflow_dispatch workflows; live API acceptance,
-# release publishing, image publishing, supplementary race amplification,
-# and maintenance are separate from this validation run.
-TEST_WORKFLOWS = (
-    ("ci.yml", {}),
-    ("frontend.yml", {}),
-    ("real-ha.yml", {}),
-    ("enhanced-stress.yml", {"campaign": "all", "intensity": "heavy"}),
-    ("release-smoke.yml", {}),
-    ("cross-browser-smoke.yml", {}),
-    ("upgrade-acceptance.yml", {"from_version": "all"}),
-    ("frontend-backend-version-skew.yml", {}),
-    ("ha-version-upgrade-acceptance.yml", {}),
-    ("hacs-install-update-acceptance.yml", {}),
-    ("deployment-recovery.yml", {}),
-    ("side-by-side-isolation.yml", {}),
-    ("ipv6-only-networking-acceptance.yml", {}),
-    ("ha-browser-compatibility.yml", {}),
-    ("android-companion-app.yml", {}),
-    ("ios-companion-app.yml", {}),
-    ("mutation.yml", {"campaign": "all"}),
-    ("hacs.yaml", {}),
-    ("frontend-latency-diagnostics.yml", {"runs": "3", "diagnostic_picker": "false"}),
-    ("haos-supervisor-vm-acceptance.yml", {}),
-    ("official-ha-container.yml", {}),
-    ("resource-constrained.yml", {}),
-    ("deployment-architecture.yml", {}),
-    ("docs.yml", {}),
-    ("openai-sdk-compatibility.yml", {}),
-    ("version-check.yml", {}),
-)
-CERTIFICATION_WORKFLOW = "nightly-programme.yml"
+try:
+    from ci.validation_inventory import CERTIFICATION_WORKFLOW, TEST_WORKFLOWS
+except ImportError:
+    from validation_inventory import CERTIFICATION_WORKFLOW, TEST_WORKFLOWS
+
 
 API_URL = os.environ["GH_API_URL"].rstrip("/")
 REPOSITORY = os.environ["GH_REPOSITORY"]
@@ -283,6 +255,22 @@ def main() -> int:
             lines.append(f"| `{workflow}` | not dispatched | {error} |")
     lines.extend(["", f"Temporary ref `{REF_NAME}` is removed by the cleanup job."])
     SUMMARY_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Persist the exact cohort even after its temporary branch is cleaned up.
+    Path("full-validation-cohort.json").write_text(
+        json.dumps({
+            "schema": 1,
+            "candidate_sha": TARGET_SHA,
+            "validation_ref": REF_NAME,
+            "run_id": RUN_ID,
+            "run_attempt": RUN_ATTEMPT,
+            "passed": not failures,
+            "runs": [
+                {"workflow": item["workflow"], "run_id": item["run_id"],
+                 "run_attempt": run.get("run_attempt", 1)}
+                for item, run in results
+            ],
+        }, indent=2) + "\n", encoding="utf-8",
+    )
     return 1 if failures else 0
 
 

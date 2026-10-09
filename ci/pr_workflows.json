@@ -1,0 +1,293 @@
+{
+  "android-companion-app": {
+    "workflow": "android-companion-app.yml",
+    "paths": [
+      ".github/workflows/android-companion-app.yml",
+      "ci/companion_app_server.py",
+      "tests_mobile/**",
+      "ci/run_android_companion.sh",
+      "requirements_test.txt",
+      "custom_components/extended_openai_conversation_responses/frontend_assets.py",
+      "custom_components/extended_openai_conversation_responses/manifest.json",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "ci-image-dev": {
+    "workflow": "ci-image-dev.yml",
+    "paths": [
+      "ci/Dockerfile.dev",
+      "ci/Dockerfile.typecheck",
+      "ci/typecheck_image_key.py",
+      "ci/check_ha_dev_image.py",
+      "ci/environment_fingerprint.py",
+      "ci/run_prebuilt_ha_dev.sh",
+      "ci/check_ha_dev_runtime.sh",
+      "ci/install_ha_dependencies.py",
+      "ci/install_ha_media_dependencies.py",
+      "ci/reconcile_ha_dev_environment.sh",
+      "ci/check_ha_dev_environment.py",
+      "requirements_test.txt",
+      "custom_components/extended_openai_conversation_responses/manifest.json",
+      ".github/workflows/ci-image-dev.yml",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "ci-image-stable": {
+    "workflow": "ci-image-stable.yml",
+    "paths": [
+      "ci/Dockerfile.stable",
+      "ci/resolve_ha_test_plugin.py",
+      "ci/install_ha_test_plugin.py",
+      "ci/install_ha_dependencies.py",
+      "ci/install_ha_media_dependencies.py",
+      "ci/environment_fingerprint.py",
+      "ci/reconcile_stable_environment.sh",
+      "ci/write_playwright_environment_identity.sh",
+      "ci/verify_playwright_engine.mjs",
+      "requirements_test.txt",
+      "custom_components/extended_openai_conversation_responses/manifest.json",
+      ".github/workflows/ci-image-stable.yml",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "ci": {
+    "workflow": "ci.yml",
+    "paths-ignore": [
+      "docs/**",
+      "mkdocs.yml",
+      "requirements-docs.txt"
+    ]
+  },
+  "cross-browser-smoke": {
+    "workflow": "cross-browser-smoke.yml"
+  },
+  "deployment-recovery": {
+    "workflow": "deployment-recovery.yml",
+    "paths": [
+      ".github/workflows/deployment-recovery.yml",
+      "playwright.real-ha-https-proxy.config.mjs",
+      "tests_browser/real-ha-https-proxy.spec.mjs",
+      "tests_real_ha/test_https_proxy_acceptance.py",
+      "tests_real_ha/test_native_ha_backup_restore.py",
+      "custom_components/extended_openai_conversation_responses/restore_recovery.py",
+      "custom_components/extended_openai_conversation_responses/backup.py",
+      "requirements_test.txt",
+      "ci/specialist_evidence.py",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "docs": {
+    "workflow": "docs.yml",
+    "paths": [
+      "docs/**",
+      "mkdocs.yml",
+      "requirements-docs.txt",
+      "scripts/check_docs.py",
+      ".github/workflows/docs.yml",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "frontend-backend-version-skew": {
+    "workflow": "frontend-backend-version-skew.yml",
+    "branches": [
+      "develop",
+      "main"
+    ],
+    "paths": [
+      ".github/workflows/frontend-backend-version-skew.yml",
+      "ci/specialist_evidence.py",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "frontend": {
+    "workflow": "frontend.yml"
+  },
+  "ha-browser-compatibility": {
+    "workflow": "ha-browser-compatibility.yml",
+    "paths": [
+      ".github/workflows/ha-browser-compatibility.yml",
+      "tests_browser/real-ha-compatibility.spec.mjs",
+      "tests_browser/real-ha-shell-helpers.mjs",
+      "tests_browser/real-ha-cross-browser-handoff.spec.mjs",
+      "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py",
+      "playwright.real-ha-cross-browser.config.mjs",
+      "tests_real_ha/test_browser_compatibility_acceptance.py",
+      "tests_real_ha/test_browser_backend_acceptance.py",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "ha-version-upgrade-acceptance": {
+    "workflow": "ha-version-upgrade-acceptance.yml",
+    "paths": [
+      ".github/workflows/ha-version-upgrade-acceptance.yml",
+      "ci/specialist_evidence.py",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "hacs-install-update-acceptance": {
+    "workflow": "hacs-install-update-acceptance.yml",
+    "paths": [
+      ".github/workflows/hacs-install-update-acceptance.yml",
+      "ci/specialist_evidence.py",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "hacs": {
+    "workflow": "hacs.yaml",
+    "paths": [
+      "custom_components/extended_openai_conversation_responses/**",
+      "hacs.json",
+      ".github/workflows/hacs.yaml",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "haos-supervisor-vm-acceptance": {
+    "workflow": "haos-supervisor-vm-acceptance.yml",
+    "paths": [
+      ".github/workflows/haos-supervisor-vm-acceptance.yml",
+      "ci/haos_supervisor_acceptance.py",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "ipv6-only-networking-acceptance": {
+    "workflow": "ipv6-only-networking-acceptance.yml",
+    "branches": [
+      "develop",
+      "main"
+    ],
+    "paths": [
+      ".github/workflows/ipv6-only-networking-acceptance.yml",
+      "ci/specialist_evidence.py",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "official-ha-container": {
+    "workflow": "official-ha-container.yml",
+    "paths": [
+      ".github/workflows/official-ha-container.yml",
+      "ci/official_container_acceptance.py",
+      "ci/isolated_ha_runtime.py",
+      "ci/nightly_programme.py",
+      "ci/release_certification.py",
+      "tests/test_nightly_programme.py",
+      "tests/test_release_certification.py",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "real-ha": {
+    "workflow": "real-ha.yml",
+    "paths": [
+      "custom_components/extended_openai_conversation_responses/**",
+      "tests_real_ha/**",
+      "requirements_test.txt",
+      "pyproject.toml",
+      "ci/**",
+      ".github/workflows/real-ha.yml",
+      "hacs.json",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "release-smoke": {
+    "workflow": "release-smoke.yml",
+    "paths": [
+      "custom_components/extended_openai_conversation_responses/**",
+      "requirements_test.txt",
+      "scripts/set_release_version.py",
+      "tests_real_ha/test_packaged_release.py",
+      "tests_real_ha/test_packaged_process_restart.py",
+      ".github/workflows/release-smoke.yml",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "resource-constrained": {
+    "workflow": "resource-constrained.yml",
+    "paths": [
+      ".github/workflows/resource-constrained.yml",
+      "tests_stress/test_large_installation.py",
+      "tests_stress/test_responses_scale_fairness.py",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "side-by-side-isolation": {
+    "workflow": "side-by-side-isolation.yml",
+    "paths": [
+      "custom_components/extended_openai_conversation_responses/__init__.py",
+      "custom_components/extended_openai_conversation_responses/ai_task.py",
+      "custom_components/extended_openai_conversation_responses/conversation.py",
+      "custom_components/extended_openai_conversation_responses/management_ui.py",
+      "custom_components/extended_openai_conversation_responses/memory.py",
+      "custom_components/extended_openai_conversation_responses/frontend/**",
+      "tests_real_ha/test_identity_isolation_matrix.py",
+      "tests/test_side_by_side_identity_contract.py",
+      ".github/workflows/side-by-side-isolation.yml",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "upgrade-acceptance": {
+    "workflow": "upgrade-acceptance.yml",
+    "paths": [
+      "tests_real_ha/test_release_upgrade_acceptance.py",
+      "tests_real_ha/test_release_upgrade_custom_function_tool.py",
+      "tests_real_ha/test_browser_release_upgrade_acceptance.py",
+      "tests_browser/release-upgrade-visible.spec.mjs",
+      "tests_browser/real-ha-fixture.html",
+      "tests_browser/real-ha-harness.mjs",
+      "playwright.config.mjs",
+      "scripts/upgrade_acceptance_requirements.py",
+      ".github/workflows/upgrade-acceptance.yml",
+      "custom_components/extended_openai_conversation_responses/manifest.json",
+      "custom_components/extended_openai_conversation_responses/migration*.py",
+      "custom_components/extended_openai_conversation_responses/backup*.py",
+      "custom_components/extended_openai_conversation_responses/*storage*.py",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  },
+  "version-check": {
+    "workflow": "version-check.yml",
+    "paths": [
+      "custom_components/extended_openai_conversation_responses/manifest.json",
+      "custom_components/extended_openai_conversation_responses/frontend_version.py",
+      "scripts/set_release_version.py",
+      ".github/workflows/version-check.yml",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
+  }
+}

@@ -1,23 +1,13 @@
 name: Side-by-side Integration Isolation
 
 on:
-  pull_request:
-    paths:
-      - "custom_components/extended_openai_conversation_responses/__init__.py"
-      - "custom_components/extended_openai_conversation_responses/ai_task.py"
-      - "custom_components/extended_openai_conversation_responses/conversation.py"
-      - "custom_components/extended_openai_conversation_responses/management_ui.py"
-      - "custom_components/extended_openai_conversation_responses/memory.py"
-      - "custom_components/extended_openai_conversation_responses/frontend/**"
-      - "tests_real_ha/test_identity_isolation_matrix.py"
-      - "tests/test_side_by_side_identity_contract.py"
-      - ".github/workflows/side-by-side-isolation.yml"
+  workflow_call:
   schedule:
     - cron: "37 4 * * 0"
   workflow_dispatch:
 
 env:
-  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CANDIDATE_SHA: ${{ github.sha }}
 
 permissions:
   contents: read
@@ -46,7 +36,7 @@ jobs:
       - name: Checkout candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Trust mounted checkout for Git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -107,7 +97,7 @@ jobs:
       - name: Record specialist execution evidence
         if: success()
         env:
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CANDIDATE_SHA: ${{ github.sha }}
         run: >-
           python3 ci/specialist_evidence.py --workflow side-by-side-isolation.yml --report specialist-tests.xml
 
@@ -115,7 +105,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: specialist-execution-evidence
+          name: ${{ github.event_name == 'pull_request' && 'pr-side-by-side-isolation-specialist-execution-evidence' || 'specialist-execution-evidence' }}
           path: specialist-execution.json
           if-no-files-found: error
           retention-days: 30

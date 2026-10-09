@@ -210,6 +210,8 @@ class FakeActions:
     def artifact_json(self, artifact, filename):
         assert filename in {
             "workflow-evidence.json",
+            "full-validation-cohort.json",
+            "nightly-programme.json",
             "certification-final.json",
             "certification.json",
             "specialist-execution.json",
@@ -218,6 +220,10 @@ class FakeActions:
 
     def workflow_runs(self, filename, source_sha):
         assert source_sha == SOURCE
+        if filename == "full-validation.yml":
+            return 1000, self.runs.get(filename, [])
+        if filename not in REQUIRED_WORKFLOWS:
+            return 2000 + list(self.runs).index(filename), self.runs.get(filename, [])
         return REQUIRED_WORKFLOWS.index(filename) + 1, self.runs[filename]
 
     def run_jobs(self, run_id):
@@ -609,10 +615,180 @@ def test_specialist_producer_emits_candidate_bound_executed_report(tmp_path, mon
         args = ["--haos-proof", str(report)]
     else:
         report = tmp_path / "tests.xml"
-        report.write_text('<testsuite>' + ''.join(f'<testcase classname="acceptance" name="{name}"/>' for name in producer.REQUIRED_SOURCES[workflow]) + '</testsuite>')
+        report.write_text(
+            "<testsuite>"
+            + "".join(
+                f'<testcase classname="acceptance" name="{name}"/>'
+                for name in producer.REQUIRED_SOURCES[workflow]
+            )
+            + "</testsuite>"
+        )
         args = ["--report", str(report)]
     monkeypatch.setattr(sys, "argv", ["producer", "--workflow", workflow, *args])
     producer.main()
     item = json.loads((tmp_path / "specialist-execution.json").read_text())
-    assert not producer.specialist_errors(item, workflow, SOURCE, {"id": 42, "run_attempt": 2})
-    assert producer.specialist_errors(item, workflow, PARENT, {"id": 42, "run_attempt": 2})
+    assert not producer.specialist_errors(
+        item, workflow, SOURCE, {"id": 42, "run_attempt": 2}
+    )
+    assert producer.specialist_errors(
+        item, workflow, PARENT, {"id": 42, "run_attempt": 2}
+    )
+
+
+class CohortActions(FakeActions):
+    """A complete Full Validation cohort with genuine programme evidence."""
+
+    def __init__(self):
+        super().__init__()
+        from ci.validation_inventory import TEST_WORKFLOWS, CERTIFICATION_WORKFLOW
+        from ci.nightly_programme import collect
+
+        self.ref = "full-validation-100-1"
+        for name in [*(name for name, _ in TEST_WORKFLOWS), CERTIFICATION_WORKFLOW]:
+            if name not in self.runs:
+                run_id = 200 + len(self.runs)
+                self.runs[name] = [
+                    {
+                        "id": run_id,
+                        "workflow_id": 2000 + len(self.runs),
+                        "head_sha": SOURCE,
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ]
+                self.artifacts[run_id] = []
+                self.jobs[run_id] = []
+            self.runs[name][0].update(
+                head_branch=self.ref, event="workflow_dispatch", run_attempt=1
+            )
+        self.runs["full-validation.yml"] = [
+            {
+                "id": 100,
+                "workflow_id": 1000,
+                "head_sha": SOURCE,
+                "head_branch": "develop",
+                "event": "workflow_dispatch",
+                "run_attempt": 1,
+                "status": "completed",
+                "conclusion": "success",
+            }
+        ]
+        self.artifacts[100] = []
+        self.proof = {
+            "schema": 1,
+            "candidate_sha": SOURCE,
+            "passed": True,
+            "validation_ref": self.ref,
+            "run_id": "100",
+            "run_attempt": "1",
+            "runs": [
+                {"workflow": name, "run_id": self.runs[name][0]["id"], "run_attempt": 1}
+                for name in [
+                    *(name for name, _ in TEST_WORKFLOWS),
+                    CERTIFICATION_WORKFLOW,
+                ]
+            ],
+        }
+        self._artifact(100, "full-validation-cohort", self.proof)
+        minimum = json.loads(
+            __import__("pathlib").Path("hacs.json").read_text(encoding="utf-8")
+        )["homeassistant"]
+        for value in self.contents.values():
+            for envelope in value.get("jobs", []):
+                point = envelope.get("ha_point")
+                for item in [envelope, *envelope.get("execution_runs", [])]:
+                    if point == "oldest":
+                        item["environment"]["packages"]["homeassistant"] = minimum
+                    elif point == "dev":
+                        item["environment"]["homeassistant_source_commit"] = "d" * 40
+                    item["environment_fingerprint"] = environment_fingerprint(
+                        item["environment"]
+                    )
+        # Native browser and architecture proofs are collected by the same production collector.
+        browser = self.runs["ha-browser-compatibility.yml"][0]["id"]
+        for point in ("oldest", "stable", "dev"):
+            envelope = self._envelope("browser")
+            envelope["ha_point"] = point
+            if point == "oldest":
+                envelope["environment"]["packages"]["homeassistant"] = minimum
+            elif point == "dev":
+                envelope["environment"]["homeassistant_source_commit"] = "d" * 40
+            envelope["environment_fingerprint"] = environment_fingerprint(
+                envelope["environment"]
+            )
+            self._artifact(browser, f"ha-native-browser-{point}-chromium", envelope)
+        architecture = self.runs["deployment-architecture.yml"][0]["id"]
+        for machine, arch in (("x86_64", "x86_64-native"), ("aarch64", "arm64-native")):
+            self._artifact(
+                architecture,
+                f"isolated-deployment-{arch}",
+                {
+                    "candidate_sha": SOURCE,
+                    "passed": True,
+                    "homeassistant": "2026.9.4",
+                    "machine": machine,
+                    "phases": [
+                        "seed",
+                        "recover",
+                        "recover-recorder-first",
+                        "recover-provider-first",
+                        "auth",
+                    ],
+                },
+            )
+        self.certificate = {
+            "candidate_sha": SOURCE,
+            "ha_version": "2026.9.4",
+            "passed": True,
+            "errors": [],
+            "workflows": collect(self, SOURCE, validation_ref=self.ref),
+        }
+        programme = self.runs[CERTIFICATION_WORKFLOW][0]["id"]
+        self._artifact(programme, f"nightly-programme-{SOURCE}", self.certificate)
+
+
+def test_full_validation_cohort_can_certify_release():
+    assert set(certify(CohortActions(), SOURCE)) == set(REQUIRED_WORKFLOWS)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_ios",
+        "child_attempt",
+        "failed_child",
+        "expired",
+        "candidate",
+        "escaped",
+        "environment",
+        "cases",
+    ],
+)
+def test_full_validation_cohort_rejects_incomplete_or_stale_proof(damage):
+    actions = CohortActions()
+    if damage == "missing_ios":
+        actions.proof["runs"] = [
+            row
+            for row in actions.proof["runs"]
+            if row["workflow"] != "ios-companion-app.yml"
+        ]
+    elif damage == "child_attempt":
+        actions.runs["ci.yml"][0]["run_attempt"] = 2
+    elif damage == "failed_child":
+        actions.runs["ci.yml"][0]["conclusion"] = "failure"
+    elif damage == "expired":
+        actions.artifacts[100][0]["expired"] = True
+    elif damage == "candidate":
+        actions.proof["candidate_sha"] = PARENT
+    elif damage == "escaped":
+        actions.certificate["workflows"]["ci.yml"]["run"]["id"] = 9876
+    elif damage == "environment":
+        actions.certificate["workflows"]["enhanced-stress.yml"]["envelopes"][0][
+            "environment"
+        ]["packages"]["homeassistant"] = "1900.1.0"
+    elif damage == "cases":
+        actions.certificate["workflows"]["enhanced-stress.yml"]["envelopes"][0][
+            "execution_cases"
+        ] = []
+    with pytest.raises(RuntimeError):
+        certify(actions, SOURCE)

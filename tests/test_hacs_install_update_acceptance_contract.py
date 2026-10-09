@@ -1,5 +1,6 @@
 """Contracts for the genuine HACS install/update acceptance lane."""
 
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,8 +14,10 @@ def test_hacs_acceptance_workflow_has_focused_pr_gate() -> None:
 
     assert "schedule:" in trigger_block
     assert "workflow_dispatch:" in trigger_block
-    assert "pull_request:" in trigger_block
-    assert "ci/specialist_evidence.py" in trigger_block
+    assert "workflow_call:" in trigger_block
+    policy = json.loads((ROOT / "ci/pr_workflows.json").read_text(encoding="utf-8"))
+    paths = policy["hacs-install-update-acceptance"]["paths"]
+    assert "ci/specialist_evidence.py" in paths
     assert "push:" not in trigger_block
     assert "hacs/integration/releases/latest" in text
     assert "hacs.zip" in text

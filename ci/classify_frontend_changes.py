@@ -21,6 +21,11 @@ FRONTEND_PREFIXES = (
 )
 FRONTEND_EXACT = {
     "requirements_test.txt", "pyproject.toml", ".github/workflows/frontend.yml",
+    "ci/check_frontend_bundle.py", "ci/prepare_playwright_host.sh",
+    "scripts/run-frontend-standalone-tests.mjs",
+    "tests_stress/test_generated_editor_journey.py",
+    "custom_components/extended_openai_conversation_responses/manifest.json",
+    "custom_components/extended_openai_conversation_responses/frontend_version.py",
     ".github/workflows/cross-browser-smoke.yml", "ci/classify_frontend_changes.py",
     "ci/browser_fixture_server.py", "ci/test_classify_frontend_changes.py",
     "ci/test_route_acceptance.py", "tests_stress/test_frontend_route_inventory.py",
@@ -62,7 +67,7 @@ def management_dependencies(repo: Path) -> set[str]:
 
 def needs_frontend(path: str, dependencies: set[str]) -> bool:
     normalized = path.replace("\\", "/")
-    if normalized in FRONTEND_EXACT or normalized in dependencies:
+    if normalized in FRONTEND_EXACT or normalized in dependencies or normalized.startswith("ci/Dockerfile"):
         return True
     if normalized.startswith("tests_real_ha/test_browser_") or normalized == "tests_real_ha/test_management_backend_acceptance.py":
         return True
@@ -81,6 +86,18 @@ def needs_frontend(path: str, dependencies: set[str]) -> bool:
     return False
 
 
+def needs_mocked_browser(path: str) -> bool:
+    """Static browser fixtures mock Python; keep their build/runtime inputs covered."""
+    path = path.replace("\\", "/")
+    return (
+        path in FRONTEND_EXACT
+        or path.startswith(FRONTEND_PREFIXES)
+        or path.startswith((COMPONENT / "frontend").as_posix() + "/")
+        or path.startswith("ci/Dockerfile")
+        or (path.startswith("tests/") and path.endswith(".test.mjs"))
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("changed_files", type=Path)
@@ -89,7 +106,11 @@ def main() -> None:
     dependencies = management_dependencies(Path.cwd())
     paths = [path.strip() for path in args.changed_files.read_text(encoding="utf-8").splitlines() if path.strip()]
     required = not paths or any(needs_frontend(path, dependencies) for path in paths)
-    value = f"frontend={'true' if required else 'false'}\n"
+    mocked = not paths or any(needs_mocked_browser(path) for path in paths)
+    value = (
+        f"frontend={'true' if required else 'false'}\n"
+        f"mocked_browser={'true' if mocked else 'false'}\n"
+    )
     if args.output:
         with args.output.open("a", encoding="utf-8") as output:
             output.write(value)

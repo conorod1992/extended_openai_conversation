@@ -1,17 +1,7 @@
 name: Real HA Acceptance
 
 on:
-  pull_request:
-    paths:
-      - "custom_components/extended_openai_conversation_responses/**"
-      - "tests_real_ha/**"
-      - "requirements_test.txt"
-      - "pyproject.toml"
-      - "ci/**"
-      - ".github/workflows/real-ha.yml"
-  push:
-    branches:
-      - develop
+  workflow_call:
   schedule:
     - cron: "30 0 * * *"
   workflow_dispatch:
@@ -21,7 +11,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: real-ha-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -133,12 +123,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ha-version: [oldest, stable, dev]
+        ha-version: ${{ fromJSON(github.event_name == 'pull_request' && '["oldest"]' || '["oldest","stable","dev"]') }}
     steps:
-      - name: Checkout exact EOAI PR head
+      - name: Checkout exact EOAI candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Set up Python required by selected HA
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -510,8 +500,8 @@ jobs:
     needs:
       - classify
       - prepare
-    if: needs.classify.outputs.backend == 'true'
-    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    if: needs.classify.outputs.backend == 'true' && github.event_name != 'pull_request'
+
     env:
       HA_DEV_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:ha-dev
     steps:

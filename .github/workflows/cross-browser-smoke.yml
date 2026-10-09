@@ -2,12 +2,9 @@ name: Cross-browser smoke
 
 on:
   schedule:
-    - cron: "41 3 * * *"
+    - cron: "41 3 * * 0"
   workflow_dispatch:
-  push:
-    branches:
-      - develop
-  pull_request:
+  workflow_call:
 
 concurrency:
   group: cross-browser-smoke-${{ github.ref }}
@@ -22,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       frontend: ${{ steps.changes.outputs.frontend }}
+      mocked_browser: ${{ steps.changes.outputs.mocked_browser }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -36,6 +34,7 @@ jobs:
           python -m unittest ci.test_classify_frontend_changes -v
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
+            echo "mocked_browser=true" >> "$GITHUB_OUTPUT"
           else
             git diff --no-renames --name-only \
               "${{ github.event.pull_request.base.sha }}" \
@@ -46,7 +45,7 @@ jobs:
     name: Shipped bundle critical paths (Chromium, Firefox, WebKit)
     runs-on: ubuntu-latest
     needs: classify
-    if: needs.classify.outputs.frontend == 'true'
+    if: needs.classify.outputs.mocked_browser == 'true'
     timeout-minutes: 10
     steps:
       - name: Checkout repository

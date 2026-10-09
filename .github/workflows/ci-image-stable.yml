@@ -1,17 +1,20 @@
 name: Stable CI Images
 
 on:
-  pull_request:
-    paths:
-      - "ci/**"
-      - "requirements_test.txt"
-      - "custom_components/extended_openai_conversation_responses/manifest.json"
-      - ".github/workflows/ci-image-stable.yml"
+  workflow_call:
   push:
     branches:
       - develop
     paths:
-      - "ci/**"
+      - "ci/Dockerfile.stable"
+      - "ci/resolve_ha_test_plugin.py"
+      - "ci/install_ha_test_plugin.py"
+      - "ci/install_ha_dependencies.py"
+      - "ci/install_ha_media_dependencies.py"
+      - "ci/environment_fingerprint.py"
+      - "ci/reconcile_stable_environment.sh"
+      - "ci/write_playwright_environment_identity.sh"
+      - "ci/verify_playwright_engine.mjs"
       - "requirements_test.txt"
       - "custom_components/extended_openai_conversation_responses/manifest.json"
       - ".github/workflows/ci-image-stable.yml"

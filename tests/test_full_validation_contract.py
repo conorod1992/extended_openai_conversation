@@ -92,7 +92,7 @@ def test_workflow_wait_does_not_finish_on_an_in_progress_run(monkeypatch, tmp_pa
 
 def test_full_validation_includes_specialists_and_accounts_for_all_workflows():
     root = Path(__file__).resolve().parents[1]
-    tree = ast.parse((root / "ci/full_validation.py").read_text(encoding="utf-8"))
+    tree = ast.parse((root / "ci/validation_inventory.py").read_text(encoding="utf-8"))
     assignment = next(
         node
         for node in tree.body
@@ -123,6 +123,7 @@ def test_full_validation_includes_specialists_and_accounts_for_all_workflows():
     assert all((root / ".github" / "workflows" / name).is_file() for name in workflows)
     excluded = {
         "full-validation.yml",
+        "pr-validation.yml",
         "release.yml",
         "ci-image-stable.yml",
         "ci-image-dev.yml",
@@ -194,7 +195,14 @@ def test_final_certification_waits_for_successful_prerequisites(
         return {"candidate_sha": driver.TARGET_SHA}
 
     monkeypatch.setattr(driver, "programme_inputs", inputs)
+    monkeypatch.chdir(tmp_path)
     assert driver.main() == int(failure is not None)
+    import json
+    cohort = json.loads(Path("full-validation-cohort.json").read_text(encoding="utf-8"))
+    assert cohort["candidate_sha"] == driver.TARGET_SHA
+    assert cohort["passed"] is (failure is None)
+    assert cohort["run_attempt"] == "1"
+    assert len(cohort["runs"]) == len(completed)
     assert (driver.CERTIFICATION_WORKFLOW in launched) == (
         failure not in {"test", "dispatch", "evidence"}
     )

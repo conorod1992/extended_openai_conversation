@@ -110,7 +110,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
-          python ci/release_certification.py \
+          python -m ci.release_certification \
             --repository "${{ github.repository }}" --sha "$SOURCE_SHA"
 
       - name: Set up Node.js

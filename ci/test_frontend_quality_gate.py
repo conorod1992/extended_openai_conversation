@@ -3,8 +3,8 @@
 from pathlib import Path
 import unittest
 
-from ci.classify_frontend_changes import needs_frontend
-
+from ci.classify_frontend_changes import needs_frontend, needs_mocked_browser
+from ci.pr_validation import select
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,6 +19,8 @@ class FrontendQualityGateTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertTrue(needs_frontend(path, set()))
+                self.assertTrue(needs_mocked_browser(path))
+                self.assertTrue(select([path], "develop")["frontend"])
 
     def test_frontend_workflow_executes_each_validator(self):
         workflow = (ROOT / ".github/workflows/frontend.yml").read_text(encoding="utf-8")
@@ -32,4 +34,7 @@ class FrontendQualityGateTests(unittest.TestCase):
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, workflow)
-        self.assertIn("pull_request:", workflow)
+        self.assertIn("workflow_call:", workflow)
+        parent = (ROOT / ".github/workflows/pr-validation.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", parent)
+        self.assertIn("uses: ./.github/workflows/frontend.yml", parent)

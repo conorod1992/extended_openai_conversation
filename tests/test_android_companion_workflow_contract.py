@@ -25,7 +25,7 @@ def test_companion_workflow_pins_released_app_and_exact_candidate():
         for step in job["steps"]
         if step.get("uses", "").startswith("actions/checkout@")
     )
-    assert checkout["with"]["ref"] == "${{ github.event.pull_request.head.sha || github.sha }}"
+    assert checkout["with"]["ref"] == "${{ github.sha }}"
     emulator = next(
         step
         for step in job["steps"]

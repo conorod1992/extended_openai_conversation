@@ -23,8 +23,8 @@ on:
         type: string
   schedule:
     # Keep mutation testing off the PR critical path while exercising every
-    # established high-value campaign nightly from the default branch.
-    - cron: "43 2 * * *"
+    # established high-value campaign weekly from the default branch.
+    - cron: "43 2 * * 0"
 
 permissions:
   contents: read

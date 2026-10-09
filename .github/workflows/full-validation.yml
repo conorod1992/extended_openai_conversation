@@ -40,6 +40,14 @@ jobs:
           GH_RUN_ATTEMPT: ${{ github.run_attempt }}
           FULL_VALIDATION_SEED: ${{ inputs.seed }}
         run: python3 ci/full_validation.py
+      - name: Preserve exact validation cohort for release certification
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: full-validation-cohort
+          path: full-validation-cohort.json
+          if-no-files-found: error
+          retention-days: 14
 
   cleanup-ref:
     name: Remove temporary validation ref

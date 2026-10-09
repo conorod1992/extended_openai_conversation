@@ -2,7 +2,8 @@ name: Release Upgrade Acceptance
 
 on:
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "17 3 * * 1-6"
+    - cron: "17 3 * * 0"
   workflow_dispatch:
     inputs:
       from_version:
@@ -10,17 +11,7 @@ on:
         required: false
         default: "latest"
         type: string
-  pull_request:
-    paths:
-      - "tests_real_ha/test_release_upgrade_acceptance.py"
-      - "tests_real_ha/test_release_upgrade_custom_function_tool.py"
-      - "tests_real_ha/test_browser_release_upgrade_acceptance.py"
-      - "tests_browser/release-upgrade-visible.spec.mjs"
-      - "tests_browser/real-ha-fixture.html"
-      - "tests_browser/real-ha-harness.mjs"
-      - "playwright.config.mjs"
-      - "scripts/upgrade_acceptance_requirements.py"
-      - ".github/workflows/upgrade-acceptance.yml"
+  workflow_call:
 
 concurrency:
   group: release-upgrade-acceptance-${{ github.ref }}-${{ inputs.from_version || 'latest' }}
@@ -39,7 +30,7 @@ jobs:
         # Reviewed migration epochs. Keep release-created state at each boundary.
         # 6.2.0 is the oldest coherent tagged Responses payload in this fork.
         # 6.7.0 precedes coalesced Usage persistence and Archive lifecycle changes.
-        from_version: ${{ fromJSON((github.event_name == 'schedule' || inputs.from_version == 'all') && '["latest","6.8.2","6.7.0","6.5.0","6.3.1","6.2.0"]' || format('["{0}"]', inputs.from_version || 'latest')) }}
+        from_version: ${{ fromJSON(((github.event_name == 'schedule' && github.event.schedule == '17 3 * * 0') || inputs.from_version == 'all') && '["latest","6.8.2","6.7.0","6.5.0","6.3.1","6.2.0"]' || format('["{0}"]', inputs.from_version || 'latest')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     container:
@@ -57,7 +48,7 @@ jobs:
       - name: Checkout candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Trust mounted checkout for Git

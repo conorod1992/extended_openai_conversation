@@ -3,18 +3,10 @@ name: HA native browser compatibility
 # A tiny nightly frontend tripwire, not the full browser suite per version.
 on:
   schedule:
-    - cron: "45 3 * * *"
+    - cron: "45 3 * * 1-6"
+    - cron: "45 3 * * 0"
   workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/ha-browser-compatibility.yml"
-      - "tests_browser/real-ha-compatibility.spec.mjs"
-      - "tests_browser/real-ha-shell-helpers.mjs"
-      - "tests_browser/real-ha-cross-browser-handoff.spec.mjs"
-      - "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py"
-      - "playwright.real-ha-cross-browser.config.mjs"
-      - "tests_real_ha/test_browser_compatibility_acceptance.py"
-      - "tests_real_ha/test_browser_backend_acceptance.py"
+  workflow_call:
 
 permissions:
   contents: read
@@ -55,7 +47,7 @@ jobs:
           fi
           echo "stable-ha-version=$STABLE_HA_VERSION" >> "$GITHUB_OUTPUT"
           NIGHTLY_BROWSERS='[]'
-          if [ "${{ github.event_name }}" = schedule ] || [ "${{ github.event_name }}" = workflow_dispatch ]; then
+          if [ "${{ github.event_name }}" = workflow_dispatch ] || [ "${{ github.event.schedule }}" = "45 3 * * 0" ]; then
             NIGHTLY_BROWSERS='[{"ha-version":"stable","profile":"firefox"},{"ha-version":"stable","profile":"webkit"},{"ha-version":"stable","profile":"webkit-mobile"}]'
           fi
           echo "nightly-browsers=$NIGHTLY_BROWSERS" >> "$GITHUB_OUTPUT"
@@ -74,14 +66,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ha-version: [oldest, stable, dev]
+        ha-version: ${{ fromJSON(github.event_name == 'schedule' && github.event.schedule == '45 3 * * 1-6' && '["stable","dev"]' || '["oldest","stable","dev"]') }}
         profile: [chromium]
         include: ${{ fromJson(needs.prepare.outputs.nightly-browsers) }}
     steps:
-      - name: Checkout exact EOAI PR head
+      - name: Checkout exact EOAI candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Set up Python required by selected HA
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -158,6 +150,7 @@ jobs:
 
 
   cross-engine-handoff:
+    if: github.event_name != 'schedule' || github.event.schedule == '45 3 * * 0'
     name: Cross-engine persisted-state handoff
     runs-on: ubuntu-latest
     needs: prepare
@@ -168,10 +161,10 @@ jobs:
       ENHANCED_EXECUTION_EVIDENCE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '' }}
       PYTEST_PLUGINS: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'ci.pytest_execution' || '' }}
     steps:
-      - name: Checkout exact EOAI PR head
+      - name: Checkout exact EOAI candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Set up stable Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:

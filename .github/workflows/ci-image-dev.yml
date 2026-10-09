@@ -1,22 +1,7 @@
 name: HA Dev CI Image
 
 on:
-  pull_request:
-    paths:
-      - "ci/Dockerfile.dev"
-      - "ci/Dockerfile.typecheck"
-      - "ci/typecheck_image_key.py"
-      - "ci/check_ha_dev_image.py"
-      - "ci/environment_fingerprint.py"
-      - "ci/run_prebuilt_ha_dev.sh"
-      - "ci/check_ha_dev_runtime.sh"
-      - "ci/install_ha_dependencies.py"
-      - "ci/install_ha_media_dependencies.py"
-      - "ci/reconcile_ha_dev_environment.sh"
-      - "ci/check_ha_dev_environment.py"
-      - "requirements_test.txt"
-      - "custom_components/extended_openai_conversation_responses/manifest.json"
-      - ".github/workflows/ci-image-dev.yml"
+  workflow_call:
   push:
     branches:
       - develop
@@ -31,6 +16,7 @@ on:
       - "ci/install_ha_dependencies.py"
       - "ci/install_ha_media_dependencies.py"
       - "ci/reconcile_ha_dev_environment.sh"
+      - "ci/check_ha_dev_environment.py"
       - "requirements_test.txt"
       - "custom_components/extended_openai_conversation_responses/manifest.json"
       - ".github/workflows/ci-image-dev.yml"
