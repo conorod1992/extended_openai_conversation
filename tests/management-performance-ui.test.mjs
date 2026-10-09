@@ -1092,6 +1092,64 @@ for (const failedKind of ["usage", "memory", "knowledge", "guest_mode", "setup_h
   assert.equal(panel._contentData.sessions.total, 50);
 }
 
+{
+  await routeAssetPromise("data-memory/conversations");
+  const {loadConversationPage} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-history-pagination.js");
+  const panel = panelFor("data-memory", "conversations");
+  panel._eocHistoryMode = "search";
+  panel._eocHistoryQuery = "battery";
+  const others = Array.from({length:40}, (_, i) => ({session_id:`other-${i}`, turn_id:`turn-${i}`}));
+  panel._contentData = {sessions:{sessions:[{session_id:"deleted"}, ...others.slice(0,19)],
+    offset:20, returned:20, has_more:true, next_offset:40}};
+  panel._confirm = async () => true;
+  panel._toast = () => {};
+  const offsets = [];
+  panel._call = async (section, action, extra) => {
+    if (action === "delete") return {deleted_sessions:1};
+    assert.equal(action, "search");
+    assert.equal(extra.query, "battery");
+    offsets.push(extra.offset);
+    return {results:others.slice(extra.offset, extra.offset + 20), offset:extra.offset,
+      returned:20, has_more:extra.offset === 0, next_offset:extra.offset + 20};
+  };
+  await panel._deleteSession("deleted");
+  assert.deepEqual(offsets, [0], "deleting a multi-page conversation restarts the search");
+  const first = panel._contentData.sessions.sessions;
+  await loadConversationPage(panel, panel._contentData.sessions.next_offset);
+  assert.deepEqual([...first, ...panel._contentData.sessions.sessions].map(row => row.turn_id),
+    others.map(row => row.turn_id), "continuation neither skips nor duplicates surviving matches");
+}
+
+for (const refreshOutcome of ["failure", "scope-change"]) {
+  const panel = panelFor("data-memory", "conversations");
+  panel._eocHistoryMode = "search";
+  panel._eocHistoryQuery = "battery";
+  panel._contentData = {sessions:{sessions:[{session_id:"deleted"}, {session_id:"keep"}],
+    offset:20, returned:2, has_more:true, next_offset:22}};
+  panel._confirm = async () => true;
+  const toasts = [];
+  panel._toast = (...args) => toasts.push(args);
+  const otherScope = {sessions:{sessions:[{session_id:"other-scope"}]}};
+  panel._call = async (_section, action) => {
+    if (action === "delete") return {deleted_sessions:1};
+    assert.equal(panel._contentData.sessions.has_more, false, "stale continuation is disabled during refresh");
+    if (refreshOutcome === "failure") throw new Error("offline");
+    panel._scopeId = "user:other";
+    panel._contentData = otherScope;
+    return {results:[{session_id:"stale"}]};
+  };
+  await panel._deleteSession("deleted");
+  if (refreshOutcome === "failure") {
+    assert.equal(panel._contentData.sessions.offset, 0);
+    assert.equal(panel._contentData.sessions.next_offset, null);
+    assert.deepEqual(panel._contentData.sessions.sessions, []);
+    assert.match(toasts.at(-1)[0], /Unable to load conversation history/);
+    assert.equal(toasts.at(-1)[1], true, "success toast must not hide the refresh error");
+  } else {
+    assert.equal(panel._contentData, otherScope, "late search refresh cannot overwrite another scope");
+  }
+}
+
 // Audit: retain the second occurrence of an unchanged ambiguous local time.
 {
   const panel = panelFor("capabilities", "guest-mode");

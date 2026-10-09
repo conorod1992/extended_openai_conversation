@@ -2292,20 +2292,29 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const current = this._contentData.sessions;
         const sessions = (current.sessions || []).filter((item) => item.session_id !== sessionId);
         const removed = (current.sessions || []).length - sessions.length;
+        const searching = this._eocHistoryMode === "search";
         this._contentData = {
           ...this._contentData,
-          sessions: {
+          // Search pages contain turns: the deleted conversation may also
+          // have matches before this page. Only a fresh search can rebase it.
+          sessions: searching ? {
+            sessions: [], results: [], offset: 0, returned: 0,
+            has_more: false, next_offset: null,
+          } : {
             ...current,
             sessions,
             returned: Math.max(0, Number(current.returned ?? current.sessions?.length ?? 0) - removed),
             next_offset: Math.max(0, Number(current.offset || 0) + sessions.length),
-            ...(this._eocHistoryMode !== "search" && Number.isFinite(Number(current.total))
+            ...(Number.isFinite(Number(current.total))
               ? {total: Math.max(0, Number(current.total) - removed)}
               : {}),
           },
         };
         if (removed) this._adjustConversationScopeCount(-1);
         this._render();
+        if (searching) {
+          if (!await getRouteFeature("data-memory/conversations").loadConversationPage(this, 0)) return;
+        }
       }
       this._toast("Conversation deleted");
     } catch (err) {
