@@ -133,9 +133,14 @@ def _optional_null_plan(
 
     reference = schema.get("$ref")
     if isinstance(reference, str) and reference.startswith("#/"):
+        from urllib.parse import unquote
+
         resolved = root
-        for part in reference[2:].split("/"):
-            resolved = resolved[part.replace("~1", "/").replace("~0", "~")]
+        for part in unquote(reference[2:]).split("/"):
+            key = part.replace("~1", "/").replace("~0", "~")
+            resolved = (
+                resolved[int(key)] if isinstance(resolved, list) else resolved[key]
+            )
         if isinstance(resolved, dict):
             plan.reference = child(resolved)
     plan.properties = {key: child(value) for key, value in properties.items()}

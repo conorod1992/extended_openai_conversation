@@ -1046,6 +1046,7 @@ async def async_function_repair(
 
     if action in {"save_one", "delete_one"}:
         require_repair_revision(subentry, message.get("revision"))
+        operation_revision = repair_revision(subentry)
         editable = editable_function_tools(dict(subentry.data))
         index = message.get("index")
         if not isinstance(editable, list) or not isinstance(index, int):
@@ -1072,6 +1073,7 @@ async def async_function_repair(
                         management_ui._function_reference_error(old_name, references)
                     )
             editable.pop(index)
+            require_repair_revision(subentry, operation_revision)
             persisted = _persist_raw_tools(
                 hass,
                 entry,
@@ -1106,6 +1108,7 @@ async def async_function_repair(
                         management_ui.CONF_GUEST_ALLOWED_FUNCTION_NAMES, []
                     )
                 ]
+            require_repair_revision(subentry, operation_revision)
             persisted = _persist_raw_tools(
                 hass,
                 entry,
@@ -1114,12 +1117,23 @@ async def async_function_repair(
                 _replace_group_function_name(groups, old_name, new_name),
                 extra_updates,
             )
+            persisted_revision = saved_agent_config_revision(
+                subentry, persisted, subentry.title
+            )
             if rules is not None:
                 try:
                     await rules.async_rename_function_reference(
                         old_name, new_name, expected_revision=rules_revision
                     )
                 except Exception:
+                    try:
+                        require_repair_revision(subentry, persisted_revision)
+                    except HomeAssistantError as rollback_err:
+                        raise HomeAssistantError(
+                            "Function Tool configuration changed while a related Request Rule "
+                            "rename failed. The newer configuration was preserved; reload "
+                            "before retrying."
+                        ) from rollback_err
                     update_live_subentry(hass, entry, subentry, data=original_data)
                     raise
 
@@ -1135,6 +1149,7 @@ async def async_function_repair(
         raise HomeAssistantError(f"Unknown Function Tool repair action: {action}")
 
     require_repair_revision(subentry, message.get("revision"))
+    operation_revision = repair_revision(subentry)
     candidate = message.get("tools")
     if not isinstance(candidate, list):
         raise HomeAssistantError("tools must be a JSON array")
@@ -1152,6 +1167,7 @@ async def async_function_repair(
     await management_ui._async_validate_configuration_dependencies(
         hass, entry, subentry, persisted
     )
+    require_repair_revision(subentry, operation_revision)
     update_live_subentry(hass, entry, subentry, data=persisted)
     return {
         "valid": True,
