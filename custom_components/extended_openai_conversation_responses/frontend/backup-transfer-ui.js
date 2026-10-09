@@ -27,13 +27,17 @@ function selectedAgent(panel) {
 export async function callBackupTransfer(panel, action, data = {}) {
   if (!panel?._hass?.callWS) throw new Error("Home Assistant connection is unavailable");
   const agent = selectedAgent(panel);
-  return panel._hass.callWS({
+  const result = await panel._hass.callWS({
     type: WS_BACKUP_TRANSFER,
     action,
     entry_id: agent.entry_id,
     subentry_id: agent.subentry_id,
     data,
   });
+  if (action === "import_restore") {
+    panel._invalidateAfterMutation?.(agent.subentry_id, "backup", "restore");
+  }
+  return result;
 }
 
 export function bytesToBase64(bytes) {

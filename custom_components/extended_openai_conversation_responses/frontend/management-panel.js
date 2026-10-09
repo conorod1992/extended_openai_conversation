@@ -880,6 +880,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
       const prefix = `${agentId}|`;
       for (const key of this._sectionCache.keys()) if (key.startsWith(prefix)) this._sectionCache.delete(key);
+      for (const key of this._eocSectionCacheTimes.keys()) if (key.startsWith(prefix)) this._eocSectionCacheTimes.delete(key);
+      this._eocPendingRouteReads?.clear();
       for (const key of this._scopeCatalogCache.keys()) if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
       if (this._scopeCatalogVisitKey?.startsWith(prefix)) this._scopeCatalogVisitKey = null;
     } else {
