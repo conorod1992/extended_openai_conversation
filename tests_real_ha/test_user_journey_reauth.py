@@ -10,7 +10,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_provider_wire_e2e import (
-    _chat_sse_text, _install_wire, _say, _speech,
+    _chat_sse_text, _install_wire, _raw_client, _say, _speech,
 )
 
 
@@ -40,11 +40,14 @@ async def test_reauthentication_keeps_agent_usable_and_refreshes_wire_auth(hass,
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
     wire = _install_wire(monkeypatch, agent, [_chat_sse_text("Credential repaired.")])
+    observed_auth = []
+    async def capture_auth(request, *args, **kwargs):
+        observed_auth.append(request.headers.get("authorization", ""))
+        return await wire.send(request, *args, **kwargs)
+    monkeypatch.setattr(_raw_client(agent)._client, "send", capture_auth)
     assert _speech(await _say(hass, agent)) == "Credential repaired."
     assert len(wire.requests) == 1
     assert wire.requests[0]["path"] == "/v1/chat/completions"
     # Assert the actual SDK request uses the newly persisted credential,
     # not merely that the configuration entry displays it.
-    request_headers = wire.requests[0].get("headers", {})
-    assert "sk-replacement-journey" in str(request_headers)
-    assert "sk-expired-journey" not in str(request_headers)
+    assert observed_auth == ["Bearer sk-replacement-journey"]
