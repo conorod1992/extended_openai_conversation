@@ -38,7 +38,7 @@ async def test_native_script_consumes_ai_task_response_variable(
             "default": [{"action": "journey.record", "data": {"marker": "not-ready"}}],
         },
     ]
-    script = Script(hass, sequence, "EOAI AI Task consumer")
+    script = Script(hass, sequence, "EOAI AI Task consumer", "automation")
     await script.async_run()
     assert triggered == ["ready" if expected else "not-ready"]
     assert len(client.completions.calls) == 1
