@@ -1,16 +1,8 @@
 name: iOS Companion app acceptance
 
+# Native iOS builds are expensive; run explicitly or through manual Full validation.
 on:
-  schedule:
-    - cron: "17 4 * * 1"
   workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/ios-companion-app.yml"
-      - "ci/companion_app_server.py"
-      - "ci/patch_ios_companion_e2e.py"
-      - "custom_components/extended_openai_conversation_responses/**"
-      - "requirements_test.txt"
 
 permissions:
   contents: read
@@ -24,9 +16,6 @@ concurrency:
 jobs:
   companion:
     name: iOS Companion app smoke
-    # During introduction, run this expensive lane on its own PR so failures can
-    # be repaired before merge. After merge it remains weekly/manual only.
-    if: github.event_name != 'pull_request' || github.event.pull_request.number == 1136
     runs-on: xcode-27
     timeout-minutes: 120
     env:
