@@ -52,7 +52,10 @@ def test_ai_task_local_reference_can_traverse_composition_arrays(reference):
 
 @pytest.mark.parametrize("resource_id", ["https://example.com/payload", "payload"])
 @pytest.mark.parametrize("placeholder", [False, True])
-def test_ai_task_references_use_nested_resource_scope(resource_id, placeholder):
+@pytest.mark.parametrize("reference_first", [False, True])
+def test_ai_task_references_use_nested_resource_scope(
+    resource_id, placeholder, reference_first
+):
     payload = {
         "$id": resource_id,
         "type": "object",
@@ -76,17 +79,29 @@ def test_ai_task_references_use_nested_resource_scope(resource_id, placeholder):
     data = {"payload": {"text": "hello", "copy": "world", "nullable": None}}
     if placeholder:
         data["payload"]["optional"] = None
+    if reference_first:
+        schema["properties"] = {
+            "duplicate": {"$ref": "#/properties/payload"},
+            **schema["properties"],
+        }
+        schema["required"].append("duplicate")
+        data["duplicate"] = deepcopy(data["payload"])
     original = deepcopy(schema)
     provider = deepcopy(schema)
     _adjust_schema(provider, root=True)
     # The strict provider schema requires the optional field as a null placeholder.
     provider_data = deepcopy(data)
     provider_data["payload"].setdefault("optional", None)
+    if reference_first:
+        provider_data["duplicate"].setdefault("optional", None)
     Draft202012Validator(provider).validate(provider_data)
     result = parse_ai_task_structured_response(
         json.dumps(data), _caller_structure(schema), original_schema=schema
     )
-    assert result == {"payload": {"text": "hello", "copy": "world", "nullable": None}}
+    expected = {"payload": {"text": "hello", "copy": "world", "nullable": None}}
+    if reference_first:
+        expected["duplicate"] = deepcopy(expected["payload"])
+    assert result == expected
     assert schema == original
     assert ("optional" in data["payload"]) == placeholder
 
