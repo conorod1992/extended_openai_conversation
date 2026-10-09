@@ -228,7 +228,7 @@ async def test_initial_provider_setup_routes_to_simple_provider_specific_forms()
     )
     assert advanced["step_id"] == "openai_advanced"
     advanced_keys = {str(key) for key in advanced["data_schema"].schema}
-    assert {CONF_BASE_URL, CONF_ORGANIZATION, CONF_SKIP_AUTHENTICATION} == advanced_keys
+    assert {CONF_API_KEY, CONF_BASE_URL, CONF_ORGANIZATION, CONF_SKIP_AUTHENTICATION} == advanced_keys
     assert CONF_API_VERSION not in advanced_keys
 
     flow._setup_data = None

@@ -19,7 +19,7 @@ def test_repair_persistence_reuses_tools_while_preserving_absence(monkeypatch, h
     tools = [{"spec": {"name": "tool"}}]
     groups = [{"id": "group", "functions": ["tool"]}]
     subentry = SimpleNamespace(data={}, title="Agent")
-    entry = SimpleNamespace()
+    entry = SimpleNamespace(data={})
     projection = SimpleNamespace(
         snapshot={
             repair.CONF_FUNCTION_TOOLS: tools,

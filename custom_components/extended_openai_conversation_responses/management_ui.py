@@ -1085,8 +1085,13 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     hass, is_admin, message = request.hass, request.is_admin, request.message
     entry, subentry = request.entry, request.subentry
     title = message.get("title")
-    if title is not None and (not isinstance(title, str) or not title.strip()):
-        return {"valid": False, "errors": {"title": "must not be empty"}}
+    if title is not None:
+        if not isinstance(title, str) or not title.strip():
+            return {"valid": False, "errors": {"title": "must not be empty"}}
+        try:
+            title = validate_agent_title(title)
+        except HomeAssistantError as err:
+            return {"valid": False, "errors": {"title": str(err)}}
 
     _require_admin(is_admin)
     updates = message.get("config", {})
@@ -1543,6 +1548,10 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     if action == "import_preview":
         parsed = _parse_import_document(message.get("document"))
         _validated_model_request(parsed["config"], entry.data)
+        if message.get("mode", "current") == "current":
+            await _async_validate_configuration_dependencies(
+                hass, entry, subentry, parsed["config"]
+            )
         return {
             "valid": True,
             "title": parsed["title"],
@@ -1564,6 +1573,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         _validated_model_request(parsed["config"], entry.data)
         mode = message.get("mode", "current")
         if mode == "current":
+            await _async_validate_configuration_dependencies(
+                hass, entry, subentry, parsed["config"]
+            )
             if message.get("confirm") is not True:
                 raise HomeAssistantError("Explicit confirmation is required")
             _require_agent_config_revision(subentry, message.get("revision"))
@@ -1615,6 +1627,18 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         )
 
     return _unknown_management_action(request)
+
+
+async def _async_validate_configuration_dependencies(
+    hass: HomeAssistant, entry: Any, subentry: Any, config: Mapping[str, Any]
+) -> None:
+    """Validate retained rules against the exact replacement configuration."""
+    from .transfer import _async_validate_request_rule_function_dependencies
+
+    rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
+    await _async_validate_request_rule_function_dependencies(
+        hass, await rules.async_backup_data(), config
+    )
 
 
 async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:

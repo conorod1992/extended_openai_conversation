@@ -173,6 +173,7 @@ class ToolSnapshot:
     tools: dict[str, LiveTool] = field(default_factory=dict)
     unavailable_sources: list[str] = field(default_factory=list)
     caller_provided: bool = False
+    caller_prompt: str = ""
 
     def project(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Keep saved references intact while replacing only live runtime specs."""
@@ -196,7 +197,9 @@ class ToolSnapshot:
 
     def prompt_for(self, tools: list[dict[str, Any]]) -> str:
         """Include intact source prompts only for effectively visible tools."""
-        prompts: dict[str, None] = {}
+        prompts: dict[str, None] = (
+            {self.caller_prompt: None} if self.caller_prompt else {}
+        )
         aliases = []
         for tool in tools:
             if is_ha_tool(tool) and (
@@ -238,7 +241,10 @@ def caller_api_tools(
     instance: llm.APIInstance,
 ) -> tuple[ToolSnapshot, list[dict[str, Any]]]:
     """Adapt an AI Task caller's already assembled API without registering it."""
-    snapshot = ToolSnapshot(caller_provided=True)
+    snapshot = ToolSnapshot(
+        caller_provided=True,
+        caller_prompt=(instance.api_prompt or "") if not instance.tools else "",
+    )
     _add_tools(
         snapshot,
         instance,

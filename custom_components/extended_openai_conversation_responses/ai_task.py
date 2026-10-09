@@ -23,7 +23,6 @@ from .debug import record_current_provider_failure
 from .entity import (
     ExtendedOpenAIBaseLLMEntity,
     _make_schema_nullable,
-    _schema_explicitly_allows_null,
     _serialize_structured_output,
 )
 from .ha_llm_tools import ToolSnapshot, caller_api_tools, tool_snapshot_scope
@@ -43,12 +42,15 @@ class _OptionalNullPlan:
     items: _OptionalNullPlan | None
     alternatives: list[_OptionalNullPlan] = field(default_factory=list)
     validator: Any = None
+    reference: _OptionalNullPlan | None = None
 
     def apply(self, data: Any) -> tuple[Any, int]:
         """Return cleaned data and a count of removed placeholders."""
         if self.validator is not None and self.validator.is_valid(data):
             return data, 0
         removed = 0
+        if self.reference is not None:
+            data, removed = self.reference.apply(data)
         if isinstance(data, dict):
             cleaned = {}
             for key, value in data.items():
@@ -100,29 +102,85 @@ def _caller_object_fields(
     return properties, required
 
 
-def _optional_null_plan(schema: dict[str, Any]) -> _OptionalNullPlan:
+def _optional_null_plan(
+    schema: dict[str, Any],
+    *,
+    root: dict[str, Any] | None = None,
+    memo: dict[int, _OptionalNullPlan] | None = None,
+    validator: Any = None,
+    resolver: Any = None,
+) -> _OptionalNullPlan:
+    from jsonschema.validators import validator_for
+    from referencing import Resource
+    from referencing.jsonschema import DRAFT202012, specification_with
+
+    root = schema if root is None else root
+    memo = {} if memo is None else memo
+    if id(schema) in memo:
+        return memo[id(schema)]
+    validator = validator_for(root)(root) if validator is None else validator
+    specification = specification_with(root.get("$schema", ""), default=DRAFT202012)
+    if resolver is None:
+        # Keep the validator's existing registry/retrieval behavior as well as
+        # its root resource. jsonschema uses this resolver for descend itself.
+        resolver = validator._resolver
+
+    class ScopedValidator:
+        """Validate a branch with the same resource scope used by its plan."""
+
+        def is_valid(self, data):
+            return (
+                next(validator.descend(data, schema, resolver=resolver), None) is None
+            )
+
+    def child(value, *, resolved_scope=None):
+        child_resolver = (
+            resolved_scope
+            if resolved_scope is not None
+            else resolver.in_subresource(
+                Resource.from_contents(value, default_specification=specification)
+            )
+        )
+        return _optional_null_plan(
+            value, root=root, memo=memo, validator=validator, resolver=child_resolver
+        )
+
+    def allows_null(value):
+        child_resolver = resolver.in_subresource(
+            Resource.from_contents(value, default_specification=specification)
+        )
+        return (
+            next(validator.descend(None, value, resolver=child_resolver), None) is None
+        )
+
     properties, required = _caller_object_fields(schema)
     plan = _OptionalNullPlan(
         optional_nonnullable=frozenset(
             key
             for key, value in properties.items()
-            if key not in required and not _schema_explicitly_allows_null(value)
+            if key not in required and not allows_null(value)
         ),
-        properties={
-            key: _optional_null_plan(value) for key, value in properties.items()
-        },
-        items=_optional_null_plan(schema["items"])
-        if isinstance(schema.get("items"), dict)
-        else None,
+        properties={},
+        items=None,
     )
+    memo[id(schema)] = plan
+
+    reference = schema.get("$ref")
+    if isinstance(reference, str) and reference.startswith("#"):
+        # A local pointer belongs to the nearest resource, which can be a nested
+        # $id. lookup also retains that scope when a pointer enters a resource.
+        resolved = resolver.lookup(reference)
+        if isinstance(resolved.contents, dict):
+            plan.reference = child(resolved.contents, resolved_scope=resolved.resolver)
+    plan.properties = {key: child(value) for key, value in properties.items()}
+    if isinstance(schema.get("items"), dict):
+        plan.items = child(schema["items"])
     for keyword in ("anyOf", "oneOf"):
         for branch in schema.get(keyword, []):
-            plan.alternatives.append(_optional_null_plan(branch))
+            plan.alternatives.append(child(branch))
     if plan.alternatives or "allOf" in schema:
         # Imported only for composed AI Task schemas, never ordinary tool calls.
-        from jsonschema.validators import validator_for
-
-        plan.validator = validator_for(schema)(schema)
+        plan.validator = ScopedValidator()
     return plan
 
 
@@ -135,6 +193,10 @@ def _normalize_caller_nullable(schema: dict[str, Any]) -> None:
             _normalize_caller_nullable(branch)
     for value in schema.get("properties", {}).values():
         _normalize_caller_nullable(value)
+    for keyword in ("$defs", "definitions"):
+        for value in schema.get(keyword, {}).values():
+            if isinstance(value, dict):
+                _normalize_caller_nullable(value)
     if isinstance(schema.get("items"), dict):
         _normalize_caller_nullable(schema["items"])
 

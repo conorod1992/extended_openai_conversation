@@ -32,9 +32,15 @@ _LOGGER = logging.getLogger(__name__)
 AZURE_DOMAINS = ("openai.azure.com", "azure-api.net", "services.ai.azure.com")
 
 
-def get_api_mode(configured_mode: str, model: str, tools_required: bool = False) -> str:
+def get_api_mode(
+    configured_mode: str,
+    model: str,
+    tools_required: bool = False,
+    effort: str | None = None,
+    web_search: bool = False,
+) -> str:
     """Resolve/validate API mode from authoritative model capability data."""
-    return select_api_path(model, configured_mode, tools_required)
+    return select_api_path(model, configured_mode, tools_required, effort, web_search)
 
 
 def get_model_config(model: str) -> dict[str, Any]:

@@ -8,6 +8,18 @@ import {
 import {modelFieldPresentation, webSearchControlState} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-model-presentation.js";
 
 {
+  const metadata = {api:{responses:true,chat_completions:true},function_calling:{responses:true,chat_completions:false}};
+  const panel = {_draft:{max_function_calls_per_conversation:0,functions:[{spec:{name:"dormant"}}]},_result:{model_capabilities:metadata,options:{api_mode:[]}}};
+  assert.equal(modelFieldPresentation(panel,"api_mode","chat_completions").disabledOption("chat_completions"),false);
+  panel._draft.max_function_calls_per_conversation=10;
+  panel._draft.functions=[];
+  assert.equal(modelFieldPresentation(panel,"api_mode","chat_completions").disabledOption("chat_completions"),true);
+  panel._draft.max_function_calls_per_conversation=0;
+  panel._draft.continue_conversation="conditional";
+  assert.equal(modelFieldPresentation(panel,"api_mode","chat_completions").disabledOption("chat_completions"),true);
+}
+
+{
   const conditional = {
     support: "conditional",
     allowed_reasoning_efforts: ["none"],
@@ -93,14 +105,17 @@ import {modelFieldPresentation, webSearchControlState} from "../custom_component
   panel._draft.reasoning_effort="minimal";
   panel._draft.web_search=true;
   capabilities.evaluations.responses.minimal={reasoning:true,function:true,web_search:false};
+  assert.equal(webSearchControlState(panel).disabled,false);
+  panel._draft.web_search=false;
   assert.equal(webSearchControlState(panel).disabled,true);
+  panel._draft.web_search=true;
   assert.match(webSearchControlState(panel).note,/saved setting is retained/);
   panel._draft.reasoning_effort="high";
   assert.equal(webSearchControlState(panel).disabled,false);
   panel._draft.reasoning_effort=null;
   panel._draft.api_mode="auto";
   capabilities.recommended_profile.reasoning_effort=null;
-  capabilities.auto_paths["null:0:1"]="responses";
+  capabilities.auto_paths["null:1:1"]="responses";
   capabilities.evaluations.responses.null={reasoning:true,function:true,web_search:true};
   assert.equal(webSearchControlState(panel).disabled,false);
 }

@@ -290,7 +290,7 @@ def test_output_token_limit_uses_modern_field_and_rejects_legacy_field(
 def test_sampling_configuration_omits_legacy_defaults_and_rejects_unknown_parameter() -> None:
     """Migration defaults remain omitted while explicit non-default values are retained."""
     assert not model_capabilities.sampling_value_is_configured("temperature", None, 1.0)
-    assert not model_capabilities.sampling_value_is_configured("temperature", 1.0, 1.0)
+    assert model_capabilities.sampling_value_is_configured("temperature", 1.0, 1.0)
     assert model_capabilities.sampling_value_is_configured("temperature", 0.0, 1.0)
 
     with pytest.raises(ModelCapabilityError, match="Unknown sampling parameter"):

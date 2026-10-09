@@ -39,6 +39,18 @@ from custom_components.extended_openai_conversation_responses.management_ui impo
 from homeassistant.exceptions import HomeAssistantError
 
 
+@pytest.fixture(autouse=True)
+async def retained_rules(monkeypatch):
+    from tests.test_request_rules import MemoryStore
+    from custom_components.extended_openai_conversation_responses.request_rules import RequestRules
+    manager = RequestRules(MemoryStore())
+    await manager.async_initialize()
+    async def load(*args):
+        return manager
+    monkeypatch.setattr(management_ui, "async_get_request_rules", load)
+    return manager
+
+
 class _HashableNamespace(SimpleNamespace):
     __hash__ = object.__hash__
 

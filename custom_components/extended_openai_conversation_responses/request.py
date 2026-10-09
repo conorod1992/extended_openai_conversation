@@ -264,7 +264,7 @@ def _sampling_value(
         legacy_default = DEFAULT_TEMPERATURE
     else:
         legacy_default = DEFAULT_TOP_P
-    value = options.get(parameter, legacy_default)
+    value = options.get(parameter)
     if not sampling_value_is_configured(parameter, value, legacy_default):
         return None
     if parameter_is_allowed(model, parameter, effort):
