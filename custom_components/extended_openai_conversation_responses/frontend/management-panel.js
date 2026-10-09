@@ -861,9 +861,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._invalidateCleanConfiguration(agentId);
     }
     if (agentId && section === "usage" && action === "clear_details") {
-      const key = `${agentId}|usage-maintenance/usage`;
-      this._sectionCache.delete(key);
-      this._eocSectionCacheTimes.delete(key);
+      for (const key of this._sectionCache.keys()) {
+        if (!key.startsWith(`${agentId}|usage-maintenance/usage`)) continue;
+        this._sectionCache.delete(key);
+        this._eocSectionCacheTimes.delete(key);
+      }
     }
     if (agentId && isAgentMutation(section, action)) {
       this._cacheGeneration += 1;
@@ -873,8 +875,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     if (agentId && section === "backup" && action === "restore") {
       this._cacheGeneration += 1;
+      // Replacing the map also isolates reads started before the restore.
+      this._eocUsageWindowCache = new Map();
+      this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
       const prefix = `${agentId}|`;
       for (const key of this._sectionCache.keys()) if (key.startsWith(prefix)) this._sectionCache.delete(key);
+      for (const key of this._eocSectionCacheTimes.keys()) if (key.startsWith(prefix)) this._eocSectionCacheTimes.delete(key);
+      this._eocPendingRouteReads?.clear();
       for (const key of this._scopeCatalogCache.keys()) if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
       if (this._scopeCatalogVisitKey?.startsWith(prefix)) this._scopeCatalogVisitKey = null;
     } else {
@@ -915,6 +922,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _sectionCacheKey(view = this._viewKey()) {
     const agentId = this._agentId;
     if (!agentId) return null;
+    if (view === "usage-maintenance/usage") return `${agentId}|${view}|${this._usageHistoryWindow || "30"}`;
     if (["overview", "capabilities/request-rules", "data-memory/knowledge", "usage-maintenance/usage"].includes(view)) return `${agentId}|${view}`;
     return null;
   }
@@ -1829,13 +1837,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
+      const status = this._result?.status || {};
+      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : value;
       try {
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");
         }
         const result = await this._call("guest_mode", "update", {
-          ...(start ? {active_from: start} : {}),
-          ...(!indefinite && end ? {active_until: end} : {}),
+          ...(start ? {active_from: now ? start : originalInstant(start, status.active_from)} : {}),
+          ...(!indefinite && end ? {active_until: originalInstant(end, status.active_until)} : {}),
           indefinite,
         });
         await this._refreshGuestModeMutation(agentId, result);
@@ -2200,7 +2210,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           this._result = {...this._result, memories: [...(this._result.memories || []).filter(memory => memory.memory_id !== response.memory.memory_id), response.memory]};
         }
         if (response.status === "created") this._patchScopeCount(response.scope_id, "temporary_memory_count", 1);
-      } else if (owner.kind === "persistent" && !getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
+      } else if (owner.kind === "persistent" && !await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
+      if (!current()) return;
       this._setSaving(button, false);
       dialog.close();
       if (!temporary && response.status === "created") this._patchScopeCount(response.scope_id, "memory_count", 1);
@@ -2242,7 +2253,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     try {
       const response = await this._call("memories", "delete", { scope_id: owner.scope, memory_id: memoryId });
       if (!this._ownsRetainedMutation(owner)) return;
-      if (!getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {deletedId: memoryId, sourceScope: owner.scope})) throw new Error("The deleted memory response was incomplete.");
+      if (!await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {deletedId: memoryId, sourceScope: owner.scope})) throw new Error("The deleted memory response was incomplete.");
+      if (!this._ownsRetainedMutation(owner)) return;
       if (fromDialog) this.shadowRoot.querySelector("#memory-dialog").close();
       this._patchScopeCount(owner.scope, "memory_count", -1);
       this._selectedAgent().memory_count = Math.max(0, Number(this._selectedAgent().memory_count || 0) - 1);
@@ -2280,19 +2292,29 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const current = this._contentData.sessions;
         const sessions = (current.sessions || []).filter((item) => item.session_id !== sessionId);
         const removed = (current.sessions || []).length - sessions.length;
+        const searching = this._eocHistoryMode === "search";
         this._contentData = {
           ...this._contentData,
-          sessions: {
+          // Search pages contain turns: the deleted conversation may also
+          // have matches before this page. Only a fresh search can rebase it.
+          sessions: searching ? {
+            sessions: [], results: [], offset: 0, returned: 0,
+            has_more: false, next_offset: null,
+          } : {
             ...current,
             sessions,
             returned: Math.max(0, Number(current.returned ?? current.sessions?.length ?? 0) - removed),
-            ...(this._eocHistoryMode !== "search" && Number.isFinite(Number(current.total))
+            next_offset: Math.max(0, Number(current.offset || 0) + sessions.length),
+            ...(Number.isFinite(Number(current.total))
               ? {total: Math.max(0, Number(current.total) - removed)}
               : {}),
           },
         };
         if (removed) this._adjustConversationScopeCount(-1);
         this._render();
+        if (searching) {
+          if (!await getRouteFeature("data-memory/conversations").loadConversationPage(this, 0)) return;
+        }
       }
       this._toast("Conversation deleted");
     } catch (err) {

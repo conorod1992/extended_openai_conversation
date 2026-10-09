@@ -263,6 +263,10 @@ export function regexRow(panel, rule, index, disabled = false) {
 function dirty(panel) {
   readConfig(panel);
   panel._setConfigDirty(true);
+  refreshSaveBar(panel);
+}
+
+function refreshSaveBar(panel) {
   if (!panel.shadowRoot.querySelector(".save-bar")) {
     panel.shadowRoot.querySelector("#save-bar-anchor")?.insertAdjacentHTML("beforebegin", saveBar(panel));
     bindSaveBar(panel);
@@ -297,6 +301,7 @@ function bindRegexRules(panel) {
     readConfig(panel);
     panel._draft.speech_regex_replacements.splice(index, 1);
     panel._setConfigDirty(true);
+    refreshSaveBar(panel);
     renderRegexRules(panel, Math.min(index, panel._draft.speech_regex_replacements.length - 1));
   }));
   root.querySelectorAll(".move-regex").forEach((button) => button.addEventListener("click", () => {
@@ -306,6 +311,7 @@ function bindRegexRules(panel) {
     if (target < 0 || target >= panel._draft.speech_regex_replacements.length) return;
     [panel._draft.speech_regex_replacements[index], panel._draft.speech_regex_replacements[target]] = [panel._draft.speech_regex_replacements[target], panel._draft.speech_regex_replacements[index]];
     panel._setConfigDirty(true);
+    refreshSaveBar(panel);
     renderRegexRules(panel, target);
   }));
 }

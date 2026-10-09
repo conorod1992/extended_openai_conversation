@@ -60,7 +60,7 @@ export function findPersistentMemory(panel, id) {
   return collectionState(panel).items.get(String(id));
 }
 
-export function applyPersistentMemoryMutation(panel, response, {deletedId = null, sourceScope = panel._scopeId} = {}) {
+export async function applyPersistentMemoryMutation(panel, response, {deletedId = null, sourceScope = panel._scopeId} = {}) {
   if (!panel._result || !Array.isArray(panel._result.memories)) return false;
   if (deletedId && response?.deleted !== 1) return false;
   const memory = response?.memory;
@@ -89,12 +89,18 @@ export function applyPersistentMemoryMutation(panel, response, {deletedId = null
     ...(Number.isFinite(panel._result.total) ? {total: Math.max(0, panel._result.total + pageDelta)} : {}),
   };
   collection.result = panel._result;
+  // The backend owns Unicode casefold matching; JS lowercasing is insufficient.
+  if (query) await runMemorySearch(panel);
   if (panel._query.trim().toLocaleLowerCase() !== search.memoryQuery) scheduleMemorySearch(panel);
   return true;
 }
 
 function memoryCard(panel, memory) {
-  return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}" ${memorySearchProjection(memory).includes(panel._query.trim().toLocaleLowerCase()) ? "" : "hidden"}><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}"><p class="primary-copy">${panel._e(memory.content)}</p><p class="meta">${panel._e(memory.category)} · ${panel._e(memory.source)} · Updated ${panel._e(panel._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${panel._e(memory.memory_id)}">Edit</button>${panel._data?.is_admin && panel._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${panel._e(memory.memory_id)}">Assign to user</button>` : ""}<button type="button" class="danger delete-memory" data-id="${panel._e(memory.memory_id)}">Delete</button></div></article>`;
+  const query = panel._query.trim().toLocaleLowerCase();
+  const matches = query === browserState(panel).memoryQuery
+    ? (panel._result?.memories || []).some(item => item.memory_id === memory.memory_id)
+    : memorySearchProjection(memory).includes(query);
+  return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}" ${matches ? "" : "hidden"}><div class="card-main clickable edit-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}"><p class="primary-copy">${panel._e(memory.content)}</p><p class="meta">${panel._e(memory.category)} · ${panel._e(memory.source)} · Updated ${panel._e(panel._formatDate(memory.updated_at))}</p></div><div class="actions"><button type="button" class="secondary memory-edit-button" data-id="${panel._e(memory.memory_id)}">Edit</button>${panel._data?.is_admin && panel._scopeId === "__anonymous__" ? `<button type="button" class="secondary reassign-memory" data-id="${panel._e(memory.memory_id)}">Assign to user</button>` : ""}<button type="button" class="danger delete-memory" data-id="${panel._e(memory.memory_id)}">Delete</button></div></article>`;
 }
 
 function currentSearch(panel, identity, sequence, query) {

@@ -56,6 +56,7 @@ function refreshSaveBar(panel) {
     "beforebegin",
     saveBarMarkup({configuration: true, pending: Boolean(panel._configurationSaving)}),
   );
+  bindDiscard(panel);
 }
 
 export function bindRetentionSettings(panel) {
@@ -72,7 +73,14 @@ export function bindRetentionSettings(panel) {
     });
   });
 
-  root.querySelector("#revert-config")?.addEventListener("click", () => {
+  bindDiscard(panel);
+}
+
+function bindDiscard(panel) {
+  const button = panel.shadowRoot.querySelector("#revert-config");
+  if (!button || button.dataset.eocDiscardBound) return;
+  button.dataset.eocDiscardBound = "true";
+  button.addEventListener("click", () => {
     if (panel._configurationSaving || !panel._configData?.config) return;
     panel._draft = clone(panel._configData.config);
     panel._draftTitle = panel._configData.title;

@@ -1062,3 +1062,149 @@ for (const failedKind of ["usage", "memory", "knowledge", "guest_mode", "setup_h
   assert.equal(panel._contentData.sessions.sessions.length, 1,
     "late deletion cannot patch a different History scope");
 }
+
+// Audit: range identity and restore invalidate every visited Usage range.
+{
+  const panel = panelFor("usage-maintenance", "usage");
+  panel._usageHistoryWindow = "30";
+  const key30 = panel._sectionCacheKey();
+  panel._usageHistoryWindow = "90";
+  assert.notEqual(panel._sectionCacheKey(), key30);
+  panel._sectionCache.set(key30, {days:{requested_window:"30"}});
+  const oldCache = new Map([["agent-a|7|2026-10-09", {days:["old"]}]]);
+  panel._eocUsageWindowCache = oldCache;
+  panel._invalidateAfterMutation("agent-a", "backup", "restore");
+  assert.equal(panel._sectionCache.has(key30), false);
+  assert.notEqual(panel._eocUsageWindowCache, oldCache);
+  assert.equal(panel._eocUsageWindowCache.size, 0);
+}
+
+// Audit: deleting from a full first page must not skip the final survivor.
+{
+  const panel = panelFor("data-memory", "conversations");
+  panel._contentData = {sessions:{sessions:Array.from({length:50}, (_, id) => ({session_id:String(id)})),
+    offset:0, returned:50, total:51, has_more:true, next_offset:50}};
+  panel._confirm = async () => true;
+  panel._toast = () => {};
+  panel._call = async () => ({deleted_sessions:1});
+  await panel._deleteSession("0");
+  assert.equal(panel._contentData.sessions.next_offset, 49);
+  assert.equal(panel._contentData.sessions.total, 50);
+}
+
+{
+  await routeAssetPromise("data-memory/conversations");
+  const {loadConversationPage} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-history-pagination.js");
+  const panel = panelFor("data-memory", "conversations");
+  panel._eocHistoryMode = "search";
+  panel._eocHistoryQuery = "battery";
+  const others = Array.from({length:40}, (_, i) => ({session_id:`other-${i}`, turn_id:`turn-${i}`}));
+  panel._contentData = {sessions:{sessions:[{session_id:"deleted"}, ...others.slice(0,19)],
+    offset:20, returned:20, has_more:true, next_offset:40}};
+  panel._confirm = async () => true;
+  panel._toast = () => {};
+  const offsets = [];
+  panel._call = async (section, action, extra) => {
+    if (action === "delete") return {deleted_sessions:1};
+    assert.equal(action, "search");
+    assert.equal(extra.query, "battery");
+    offsets.push(extra.offset);
+    return {results:others.slice(extra.offset, extra.offset + 20), offset:extra.offset,
+      returned:20, has_more:extra.offset === 0, next_offset:extra.offset + 20};
+  };
+  await panel._deleteSession("deleted");
+  assert.deepEqual(offsets, [0], "deleting a multi-page conversation restarts the search");
+  const first = panel._contentData.sessions.sessions;
+  await loadConversationPage(panel, panel._contentData.sessions.next_offset);
+  assert.deepEqual([...first, ...panel._contentData.sessions.sessions].map(row => row.turn_id),
+    others.map(row => row.turn_id), "continuation neither skips nor duplicates surviving matches");
+}
+
+for (const refreshOutcome of ["failure", "scope-change"]) {
+  const panel = panelFor("data-memory", "conversations");
+  panel._eocHistoryMode = "search";
+  panel._eocHistoryQuery = "battery";
+  panel._contentData = {sessions:{sessions:[{session_id:"deleted"}, {session_id:"keep"}],
+    offset:20, returned:2, has_more:true, next_offset:22}};
+  panel._confirm = async () => true;
+  const toasts = [];
+  panel._toast = (...args) => toasts.push(args);
+  const otherScope = {sessions:{sessions:[{session_id:"other-scope"}]}};
+  panel._call = async (_section, action) => {
+    if (action === "delete") return {deleted_sessions:1};
+    assert.equal(panel._contentData.sessions.has_more, false, "stale continuation is disabled during refresh");
+    if (refreshOutcome === "failure") throw new Error("offline");
+    panel._scopeId = "user:other";
+    panel._contentData = otherScope;
+    return {results:[{session_id:"stale"}]};
+  };
+  await panel._deleteSession("deleted");
+  if (refreshOutcome === "failure") {
+    assert.equal(panel._contentData.sessions.offset, 0);
+    assert.equal(panel._contentData.sessions.next_offset, null);
+    assert.deepEqual(panel._contentData.sessions.sessions, []);
+    assert.match(toasts.at(-1)[0], /Unable to load conversation history/);
+    assert.equal(toasts.at(-1)[1], true, "success toast must not hide the refresh error");
+  } else {
+    assert.equal(panel._contentData, otherScope, "late search refresh cannot overwrite another scope");
+  }
+}
+
+// Audit: retain the second occurrence of an unchanged ambiguous local time.
+{
+  const panel = panelFor("capabilities", "guest-mode");
+  const end = "2026-11-01T06:30:00Z";
+  panel._result = {status:{active_until:end}};
+  const controls = new Map([
+    ["#guest-indefinite", {checked:false}],
+    ["#guest-start", {value:"2026-10-31T12:00"}],
+    ["#guest-end", {value:"2026-11-01T01:30", checkValidity:() => true}],
+  ]);
+  panel.shadowRoot.querySelector = key => controls.get(key);
+  panel._dateTimeLocal = () => "2026-11-01T01:30";
+  panel._runGuestOperation = operation => operation();
+  panel._refreshGuestModeMutation = async () => {};
+  panel._toast = () => {};
+  let submitted;
+  panel._call = async (_section, _action, payload) => { submitted = payload; return {}; };
+  await panel._updateGuestMode();
+  assert.equal(submitted.active_until, end);
+  assert.equal(submitted.active_from, "2026-10-31T12:00");
+}
+
+// Audit: destination changes use the status snapshot most recently polled.
+{
+  const host = {innerHTML:""};
+  let change;
+  const radio = {addEventListener:(_event, handler) => { change = handler; }};
+  const panel = {_viewKey:() => "overview", _e:String,
+    shadowRoot:{querySelector:key => key === "#broadcast-card" ? host : null,
+      querySelectorAll:key => key === 'input[name="broadcast-destination"]' ? [radio] : []}};
+  const snapshot = {enabled:false, can_manage:false, catalog:{satellites:[], areas:[]},
+    history:[{message:"Notice", status:"delivered", created_at:"2026-10-09T00:00:00Z", deliveries:{}}]};
+  await bindBroadcast(panel, Promise.resolve(snapshot));
+  panel._eocBroadcastSnapshot = {...snapshot, history:[{...snapshot.history[0], message:"Latest delivered notice"}]};
+  change({target:{checked:true, value:"whole"}});
+  assert.match(host.innerHTML, /Latest delivered notice/);
+}
+
+// Audit: the first dynamically inserted retention Discard has a handler.
+{
+  const {bindRetentionSettings} = await import("../custom_components/extended_openai_conversation_responses/frontend/retention-settings-ui.js");
+  const handlers = {};
+  const button = {dataset:{}, addEventListener:(event, handler) => { handlers[event] = handler; }};
+  let inserted = false;
+  let changed;
+  const control = {dataset:{retentionConfig:"usage_request_retention_days"}, value:"7",
+    addEventListener:(_event, handler) => { changed = handler; }};
+  const panel = {_draft:{usage_request_retention_days:30}, _configData:{config:{usage_request_retention_days:30}},
+    _setConfigDirty(value) { this._configDirty = value; }, _render() {},
+    shadowRoot:{querySelectorAll:() => [control], querySelector:key => key === "#save-bar-anchor"
+      ? {insertAdjacentHTML() { inserted = true; }} : key === "#revert-config" && inserted ? button : null}};
+  bindRetentionSettings(panel);
+  changed();
+  assert.equal(typeof handlers.click, "function");
+  handlers.click();
+  assert.equal(panel._draft.usage_request_retention_days, 30);
+  assert.equal(panel._configDirty, false);
+}
