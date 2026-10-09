@@ -1,14 +1,14 @@
 """A real Home Assistant script consumes an EOAI AI Task service response."""
+
 import pytest
 
-from homeassistant.helpers.script import Script
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.script import Script, async_validate_actions_config
 from tests_real_ha.test_ai_task_runtime import _setup_entry
 
 
 @pytest.mark.parametrize("answer,expected", [("ready", True), ("not-ready", False)])
-async def test_native_script_consumes_ai_task_response_variable(
-    hass, answer, expected
-):
+async def test_native_script_consumes_ai_task_response_variable(hass, answer, expected):
     _entry, entity_id, client = await _setup_entry(hass, [answer])
     triggered = []
 
@@ -38,6 +38,7 @@ async def test_native_script_consumes_ai_task_response_variable(
             "default": [{"action": "journey.record", "data": {"marker": "not-ready"}}],
         },
     ]
+    sequence = await async_validate_actions_config(hass, cv.SCRIPT_SCHEMA(sequence))
     script = Script(hass, sequence, "EOAI AI Task consumer", "automation")
     await script.async_run()
     assert triggered == ["ready" if expected else "not-ready"]

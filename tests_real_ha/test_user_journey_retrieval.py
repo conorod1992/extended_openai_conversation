@@ -1,15 +1,23 @@
 """Naturalistic Knowledge retrieval with distractors and disabled sources."""
+
 import json
 
-from custom_components.extended_openai_conversation_responses.const import API_MODE_CHAT_COMPLETIONS
+from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_CHAT_COMPLETIONS,
+)
 from tests_real_ha.test_knowledge_provider_wire_e2e import (
-    _knowledge_agent, _say, _chat_sse_tool_call, _chat_sse_text,
+    _chat_sse_text,
+    _chat_sse_tool_call,
     _chat_tool_result,
+    _knowledge_agent,
+    _say,
 )
 from tests_real_ha.test_provider_wire_e2e import _install_wire, _speech
 
 
-async def test_appliance_procedure_retrieval_excludes_disabled_distractor(hass, monkeypatch):
+async def test_appliance_procedure_retrieval_excludes_disabled_distractor(
+    hass, monkeypatch
+):
     agent = await _knowledge_agent(hass, API_MODE_CHAT_COMPLETIONS)
     knowledge = agent._knowledge
     relevant = await knowledge.async_create(
@@ -30,14 +38,28 @@ async def test_appliance_procedure_retrieval_excludes_disabled_distractor(hass, 
     )
     await knowledge.async_update(disabled.source_id, enabled=False)
     wire = _install_wire(
-        monkeypatch, agent,
-        [_chat_sse_tool_call("call-appliance", "knowledge_search",
-                            {"query": "dishwasher will not drain filter", "limit": 5}),
-         _chat_sse_text("Search completed.")],
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call(
+                "call-appliance",
+                "knowledge_search",
+                {"query": "dishwasher will not drain filter", "limit": 5},
+            ),
+            _chat_sse_text("Search completed."),
+        ],
     )
-    assert _speech(await _say(hass, agent, "How should I troubleshoot the dishwasher drainage?")) == "Search completed."
+    assert (
+        _speech(
+            await _say(
+                hass, agent, "How should I troubleshoot the dishwasher drainage?"
+            )
+        )
+        == "Search completed."
+    )
     result = _chat_tool_result(wire.requests[1]["body"], "call-appliance")
     identifiers = {item["source_id"] for item in result["results"]}
     assert relevant.source_id in identifiers
+    assert result["results"][0]["source_id"] == relevant.source_id
     assert disabled.source_id not in identifiers
-    assert "bypass the filter sensor" not in json.dumps(result)
+    assert "bypass the filter sensor" not in json.dumps(wire.requests)
