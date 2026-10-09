@@ -118,7 +118,7 @@ def _safe_configuration(value: Any, *, schema: bool = False) -> Any:
 
 
 def _configuration_snapshot_preserving_quarantine(
-    data: Any, *, frontend_shape: bool
+    data: Any, *, frontend_shape: bool, allow_malformed_yaml: bool = False
 ) -> dict[str, Any]:
     """Normalize known config without discarding opaque later-version fields."""
     raw = dict(data)
@@ -160,6 +160,8 @@ def _configuration_snapshot_preserving_quarantine(
                     try:
                         snapshot[key] = yaml.safe_load(snapshot[key])
                     except yaml.YAMLError as err:
+                        if allow_malformed_yaml:
+                            continue
                         raise BackupError(
                             "Repair malformed Function YAML before exporting configuration"
                         ) from err
@@ -176,6 +178,13 @@ def export_configuration_snapshot(data: Any) -> dict[str, Any]:
 def recoverable_configuration_snapshot(data: Any) -> dict[str, Any]:
     """Return persistence-shaped validated config that retains quarantined Functions."""
     return _configuration_snapshot_preserving_quarantine(data, frontend_shape=False)
+
+
+def private_configuration_snapshot(data: Any) -> dict[str, Any]:
+    """Preserve malformed destination YAML inside private recovery operations."""
+    return _configuration_snapshot_preserving_quarantine(
+        data, frontend_shape=True, allow_malformed_yaml=True
+    )
 
 
 def _backup_lock(hass: HomeAssistant, entry_id: str, subentry_id: str) -> asyncio.Lock:
@@ -465,7 +474,7 @@ async def _snapshot_for_restore(
     )
     return PreparedRestore(
         subentry.title,
-        export_configuration_snapshot(subentry.data),
+        private_configuration_snapshot(subentry.data),
         PersistentMemory.validate_backup_data(await memory.async_backup_data()),
         TemporaryMemory.validate_backup_data(await temporary.async_backup_data()),
         KnowledgeLibrary.validate_backup_data(await knowledge.async_backup_data()),

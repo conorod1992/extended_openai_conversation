@@ -75,7 +75,7 @@ _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
 _MEMORY_KEY_PATTERN = re.compile(r"^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$")
 _SECRET_PATTERN = re.compile(
-    r"\b(?:password|passcode|api[_ -]?key|access[_ -]?token|auth[_ -]?token|"
+    r"(?<![^\W_])(?:password|passcode|api[_ -]?key|access[_ -]?token|auth[_ -]?token|"
     r"security[_ -]?code|secret|pin)\b\s*(?:is|:|=)\s*\S+|"
     r"\bsk-[A-Za-z0-9_-]{12,}\b",
     re.IGNORECASE,
