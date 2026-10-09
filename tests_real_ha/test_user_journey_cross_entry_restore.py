@@ -7,10 +7,14 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
 from custom_components.extended_openai_conversation_responses.memory import (
     async_get_memory,
 )
+from homeassistant.const import EVENT_HOMEASSISTANT_FINAL_WRITE
 from tests_real_ha.test_acceptance_lifecycle import (
     _conversation_subentry,
     _make_entry,
     _setup_entry,
+)
+from tests_real_ha.test_persistence_state_round_trips import (
+    _evict_agent_runtime_managers,
 )
 
 
@@ -85,3 +89,27 @@ async def test_backup_import_to_different_entry_preserves_target_credentials_and
         await reread_knowledge.async_get(source.source_id)
     ).content == source.content
     assert dict(target.data) == credentials_before
+
+    # Reuse the existing cold-load boundary: cached singleton reads alone do not
+    # prove that the destination's independent stores contain the imported data.
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_FINAL_WRITE)
+    await hass.async_block_till_done()
+    assert await hass.config_entries.async_unload(origin.entry_id)
+    assert await hass.config_entries.async_unload(target.entry_id)
+    await hass.async_block_till_done()
+    _evict_agent_runtime_managers(hass)
+    assert await hass.config_entries.async_setup(target.entry_id)
+    await hass.async_block_till_done()
+    cold_memory = await async_get_memory(hass, target.entry_id, dest_sub.subentry_id)
+    cold_knowledge = await async_get_knowledge(
+        hass, target.entry_id, dest_sub.subentry_id
+    )
+    assert cold_memory is not reread
+    assert cold_knowledge is not reread_knowledge
+    assert [
+        item.content for item in await cold_memory.async_list("journey-owner", limit=25)
+    ] == ["The breaker is beside the back door."]
+    assert (await cold_knowledge.async_get(source.source_id)).content == source.content
+    assert dict(target.data) == credentials_before
+    assert await hass.config_entries.async_setup(origin.entry_id)
+    await hass.async_block_till_done()
