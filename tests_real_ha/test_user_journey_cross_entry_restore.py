@@ -48,7 +48,7 @@ async def test_backup_import_to_different_entry_preserves_target_credentials_and
         for item in await restored_memory.async_list("journey-owner", limit=25)
     )
     assert any(
-        "main breaker" in item.content
+        "main breaker" in item["content"]
         for item in await restored_knowledge.async_list()
     )
     assert await hass.config_entries.async_reload(target.entry_id)
