@@ -6,6 +6,9 @@ from collections.abc import Mapping, Sequence
 from enum import IntEnum
 from typing import Any
 
+from homeassistant.helpers.script_variables import ScriptVariables
+from homeassistant.helpers.template import Template
+
 
 class FunctionSecurity(IntEnum):
     """Increasingly difficult capability classes for Guest enforcement."""
@@ -49,6 +52,9 @@ def classify_function(
             return FunctionSecurity.SAFE
         return FunctionSecurity.UNSCOPABLE
     if function_type == "script":
+        # HA templates can read arbitrary state independently of the action target.
+        if _contains_template(function):
+            return FunctionSecurity.UNSCOPABLE
         return _classify_script(function.get("sequence"))
     if function_type == "composite":
         sequence = function.get("sequence")
@@ -66,6 +72,26 @@ def classify_function(
     # Templates, network, database, shell, and file functions can access data or
     # cause effects outside entity-scoped HA action validation.
     return FunctionSecurity.UNSCOPABLE
+
+
+def _contains_template(value: Any, depth: int = 0) -> bool:
+    """Fail closed on unbounded Script data, including validated HA templates."""
+    if depth >= _MAX_CLASSIFICATION_DEPTH:
+        return True
+    if isinstance(value, ScriptVariables):
+        value = value.variables
+    if isinstance(value, Template):
+        value = value.template
+    if isinstance(value, str):
+        return "{{" in value or "{%" in value
+    if isinstance(value, Mapping):
+        return any(
+            _contains_template(key, depth + 1) or _contains_template(child, depth + 1)
+            for key, child in value.items()
+        )
+    if isinstance(value, Sequence):
+        return any(_contains_template(child, depth + 1) for child in value)
+    return False
 
 
 def _classify_script(sequence: Any) -> FunctionSecurity:

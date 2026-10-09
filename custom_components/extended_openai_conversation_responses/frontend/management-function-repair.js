@@ -1,3 +1,4 @@
+import {synchronizePersistedConfigurationFields} from "./management-actions.js";
 import {getToolYamlEditor} from "./tool-yaml-editor-adapter.js";
 
 function repairIssue(panel) {
@@ -111,9 +112,14 @@ async function openInvalidToolEditor(panel, item) {
   }
 }
 
-export async function refreshAfterRepair(panel, message) {
+export async function refreshAfterRepair(panel, message, saved) {
   const selectedId = panel._agentId;
-  panel._clearConfigDraft?.();
+  if (!saved?.config) saved = await panel._call("configuration", "get");
+  if (panel._configData) {
+    panel._configData = {...panel._configData, function_repair:saved.function_repair};
+  }
+  synchronizePersistedConfigurationFields(panel, saved, ["functions", "function_groups"]);
+  if (panel._configData) panel._result = panel._configData;
   await panel._loadAgents(selectedId);
   panel._toast(message);
 }
@@ -136,14 +142,14 @@ async function saveInvalidTool(panel, button) {
       }
       return true;
     }
-    await panel._call("function_repair", "save_one", {
+    const saved = await panel._call("function_repair", "save_one", {
       index,
       tool: validation.config,
       revision: panel._repairToolRevision,
     });
     panel.shadowRoot?.querySelector("#tool-dialog")?.close?.();
     panel._repairToolIndex = null;
-    await refreshAfterRepair(panel, "Function Tool repaired");
+    await refreshAfterRepair(panel, "Function Tool repaired", saved);
   } catch (err) {
     panel._toast(`Unable to repair Function Tool: ${err.message || String(err)}`, true);
   } finally {
@@ -161,11 +167,11 @@ async function deleteInvalidTool(panel, item, button) {
   if (!confirmed) return;
   button.disabled = true;
   try {
-    await panel._call("function_repair", "delete_one", {
+    const saved = await panel._call("function_repair", "delete_one", {
       index: Number(item.index),
       revision: panel._result?.revision,
     });
-    await refreshAfterRepair(panel, "Function Tool deleted");
+    await refreshAfterRepair(panel, "Function Tool deleted", saved);
   } catch (err) {
     panel._toast(`Unable to delete Function Tool: ${err.message || String(err)}`, true);
     button.disabled = false;
@@ -227,8 +233,8 @@ function bindFallbackRepair(panel) {
       }
       button.disabled = true;
       try {
-        await panel._call("function_repair", "save", {tools, revision: panel._result?.revision});
-        await refreshAfterRepair(panel, "Function Tools repaired");
+        const saved = await panel._call("function_repair", "save", {tools, revision: panel._result?.revision});
+        await refreshAfterRepair(panel, "Function Tools repaired", saved);
       } catch (err) {
         panel._toast(`Unable to repair Function Tools: ${err.message || String(err)}`, true);
       } finally {

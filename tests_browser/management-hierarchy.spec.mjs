@@ -190,6 +190,10 @@ test("Request Rules keeps both create paths and a task-ordered layout", async ({
 });
 
 test("rule testing distinguishes safe preview from confirmed live execution", async ({page}) => {
+  await page.route("**/management-decision-guidance*.js", async route => {
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await route.continue();
+  });
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));
   const panel = page.locator("extended-openai-management-panel");
@@ -207,6 +211,9 @@ test("rule testing distinguishes safe preview from confirmed live execution", as
   await expect(live.locator(".eoc-live-label")).toHaveText("Live · real effects possible");
   await live.locator("#eoc-rule-live-text").fill("baseline route");
   await expect(live.locator("#eoc-rule-live-text")).toHaveValue("baseline route");
+  // Opening the details loads this feature asynchronously. Exercise the live
+  // confirmation only after its handler is attached, including delayed imports.
+  await expect(live).toHaveAttribute("data-eoc-bound", "");
   await live.locator("#eoc-rule-live-run").click();
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#confirm-cancel").click();

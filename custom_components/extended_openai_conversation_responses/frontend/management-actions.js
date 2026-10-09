@@ -225,3 +225,17 @@ export function syncAgentPicker(panel) {
   if (pending > 0) picker.setAttribute("aria-busy", "true");
   else picker.removeAttribute("aria-busy");
 }
+
+// Independently saved fields must advance the shared baseline without adopting
+// unrelated persisted values over the assistant's pending settings or title.
+export function synchronizePersistedConfigurationFields(panel, saved, fields) {
+  if (!panel._configData?.config || !saved?.config) return;
+  const updates = Object.fromEntries(fields.filter(key => Object.hasOwn(saved.config, key)).map(key => [key, clone(saved.config[key])]));
+  panel._configData = {...panel._configData, revision:saved.revision, config:{...panel._configData.config, ...updates}};
+  panel._configDataStale = false;
+  panel._rememberCleanConfiguration?.(panel._configData);
+  if (panel._draft && panel._draftAgentId === panel._agentId) {
+    panel._draft = {...panel._draft, ...clone(updates)};
+    panel._syncConfigDirty?.();
+  }
+}

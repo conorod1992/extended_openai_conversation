@@ -38,7 +38,12 @@ from .guest_mode import get_loaded_guest_mode, resolve_guest_policy
 from .ha_llm_tools import is_ha_tool, validate_reference
 from .helpers import get_api_mode, get_exposed_entities, supports_openai_hosted_tools
 from .memory import async_get_memory, memory_enabled
-from .model_capabilities import capability_allowed, model_capability_snapshot
+from .model_capabilities import (
+    capability_allowed,
+    model_capability_snapshot,
+    recommended_reasoning_effort,
+    validate_reasoning_effort,
+)
 from .model_catalog import model_metadata
 from .provider_errors import (
     classify_config_provider_error,
@@ -315,6 +320,24 @@ async def async_test_agent(
     usage_manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
     probe_budget_exhausted = False
     try:
+        # Use the same reasoning default and validator as live requests without
+        # imposing unrelated request settings on this minimal capability probe.
+        with model_capability_snapshot(model, metadata):
+            effort = None
+            if metadata["reasoning"]["supported"]:
+                configured_effort = subentry.data.get("reasoning_effort")
+                if configured_effort is None:
+                    configured_effort = recommended_reasoning_effort(model)
+                effort = validate_reasoning_effort(model, configured_effort, api_mode)
+        probe_reasoning = (
+            (
+                {"reasoning": {"effort": effort}}
+                if api_mode == API_MODE_RESPONSES
+                else {"reasoning_effort": effort}
+            )
+            if effort is not None
+            else {}
+        )
         if api_mode == API_MODE_RESPONSES:
             tools: list[dict[str, Any]] = [noop_tool] if function_tools_required else []
             if web_search and web_search_compatible:
@@ -324,6 +347,7 @@ async def async_test_agent(
                 "input": [{"role": "user", "content": "Reply OK."}],
                 "max_output_tokens": 16,
                 "store": False,
+                **probe_reasoning,
             }
             if tools:
                 response_kwargs.update(tools=tools, tool_choice="none")
@@ -344,6 +368,7 @@ async def async_test_agent(
                 "messages": [{"role": "user", "content": "Reply OK."}],
                 "stream": False,
                 "max_completion_tokens": 16,
+                **probe_reasoning,
             }
             if function_tools_required:
                 kwargs.update(

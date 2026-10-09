@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import time
 from typing import Any
 
@@ -17,6 +18,8 @@ import yaml
 
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
+    CONF_GUEST_POLICY_VERSION,
+    GUEST_POLICY_VERSION,
 )
 from homeassistant.components import conversation, onboarding
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
@@ -331,3 +334,43 @@ async def test_shipped_frontend_treats_hostile_knowledge_and_memory_as_text(
         env=real_ha_shell["env"],
         failure_label="Genuine HA hostile-content rendering failed",
     )
+
+
+@pytest.mark.parametrize("operation,mutate", [("guest",False),("guest",True),("repair",False),("repair",True)])
+async def test_sequential_shared_draft_is_preserved_and_savable(hass, hass_ws_client, operation, mutate):
+    if operation == "repair":
+        valid = {"spec":{"name":"audit_valid_sibling", "description":"Unchanged sibling", "parameters":{"type":"object", "properties":{}}}, "function":{"type":"native", "name":"get_user_from_user_id"}, "enabled":False}
+        invalid = {"spec":{"name":"audit_invalid", "description":"Needs repair", "parameters":{"type":"object", "properties":{}, "description":123}}, "function":{"type":"native", "name":"get_user_from_user_id"}}
+        entry = _make_entry("Sequential repair draft audit", include_ai_task=False,
+            conversation_options={CONF_FUNCTION_TOOLS:yaml.safe_dump([valid, invalid])})
+    else:
+        entry = _make_entry("Sequential Guest draft audit", include_ai_task=False,
+            conversation_options={CONF_GUEST_POLICY_VERSION:GUEST_POLICY_VERSION})
+    await _setup_entry(hass, entry)
+
+    class BrowserClient:
+        client = None
+        async def send_json_auto_id(self, message):
+            if self.client is None:
+                self.client = await _admin_client(hass, hass_ws_client, user_id=f"audit-{operation}-admin")
+            await self.client.send_json_auto_id(message)
+        async def receive_json(self):
+            return await self.client.receive_json()
+
+    runner, backend_url = await _start_ws_bridge(BrowserClient())
+    with socket.socket() as audit_socket:
+        audit_socket.bind(("127.0.0.1", 0))
+        browser_port = str(audit_socket.getsockname()[1])
+    try:
+        await _run_playwright(repo_root=Path(__file__).parents[1],
+            spec="tests_browser/real-ha-sequential-drafts.spec.mjs",
+            config="playwright.config.mjs",
+            env={"REAL_HA_BACKEND_URL":backend_url, "AUDIT_OPERATION":operation,
+                "AUDIT_MUTATE":"1" if mutate else "0",
+                "PLAYWRIGHT_PORT":browser_port, "SHIPPED_BUNDLE":"1"},
+            failure_label=f"Public sequential {operation} operation violated draft invariant")
+    finally:
+        await runner.cleanup()
+        await hass.async_block_till_done()
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()

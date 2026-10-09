@@ -1,4 +1,4 @@
-import {saveConfiguration} from "./management-actions.js";
+import {saveConfiguration, synchronizePersistedConfigurationFields} from "./management-actions.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {UnsavedState, clone, same, draftScope, saveBarMarkup} from "./unsaved-state.js";
 import {NAVIGATION} from "./frontend-navigation.js";
@@ -75,6 +75,7 @@ export function initializePageDraft(panel) {
       current.refreshWarning = null;
       if (view === GUEST) {
         if (panel._agentId === agentId && panel._selectedAgent?.()?.entry_id === entryId) {
+          synchronizePersistedConfigurationFields(panel, saved, Object.keys(saved.config));
           panel._guestMigrationReview = false;
           panel._guestStartingFresh = false;
         }

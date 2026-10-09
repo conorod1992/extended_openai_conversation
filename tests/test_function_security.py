@@ -506,3 +506,33 @@ async def test_indirect_wrapper_is_rejected_at_execution(
     assert outcome["status"] == "denied"
     assert outcome["reason"] == "guest_mode"
     execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize("validated", [False, True])
+@pytest.mark.parametrize("location", ["variables", "data", "composite"])
+def test_guest_script_templates_cannot_hide_outside_action_targets(
+    validated, location, hass
+):
+    from homeassistant.helpers.script_variables import ScriptVariables
+    from homeassistant.helpers.template import Template
+
+    value = "{{ states('sensor.excluded') }}"
+    if validated:
+        value = Template(value, hass)
+    script = {
+        "type": "script",
+        "sequence": [
+            {"action": "light.turn_on", "target": {"entity_id": "light.allowed"}}
+        ],
+    }
+    if location == "data":
+        script["sequence"][0]["data"] = {"brightness": value}
+    else:
+        variables = {"_function_result": value}
+        script["variables"] = ScriptVariables(variables) if validated else variables
+    function = (
+        {"type": "composite", "sequence": [script]}
+        if location == "composite"
+        else script
+    )
+    assert classify_function(function) == FunctionSecurity.UNSCOPABLE
