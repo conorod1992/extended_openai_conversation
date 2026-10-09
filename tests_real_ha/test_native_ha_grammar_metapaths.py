@@ -7,6 +7,8 @@ from itertools import product
 
 import pytest
 
+from homeassistant.helpers import config_validation as cv
+
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _say, _speech
 from tests_real_ha.test_request_rules_script_semantics import _local
 
@@ -70,8 +72,11 @@ async def test_generated_native_script_grammar_preserves_output(
         recorded.append(call.data["message"])
 
     hass.services.async_register("grammar_probe", "record", record)
+    actions = _script_shape(shape, value, gate)
+    # The independent HA schema must accept every generated input before EOAI.
+    cv.SCRIPT_SCHEMA(actions)
     await agent._request_rules.async_create(
-        _local(_script_shape(shape, value, gate), phrase="run grammar")
+        _local(actions, phrase="run grammar")
     )
     answer = await _say(hass, agent, "run grammar")
     assert _speech(answer) == "Done"
