@@ -2892,6 +2892,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("metadata_keys"): list,
         vol.Optional("memory_id"): str,
         vol.Optional("session_id"): str,
+        vol.Optional("target_rule_id"): str,
         vol.Optional("source_id"): str,
         vol.Optional("run_id"): str,
         vol.Optional("query"): str,

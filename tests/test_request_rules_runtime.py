@@ -493,8 +493,9 @@ async def test_local_action_failure_unloads_script_and_clears_active_executor() 
     assert result.response == "Failed kitchen"
     script.async_run.assert_awaited_once()
     script.async_unload.assert_awaited_once_with()
-    logger.exception.assert_called_once()
-    log_args = logger.exception.call_args.args
+    logger.error.assert_called_once()
+    logger.exception.assert_not_called()
+    log_args = logger.error.call_args.args
     assert "Extended OpenAI > Request Rules" in log_args[0]
     assert log_args[1] == "Kitchen lights"
 

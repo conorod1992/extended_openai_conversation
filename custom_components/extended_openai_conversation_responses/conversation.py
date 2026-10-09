@@ -882,11 +882,7 @@ class ExtendedOpenAIAgentEntity(
             temporary_token = _ACTIVE_TEMPORARY_SCOPE.set(temporary_scope)
             function_group_session = (
                 self._function_groups_runtime.begin(
-                    (
-                        f"continuity:{resolution.key}"
-                        if resolution.key
-                        else f"conversation:{chat_log.conversation_id}"
-                    ),
+                    rule_session_key,
                     timeout_minutes if resolution.key else 5,
                 )
                 if self._function_groups_runtime is not None

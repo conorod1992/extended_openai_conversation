@@ -115,7 +115,7 @@ def test_request_rule_session_id_prefers_continuity_identity() -> None:
 
     assert (
         request_rules.request_rule_session_id("device:one", "conversation")
-        == "continuity:device:one"
+        == "continuity:device:one:conversation:conversation"
     )
     assert (
         request_rules.request_rule_session_id(None, "conversation")

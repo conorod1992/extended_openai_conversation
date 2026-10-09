@@ -23,6 +23,23 @@ MAX_PATTERN_CHARS = 200
 _SENTENCE_END = frozenset(".!?。؟")  # NFKC folds fullwidth punctuation to ASCII.
 
 _CAPTURE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+RESERVED_CAPTURE_NAMES = frozenset(
+    {
+        "request",
+        "conversation",
+        "system",
+        "trigger",
+        "this",
+        "repeat",
+        "wait",
+        "true",
+        "false",
+        "none",
+        "True",
+        "False",
+        "None",
+    }
+)
 _NUMERIC_RANGE = re.compile(r"^([+-]?\d+)\.\.([+-]?\d+)$")
 _INTEGER_AT = re.compile(r"[+-]?\d+")
 
@@ -577,7 +594,7 @@ class _Parser:
             raise SentencePatternError("captured value name is required")
         name, separator, spec = raw.partition("=")
         name = name.strip()
-        if not _CAPTURE_NAME.fullmatch(name):
+        if not _CAPTURE_NAME.fullmatch(name) or name in RESERVED_CAPTURE_NAMES:
             raise SentencePatternError(
                 "captured value names must start with a letter or underscore and "
                 "contain only letters, numbers, and underscores"

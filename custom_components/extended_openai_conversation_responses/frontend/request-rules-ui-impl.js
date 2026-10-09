@@ -203,10 +203,14 @@ async function labelConditionAddControl(panel, selector) {
 }
 
 export function renameResultReferences(value, oldAlias, newAlias) {
+  return renameResultReferenceMap(value, new Map([[oldAlias, newAlias]]));
+}
+
+export function renameResultReferenceMap(value, mapping) {
   if (typeof value === "string") return value.replace(/(?<!\{)\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_0-9][A-Za-z0-9_]*)*\}(?!\})/g,
-    (whole) => { const body=whole.slice(1,-1), alias=body.split(".",1)[0]; return alias === oldAlias ? `{${newAlias}${body.slice(alias.length)}}` : whole; });
-  if (Array.isArray(value)) return value.map((item) => renameResultReferences(item, oldAlias, newAlias));
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, key === "result_alias" ? item : renameResultReferences(item, oldAlias, newAlias)]));
+    (whole) => { const body=whole.slice(1,-1), alias=body.split(".",1)[0]; return mapping.has(alias) ? `{${mapping.get(alias)}${body.slice(alias.length)}}` : whole; });
+  if (Array.isArray(value)) return value.map((item) => renameResultReferenceMap(item, mapping));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, key === "result_alias" ? item : renameResultReferenceMap(item, mapping)]));
   return value;
 }
 
@@ -277,8 +281,14 @@ function setReasoningOptions(root, efforts, selected = "") {
     option.textContent = value.charAt(0).toUpperCase() + value.slice(1);
     return option;
   })];
+  if (selected && !values.includes(selected)) {
+    const saved = select.ownerDocument.createElement("option");
+    saved.value = selected;
+    saved.textContent = selected;
+    options.push(saved);
+  }
   select.replaceChildren(...options);
-  select.value = selected && values.includes(selected) ? selected : "";
+  select.value = selected;
 }
 
 export function syncRequestRuleRoutingControls(root, efforts = null, selectedEffort = null) {
@@ -291,7 +301,7 @@ export function syncRequestRuleRoutingControls(root, efforts = null, selectedEff
   const help = root.querySelector("#rule-routing-scope-help");
   if (!actionType || !matchType || !scope) return;
   const modelRouting = actionType.value === "model_routing";
-  const consumed = modelRouting && ["equals", "sentence_pattern"].includes(matchType.value) && !(continueToAi?.checked ?? false);
+  const consumed = modelRouting && ["equals", "sentence_pattern"].includes(matchType.value) && !(continueToAi?.checked ?? false) && !(root.querySelector("#rule-continue-matching")?.checked ?? false);
   const requestOption = scope.querySelector('option[value="request"]');
   if (requestOption) requestOption.disabled = consumed;
   if (consumed) scope.value = "conversation";
@@ -357,7 +367,7 @@ function refreshEditor(panel) {
   syncRequestRuleRoutingControls(root);
   if(local)return;
   const model=q("#rule-model")?.value.trim();
-  if(!model)return;
+  if(!model || /\{[^{}]+\}/.test(model))return;
   const state=editorState(panel), current=++state.modelRevision;
   void ensureModelCatalog().then((module)=>module.lookupModelData(panel,model)).then((data)=>{
     if(current===state.modelRevision && root.querySelector("#rule-dialog")?.open) syncRequestRuleRoutingControls(root,data.reasoning_effort_options);
@@ -421,18 +431,20 @@ export function bindRequestRuleEditor(panel) {
       let actions=readRequestRuleActions(state.actionSelector);
       if(actionType==="local_action"&&!actions.length)throw new Error("Add at least one action before saving this rule.");
       const previous=(panel._result?.rules||[]).find((item)=>item.id===panel._editingRuleId);
+      const aliasMappings = new Map();
       for (const oldStep of previous?.action?.actions || []) {
         const oldAlias=oldStep?.data?.result_alias, stepId=oldStep?.data?.step_id;
         if (!oldAlias || !stepId) continue;
         const edited=actions.find((step)=>step?.data?.step_id===stepId);
         if (edited?.data?.result_alias && edited.data.result_alias!==oldAlias) {
-          actions=renameResultReferences(actions,oldAlias,edited.data.result_alias);
-          q("#rule-success").value=renameResultReferences(q("#rule-success").value,oldAlias,edited.data.result_alias);
+          aliasMappings.set(oldAlias, edited.data.result_alias);
         }
       }
+      actions=renameResultReferenceMap(actions,aliasMappings);
+      const successResponse=renameResultReferenceMap(q("#rule-success").value,aliasMappings);
       const rules=panel._result?.rules||[];
       if(q("#rule-ai-input-mode").value==="capture" && (q("#rule-ai-input-settings").hidden || q("#rule-ai-input-capture").getAttribute("aria-invalid")==="true")) throw new Error(q("#rule-ai-input-help").textContent || "Choose a capture available in every trigger.");
-      const rule={ai_input_mode:q("#rule-ai-input-mode").value,ai_input_capture:q("#rule-ai-input-mode").value==="capture"?q("#rule-ai-input-capture").value:null,name:q("#rule-name").value,enabled:previous?.enabled??true,phrases:q("#rule-phrases").value.split("\n").map((item)=>item.trim()).filter(Boolean),match_type:q("#rule-match").value,action_type:actionType,action:actionType==="local_action"?{actions,success_response:q("#rule-success").value,failure_response:q("#rule-failure").value,continue_to_ai:q("#rule-local-continue-to-ai").checked}:{model:q("#rule-model").value,reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,continue_to_ai:q("#rule-continue-to-ai").checked,success_response:q("#rule-routing-success").value},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked,fuzzy:q("#rule-fuzzy").checked,fuzzy_threshold:fuzzyThresholdValue(q("#rule-threshold").value)},order:rules.find((item)=>item.id===panel._editingRuleId)?.order??rules.length,conditions:state.conditionSelector.value||[],group_id:q("#rule-group").value||null,continue_matching:q("#rule-continue-matching").checked};
+      const rule={ai_input_mode:q("#rule-ai-input-mode").value,ai_input_capture:q("#rule-ai-input-mode").value==="capture"?q("#rule-ai-input-capture").value:null,name:q("#rule-name").value,enabled:previous?.enabled??true,phrases:q("#rule-phrases").value.split("\n").map((item)=>item.trim()).filter(Boolean),match_type:q("#rule-match").value,action_type:actionType,action:actionType==="local_action"?{actions,success_response:successResponse,failure_response:q("#rule-failure").value,continue_to_ai:q("#rule-local-continue-to-ai").checked}:{model:q("#rule-model").value,reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,continue_to_ai:q("#rule-continue-to-ai").checked,success_response:q("#rule-routing-success").value},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked,fuzzy:q("#rule-fuzzy").checked,fuzzy_threshold:fuzzyThresholdValue(q("#rule-threshold").value)},order:rules.find((item)=>item.id===panel._editingRuleId)?.order??rules.length,conditions:state.conditionSelector.value||[],group_id:q("#rule-group").value||null,continue_matching:q("#rule-continue-matching").checked};
       const action=panel._editingRuleId?"update":"create";
       const result=await panel._call("request_rules",action,{...(panel._editingRuleId?{rule_id:panel._editingRuleId}:{}),rule,revision:state.revision});
       dialog.close();

@@ -93,15 +93,18 @@ def test_native_result_sequence_rewrites_nested_result_and_slot_references() -> 
 
     sequence = request_rules._native_result_sequence(actions, {"room": "Kitchen"})
 
-    assert sequence[0]["data"]["attributes"]["template"] == (
-        "{{ reading['values'][('0' if reading['values'] is mapping else 0)] }} "
-        "{{ room }} {missing}"
-    )
+    template = sequence[0]["data"]["attributes"]["template"]
+    helper = template.split("(", 1)[0].removeprefix("{{ ")
+    assert helper.startswith("__eoai_result_value_")
+    assert template == "{{ " + helper + "('reading.values.0') }} {{ room }} {missing}"
     assert sequence[0]["response_variable"] == "__eoai_result_reading"
     assert sequence[1] == {
-        "variables": {"reading": "{{ __eoai_result_reading.result }}"}
+        "if": "{{ __eoai_result_reading is defined }}",
+        "then": [{"variables": {"reading": "{{ __eoai_result_reading.result }}"}}],
     }
-    assert sequence[2]["data"]["values"][0]["template"] == ("{{ reading['value'] }}")
+    assert sequence[2]["data"]["values"][0]["template"] == (
+        "{{ " + helper + "('reading.value') }}"
+    )
     assert sequence[0]["enabled"] is False
 
 

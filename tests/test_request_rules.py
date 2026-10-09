@@ -1520,7 +1520,7 @@ def test_unicode_normalization_distinguishes_dotless_i_from_ascii_i() -> None:
 
 def test_session_identity_uses_continuity_or_actual_chat_log_id() -> None:
     assert request_rule_session_id("device:kitchen", "core-id") == (
-        "continuity:device:kitchen"
+        "continuity:device:kitchen:conversation:core-id"
     )
     assert request_rule_session_id(None, "core-created-id") == (
         "conversation:core-created-id"

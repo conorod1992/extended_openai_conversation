@@ -31,7 +31,9 @@ from homeassistant.helpers import condition as ha_condition, config_validation a
 from homeassistant.helpers.script import Script, async_validate_actions_config
 from homeassistant.helpers.script_variables import ScriptVariables
 from homeassistant.helpers.template import Template
+from homeassistant.helpers.trace import StopReason, script_execution_cv
 from homeassistant.helpers.typing import UNDEFINED
+from homeassistant.util.async_ import create_eager_task
 
 from .const import (
     CONF_CHAT_MODEL,
@@ -57,6 +59,7 @@ from .persistence_hardening import (
 )
 from .request_rule_patterns import (
     MAX_AGENT_PATTERN_STATES,
+    RESERVED_CAPTURE_NAMES,
     CompiledSentencePattern,
     MatchBudget,
     PreparedSentenceText,
@@ -94,7 +97,7 @@ RESERVED_RESULT_ALIASES = {
     "this",
     "repeat",
     "wait",
-}
+} | RESERVED_CAPTURE_NAMES
 MAX_RESULT_BYTES = 16384
 MAX_RESULT_DEPTH = 8
 JINJA_SLOT_REFERENCE = re.compile(
@@ -1358,7 +1361,7 @@ class RequestRuleRuntime:
 def request_rule_session_id(continuity_key: str | None, conversation_id: str) -> str:
     """Use the resolved continuity identity, or Core's actual ChatLog identity."""
     return (
-        f"continuity:{continuity_key}"
+        f"continuity:{continuity_key}:conversation:{conversation_id}"
         if continuity_key
         else f"conversation:{conversation_id}"
     )
@@ -1637,6 +1640,7 @@ def _stored_slot_names(value: Mapping[str, Any]) -> list[str]:
             isinstance(slot, Mapping)
             and isinstance(slot.get("name"), str)
             and SLOT_NAME.fullmatch(str(slot["name"]))
+            and slot["name"] not in RESERVED_CAPTURE_NAMES
         ):
             result.append(str(slot["name"]))
     return sorted(set(result))
@@ -1929,7 +1933,8 @@ def _assign_missing_result_step_ids(value: Any) -> Any:
             continue
         data = step.get("data")
         if (
-            step.get("action") == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+            step.get("action", step.get("service"))
+            == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
             and isinstance(data, dict)
             and data.get("result_alias")
             and not data.get("step_id")
@@ -2003,9 +2008,9 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
                 + ", ".join(sorted(missing))
             )
         data = step.get("data", {})
-        if step.get("action") != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}" or not isinstance(
-            data, Mapping
-        ):
+        if step.get(
+            "action", step.get("service")
+        ) != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}" or not isinstance(data, Mapping):
             continue
         alias = data.get("result_alias")
         if alias is None:
@@ -2055,7 +2060,15 @@ def _mask_script_templates(
         # durations/timeouts, repeat iteration sources and shorthand conditions.
         # Keep those templates intact so type-aware validation sees a template
         # instead of an arbitrary placeholder string that is invalid for the field.
-        if key in {"delay", "timeout", "for_each", "conditions"} or parent_key in {
+        if key in {
+            "delay",
+            "timeout",
+            "for_each",
+            "conditions",
+            "if",
+            "while",
+            "until",
+        } or parent_key in {
             "delay",
             "timeout",
         }:
@@ -2244,8 +2257,6 @@ async def async_call_active_function(
             with suppress(json.JSONDecodeError):
                 payload = json.loads(payload)
         results[result_alias] = _bounded_function_result(payload)
-        for reference in (_ACTIVE_RESULT_PATHS.get() or {}).get(result_alias, set()):
-            resolve_result_values(reference, {}, results)
         return results[result_alias]
     return result
 
@@ -2293,30 +2304,29 @@ class RuleResponseValueError(ValueError):
     """An unavailable, validated variable/path in a rule's final response."""
 
 
+def _lookup_result_value(token: str, results: Mapping[str, Any]) -> Any:
+    """Traverse only mapping keys and list indices, never attributes or scalars."""
+    alias, *path = token.split(".")
+    if alias not in results:
+        raise RuleResponseValueError(f"Function result {alias} is unavailable")
+    current = results[alias]
+    for part in path:
+        if isinstance(current, Mapping) and part in current:
+            current = current[part]
+        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+            current = current[int(part)]
+        else:
+            raise RuleResponseValueError(f"Function result path {token} is unavailable")
+    return current
+
+
 def resolve_result_values(
     value: Any, slots: Mapping[str, str], results: Mapping[str, Any]
 ) -> Any:
     """Resolve exact result paths, keeping captures in their own namespace."""
 
     def lookup(token: str) -> Any:
-        alias, *path = token.split(".")
-        if alias not in results:
-            raise RuleResponseValueError(f"Function result {alias} is unavailable")
-        current = results[alias]
-        for part in path:
-            if isinstance(current, Mapping) and part in current:
-                current = current[part]
-            elif (
-                isinstance(current, list)
-                and part.isdigit()
-                and int(part) < len(current)
-            ):
-                current = current[int(part)]
-            else:
-                raise RuleResponseValueError(
-                    f"Function result path {token} is unavailable"
-                )
-        return current
+        return _lookup_result_value(token, results)
 
     if isinstance(value, str):
         exact = re.fullmatch(
@@ -2356,30 +2366,25 @@ def _native_result_sequence(
         for step in actions
         if isinstance(step.get("data"), Mapping) and step["data"].get("result_alias")
     }
+    # Each frozen script owns its helper; captured/native names cannot shadow it.
+    lookup_name = f"__eoai_result_value_{uuid4().hex}"
 
     def result_template(match: re.Match[str]) -> str:
-        alias, *path = match.group(0)[1:-1].split(".")
-        expression = alias
-        for part in path:
-            # Bracket lookup avoids dict methods (for example ``items``).
-            # Numeric segments index lists but retain string keys in mappings,
-            # exactly as the final-response resolver does.
-            index = (
-                f"({part!r} if {expression} is mapping else {int(part)})"
-                if part.isdigit()
-                else repr(part)
-            )
-            expression += f"[{index}]"
-        return "{{ " + expression + " }}"
+        token = match.group(0)[1:-1]
+        return "{{ " + lookup_name + "(" + repr(token) + ") }}"
 
     def native_templates(value: Any) -> Any:
         if isinstance(value, str):
             value = RESULT_REFERENCE.sub(result_template, value)
             return SLOT_REFERENCE.sub(
                 lambda match: (
-                    "{{ " + match.group(1) + " }}"
-                    if match.group(1) in aliases or match.group(1) in slots
-                    else match.group(0)
+                    result_template(match)
+                    if match.group(1) in aliases
+                    else (
+                        "{{ " + match.group(1) + " }}"
+                        if match.group(1) in slots
+                        else match.group(0)
+                    )
                 ),
                 value,
             )
@@ -2399,7 +2404,12 @@ def _native_result_sequence(
             rendered["response_variable"] = response_name
             sequence.append(rendered)
             sequence.append(
-                {"variables": {alias: "{{ " + response_name + ".result }}"}}
+                {
+                    "if": "{{ " + response_name + " is defined }}",
+                    "then": [
+                        {"variables": {alias: "{{ " + response_name + ".result }}"}}
+                    ],
+                }
             )
         else:
             sequence.append(rendered)
@@ -2640,6 +2650,63 @@ def _guard_template_reads(
         }
     if isinstance(value, list):
         return [_guard_template_reads(item, policy) for item in value]
+    return value
+
+
+class _ResultReferenceTemplate(Template):
+    """Keep lazy result failures fatal even inside native if/choose conditions."""
+
+    def __init__(
+        self,
+        source: Template,
+        helper: str,
+        on_error: Callable[[RuleResponseValueError], None],
+    ) -> None:
+        super().__init__(source.template, source.hass)
+        self._source = source
+        self._helper = helper
+        self._on_error = on_error
+
+    def async_render_to_info(self, variables=None, **kwargs):
+        scope = dict(variables or {})
+        scope[self._helper] = lambda token: _lookup_result_value(token, variables or {})
+        info = self._source.async_render_to_info(scope, **kwargs)
+        error = info.exception
+        seen = set()
+        while error is not None and id(error) not in seen:
+            if isinstance(error, RuleResponseValueError):
+                # Tracked wait templates render in HA event callbacks. Raising
+                # there alone cannot stop the owning script.
+                self._on_error(error)
+                # Outside Jinja this remains a ValueError. HA must not convert a
+                # reached invalid reference into a false condition or continue.
+                raise error
+            seen.add(id(error))
+            error = error.__cause__ or error.__context__
+        return info
+
+    def async_render(self, *args, **kwargs):
+        return self.async_render_to_info(*args, **kwargs).result()
+
+
+def _guard_result_references(
+    value: Any, on_error: Callable[[RuleResponseValueError], None]
+) -> Any:
+    if isinstance(value, Template):
+        helper = re.search(r"\b__eoai_result_value_[0-9a-f]{32}\b", value.template)
+        return (
+            _ResultReferenceTemplate(value, helper.group(), on_error)
+            if helper
+            else value
+        )
+    if isinstance(value, ScriptVariables):
+        return ScriptVariables(_guard_result_references(value.as_dict(), on_error))
+    if isinstance(value, Mapping):
+        return {
+            key: _guard_result_references(item, on_error) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_guard_result_references(item, on_error) for item in value]
     return value
 
 
@@ -2960,9 +3027,11 @@ async def _async_evaluate_matched_rule(
                 )
             except GuestModeDenied:
                 allowed = False
-            except Exception:
-                _LOGGER.exception(
-                    "Guest authorization failed for Request Rule %s", rule["id"]
+            except Exception as err:
+                _LOGGER.error(
+                    "Guest authorization failed for Request Rule %s (%s)",
+                    rule["id"],
+                    type(err).__name__,
                 )
                 allowed = False
             if not allowed:
@@ -2991,6 +3060,21 @@ async def _async_evaluate_matched_rule(
             validated_actions = await async_validate_actions_config(
                 hass, schema_actions
             )
+            result_reference_error: RuleResponseValueError | None = None
+            result_reference_stop: asyncio.Task[None] | None = None
+
+            def stop_on_result_error(error: RuleResponseValueError) -> None:
+                nonlocal result_reference_error, result_reference_stop
+                if result_reference_error is None:
+                    result_reference_error = error
+                    # Start eagerly so HA's stop signal is set in this callback,
+                    # before a ready wait timeout can advance to another action.
+                    result_reference_stop = create_eager_task(script.async_stop())
+
+            if captures_results:
+                validated_actions = _guard_result_references(
+                    validated_actions, stop_on_result_error
+                )
 
             def current_policy() -> GuestCapabilityPolicy:
                 nonlocal policy
@@ -3051,14 +3135,22 @@ async def _async_evaluate_matched_rule(
             paths_token = _ACTIVE_RESULT_PATHS.set(
                 _result_paths_by_alias(executable_actions)
             )
+            execution = StopReason()
+            execution_token = script_execution_cv.set(execution)
             try:
                 run_result = await script.async_run(
                     {**match.slots, "request": {"slots": dict(match.slots)}},
                     context,
                 )
+                if result_reference_error is not None:
+                    raise result_reference_error
                 variables = run_result.variables if run_result is not None else {}
-                if run_result is None or not (
-                    variables.get(completion_marker) or variables.get(stop_marker)
+                if (
+                    execution.script_execution in {"aborted", "error", "cancelled"}
+                    or run_result is None
+                    or not (
+                        variables.get(completion_marker) or variables.get(stop_marker)
+                    )
                 ):
                     return RuleEvaluation(
                         match,
@@ -3078,10 +3170,13 @@ async def _async_evaluate_matched_rule(
                     variables.get(stop_marker)
                 )
             finally:
+                script_execution_cv.reset(execution_token)
                 _ACTIVE_RESULT_PATHS.reset(paths_token)
                 _ACTIVE_FUNCTION_RESULTS.reset(result_token)
                 _ACTIVE_FUNCTION_EXECUTOR.reset(token)
                 _ACTIVE_ACTION_GUARD.reset(guard_token)
+                if result_reference_stop is not None:
+                    await result_reference_stop
                 # Script.async_unload was added after our minimum supported HA.
                 # Older Script releases expose async_stop for the same final
                 # run cleanup; keep using async_unload where it is available.
@@ -3091,14 +3186,15 @@ async def _async_evaluate_matched_rule(
                     await script.async_stop()
         except GuestModeDenied, _GuestTemplateDenied:
             return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
-        except Exception:
+        except Exception as err:
             if require_matching_revision is not None:
                 require_matching_revision()
-            _LOGGER.exception(
+            _LOGGER.error(
                 "Request Rule '%s' failed while running its local Home Assistant "
                 "action. Review the rule's actions and referenced entities/services "
-                "in Extended OpenAI > Request Rules",
+                "in Extended OpenAI > Request Rules (%s)",
                 rule.get("name") or rule["id"],
+                type(err).__name__,
             )
             return RuleEvaluation(
                 match,
