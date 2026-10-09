@@ -111,7 +111,7 @@ def _optional_null_plan(
     resolver: Any = None,
 ) -> _OptionalNullPlan:
     from jsonschema.validators import validator_for
-    from referencing import Registry, Resource
+    from referencing import Resource
     from referencing.jsonschema import DRAFT202012, specification_with
 
     root = schema if root is None else root
@@ -121,9 +121,9 @@ def _optional_null_plan(
     validator = validator_for(root)(root) if validator is None else validator
     specification = specification_with(root.get("$schema", ""), default=DRAFT202012)
     if resolver is None:
-        resolver = Registry().resolver_with_root(
-            Resource.from_contents(root, default_specification=specification)
-        )
+        # Keep the validator's existing registry/retrieval behavior as well as
+        # its root resource. jsonschema uses this resolver for descend itself.
+        resolver = validator._resolver
 
     class ScopedValidator:
         """Validate a branch with the same resource scope used by its plan."""

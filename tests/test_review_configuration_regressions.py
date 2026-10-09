@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from jsonschema import Draft202012Validator
 import pytest
+from referencing import Registry, Resource
 import yaml
 
 from custom_components.extended_openai_conversation_responses import (
@@ -13,6 +14,7 @@ from custom_components.extended_openai_conversation_responses import (
     management_ui,
 )
 from custom_components.extended_openai_conversation_responses.ai_task import (
+    _optional_null_plan,
     parse_ai_task_structured_response,
 )
 from custom_components.extended_openai_conversation_responses.entity import (
@@ -104,6 +106,20 @@ def test_ai_task_references_use_nested_resource_scope(
     assert result == expected
     assert schema == original
     assert ("optional" in data["payload"]) == placeholder
+
+
+def test_ai_task_cleanup_preserves_validator_reference_registry():
+    schema = {"type": "object", "properties": {"optional": {"$ref": "urn:review:text"}}}
+    resource = Resource.from_contents(
+        {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "string"}
+    )
+    validator = Draft202012Validator(
+        schema, registry=Registry().with_resource("urn:review:text", resource)
+    )
+    assert (
+        _optional_null_plan(schema, validator=validator).apply({"optional": None})[0]
+        == {}
+    )
 
 
 @pytest.mark.parametrize("concurrent_save", [False, True])
