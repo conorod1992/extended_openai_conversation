@@ -75,7 +75,10 @@ _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
 _MEMORY_KEY_PATTERN = re.compile(r"^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$")
 _SECRET_PATTERN = re.compile(
-    r"(?<![^\W_])(?:password|passcode|api[_ -]?key|access[_ -]?token|auth[_ -]?token|"
+    # Accept separators and camelCase label starts; keep case transitions
+    # case-sensitive even though credential names themselves ignore case.
+    r"(?:(?<![^\W_])|(?<=(?-i:[a-z]))(?=(?-i:[A-Z])))"
+    r"(?:password|passcode|api[_ -]?key|access[_ -]?token|auth[_ -]?token|"
     r"security[_ -]?code|secret|pin)\b\s*(?:is|:|=)\s*\S+|"
     r"\bsk-[A-Za-z0-9_-]{12,}\b",
     re.IGNORECASE,
