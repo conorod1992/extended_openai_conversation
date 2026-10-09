@@ -11,6 +11,7 @@ from typing import Any, cast
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
+    area_registry as ar,
     device_registry as dr,
     entity_registry as er,
     target as target_helpers,
@@ -835,6 +836,7 @@ def _resolve_legacy_entity_ids(
     labels = _string_set(options.get(label_key, ()))
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
+    area_registry = ar.async_get(hass)
     allowed: set[str] = set()
     for state in hass.states.async_all():
         entity_id = state.entity_id
@@ -851,6 +853,8 @@ def _resolve_legacy_entity_ids(
         entity_labels = set(getattr(registry_entry, "labels", ()) or ()) | set(
             getattr(device, "labels", ()) or ()
         )
+        area = area_registry.async_get_area(effective_area) if effective_area else None
+        entity_labels.update(getattr(area, "labels", ()) or ())
         if (
             entity_id in explicit
             or entity_id.partition(".")[0] in domains
@@ -888,6 +892,7 @@ def resolve_guest_selector_entity_ids(
         return set()
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
+    area_registry = ar.async_get(hass)
     matched: set[str] = set()
     for entity_id in candidates:
         registry_entry = entity_registry.async_get(entity_id)
@@ -903,6 +908,8 @@ def resolve_guest_selector_entity_ids(
         entity_labels = set(getattr(registry_entry, "labels", ()) or ()) | set(
             getattr(device, "labels", ()) or ()
         )
+        area = area_registry.async_get_area(effective_area) if effective_area else None
+        entity_labels.update(getattr(area, "labels", ()) or ())
         if (
             entity_id in explicit
             or entity_id.partition(".")[0] in selected_domains
@@ -1019,6 +1026,27 @@ def guest_arguments_allowed_runtime(
 
     def inspect(item: Any, key: str | None = None) -> bool:
         if isinstance(item, Mapping):
+            if control:
+                domain, service = item.get("domain"), item.get("service")
+                action_name = item.get("action", service)
+                if isinstance(action_name, str) and "." in action_name:
+                    domain, _, service = action_name.partition(".")
+                if isinstance(domain, str) and isinstance(service, str):
+                    from .functions.native import _service_participants
+
+                    generic = domain == "homeassistant" and service in {
+                        "turn_on",
+                        "turn_off",
+                        "toggle",
+                        "update_entity",
+                    }
+                    internal = domain == DOMAIN and service == "call_function"
+                    if (
+                        not generic
+                        and not internal
+                        and _service_participants(hass, domain, service, set()) is None
+                    ):
+                        return False
             return all(
                 inspect(child, str(child_key).lower())
                 for child_key, child in item.items()

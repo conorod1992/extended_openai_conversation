@@ -231,13 +231,14 @@ def _append_automation_atomic(
     existing_text = previous or ""
     if existing_text.strip():
         try:
-            current = yaml.safe_load(existing_text)
+            current_node = yaml.compose(existing_text, Loader=yaml.SafeLoader)
         except yaml.YAMLError as err:
             raise HomeAssistantError(
                 f"Existing automations YAML is invalid: {err}"
             ) from err
-        if not isinstance(current, list):
+        if not isinstance(current_node, yaml.SequenceNode):
             raise HomeAssistantError("Existing automations YAML must contain a list")
+        current = current_node.value
     else:
         current = []
 
@@ -250,14 +251,22 @@ def _append_automation_atomic(
             prefix += "\n"
         updated = prefix + raw_config
         try:
-            combined = yaml.safe_load(updated)
+            combined_node = yaml.compose(updated, Loader=yaml.SafeLoader)
+            combined = (
+                combined_node.value
+                if isinstance(combined_node, yaml.SequenceNode)
+                else None
+            )
         except yaml.YAMLError:
             combined = None
         if not isinstance(combined, list) or len(combined) != len(current) + 1:
             # Non-standard flow-style list: correctness is more important than
             # preserving formatting, so fall back to serializing the complete list.
-            updated = yaml.safe_dump(
-                [*current, config], allow_unicode=True, sort_keys=False
+            new_node = yaml.compose(raw_config, Loader=yaml.SafeLoader)
+            assert isinstance(new_node, yaml.SequenceNode)
+            updated = yaml.serialize(
+                yaml.SequenceNode("tag:yaml.org,2002:seq", [*current, *new_node.value]),
+                allow_unicode=True,
             )
 
     _atomic_write_text(path, updated, expected_previous=previous)
@@ -390,6 +399,8 @@ class NativeFunction(Function):
             for key in _INDIRECT_TARGET_KEYS
             if (value := service_data.get(key)) is not None
         }
+        if service_data.get("entity_id"):
+            selection["entity_id"] = service_data["entity_id"]
         if not selection:
             return
 
@@ -430,14 +441,21 @@ class NativeFunction(Function):
                 candidates = _service_participants(hass, domain, service, participating)
                 if candidates is not None:
                     participating.intersection_update(candidates)
+                elif domain != "homeassistant":
+                    participating = {
+                        entity_id
+                        for entity_id in participating
+                        if entity_id.partition(".")[0] == domain
+                    }
             if not participating:
                 raise HomeAssistantError(
                     "Service target does not resolve to any participating entities"
                 )
-        # Check exposure for the complete selection, but availability only for
-        # participants. One validation pass builds the exposed-ID set once.
         self.validate_entity_ids(
-            hass, entity_ids, exposed_entities, availability_entity_ids=participating
+            hass,
+            sorted(participating),
+            exposed_entities,
+            require_available=(domain, service) != ("homeassistant", "update_entity"),
         )
 
     async def execute_service_single(
@@ -478,7 +496,6 @@ class NativeFunction(Function):
 
         # Explicit entity IDs use the existing policy check. Resolve only indirect
         # area/device/floor/label targets so those selectors cannot bypass it.
-        self.validate_entity_ids(hass, entity_id or [], exposed_entities)
         self.validate_service_targets(
             hass, service_data, exposed_entities, domain=domain, service=service
         )

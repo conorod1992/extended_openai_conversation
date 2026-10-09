@@ -278,8 +278,8 @@ def _copy_light_color(attributes: Mapping[str, Any], result: dict[str, Any]) -> 
         "hs": "hs_color",
         "xy": "xy_color",
         "rgb": "rgb_color",
-        "rgbw": "rgb_color",
-        "rgbww": "rgb_color",
+        "rgbw": "rgbw_color",
+        "rgbww": "rgbww_color",
     }.get(color_mode_key)
     if color_mode_key:
         if preferred is not None:

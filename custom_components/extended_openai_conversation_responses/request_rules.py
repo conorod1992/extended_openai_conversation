@@ -2504,6 +2504,8 @@ def _guest_script_allowed(
     slots: Mapping[str, str] | None = None,
 ) -> bool:
     """Authorize effects without interpreting native wait/condition templates."""
+    if not _guest_template_reads_allowed(hass, sequence, policy, slots or {}):
+        return False
     for item in _iter_script_actions(sequence):
         if slots is not None and any(
             key in item for key in ("action", "service", "scene")
@@ -2536,6 +2538,55 @@ def _guest_script_allowed(
         elif any(key in item for key in ("device_id", "event", "event_type")):
             return False
     return True
+
+
+def _guest_template_reads_allowed(
+    hass: HomeAssistant,
+    value: Any,
+    policy: GuestCapabilityPolicy,
+    slots: Mapping[str, str],
+) -> bool:
+    """Authorize the state dependencies of every local-rule template."""
+    from jinja2 import meta
+
+    from homeassistant.helpers.template import Template, TemplateEnvironment
+
+    if isinstance(value, Mapping):
+        return all(
+            _guest_template_reads_allowed(hass, item, policy, slots)
+            for item in value.values()
+        )
+    if isinstance(value, (list, tuple)):
+        return all(
+            _guest_template_reads_allowed(hass, item, policy, slots) for item in value
+        )
+    source = value.template if isinstance(value, Template) else value
+    if not isinstance(source, str) or ("{{" not in source and "{%" not in source):
+        return True
+    template = Template(source, hass)
+    environment = TemplateEnvironment(hass, limited=False, strict=False)
+    unknown = (
+        meta.find_undeclared_variables(environment.parse(source))
+        - set(slots)
+        - {"request"}
+    )
+    if unknown:
+        # Native-local variables/results may select a different entity at runtime.
+        # Do not certify reads that cannot be resolved in this preflight scope.
+        return False
+    info = template.async_render_to_info({**slots, "request": {"slots": dict(slots)}})
+    if info.exception is not None:
+        return False
+    if not all(policy.allows_entity_read(entity_id) for entity_id in info.entities):
+        return False
+    return not (
+        (info.all_states or info.domains)
+        and any(
+            not policy.allows_entity_read(state.entity_id)
+            for state in hass.states.async_all()
+            if info.all_states or state.domain in info.domains
+        )
+    )
 
 
 def _guard_native_actions(actions: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:

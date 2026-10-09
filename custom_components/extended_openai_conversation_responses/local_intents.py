@@ -152,7 +152,12 @@ async def async_try_handle_local_intent(
     # HA's HassBroadcast only has a message slot and broadcasts to every other
     # satellite. Resolve explicit area/device/floor/label wording first so a command
     # like "broadcast to the kitchen..." is deterministic and provider-free.
-    targeted = await _async_try_targeted_broadcast(hass, user_input)
+    excluded = tuple(options.get(CONF_LOCAL_INTENT_EXCLUSIONS, ()))
+    targeted = (
+        None
+        if "HassBroadcast" in excluded
+        else await _async_try_targeted_broadcast(hass, user_input)
+    )
     if targeted is not None:
         return targeted
 

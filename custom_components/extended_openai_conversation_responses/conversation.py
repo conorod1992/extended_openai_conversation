@@ -2037,9 +2037,14 @@ class ExtendedOpenAIAgentEntity(
                 getattr(self, "hass", None), HomeAssistant
             ):
                 exposed_entities = self._get_exposed_entities()
-            content = await self._async_dispatch_function_tool(
-                function_tool, tool_input, llm_context, exposed_entities
-            )
+            from .skill_runtime_availability import selected_skill_scope
+
+            with selected_skill_scope(
+                getattr(getattr(self, "subentry", None), "data", {})
+            ):
+                content = await self._async_dispatch_function_tool(
+                    function_tool, tool_input, llm_context, exposed_entities
+                )
             payload = tool_result_data(content)
             if isinstance(payload, dict) and isinstance(payload.get("result"), str):
                 payload["result"] = bounded_tool_result_text(payload["result"])

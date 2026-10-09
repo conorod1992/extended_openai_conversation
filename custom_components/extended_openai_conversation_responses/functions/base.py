@@ -8,7 +8,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
@@ -125,7 +125,7 @@ class Function(ABC):
             entity_id
             for entity_id, state in states.items()
             if state is not None
-            and state.state in {STATE_UNAVAILABLE, STATE_UNKNOWN}
+            and state.state == STATE_UNAVAILABLE
             and (
                 availability_entity_ids is None or entity_id in availability_entity_ids
             )
