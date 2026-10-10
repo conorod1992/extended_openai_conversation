@@ -16,8 +16,8 @@ EOAI_VERSION = Version(
 )
 
 MAX_CATALOG_BYTES = 256 * 1024
-SUPPORTED_SCHEMA_VERSIONS = frozenset({5, 6, 7})
-CURRENT_SCHEMA_VERSION = 7
+SUPPORTED_SCHEMA_VERSIONS = frozenset({5, 6, 7, 8})
+CURRENT_SCHEMA_VERSION = 8
 COMPATIBILITY_MESSAGE = (
     "A newer model catalogue is available, but it requires a newer version "
     "of Extended OpenAI Conversation."
@@ -254,11 +254,13 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
 
     output_tokens = value["output_tokens"]
     _keys(output_tokens, {"responses", "chat_completions", "legacy_max_tokens"})
-    if output_tokens != {
-        "responses": "max_output_tokens",
-        "chat_completions": "max_completion_tokens",
-        "legacy_max_tokens": "never_send",
-    }:
+    chat_field = output_tokens["chat_completions"]
+    if (
+        output_tokens["responses"] != "max_output_tokens"
+        or chat_field not in {"max_tokens", "max_completion_tokens"}
+        or output_tokens["legacy_max_tokens"]
+        != ("chat_completions_only" if chat_field == "max_tokens" else "never_send")
+    ):
         raise ValueError("Invalid output-token parameter mapping")
 
     profile = value["recommended_profile"]
@@ -823,8 +825,10 @@ def compatibility_capabilities(
         "supports_top_p": metadata["top_p"]["support"] in {"always", "conditional"},
         "supports_temperature": metadata["temperature"]["support"]
         in {"always", "conditional"},
-        "supports_max_tokens": False,
-        "supports_max_completion_tokens": True,
+        "supports_max_tokens": metadata["output_tokens"]["chat_completions"]
+        == "max_tokens",
+        "supports_max_completion_tokens": metadata["output_tokens"]["chat_completions"]
+        == "max_completion_tokens",
         "supports_reasoning_effort": metadata["reasoning"]["supported"],
         "supports_service_tier": bool(metadata["service_tiers"]),
         "service_tier_options": list(metadata["service_tiers"]),

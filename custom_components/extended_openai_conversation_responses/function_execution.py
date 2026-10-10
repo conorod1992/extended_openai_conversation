@@ -156,6 +156,63 @@ def validate_function_schema(schema: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(warnings)
 
 
+def validate_strict_function_schema(schema: Mapping[str, Any]) -> None:
+    """Reject provider-invalid strict object schemas at configuration time."""
+    if schema.get("type") != "object":
+        raise _schema_error("strict parameters.type must be object")
+
+    def visit(node: Any, path: str, depth: int = 0) -> None:
+        if not isinstance(node, Mapping):
+            raise _schema_error(f"strict schema at `{path}` must be an object")
+        if depth > 64:
+            raise _schema_error(f"strict schema at `{path}` is too deeply nested")
+        types = node.get("type", [])
+        types = [types] if isinstance(types, str) else types
+        if not isinstance(types, list) or not all(
+            isinstance(item, str) for item in types
+        ):
+            raise _schema_error(f"strict `{path}.type` must name valid JSON types")
+        if "object" in types or "properties" in node:
+            if node.get("additionalProperties") is not False:
+                raise _schema_error(
+                    f"strict `{path}.additionalProperties` must be false"
+                )
+            properties = node.get("properties", {})
+            required = node.get("required", [])
+            if not isinstance(properties, Mapping):
+                raise _schema_error(f"strict `{path}.properties` must be an object")
+            if not isinstance(required, list) or not all(
+                isinstance(item, str) for item in required
+            ):
+                raise _schema_error(
+                    f"strict `{path}.required` must be a list of property names"
+                )
+            if set(required) != set(properties):
+                raise _schema_error(
+                    f"strict `{path}.required` must include every property"
+                )
+        if "array" in types and "items" not in node:
+            raise _schema_error(f"strict `{path}.items` is required")
+        for keyword in ("properties", "$defs", "definitions"):
+            children = node.get(keyword, {})
+            if not isinstance(children, Mapping):
+                raise _schema_error(f"strict `{path}.{keyword}` must be an object")
+            for name, child in children.items():
+                visit(child, f"{path}.{keyword}.{name}", depth + 1)
+        if "items" in node:
+            visit(node["items"], f"{path}.items", depth + 1)
+        for keyword in ("anyOf", "oneOf", "allOf"):
+            children = node.get(keyword, [])
+            if not isinstance(children, list):
+                raise _schema_error(
+                    f"strict `{path}.{keyword}` must be a list of schemas"
+                )
+            for index, child in enumerate(children):
+                visit(child, f"{path}.{keyword}[{index}]", depth + 1)
+
+    visit(schema, "parameters")
+
+
 def _validate_schema_node(
     path: str, schema: Mapping[str, Any], warnings: list[str]
 ) -> None:

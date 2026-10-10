@@ -172,7 +172,10 @@ from .const import (
     VOICE_POLICIES,
     WEB_SEARCH_CONTEXT_OPTIONS,
 )
-from .function_execution import validate_function_schema
+from .function_execution import (
+    validate_function_schema,
+    validate_strict_function_schema,
+)
 from .function_tool_policy import (
     FUNCTION_TOOL_NAME_PATTERN,
     NATIVE_FUNCTION_IMPLEMENTATIONS,
@@ -510,6 +513,8 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
             raise AgentConfigError(f"{field}.spec.parameters", "must be an object")
         try:
             validate_function_schema(parameters)
+            if strict:
+                validate_strict_function_schema(parameters)
         except HomeAssistantError as err:
             message = str(err).removeprefix("Function input schema is invalid: ")
             raise AgentConfigError(f"{field}.spec.parameters", message) from err
