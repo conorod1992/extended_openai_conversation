@@ -1070,7 +1070,7 @@ def guest_arguments_allowed_runtime(
                 if isinstance(action_name, str) and "." in action_name:
                     domain, _, service = action_name.partition(".")
                 if isinstance(domain, str) and isinstance(service, str):
-                    from .functions.native import _service_participants
+                    from .ha_actions import _service_participants
 
                     generic = domain == "homeassistant" and service in {
                         "turn_on",
