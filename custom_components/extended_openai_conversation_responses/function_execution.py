@@ -460,9 +460,19 @@ async def async_validate_function_arguments(
     return validated
 
 
+def _non_null_schema_types(schema: Mapping[str, Any]) -> set[str]:
+    """Normalize supported JSON Schema type declarations without hashing lists."""
+    value = schema.get("type")
+    if isinstance(value, str):
+        return {value} - {"null"}
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return set(value) - {"null"}
+    return set()
+
+
 def _is_legacy_delay_schema(schema: object) -> bool:
-    """Return whether a parameter matches the documented legacy delay contract."""
-    if not isinstance(schema, Mapping) or schema.get("type") != "object":
+    """Recognize the documented delay contract, including nullable declarations."""
+    if not isinstance(schema, Mapping) or _non_null_schema_types(schema) != {"object"}:
         return False
     properties = schema.get("properties")
     if not isinstance(properties, Mapping) or not properties:
@@ -470,7 +480,9 @@ def _is_legacy_delay_schema(schema: object) -> bool:
     if not set(properties).issubset(_LEGACY_DELAY_FIELDS):
         return False
     return all(
-        isinstance(child, Mapping) and child.get("type") in {"integer", "number"}
+        isinstance(child, Mapping)
+        and bool(types := _non_null_schema_types(child))
+        and types <= {"integer", "number"}
         for child in properties.values()
     )
 
@@ -494,13 +506,18 @@ def split_legacy_execution_delay(
         return execution_arguments, None
     delay_schema = properties.get("delay")
     delay_value = execution_arguments.get("delay")
-    if not _is_legacy_delay_schema(delay_schema) or not isinstance(
-        delay_value, Mapping
-    ):
+    if not _is_legacy_delay_schema(delay_schema):
+        return execution_arguments, None
+    if delay_value is not None and not isinstance(delay_value, Mapping):
         return execution_arguments, None
 
     execution_arguments.pop("delay", None)
-    return execution_arguments, dict(delay_value)
+    # Nullable units mean omitted scheduling metadata, not zero-valued invalid HA
+    # time periods. Actual positive/negative durations still use scheduler checks.
+    delay = {
+        key: value for key, value in (delay_value or {}).items() if value is not None
+    }
+    return execution_arguments, delay or None
 
 
 def _field_name(parent: str, child: str) -> str:

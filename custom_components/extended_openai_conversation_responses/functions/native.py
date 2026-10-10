@@ -436,16 +436,17 @@ class NativeFunction(Function):
         )
 
         try:
-            previous_state = await async_call_ha_action(
+            action_result = await async_call_ha_action(
                 hass,
                 domain,
                 service,
                 data=service_data,
                 blocking=True,
+                include_response=True,
             )
             result: dict[str, Any] = {"success": True}
-            if previous_state:
-                result["previous_state"] = previous_state
+            if action_result:
+                result.update(action_result)
             return result
         except HomeAssistantError as e:
             log_handled_failure(

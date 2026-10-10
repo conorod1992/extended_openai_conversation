@@ -45,7 +45,9 @@ class TemplateFunction(Function):
             elif isinstance(value, list):
                 entity_ids.extend(str(item) for item in value)
         if entity_ids:
-            self.validate_entity_ids(hass, entity_ids, exposed_entities)
+            self.validate_entity_ids(
+                hass, entity_ids, exposed_entities, require_available=False
+            )
 
         return function_config["value_template"].async_render(
             arguments,
