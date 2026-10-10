@@ -40,6 +40,8 @@ function functionsView() {
 
 {
   assert.equal(editableToolsText("raw persisted text"), "raw persisted text");
+  assert.equal(editableToolsText({broken:"definition"}), '{\n  "broken": "definition"\n}');
+  assert.equal(editableToolsText(37), "37");
   assert.equal(
     editableToolsText([{spec: {name: "one"}}]),
     '[\n  {\n    "spec": {\n      "name": "one"\n    }\n  }\n]',
