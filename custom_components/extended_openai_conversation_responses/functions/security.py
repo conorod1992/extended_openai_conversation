@@ -149,6 +149,8 @@ def contains_indirect_service_call(value: Any, hass: Any = None) -> bool:
         if isinstance(service, str) and "." in service:
             domain, _, service = service.partition(".")
         if domain == "homeassistant" and service in {"turn_on", "turn_off", "toggle"}:
+            data = value.get("data", value.get("service_data", {}))
+            data = {**value, **data} if isinstance(data, Mapping) else value
             if hass is not None:
                 from ..ha_actions import resolve_action_entity_ids
 
@@ -156,7 +158,7 @@ def contains_indirect_service_call(value: Any, hass: Any = None) -> bool:
                     hass,
                     domain,
                     service,
-                    value.get("data", value.get("service_data", value)),
+                    data,
                     value.get("target"),
                 )
                 if any(
@@ -165,9 +167,7 @@ def contains_indirect_service_call(value: Any, hass: Any = None) -> bool:
                 ):
                     return True
             else:
-                target = value.get(
-                    "target", value.get("data", value.get("service_data", {}))
-                )
+                target = value.get("target", data)
                 ids = target.get("entity_id", []) if isinstance(target, Mapping) else []
                 ids = ids if isinstance(ids, list) else [ids]
                 if any(
