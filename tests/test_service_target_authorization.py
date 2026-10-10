@@ -219,6 +219,24 @@ async def test_generic_and_custom_service_semantics(
     assert seen == [expected]
 
 
+async def test_generic_power_previous_state_contains_only_service_participants(
+    selected_home,
+):
+    result = await NativeFunction().execute_service_single(
+        selected_home,
+        {},
+        {
+            "domain": "homeassistant",
+            "service": "turn_on",
+            "service_data": {"area_id": "kitchen"},
+        },
+        None,
+        [{"entity_id": "light.kitchen"}],
+    )
+    assert result["success"]
+    assert result["previous_state"] == {"light.kitchen": {"state": "on"}}
+
+
 async def test_generic_power_retains_other_participating_domains(selected_home):
     hass = selected_home
     hass.services.has_service.side_effect = lambda *_: True

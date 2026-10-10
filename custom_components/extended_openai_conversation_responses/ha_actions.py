@@ -313,7 +313,7 @@ def _capture_previous_state(
         return {}
     if not hasattr(hass, "states"):
         return {}
-    entity_ids = _resolve_target_entity_ids(hass, data, target)
+    entity_ids = resolve_action_entity_ids(hass, action_domain, service, data, target)
     result: dict[str, dict[str, Any]] = {}
     for entity_id in sorted(entity_ids):
         entity_domain = entity_id.partition(".")[0]
