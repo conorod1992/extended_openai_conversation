@@ -186,6 +186,20 @@ async def test_alias_assignment_preserves_type_in_real_script(hass, legacy, valu
     assert outcome.response == f"True / {expected} / {expected}"
 
 
+@pytest.mark.parametrize("legacy", [True, False])
+@pytest.mark.parametrize("value", ["123456", "False", "None", '{"level":62}', "  spaced  ", False, 0, None, {"level": 62}, [1, 2]])
+def test_exact_result_reference_preserves_native_type_at_render_boundary(hass, legacy, value):
+    from homeassistant.helpers.template import Template
+
+    hass.config.legacy_templates = legacy
+    helper = "__eoai_result_value_" + "a" * 32
+    source = Template("{{ " + helper + "('answer') }}", hass)
+    wrapped = rules._ResultReferenceTemplate(source, helper, lambda error: pytest.fail(str(error)))
+    rendered = wrapped.async_render({"answer": value})
+    assert rendered == value
+    assert type(rendered) is type(value)
+
+
 async def test_guest_parallel_forbidden_event_rejected_before_any_effect(hass):
     prepare_native(hass)
     rule = local_rule(phrases=["run"])

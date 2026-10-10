@@ -112,6 +112,7 @@ async def test_edit_working_rule_then_execute_again_without_stale_alias(
     hass, monkeypatch
 ):
     """Rule editing changes execution rather than just its saved representation."""
+    hass.config.legacy_templates = False
     agent = await _agent(
         hass,
         **{
@@ -124,6 +125,7 @@ async def test_edit_working_rule_then_execute_again_without_stale_alias(
                     },
                     "function": {
                         "type": "template",
+                        "parse_result": True,
                         "value_template": '{"rows":[{"level":73}]}',
                     },
                 }

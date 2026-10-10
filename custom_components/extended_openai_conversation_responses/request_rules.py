@@ -2932,6 +2932,10 @@ class _ResultReferenceTemplate(Template):
         self._source = source
         self._helper = helper
         self._on_error = on_error
+        self._exact_reference = re.fullmatch(
+            r"\{\{\s*" + re.escape(helper) + r"\('([A-Za-z_][A-Za-z0-9_.]*)'\)\s*\}\}",
+            source.template,
+        )
 
     def async_render_to_info(self, variables=None, **kwargs):
         scope = dict(variables or {})
@@ -2952,7 +2956,14 @@ class _ResultReferenceTemplate(Template):
         return info
 
     def async_render(self, *args, **kwargs):
-        return self.async_render_to_info(*args, **kwargs).result()
+        info = self.async_render_to_info(*args, **kwargs)
+        rendered = info.result()
+        if self._exact_reference is not None:
+            # A full authored result reference denotes its native value. HA's
+            # literal parser must not reinterpret a tool's JSON-looking text.
+            variables = args[0] if args else kwargs.get("variables")
+            return _lookup_result_value(self._exact_reference.group(1), variables or {})
+        return rendered
 
 
 def _guard_result_references(
