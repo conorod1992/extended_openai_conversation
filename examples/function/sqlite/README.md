@@ -105,11 +105,6 @@ Values are bound with SQLite named parameters. Dates use Home Assistant host-loc
 Duration is calculated over the half-open interval `[start, end)`; missing initial
 history returns `unknown`, while a known zero duration returns `0s`.
 
-Values are bound with SQLite named parameters. Dates use Home Assistant host-local
-`YYYY-MM-DD HH:MM:SS` times. SQL keywords/operators are explicitly whitelisted.
-Duration is calculated over the half-open interval `[start, end)`; missing initial
-history returns `unknown`, while a known zero duration returns `0s`.
-
 #### 2-1. get_state_at_time
 <img width="300" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/19fac845-5cee-4d84-98b5-1e18994bb2ee">
 <img width="300" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/af8a26d1-0525-4411-b323-29be92d8f368">

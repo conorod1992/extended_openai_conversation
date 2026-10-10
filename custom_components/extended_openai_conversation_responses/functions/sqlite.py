@@ -316,6 +316,23 @@ class SqliteFunction(Function):
         _LOGGER.debug("SQLite query rendered characters=%d", len(q))
 
         try:
+            if "parameters" in function_config:
+                return await hass.async_add_executor_job(
+                    _execute_sqlite_query,
+                    db_url,
+                    q,
+                    function_config.get("single") is True,
+                    int(function_config.get("max_rows", _DEFAULT_MAX_ROWS)),
+                    float(
+                        function_config.get("timeout", _DEFAULT_QUERY_TIMEOUT_SECONDS)
+                    ),
+                    int(
+                        function_config.get(
+                            "max_result_bytes", _DEFAULT_MAX_RESULT_BYTES
+                        )
+                    ),
+                    parameters,
+                )
             return await hass.async_add_executor_job(
                 _execute_sqlite_query,
                 db_url,
@@ -324,7 +341,6 @@ class SqliteFunction(Function):
                 int(function_config.get("max_rows", _DEFAULT_MAX_ROWS)),
                 float(function_config.get("timeout", _DEFAULT_QUERY_TIMEOUT_SECONDS)),
                 int(function_config.get("max_result_bytes", _DEFAULT_MAX_RESULT_BYTES)),
-                *([parameters] if "parameters" in function_config else []),
             )
         except sqlite3.Error as err:
             raise HomeAssistantError(f"SQLite query failed: {err}") from err
