@@ -159,11 +159,11 @@ class TestScriptFunctionYaml:
             patch(
                 "custom_components.extended_openai_conversation_responses.functions.script.Script"
             ) as mock_script_class,
+            pytest.raises(RuntimeError, match="invalid condition"),
         ):
-            with pytest.raises(RuntimeError, match="invalid condition"):
-                await function.execute(
-                    hass, function_config, {}, llm_context, exposed_entities
-                )
+            await function.execute(
+                hass, function_config, {}, llm_context, exposed_entities
+            )
 
         mock_validate.assert_awaited_once()
         mock_script_class.assert_not_called()
