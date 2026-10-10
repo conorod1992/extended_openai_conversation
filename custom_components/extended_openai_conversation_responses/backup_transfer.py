@@ -633,13 +633,18 @@ async def _async_load_prepared_restore(
     path: str,
     kind: str,
     target_subentry_id: str,
+    *,
+    sections: Any = None,
+    inspect_only: bool = False,
 ) -> transfer.PreparedTransfer:
     """Decode an upload off-loop, then run HA-aware validation on the event loop."""
     document = await hass.async_add_executor_job(_load_uploaded_document, path, kind)
     # inspect_transfer ultimately validates configured Function Tools. Some Home
     # Assistant validators used by those schemas (notably cv.template) require the
     # event-loop context, so only file I/O/decompression belongs in the executor.
-    return transfer.inspect_transfer(document, target_subentry_id)
+    return transfer.inspect_transfer(
+        document, target_subentry_id, sections=sections, inspect_only=inspect_only
+    )
 
 
 async def _discard_export(hass: HomeAssistant, session_id: str) -> bool:
@@ -951,8 +956,18 @@ async def _inspect_import(
         if _imports(hass).get(session.session_id) is not session:
             raise backup.BackupError("The backup upload has expired or was cancelled")
         prepared = await _async_load_prepared_restore(
-            hass, session.path, session.kind, subentry_id
+            hass,
+            session.path,
+            session.kind,
+            subentry_id,
+            sections=data.get("sections"),
+            inspect_only=data.get("inspect_only") is True,
         )
+        if data.get("inspect_only") is True:
+            _forget_preview(hass, session)
+            session.preview_token = None
+            session.preview_revision = None
+            return {**transfer.inspection_for_frontend(prepared), "preview_token": None}
         entry, subentry = _resolve_agent(hass, entry_id, subentry_id)
         selected = transfer.validate_section_selection(
             data.get("sections"),
@@ -1060,7 +1075,11 @@ async def _restore_import(
         if _imports(hass).get(session.session_id) is not session:
             raise backup.BackupError("The backup upload has expired or was cancelled")
         prepared = await _async_load_prepared_restore(
-            hass, session.path, session.kind, subentry.subentry_id
+            hass,
+            session.path,
+            session.kind,
+            subentry.subentry_id,
+            sections=session.preview_sections,
         )
         selected_sections = tuple(session.preview_sections or ())
         resolved_user_mappings = dict(session.preview_user_scope_mappings or ())

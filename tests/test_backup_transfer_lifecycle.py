@@ -124,7 +124,7 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
     subentry = SimpleNamespace(subentry_id="agent-1")
     load_calls = 0
 
-    async def load_prepared(_hass, path, kind, target_subentry_id):
+    async def load_prepared(_hass, path, kind, target_subentry_id, **_kwargs):
         nonlocal load_calls
         load_calls += 1
         assert path == staged_path
@@ -318,7 +318,7 @@ async def test_restore_failure_still_consumes_and_deletes_completed_upload(
         },
     )
 
-    async def load_prepared(*_args):
+    async def load_prepared(*_args, **_kwargs):
         return object()
 
     async def fail_restore(*_args, precondition, **_kwargs):

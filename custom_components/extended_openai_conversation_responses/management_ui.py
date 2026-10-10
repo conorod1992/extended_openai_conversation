@@ -167,7 +167,7 @@ from .request_rules import (
     validate_rule,
 )
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
-from .secret_redaction import redact_secrets, restore_redacted_secrets
+from .secret_redaction import is_redacted_secret, redact_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
 
@@ -405,7 +405,7 @@ def _export_agent(subentry) -> dict[str, Any]:
     }
 
 
-def _parse_import_document(value: Any) -> dict[str, Any]:
+def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, Any]:
     if isinstance(value, str):
         try:
             value = yaml.safe_load(value)
@@ -422,7 +422,25 @@ def _parse_import_document(value: Any) -> dict[str, Any]:
         raise AgentConfigError(
             "document", "unknown fields: " + ", ".join(sorted(unknown))
         )
-    config = restore_redacted_secrets(value.get("config"))
+    from .transfer import _restore_section_secrets
+
+    fallback = (
+        agent_config_snapshot(dict(destination.data)) if destination is not None else {}
+    )
+    raw_config = value.get("config")
+    if isinstance(raw_config, dict):
+        # Parent-entry credentials are outside the agent export contract.
+        raw_config = {
+            key: item
+            for key, item in raw_config.items()
+            if key != "api_key" or not is_redacted_secret(item)
+        }
+    config, _preserved, missing = _restore_section_secrets(raw_config, fallback)
+    if missing:
+        raise AgentConfigError(
+            "config",
+            "Cannot safely restore unavailable secrets: " + ", ".join(missing[:50]),
+        )
     if not isinstance(config, dict):
         raise AgentConfigError("config", "must be an object")
     return {
@@ -1546,7 +1564,14 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "json": json.dumps(document, indent=2, ensure_ascii=False),
         }
     if action == "import_preview":
-        parsed = _parse_import_document(message.get("document"))
+        if message.get("mode", "current") not in {"current", "new"}:
+            raise HomeAssistantError("mode must be current or new")
+        parsed = _parse_import_document(
+            message.get("document"),
+            destination=subentry
+            if message.get("mode", "current") == "current"
+            else None,
+        )
         _validated_model_request(parsed["config"], entry.data)
         if message.get("mode", "current") == "current":
             await _async_validate_configuration_dependencies(
@@ -1569,7 +1594,12 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         }
     if action == "import":
         _require_admin(is_admin)
-        parsed = _parse_import_document(message.get("document"))
+        parsed = _parse_import_document(
+            message.get("document"),
+            destination=subentry
+            if message.get("mode", "current") == "current"
+            else None,
+        )
         _validated_model_request(parsed["config"], entry.data)
         mode = message.get("mode", "current")
         if mode == "current":
