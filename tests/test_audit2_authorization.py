@@ -149,6 +149,63 @@ def test_area_authorization_uses_participants_and_preserves_missing_explicit_ids
     ] == ["light.a", "light.b"]
 
 
+def test_generic_alias_checks_root_target_with_nested_service_data(hass, monkeypatch):
+    hass.services.has_service.return_value = True
+    monkeypatch.setattr(native, "_service_participants", lambda *args: None)
+    monkeypatch.setattr(
+        ha_actions,
+        "_resolve_target_entity_ids",
+        lambda hass, data, target: set(data.get("entity_id", [])),
+    )
+    assert contains_indirect_service_call(
+        {
+            "domain": "homeassistant",
+            "service": "turn_on",
+            "entity_id": ["script.public"],
+            "service_data": {"variables": {}},
+        },
+        hass,
+    )
+
+
+async def test_guest_preflight_checks_static_script_aliases(hass, monkeypatch):
+    hass.services.has_service.return_value = True
+    monkeypatch.setattr(native, "_service_participants", lambda *args: None)
+    monkeypatch.setattr(
+        ha_actions, "_resolve_target_entity_ids", lambda *args: {"script.public"}
+    )
+    tool = {
+        "spec": {
+            "name": "start_script",
+            "description": "Start script",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "script",
+            "sequence": [
+                {
+                    "action": "homeassistant.turn_on",
+                    "target": {"entity_id": "script.public"},
+                }
+            ],
+        },
+    }
+    assert not await _async_guest_functions_allowed(
+        hass,
+        [
+            {
+                "action": "extended_openai_conversation_responses.call_function",
+                "data": {"function": "start_script", "arguments": {}},
+            }
+        ],
+        GuestCapabilityPolicy(
+            True, controllable_entity_ids=frozenset({"script.public"})
+        ),
+        {},
+        {"functions": [tool]},
+    )
+
+
 async def test_guest_function_preflight_prevents_earlier_action(tmp_path):
     hass = HomeAssistant(str(tmp_path))
     effects = []

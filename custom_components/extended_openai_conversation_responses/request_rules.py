@@ -2619,6 +2619,8 @@ async def _async_guest_functions_allowed(
         control = level == FunctionSecurity.CONTROL
         if control and contains_indirect_service_call(arguments, hass):
             return False
+        if control and contains_indirect_service_call(tool["function"], hass):
+            return False
         if not guest_arguments_allowed_runtime(
             hass, arguments, policy, control=control
         ):
