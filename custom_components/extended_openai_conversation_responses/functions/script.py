@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import ExitStack
 from copy import deepcopy
 import logging
@@ -18,6 +19,30 @@ from ..const import DOMAIN
 from .base import Function, copy_runtime_function_config
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _reject_device_actions(sequence: Any) -> None:
+    """Device handlers may bypass services; reject them before any script runs.
+
+    Walk only action containers, never similarly named fields in service data.
+    Accept HA's single-action shorthand while inspecting unvalidated config too.
+    """
+    actions = [sequence] if isinstance(sequence, Mapping) else sequence
+    for action in actions:
+        if not isinstance(action, Mapping):
+            continue
+        if "device_id" in action and "condition" not in action:
+            raise HomeAssistantError(
+                "Script Functions do not support device actions because their "
+                "entity permissions cannot be enforced. Use a service action instead."
+            )
+        for key in ("sequence", "then", "else", "default", "parallel"):
+            if key in action:
+                _reject_device_actions(action[key])
+        if "repeat" in action:
+            _reject_device_actions(action["repeat"].get("sequence", []))
+        if "choose" in action:
+            _reject_device_actions(action["choose"])
 
 
 class _AuthorizedScriptServices:
@@ -113,7 +138,9 @@ class ScriptFunction(Function):
                 "Script Functions do not support mode, max or max_exceeded. "
                 "Use a Home Assistant script entity for shared concurrency controls."
             )
-        return super().validate_schema(function_config)
+        validated = super().validate_schema(function_config)
+        _reject_device_actions(validated["sequence"])
+        return validated
 
     async def execute(
         self,
@@ -128,6 +155,7 @@ class ScriptFunction(Function):
         # here with HA-aware validation for dynamic actions such as device actions,
         # conditions, triggers, and nested sequences. Validate an isolated runtime-safe
         # copy because Home Assistant may normalize the sequence in place.
+        _reject_device_actions(function_config["sequence"])
         sequence = await async_validate_actions_config(
             hass,
             copy_runtime_function_config(function_config["sequence"]),

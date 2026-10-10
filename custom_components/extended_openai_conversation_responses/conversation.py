@@ -173,6 +173,7 @@ from .ha_permissions import bind_active_ha_context
 from .ha_tool_result_compat import make_tool_result_content, tool_result_data
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
+from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
 from .memory import (
     MemoryRecord,
@@ -397,7 +398,7 @@ class ExtendedOpenAIAgentEntity(
                 # Shared managers can retain a provider bound to the previous entity.
                 sync_memory_embedding_provider(self)
                 self._schedule_archive_retention()
-                conversation.async_set_agent(self.hass, self.entry, self)
+                register_legacy_agent(self.hass, self.entry, self)
         except BaseException:
             self._agent_initialization_failed = True
             raise
@@ -646,7 +647,7 @@ class ExtendedOpenAIAgentEntity(
 
     async def async_will_remove_from_hass(self) -> None:
         """When entity will be removed from Home Assistant."""
-        conversation.async_unset_agent(self.hass, self.entry)
+        unregister_legacy_agent(self.hass, self.entry, self)
         remove_function_group_runtime(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )

@@ -84,7 +84,9 @@ class TestFunctionBase:
         hass.states.get = MagicMock(return_value=None)
 
         with pytest.raises(EntityNotFound):
-            function.validate_entity_ids(hass, ["light.nonexistent"], exposed_entities)
+            function.validate_entity_ids(
+                hass, ["light.nonexistent"], [{"entity_id": "light.nonexistent"}]
+            )
 
     def test_validate_entity_ids_not_exposed(self, hass, exposed_entities):
         """Test validate_entity_ids raises EntityNotExposed."""
@@ -92,6 +94,7 @@ class TestFunctionBase:
 
         with pytest.raises(EntityNotExposed):
             function.validate_entity_ids(hass, ["light.not_exposed"], exposed_entities)
+
 
 class _Function(Function):
     """Minimal concrete Function for base-class validation tests."""
@@ -126,8 +129,9 @@ def test_copy_runtime_function_config_preserves_aliases_and_cycles() -> None:
     assert copied["self"] is copied
 
 
-def test_copy_runtime_function_config_preserves_collections_and_hydrated_leaves(
-) -> None:
+def test_copy_runtime_function_config_preserves_collections_and_hydrated_leaves() -> (
+    None
+):
     """Container types are copied while opaque runtime leaves retain identity."""
     runtime_object = _AtomicRuntimeObject()
     source = {
@@ -185,4 +189,3 @@ def test_validate_schema_preserves_persisted_and_runtime_copy_contracts() -> Non
     assert copied["runtime"] is runtime_object
     assert deepcopy(copied) == {"type": "example", "source": "persisted"}
     assert deepcopy(copied) is not config
-
