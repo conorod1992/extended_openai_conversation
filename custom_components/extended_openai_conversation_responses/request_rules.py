@@ -2289,7 +2289,7 @@ def _iter_script_actions(
             raise ValueError(f"action sequence exceeds {MAX_SCRIPT_NODES} nodes")
         yield item
 
-        for key in ("sequence", "then", "else", "default"):
+        for key in ("sequence", "then", "else", "default", "parallel"):
             nested = nested_sequence(item.get(key))
             if nested is not None:
                 yield from _iter_script_actions(nested, depth=depth + 1, budget=budget)
@@ -2450,7 +2450,9 @@ def resolve_result_values(
 
 
 def _native_result_sequence(
-    actions: Sequence[Mapping[str, Any]], slots: Mapping[str, str]
+    actions: Sequence[Mapping[str, Any]],
+    slots: Mapping[str, str],
+    alias_bindings: dict[str, tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Keep HA variables and waits in one script while exposing captured results."""
     aliases = {
@@ -2493,19 +2495,53 @@ def _native_result_sequence(
         alias = data.get("result_alias") if isinstance(data, Mapping) else None
         if alias:
             response_name = step.get("response_variable") or f"__eoai_result_{alias}"
+            binding = f"__eoai_alias_{uuid4().hex}"
+            if alias_bindings is not None:
+                alias_bindings[binding] = (alias, response_name)
             rendered["response_variable"] = response_name
             sequence.append(rendered)
             sequence.append(
                 {
                     "if": "{{ " + response_name + " is defined }}",
                     "then": [
-                        {"variables": {alias: "{{ " + response_name + ".result }}"}}
+                        {
+                            "alias": binding,
+                            "variables": {alias: "{{ " + response_name + ".result }}"},
+                        }
                     ],
                 }
             )
         else:
             sequence.append(rendered)
     return sequence
+
+
+class _ResultAliasVariables(ScriptVariables):
+    """Copy a captured result without HA interpreting strings as native literals."""
+
+    def __init__(self, variables: ScriptVariables, alias: str, response: str) -> None:
+        super().__init__(variables.as_dict())
+        self._alias = alias
+        self._response = response
+
+    def async_simple_render(self, run_variables: Mapping[str, Any]) -> dict[str, Any]:
+        return {self._alias: run_variables[self._response]["result"]}
+
+
+def _bind_result_aliases(value: Any, bindings: Mapping[str, tuple[str, str]]) -> Any:
+    """Bind only generated assignments after HA validation and template guards."""
+    if isinstance(value, Mapping):
+        result = {
+            key: _bind_result_aliases(item, bindings) for key, item in value.items()
+        }
+        marker = value.get("alias")
+        binding = bindings.get(marker) if isinstance(marker, str) else None
+        if binding is not None and isinstance(result.get("variables"), ScriptVariables):
+            result["variables"] = _ResultAliasVariables(result["variables"], *binding)
+        return result
+    if isinstance(value, list):
+        return [_bind_result_aliases(item, bindings) for item in value]
+    return value
 
 
 def _outcome_probes(
@@ -3277,7 +3313,10 @@ async def _async_evaluate_matched_rule(
                 and step["data"].get("result_alias")
                 for step in executable_actions
             )
-            script_actions = _native_result_sequence(executable_actions, match.slots)
+            alias_bindings: dict[str, tuple[str, str]] = {}
+            script_actions = _native_result_sequence(
+                executable_actions, match.slots, alias_bindings
+            )
             if live_guest_policy is not None:
                 _ensure_action_guard_service(hass)
                 script_actions = _guard_native_actions(script_actions)
@@ -3317,6 +3356,7 @@ async def _async_evaluate_matched_rule(
                 )
             if require_matching_revision is not None:
                 require_matching_revision()
+            validated_actions = _bind_result_aliases(validated_actions, alias_bindings)
             # Once the validated native script starts, its frozen actions may
             # produce external effects. Later edits apply to future requests;
             # they must never invite a retry of an already executed action.
