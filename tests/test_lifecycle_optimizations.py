@@ -9,9 +9,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import agent_config
-from custom_components.extended_openai_conversation_responses import conversation as lifecycle
+from custom_components.extended_openai_conversation_responses import (
+    conversation as lifecycle,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_SERVICE_TIER,
     CONVERSATION_CONTINUITY_HA_DEFAULT,
@@ -174,20 +177,20 @@ async def test_ha_default_never_restores_history_between_distinct_ids() -> None:
 
 
 def test_service_tier_request_respects_model_specific_options() -> None:
-    """Standard remains universal while Flex is sent only for supported models."""
+    """Standard remains universal while unsupported Flex is rejected explicitly."""
     defaults = agent_config.agent_config_defaults()
     assert defaults[CONF_SERVICE_TIER] == "default"
 
     missing = build_provider_request_snapshot({}, {"api_provider": "openai"})
-    unsupported_flex = build_provider_request_snapshot(
-        {CONF_SERVICE_TIER: "flex"}, {"api_provider": "openai"}
-    )
+    with pytest.raises(HomeAssistantError, match="processing tier"):
+        build_provider_request_snapshot(
+            {CONF_SERVICE_TIER: "flex"}, {"api_provider": "openai"}
+        )
     supported_flex = build_provider_request_snapshot(
         {"chat_model": "gpt-5.6-terra", CONF_SERVICE_TIER: "flex"},
         {"api_provider": "openai"},
     )
     assert missing.api_kwargs.get("service_tier") == "default"
-    assert "service_tier" not in unsupported_flex.api_kwargs
     assert supported_flex.api_kwargs.get("service_tier") == "flex"
 
 

@@ -1236,7 +1236,9 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     timings["revision_calculation_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
     capability_hits = _cached_model_capabilities.cache_info().hits
-    capabilities = _configuration_model_capabilities(snapshot[CONF_CHAT_MODEL])
+    capabilities = _configuration_model_capabilities(
+        str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL])
+    )
     timings["model_capabilities_ms"] = _elapsed_ms(phase)
     timings["model_capabilities_cache_hit"] = (
         _cached_model_capabilities.cache_info().hits > capability_hits
@@ -1405,7 +1407,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         options_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
-        capabilities = _configuration_model_capabilities(config[CONF_CHAT_MODEL])
+        capabilities = _configuration_model_capabilities(
+            str(config.get("azure_model") or config[CONF_CHAT_MODEL])
+        )
         model_capabilities_ms = _elapsed_ms(phase)
 
         assembly_started = perf_counter()
@@ -1476,7 +1480,10 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         )
         if result["valid"]:
             result["model_capabilities"] = model_capabilities(
-                result["config"][CONF_CHAT_MODEL]
+                str(
+                    result["config"].get("azure_model")
+                    or result["config"][CONF_CHAT_MODEL]
+                )
             )
         return result
     if action == "update":
@@ -1518,7 +1525,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "title": saved_title,
             "revision": saved_agent_config_revision(subentry, normalized, saved_title),
             "config": snapshot,
-            "model_capabilities": model_capabilities(snapshot[CONF_CHAT_MODEL]),
+            "model_capabilities": model_capabilities(
+                str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL])
+            ),
         }
         seed_persisted_config_projection(entry, subentry, snapshot, result["revision"])
         if refresh_local_handling:

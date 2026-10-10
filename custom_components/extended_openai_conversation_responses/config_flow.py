@@ -663,13 +663,28 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             # Check if advanced options is enabled
             if user_input.get(CONF_ADVANCED_OPTIONS, False):
                 # Store data and move to advanced step
-                self._temp_data = user_input
+                self._temp_data = dict(user_input)
+                if (
+                    user_input.get("azure_model") or user_input.get(CONF_CHAT_MODEL)
+                ) != (
+                    self.options.get("azure_model") or self.options.get(CONF_CHAT_MODEL)
+                ):
+                    self._temp_data[CONF_REASONING_EFFORT] = (
+                        recommended_reasoning_effort(
+                            str(
+                                user_input.get("azure_model")
+                                or user_input[CONF_CHAT_MODEL]
+                            )
+                        )
+                    )
                 return await self.async_step_advanced()
 
             candidate = {**self.options, **user_input}
-            if candidate.get(CONF_CHAT_MODEL) != self.options.get(CONF_CHAT_MODEL):
+            if (candidate.get("azure_model") or candidate.get(CONF_CHAT_MODEL)) != (
+                self.options.get("azure_model") or self.options.get(CONF_CHAT_MODEL)
+            ):
                 candidate[CONF_REASONING_EFFORT] = recommended_reasoning_effort(
-                    candidate[CONF_CHAT_MODEL]
+                    str(candidate.get("azure_model") or candidate[CONF_CHAT_MODEL])
                 )
             from .request import build_provider_request_snapshot
 
@@ -680,7 +695,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             except HomeAssistantError as err:
                 errors["base"] = "invalid_request"
                 validation_error = str(err)
-                self.options.update(user_input)
+                self.options = candidate
             else:
                 if self._is_new:
                     title = candidate.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
@@ -706,6 +721,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     CONF_CHAT_MODEL,
                     default=DEFAULT_CHAT_MODEL,
                 ): str,
+                vol.Optional("azure_model", default=""): str,
                 vol.Optional(
                     CONF_API_MODE,
                     default=DEFAULT_API_MODE,
@@ -739,7 +755,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             description_placeholders={"reason": validation_error},
             data_schema=schema_for_ha(
                 self.add_suggested_values_to_schema(
-                    schema_for_ha(vol.Schema(schema)), self.options
+                    schema_for_ha(vol.Schema(schema)),
+                    self.options,
                 )
             ),
         )
@@ -753,17 +770,20 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         chat_model = str(
             (self._temp_data or {}).get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
         )
-        metadata = get_model_capabilities(chat_model)
-        recommended_effort = recommended_reasoning_effort(chat_model)
+        effective_options = {**self.options, **(self._temp_data or {})}
+        capability_model = str(effective_options.get("azure_model") or chat_model)
+        metadata = get_model_capabilities(capability_model)
+        recommended_effort = recommended_reasoning_effort(capability_model)
         display_effort = _ai_task_display_reasoning_effort(
-            chat_model,
-            self.options,
-            reconfigure=not self._is_new,
+            capability_model,
+            {**effective_options, CONF_CHAT_MODEL: capability_model},
+            reconfigure=True,
         )
 
         if user_input is not None:
             final_data = {**self.options, **(self._temp_data or {}), **user_input}
-            configured_effort = final_data.get(CONF_REASONING_EFFORT)
+            configured_effort = final_data.get(CONF_REASONING_EFFORT, display_effort)
+            final_data[CONF_REASONING_EFFORT] = configured_effort
             effective_effort = (
                 str(configured_effort)
                 if configured_effort is not None
@@ -771,7 +791,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             )
             for parameter in (CONF_TEMPERATURE, CONF_TOP_P):
                 if parameter in final_data and not parameter_is_allowed(
-                    chat_model, parameter, effective_effort
+                    capability_model, parameter, effective_effort
                 ):
                     final_data.pop(parameter, None)
 
@@ -785,6 +805,9 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 errors["base"] = "invalid_request"
                 validation_error = str(err)
                 self.options.update(final_data)
+                self._temp_data = dict(final_data)
+                effective_options = final_data
+                display_effort = effective_effort
             else:
                 if self._is_new:
                     title = final_data.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
@@ -802,7 +825,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         schema: dict[Any, Any] = {}
         reasoning = metadata["reasoning"]
 
-        if parameter_is_allowed(chat_model, CONF_TOP_P, display_effort):
+        if parameter_is_allowed(capability_model, CONF_TOP_P, display_effort):
             schema[
                 vol.Optional(
                     CONF_TOP_P,
@@ -810,7 +833,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
             ] = NumberSelector(NumberSelectorConfig(min=0, max=1, step=0.05))
 
-        if parameter_is_allowed(chat_model, CONF_TEMPERATURE, display_effort):
+        if parameter_is_allowed(capability_model, CONF_TEMPERATURE, display_effort):
             schema[
                 vol.Optional(
                     CONF_TEMPERATURE,
@@ -865,7 +888,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             description_placeholders={"reason": validation_error},
             data_schema=schema_for_ha(
                 self.add_suggested_values_to_schema(
-                    schema_for_ha(vol.Schema(schema)), self.options
+                    schema_for_ha(vol.Schema(schema)),
+                    {**effective_options, CONF_REASONING_EFFORT: display_effort},
                 )
             ),
         )
