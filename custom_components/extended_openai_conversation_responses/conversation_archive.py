@@ -784,6 +784,7 @@ class ConversationArchive:
             if not isinstance(raw, dict):
                 raise ValueError("archive turn must be an object")
             turn = _validated_turn(raw)
+            turn = replace(turn, timestamp=_parse_time(turn.timestamp).isoformat())
             if turn.session_id in private_session_ids:
                 raise ValueError("private archive sessions cannot contain turns")
             if turn.turn_id in turn_ids or turn.session_id not in session_ids:
