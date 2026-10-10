@@ -106,7 +106,7 @@ async def test_rejected_duplicate_preserves_order_revision_and_durable_state(
     assert rules._rules == before and rules.revision() == revision
 
 
-@pytest.mark.parametrize("path", ["configuration", "tools"])
+@pytest.mark.parametrize("path", ["configuration", "save", "tools"])
 async def test_mutations_cannot_break_retained_required_arguments(
     hass, monkeypatch, path
 ):
@@ -149,10 +149,10 @@ async def test_mutations_cannot_break_retained_required_arguments(
         {
             **base,
             "section": "configuration",
-            "action": "update",
+            "action": "save" if path == "save" else "update",
             "config": {"functions": [proposed]},
         }
-        if path == "configuration"
+        if path in {"configuration", "save"}
         else {
             **base,
             "section": "tools",

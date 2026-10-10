@@ -1199,6 +1199,11 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
 
     phase = perf_counter()
     normalized = validation["config"]
+    if tools_changed or groups_changed:
+        await _async_validate_configuration_dependencies(
+            hass, entry, subentry, normalized
+        )
+        _require_agent_config_revision(subentry, message["revision"])
     persisted = preserve_legacy_guest_policy(dict(subentry.data), deepcopy(normalized))
     saved_title = title.strip() if isinstance(title, str) else subentry.title
     refresh_local_handling = _local_handling_config_changed(
@@ -1499,6 +1504,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             await _async_validate_configuration_dependencies(
                 hass, entry, subentry, normalized
             )
+            _require_agent_config_revision(subentry, message["revision"])
         if CONF_GUEST_POLICY_VERSION not in subentry.data:
             for key in GUEST_V2_FIELDS:
                 normalized.pop(key, None)
