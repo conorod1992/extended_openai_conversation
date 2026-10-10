@@ -287,6 +287,10 @@ def build_provider_request_snapshot(
 ) -> ProviderRequestSnapshot:
     """Build validated/normalized settings used by the live OpenAI request."""
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+    if options.get("azure_model") and entry_data.get(CONF_API_PROVIDER) != "azure":
+        raise HomeAssistantError(
+            "Azure underlying model is only supported with Azure; clear the setting for this provider."
+        )
     needs_tools = (
         _configured_tools_required(options)
         if tools_required is None

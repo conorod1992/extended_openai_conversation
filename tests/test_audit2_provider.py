@@ -110,7 +110,7 @@ def test_azure_deployment_identity_uses_explicit_underlying_capabilities():
     )
     assert deployment.api_kwargs["model"] == "ha-production"
     assert {**deployment.api_kwargs, "model": "gpt-4.1"} == model.api_kwargs
-    with pytest.raises(HomeAssistantError, match="function/tool"):
+    with pytest.raises(HomeAssistantError, match="only supported with Azure"):
         build_provider_request_snapshot(
             options, {"api_provider": "openai"}, tools_required=True
         )

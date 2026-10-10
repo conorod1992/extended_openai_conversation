@@ -206,19 +206,20 @@ def _caller_null_plan(structure: Any) -> _OptionalNullPlan | None:
     """Use the caller's actual union semantics when its schema is inspectable."""
     source = getattr(structure, "schema", structure)
     required = bool(getattr(structure, "required", False))
+    extra = getattr(structure, "extra", vol.PREVENT_EXTRA)
     if not isinstance(source, (dict, list, vol.Any)):
         return None
 
     class CallerValidator:
         def is_valid(self, value):
             try:
-                vol.Schema(source, required=required)(deepcopy(value))
+                vol.Schema(source, required=required, extra=extra)(deepcopy(value))
             except SCHEMA_ERRORS:
                 return False
             return True
 
     def child(value):
-        return _caller_null_plan(vol.Schema(value, required=required))
+        return _caller_null_plan(vol.Schema(value, required=required, extra=extra))
 
     properties = {}
     optional = set()
