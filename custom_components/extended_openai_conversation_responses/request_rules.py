@@ -2508,6 +2508,52 @@ def _resolve_guest_slot_templates(value: Any, slots: Mapping[str, str]) -> Any:
     return value
 
 
+def _map_script_effect_templates(
+    sequence: Sequence[Mapping[str, Any]], transform: Callable[[Any], Any]
+) -> list[dict[str, Any]]:
+    """Transform effect inputs while retaining trusted native conditions.
+
+    Walk only native action containers. A similarly named key in service data
+    is still an effect input and must not bypass Guest read checks.
+    """
+    result = []
+    for action in sequence:
+        if "condition" in action:
+            result.append(dict(action))
+            continue
+        mapped = {}
+        for key, value in action.items():
+            if key == "if":
+                mapped[key] = value
+            elif key in {"sequence", "then", "else", "default", "parallel"}:
+                mapped[key] = _map_script_effect_templates(value, transform)
+            elif key == "choose":
+                mapped[key] = [
+                    {
+                        **branch,
+                        "sequence": _map_script_effect_templates(
+                            branch.get("sequence", []), transform
+                        ),
+                    }
+                    for branch in value
+                ]
+            elif key == "repeat":
+                mapped[key] = {
+                    name: (
+                        _map_script_effect_templates(item, transform)
+                        if name == "sequence"
+                        else item
+                        if name in {"while", "until"}
+                        else transform(item)
+                    )
+                    for name, item in value.items()
+                }
+            else:
+                mapped[key] = transform(value)
+        result.append(mapped)
+    return result
+
+
 def _guest_script_allowed(
     hass: HomeAssistant,
     sequence: Sequence[Mapping[str, Any]],
@@ -2516,9 +2562,19 @@ def _guest_script_allowed(
     slots: Mapping[str, str] | None = None,
 ) -> bool:
     """Authorize effects without interpreting native wait/condition templates."""
-    if not _guest_template_reads_allowed(hass, sequence, policy, slots or {}):
+
+    def check_effect_templates(value: Any) -> Any:
+        if not _guest_template_reads_allowed(hass, value, policy, slots or {}):
+            raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
+        return value
+
+    try:
+        _map_script_effect_templates(sequence, check_effect_templates)
+    except GuestModeDenied:
         return False
     for item in _iter_script_actions(sequence):
+        if "condition" in item:
+            continue
         if slots is not None and any(
             key in item for key in ("action", "service", "scene")
         ):
@@ -3167,8 +3223,9 @@ async def _async_evaluate_matched_rule(
                 return policy
 
             if policy.guest_active or live_guest_policy is not None:
-                validated_actions = _guard_template_reads(
-                    validated_actions, current_policy
+                validated_actions = _map_script_effect_templates(
+                    validated_actions,
+                    lambda value: _guard_template_reads(value, current_policy),
                 )
             if require_matching_revision is not None:
                 require_matching_revision()
