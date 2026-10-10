@@ -98,6 +98,15 @@ class ScriptFunction(Function):
         """Initialize script tool."""
         super().__init__(script_config.SCRIPT_ENTITY_SCHEMA)
 
+    def validate_schema(self, function_config: dict[str, Any]) -> dict[str, Any]:
+        """Reject controls that a transient per-invocation runner cannot honor."""
+        if any(key in function_config for key in ("mode", "max", "max_exceeded")):
+            raise HomeAssistantError(
+                "Script Functions do not support mode, max or max_exceeded. "
+                "Use a Home Assistant script entity for shared concurrency controls."
+            )
+        return super().validate_schema(function_config)
+
     async def execute(
         self,
         hass: HomeAssistant,

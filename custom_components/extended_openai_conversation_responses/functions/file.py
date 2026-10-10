@@ -288,6 +288,9 @@ class ReadFileFunction(FileFunction):
         exposed_entities,
     ):
         """Read file contents."""
+        from .workspace import async_ensure_workspace
+
+        await async_ensure_workspace(hass, self.get_working_dir(hass))
         path_template = function_config.get("path")
         template_source = str(getattr(path_template, "template", ""))
 
@@ -353,6 +356,9 @@ class WriteFileFunction(FileFunction):
         exposed_entities,
     ):
         """Write content to file."""
+        from .workspace import async_ensure_workspace
+
+        await async_ensure_workspace(hass, self.get_working_dir(hass))
         path_template = function_config.get("path")
         path_str = path_template.async_render(arguments, parse_result=False)
         content_template = function_config.get("content")
@@ -405,6 +411,9 @@ class EditFileFunction(FileFunction):
         exposed_entities,
     ):
         """Edit file with find-and-replace."""
+        from .workspace import async_ensure_workspace
+
+        await async_ensure_workspace(hass, self.get_working_dir(hass))
         path_template = function_config.get("path")
         path_str = path_template.async_render(arguments, parse_result=False)
         old_text_template = function_config.get("old_text")
