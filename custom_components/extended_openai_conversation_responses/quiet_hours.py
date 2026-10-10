@@ -190,7 +190,14 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         self._remove_previous_publication(entity_id)
         registry = er.async_get(self.hass)
         lookup = getattr(registry, "async_get", None)
-        entry = lookup(entity_id) if callable(lookup) else None
+        try:
+            entry = lookup(entity_id) if callable(lookup) else None
+        except AttributeError as err:
+            # Registry storage may not be loaded during early integration setup.
+            # Defer publication until we can honor the saved disablement state.
+            if err.name not in {"entities", "_entities_data"}:
+                raise
+            return
         if entry is not None and entry.disabled_by is not None:
             if self._published_state is not None and (
                 self.hass.states.get(entity_id) is self._published_state

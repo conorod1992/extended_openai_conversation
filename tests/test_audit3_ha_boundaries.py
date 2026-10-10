@@ -95,3 +95,13 @@ async def test_disabled_quiet_sensor_stays_absent_and_can_be_reenabled(tmp_path)
     registry.async_update_entity(entity_id, disabled_by=None)
     manager._publish_state(None)
     assert hass.states.get(entity_id).state == "off"
+    await hass.async_stop(force=True)
+
+
+def test_quiet_publication_waits_for_registry_storage(hass, monkeypatch):
+    manager = QuietHoursManager(hass)
+    monkeypatch.setattr(manager, "_state_entity_id", lambda: "binary_sensor.quiet")
+    registry = SimpleNamespace(async_get=Mock(side_effect=AttributeError(name="_entities_data")))
+    monkeypatch.setattr(er, "async_get", lambda _: registry)
+    manager._publish_state(None)
+    hass.states.async_set.assert_not_called()
