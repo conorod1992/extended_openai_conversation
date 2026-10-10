@@ -231,3 +231,26 @@ async def test_literal_config_whitespace_is_preserved(hass, tmp_path):
     result = await function.execute(hass, config, {}, None, [])
     assert result["success"]
     assert target.read_bytes() == b"    literal\n\n"
+
+
+@pytest.mark.parametrize("command", [
+    "echo ready # don't retry",
+    'echo ready # unmatched " quote',
+    "echo ready # first comment\necho done # don't retry",
+    "echo 'hash # inside quotes' # don't retry",
+    "echo https://example.com/#fragment # don't retry",
+])
+def test_shell_comments_do_not_break_literal_path_guard(tmp_path, command):
+    BashFunction()._guard_command(command, tmp_path, True)
+
+
+@pytest.mark.parametrize("command", [
+    "echo ready # don't retry\ncat /outside/secret",
+    "echo https://example.com/#fragment; cat /outside/secret",
+    "echo word#fragment; cat /outside/secret",
+    "echo 'hash # quoted'; cat /outside/secret",
+    r"echo escaped\#hash; cat /outside/secret",
+])
+def test_comment_handling_does_not_hide_following_absolute_paths(tmp_path, command):
+    with pytest.raises(ValueError, match="outside working dir"):
+        BashFunction()._guard_command(command, tmp_path, True)

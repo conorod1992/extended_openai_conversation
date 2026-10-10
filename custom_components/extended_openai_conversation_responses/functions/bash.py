@@ -36,6 +36,47 @@ _SHELL_CLEANUP_WAIT_SECONDS = 5.0
 _SHELL_OUTPUT_BYTE_LIMIT = SHELL_OUTPUT_LIMIT * 4
 
 
+def _without_shell_comments(command: str) -> str:
+    """Remove unquoted shell comments without consuming hashes inside words."""
+    result: list[str] = []
+    quote: str | None = None
+    escaped = False
+    word_start = True
+    comment = False
+    for char in command:
+        if comment:
+            if char == "\n":
+                comment = False
+                word_start = True
+                result.append(char)
+            continue
+        if escaped:
+            result.append(char)
+            escaped = False
+            if char != "\n":
+                word_start = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            result.append(char)
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            result.append(char)
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            word_start = False
+        elif char == "#" and word_start:
+            comment = True
+            continue
+        else:
+            word_start = char.isspace() or char in "();&|<>"
+        result.append(char)
+    return "".join(result)
+
+
 def _valid_allow_pattern(value: str) -> str:
     """Reject malformed Bash allowlist regular expressions at configuration time."""
     if not isinstance(value, str):
@@ -232,7 +273,11 @@ class BashFunction(Function):
             # Tokenize shell operators before recognizing URLs: a URL argument
             # must not hide a following command or redirection. This remains a
             # defensive literal-path guard, not a sandbox for arbitrary Bash.
-            lexer = shlex.shlex(command, posix=True, punctuation_chars="();&|<>")
+            lexer = shlex.shlex(
+                _without_shell_comments(command),
+                posix=True,
+                punctuation_chars="();&|<>",
+            )
             lexer.whitespace_split = True
             lexer.commenters = ""
             posix_paths = []
