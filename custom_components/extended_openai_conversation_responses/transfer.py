@@ -602,8 +602,9 @@ def _compatible_secret_context(
 ) -> bool:
     """Require identical visible structure; only secret scalar leaves may differ.
 
-    A marker cannot hide a container (and therefore a destination). Nested lists
-    may reorder only when their items have unique, one-to-one safe matches.
+    A marker cannot hide a container (and therefore a destination). Identical
+    public lists can contain duplicates; lists with secrets may reorder only
+    when their items have unique, one-to-one safe matches.
     """
     if is_literal_text(value):
         return bool(value[LITERAL_TEXT_KEY] == fallback)
@@ -627,11 +628,16 @@ def _compatible_secret_context(
     if isinstance(value, list):
         if not isinstance(fallback, list) or len(value) != len(fallback):
             return False
+        same_order = all(
+            _compatible_secret_context(item, candidate)
+            for item, candidate in zip(value, fallback, strict=True)
+        )
         if ordered:
-            return all(
-                _compatible_secret_context(item, candidate)
-                for item, candidate in zip(value, fallback, strict=True)
-            )
+            return same_order
+        # Public values are compared in full, so repeated entries introduce no
+        # uncertainty about which local credential a marker can recover.
+        if same_order and not _collect_secret_paths(value):
+            return True
         matches = [_fallback_list_index(item, fallback) for item in value]
         return None not in matches and len(set(matches)) == len(matches)
     return type(value) is type(fallback) and bool(value == fallback)
