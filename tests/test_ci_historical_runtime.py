@@ -20,7 +20,7 @@ def test_release_day_bridge_yields_to_exact_published_fixtures():
         resolve_ha_test_plugin(
             GENERATED_HA_VERSION,
             project,
-            lambda _: {"info": {"requires_dist": ["homeassistant==2026.10.0"]}},
+            lambda _: {"info": {"requires_dist": [f"homeassistant=={GENERATED_HA_VERSION}"]}},
         )
         == "0.13.371"
     )
@@ -38,7 +38,7 @@ def test_release_day_bridge_yields_to_exact_published_fixtures():
 def test_generated_fixtures_reject_beta_relabeling_or_wrong_source(tmp_path, drift):
     wheel = tmp_path / "fixtures.whl"
     ha_pin = "2026.10.0b4" if drift == "metadata" else GENERATED_HA_VERSION
-    patch = "0b4" if drift == "fixtures" else "0"
+    patch = "0b4" if drift == "fixtures" else GENERATED_HA_VERSION.rsplit(".", 1)[-1]
     provenance = {
         "generator_sha": GENERATOR_SHA,
         "core_sha": "a" * 40 if drift == "provenance" else CORE_SHA,
