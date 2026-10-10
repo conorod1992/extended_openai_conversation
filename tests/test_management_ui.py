@@ -387,7 +387,7 @@ async def test_ha_tool_add_validation_refresh_and_group_assignment(
         "tool_name": "Light",
     }
     monkeypatch.setattr(management_ui, "new_reference_tool", lambda *_args: added)
-    persist = Mock(return_value={"status": "saved"})
+    persist = AsyncMock(return_value={"status": "saved"})
     monkeypatch.setattr(management_ui, "_persist_function_configuration", persist)
     result = await management_ui.async_management_command(
         hass,
@@ -426,7 +426,7 @@ async def test_function_tool_validation_and_save_boundaries(
         "validate_function_tools",
         lambda value: deepcopy(value) if isinstance(value, list) else [],
     )
-    persist = Mock(return_value={"status": "saved", "revision": "next"})
+    persist = AsyncMock(return_value={"status": "saved", "revision": "next"})
     monkeypatch.setattr(management_ui, "_persist_function_configuration", persist)
 
     assert await management_ui.async_management_command(
@@ -483,7 +483,7 @@ async def test_function_enable_delete_and_group_validation_boundaries(
     monkeypatch.setattr(
         management_ui,
         "_persist_function_configuration",
-        Mock(side_effect=lambda *_args, **_kwargs: {"status": "saved"}),
+        AsyncMock(side_effect=lambda *_args, **_kwargs: {"status": "saved"}),
     )
     monkeypatch.setattr(
         management_ui,
@@ -593,7 +593,7 @@ async def test_function_rename_propagates_failure_after_successful_rollback(
         "_function_reference_state",
         AsyncMock(return_value=(rules, {"request_rules": [], "guest_mode": False})),
     )
-    persist = Mock(
+    persist = AsyncMock(
         side_effect=[
             {"status": "saved", "revision": "new-revision"},
             {"status": "rolled-back"},

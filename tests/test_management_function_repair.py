@@ -7,6 +7,7 @@ from copy import deepcopy
 import gc
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
@@ -564,7 +565,18 @@ async def test_save_one_repairs_and_renames_group_reference_without_touching_sib
     rule["action"]["actions"] = [
         {
             "action": f"{DOMAIN}.call_function",
-            "data": {"function": old_name, "arguments": {}},
+            "data": {
+                "function": old_name,
+                "arguments": {
+                    "list": [
+                        {
+                            "domain": "light",
+                            "service": "turn_on",
+                            "service_data": {"entity_id": "light.kitchen"},
+                        }
+                    ]
+                },
+            },
         }
     ]
     await retained_rules.async_create(rule)
@@ -580,7 +592,11 @@ async def test_save_one_repairs_and_renames_group_reference_without_touching_sib
         }
     ]
     entry, subentry = _entry_and_subentry(data)
-    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    hass = SimpleNamespace(
+        data={},
+        config_entries=_FakeConfigEntries(),
+        async_add_executor_job=AsyncMock(side_effect=lambda fn, *args: fn(*args)),
+    )
     monkeypatch.setattr(
         management_ui,
         "entry_and_agent",

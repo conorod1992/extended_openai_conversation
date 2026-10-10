@@ -135,6 +135,12 @@ def history_as_summary_text(items: list[conversation.Content]) -> str:
         if native is not None and not content:
             if hasattr(native, "model_dump"):
                 native = native.model_dump(exclude_none=True)
+            if isinstance(native, dict) and native.get("type") == "reasoning":
+                native = {
+                    key: value
+                    for key, value in native.items()
+                    if key != "encrypted_content"
+                }
             lines.append(
                 f"assistant native item: {json.dumps(native, ensure_ascii=False, default=str)}"
             )

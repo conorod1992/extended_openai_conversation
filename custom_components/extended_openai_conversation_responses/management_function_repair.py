@@ -1113,6 +1113,17 @@ async def async_function_repair(
                     )
                 ]
             require_repair_revision(subentry, operation_revision)
+            await management_ui._async_validate_configuration_dependencies(
+                hass,
+                entry,
+                subentry,
+                {**subentry.data, CONF_FUNCTION_TOOLS: editable},
+                renamed_function=(old_name, new_name)
+                if old_name and old_name != new_name
+                else None,
+                rules_manager=rules,
+            )
+            require_repair_revision(subentry, operation_revision)
             persisted = _persist_raw_tools(
                 hass,
                 entry,

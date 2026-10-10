@@ -705,7 +705,7 @@ class RequestRules:
                 validate_sentence_pattern=not preserve_inactive,
             )
             self._require_group(rule)
-            prospective = [*self._rules]
+            prospective = deepcopy(self._rules)
             prospective[index] = rule
             _validate_total_pattern_states(
                 prospective, inactive_rule_ids=set(self._diagnostics) - {rule_id}
@@ -756,7 +756,7 @@ class RequestRules:
                 order=source_index + 1,
             )
             rule = validate_rule(source)
-            prospective = [*self._rules]
+            prospective = deepcopy(self._rules)
             prospective.insert(source_index + 1, rule)
             for order, item in enumerate(prospective):
                 item["order"] = order
@@ -1891,7 +1891,8 @@ def _legacy_action_slots(value: Any) -> set[str]:
     result: set[str] = set()
     for action in actions:
         if not isinstance(action, Mapping) or not (
-            "domain" in action or action.get("type") in {"function", "home_assistant"}
+            ("domain" in action and "service" in action)
+            or action.get("type") in {"function", "home_assistant"}
         ):
             continue
         result.update(_referenced_slots(action))
@@ -1904,7 +1905,10 @@ def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
     for item in value:
         if not isinstance(item, Mapping):
             raise ValueError("each Home Assistant action must be an object")
-        if "domain" in item or item.get("type") in {"function", "home_assistant"}:
+        if ("domain" in item and "service" in item) or item.get("type") in {
+            "function",
+            "home_assistant",
+        }:
             migrated.append(_validate_local_action(item))
         else:
             migrated.append(dict(deepcopy(item)))
@@ -3185,11 +3189,7 @@ async def _async_evaluate_matched_rule(
                 and step["data"].get("result_alias")
                 for step in executable_actions
             )
-            script_actions = (
-                _native_result_sequence(executable_actions, match.slots)
-                if captures_results
-                else executable_actions
-            )
+            script_actions = _native_result_sequence(executable_actions, match.slots)
             if live_guest_policy is not None:
                 _ensure_action_guard_service(hass)
                 script_actions = _guard_native_actions(script_actions)

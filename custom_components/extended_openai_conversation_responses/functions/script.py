@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+from copy import deepcopy
 import logging
 from typing import Any, cast
 
@@ -101,6 +102,18 @@ class ScriptFunction(Function):
     def __init__(self) -> None:
         """Initialize script tool."""
         super().__init__(script_config.SCRIPT_ENTITY_SCHEMA)
+
+    def validate_schema(self, function_config: dict[str, Any]) -> dict[str, Any]:
+        """Reject controls that a transient per-invocation runner cannot honor."""
+        # Runtime HA defaults are not administrator-authored concurrency controls.
+        # Its persistence-safe copy recovers the original source configuration.
+        function_config = deepcopy(function_config)
+        if any(key in function_config for key in ("mode", "max", "max_exceeded")):
+            raise HomeAssistantError(
+                "Script Functions do not support mode, max or max_exceeded. "
+                "Use a Home Assistant script entity for shared concurrency controls."
+            )
+        return super().validate_schema(function_config)
 
     async def execute(
         self,

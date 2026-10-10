@@ -362,7 +362,9 @@ async def test_forced_compaction_survives_local_detour_and_device_continuity(
         hass,
         **{
             CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_DEVICE,
-            "context_threshold": 1000,
+            # Leave room for the live tool catalogue, which is now budgeted on
+            # every round, while forcing compaction via the reported usage below.
+            "context_threshold": 20000,
             "context_truncate_strategy": "clear",
         },
     )
@@ -381,7 +383,11 @@ async def test_forced_compaction_survives_local_detour_and_device_continuity(
         "created": 0,
         "model": "gpt-5.6",
         "choices": [],
-        "usage": {"prompt_tokens": 2000, "completion_tokens": 1, "total_tokens": 2001},
+        "usage": {
+            "prompt_tokens": 40000,
+            "completion_tokens": 1,
+            "total_tokens": 40001,
+        },
     }
     compacting_reply = _chat_sse_text("Recent retained.").replace(
         b"data: [DONE]", ("data: " + json.dumps(usage) + "\n\ndata: [DONE]").encode()

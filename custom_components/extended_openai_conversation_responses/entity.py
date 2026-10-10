@@ -868,6 +868,58 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         messages.insert(0, primary_items[0])
                     primary_system_item_present = bool(primary_items)
 
+                # Tool outputs and the live tool catalogue can grow between rounds.
+                # Trim complete older turns before submitting the next request.
+                round_estimate = estimate_provider_input_tokens(
+                    messages, tool_kwargs.get("tools")
+                )
+                if (
+                    round_estimate > threshold
+                    and len(partition_history(chat_log.content).turns) > 1
+                ):
+                    await self._truncate_message_history(
+                        chat_log,
+                        observed_input_tokens=round_estimate,
+                        model=model,
+                        api_mode=api_mode,
+                    )
+                    messages = (
+                        _convert_content_to_responses_param(
+                            chat_log.content, prepared_user_content
+                        )
+                        if api_mode == API_MODE_RESPONSES
+                        else _convert_content_to_param(
+                            chat_log.content,
+                            shorten_tool_call_id,
+                            prepared_user_content,
+                        )
+                    )
+                    immediate_estimate = estimate_provider_input_tokens(
+                        messages, tool_kwargs.get("tools")
+                    )
+                    if immediate_estimate > threshold:
+                        keep_recent_messages(
+                            chat_log.content, immediate_estimate, threshold
+                        )
+                        messages = (
+                            _convert_content_to_responses_param(
+                                chat_log.content, prepared_user_content
+                            )
+                            if api_mode == API_MODE_RESPONSES
+                            else _convert_content_to_param(
+                                chat_log.content,
+                                shorten_tool_call_id,
+                                prepared_user_content,
+                            )
+                        )
+                    primary_system_item_present = (
+                        api_mode != API_MODE_RESPONSES
+                        or bool(
+                            chat_log.content
+                            and getattr(chat_log.content[0], "content", None)
+                        )
+                    )
+
                 _LOGGER.info(
                     "Sending provider request for %s using %s with %d input items",
                     model,
