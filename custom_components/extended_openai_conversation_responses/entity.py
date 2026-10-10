@@ -266,27 +266,13 @@ def _make_schema_nullable(schema: dict[str, Any]) -> None:
     schema["anyOf"] = [original, {"type": "null"}]
 
 
-def _merge_stream_identity(
-    current: str, delta: str, *, arguments: str = "", kind: str = "name"
-) -> str:
-    """Accept fragments, repeated complete values, and cumulative updates."""
-    if not current or delta == current:
-        return delta
-    if delta.startswith(current):
-        return delta
-    if current.startswith(delta):
-        return current
-    try:
-        json.loads(arguments)
-    except ValueError, TypeError:
-        complete = False
-    else:
-        complete = True
-    if complete or (kind == "id" and delta.startswith(("call_", "call-"))):
-        raise ProviderStreamError(
-            f"Provider returned malformed data: conflicting tool {'call id' if kind == 'id' else 'name'}",
-            error_type="invalid_event_sequence",
-        )
+def _merge_stream_identity(current: str, delta: str) -> str:
+    """Append Chat Completions identity deltas without guessing their meaning.
+
+    Repeated or overlapping text can be a legitimate fragment. Arguments may
+    finish before identity fragments, so their JSON completeness is irrelevant.
+    Cumulative snapshots/repeated full identities are not delta semantics.
+    """
     return current + delta
 
 
@@ -1595,7 +1581,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     idx = tool_call_delta.index
                     if idx not in current_tool_calls:
                         current_tool_calls[idx] = {
-                            "id": tool_call_delta.id or "",
+                            "id": "",
                             "name": "",
                             "arguments": "",
                         }
@@ -1604,8 +1590,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         current_tool_calls[idx]["id"] = _merge_stream_identity(
                             current_tool_calls[idx]["id"],
                             tool_call_delta.id,
-                            arguments=current_tool_calls[idx]["arguments"],
-                            kind="id",
                         )
 
                     if tool_call_delta.function:
@@ -1613,7 +1597,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             current_tool_calls[idx]["name"] = _merge_stream_identity(
                                 current_tool_calls[idx]["name"],
                                 tool_call_delta.function.name,
-                                arguments=current_tool_calls[idx]["arguments"],
                             )
                         if tool_call_delta.function.arguments:
                             current_tool_calls[idx]["arguments"] += (

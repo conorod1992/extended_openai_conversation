@@ -32,43 +32,48 @@ from tests.test_provider_tool_protocol import (
 )
 
 
-@pytest.mark.parametrize("cumulative", [False, True])
-async def test_chat_stream_accumulates_identity_fragments(hass, cumulative):
+@pytest.mark.parametrize(
+    ("fragments", "expected_id", "expected_name"),
+    [
+        (
+            [("call_", "get_", '{"value":'), ("123", "state", "1}")],
+            "call_123",
+            "get_state",
+        ),
+        ([("call_", "go", "{}"), ("call_", "go", None)], "call_call_", "gogo"),
+        ([("call_", "get_", "{}"), ("123", "state", None)], "call_123", "get_state"),
+        ([("call", "ab", "{}"), ("all", "a", None)], "callall", "aba"),
+        ([("call", "a", "{}"), ("call_more", "abc", None)], "callcall_more", "aabc"),
+    ],
+)
+async def test_chat_stream_accumulates_identity_fragments(
+    hass, fragments, expected_id, expected_name
+):
     entity = _entity(hass, [])
-
-    def delta(call_id, name, arguments):
-        return SimpleNamespace(
-            index=0,
-            id=call_id,
-            function=SimpleNamespace(name=name, arguments=arguments),
+    chunks = [
+        _chat_chunk(
+            tool_calls=[
+                SimpleNamespace(
+                    index=0,
+                    id=call_id,
+                    function=SimpleNamespace(name=name, arguments=arguments),
+                )
+            ]
         )
-
-    stream = _FakeStream(
-        [
-            _chat_chunk(tool_calls=[delta("call_", "get_", '{"value":')]),
-            _chat_chunk(
-                tool_calls=[
-                    delta(
-                        "call_123" if cumulative else "123",
-                        "get_state" if cumulative else "state",
-                        "1}",
-                    )
-                ]
-            ),
-            _chat_chunk(
-                tool_calls=[delta("call_123", "get_state", None)],
-                finish_reason="tool_calls",
-            ),
-        ]
-    )
+        for call_id, name, arguments in fragments
+    ]
+    chunks.append(_chat_chunk(finish_reason="tool_calls"))
     output = [
-        item async for item in entity._transform_chat_stream(_chat_log(hass), stream)
+        item
+        async for item in entity._transform_chat_stream(
+            _chat_log(hass), _FakeStream(chunks)
+        )
     ]
     call = next(item["tool_calls"][0] for item in output if "tool_calls" in item)
     assert (call.id, call.tool_name, call.tool_args) == (
-        "call_123",
-        "get_state",
-        {"value": 1},
+        expected_id,
+        expected_name,
+        {"value": 1} if fragments[0][2] != "{}" else {},
     )
 
 
