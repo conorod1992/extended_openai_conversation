@@ -365,7 +365,9 @@ def resolve_action_entity_ids(
     explicit = set(selection.get(ATTR_ENTITY_ID, [])) - {"all", "none"}
     if domain == "homeassistant" and service in {"turn_on", "turn_off", "toggle"}:
         participating: set[str] = set()
-        for entity_domain in {entity_id.partition(".")[0] for entity_id in selected}:
+        for entity_domain in sorted(
+            {entity_id.partition(".")[0] for entity_id in selected}
+        ):
             if entity_domain == "homeassistant" or not hass.services.has_service(
                 entity_domain, service
             ):
