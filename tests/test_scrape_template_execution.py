@@ -245,7 +245,7 @@ def test_published_scrape_examples_validate(hass):
     for relative in (
         "docs/functions/scrape.md",
         "docs/functions/function-types.md",
-        "tests/fixtures/legacy_examples/kakao_bus.md",
+        "tests/fixtures/legacy_examples/kakao_bus/kakao_bus.md",
         "tests/fixtures/functions/scrape_example.yaml",
     ):
         source = (root / relative).read_text(encoding="utf-8")
