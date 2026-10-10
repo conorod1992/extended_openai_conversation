@@ -2505,7 +2505,9 @@ def _native_result_sequence(
                     "if": "{{ " + response_name + " is defined }}",
                     "then": [
                         {
-                            "alias": binding,
+                            **(
+                                {"alias": binding} if alias_bindings is not None else {}
+                            ),
                             "variables": {alias: "{{ " + response_name + ".result }}"},
                         }
                     ],
