@@ -854,7 +854,11 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         deleted = await rules.async_delete(
             rule_id, expected_revision=message.get("revision")
         )
-        return {"deleted": deleted, "revision": rules.revision()}
+        return {
+            "deleted": deleted,
+            "revision": rules.revision(),
+            "diagnostics": rules.snapshot().get("diagnostics", {}),
+        }
     if action == "duplicate":
         rule = await rules.async_duplicate(
             rule_id, expected_revision=message.get("revision")
