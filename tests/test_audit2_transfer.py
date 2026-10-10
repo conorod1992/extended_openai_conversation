@@ -9,6 +9,7 @@ import yaml
 from custom_components.extended_openai_conversation_responses import backup, transfer
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
+    normalize_agent_config,
 )
 from custom_components.extended_openai_conversation_responses.management_ui import (
     _export_agent,
@@ -100,3 +101,45 @@ def test_required_template_secrets_are_restored_before_validation(hass):
         yaml.safe_load(parsed["config"]["functions"])[0]["function"]["value_template"]
         == "sk-privatebbbbbbbbbbbb"
     )
+
+
+@pytest.mark.parametrize(
+    "channels", [["a", "a"], [{"name": "a"}, {"name": "a"}], [[True], [True]]]
+)
+def test_agent_roundtrip_retains_secrets_with_duplicate_public_list_values(
+    hass, channels
+):
+    config = _document()["agent"]["config"]
+    tool = _rest_tool()
+    tool["function"] = {
+        "type": "script",
+        "sequence": [
+            {
+                "action": "rest_command.notify",
+                "data": {"channels": channels, "token": "local-credential"},
+            }
+        ],
+    }
+    config["functions"] = [tool]
+    config["function_groups"] = []
+    agent = SimpleNamespace(title="Agent", data=normalize_agent_config(config))
+    parsed = _parse_import_document(_export_agent(agent), destination=agent)
+    restored = yaml.safe_load(parsed["config"]["functions"])[0]["function"]
+    assert restored == tool["function"]
+    changed = _export_agent(agent)
+    data = changed["config"]["functions"][0]["function"]["sequence"][0]["data"]
+    data["channels"][0] = "different-destination"
+    with pytest.raises(AgentConfigError, match="unavailable secrets"):
+        _parse_import_document(changed, destination=agent)
+
+
+def test_duplicate_public_lists_preserve_scalar_types_in_secret_context():
+    local = {"destinations": [True, True], "token": "local-credential"}
+    imported = redact_secrets(local)
+    imported["destinations"] = [1, 1]
+    restored, preserved, missing = transfer._restore_section_secrets(
+        [imported], [local]
+    )
+    assert not preserved
+    assert missing == ("[0].token",)
+    assert "token" not in restored[0]
