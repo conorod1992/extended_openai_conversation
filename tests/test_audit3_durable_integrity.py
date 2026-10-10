@@ -199,6 +199,128 @@ def test_group_rename_transfers_hidden_quarantined_members():
     assert edited[0]["functions"] == ["good"]
 
 
-@pytest.mark.parametrize("key", ["authorization_header", "clientSecretValue", "api_key_value", "password_value", "refreshTokenValue"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "authorization_header",
+        "clientSecretValue",
+        "api_key_value",
+        "password_value",
+        "refreshTokenValue",
+    ],
+)
 def test_nonstandard_credential_fields_remain_redacted(key):
     assert redact_secrets({key: "private-value"}) == {key: REDACTED_SECRET_SENTINEL}
+
+
+@pytest.mark.parametrize("operation", ["add", "upsert", "update"])
+@pytest.mark.parametrize("readable", [[], ["another-person"]])
+async def test_write_only_memory_never_returns_stored_fields(operation, readable):
+    memory = await _memory()
+    agent = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
+    agent.subentry = SimpleNamespace(data={"memory_enabled": True})
+    agent._memory = memory
+    agent._current_readable_memory_scope_ids = lambda context: readable
+    agent._current_write_memory_scope_id = lambda *args, **kwargs: (
+        SHARED_HOUSEHOLD_SCOPE_ID
+    )
+    existing = await memory.async_add(
+        SHARED_HOUSEHOLD_SCOPE_ID,
+        "The spare house key is beneath the porch",
+        "home",
+        "explicit",
+        subject="spare key",
+        key="house.key",
+    )
+    args = {"category": "home", "source": "explicit", "subject": "spare key"}
+    if operation == "update":
+        args = {"memory_id": existing["memory"]["memory_id"], "category": "security"}
+    else:
+        args["content"] = "The spare house key is somewhere"
+    result = await agent._async_execute_memory_tool(operation, args, None)
+    assert set(result) == {"status"}
+    if operation != "update":
+        args["content"] = "The spare house key is beneath the porch"
+        result = await agent._async_execute_memory_tool(operation, args, None)
+        assert set(result) == {"status"}
+        args["content"] = "Unrelated newly supplied fact"
+        args.pop("subject")
+        result = await agent._async_execute_memory_tool(operation, args, None)
+        assert result == {"status": "created"}
+
+
+@pytest.mark.parametrize("container", ["variables", "data", "service_data"])
+def test_script_payload_redaction_preserves_ordinary_names(container):
+    payload = {
+        "token_index": 7,
+        "token_type": "Bearer",
+        "secret_reference": "recipe",
+        "access_token": "private",
+        "authorization_header": "Bearer private",
+        "clientSecretValue": "private",
+        "api_key_value": "private",
+        "password_value": "private",
+        "refreshTokenValue": "private",
+    }
+    raw = {
+        "functions": [
+            {
+                "function": {
+                    "type": "script",
+                    "sequence": [{"parallel": [{"sequence": [{container: payload}]}]}],
+                }
+            }
+        ]
+    }
+    safe = redact_secrets(raw)["functions"][0]["function"]["sequence"][0]["parallel"][
+        0
+    ]["sequence"][0][container]
+    assert safe["token_index"] == 7
+    assert safe["token_type"] == "Bearer"
+    assert safe["secret_reference"] == "recipe"
+    assert all(
+        safe[key] == REDACTED_SECRET_SENTINEL
+        for key in payload
+        if key not in {"token_index", "token_type", "secret_reference"}
+    )
+
+
+def test_local_rule_payload_redaction_preserves_variables():
+    raw = {
+        "action_type": "local_action",
+        "action": {
+            "actions": [{"variables": {"token_index": 7, "password": "private"}}]
+        },
+    }
+    safe = redact_secrets(raw)["action"]["actions"][0]["variables"]
+    assert safe == {"token_index": 7, "password": REDACTED_SECRET_SENTINEL}
+
+
+def test_nonsecret_script_variable_backup_roundtrip(hass):
+    import yaml
+    from custom_components.extended_openai_conversation_responses import backup
+    from tests.test_backup import _document
+
+    config = {
+        "functions": [
+            {
+                "spec": {
+                    "name": "ordinal",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                "function": {
+                    "type": "script",
+                    "sequence": [
+                        {"variables": {"token_index": 7}},
+                        {"variables": {"_function_result": "{{ token_index }}"}},
+                    ],
+                },
+            }
+        ]
+    }
+    snapshot = _document()
+    snapshot["agent"]["config"] = backup.export_configuration_snapshot(config)
+    exported = backup.finalize_backup_snapshot(snapshot)["document"]
+    prepared = backup.inspect_backup(exported, "destination")
+    function = yaml.safe_load(prepared.config["functions"])[0]["function"]
+    assert function["sequence"][0]["variables"]["token_index"] == 7

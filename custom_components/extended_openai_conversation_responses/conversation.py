@@ -2592,9 +2592,12 @@ class ExtendedOpenAIAgentEntity(
                 for name in ("subject", "key", "valid_from")
                 if name in arguments
             }
-            return _compact_memory_result(
-                await method(write_scope_id, content, category, source, **metadata)
-            )
+            result = await method(write_scope_id, content, category, source, **metadata)
+            # Write permission does not grant access to existing candidate records,
+            # including duplicate/conflict metadata returned by the memory store.
+            if write_scope_id not in readable_scope_ids:
+                return {"status": result["status"]}
+            return _compact_memory_result(result)
         if operation == "search":
             query = arguments.get("query")
             category = arguments.get("category")
@@ -2708,6 +2711,8 @@ class ExtendedOpenAIAgentEntity(
                 clear_fields=clear_fields,
                 source=source,
             )
+            if write_scope_id not in readable_scope_ids:
+                return {"status": "updated"}
             return {
                 "status": "updated",
                 "memory": model_memory_as_dict(

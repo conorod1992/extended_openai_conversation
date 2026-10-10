@@ -46,6 +46,21 @@ def _is_secret_key(key: Any) -> bool:
     return any(family in canonical for family in _SECRET_KEY_FAMILIES)
 
 
+def _is_payload_secret_key(key: Any) -> bool:
+    """Distinguish credentials from user-defined Script variable/data names."""
+    separated = _CAMEL_CASE_BOUNDARY.sub(" ", str(key))
+    parts = tuple(part.casefold() for part in _KEY_SEPARATOR.split(separated) if part)
+    if not _is_secret_key(key):
+        return False
+    # Arbitrary payload names such as token_index and secret_reference are not
+    # credential settings. Still redact credential names and common wrappers.
+    if parts and parts[-1] in {"value", "header"}:
+        parts = parts[:-1]
+    return bool(parts) and (
+        parts[-1] in _SECRET_KEY_PARTS or "".join(parts).endswith(_SECRET_KEY_FAMILIES)
+    )
+
+
 def _sentinel() -> dict[str, bool]:
     """Return an isolated sentinel object suitable for JSON serialization."""
     return dict(REDACTED_SECRET_SENTINEL)
@@ -78,7 +93,15 @@ def _is_function_tool_schema_root(path: tuple[Any, ...]) -> bool:
     )
 
 
-def _redact_secrets(value: Any, *, schema: bool, path: tuple[Any, ...]) -> Any:
+def _redact_secrets(
+    value: Any,
+    *,
+    schema: bool,
+    path: tuple[Any, ...],
+    action: bool = False,
+    payload: bool = False,
+    rule_action: bool = False,
+) -> Any:
     """Recursively redact secrets while tracking structural schema context."""
     if value == REDACTED_SECRET_SENTINEL:
         return _sentinel()
@@ -86,7 +109,9 @@ def _redact_secrets(value: Any, *, schema: bool, path: tuple[Any, ...]) -> Any:
         value = value[LITERAL_TEXT_KEY]
     if isinstance(value, list):
         return [
-            _redact_secrets(item, schema=schema, path=(*path, index))
+            _redact_secrets(
+                item, schema=schema, path=(*path, index), action=action, payload=payload
+            )
             for index, item in enumerate(value)
         ]
     if isinstance(value, str):
@@ -102,13 +127,37 @@ def _redact_secrets(value: Any, *, schema: bool, path: tuple[Any, ...]) -> Any:
     for key, item in value.items():
         child_path = (*path, key)
         child_schema = schema or _is_function_tool_schema_root(child_path)
-        if not schema and _is_secret_key(key):
+        secret_key = _is_payload_secret_key(key) if payload else _is_secret_key(key)
+        if not schema and secret_key:
             result[key] = _sentinel()
             continue
         result[key] = _redact_secrets(
             item,
             schema=child_schema,
             path=child_path,
+            action=(
+                not payload
+                and (
+                    (
+                        action
+                        and key
+                        in {
+                            "sequence",
+                            "then",
+                            "else",
+                            "default",
+                            "parallel",
+                            "repeat",
+                            "choose",
+                        }
+                    )
+                    or (value.get("type") == "script" and key == "sequence")
+                    or (rule_action and key == "actions")
+                )
+            ),
+            payload=payload
+            or (action and key in {"variables", "data", "service_data"}),
+            rule_action=value.get("action_type") == "local_action" and key == "action",
         )
     return result
 
