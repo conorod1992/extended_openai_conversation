@@ -94,17 +94,10 @@ async def async_authorize_ha_action(
     # A visible entity_id can be reused by a different registry entry. Registry
     # entries are replaced on updates, so identity also catches A -> B -> A
     # membership changes that a second textual resolution would miss.
-    selection = _target_selection(data, target)
-    indirect = any(
-        key in selection
-        for key in (ATTR_DEVICE_ID, ATTR_AREA_ID, ATTR_FLOOR_ID, ATTR_LABEL_ID)
-    )
+    # Even explicit IDs can gain participants in a live component while the
+    # permission lookup awaits, without replacing the service registration.
     if (
-        (
-            indirect
-            and resolve_action_entity_ids(hass, domain, service, data, target)
-            != entity_ids
-        )
+        resolve_action_entity_ids(hass, domain, service, data, target) != entity_ids
         or not _same_target_identity(
             _target_identity(hass, entity_ids), target_identity
         )
@@ -320,7 +313,7 @@ def _capture_previous_state(
         return {}
     if not hasattr(hass, "states"):
         return {}
-    entity_ids = _resolve_target_entity_ids(hass, data, target)
+    entity_ids = resolve_action_entity_ids(hass, action_domain, service, data, target)
     result: dict[str, dict[str, Any]] = {}
     for entity_id in sorted(entity_ids):
         entity_domain = entity_id.partition(".")[0]
