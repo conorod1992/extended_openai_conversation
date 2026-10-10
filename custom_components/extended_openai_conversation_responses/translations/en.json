@@ -166,12 +166,14 @@
                     "data": {
                         "name": "Agent name",
                         "chat_model": "Model",
+            "azure_model": "Azure underlying model",
                         "api_mode": "API mode",
                         "max_tokens": "Maximum tokens to return in response",
                         "web_search": "Web search",
                         "advanced_options": "Advanced options"
                     },
                     "data_description": {
+            "azure_model": "For custom Azure deployment names, enter the underlying model ID, such as gpt-4.1. Leave blank for other providers.",
                         "web_search": "Allow this AI Task agent to use OpenAI's native Web Search tool for current or external information. Requires the direct OpenAI Responses API."
                     }
                 },

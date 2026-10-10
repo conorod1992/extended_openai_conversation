@@ -47,3 +47,16 @@ The integration's OpenAI hosted Web Search integration is specifically for direc
 Some compatible providers have stricter tool-call identifier requirements. The **Shorten tool call IDs** advanced option creates 9-character IDs for those deployments.
 
 Leave it disabled for OpenAI unless you have a concrete compatibility reason to change it.
+
+## Streamed tool identities
+
+Chat Completions tool calls are accumulated by their `index`. Nonempty `id` and
+`function.name` deltas are appended literally, just like argument fragments;
+repeated or overlapping fragments are preserved even after the arguments form
+complete JSON. Providers that send a full identity normally send it once, as in
+[OpenAI's streaming function-call examples](https://developers.openai.com/api/docs/guides/function-calling#streaming).
+
+Cumulative snapshots or repeated full identities on later chunks cannot be
+reliably distinguished from legitimate fragments. Compatible endpoints must
+emit identity deltas rather than such snapshots; the integration does not guess
+or deduplicate them. Responses API identity events retain their separate rules.

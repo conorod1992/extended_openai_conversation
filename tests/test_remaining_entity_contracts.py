@@ -133,12 +133,8 @@ def _chat_chunk(*, name="demo", arguments="{}", finish=None, content=None):
             ],
             "after terminal",
         ),
-        (
-            [_chat_chunk(name="first"), _chat_chunk(name="second")],
-            "conflicting tool name",
-        ),
     ],
-    ids=["late-chat-event", "changed-tool-name"],
+    ids=["late-chat-event"],
 )
 async def test_chat_rejects_inconsistent_stream_before_dispatch(chunks, message):
     with pytest.raises(ProviderStreamError, match=message):

@@ -266,16 +266,85 @@ def _make_schema_nullable(schema: dict[str, Any]) -> None:
     schema["anyOf"] = [original, {"type": "null"}]
 
 
+def _merge_stream_identity(current: str, delta: str) -> str:
+    """Append Chat Completions identity deltas without guessing their meaning.
+
+    Repeated or overlapping text can be a legitimate fragment. Arguments may
+    finish before identity fragments, so their JSON completeness is irrelevant.
+    Cumulative snapshots/repeated full identities are not delta semantics.
+    """
+    return current + delta
+
+
+def _disjoint_schema_alternatives(variants: list[Any]) -> bool:
+    """Prove exclusivity before replacing oneOf with provider-supported anyOf."""
+
+    def types(branch):
+        value = branch.get("type")
+        values = {value} if isinstance(value, str) else set(value or [])
+        if branch.get("nullable"):
+            values.add("null")
+        # JSON Schema integers are also numbers.
+        if "number" in values:
+            values.add("integer")
+        return values
+
+    def values(branch):
+        if "const" in branch:
+            return [branch["const"]]
+        return branch.get("enum")
+
+    for index, left in enumerate(variants):
+        for right in variants[index + 1 :]:
+            if not isinstance(left, dict) or not isinstance(right, dict):
+                return False
+            if types(left) and types(right) and not types(left) & types(right):
+                continue
+            # Required discriminators distinguish objects only. Missing types
+            # also admit scalars, and nullable objects still overlap at null.
+            if types(left) != {"object"} or types(right) != {"object"}:
+                return False
+            shared = set(left.get("required", [])) & set(right.get("required", []))
+            for key in shared:
+                a = values(left.get("properties", {}).get(key, {}))
+                b = values(right.get("properties", {}).get(key, {}))
+                if (
+                    a is not None
+                    and b is not None
+                    and all(x != y for x in a for y in b)
+                ):
+                    break
+            else:
+                return False
+    return bool(variants)
+
+
 def _adjust_schema(schema: dict[str, Any], *, root: bool = False) -> None:
     """Adjust the schema to be compatible with OpenAI API."""
     # HA selectors emit domain-specific annotations outside strict provider schemas.
     schema.pop("format", None)
     schema.pop("uniqueItems", None)
-    if root and (schema.get("type") != "object" or "anyOf" in schema):
+    if root and (
+        schema.get("type") != "object" or "anyOf" in schema or "oneOf" in schema
+    ):
         raise HomeAssistantError(
             "Strict structured outputs require a root object without anyOf; "
             "place alternatives inside a named field"
         )
+    if "oneOf" in schema:
+        if "anyOf" in schema:
+            raise HomeAssistantError(
+                "Strict structured outputs cannot combine oneOf and anyOf at one node"
+            )
+        variants = schema["oneOf"]
+        if not isinstance(variants, list) or not _disjoint_schema_alternatives(
+            variants
+        ):
+            raise HomeAssistantError(
+                "Strict structured outputs cannot represent overlapping oneOf alternatives; "
+                "use disjoint types or a required discriminator"
+            )
+        schema["anyOf"] = schema.pop("oneOf")
     if "allOf" in schema:
         raise HomeAssistantError(
             "Strict structured outputs cannot represent allOf compositions; "
@@ -1564,34 +1633,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     idx = tool_call_delta.index
                     if idx not in current_tool_calls:
                         current_tool_calls[idx] = {
-                            "id": tool_call_delta.id or "",
+                            "id": "",
                             "name": "",
                             "arguments": "",
                         }
 
-                    if tool_call_delta.id and current_tool_calls[idx]["id"] not in {
-                        "",
-                        tool_call_delta.id,
-                    }:
-                        raise ProviderStreamError(
-                            "Provider returned malformed data: conflicting tool call id",
-                            error_type="invalid_event_sequence",
+                    if tool_call_delta.id:
+                        current_tool_calls[idx]["id"] = _merge_stream_identity(
+                            current_tool_calls[idx]["id"],
+                            tool_call_delta.id,
                         )
-                    if tool_call_delta.id and not current_tool_calls[idx]["id"]:
-                        current_tool_calls[idx]["id"] = tool_call_delta.id
 
                     if tool_call_delta.function:
                         if tool_call_delta.function.name:
-                            if current_tool_calls[idx]["name"] not in {
-                                "",
+                            current_tool_calls[idx]["name"] = _merge_stream_identity(
+                                current_tool_calls[idx]["name"],
                                 tool_call_delta.function.name,
-                            }:
-                                raise ProviderStreamError(
-                                    "Provider returned malformed data: conflicting tool name",
-                                    error_type="invalid_event_sequence",
-                                )
-                            current_tool_calls[idx]["name"] = (
-                                tool_call_delta.function.name
                             )
                         if tool_call_delta.function.arguments:
                             current_tool_calls[idx]["arguments"] += (

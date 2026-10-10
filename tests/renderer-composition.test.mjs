@@ -69,7 +69,11 @@ try {
   unsupportedOwner._result.options.reasoning_effort = [{value:"low",label:"Low"},{value:"high",label:"High"}];
   unsupportedOwner._result.options.service_tier = [{value:"flex",label:"Flex"},{value:"default",label:"Default"}];
   const unsupportedHtml = renderConfiguration(unsupportedOwner);
-  for (const key of ["temperature","top_p","reasoning_effort","service_tier"]) {
+  const tierSelect = unsupportedHtml.match(/<select id="config-service_tier"[^>]*>/)?.[0];
+  assert.ok(tierSelect, "models without optional tiers must still offer the default tier");
+  assert.doesNotMatch(tierSelect, /disabled/, "a retained unsupported tier must remain correctable");
+  assert.match(unsupportedHtml, /value="default"/);
+  for (const key of ["temperature","top_p","reasoning_effort"]) {
     assert.match(
       unsupportedHtml,
       new RegExp(`class="setting is-disabled eoc-unavailable-model-setting"[^>]*data-field="${key}"`),

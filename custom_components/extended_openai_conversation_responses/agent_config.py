@@ -238,6 +238,7 @@ AGENT_CONFIG_DEFAULTS = MappingProxyType(
         CONF_EXPOSED_ENTITIES_ENABLED: DEFAULT_EXPOSED_ENTITIES_ENABLED,
         CONF_EXPOSED_ENTITIES_TEMPLATE: DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
         CONF_CHAT_MODEL: DEFAULT_CHAT_MODEL,
+        "azure_model": "",
         CONF_API_MODE: DEFAULT_API_MODE,
         CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,
         CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION: DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -842,7 +843,9 @@ def normalize_agent_config(
         result[CONF_PROMPT] = DEFAULT_PROMPT
     _coerce_legacy_numbers(result)
 
-    selected_model = str(result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+    selected_model = str(
+        result.get("azure_model") or result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+    )
     reasoning_options = get_reasoning_effort_options(selected_model)
     if not reasoning_options:
         # Hidden defaults/drafts from another model are inactive, not request
@@ -893,6 +896,7 @@ def normalize_agent_config(
             CONF_CURRENT_DATETIME_TEMPLATE,
             CONF_EXPOSED_ENTITIES_TEMPLATE,
             CONF_CHAT_MODEL,
+            "azure_model",
             CONF_API_MODE,
             CONF_CONTEXT_TRUNCATE_STRATEGY,
             CONF_CONTINUE_CONVERSATION,
@@ -943,7 +947,14 @@ def normalize_agent_config(
             item["key"] for item in CONTEXT_TRUNCATE_STRATEGIES
         ],
         CONF_REASONING_EFFORT: reasoning_options,
-        CONF_SERVICE_TIER: SERVICE_TIER_OPTIONS,
+        CONF_SERVICE_TIER: list(
+            dict.fromkeys(
+                [
+                    DEFAULT_SERVICE_TIER,
+                    *get_model_config(selected_model).get("service_tier_options", []),
+                ]
+            )
+        ),
         CONF_GUEST_KNOWLEDGE_POLICY: GUEST_ACCESS_POLICIES,
         CONF_GUEST_FUNCTION_POLICY: GUEST_ACCESS_POLICIES,
         CONF_GUEST_SHARED_MEMORY_POLICY: GUEST_SHARED_MEMORY_POLICIES,
@@ -1120,10 +1131,15 @@ def merge_agent_config(
         )
     known = {key: value for key, value in current.items() if key in AGENT_CONFIG_FIELDS}
     if (
-        CONF_CHAT_MODEL in updates
-        and updates[CONF_CHAT_MODEL] != known.get(CONF_CHAT_MODEL)
-        and CONF_REASONING_EFFORT not in updates
-    ):
+        (
+            CONF_CHAT_MODEL in updates
+            and updates[CONF_CHAT_MODEL] != known.get(CONF_CHAT_MODEL)
+        )
+        or (
+            "azure_model" in updates
+            and updates["azure_model"] != known.get("azure_model")
+        )
+    ) and CONF_REASONING_EFFORT not in updates:
         # A model change with no explicit effort should use the new model's
         # recommended profile. Retaining the prior model's effort can make a
         # perfectly valid switch to a non-reasoning model unsavable.

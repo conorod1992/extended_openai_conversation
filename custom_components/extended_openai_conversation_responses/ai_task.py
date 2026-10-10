@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from openai import OpenAIError
+import voluptuous as vol
 
 from homeassistant.components import ai_task, conversation
 from homeassistant.components.ai_task.const import DEFAULT_SYSTEM_PROMPT
@@ -201,6 +202,86 @@ def _normalize_caller_nullable(schema: dict[str, Any]) -> None:
         _normalize_caller_nullable(schema["items"])
 
 
+def _caller_null_plan(structure: Any) -> _OptionalNullPlan | None:
+    """Use the caller's actual union semantics when its schema is inspectable."""
+    # Voluptuous Any stores its containing Schema in .schema after compilation;
+    # that is context, rather than the union's own source definition.
+    union = isinstance(structure, vol.Any)
+    source = structure if union else getattr(structure, "schema", structure)
+    required = bool(getattr(structure, "required", False))
+    extra = getattr(structure, "extra", vol.PREVENT_EXTRA)
+    if union:
+        extra = getattr(
+            structure,
+            "_extra",
+            getattr(getattr(structure, "schema", None), "extra", extra),
+        )
+    if isinstance(source, vol.Schema):
+        return _caller_null_plan(source)
+    if isinstance(source, vol.Any):
+        required = bool(source.required)
+    if not isinstance(source, (dict, list, vol.Any)):
+        return None
+
+    class CallerValidator:
+        def is_valid(self, value):
+            try:
+                vol.Schema(source, required=required, extra=extra)(deepcopy(value))
+            except SCHEMA_ERRORS:
+                return False
+            return True
+
+    def child(value):
+        if isinstance(value, (vol.Schema, vol.Any)):
+            return _caller_null_plan(value)
+        return _caller_null_plan(vol.Schema(value, required=required, extra=extra))
+
+    properties = {}
+    optional = set()
+    items = None
+    alternatives = []
+    if isinstance(source, dict):
+        for marker, value in source.items():
+            key = getattr(marker, "schema", marker)
+            if not isinstance(key, str):
+                continue
+            try:
+                vol.Schema(value)(None)
+            except SCHEMA_ERRORS:
+                if isinstance(marker, vol.Optional) or (
+                    not required and not isinstance(marker, vol.Required)
+                ):
+                    optional.add(key)
+            plan = child(value)
+            if plan is not None:
+                properties[key] = plan
+    elif isinstance(source, list) and source:
+        if len(source) == 1:
+            items = child(source[0])
+        else:
+
+            class ListItemValidator:
+                def is_valid(self, value):
+                    # Legacy Voluptuous lists can stop at a deeper branch error;
+                    # they do not always have Any's alternative semantics.
+                    return CallerValidator().is_valid([value])
+
+            items = _OptionalNullPlan(
+                frozenset(),
+                {},
+                None,
+                [plan for value in source if (plan := child(value)) is not None],
+                ListItemValidator(),
+            )
+    elif isinstance(source, vol.Any):
+        alternatives = [
+            plan for value in source.validators if (plan := child(value)) is not None
+        ]
+    return _OptionalNullPlan(
+        frozenset(optional), properties, items, alternatives, CallerValidator()
+    )
+
+
 def _omit_optional_nulls(data: Any, schema: dict[str, Any]) -> Any:
     """Undo placeholders with a plan reused for every object in array items."""
     normalized = deepcopy(schema)
@@ -222,7 +303,18 @@ def parse_ai_task_structured_response(
         raise HomeAssistantError("Error with structured response") from err
     if original_schema is not None:
         data = _omit_optional_nulls(data, original_schema)
-    return _validate_structured_response(data, structure)
+    return _validate_with_caller_cleanup(data, structure)
+
+
+def _validate_with_caller_cleanup(data: Any, structure: SchemaValidator | None) -> Any:
+    """Resolve projection ambiguities against the caller on the HA event loop."""
+    try:
+        return _validate_structured_response(data, structure)
+    except HomeAssistantError:
+        plan = _caller_null_plan(structure)
+        if plan is None:
+            raise
+        return _validate_structured_response(plan.apply(data)[0], structure)
 
 
 def _validate_structured_response(data: Any, structure: SchemaValidator | None) -> Any:
@@ -353,7 +445,7 @@ class ExtendedOpenAITaskEntity(
             text,
             original_schema=original_schema,
         )
-        data = _validate_structured_response(data, task.structure)
+        data = _validate_with_caller_cleanup(data, task.structure)
 
         return ai_task.GenDataTaskResult(
             conversation_id=chat_log.conversation_id,
