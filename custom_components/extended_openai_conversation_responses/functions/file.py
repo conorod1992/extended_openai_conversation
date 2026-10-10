@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
-from typing import Any
+from typing import Any, cast
 
 import voluptuous as vol
 
@@ -59,7 +59,7 @@ def _render_exact_text(template: Template, arguments: dict[str, Any]) -> str:
         if isinstance(template, _ExactTextTemplate)
         else Template("\u2063" + template.template + "\u2063", template.hass)
     )
-    return protected.async_render(arguments, parse_result=False)[1:-1]
+    return cast(str, protected.async_render(arguments, parse_result=False))[1:-1]
 
 
 def _fingerprint(stat_result: os.stat_result) -> _FileFingerprint:

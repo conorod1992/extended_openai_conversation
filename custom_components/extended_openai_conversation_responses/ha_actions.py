@@ -146,7 +146,9 @@ async def _async_call_ha_action_unchecked(
     if request_response:
         kwargs.update(return_response=True, blocking=True)
     try:
-        response = await hass.services.async_call(domain=domain, service=service, **kwargs)
+        response = await hass.services.async_call(
+            domain=domain, service=service, **kwargs
+        )
     except _SERVICE_SCHEMA_ERRORS as err:
         # Home Assistant has transitioned service schemas from voluptuous to
         # probatio. Keep the integration's action boundary stable across both: a
