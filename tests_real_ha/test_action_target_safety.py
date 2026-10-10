@@ -8,6 +8,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.extended_openai_conversation_responses.functions.native import (
     NativeFunction,
 )
+from custom_components.extended_openai_conversation_responses.ha_actions import (
+    action_target_revalidation,
+)
 from custom_components.extended_openai_conversation_responses.intercom import (
     ANNOUNCE_FEATURE,
     IntercomManager,
@@ -84,9 +87,18 @@ async def test_indirect_target_ignores_unrelated_unavailable_sensor(
             }
         ]
     }
-    result = await NativeFunction().execute(
-        hass, {"name": "execute_service"}, arguments, None, exposed
-    )
+    # Exercise the shared dispatch-boundary exposure check as conversation does.
+    # The sensor is deliberately unexposed, despite sharing every selector.
+    exposed = [{"entity_id": light.entity_id}]
+
+    def revalidate(current_hass, entity_ids):
+        assert entity_ids == {light.entity_id}
+        NativeFunction().validate_entity_ids(current_hass, sorted(entity_ids), exposed)
+
+    with action_target_revalidation(revalidate):
+        result = await NativeFunction().execute(
+            hass, {"name": "execute_service"}, arguments, None, exposed
+        )
     assert result[0]["success"] is True
     assert hass.states.get(light.entity_id).state == "on"
     # Intended targets must still pass availability and exposure checks.
