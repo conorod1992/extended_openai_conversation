@@ -117,6 +117,12 @@ class Function(ABC):
         require_available: bool = True,
         availability_entity_ids: set[str] | None = None,
     ) -> None:
+        exposed_entity_ids = {e["entity_id"] for e in exposed_entities}
+        not_exposed = [
+            entity_id for entity_id in entity_ids if entity_id not in exposed_entity_ids
+        ]
+        if not_exposed:
+            raise entity_access_error(hass, not_exposed)
         states = {entity_id: hass.states.get(entity_id) for entity_id in entity_ids}
         not_found = [entity_id for entity_id, state in states.items() if state is None]
         if not_found:
@@ -132,12 +138,6 @@ class Function(ABC):
         ]
         if require_available and unavailable:
             raise HomeAssistantError(f"Entity is unavailable: {', '.join(unavailable)}")
-        exposed_entity_ids = {e["entity_id"] for e in exposed_entities}
-        not_exposed = [
-            entity_id for entity_id in entity_ids if entity_id not in exposed_entity_ids
-        ]
-        if not_exposed:
-            raise entity_access_error(hass, not_exposed)
 
     @abstractmethod
     async def execute(

@@ -12,10 +12,10 @@ from urllib.request import Request, urlopen
 # Release-day bridge: the upstream daily generator has not published fixtures
 # for this Core release yet. Regenerate from these immutable upstream sources;
 # never relabel beta fixtures or silently select an older stable runtime.
-GENERATED_HA_VERSION = "2026.10.0"
+GENERATED_HA_VERSION = "2026.10.1"
 GENERATOR_SHA = "aacf4b5e11e16da8f6ccc67fe3729441a51c282e"
-CORE_SHA = "6a811d3359c7b2076dc9e1cf900843a129c044af"
-GENERATED_PLUGIN_VERSION = "0.13.370+eoai.ha2026.10.0.gaacf4b5e.c6a811d33"
+CORE_SHA = "abe1fdd7cd6b4de1715c87b6fd87d92699514ef9"
+GENERATED_PLUGIN_VERSION = "0.13.370+eoai.ha2026.10.1.gaacf4b5e.cabe1fdd7"
 
 
 def _numeric_version(value: str) -> tuple[int, ...] | None:

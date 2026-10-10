@@ -188,6 +188,16 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
     def _publish_state(self, period: QuietPeriod | None) -> None:
         entity_id = self._state_entity_id()
         self._remove_previous_publication(entity_id)
+        registry = er.async_get(self.hass)
+        lookup = getattr(registry, "async_get", None)
+        entry = lookup(entity_id) if callable(lookup) else None
+        if entry is not None and entry.disabled_by is not None:
+            if self._published_state is not None and (
+                self.hass.states.get(entity_id) is self._published_state
+            ):
+                self.hass.states.async_remove(entity_id)
+            self._published_state = None
+            return
         self.hass.states.async_set(
             entity_id,
             "on" if period is not None else "off",
