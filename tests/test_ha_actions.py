@@ -14,7 +14,7 @@ from custom_components.extended_openai_conversation_responses.ha_actions import 
     async_call_ha_action,
     serialize_reversible_state,
 )
-from homeassistant.core import Context, State
+from homeassistant.core import Context, State, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 
 _REAL_TARGET_IDENTITY = ha_actions._target_identity
@@ -195,6 +195,7 @@ def _hass_with_states(states: dict[str, State], events: list[str] | None = None)
     event_log = events if events is not None else []
     services = SimpleNamespace(
         has_service=lambda _domain, _service: True,
+        supports_response=lambda *_: SupportsResponse.NONE,
         async_call=AsyncMock(side_effect=lambda **_kwargs: event_log.append("execute")),
     )
 
@@ -467,6 +468,7 @@ def test_target_selection_merges_scalar_and_list_values() -> None:
 async def test_unchecked_action_translates_service_schema_rejection() -> None:
     services = SimpleNamespace(
         has_service=lambda _domain, _service: True,
+        supports_response=lambda *_: SupportsResponse.NONE,
         async_call=AsyncMock(side_effect=vol.Invalid("invalid service payload")),
     )
     hass = SimpleNamespace(services=services)
@@ -602,9 +604,9 @@ def test_service_identity_returns_current_service_owner(
     owner = object()
     hass = SimpleNamespace(
         services=SimpleNamespace(
-            async_services_for_domain=lambda domain: {"turn_on": owner}
-            if domain == "light"
-            else {}
+            async_services_for_domain=lambda domain: (
+                {"turn_on": owner} if domain == "light" else {}
+            )
         )
     )
 

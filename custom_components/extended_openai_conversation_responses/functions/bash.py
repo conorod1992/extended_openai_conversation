@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import shlex
 import signal
 
 import voluptuous as vol
@@ -228,7 +229,17 @@ class BashFunction(Function):
 
             # Extract and validate literal absolute paths in command text.
             win_paths = re.findall(r"[A-Za-z]:\\[^\\\"\' ]+", command)
-            posix_paths = re.findall(r"(?<!\w)/[^\s\"\']+", command)
+            # Tokenize shell operators before recognizing URLs: a URL argument
+            # must not hide a following command or redirection. This remains a
+            # defensive literal-path guard, not a sandbox for arbitrary Bash.
+            lexer = shlex.shlex(command, posix=True, punctuation_chars="();&|<>")
+            lexer.whitespace_split = True
+            lexer.commenters = ""
+            posix_paths = []
+            for token in lexer:
+                if re.match(r"^(?:[^=]+=)?[A-Za-z][A-Za-z0-9+.-]*://", token):
+                    continue
+                posix_paths.extend(re.findall(r"(?<![\w./:])/[^\s\"\']+", token))
 
             for raw in win_paths + posix_paths:
                 try:

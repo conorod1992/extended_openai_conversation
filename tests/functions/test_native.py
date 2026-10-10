@@ -94,7 +94,7 @@ class TestNativeFunctionYaml:
         )
         function_config = function_tool["function"]
         previous_state = {"light.living_room": {"state": "on", "brightness": 92}}
-        execute = AsyncMock(return_value=previous_state)
+        execute = AsyncMock(return_value={"previous_state": previous_state})
         monkeypatch.setattr(
             "custom_components.extended_openai_conversation_responses.functions.native.async_call_ha_action",
             execute,

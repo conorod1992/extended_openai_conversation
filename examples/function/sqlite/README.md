@@ -135,11 +135,9 @@ history returns `unknown`, while a known zero duration returns `0s`.
         SELECT datetime(s.last_updated_ts, 'unixepoch', 'localtime') as state_updated_at, s.state
         FROM states s
                  INNER JOIN states_meta sm ON s.metadata_id = sm.metadata_id
-                 INNER JOIN states old ON s.old_state_id = old.state_id
         WHERE sm.entity_id = :entity_id
-          AND s.state != old.state
-          AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') < :datetime
-        ORDER BY s.last_updated_ts DESC
+          AND s.last_updated_ts <= CAST(strftime('%s', :datetime, 'utc') AS REAL)
+        ORDER BY s.last_updated_ts DESC, s.state_id DESC
         LIMIT 1
       {%- else -%}
         {{ raise("entity_id should be exposed.") }}
