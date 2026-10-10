@@ -29,6 +29,7 @@ from ..function_execution import backend_failure
 from ..operational_errors import log_handled_failure
 from ..skills import SkillManager
 from .base import Function
+from .workspace import async_ensure_workspace
 
 _LOGGER = logging.getLogger(__name__)
 _FILE_EDIT_LOCKS = f"{DOMAIN}.file_edit_locks"
@@ -268,6 +269,9 @@ class ReadFileFunction(FileFunction):
         """Resolve and read one bounded file through the existing security checks."""
         try:
             target_path = self._resolve_path(hass, path_str, allow_dirs)
+            await async_ensure_workspace(
+                hass, self.get_working_dir(hass), target=target_path
+            )
             if not target_path.exists():
                 return backend_failure(f"File not found: {path_str}")
             if not target_path.is_file():
@@ -288,9 +292,6 @@ class ReadFileFunction(FileFunction):
         exposed_entities,
     ):
         """Read file contents."""
-        from .workspace import async_ensure_workspace
-
-        await async_ensure_workspace(hass, self.get_working_dir(hass))
         path_template = function_config.get("path")
         template_source = str(getattr(path_template, "template", ""))
 
@@ -356,9 +357,6 @@ class WriteFileFunction(FileFunction):
         exposed_entities,
     ):
         """Write content to file."""
-        from .workspace import async_ensure_workspace
-
-        await async_ensure_workspace(hass, self.get_working_dir(hass))
         path_template = function_config.get("path")
         path_str = path_template.async_render(arguments, parse_result=False)
         content_template = function_config.get("content")
@@ -369,6 +367,9 @@ class WriteFileFunction(FileFunction):
 
         try:
             target_path = self._resolve_path(hass, path_str, allow_dirs)
+            await async_ensure_workspace(
+                hass, self.get_working_dir(hass), target=target_path
+            )
             async with _get_edit_lock(hass, target_path):
                 bytes_written = await _async_settle_native_edit(
                     hass.async_add_executor_job(
@@ -411,9 +412,6 @@ class EditFileFunction(FileFunction):
         exposed_entities,
     ):
         """Edit file with find-and-replace."""
-        from .workspace import async_ensure_workspace
-
-        await async_ensure_workspace(hass, self.get_working_dir(hass))
         path_template = function_config.get("path")
         path_str = path_template.async_render(arguments, parse_result=False)
         old_text_template = function_config.get("old_text")
@@ -426,6 +424,9 @@ class EditFileFunction(FileFunction):
 
         try:
             target_path = self._resolve_path(hass, path_str, allow_dirs)
+            await async_ensure_workspace(
+                hass, self.get_working_dir(hass), target=target_path
+            )
             async with _get_edit_lock(hass, target_path):
                 if not target_path.exists():
                     return backend_failure(f"File not found: {path_str}")

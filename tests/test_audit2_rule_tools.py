@@ -25,6 +25,8 @@ from custom_components.extended_openai_conversation_responses.function_execution
     async_validate_function_arguments,
 )
 from custom_components.extended_openai_conversation_responses.functions import (
+    EditFileFunction,
+    ReadFileFunction,
     WriteFileFunction,
 )
 from custom_components.extended_openai_conversation_responses.functions.bash import (
@@ -243,6 +245,52 @@ async def test_file_write_and_default_bash_create_fresh_workspaces(
         [],
     )
     assert "error" not in result and shell_root.is_dir()
+
+
+@pytest.mark.parametrize("operation", ["read", "write", "edit", "bash"])
+async def test_absolute_file_and_bash_paths_do_not_need_default_workspace(
+    hass, monkeypatch, tmp_path, operation
+):
+    blocked_default = tmp_path / "unused-workspace"
+    blocked_default.write_text("An existing file prevents mkdir")
+    allowed = tmp_path / "custom-workspace"
+    allowed.mkdir()
+    note = allowed / "note.txt"
+    note.write_text("Saved content")
+    if operation == "bash":
+        function = BashFunction()
+        config = {
+            "allow_unsafe_shell": True,
+            "command": Template("pwd", hass),
+            "cwd": Template(str(allowed), hass),
+        }
+    else:
+        function = {
+            "read": ReadFileFunction,
+            "write": WriteFileFunction,
+            "edit": EditFileFunction,
+        }[operation]()
+        config = {
+            "path": Template(str(note), hass),
+            "allow_dir": [Template(str(allowed), hass)],
+        }
+        if operation == "read":
+            config["restrict_to_allow_dir"] = True
+        elif operation == "write":
+            config["content"] = Template("Updated content", hass)
+        else:
+            config.update(
+                old_text=Template("Saved", hass), new_text=Template("Updated", hass)
+            )
+    monkeypatch.setattr(function, "get_working_dir", lambda *_: blocked_default)
+    result = await function.execute(hass, config, {}, None, [])
+    assert "error" not in result
+    if operation == "read":
+        assert result["content"] == "Saved content"
+    elif operation == "bash":
+        assert result["stdout"].strip() == str(allowed)
+    else:
+        assert note.read_text() == "Updated content"
 
 
 def test_script_schema_can_revalidate_its_runtime_defaults():
