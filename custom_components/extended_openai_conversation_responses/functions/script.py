@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+from copy import deepcopy
 import logging
 from typing import Any, cast
 
@@ -100,6 +101,9 @@ class ScriptFunction(Function):
 
     def validate_schema(self, function_config: dict[str, Any]) -> dict[str, Any]:
         """Reject controls that a transient per-invocation runner cannot honor."""
+        # Runtime HA defaults are not administrator-authored concurrency controls.
+        # Its persistence-safe copy recovers the original source configuration.
+        function_config = deepcopy(function_config)
         if any(key in function_config for key in ("mode", "max", "max_exceeded")):
             raise HomeAssistantError(
                 "Script Functions do not support mode, max or max_exceeded. "

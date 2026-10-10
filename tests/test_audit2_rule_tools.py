@@ -243,3 +243,30 @@ async def test_file_write_and_default_bash_create_fresh_workspaces(
         [],
     )
     assert "error" not in result and shell_root.is_dir()
+
+
+def test_script_schema_can_revalidate_its_runtime_defaults():
+    script = ScriptFunction()
+    raw = {"type": "script", "sequence": []}
+    runtime = script.validate_schema(raw)
+    assert "mode" in runtime  # Home Assistant injects defaults at validation.
+    again = script.validate_schema(runtime)
+    assert deepcopy(again) == raw
+
+
+@pytest.mark.parametrize(
+    "controls",
+    [{"mode": "single"}, {"mode": "queued"}, {"max": 2}, {"max_exceeded": "silent"}],
+)
+def test_composite_cannot_bypass_script_concurrency_validation(controls):
+    from custom_components.extended_openai_conversation_responses.functions.composite import (
+        CompositeFunction,
+    )
+
+    with pytest.raises(HomeAssistantError, match="do not support"):
+        CompositeFunction().validate_schema(
+            {
+                "type": "composite",
+                "sequence": [{"type": "script", "sequence": [], **controls}],
+            }
+        )
