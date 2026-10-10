@@ -695,10 +695,20 @@ def persist_valid_function_configuration(
         candidate[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
             candidate[CONF_FUNCTION_TOOLS], sort_keys=False, allow_unicode=True
         )
-    normalized = preserve_legacy_guest_policy(
+    normalized_candidate = preserve_legacy_guest_policy(
         subentry.data,
         candidate,
     )
+    # Function edits must not turn implicit model-dependent defaults into saved
+    # settings. For example, an absent effort follows each routed model's profile;
+    # persisting the default model's effort can invalidate an unchanged route.
+    normalized = deepcopy(dict(subentry.data))
+    changed_fields = {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS, *(extra_updates or {})}
+    for key in changed_fields:
+        if key in normalized_candidate:
+            normalized[key] = deepcopy(normalized_candidate[key])
+        else:
+            normalized.pop(key, None)
     normalization_ms = (perf_counter() - phase) * 1000
     from .management_ui import _validated_model_request
 
@@ -709,7 +719,7 @@ def persist_valid_function_configuration(
     phase = perf_counter()
     from .management_loading_performance import _snapshot_normalized_configuration
 
-    response_data = dict(normalized)
+    response_data = dict(normalized_candidate)
     response_data[CONF_FUNCTION_TOOLS] = response_snapshot[CONF_FUNCTION_TOOLS]
     response_data[CONF_FUNCTION_GROUPS] = response_snapshot[CONF_FUNCTION_GROUPS]
     snapshot = _snapshot_normalized_configuration(response_data, validated=True)

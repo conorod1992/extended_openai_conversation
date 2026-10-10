@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any, cast
@@ -21,6 +23,35 @@ from .scope import ResolvedDataScope
 GUEST_CONTINUITY_NAMESPACE = "guest"
 GUEST_CONVERSATION_ID_PREFIX = "extended-openai-guest-"
 _MAX_IGNORED_CONVERSATION_IDS = 64
+
+
+@contextmanager
+def forward_chat_log_deltas(
+    source: conversation.ChatLog | None,
+    target: conversation.ChatLog,
+    request_text: str,
+) -> Generator[None]:
+    """Keep the current Assist listener when continuity selects another ChatLog.
+
+    Only the live listener follows this request. History and ownership remain on
+    their separate logs, and the callback must never survive this request.
+    """
+    if (
+        source is None
+        or source is target
+        or source.delta_listener is None
+        or not source.content
+        or not isinstance(source.content[-1], conversation.UserContent)
+        or source.content[-1].content != request_text
+    ):
+        yield
+        return
+    previous_listener = target.delta_listener
+    target.delta_listener = source.delta_listener
+    try:
+        yield
+    finally:
+        target.delta_listener = previous_listener
 
 
 @dataclass(slots=True)

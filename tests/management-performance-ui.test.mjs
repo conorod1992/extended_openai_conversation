@@ -127,6 +127,72 @@ function panelFor(page = "assistant", subsection = "basics") {
 }
 
 {
+  const panel = panelFor("capabilities", "request-rules");
+  panel._eocRequestRuleRevision = {agentId:"agent-a", value:"stale"};
+  const calls = [];
+  panel._hass = {callWS: async (message) => {
+    calls.push(message);
+    return {revision:message.action === "list" ? "fresh" : "saved", rules:[]};
+  }};
+  await panel._call("request_rules", "list");
+  await panel._call("request_rules", "create", {rule:{}});
+  assert.equal(calls[1].revision, "fresh", "an authoritative list replaces a stale tracked revision");
+  assert.equal(panel._eocRequestRuleRevision.value, "saved");
+  await panel._call("request_rules", "create", {rule:{}, revision:"explicit-stale"});
+  assert.equal(calls[2].revision, "explicit-stale", "explicit editor revisions remain concurrency guards");
+}
+
+{
+  const panel = panelFor("capabilities", "request-rules");
+  const reads = [];
+  panel._hass = {callWS: () => new Promise((resolve) => reads.push(resolve))};
+  const oldRead = panel._call("request_rules", "list");
+  const freshRead = panel._call("request_rules", "list");
+  reads[1]({revision:"fresh"});
+  await freshRead;
+  reads[0]({revision:"old"});
+  await oldRead;
+  assert.equal(panel._eocRequestRuleRevision.value, "fresh", "an older read cannot replace the newer read");
+  const otherAgentRead = panel._call("request_rules", "list");
+  panel._agentId = "agent-b";
+  reads[2]({revision:"agent-a-late"});
+  await otherAgentRead;
+  assert.deepEqual(panel._eocRequestRuleRevision, {agentId:"agent-a", value:"fresh"});
+}
+
+for (const readDuringMutation of [false, true]) {
+  const panel = panelFor("capabilities", "request-rules");
+  let releaseRead, releaseMutation;
+  panel._hass = {callWS: (message) => new Promise((resolve) => {
+    if (message.action === "list") releaseRead = resolve;
+    else releaseMutation = resolve;
+  })};
+  const oldRead = readDuringMutation ? null : panel._call("request_rules", "list");
+  const mutation = panel._call("request_rules", "create", {rule:{}});
+  await new Promise((resolve) => setImmediate(resolve));
+  const read = oldRead || panel._call("request_rules", "list");
+  releaseMutation({revision:"saved"});
+  await mutation;
+  releaseRead({revision:"pre-save"});
+  await read;
+  assert.equal(panel._eocRequestRuleRevision.value, "saved", "a read crossing a mutation cannot undo its acknowledgement");
+}
+
+{
+  const panel = panelFor("capabilities", "request-rules");
+  for (const agent of agents) {
+    const key = `${agent.subentry_id}|capabilities/request-rules`;
+    panel._sectionCache.set(key, {revision:"cached", rules:[]});
+    panel._eocSectionCacheTimes.set(key, Date.now());
+  }
+  panel._invalidateAfterMutation("agent-a", "configuration", "save");
+  assert.equal(panel._sectionCache.has("agent-a|capabilities/request-rules"), false,
+    "a configuration save refreshes rule diagnostics and revision rather than hydrating a stale list");
+  assert.equal(panel._eocSectionCacheTimes.has("agent-a|capabilities/request-rules"), false);
+  assert.equal(panel._sectionCache.has("agent-b|capabilities/request-rules"), true);
+}
+
+{
   const panel = panelFor("capabilities", "functions");
   panel._configData = {revision:"r1", config:{functions:[], function_groups:[]}};
   const calls = [];
