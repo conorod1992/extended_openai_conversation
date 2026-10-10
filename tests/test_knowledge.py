@@ -1034,8 +1034,8 @@ def test_field_cleaners_reject_non_strings_and_normalize_whitespace() -> None:
     assert knowledge._clean_content(" one  \r\n two\t \rthree  ") == "one\n two\nthree"
 
 
-def test_token_and_normalization_helpers_drop_single_character_noise() -> None:
-    assert knowledge._tokens("A I drill-drill O'Neil x") == {"drill-drill", "o'neil"}
+def test_token_and_normalization_helpers_preserve_short_and_compound_terms() -> None:
+    assert knowledge._tokens("A I drill-drill O'Neil x") == {"a", "i", "drill-drill", "drill", "o'neil", "x"}
     assert knowledge._normalize("  Drill---PRESS!!  O'Neil  ") == "drill---press o'neil"
 
 

@@ -662,7 +662,11 @@ class PersistentMemory:
                 )
                 lexical += _metadata_bonus(query_tokens, memory)
                 normalized_content = _normalize(memory.content)
-                if normalized_query and normalized_query in normalized_content:
+                if (
+                    normalized_query
+                    and query_tokens & token_set
+                    and normalized_query in normalized_content
+                ):
                     lexical += 0.35
                 elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
                     lexical += 0.18
@@ -1697,14 +1701,12 @@ def _memory_metadata_schema(*, include_scope: bool) -> dict[str, Any]:
 
 
 def _token_list(value: str) -> list[str]:
-    from .retrieval_text import cjk_terms
+    from .retrieval_text import cjk_terms, lexical_terms
 
     normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
     normalized = re.sub(r"(?<=\w)'s\b|(?<=s)'(?=\W|$)", "", normalized)
     terms = [
-        _stem(token)
-        for token in _TOKEN_PATTERN.findall(normalized)
-        if len(token) > 1 and token not in _STOP_WORDS
+        _stem(token) for token in lexical_terms(normalized) if token not in _STOP_WORDS
     ]
     return terms + sorted(cjk_terms(normalized) - set(terms))
 

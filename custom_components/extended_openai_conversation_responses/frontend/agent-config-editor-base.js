@@ -1,3 +1,4 @@
+import {searchTokens, matchesFunctionSearchTokens} from "./function-search.js";
 import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
 import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
@@ -112,32 +113,6 @@ export async function copyTextToClipboard(text, clipboardNavigator = globalThis.
   }
 }
 
-
-const searchTokens = (value) => String(value || "")
-  .normalize("NFKD")
-  .replace(/[\u0300-\u036f]/g, "")
-  .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, " ")
-  .trim()
-  .split(/\s+/)
-  .filter(Boolean)
-  .map((token) => {
-    if (token.length > 4 && token.endsWith("ies")) return `${token.slice(0, -3)}y`;
-    if (token.length > 4 && /(ches|shes|sses|xes|zes)$/.test(token)) return token.slice(0, -2);
-    if (token.length > 3 && token.endsWith("s") && !token.endsWith("ss")) return token.slice(0, -1);
-    return token;
-  });
-
-function matchesFunctionSearchTokens(queryTokens, textTokens, minimumPrefixLength = 3) {
-  if (!queryTokens.length) return true;
-  return queryTokens.every((queryToken) => textTokens.some((textToken) =>
-    textToken === queryToken || (
-      Math.min(textToken.length, queryToken.length) >= minimumPrefixLength
-      && (textToken.startsWith(queryToken) || queryToken.startsWith(textToken))
-    )
-  ));
-}
 
 export function matchesFunctionSearch(query, searchableText, minimumPrefixLength = 3) {
   return matchesFunctionSearchTokens(searchTokens(query), searchTokens(searchableText), minimumPrefixLength);
