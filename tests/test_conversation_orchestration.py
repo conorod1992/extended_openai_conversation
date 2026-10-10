@@ -66,11 +66,19 @@ class _UsageRecorder:
     def __init__(self, *, successful: bool = True) -> None:
         self.calls: list[dict[str, object]] = []
         self.successful = successful
+        self._run = None
+
+    def current_run(self):
+        return self._run
 
     @asynccontextmanager
     async def async_run(self, **kwargs):
         self.calls.append(dict(kwargs))
-        yield SimpleNamespace(run_id="run-1", successful=self.successful)
+        self._run = SimpleNamespace(run_id="run-1", successful=self.successful)
+        try:
+            yield self._run
+        finally:
+            self._run = None
 
 
 def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
