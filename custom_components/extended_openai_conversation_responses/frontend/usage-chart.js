@@ -255,7 +255,10 @@ export function renderUsageDiagnostics(panel, result = {}) {
   const summary = history.summary;
   const recentRuns = result.runs?.runs || [];
   const failedRuns = recentRuns.filter((run) => run.successful === false).slice(0, 5);
-  const recentLocalRuns = recentRuns.filter((run) => tokenCount(run.request_count) === 0).length;
+  const localRuns = result.days?.local_run_summary;
+  const localRunCount = localRuns && localRuns.end_date === history.endDate
+    && (localRuns.start_date === history.startDate || (!history.startDate && localRuns.start_date === "0000-01-01"))
+    ? formatUsageNumber(localRuns.count) : "Unavailable";
   const cacheDetail = summary.input_tokens
     ? `${formatUsageNumber(summary.cached_input_tokens)} of ${formatUsageNumber(summary.input_tokens)} input tokens`
     : "No provider-reported input tokens";
@@ -300,7 +303,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
           <div class="usage-fact"><span>Provider requests</span><strong>${formatUsageNumber(summary.api_request_count)}</strong></div>
           <div class="usage-fact"><span>Tool calls</span><strong>${formatUsageNumber(summary.tool_call_count)}</strong></div>
           <div class="usage-fact"><span>Web-search runs</span><strong>${formatUsageNumber(summary.web_search_run_count)}</strong></div>
-          <div class="usage-fact"><span>Runs without provider requests</span><strong>${formatUsageNumber(recentLocalRuns)}</strong></div>
+          <div class="usage-fact"><span>Retained runs without provider requests</span><strong>${localRunCount}</strong><small>Selected period; individual run retention may exclude older runs.</small></div>
           <div class="usage-fact"><span>Failed provider requests</span><strong>${formatUsageNumber(summary.failed_request_count)}</strong></div>
         </div></section>
       </div>

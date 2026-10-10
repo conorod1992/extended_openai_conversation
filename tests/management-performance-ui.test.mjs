@@ -1220,7 +1220,8 @@ for (const refreshOutcome of ["failure", "scope-change"]) {
 {
   const panel = panelFor("capabilities", "guest-mode");
   const previousTimezone = process.env.TZ;
-  process.env.TZ = "America/New_York";
+  process.env.TZ = "Europe/Dublin";
+  panel._hass = {config: {time_zone: "America/New_York"}};
   const end = "2026-11-01T06:30:00Z";
   panel._result = {status:{active_until:end}};
   const controls = new Map([
@@ -1229,7 +1230,6 @@ for (const refreshOutcome of ["failure", "scope-change"]) {
     ["#guest-end", {value:"2026-11-01T01:30", checkValidity:() => true}],
   ]);
   panel.shadowRoot.querySelector = key => controls.get(key);
-  panel._dateTimeLocal = () => "2026-11-01T01:30";
   panel._runGuestOperation = operation => operation();
   panel._refreshGuestModeMutation = async () => {};
   panel._toast = () => {};

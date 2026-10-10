@@ -1,3 +1,4 @@
+import {scheduleWallTime, scheduleInstant} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
 import {stopLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
@@ -1807,10 +1808,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _dateTimeLocal(value) {
-    if (!value) return "";
-    const date = new Date(value);
-    const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return shifted.toISOString().slice(0, 16);
+    return scheduleWallTime(value, this._hass?.config?.time_zone || "UTC");
   }
 
   _runGuestOperation(operation) {
@@ -1863,7 +1861,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
       const status = this._result?.status || {};
-      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : new Date(value).toISOString();
+      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : scheduleInstant(value, this._hass?.config?.time_zone || "UTC");
       try {
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");
