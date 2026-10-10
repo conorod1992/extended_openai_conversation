@@ -1708,7 +1708,10 @@ async def _async_validate_configuration_dependencies(
             if isinstance(tool, dict):
                 tool["enabled"] = True
         candidate[CONF_FUNCTION_TOOLS] = tools
-    await _async_validate_request_rule_function_dependencies(hass, document, candidate)
+    if document.get("rules"):
+        await _async_validate_request_rule_function_dependencies(
+            hass, document, candidate
+        )
     if rules.revision() != rules_revision:
         raise HomeAssistantError(
             "Request Rules changed while validating Function Tools; reload before retrying."
