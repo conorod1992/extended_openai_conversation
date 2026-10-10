@@ -1153,6 +1153,8 @@ for (const refreshOutcome of ["failure", "scope-change"]) {
 // Audit: retain the second occurrence of an unchanged ambiguous local time.
 {
   const panel = panelFor("capabilities", "guest-mode");
+  const previousTimezone = process.env.TZ;
+  process.env.TZ = "America/New_York";
   const end = "2026-11-01T06:30:00Z";
   panel._result = {status:{active_until:end}};
   const controls = new Map([
@@ -1169,7 +1171,8 @@ for (const refreshOutcome of ["failure", "scope-change"]) {
   panel._call = async (_section, _action, payload) => { submitted = payload; return {}; };
   await panel._updateGuestMode();
   assert.equal(submitted.active_until, end);
-  assert.equal(submitted.active_from, "2026-10-31T12:00");
+  assert.equal(submitted.active_from, "2026-10-31T16:00:00.000Z");
+  if (previousTimezone === undefined) delete process.env.TZ; else process.env.TZ = previousTimezone;
 }
 
 // Audit: destination changes use the status snapshot most recently polled.

@@ -1,5 +1,6 @@
 """Regression coverage for direct Guest operations and trusted context boundaries."""
 
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -25,6 +26,7 @@ from custom_components.extended_openai_conversation_responses.prompt import (
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     RequestRuleRuntime,
+    _async_guest_functions_allowed,
     async_evaluate_rule,
 )
 from custom_components.extended_openai_conversation_responses.template import (
@@ -32,6 +34,50 @@ from custom_components.extended_openai_conversation_responses.template import (
 )
 from homeassistant.core import HomeAssistant
 from tests.test_request_rules import local_rule, manager
+
+
+@pytest.mark.parametrize(
+    "restriction",
+    ["disabled", "group", "unscopable", "legacy", "result", "missing", "allowed"],
+)
+async def test_guest_function_preflight_checks_current_availability(hass, restriction):
+    tool = {
+        "enabled": restriction != "disabled",
+        "spec": {
+            "name": "read",
+            "description": "Read",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "get_history"},
+    }
+    if restriction == "unscopable":
+        tool["function"] = {"type": "template", "value_template": "private"}
+    groups = [
+        {
+            "id": "reads",
+            "name": "Reads",
+            "description": "Reads",
+            "functions": ["read"],
+            "loading_mode": "always",
+            "enabled": restriction != "group",
+        }
+    ]
+    arguments = {"value": "{reading.level}"} if restriction == "result" else {}
+    action = {
+        "action": "extended_openai_conversation_responses.call_function",
+        "data": {
+            "function": "missing" if restriction == "missing" else "read",
+            "arguments": arguments,
+        },
+    }
+    policy = GuestCapabilityPolicy(True, legacy_function_flags=restriction == "legacy")
+    assert await _async_guest_functions_allowed(
+        hass,
+        [action],
+        policy,
+        {},
+        {"functions": [deepcopy(tool)], "function_groups": groups},
+    ) is (restriction == "allowed")
 
 
 @pytest.mark.parametrize("domain", ["script", "automation", "scene"])

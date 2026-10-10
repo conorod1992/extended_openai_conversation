@@ -2560,8 +2560,12 @@ async def _async_guest_functions_allowed(
     request_options: Mapping[str, Any] | None,
 ) -> bool:
     """Validate every requested Function before any sequence effect starts."""
+    from .agent_config import function_tool_enabled
     from .function_execution import async_validate_function_arguments
-    from .function_tool_quarantine import _runtime_configured_function_tools
+    from .function_tool_quarantine import (
+        _runtime_configured_function_tools,
+        _runtime_validate_function_groups,
+    )
     from .functions.security import FunctionSecurity, classify_tool
 
     tools = None
@@ -2573,6 +2577,20 @@ async def _async_guest_functions_allowed(
             continue
         if tools is None:
             tools = _runtime_configured_function_tools(request_options or {})
+            groups = _runtime_validate_function_groups(
+                (request_options or {}).get("function_groups", []), tools
+            )
+            disabled = {
+                name
+                for group in groups
+                if group.get("enabled", True) is not True
+                for name in group["functions"]
+            }
+            tools = [
+                tool
+                for tool in tools
+                if function_tool_enabled(tool) and tool["spec"]["name"] not in disabled
+            ]
         data = resolve_slot_values(
             _resolve_guest_slot_templates(step.get("data", {}), slots), slots
         )
