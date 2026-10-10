@@ -8,6 +8,13 @@ import {
 import {modelFieldPresentation, webSearchControlState} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-model-presentation.js";
 
 {
+  const panel = {_result:{model_capabilities:{service_tier_options:[]}}};
+  assert.deepEqual(modelFieldPresentation(panel,"service_tier","default").options.map(({value})=>value),["default"]);
+  panel._result.model_capabilities.service_tier_options = ["default","priority"];
+  assert.deepEqual(modelFieldPresentation(panel,"service_tier","default").options.map(({value})=>value),["default","priority"]);
+}
+
+{
   const metadata = {api:{responses:true,chat_completions:true},function_calling:{responses:true,chat_completions:false}};
   const panel = {_draft:{max_function_calls_per_conversation:0,functions:[{spec:{name:"dormant"}}]},_result:{model_capabilities:metadata,options:{api_mode:[]}}};
   assert.equal(modelFieldPresentation(panel,"api_mode","chat_completions").disabledOption("chat_completions"),false);

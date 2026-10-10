@@ -45,7 +45,7 @@ export function modelFieldPresentation(panel, key, value) {
     return {models:data.catalog_models || [], note, noteClass:"model-lifecycle-note"};
   }
   if (key === "service_tier") {
-    return {options:(metadata.service_tier_options || metadata.service_tiers || []).map(value => ({value, label:String(value)}))};
+    return {options:[...new Set(["default", ...(metadata.service_tier_options || metadata.service_tiers || [])])].map(value => ({value, label:String(value)}))};
   }
   if (key === "max_tokens") {
     const max = Number(metadata.limits?.max_output_tokens);
