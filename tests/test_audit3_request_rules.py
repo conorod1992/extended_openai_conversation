@@ -74,6 +74,7 @@ async def test_successful_stop_in_shorthand_container_is_success(hass, container
 
 async def test_authored_response_variable_and_alias_both_available(hass):
     hass.config.legacy_templates = False
+
     async def execute(*_args):
         return {"level": 62}
 
@@ -108,3 +109,61 @@ async def test_result_alias_preserves_native_return_type(value):
     finally:
         rules._ACTIVE_FUNCTION_RESULTS.reset(context)
         rules._ACTIVE_FUNCTION_EXECUTOR.reset(executor)
+
+
+@pytest.mark.parametrize(
+    "parallel",
+    [
+        {"stop": "Finished successfully"},
+        [{"stop": "Finished successfully"}],
+        [[{"stop": "Finished successfully"}]],
+        [{"sequence": {"stop": "Finished successfully"}}],
+    ],
+)
+@pytest.mark.parametrize("guest", [False, True])
+async def test_parallel_stop_shorthand_succeeds(hass, parallel, guest):
+    prepare_native(hass)
+    rule = local_rule(phrases=["run"])
+    rule["action"]["actions"] = [{"parallel": parallel}]
+    outcome = await rules.async_evaluate_rule(
+        hass,
+        await manager(rule),
+        rules.RequestRuleRuntime(),
+        "run",
+        "session",
+        guest_policy=GuestCapabilityPolicy(guest),
+    )
+    assert outcome.successful
+
+
+@pytest.mark.parametrize("guest", [False, True])
+async def test_parallel_list_of_sequences_authorized_before_execution(hass, guest):
+    prepare_native(hass)
+    rule = local_rule(phrases=["run"])
+    rule["action"]["actions"] = [
+        {"parallel": [[{"set_conversation_response": "SAFE"}]]}
+    ]
+    outcome = await rules.async_evaluate_rule(
+        hass,
+        await manager(rule),
+        rules.RequestRuleRuntime(),
+        "run",
+        "session",
+        guest_policy=GuestCapabilityPolicy(guest),
+    )
+    assert outcome.successful
+    assert outcome.response == "SAFE"
+
+
+def test_parallel_normalization_preserves_templates_and_service_payload():
+    action = {
+        "alias": "Branch",
+        "action": "notify.send_message",
+        "data": {
+            "sequence": {"text": "{{ message }}"},
+            "parallel": [{"variables": {"token_index": 7}}],
+        },
+    }
+    normalized = rules._normalize_script_containers([{"parallel": [action]}])
+    assert normalized == [{"parallel": [{"sequence": [action]}]}]
+    assert action["data"]["sequence"]["text"] == "{{ message }}"
