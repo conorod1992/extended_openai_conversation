@@ -721,7 +721,7 @@ class RequestRules:
                 validate_sentence_pattern=not preserve_inactive,
             )
             self._require_group(rule)
-            prospective = [*self._rules]
+            prospective = deepcopy(self._rules)
             prospective[index] = rule
             _validate_total_pattern_states(
                 prospective, inactive_rule_ids=set(self._diagnostics) - {rule_id}
@@ -772,7 +772,7 @@ class RequestRules:
                 order=source_index + 1,
             )
             rule = validate_rule(source)
-            prospective = [*self._rules]
+            prospective = deepcopy(self._rules)
             prospective.insert(source_index + 1, rule)
             for order, item in enumerate(prospective):
                 item["order"] = order
@@ -1919,7 +1919,8 @@ def _legacy_action_slots(value: Any) -> set[str]:
     result: set[str] = set()
     for action in actions:
         if not isinstance(action, Mapping) or not (
-            "domain" in action or action.get("type") in {"function", "home_assistant"}
+            ("domain" in action and "service" in action)
+            or action.get("type") in {"function", "home_assistant"}
         ):
             continue
         result.update(_referenced_slots(action))
@@ -1932,7 +1933,10 @@ def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
     for item in value:
         if not isinstance(item, Mapping):
             raise ValueError("each Home Assistant action must be an object")
-        if "domain" in item or item.get("type") in {"function", "home_assistant"}:
+        if ("domain" in item and "service" in item) or item.get("type") in {
+            "function",
+            "home_assistant",
+        }:
             migrated.append(_validate_local_action(item))
         else:
             migrated.append(dict(deepcopy(item)))
@@ -2536,6 +2540,52 @@ def _resolve_guest_slot_templates(value: Any, slots: Mapping[str, str]) -> Any:
     return value
 
 
+def _map_script_effect_templates(
+    sequence: Sequence[Mapping[str, Any]], transform: Callable[[Any], Any]
+) -> list[dict[str, Any]]:
+    """Transform effect inputs while retaining trusted native conditions.
+
+    Walk only native action containers. A similarly named key in service data
+    is still an effect input and must not bypass Guest read checks.
+    """
+    result = []
+    for action in sequence:
+        if "condition" in action:
+            result.append(dict(action))
+            continue
+        mapped = {}
+        for key, value in action.items():
+            if key == "if":
+                mapped[key] = value
+            elif key in {"sequence", "then", "else", "default", "parallel"}:
+                mapped[key] = _map_script_effect_templates(value, transform)
+            elif key == "choose":
+                mapped[key] = [
+                    {
+                        **branch,
+                        "sequence": _map_script_effect_templates(
+                            branch.get("sequence", []), transform
+                        ),
+                    }
+                    for branch in value
+                ]
+            elif key == "repeat":
+                mapped[key] = {
+                    name: (
+                        _map_script_effect_templates(item, transform)
+                        if name == "sequence"
+                        else item
+                        if name in {"while", "until"}
+                        else transform(item)
+                    )
+                    for name, item in value.items()
+                }
+            else:
+                mapped[key] = transform(value)
+        result.append(mapped)
+    return result
+
+
 def _guest_script_allowed(
     hass: HomeAssistant,
     sequence: Sequence[Mapping[str, Any]],
@@ -2544,9 +2594,19 @@ def _guest_script_allowed(
     slots: Mapping[str, str] | None = None,
 ) -> bool:
     """Authorize effects without interpreting native wait/condition templates."""
-    if not _guest_template_reads_allowed(hass, sequence, policy, slots or {}):
+
+    def check_effect_templates(value: Any) -> Any:
+        if not _guest_template_reads_allowed(hass, value, policy, slots or {}):
+            raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
+        return value
+
+    try:
+        _map_script_effect_templates(sequence, check_effect_templates)
+    except GuestModeDenied:
         return False
     for item in _iter_script_actions(sequence):
+        if "condition" in item:
+            continue
         if slots is not None and any(
             key in item for key in ("action", "service", "scene")
         ):
@@ -2576,6 +2636,86 @@ def _guest_script_allowed(
             ):
                 return False
         elif any(key in item for key in ("device_id", "event", "event_type")):
+            return False
+    return True
+
+
+async def _async_guest_functions_allowed(
+    hass: HomeAssistant,
+    sequence: Sequence[Mapping[str, Any]],
+    policy: GuestCapabilityPolicy,
+    slots: Mapping[str, str],
+    request_options: Mapping[str, Any] | None,
+) -> bool:
+    """Validate every requested Function before any sequence effect starts."""
+    from .agent_config import function_tool_enabled
+    from .function_execution import async_validate_function_arguments
+    from .function_tool_quarantine import (
+        _runtime_configured_function_tools,
+        _runtime_validate_function_groups,
+    )
+    from .functions.security import (
+        FunctionSecurity,
+        classify_tool,
+        contains_indirect_service_call,
+    )
+
+    tools = None
+    for step in _iter_script_actions(sequence):
+        if (
+            step.get("action", step.get("service"))
+            != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+        ):
+            continue
+        if tools is None:
+            tools = _runtime_configured_function_tools(request_options or {})
+            groups = _runtime_validate_function_groups(
+                (request_options or {}).get("function_groups", []), tools
+            )
+            disabled = {
+                name
+                for group in groups
+                if group.get("enabled", True) is not True
+                for name in group["functions"]
+            }
+            tools = [
+                tool
+                for tool in tools
+                if function_tool_enabled(tool) and tool["spec"]["name"] not in disabled
+            ]
+        data = resolve_slot_values(
+            _resolve_guest_slot_templates(step.get("data", {}), slots), slots
+        )
+        if not isinstance(data, Mapping):
+            return False
+        tool = next(
+            (tool for tool in tools if tool["spec"]["name"] == data.get("function")),
+            None,
+        )
+        if tool is None or (
+            policy.legacy_function_flags and tool.get("guest_allowed") is not True
+        ):
+            return False
+        level = classify_tool(tool)
+        if level > FunctionSecurity.CONTROL:
+            return False
+        arguments = data.get("arguments", {})
+        # Results are unknown before execution. Never guess a restricted target.
+        if RESULT_REFERENCE.search(json.dumps(arguments, ensure_ascii=False)):
+            return False
+        await async_validate_function_arguments(hass, tool["spec"], arguments)
+        control = level == FunctionSecurity.CONTROL
+        if control and contains_indirect_service_call(arguments, hass):
+            return False
+        if control and contains_indirect_service_call(tool["function"], hass):
+            return False
+        if not guest_arguments_allowed_runtime(
+            hass, arguments, policy, control=control
+        ):
+            return False
+        if control and not guest_arguments_allowed_runtime(
+            hass, tool["function"], policy, control=True
+        ):
             return False
     return True
 
@@ -3053,6 +3193,10 @@ async def _async_evaluate_matched_rule(
                     policy,
                     slots=match.slots,
                 )
+                if allowed:
+                    allowed = await _async_guest_functions_allowed(
+                        hass, executable_actions, policy, match.slots, request_options
+                    )
             except GuestModeDenied:
                 allowed = False
             except Exception as err:
@@ -3073,11 +3217,7 @@ async def _async_evaluate_matched_rule(
                 and step["data"].get("result_alias")
                 for step in executable_actions
             )
-            script_actions = (
-                _native_result_sequence(executable_actions, match.slots)
-                if captures_results
-                else executable_actions
-            )
+            script_actions = _native_result_sequence(executable_actions, match.slots)
             if live_guest_policy is not None:
                 _ensure_action_guard_service(hass)
                 script_actions = _guard_native_actions(script_actions)
@@ -3111,8 +3251,9 @@ async def _async_evaluate_matched_rule(
                 return policy
 
             if policy.guest_active or live_guest_policy is not None:
-                validated_actions = _guard_template_reads(
-                    validated_actions, current_policy
+                validated_actions = _map_script_effect_templates(
+                    validated_actions,
+                    lambda value: _guard_template_reads(value, current_policy),
                 )
             if require_matching_revision is not None:
                 require_matching_revision()
@@ -3313,6 +3454,14 @@ async def _async_evaluate_matched_rule(
     selected_model = (
         model or conversation_override.get(CONF_CHAT_MODEL) or configured_model
     )
+    # Azure requests use deployment identities, with capabilities explicitly
+    # asserted by the agent's underlying-model binding just as provider setup does.
+    capability_model = (
+        str(request_options.get("azure_model") or selected_model)
+        if request_options is not None
+        and (entry_data or {}).get("api_provider") == "azure"
+        else selected_model
+    )
     if effort:
         captured_effort = bool(
             action["reasoning_effort"]
@@ -3322,7 +3471,7 @@ async def _async_evaluate_matched_rule(
             action["model"] and SLOT_REFERENCE.search(action["model"])
         )
         _validate_effective_reasoning(
-            selected_model,
+            capability_model,
             effort,
             captured=captured_effort and not captured_model,
         )
@@ -3336,7 +3485,7 @@ async def _async_evaluate_matched_rule(
     combined_model = combined_override.get(CONF_CHAT_MODEL, configured_model)
     combined_effort = combined_override.get(CONF_REASONING_EFFORT)
     if combined_effort and (not effort or combined_model != selected_model):
-        _validate_effective_reasoning(combined_model, combined_effort)
+        _validate_effective_reasoning(capability_model, combined_effort)
     if request_options is not None:
         validate_routed_request_options(
             {**request_options, **combined_override}, entry_data or {}

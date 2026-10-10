@@ -287,6 +287,10 @@ def build_provider_request_snapshot(
 ) -> ProviderRequestSnapshot:
     """Build validated/normalized settings used by the live OpenAI request."""
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+    if options.get("azure_model") and entry_data.get(CONF_API_PROVIDER) != "azure":
+        raise HomeAssistantError(
+            "Azure underlying model is only supported with Azure; clear the setting for this provider."
+        )
     needs_tools = (
         _configured_tools_required(options)
         if tools_required is None
@@ -297,7 +301,11 @@ def build_provider_request_snapshot(
         capabilities = (
             model_capabilities
             if model_capabilities is not None
-            else get_model_capabilities(model)
+            else get_model_capabilities(
+                str(options.get("azure_model") or model)
+                if entry_data.get(CONF_API_PROVIDER) == "azure"
+                else model
+            )
         )
         with model_capability_snapshot(model, capabilities):
             effort: str | None = None
@@ -364,6 +372,13 @@ def build_provider_request_snapshot(
                 api_kwargs[CONF_TOP_P] = top_p
 
             service_tier = options.get(CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER)
+            if (
+                service_tier != DEFAULT_SERVICE_TIER
+                and service_tier not in capabilities.get("service_tiers", [])
+            ):
+                raise ModelCapabilityError(
+                    f"{model} does not support processing tier {service_tier!r}."
+                )
             if service_tier in capabilities.get("service_tiers", []):
                 api_kwargs["service_tier"] = service_tier
     except ModelCapabilityError as err:

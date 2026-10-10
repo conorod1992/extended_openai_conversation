@@ -165,7 +165,9 @@ async def test_validate_input_normalizes_openai_and_forwards_provider_settings()
         )
 
 
-async def test_initial_provider_setup_routes_to_simple_provider_specific_forms() -> None:
+async def test_initial_provider_setup_routes_to_simple_provider_specific_forms() -> (
+    None
+):
     """Initial setup asks for provider first and hides irrelevant provider fields."""
     flow = SimpleNamespace(
         hass=MagicMock(),
@@ -200,13 +202,9 @@ async def test_initial_provider_setup_routes_to_simple_provider_specific_forms()
         )
 
     flow.async_step_user = AsyncMock(side_effect=step_user)
-    flow.async_step_openai_credentials = AsyncMock(
-        side_effect=step_openai_credentials
-    )
+    flow.async_step_openai_credentials = AsyncMock(side_effect=step_openai_credentials)
     flow.async_step_openai_advanced = AsyncMock(side_effect=step_openai_advanced)
-    flow.async_step_azure_credentials = AsyncMock(
-        side_effect=step_azure_credentials
-    )
+    flow.async_step_azure_credentials = AsyncMock(side_effect=step_azure_credentials)
     flow._async_finish_initial_setup = AsyncMock(side_effect=finish)
 
     first = await step_user()
@@ -228,7 +226,12 @@ async def test_initial_provider_setup_routes_to_simple_provider_specific_forms()
     )
     assert advanced["step_id"] == "openai_advanced"
     advanced_keys = {str(key) for key in advanced["data_schema"].schema}
-    assert {CONF_API_KEY, CONF_BASE_URL, CONF_ORGANIZATION, CONF_SKIP_AUTHENTICATION} == advanced_keys
+    assert {
+        CONF_API_KEY,
+        CONF_BASE_URL,
+        CONF_ORGANIZATION,
+        CONF_SKIP_AUTHENTICATION,
+    } == advanced_keys
     assert CONF_API_VERSION not in advanced_keys
 
     flow._setup_data = None
@@ -499,7 +502,7 @@ async def test_ai_task_handler_covers_basic_and_advanced_lifecycle_paths() -> No
     assert await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_init(
         handler, advanced_input
     ) == {"step_id": "advanced"}
-    assert handler._temp_data is advanced_input
+    assert handler._temp_data == advanced_input
 
     basic_input = {
         CONF_NAME: "Basic",
@@ -614,7 +617,8 @@ async def test_ai_task_handler_covers_basic_and_advanced_lifecycle_paths() -> No
             handler
         )
         assert {str(key) for key in shown["data_schema"].schema} == {
-            CONF_SHORTEN_TOOL_CALL_ID
+            CONF_SHORTEN_TOOL_CALL_ID,
+            CONF_SERVICE_TIER,
         }
         updated = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_advanced(
             handler, {CONF_TEMPERATURE: 0.2, CONF_TOP_P: 0.7}

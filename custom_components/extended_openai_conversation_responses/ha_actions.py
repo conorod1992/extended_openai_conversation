@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
+from functools import partial
 from typing import Any
 
 from homeassistant.const import (
@@ -13,12 +14,14 @@ from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_FLOOR_ID,
     ATTR_LABEL_ID,
+    ENTITY_MATCH_ALL,
 )
 from homeassistant.core import Context, HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
+    service as service_helpers,
     target as target_helpers,
 )
 
@@ -84,7 +87,7 @@ async def async_authorize_ha_action(
 ) -> set[str]:
     """Authorize the exact dispatch without replacing native service responses."""
     context = context or get_active_ha_context()
-    entity_ids = _resolve_target_entity_ids(hass, data, target)
+    entity_ids = resolve_action_entity_ids(hass, domain, service, data, target)
     target_identity = _target_identity(hass, entity_ids)
     service_identity = _service_identity(hass, domain, service)
     await async_require_control_permission(hass, entity_ids, context=context)
@@ -92,13 +95,10 @@ async def async_authorize_ha_action(
     # A visible entity_id can be reused by a different registry entry. Registry
     # entries are replaced on updates, so identity also catches A -> B -> A
     # membership changes that a second textual resolution would miss.
-    selection = _target_selection(data, target)
-    indirect = any(
-        key in selection
-        for key in (ATTR_DEVICE_ID, ATTR_AREA_ID, ATTR_FLOOR_ID, ATTR_LABEL_ID)
-    )
+    # Even explicit IDs can gain participants in a live component while the
+    # permission lookup awaits, without replacing the service registration.
     if (
-        (indirect and _resolve_target_entity_ids(hass, data, target) != entity_ids)
+        resolve_action_entity_ids(hass, domain, service, data, target) != entity_ids
         or not _same_target_identity(
             _target_identity(hass, entity_ids), target_identity
         )
@@ -314,7 +314,7 @@ def _capture_previous_state(
         return {}
     if not hasattr(hass, "states"):
         return {}
-    entity_ids = _resolve_target_entity_ids(hass, data, target)
+    entity_ids = resolve_action_entity_ids(hass, action_domain, service, data, target)
     result: dict[str, dict[str, Any]] = {}
     for entity_id in sorted(entity_ids):
         entity_domain = entity_id.partition(".")[0]
@@ -342,6 +342,41 @@ def _resolve_target_entity_ids(
         hass, target_helpers.TargetSelection(selection)
     )
     return set(referenced.referenced | referenced.indirectly_referenced)
+
+
+def resolve_action_entity_ids(
+    hass: HomeAssistant,
+    domain: str,
+    service: str,
+    data: Mapping[str, Any] | None = None,
+    target: Mapping[str, Any] | None = None,
+    *,
+    participants: Callable[[HomeAssistant, str, str, set[str]], set[str] | None]
+    | None = None,
+) -> set[str]:
+    """Resolve selectors using the registered service's actual participants."""
+    selection = _target_selection(data, target)
+    # HA expands this sentinel inside dispatch, after our participant lookup.
+    # Treating it as an entity ID would filter it out and authorize no targets
+    # while the original request still controls every entity in the domain.
+    if ENTITY_MATCH_ALL in selection.get(ATTR_ENTITY_ID, []):
+        raise HomeAssistantError(
+            "entity_id 'all' is not supported; select explicit entities, areas, "
+            "devices, floors or labels for authorization"
+        )
+    selected = _resolve_target_entity_ids(hass, data, target)
+    if not hasattr(hass, "services"):
+        return selected
+    explicit = set(selection.get(ATTR_ENTITY_ID, [])) - {"all", "none"}
+    participating = service_target_entity_ids(
+        hass, domain, service, selected, participants=participants
+    )
+    # Explicit invalid IDs remain visible to the authorization/validation layer.
+    return participating | {
+        entity_id
+        for entity_id in explicit - participating
+        if hass.states.get(entity_id) is None
+    }
 
 
 def _target_identity(
@@ -398,7 +433,13 @@ def _target_selection(
             if source is None or source.get(key) is None:
                 continue
             value = source[key]
-            values.extend(value if isinstance(value, list) else [value])
+            items = value if isinstance(value, list) else [value]
+            values.extend(
+                part.strip()
+                for item in items
+                for part in (item.split(",") if isinstance(item, str) else [item])
+                if not isinstance(part, str) or part.strip()
+            )
         if values:
             selection[key] = values
     return selection
@@ -408,3 +449,71 @@ def _action_supports_previous_state(domain: str, service: str) -> bool:
     if domain in _NON_REVERSIBLE_DOMAINS:
         return False
     return domain != "automation" or service in _AUTOMATION_STATE_SERVICES
+
+
+def _service_participants(
+    hass: HomeAssistant, domain: str, service: str, selected: set[str]
+) -> set[str] | None:
+    """Read HA's registered entity-service candidates, without calling the service.
+
+    Entity services are registered as partials of HA's dispatch helpers. Other
+    services own their target semantics; returning None preserves their checks.
+    """
+    services_for_domain = getattr(hass.services, "async_services_for_domain", None)
+    if services_for_domain is None:
+        return None
+    registered = services_for_domain(domain).get(service)
+    target = registered.job.target if registered is not None else None
+    if not isinstance(target, partial) or target.func not in (
+        service_helpers.entity_service_call,
+        getattr(service_helpers, "batched_entity_service_call", None),
+    ):
+        return None
+    if len(target.args) < 2:
+        return None
+    entities = target.args[1]
+    if callable(entities):
+        entities = entities()
+    if isinstance(entities, Mapping):
+        return {entity_id for entity_id in selected if entity_id in entities}
+    # Older HA dispatch helpers receive the component's entity platforms.
+    if isinstance(entities, (list, tuple)):
+        return {
+            entity_id
+            for entity_id in selected
+            if any(entity_id in platform.entities for platform in entities)
+        }
+    return None
+
+
+def service_target_entity_ids(
+    hass: HomeAssistant,
+    domain: str,
+    service: str,
+    selected: set[str],
+    *,
+    participants: Callable[[HomeAssistant, str, str, set[str]], set[str] | None]
+    | None = None,
+) -> set[str]:
+    """Limit policy checks to HA service participants; retain unknown semantics.
+
+    Generic power services dispatch to each selected domain with that service.
+    Other generic/custom services must retain every selected entity: filtering
+    them by the service domain would hide targets they can actually affect.
+    """
+    participants = participants or _service_participants
+    if domain == "homeassistant" and service in {"turn_on", "turn_off", "toggle"}:
+        result: set[str] = set()
+        by_domain: dict[str, set[str]] = {}
+        for entity_id in sorted(selected):
+            by_domain.setdefault(entity_id.split(".", 1)[0], set()).add(entity_id)
+        for entity_domain, entity_ids in by_domain.items():
+            if entity_domain == "homeassistant" or not hass.services.has_service(
+                entity_domain, service
+            ):
+                continue
+            candidates = participants(hass, entity_domain, service, entity_ids)
+            result.update(entity_ids if candidates is None else entity_ids & candidates)
+        return result
+    candidates = participants(hass, domain, service, selected)
+    return set(selected) if candidates is None else selected & candidates

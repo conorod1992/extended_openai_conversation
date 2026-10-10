@@ -365,7 +365,7 @@ async def test_group_dependency_update_shares_config_revision_and_write(
     revision = management_ui._agent_config_revision(subentry.data, subentry.title)
     seen: dict = {}
 
-    def persist(
+    async def persist(
         _hass,
         _entry,
         _subentry,

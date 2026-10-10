@@ -114,12 +114,18 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
     const draft = panel._draft;
     const token = (panel._eocModelDataActionToken || 0) + 1;
     panel._eocModelDataActionToken = token;
-    const model = root.querySelector('[data-config="chat_model"]')?.value || "";
+    const capabilityModel = () => {
+      const config = panel._draft || panel._result?.config || {};
+      const azure = panel.shadowRoot?.querySelector('[data-config="azure_model"]');
+      const chat = panel.shadowRoot?.querySelector('[data-config="chat_model"]');
+      return String((azure ? azure.value : config.azure_model) || (chat ? chat.value : config.chat_model) || "");
+    };
+    const model = capabilityModel();
     const current = () => panel._eocModelDataActionToken === token
       && panel._agentId === agentId && panel._viewKey?.() === view
       && panel._loadToken === loadToken && panel._cacheGeneration === cacheGeneration
       && panel._draft === draft
-      && (panel.shadowRoot?.querySelector('[data-config="chat_model"]')?.value || "") === model;
+      && capabilityModel() === model;
     try {
       const result = await lookupModelData(panel, model, button.dataset.modelData, current);
       if (!current()) return;

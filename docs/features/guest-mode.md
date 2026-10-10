@@ -95,3 +95,25 @@ set. Execution restrictions cannot retract model context already transmitted to
 a provider; the next user turn receives the fully rebuilt Guest context.
 
 Script Functions with templated variables or action data are unavailable in Guest Mode because those templates can read data outside their action targets. Static Script Functions remain eligible; owner execution is unchanged.
+
+
+Administrator-configured system, datetime and exposed-entity templates are trusted
+context. They may deliberately read excluded states with Home Assistant template
+helpers. The integration-provided exposed-entity variable and
+`extended_openai.exposed_entities()` are filtered for the active Guest policy.
+Review custom templates before allowing Guest conversations.
+
+Administrator-authored Request Rule `Only when` and native conditions may inspect
+excluded entities. Rule eligibility and controlled responses can reveal that
+state; review those rules accordingly. Guest authorization checks directly
+requested effects before starting a local sequence and again at dispatch. It does
+not recursively inspect the indirect effects of permitted scripts or automations,
+and it cannot roll back effects after unrelated runtime failures.
+
+The Guest schedule editor displays browser-local times and sends explicit UTC
+instants to Home Assistant. Existing unchanged instants retain their original
+offset and seconds, including during repeated daylight-saving hours.
+
+Home Assistant actions through EOAI require explicit entity IDs or area, device,
+floor or label selectors. The `entity_id: all` sentinel is rejected before dispatch:
+Home Assistant expands it too late for EOAI to authorize the actual targets.

@@ -32,7 +32,7 @@ import {
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
 const TOOL_MUTATIONS = new Set(["save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"]);
-const REQUEST_RULE_MUTATIONS = new Set(["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move"]);
+const REQUEST_RULE_MUTATIONS = new Set(["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move", "rule_pack_import"]);
 const REQUEST_RULE_CACHE_KEY = "capabilities/request-rules";
 
 const KNOWLEDGE_TITLE_LIMIT = 120;
@@ -1863,7 +1863,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
       const status = this._result?.status || {};
-      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : value;
+      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : new Date(value).toISOString();
       try {
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");

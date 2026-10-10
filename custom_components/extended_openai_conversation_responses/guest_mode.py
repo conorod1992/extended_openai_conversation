@@ -936,6 +936,44 @@ def guest_arguments_allowed_runtime(
     if not policy.guest_active:
         return True
 
+    if control:
+        from .ha_actions import _TARGET_KEYS, resolve_action_entity_ids
+
+        def normalized(item: Any) -> Any:
+            if isinstance(item, Mapping):
+                result = {key: normalized(child) for key, child in item.items()}
+                domain, service = (
+                    item.get("domain"),
+                    item.get("service", item.get("action")),
+                )
+                if isinstance(service, str) and "." in service:
+                    domain, _, service = service.partition(".")
+                if isinstance(domain, str) and isinstance(service, str):
+                    data = item.get("data", item.get("service_data", item))
+                    if isinstance(data, Mapping):
+                        data = {**item, **data}
+                    target = item.get("target")
+                    entities = resolve_action_entity_ids(
+                        hass, domain, service, data, target
+                    )
+                    if entities:
+                        for key in _TARGET_KEYS:
+                            result.pop(key, None)
+                        for key in ("data", "service_data", "target"):
+                            if isinstance(result.get(key), Mapping):
+                                result[key] = {
+                                    name: child
+                                    for name, child in result[key].items()
+                                    if name not in _TARGET_KEYS
+                                }
+                        result["entity_id"] = sorted(entities)
+                return result
+            if isinstance(item, list):
+                return [normalized(child) for child in item]
+            return item
+
+        value = normalized(value)
+
     selected: dict[str, set[str]] = {
         "areas": set(),
         "devices": set(),
@@ -1032,7 +1070,7 @@ def guest_arguments_allowed_runtime(
                 if isinstance(action_name, str) and "." in action_name:
                     domain, _, service = action_name.partition(".")
                 if isinstance(domain, str) and isinstance(service, str):
-                    from .functions.native import _service_participants
+                    from .ha_actions import _service_participants
 
                     generic = domain == "homeassistant" and service in {
                         "turn_on",

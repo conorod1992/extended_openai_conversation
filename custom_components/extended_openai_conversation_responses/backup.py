@@ -277,6 +277,7 @@ def inspect_backup(
     *,
     max_bytes: int = MAX_LEGACY_EXPORT_BYTES,
     private_journal: bool = False,
+    header_only: bool = False,
 ) -> PreparedRestore:
     """Parse and validate every category without mutating agent state."""
     if isinstance(value, PreparedRestore):
@@ -364,6 +365,26 @@ def inspect_backup(
         agent["source_subentry_id"], str
     ):
         raise BackupError("The backup agent identity is invalid")
+    if header_only:
+        # Transport inspection needs the envelope before a user selects sections.
+        # These placeholders must never be committed as a restore target.
+        return PreparedRestore(
+            title,
+            {},
+            [],
+            [],
+            [],
+            [],
+            [],
+            UsageTotals(),
+            {},
+            [],
+            [],
+            None,
+            {},
+            created_at,
+            integration_version,
+        )
     try:
         raw_config = (
             deepcopy(agent["config"])

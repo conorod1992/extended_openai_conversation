@@ -774,6 +774,7 @@ def _safe_configuration_payload(
             "persisted_groups": raw_groups,
             "validation_error": issue,
             "isolatable": bool(invalid),
+            "tools": editable_function_tools(persisted) if not invalid else None,
         },
     }
 
@@ -819,6 +820,9 @@ def safe_configuration_payload(
                 "persisted_groups": deepcopy(state.raw_groups),
                 "validation_error": state.issue,
                 "isolatable": bool(state.invalid),
+                "tools": editable_function_tools(dict(subentry.data))
+                if not state.invalid
+                else None,
             },
         }
     return _safe_configuration_payload(
@@ -1118,6 +1122,17 @@ async def async_function_repair(
                         management_ui.CONF_GUEST_ALLOWED_FUNCTION_NAMES, []
                     )
                 ]
+            require_repair_revision(subentry, operation_revision)
+            await management_ui._async_validate_configuration_dependencies(
+                hass,
+                entry,
+                subentry,
+                {**subentry.data, CONF_FUNCTION_TOOLS: editable},
+                renamed_function=(old_name, new_name)
+                if old_name and old_name != new_name
+                else None,
+                rules_manager=rules,
+            )
             require_repair_revision(subentry, operation_revision)
             persisted = _persist_raw_tools(
                 hass,

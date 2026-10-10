@@ -54,9 +54,11 @@ applyRequestRuleMutation(panel,"move",{revision:"r3",rule:{id:"two",name:"Two",e
 assert.deepEqual(panel._result.rules.map((rule)=>rule.id),["one","two","copy"]);
 assert.deepEqual(panel._result.rules.map((rule)=>rule.order),[0,1,2]);
 
-applyRequestRuleMutation(panel,"delete",{revision:"r4",deleted:true},{ruleId:"two"});
+panel._result.diagnostics={copy:"Sentence pattern is inactive: per-agent state limit"};
+applyRequestRuleMutation(panel,"delete",{revision:"r4",deleted:true,diagnostics:{}},{ruleId:"two"});
 assert.deepEqual(panel._result.rules.map((rule)=>rule.id),["one","copy"]);
 assert.equal(panel._result.revision,"r4");
+assert.deepEqual(panel._result.diagnostics,{},"deleting an active rule can reactivate a retained rule");
 assert.equal(panel.renders,4);
 
 console.log("Request Rules fast-path dependency and authoritative mutation tests passed");

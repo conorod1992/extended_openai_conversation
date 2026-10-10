@@ -21,6 +21,12 @@ _REAL_TARGET_IDENTITY = ha_actions._target_identity
 _REAL_SERVICE_IDENTITY = ha_actions._service_identity
 
 
+@pytest.fixture(autouse=True)
+def mock_service_participants(monkeypatch):
+    """These action/snapshot doubles have no registered entity dispatchers."""
+    monkeypatch.setattr(ha_actions, "_service_participants", lambda *_: None)
+
+
 def _state(entity_id: str, value: str, **attributes) -> State:
     return State(entity_id, value, attributes)
 
@@ -262,7 +268,7 @@ async def test_non_reversible_actions_do_not_read_state(
         )
         == {}
     )
-    resolver.assert_called_once()
+    assert resolver.call_count == 2  # Resolve before and after permission checks.
     assert events == ["execute"]
 
 

@@ -597,11 +597,14 @@ def _list_item_identity(item: Any) -> Any:
     return None
 
 
-def _compatible_secret_context(value: Any, fallback: Any) -> bool:
+def _compatible_secret_context(
+    value: Any, fallback: Any, *, ordered: bool = False
+) -> bool:
     """Require identical visible structure; only secret scalar leaves may differ.
 
-    A marker cannot hide a container (and therefore a destination). Nested lists
-    may reorder only when their items have unique, one-to-one safe matches.
+    A marker cannot hide a container (and therefore a destination). Identical
+    public lists can contain duplicates; lists with secrets may reorder only
+    when their items have unique, one-to-one safe matches.
     """
     if is_literal_text(value):
         return bool(value[LITERAL_TEXT_KEY] == fallback)
@@ -616,13 +619,25 @@ def _compatible_secret_context(value: Any, fallback: Any) -> bool:
             isinstance(fallback, Mapping)
             and value.keys() == fallback.keys()
             and all(
-                _compatible_secret_context(item, fallback[key])
+                _compatible_secret_context(
+                    item, fallback[key], ordered=key == "sequence"
+                )
                 for key, item in value.items()
             )
         )
     if isinstance(value, list):
         if not isinstance(fallback, list) or len(value) != len(fallback):
             return False
+        same_order = all(
+            _compatible_secret_context(item, candidate)
+            for item, candidate in zip(value, fallback, strict=True)
+        )
+        if ordered:
+            return same_order
+        # Public values are compared in full, so repeated entries introduce no
+        # uncertainty about which local credential a marker can recover.
+        if same_order and not _collect_secret_paths(value):
+            return True
         matches = [_fallback_list_index(item, fallback) for item in value]
         return None not in matches and len(set(matches)) == len(matches)
     return type(value) is type(fallback) and bool(value == fallback)
@@ -670,6 +685,12 @@ def _restore_with_fallback(
         restored: list[Any] = []
         local_items = fallback if isinstance(fallback, list) else []
         matches = [_fallback_list_index(item, local_items) for item in value]
+        if path and path[-1] == "sequence":
+            matches = (
+                list(range(len(value)))
+                if _compatible_secret_context(value, local_items, ordered=True)
+                else [None] * len(value)
+            )
         for index, item in enumerate(value):
             match = matches[index]
             candidate = (
@@ -748,7 +769,9 @@ def _validate_metadata(value: Mapping[str, Any]) -> tuple[str, str, str]:
 
 
 def _validate_transfer_document(
-    value: Mapping[str, Any], target_agent_id: str
+    value: Mapping[str, Any],
+    target_agent_id: str,
+    selected: Iterable[str] | None = None,
 ) -> PreparedTransfer:
     expected = {
         "format",
@@ -778,6 +801,11 @@ def _validate_transfer_document(
     available = validate_section_selection(raw_sections.keys())
     if mode == "setup" and available != SETUP_SECTIONS:
         raise backup.BackupError("The shareable setup sections are incomplete")
+    validating = (
+        validate_section_selection(selected, allowed=available, default=available)
+        if selected != frozenset()
+        else frozenset()
+    )
 
     prepared = PreparedTransfer(
         source_kind="portable_transfer" if mode == "setup" else "custom_backup",
@@ -789,7 +817,7 @@ def _validate_transfer_document(
     )
     redacted: list[str] = []
     try:
-        if SECTION_CONFIGURATION in available:
+        if SECTION_CONFIGURATION in validating:
             raw = raw_sections[SECTION_CONFIGURATION]
             prepared.raw_configuration = deepcopy(raw)
             redacted.extend(
@@ -798,35 +826,41 @@ def _validate_transfer_document(
             restored = restore_redacted_secrets(raw)
             if not isinstance(restored, dict):
                 raise ValueError("configuration must be an object")
-            prepared.config = backup.recoverable_configuration_snapshot(restored)
-        if SECTION_REQUEST_RULES in available:
+            prepared.config = (
+                restored
+                if _collect_secret_paths(raw)
+                else backup.recoverable_configuration_snapshot(restored)
+            )
+        if SECTION_REQUEST_RULES in validating:
             raw = raw_sections[SECTION_REQUEST_RULES]
             prepared.raw_request_rules = deepcopy(raw)
             redacted.extend(
                 f"request_rules.{path}" for path in _collect_secret_paths(raw)
             )
-            prepared.request_rules = RequestRules.validate_backup_data(
-                restore_redacted_secrets(raw)
+            prepared.request_rules = (
+                None
+                if _collect_secret_paths(raw)
+                else RequestRules.validate_backup_data(restore_redacted_secrets(raw))
             )
-        if SECTION_PERSISTENT_MEMORY in available:
+        if SECTION_PERSISTENT_MEMORY in validating:
             prepared.memories = PersistentMemory.validate_backup_data(
                 raw_sections[SECTION_PERSISTENT_MEMORY]
             )
-        if SECTION_TEMPORARY_MEMORY in available:
+        if SECTION_TEMPORARY_MEMORY in validating:
             prepared.temporary_memories = TemporaryMemory.validate_backup_data(
                 raw_sections[SECTION_TEMPORARY_MEMORY]
             )
-        if SECTION_KNOWLEDGE in available:
+        if SECTION_KNOWLEDGE in validating:
             prepared.knowledge = KnowledgeLibrary.validate_backup_data(
                 raw_sections[SECTION_KNOWLEDGE]
             )
-        if SECTION_CONVERSATION_ARCHIVE in available:
+        if SECTION_CONVERSATION_ARCHIVE in validating:
             prepared.archive_sessions, prepared.archive_turns = (
                 ConversationArchive.validate_backup_data(
                     raw_sections[SECTION_CONVERSATION_ARCHIVE], target_agent_id
                 )
             )
-        if SECTION_USAGE in available:
+        if SECTION_USAGE in validating:
             (
                 prepared.usage_totals,
                 prepared.usage_daily,
@@ -835,7 +869,7 @@ def _validate_transfer_document(
             ) = UsageManager.validate_backup_data(
                 raw_sections[SECTION_USAGE], target_agent_id
             )
-        if SECTION_GUEST_MODE in available:
+        if SECTION_GUEST_MODE in validating:
             prepared.guest_mode_schedule = GuestModeManager.validate_backup_data(
                 raw_sections[SECTION_GUEST_MODE]
             )
@@ -847,7 +881,9 @@ def _validate_transfer_document(
     return prepared
 
 
-def _inspect_legacy_setup(value: Mapping[str, Any]) -> PreparedTransfer:
+def _inspect_legacy_setup(
+    value: Mapping[str, Any], *, inspect_only: bool = False
+) -> PreparedTransfer:
     if value.get("version") != AGENT_CONFIG_EXPORT_VERSION:
         raise backup.BackupError("This setup export uses an unsupported version")
     unknown = set(value) - {"schema", "version", "title", "config"}
@@ -863,7 +899,11 @@ def _inspect_legacy_setup(value: Mapping[str, Any]) -> PreparedTransfer:
         restored = restore_redacted_secrets(raw_config)
         if not isinstance(restored, dict):
             raise ValueError("configuration must be an object")
-        config = backup.recoverable_configuration_snapshot(restored)
+        config = (
+            restored
+            if inspect_only or redacted
+            else backup.recoverable_configuration_snapshot(restored)
+        )
         title = validate_agent_title(
             value.get("title"), default="Imported conversation agent"
         )
@@ -883,65 +923,45 @@ def _inspect_legacy_setup(value: Mapping[str, Any]) -> PreparedTransfer:
 
 
 def _inspect_full_backup(
-    value: Mapping[str, Any], target_agent_id: str
+    value: Mapping[str, Any],
+    target_agent_id: str,
+    selected: Iterable[str] | None = None,
 ) -> PreparedTransfer:
-    prepared = backup.inspect_backup(
-        value, target_agent_id, max_bytes=backup.MAX_BACKUP_BYTES
+    header = backup.inspect_backup(
+        value, target_agent_id, max_bytes=backup.MAX_BACKUP_BYTES, header_only=True
     )
-    version = value.get("version")
-    available = {
-        SECTION_CONFIGURATION,
-        SECTION_PERSISTENT_MEMORY,
-        SECTION_TEMPORARY_MEMORY,
-        SECTION_KNOWLEDGE,
-        SECTION_CONVERSATION_ARCHIVE,
-        SECTION_USAGE,
+    sections = {
+        SECTION_CONFIGURATION: value["agent"]["config"],
+        SECTION_PERSISTENT_MEMORY: value["memories"],
+        SECTION_TEMPORARY_MEMORY: value["temporary_memories"],
+        SECTION_KNOWLEDGE: value["knowledge"],
+        SECTION_CONVERSATION_ARCHIVE: value["archive"],
+        SECTION_USAGE: value["usage"],
     }
-    if isinstance(version, int) and version >= 2 and "guest_mode" in value:
-        available.add(SECTION_GUEST_MODE)
-    if isinstance(version, int) and version >= 3 and "request_rules" in value:
-        available.add(SECTION_REQUEST_RULES)
-    raw_config = (
-        value.get("agent", {}).get("config")
-        if isinstance(value.get("agent"), Mapping)
-        else None
-    )
-    raw_rules = value.get("request_rules")
-    redacted = [f"configuration.{path}" for path in _collect_secret_paths(raw_config)]
-    if raw_rules is not None:
-        redacted.extend(
-            f"request_rules.{path}" for path in _collect_secret_paths(raw_rules)
-        )
-    return PreparedTransfer(
-        source_kind="full_backup",
-        mode="full",
-        title=prepared.title,
-        available_sections=frozenset(available),
-        created_at=prepared.created_at,
-        integration_version=prepared.integration_version,
-        config=prepared.config,
-        request_rules=prepared.request_rules
-        if SECTION_REQUEST_RULES in available
-        else None,
-        memories=prepared.memories,
-        temporary_memories=prepared.temporary_memories,
-        knowledge=prepared.knowledge,
-        archive_sessions=prepared.archive_sessions,
-        archive_turns=prepared.archive_turns,
-        usage_totals=prepared.usage_totals,
-        usage_daily=prepared.usage_daily,
-        usage_requests=prepared.usage_requests,
-        usage_runs=prepared.usage_runs,
-        guest_mode_schedule=(
-            prepared.guest_mode_schedule if SECTION_GUEST_MODE in available else None
-        ),
-        raw_configuration=deepcopy(raw_config),
-        raw_request_rules=deepcopy(raw_rules),
-        redacted_sensitive_fields=tuple(redacted),
-    )
+    for key in (SECTION_REQUEST_RULES, SECTION_GUEST_MODE):
+        if key in value:
+            sections[key] = value[key]
+    portable = {
+        "format": TRANSFER_FORMAT,
+        "version": TRANSFER_VERSION,
+        "mode": "custom",
+        "created_at": header.created_at,
+        "integration_version": header.integration_version,
+        "agent": {key: item for key, item in value["agent"].items() if key != "config"},
+        "sections": sections,
+    }
+    prepared = _validate_transfer_document(portable, target_agent_id, selected)
+    prepared.source_kind, prepared.mode = "full_backup", "full"
+    return prepared
 
 
-def inspect_transfer(value: Any, target_agent_id: str) -> PreparedTransfer:
+def inspect_transfer(
+    value: Any,
+    target_agent_id: str,
+    *,
+    sections: Iterable[str] | None = None,
+    inspect_only: bool = False,
+) -> PreparedTransfer:
     """Classify and fully validate portable, custom, legacy, or full backup input."""
     if isinstance(value, PreparedTransfer):
         return value
@@ -957,11 +977,19 @@ def inspect_transfer(value: Any, target_agent_id: str) -> PreparedTransfer:
             "This file is not an Extended OpenAI Conversation transfer"
         )
     if value.get("format") == TRANSFER_FORMAT:
-        return _validate_transfer_document(value, target_agent_id)
+        return _validate_transfer_document(
+            value, target_agent_id, frozenset() if inspect_only else sections
+        )
     if value.get("format") == backup.BACKUP_FORMAT:
-        return _inspect_full_backup(value, target_agent_id)
+        return _inspect_full_backup(
+            value, target_agent_id, frozenset() if inspect_only else sections
+        )
     if value.get("schema") == LEGACY_AGENT_SCHEMA:
-        return _inspect_legacy_setup(value)
+        return _inspect_legacy_setup(
+            value,
+            inspect_only=inspect_only
+            or (sections is not None and SECTION_CONFIGURATION not in sections),
+        )
     raise backup.BackupError(
         "This file is not a recognised Extended OpenAI Conversation export or backup"
     )
@@ -1025,6 +1053,11 @@ def _prepared_restore_from_selection(
             )
             preserved.extend(f"configuration.{path}" for path in kept)
             missing.extend(f"configuration.{path}" for path in absent)
+            if absent:
+                raise backup.BackupError(
+                    "Cannot safely restore unavailable secrets: "
+                    + ", ".join(absent[:50])
+                )
             if not isinstance(raw, dict):
                 raise backup.BackupError("Transferred configuration is invalid")
             config = backup.recoverable_configuration_snapshot(raw)
@@ -1046,6 +1079,11 @@ def _prepared_restore_from_selection(
             )
             preserved.extend(f"request_rules.{path}" for path in kept)
             missing.extend(f"request_rules.{path}" for path in absent)
+            if absent:
+                raise backup.BackupError(
+                    "Cannot safely restore unavailable secrets: "
+                    + ", ".join(absent[:50])
+                )
             rules = RequestRules.validate_backup_data(raw)
         elif imported.request_rules is not None:
             rules = deepcopy(imported.request_rules)
@@ -1138,7 +1176,7 @@ async def async_materialize_restore(
     current_snapshot: backup.PreparedRestore | None = None,
 ) -> tuple[backup.PreparedRestore, dict[str, Any]]:
     """Build and validate a complete restore target from a selective transfer."""
-    prepared = inspect_transfer(imported, subentry.subentry_id)
+    prepared = inspect_transfer(imported, subentry.subentry_id, sections=sections)
     selected = validate_section_selection(
         sections,
         allowed=prepared.available_sections,

@@ -79,7 +79,7 @@ assert.equal(calls[2].extra.revision, undefined, "read-only tool calls need no r
 assert.equal(panel._configData.revision, "revision-3");
 
 
-for (const action of ["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move"]) {
+for (const action of ["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move", "rule_pack_import"]) {
   const key = "agent-1|capabilities/request-rules", other = "agent-2|capabilities/request-rules";
   panel._sectionCache.set(key, {revision:"old"}); panel._eocSectionCacheTimes.set(key, Date.now());
   panel._sectionCache.set(other, {revision:"other"}); panel._eocSectionCacheTimes.set(other, Date.now());

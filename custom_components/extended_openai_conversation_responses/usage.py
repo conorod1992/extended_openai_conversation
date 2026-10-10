@@ -514,7 +514,10 @@ class UsageManager:
                 ):
                     if value and value not in collection:
                         collection.append(value)
-                if not successful and request_stage != "embeddings":
+                if not successful and request_stage not in {
+                    "embeddings",
+                    "context_summary",
+                }:
                     run.successful = False
                     run.error_type = error_type or run.error_type or "provider_error"
                 if self.request_retention_days > 0:

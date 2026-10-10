@@ -6,6 +6,7 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.auth.permissions.const import POLICY_READ
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -38,13 +39,38 @@ async def websocket_broadcast(
     try:
         manager = await async_get_intercom(hass)
         if msg["action"] == "snapshot":
+            catalog, history = manager.catalog(), manager.history()
+            if not connection.user.is_admin:
+
+                def can_read(entity_id: str) -> bool:
+                    return connection.user.permissions.check_entity(
+                        entity_id, POLICY_READ
+                    )
+
+                readable = {
+                    item["id"] for item in catalog["satellites"] if can_read(item["id"])
+                }
+                catalog = manager.catalog(entity_ids=readable)
+                history = [
+                    {**item, "origin_device_id": None}
+                    for item in history
+                    if item.get("targets")
+                    and all(can_read(entity_id) for entity_id in item["targets"])
+                    and all(
+                        can_read(entity_id) for entity_id in item.get("deliveries", {})
+                    )
+                    and (
+                        not item.get("origin_entity_id")
+                        or can_read(item["origin_entity_id"])
+                    )
+                ]
             connection.send_result(
                 msg["id"],
                 {
                     "enabled": manager.enabled,
                     "can_manage": connection.user.is_admin,
-                    "catalog": manager.catalog(),
-                    "history": manager.history(),
+                    "catalog": catalog,
+                    "history": history,
                 },
             )
             return

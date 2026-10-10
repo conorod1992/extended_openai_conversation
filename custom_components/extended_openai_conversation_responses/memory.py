@@ -160,8 +160,12 @@ class EmbeddingCacheEntry:
 
     model: str
     fingerprint: str
-    vector: list[float]
+    vector: Sequence[float]
     space_id: str = ""
+
+    def __post_init__(self) -> None:
+        # Frozen entries own immutable vectors; snapshots can safely share them.
+        object.__setattr__(self, "vector", tuple(self.vector))
 
 
 @dataclass(slots=True)
@@ -425,11 +429,19 @@ class PersistentMemory:
             if key and (user_id, key) in self._key_index:
                 raise ValueError("canonical key already exists in this memory scope")
             if key is None:
-                duplicate = self._find_duplicate(user_id, content)
+                duplicate = self._find_duplicate(user_id, content, subject)
                 if duplicate:
+                    changes: dict[str, Any] = {}
                     if duplicate.source == "implicit" and source == "explicit":
+                        changes["source"] = "explicit"
+                    if (
+                        subject
+                        and not duplicate.subject
+                        and (source == "explicit" or duplicate.source == "implicit")
+                    ):
+                        changes["subject"] = subject
+                    if changes:
                         timestamp = dt_util.utcnow().isoformat()
-                        changes = {"source": "explicit"}
                         _set_updated_at_if_substantive(duplicate, changes, timestamp)
                         duplicate = self._replace_record(duplicate, **changes)
                         await self._async_save_locked()
@@ -525,7 +537,11 @@ class PersistentMemory:
                 }
 
             if not keyed_identity:
-                duplicate = self._find_duplicate(user_id, content)
+                duplicate = self._find_duplicate(
+                    user_id,
+                    content,
+                    cleaned_subject if isinstance(cleaned_subject, str) else None,
+                )
                 if duplicate:
                     if duplicate.source == "explicit" and source == "implicit":
                         return {
@@ -610,7 +626,7 @@ class PersistentMemory:
             )
             query_terms = _token_list(query)
             query_tokens = set(query_terms)
-            if not query_tokens:
+            if not query_tokens and not (hybrid and query_embedding):
                 return []
             category_filter = _clean_category(category) if category else None
             corpus = [
@@ -1093,18 +1109,28 @@ class PersistentMemory:
                 self._index(record)
             await self._async_save_locked()
 
-    def _find_duplicate(self, user_id: str, content: str) -> MemoryRecord | None:
+    def _find_duplicate(
+        self, user_id: str, content: str, subject: str | None = None
+    ) -> MemoryRecord | None:
         """Deduplicate only order-preserving normalized equality.
 
         Word overlap identifies related facts in _find_related_candidate; it
         cannot establish equivalence (preferences, negation and numbers matter).
         """
         normalized = _fact_equality(content)
-        for memory in self._memories.values():
-            if memory.user_id != user_id:
-                continue
-            if _fact_equality(memory.content) == normalized:
+        matches = [
+            memory
+            for memory in self._memories.values()
+            if memory.user_id == user_id
+            and _fact_equality(memory.content) == normalized
+        ]
+        for memory in matches:
+            if _subject_identity(memory.subject) == _subject_identity(subject):
                 return memory
+        # Omitted legacy metadata can be filled/preserved only when the content
+        # identifies one candidate. Two explicit subjects never establish a match.
+        if len(matches) == 1 and (not subject or not matches[0].subject):
+            return matches[0]
         return None
 
     def _find_related_candidate(
@@ -1114,7 +1140,11 @@ class PersistentMemory:
         key_root = key.rsplit(".", 1)[0] if key and "." in key else None
         best: tuple[float, str, MemoryRecord] | None = None
         for memory in self._memories.values():
-            if memory.user_id != user_id:
+            if memory.user_id != user_id or (
+                subject
+                and memory.subject
+                and _subject_identity(subject) != _subject_identity(memory.subject)
+            ):
                 continue
             existing = _cached_memory_tokens(memory.content)
             union = incoming | existing
@@ -1122,7 +1152,7 @@ class PersistentMemory:
             if (
                 subject
                 and memory.subject
-                and _normalize(subject) == _normalize(memory.subject)
+                and _subject_identity(subject) == _subject_identity(memory.subject)
             ) or (subject and _cached_memory_tokens(subject) & existing):
                 similarity += 0.3
             if key_root and memory.key and memory.key.startswith(f"{key_root}."):
@@ -1177,15 +1207,7 @@ class PersistentMemory:
         return _MemoryMutationSnapshot(
             memories=dict(self._memories),
             key_index=dict(self._key_index),
-            embedding_cache={
-                memory_id: EmbeddingCacheEntry(
-                    model=entry.model,
-                    fingerprint=entry.fingerprint,
-                    vector=list(entry.vector),
-                    space_id=entry.space_id,
-                )
-                for memory_id, entry in self._embedding_cache.items()
-            },
+            embedding_cache=dict(self._embedding_cache),
             embedding_cache_dirty=self._embedding_cache_dirty,
         )
 
@@ -1193,15 +1215,7 @@ class PersistentMemory:
         """Restore the last successfully committed live structures."""
         self._memories = dict(snapshot.memories)
         self._key_index = dict(snapshot.key_index)
-        self._embedding_cache = {
-            memory_id: EmbeddingCacheEntry(
-                model=entry.model,
-                fingerprint=entry.fingerprint,
-                vector=list(entry.vector),
-                space_id=entry.space_id,
-            )
-            for memory_id, entry in snapshot.embedding_cache.items()
-        }
+        self._embedding_cache = dict(snapshot.embedding_cache)
         self._embedding_cache_dirty = snapshot.embedding_cache_dirty
 
     async def _async_refresh_missing_embeddings(self, scope_ids: Sequence[str]) -> bool:
@@ -1307,7 +1321,7 @@ class PersistentMemory:
             self._embedding_cache.clear()
             self._embedding_cache_dirty = True
 
-    def _cached_embedding(self, memory: MemoryRecord) -> list[float] | None:
+    def _cached_embedding(self, memory: MemoryRecord) -> Sequence[float] | None:
         entry = self._embedding_cache.get(memory.memory_id)
         if (
             entry is None
@@ -1364,15 +1378,12 @@ class PersistentMemory:
                 self._committed_state = self._snapshot_mutation_state()
             return True
         try:
-            await self._embedding_cache_storage.async_save(
-                {
-                    "embeddings": {
-                        memory_id: asdict(entry)
-                        for memory_id, entry in self._embedding_cache.items()
-                        if memory_id in self._memories
-                    }
-                }
+            payload = await asyncio.to_thread(
+                _embedding_cache_payload,
+                dict(self._embedding_cache),
+                frozenset(self._memories),
             )
+            await self._embedding_cache_storage.async_save(payload)
             self._embedding_cache_dirty = False
             if self._embedding_cache_write_failed:
                 _LOGGER.info("Persistent memory embedding cache persistence recovered")
@@ -1686,13 +1697,16 @@ def _memory_metadata_schema(*, include_scope: bool) -> dict[str, Any]:
 
 
 def _token_list(value: str) -> list[str]:
-    return [
+    from .retrieval_text import cjk_terms
+
+    normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+    normalized = re.sub(r"(?<=\w)'s\b|(?<=s)'(?=\W|$)", "", normalized)
+    terms = [
         _stem(token)
-        for token in _TOKEN_PATTERN.findall(
-            unicodedata.normalize("NFC", value).casefold()
-        )
+        for token in _TOKEN_PATTERN.findall(normalized)
         if len(token) > 1 and token not in _STOP_WORDS
     ]
+    return terms + sorted(cjk_terms(normalized) - set(terms))
 
 
 def _tokens(value: str) -> set[str]:
@@ -1804,7 +1818,7 @@ def _fuzzy_relevance(
 
 
 def _cosine_similarity(
-    left: list[float] | None, right: list[float] | None
+    left: Sequence[float] | None, right: Sequence[float] | None
 ) -> float | None:
     if not left or not right or len(left) != len(right):
         return None
@@ -1914,6 +1928,12 @@ def _fact_equality(value: str) -> str:
     return " ".join(unicodedata.normalize("NFC", value).casefold().split()).rstrip(
         ".!?"
     )
+
+
+@lru_cache(maxsize=20_000)
+def _subject_identity(value: str | None) -> str:
+    """Fold case and whitespace without erasing subject punctuation."""
+    return " ".join(unicodedata.normalize("NFC", value or "").casefold().split())
 
 
 @lru_cache(maxsize=20_000)
@@ -2073,3 +2093,21 @@ def _cached_memory_term_frequencies(
     for term in document_terms:
         frequencies[term] = frequencies.get(term, 0) + 1
     return MappingProxyType(frequencies)
+
+
+def _embedding_cache_payload(
+    entries: Mapping[str, EmbeddingCacheEntry], memory_ids: frozenset[str]
+) -> dict[str, Any]:
+    """Convert immutable cache snapshots away from the event loop."""
+    return {
+        "embeddings": {
+            memory_id: {
+                "model": entry.model,
+                "fingerprint": entry.fingerprint,
+                "space_id": entry.space_id,
+                "vector": list(entry.vector),
+            }
+            for memory_id, entry in entries.items()
+            if memory_id in memory_ids
+        }
+    }

@@ -135,7 +135,7 @@ def _static_target(target: Mapping[str, Any]) -> bool:
     return True
 
 
-def contains_indirect_service_call(value: Any) -> bool:
+def contains_indirect_service_call(value: Any, hass: Any = None) -> bool:
     """Detect explicit generic HA wrapper calls in model-supplied arguments."""
     if isinstance(value, Mapping):
         domain = value.get("domain")
@@ -146,7 +146,40 @@ def contains_indirect_service_call(value: Any) -> bool:
             service_domain = service.partition(".")[0]
             if service_domain in _INDIRECT_DOMAINS:
                 return True
-        return any(contains_indirect_service_call(child) for child in value.values())
+        if isinstance(service, str) and "." in service:
+            domain, _, service = service.partition(".")
+        if domain == "homeassistant" and service in {"turn_on", "turn_off", "toggle"}:
+            data = value.get("data", value.get("service_data", {}))
+            data = {**value, **data} if isinstance(data, Mapping) else value
+            if hass is not None:
+                from ..ha_actions import resolve_action_entity_ids
+
+                selected = resolve_action_entity_ids(
+                    hass,
+                    domain,
+                    service,
+                    data,
+                    value.get("target"),
+                )
+                if any(
+                    entity_id.partition(".")[0] in _INDIRECT_DOMAINS
+                    for entity_id in selected
+                ):
+                    return True
+            else:
+                target = value.get("target", data)
+                ids = target.get("entity_id", []) if isinstance(target, Mapping) else []
+                ids = ids if isinstance(ids, list) else [ids]
+                if any(
+                    part.strip().partition(".")[0] in _INDIRECT_DOMAINS
+                    for item in ids
+                    if isinstance(item, str)
+                    for part in item.split(",")
+                ):
+                    return True
+        return any(
+            contains_indirect_service_call(child, hass) for child in value.values()
+        )
     if isinstance(value, list):
-        return any(contains_indirect_service_call(child) for child in value)
+        return any(contains_indirect_service_call(child, hass) for child in value)
     return False

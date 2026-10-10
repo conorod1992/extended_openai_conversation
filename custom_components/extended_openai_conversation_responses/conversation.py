@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -915,111 +915,120 @@ class ExtendedOpenAIAgentEntity(
                 current_user = chat_log.content[-1]
                 chat_log.content[:] = [*resolution.history, current_user]
             try:
-                try:
-                    evaluation = (
-                        await async_evaluate_rule(
-                            self.hass,
-                            self._request_rules,
-                            self._request_rule_runtime,
-                            user_input.text,
-                            rule_session_key,
-                            str(
-                                self.subentry.data.get(
-                                    CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL
-                                )
-                            ),
-                            request_policy,
-                            timeout_minutes,
-                            lambda name, arguments: (
-                                self._async_execute_request_rule_function(
-                                    name, arguments, llm_context
-                                )
-                            ),
-                            context=user_input.context,
-                            live_guest_policy=self._effective_guest_policy,
-                            request_options=self.subentry.data,
-                            entry_data=self.entry.data,
+                async with (
+                    self._usage.async_run(
+                        home_assistant_conversation_id=user_input.conversation_id,
+                        source_device_id=source_device_id,
+                    )
+                    if self._usage is not None
+                    else nullcontext(None)
+                ) as run:
+                    try:
+                        evaluation = (
+                            await async_evaluate_rule(
+                                self.hass,
+                                self._request_rules,
+                                self._request_rule_runtime,
+                                user_input.text,
+                                rule_session_key,
+                                str(
+                                    self.subentry.data.get(
+                                        CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL
+                                    )
+                                ),
+                                request_policy,
+                                timeout_minutes,
+                                lambda name, arguments: (
+                                    self._async_execute_request_rule_function(
+                                        name, arguments, llm_context
+                                    )
+                                ),
+                                context=user_input.context,
+                                live_guest_policy=self._effective_guest_policy,
+                                request_options=self.subentry.data,
+                                entry_data=self.entry.data,
+                            )
+                            if self._request_rules is not None
+                            and self._request_rule_runtime is not None
+                            else None
                         )
-                        if self._request_rules is not None
-                        and self._request_rule_runtime is not None
-                        else None
-                    )
-                except HomeAssistantError as err:
-                    _LOGGER.warning("Request Rule routing rejected: %s", err)
-                    return self._local_rule_result(
-                        user_input,
-                        chat_log,
-                        f"Sorry, this Request Rule cannot be used: {err}",
-                        successful=False,
-                    )
-                metadata = _PROCESS_METADATA.get()
-                if metadata is not None and evaluation is not None:
-                    metadata["matched_rule"] = {
-                        "id": evaluation.match.rule["id"],
-                        "name": evaluation.match.rule["name"],
-                    }
-                    metadata["captured_values"] = dict(evaluation.match.slots)
-                if evaluation is not None and evaluation.consume:
-                    result = await self._async_complete_local_rule(
-                        user_input,
-                        chat_log,
-                        evaluation.response
-                        if evaluation.response is not None
-                        else "Done",
-                        archive_session,
-                        resolution.key,
-                        resolution.claim_token,
-                        source_device_id,
-                        successful=evaluation.successful,
-                    )
-                    request_successful = evaluation.successful
-                    return result
-                if evaluation is not None and evaluation.provider_input is not None:
-                    current_user = chat_log.content[-1]
-                    if not isinstance(current_user, conversation.UserContent):
-                        raise HomeAssistantError(
-                            "Current request is unavailable for AI handoff"
-                        )
-                    chat_log.content[-1] = replace(
-                        current_user, content=evaluation.provider_input
-                    )
-                request_options = (
-                    self._request_rule_runtime.effective_options(
-                        self.subentry.data,
-                        rule_session_key,
-                        evaluation.request_override if evaluation else None,
-                        timeout_minutes,
-                    )
-                    if self._request_rule_runtime is not None
-                    else dict(self.subentry.data)
-                )
-                if self._usage is None:
-                    result = await self._async_dispatch_message(
-                        user_input,
-                        chat_log,
-                        request_options,
-                        try_locally=evaluation is None,
-                        guest_active=request_policy.guest_active,
-                    )
-                    if (
-                        result.response.error_code is None
-                        and chat_log.content
-                        and isinstance(
-                            chat_log.content[-1], conversation.AssistantContent
-                        )
-                    ):
-                        await continuity.async_record_success(
+                    except HomeAssistantError as err:
+                        _LOGGER.warning("Request Rule routing rejected: %s", err)
+                        return await self._async_complete_local_rule(
+                            user_input,
+                            chat_log,
+                            f"Sorry, this Request Rule cannot be used: {err}",
+                            archive_session,
                             resolution.key,
                             resolution.claim_token,
-                            chat_log.content,
-                            extra_system_prompt=chat_log.extra_system_prompt,
+                            source_device_id,
+                            successful=False,
                         )
-                    request_successful = result.response.error_code is None
-                    return result
-                async with self._usage.async_run(
-                    home_assistant_conversation_id=user_input.conversation_id,
-                    source_device_id=source_device_id,
-                ) as run:
+                    metadata = _PROCESS_METADATA.get()
+                    if metadata is not None and evaluation is not None:
+                        metadata["matched_rule"] = {
+                            "id": evaluation.match.rule["id"],
+                            "name": evaluation.match.rule["name"],
+                        }
+                        metadata["captured_values"] = dict(evaluation.match.slots)
+                    if evaluation is not None and evaluation.consume:
+                        result = await self._async_complete_local_rule(
+                            user_input,
+                            chat_log,
+                            evaluation.response
+                            if evaluation.response is not None
+                            else "Done",
+                            archive_session,
+                            resolution.key,
+                            resolution.claim_token,
+                            source_device_id,
+                            successful=evaluation.successful,
+                        )
+                        request_successful = evaluation.successful
+                        return result
+                    if evaluation is not None and evaluation.provider_input is not None:
+                        current_user = chat_log.content[-1]
+                        if not isinstance(current_user, conversation.UserContent):
+                            raise HomeAssistantError(
+                                "Current request is unavailable for AI handoff"
+                            )
+                        chat_log.content[-1] = replace(
+                            current_user, content=evaluation.provider_input
+                        )
+                    request_options = (
+                        self._request_rule_runtime.effective_options(
+                            self.subentry.data,
+                            rule_session_key,
+                            evaluation.request_override if evaluation else None,
+                            timeout_minutes,
+                        )
+                        if self._request_rule_runtime is not None
+                        else dict(self.subentry.data)
+                    )
+                    if self._usage is None:
+                        result = await self._async_dispatch_message(
+                            user_input,
+                            chat_log,
+                            request_options,
+                            try_locally=evaluation is None,
+                            guest_active=request_policy.guest_active,
+                        )
+                        if (
+                            result.response.error_code is None
+                            and chat_log.content
+                            and isinstance(
+                                chat_log.content[-1], conversation.AssistantContent
+                            )
+                        ):
+                            await continuity.async_record_success(
+                                resolution.key,
+                                resolution.claim_token,
+                                chat_log.content,
+                                extra_system_prompt=chat_log.extra_system_prompt,
+                            )
+                        request_successful = result.response.error_code is None
+                        return result
+                    assert run is not None
                     result = await self._async_dispatch_message(
                         user_input,
                         chat_log,
@@ -1438,9 +1447,14 @@ class ExtendedOpenAIAgentEntity(
     ) -> ConversationResult:
         """Finalize a locally consumed rule as a zero-provider-request run."""
         if self._usage is not None:
-            async with self._usage.async_run(
-                home_assistant_conversation_id=user_input.conversation_id,
-                source_device_id=source_device_id,
+            active_run = self._usage.current_run()
+            async with (
+                nullcontext(active_run)
+                if active_run is not None
+                else self._usage.async_run(
+                    home_assistant_conversation_id=user_input.conversation_id,
+                    source_device_id=source_device_id,
+                )
             ) as run:
                 result = self._local_rule_result(
                     user_input, chat_log, response, successful=successful
@@ -2197,7 +2211,13 @@ class ExtendedOpenAIAgentEntity(
                 }:
                     return self._tool_result(tool_input, guest_mode_denial_result())
                 control = self._is_control_tool(current_tool)
-                if control and contains_indirect_service_call(tool_input.tool_args):
+                if control and contains_indirect_service_call(
+                    tool_input.tool_args, self.hass
+                ):
+                    return self._tool_result(tool_input, guest_mode_denial_result())
+                if control and contains_indirect_service_call(
+                    current_tool.get("function", {}), self.hass
+                ):
                     return self._tool_result(tool_input, guest_mode_denial_result())
                 if not self._guest_arguments_allowed_runtime(
                     tool_input.tool_args, policy, control=control
