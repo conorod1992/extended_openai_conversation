@@ -2552,6 +2552,84 @@ def _guest_script_allowed(
     return True
 
 
+async def _async_guest_functions_allowed(
+    hass: HomeAssistant,
+    sequence: Sequence[Mapping[str, Any]],
+    policy: GuestCapabilityPolicy,
+    slots: Mapping[str, str],
+    request_options: Mapping[str, Any] | None,
+) -> bool:
+    """Validate every requested Function before any sequence effect starts."""
+    from .agent_config import function_tool_enabled
+    from .function_execution import async_validate_function_arguments
+    from .function_tool_quarantine import (
+        _runtime_configured_function_tools,
+        _runtime_validate_function_groups,
+    )
+    from .functions.security import (
+        FunctionSecurity,
+        classify_tool,
+        contains_indirect_service_call,
+    )
+
+    tools = None
+    for step in _iter_script_actions(sequence):
+        if (
+            step.get("action", step.get("service"))
+            != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+        ):
+            continue
+        if tools is None:
+            tools = _runtime_configured_function_tools(request_options or {})
+            groups = _runtime_validate_function_groups(
+                (request_options or {}).get("function_groups", []), tools
+            )
+            disabled = {
+                name
+                for group in groups
+                if group.get("enabled", True) is not True
+                for name in group["functions"]
+            }
+            tools = [
+                tool
+                for tool in tools
+                if function_tool_enabled(tool) and tool["spec"]["name"] not in disabled
+            ]
+        data = resolve_slot_values(
+            _resolve_guest_slot_templates(step.get("data", {}), slots), slots
+        )
+        if not isinstance(data, Mapping):
+            return False
+        tool = next(
+            (tool for tool in tools if tool["spec"]["name"] == data.get("function")),
+            None,
+        )
+        if tool is None or (
+            policy.legacy_function_flags and tool.get("guest_allowed") is not True
+        ):
+            return False
+        level = classify_tool(tool)
+        if level > FunctionSecurity.CONTROL:
+            return False
+        arguments = data.get("arguments", {})
+        # Results are unknown before execution. Never guess a restricted target.
+        if RESULT_REFERENCE.search(json.dumps(arguments, ensure_ascii=False)):
+            return False
+        await async_validate_function_arguments(hass, tool["spec"], arguments)
+        control = level == FunctionSecurity.CONTROL
+        if control and contains_indirect_service_call(arguments, hass):
+            return False
+        if not guest_arguments_allowed_runtime(
+            hass, arguments, policy, control=control
+        ):
+            return False
+        if control and not guest_arguments_allowed_runtime(
+            hass, tool["function"], policy, control=True
+        ):
+            return False
+    return True
+
+
 def _guest_template_reads_allowed(
     hass: HomeAssistant,
     value: Any,
@@ -3025,6 +3103,10 @@ async def _async_evaluate_matched_rule(
                     policy,
                     slots=match.slots,
                 )
+                if allowed:
+                    allowed = await _async_guest_functions_allowed(
+                        hass, executable_actions, policy, match.slots, request_options
+                    )
             except GuestModeDenied:
                 allowed = False
             except Exception as err:

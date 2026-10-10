@@ -72,6 +72,7 @@ async def test_authorized_script_service_preserves_native_call_contract(
         hass,
         ["light.kitchen"],
         [{"entity_id": "light.kitchen"}],
+        require_available=True,
     )
     service_call.assert_awaited_once_with(
         "light",
