@@ -71,7 +71,10 @@ def _service_participants(
     Entity services are registered as partials of HA's dispatch helpers. Other
     services own their target semantics; returning None preserves their checks.
     """
-    registered = hass.services.async_services_for_domain(domain).get(service)
+    services_for_domain = getattr(hass.services, "async_services_for_domain", None)
+    if services_for_domain is None:
+        return None
+    registered = services_for_domain(domain).get(service)
     target = registered.job.target if registered is not None else None
     if not isinstance(target, partial) or target.func not in (
         service_helpers.entity_service_call,
@@ -414,33 +417,11 @@ class NativeFunction(Function):
             )
         participating = set(entity_ids)
         if domain is not None and service is not None:
-            if domain == "homeassistant" and service in {
-                "turn_on",
-                "turn_off",
-                "toggle",
-            }:
-                participating = set()
-                by_domain: dict[str, set[str]] = {}
-                for entity_id in entity_ids:
-                    by_domain.setdefault(entity_id.split(".", 1)[0], set()).add(
-                        entity_id
-                    )
-                for entity_domain, selected in by_domain.items():
-                    if (
-                        entity_domain == "homeassistant"
-                        or not hass.services.has_service(entity_domain, service)
-                    ):
-                        continue
-                    candidates = _service_participants(
-                        hass, entity_domain, service, selected
-                    )
-                    participating.update(
-                        selected if candidates is None else selected & candidates
-                    )
-            else:
-                candidates = _service_participants(hass, domain, service, participating)
-                if candidates is not None:
-                    participating.intersection_update(candidates)
+            from ..ha_actions import resolve_action_entity_ids
+
+            participating = resolve_action_entity_ids(
+                hass, domain, service, service_data
+            )
             if not participating:
                 raise HomeAssistantError(
                     "Service target does not resolve to any participating entities"

@@ -339,7 +339,7 @@ async def test_script_scoped_service_boundary_preserves_response_or_blocks_dispa
         )
         assert result == {"value": "response"}
         function.validate_entity_ids.assert_called_once_with(
-            hass, ["light.kitchen"], [{"entity_id": "light.kitchen"}]
+            hass, ["light.kitchen"], [{"entity_id": "light.kitchen"}], require_available=True
         )
         hass.services.async_call.assert_awaited_once_with(
             "light",

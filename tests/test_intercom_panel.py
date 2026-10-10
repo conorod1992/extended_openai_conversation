@@ -12,7 +12,7 @@ from custom_components.extended_openai_conversation_responses import intercom_pa
 
 def _connection(*, is_admin: bool = True) -> SimpleNamespace:
     return SimpleNamespace(
-        user=SimpleNamespace(is_admin=is_admin),
+        user=SimpleNamespace(is_admin=is_admin, permissions=SimpleNamespace(check_entity=Mock(return_value=True))),
         send_result=Mock(),
         send_error=Mock(),
         context=Mock(return_value="context"),
@@ -29,8 +29,8 @@ async def test_websocket_broadcast_snapshot_returns_manager_state(hass, monkeypa
     """Snapshot exposes the current catalog, history, and permission state."""
     manager = SimpleNamespace(
         enabled=True,
-        catalog=Mock(return_value={"satellites": ["kitchen"]}),
-        history=Mock(return_value=[{"id": "message-1"}]),
+        catalog=Mock(return_value={"satellites": [{"id": "assist_satellite.kitchen"}]}),
+        history=Mock(return_value=[{"id": "message-1", "targets": ["assist_satellite.kitchen"], "origin_device_id": None}]),
     )
     monkeypatch.setattr(
         intercom_panel, "async_get_intercom", AsyncMock(return_value=manager)
@@ -44,8 +44,8 @@ async def test_websocket_broadcast_snapshot_returns_manager_state(hass, monkeypa
         {
             "enabled": True,
             "can_manage": False,
-            "catalog": {"satellites": ["kitchen"]},
-            "history": [{"id": "message-1"}],
+            "catalog": {"satellites": [{"id": "assist_satellite.kitchen"}]},
+            "history": [{"id": "message-1", "targets": ["assist_satellite.kitchen"], "origin_device_id": None}],
         },
     )
     connection.send_error.assert_not_called()

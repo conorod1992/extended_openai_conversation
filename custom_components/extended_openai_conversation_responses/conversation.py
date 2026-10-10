@@ -2193,7 +2193,7 @@ class ExtendedOpenAIAgentEntity(
                 }:
                     return self._tool_result(tool_input, guest_mode_denial_result())
                 control = self._is_control_tool(current_tool)
-                if control and contains_indirect_service_call(tool_input.tool_args):
+                if control and contains_indirect_service_call(tool_input.tool_args, self.hass):
                     return self._tool_result(tool_input, guest_mode_denial_result())
                 if not self._guest_arguments_allowed_runtime(
                     tool_input.tool_args, policy, control=control

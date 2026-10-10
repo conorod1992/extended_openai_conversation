@@ -84,7 +84,7 @@ async def async_authorize_ha_action(
 ) -> set[str]:
     """Authorize the exact dispatch without replacing native service responses."""
     context = context or get_active_ha_context()
-    entity_ids = _resolve_target_entity_ids(hass, data, target)
+    entity_ids = resolve_action_entity_ids(hass, domain, service, data, target)
     target_identity = _target_identity(hass, entity_ids)
     service_identity = _service_identity(hass, domain, service)
     await async_require_control_permission(hass, entity_ids, context=context)
@@ -98,7 +98,11 @@ async def async_authorize_ha_action(
         for key in (ATTR_DEVICE_ID, ATTR_AREA_ID, ATTR_FLOOR_ID, ATTR_LABEL_ID)
     )
     if (
-        (indirect and _resolve_target_entity_ids(hass, data, target) != entity_ids)
+        (
+            indirect
+            and resolve_action_entity_ids(hass, domain, service, data, target)
+            != entity_ids
+        )
         or not _same_target_identity(
             _target_identity(hass, entity_ids), target_identity
         )
@@ -344,6 +348,46 @@ def _resolve_target_entity_ids(
     return set(referenced.referenced | referenced.indirectly_referenced)
 
 
+def resolve_action_entity_ids(
+    hass: HomeAssistant,
+    domain: str,
+    service: str,
+    data: Mapping[str, Any] | None = None,
+    target: Mapping[str, Any] | None = None,
+) -> set[str]:
+    """Resolve selectors using the registered service's actual participants."""
+    from .functions.native import _service_participants
+
+    selected = _resolve_target_entity_ids(hass, data, target)
+    if not hasattr(hass, "services"):
+        return selected
+    selection = _target_selection(data, target)
+    explicit = set(selection.get(ATTR_ENTITY_ID, [])) - {"all", "none"}
+    if domain == "homeassistant" and service in {"turn_on", "turn_off", "toggle"}:
+        participating: set[str] = set()
+        for entity_domain in {entity_id.partition(".")[0] for entity_id in selected}:
+            if entity_domain == "homeassistant" or not hass.services.has_service(
+                entity_domain, service
+            ):
+                continue
+            candidates = {
+                entity_id
+                for entity_id in selected
+                if entity_id.startswith(entity_domain + ".")
+            }
+            owned = _service_participants(hass, entity_domain, service, candidates)
+            participating.update(candidates if owned is None else owned)
+    else:
+        owned = _service_participants(hass, domain, service, selected)
+        participating = selected if owned is None else owned
+    # Explicit invalid IDs remain visible to the authorization/validation layer.
+    return participating | {
+        entity_id
+        for entity_id in explicit - participating
+        if hass.states.get(entity_id) is None
+    }
+
+
 def _target_identity(
     hass: HomeAssistant, entity_ids: set[str]
 ) -> tuple[tuple[str, Any, Any, Any], ...]:
@@ -398,7 +442,13 @@ def _target_selection(
             if source is None or source.get(key) is None:
                 continue
             value = source[key]
-            values.extend(value if isinstance(value, list) else [value])
+            items = value if isinstance(value, list) else [value]
+            values.extend(
+                part.strip()
+                for item in items
+                for part in (item.split(",") if isinstance(item, str) else [item])
+                if not isinstance(part, str) or part.strip()
+            )
         if values:
             selection[key] = values
     return selection
