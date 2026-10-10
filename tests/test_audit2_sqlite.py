@@ -137,6 +137,28 @@ async def test_duration_missing_initial_history_is_unknown(hass, history):
     assert result == [{"total_time_in_sec": None}]
 
 
+async def test_duration_does_not_count_future_time(hass, history):
+    with sqlite3.connect(history) as conn:
+        now = int(conn.execute("SELECT strftime('%s', 'now')").fetchone()[0])
+    step = examples()["get_total_time_of_entity_state"]["function"]["sequence"][0]
+    result = await run(
+        hass,
+        history,
+        step,
+        {
+            "entity_id": "light.public",
+            "state": "off",
+            "start_datetime": datetime.fromtimestamp(now - 600).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+            "end_datetime": datetime.fromtimestamp(now + 3600).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+        },
+    )
+    assert 600 <= result[0]["total_time_in_sec"] <= 610
+
+
 @pytest.mark.parametrize(
     ("start", "end", "expected"),
     [

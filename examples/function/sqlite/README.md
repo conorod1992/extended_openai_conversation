@@ -102,7 +102,7 @@
 
 Values are bound with SQLite named parameters. Dates use Home Assistant host-local
 `YYYY-MM-DD HH:MM:SS` times. SQL keywords/operators are explicitly whitelisted.
-Duration is calculated over the half-open interval `[start, end)`; missing initial
+Duration is calculated over the half-open interval `[start, min(end, now))`; missing initial
 history returns `unknown`, while a known zero duration returns `0s`.
 
 #### 2-1. get_state_at_time
@@ -286,7 +286,7 @@ history returns `unknown`, while a known zero duration returns `0s`.
       query: |-
         WITH bounds AS (
           SELECT CAST(strftime('%s', :start_datetime, 'utc') AS REAL) AS start_ts,
-                 CAST(strftime('%s', :end_datetime, 'utc') AS REAL) AS end_ts
+                 MIN(CAST(strftime('%s', :end_datetime, 'utc') AS REAL), CAST(strftime('%s', 'now') AS REAL)) AS end_ts
         ), entity_states AS (
           SELECT s.state_id, s.state, s.last_updated_ts AS ts
           FROM states s JOIN states_meta sm ON s.metadata_id = sm.metadata_id
