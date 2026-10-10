@@ -314,6 +314,10 @@ def _disjoint_schema_alternatives(variants: list[Any]) -> bool:
                 return False
             if types(left) and types(right) and not types(left) & types(right):
                 continue
+            # Required discriminators distinguish objects only. Missing types
+            # also admit scalars, and nullable objects still overlap at null.
+            if types(left) != {"object"} or types(right) != {"object"}:
+                return False
             shared = set(left.get("required", [])) & set(right.get("required", []))
             for key in shared:
                 a = values(left.get("properties", {}).get(key, {}))
@@ -342,6 +346,10 @@ def _adjust_schema(schema: dict[str, Any], *, root: bool = False) -> None:
             "place alternatives inside a named field"
         )
     if "oneOf" in schema:
+        if "anyOf" in schema:
+            raise HomeAssistantError(
+                "Strict structured outputs cannot combine oneOf and anyOf at one node"
+            )
         variants = schema["oneOf"]
         if not isinstance(variants, list) or not _disjoint_schema_alternatives(
             variants

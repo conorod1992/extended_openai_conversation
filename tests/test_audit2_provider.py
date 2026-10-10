@@ -86,12 +86,34 @@ def test_strict_oneof_is_normalized_only_when_exclusive():
         [{"type": "number"}, {"type": "integer"}],
         [{"type": "object"}, {"type": "object"}],
         [{"type": "string", "nullable": True}, {"type": "null"}],
+        [
+            {
+                "type": ["object", "null"],
+                "properties": {"kind": {"const": kind}},
+                "required": ["kind"],
+            }
+            for kind in ("a", "b")
+        ],
     ):
         with pytest.raises(HomeAssistantError, match="overlapping oneOf"):
             _adjust_schema(
                 {"type": "object", "properties": {"value": {"oneOf": alternatives}}},
                 root=True,
             )
+
+
+def test_oneof_conversion_does_not_overwrite_existing_anyof():
+    schema = {
+        "type": "object",
+        "properties": {
+            "value": {
+                "anyOf": [{"enum": ["allowed"]}],
+                "oneOf": [{"type": "string"}, {"type": "number"}],
+            }
+        },
+    }
+    with pytest.raises(HomeAssistantError, match="combine oneOf and anyOf"):
+        _adjust_schema(schema, root=True)
 
 
 def test_azure_deployment_identity_uses_explicit_underlying_capabilities():
