@@ -104,26 +104,14 @@ class TestScriptFunctionYaml:
         self, hass, function, exposed_entities, llm_context
     ):
         """HA-aware action validation runs before constructing the transient Script."""
-        original_action = {
-            "device_id": "device-id",
-            "domain": "light",
-            "entity_id": "entity-registry-id",
-            "type": "turn_on",
-        }
+        original_action = {"condition": "template", "value_template": "{{ true }}"}
         function_config = {"type": "script", "sequence": [original_action]}
-        validated_sequence = [
-            {
-                "device_id": "device-id",
-                "domain": "light",
-                "entity_id": "light.kitchen",
-                "type": "turn_on",
-            }
-        ]
+        validated_sequence = [{"condition": "template", "value_template": "{{ true }}"}]
 
         async def validate_actions(_hass, sequence):
             assert sequence is not function_config["sequence"]
             assert sequence[0] is not original_action
-            sequence[0]["entity_id"] = "mutated-during-validation"
+            sequence[0]["value_template"] = "{{ false }}"
             return validated_sequence
 
         with (
@@ -149,7 +137,7 @@ class TestScriptFunctionYaml:
         assert result == "Success"
         mock_validate.assert_awaited_once()
         assert function_config["sequence"] == [original_action]
-        assert original_action["entity_id"] == "entity-registry-id"
+        assert original_action["value_template"] == "{{ true }}"
         assert mock_script_class.call_args.args[1] is validated_sequence
         mock_script.async_run.assert_awaited_once()
         mock_script.async_unload.assert_awaited_once_with()
@@ -160,26 +148,19 @@ class TestScriptFunctionYaml:
         """Invalid HA-aware actions fail before a transient Script is constructed."""
         function_config = {
             "type": "script",
-            "sequence": [
-                {
-                    "device_id": "missing-device",
-                    "domain": "light",
-                    "entity_id": "missing-entity",
-                    "type": "turn_on",
-                }
-            ],
+            "sequence": [{"condition": "template", "value_template": "{{ true }}"}],
         }
 
         with (
             patch(
                 "custom_components.extended_openai_conversation_responses.functions.script.async_validate_actions_config",
-                new=AsyncMock(side_effect=RuntimeError("invalid device action")),
+                new=AsyncMock(side_effect=RuntimeError("invalid condition")),
             ) as mock_validate,
             patch(
                 "custom_components.extended_openai_conversation_responses.functions.script.Script"
             ) as mock_script_class,
         ):
-            with pytest.raises(RuntimeError, match="invalid device action"):
+            with pytest.raises(RuntimeError, match="invalid condition"):
                 await function.execute(
                     hass, function_config, {}, llm_context, exposed_entities
                 )
@@ -339,7 +320,10 @@ async def test_script_scoped_service_boundary_preserves_response_or_blocks_dispa
         )
         assert result == {"value": "response"}
         function.validate_entity_ids.assert_called_once_with(
-            hass, ["light.kitchen"], [{"entity_id": "light.kitchen"}], require_available=True
+            hass,
+            ["light.kitchen"],
+            [{"entity_id": "light.kitchen"}],
+            require_available=True,
         )
         hass.services.async_call.assert_awaited_once_with(
             "light",
