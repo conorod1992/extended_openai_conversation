@@ -1938,9 +1938,32 @@ def _normalize_script_containers(value: Any) -> Any:
             result.append(action)
             continue
         normalized = deepcopy(dict(action))
-        for key in ("sequence", "then", "else", "default", "parallel"):
+        for key in ("sequence", "then", "else", "default"):
             if key in normalized:
                 normalized[key] = _normalize_script_containers(normalized[key])
+        if "parallel" in normalized:
+            branches = normalized["parallel"]
+            if isinstance(branches, Mapping):
+                branches = [branches]
+            if isinstance(branches, list):
+                parallel = []
+                for branch in branches:
+                    if isinstance(branch, Mapping) and "sequence" in branch:
+                        parallel.append(
+                            {
+                                **branch,
+                                "sequence": _normalize_script_containers(
+                                    branch["sequence"]
+                                ),
+                            }
+                        )
+                    elif isinstance(branch, (Mapping, list)):
+                        parallel.append(
+                            {"sequence": _normalize_script_containers(branch)}
+                        )
+                    else:
+                        parallel.append(branch)
+                normalized["parallel"] = parallel
         if isinstance(normalized.get("repeat"), Mapping):
             repeat = dict(normalized["repeat"])
             if "sequence" in repeat:
@@ -2266,7 +2289,7 @@ def _iter_script_actions(
             raise ValueError(f"action sequence exceeds {MAX_SCRIPT_NODES} nodes")
         yield item
 
-        for key in ("sequence", "then", "else", "default", "parallel"):
+        for key in ("sequence", "then", "else", "default"):
             nested = nested_sequence(item.get(key))
             if nested is not None:
                 yield from _iter_script_actions(nested, depth=depth + 1, budget=budget)
