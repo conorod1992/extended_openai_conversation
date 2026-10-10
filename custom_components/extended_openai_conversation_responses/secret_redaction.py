@@ -156,7 +156,8 @@ def _redact_secrets(
                 )
             ),
             payload=payload
-            or (action and key in {"variables", "data", "service_data"}),
+            or (action and key in {"variables", "data", "service_data"})
+            or (value.get("type") == "script" and key == "variables"),
             rule_action=value.get("action_type") == "local_action" and key == "action",
         )
     return result

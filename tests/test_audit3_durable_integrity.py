@@ -70,6 +70,24 @@ def test_oversized_substantive_memory_still_rejected():
         PersistentMemory.validate_backup_data({"memories": [raw_memory("x" * 1001)]})
 
 
+def test_script_root_variables_survive_backup_redaction_and_restore(hass):
+    import yaml
+    from custom_components.extended_openai_conversation_responses import backup
+    from tests.test_backup import _document
+
+    config = {"functions": [{"spec": {"name": "ordinal", "parameters": {"type": "object", "properties": {}}}, "function": {
+        "type": "script", "variables": {"token_index": 7, "secret_reference": "ordinary", "api_key": "private-credential"},
+        "sequence": [{"variables": {"_function_result": "{{ token_index }}"}}],
+    }}]}
+    document = _document()
+    document["agent"]["config"] = backup.export_configuration_snapshot(config)
+    exported = backup.finalize_backup_snapshot(document)["document"]
+    assert "private-credential" not in str(exported)
+    restored = backup.inspect_backup(exported, "destination")
+    variables = yaml.safe_load(restored.config["functions"])[0]["function"]["variables"]
+    assert variables == {"token_index": 7, "secret_reference": "ordinary"}
+
+
 @pytest.mark.parametrize(
     "instant", ["20261010T120000+0000", "2026-10-01T00:30:00+02:00"]
 )
