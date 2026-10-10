@@ -124,7 +124,9 @@ def test_archive_private_validation_does_not_rescan_sessions_for_every_turn(
             return self.key
 
     monkeypatch.setattr(archive, "_validated_session", Session)
-    monkeypatch.setattr(archive, "_validated_turn", lambda raw: SimpleNamespace(**raw))
+    monkeypatch.setattr(archive, "_validated_turn", lambda raw: archive.ArchiveTurn(
+        raw["turn_id"], raw["session_id"], None, "2026-10-10T12:00:00Z", "", "", True
+    ))
     data = {
         "sessions": [{"session_id": str(i)} for i in range(500)],
         "turns": [

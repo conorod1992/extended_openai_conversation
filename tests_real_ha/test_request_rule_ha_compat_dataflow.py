@@ -6,8 +6,6 @@ observe the actual HA service arguments and public Assist result.
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -175,6 +173,7 @@ async def test_result_path_agrees_across_later_action_and_spoken_response(
     hass, monkeypatch, path
 ):
     """A valid result reference must resolve identically in both destinations."""
+    hass.config.legacy_templates = False
     agent = await _agent(
         hass,
         **{
@@ -187,7 +186,8 @@ async def test_result_path_agrees_across_later_action_and_spoken_response(
                     },
                     "function": {
                         "type": "template",
-                        "value_template": json.dumps(_DATA),
+                        "parse_result": True,
+                        "value_template": "{{ " + repr(_DATA) + " }}",
                     },
                 }
             ]
@@ -221,6 +221,7 @@ async def test_result_path_agrees_across_later_action_and_spoken_response(
 async def test_invalid_result_path_never_executes_dependent_action(
     hass, monkeypatch, missing_path
 ):
+    hass.config.legacy_templates = False
     agent = await _agent(
         hass,
         **{
@@ -233,7 +234,8 @@ async def test_invalid_result_path_never_executes_dependent_action(
                     },
                     "function": {
                         "type": "template",
-                        "value_template": json.dumps(_DATA),
+                        "parse_result": True,
+                        "value_template": "{{ " + repr(_DATA) + " }}",
                     },
                 }
             ]
@@ -278,6 +280,7 @@ async def test_generated_two_step_dataflow_preserves_nested_value(
     hass, monkeypatch, field, expected
 ):
     """Producer → HA variable → HA service → final response, without resetting state."""
+    hass.config.legacy_templates = False
     agent = await _agent(
         hass,
         **{
@@ -290,7 +293,8 @@ async def test_generated_two_step_dataflow_preserves_nested_value(
                     },
                     "function": {
                         "type": "template",
-                        "value_template": json.dumps(_DATA),
+                        "parse_result": True,
+                        "value_template": "{{ " + repr(_DATA) + " }}",
                     },
                 }
             ]

@@ -50,6 +50,33 @@ def _record_action(message):
     return {"action": "rule_probe.record", "data": {"message": message}}
 
 
+@pytest.mark.parametrize("legacy", [True, False])
+@pytest.mark.parametrize("text", ["123456", "false", '{"level":62}'])
+async def test_configured_text_result_stays_text_through_rule_action_and_speech(
+    hass, monkeypatch, legacy, text
+):
+    hass.config.legacy_templates = legacy
+    tool = {
+        "spec": {"name": "text_result", "description": "Text result", "parameters": {"type": "object", "properties": {}}},
+        "function": {"type": "template", "value_template": text, "parse_result": False},
+    }
+    agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: [tool]})
+    _provider(monkeypatch, agent, [])
+    captured = []
+
+    async def record(call):
+        captured.append(call.data["message"])
+
+    hass.services.async_register("rule_probe", "record", record)
+    await agent._request_rules.async_create(_local([
+        {"action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}", "data": {"function": "text_result", "arguments": {}, "result_alias": "answer"}},
+        _record_action("{answer}"),
+    ], success="Value {answer}"))
+    assert _speech(await _say(hass, agent, "run rule")) == f"Value {text}"
+    assert captured == [text]
+    assert type(captured[0]) is str
+
+
 async def test_variables_delay_and_action_keep_one_ha_script_context(hass, monkeypatch):
     agent = await _agent(hass)
     _provider(monkeypatch, agent, [])
@@ -196,8 +223,9 @@ async def test_function_capture_preserves_ha_variables_and_survives_reload(
             "description": "Return a deterministic battery reading.",
             "parameters": {"type": "object", "properties": {}},
         },
-        "function": {"type": "template", "value_template": '{"level": 62}'},
+        "function": {"type": "template", "parse_result": True, "value_template": '{"level": 62}'},
     }
+    hass.config.legacy_templates = False
     agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: [tool]})
     _provider(monkeypatch, agent, [])
     function_calls = AsyncMock(wraps=services.async_call_active_function)
@@ -385,9 +413,11 @@ async def test_nested_function_results_agree_in_native_action_and_speech(
         },
         "function": {
             "type": "template",
+            "parse_result": True,
             "value_template": '{"level":9,"current":{"level":62},"items":[{"level":73}],"map":{"0":{"level":84}}}',
         },
     }
+    hass.config.legacy_templates = False
     agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: [tool]})
     _provider(monkeypatch, agent, [])
     calls = []

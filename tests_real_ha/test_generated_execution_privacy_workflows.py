@@ -25,6 +25,7 @@ from tests_real_ha.test_request_rules_script_semantics import _local, _record_ac
 
 
 async def run_execution_workflows(hass, monkeypatch, cases):
+    hass.config.legacy_templates = False
     owner = await hass.auth.async_create_user(
         "Workflow owner", group_ids=["system-admin"]
     )
@@ -59,7 +60,7 @@ async def run_execution_workflows(hass, monkeypatch, cases):
             )
         # Guest control tools must be entity-scoped; templates are unscopable.
         if case.guest == "off":
-            inner.append({"type": "template", "value_template": "{{ value }}"})
+            inner.append({"type": "template", "parse_result": True, "value_template": "{{ value }}"})
         tools.append(
             {
                 "spec": {

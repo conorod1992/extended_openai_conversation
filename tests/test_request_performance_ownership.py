@@ -310,9 +310,10 @@ def test_prepared_measurement_reuses_wire_artifacts_without_mutation(
     estimate_prepared_request(agent, usage, payload, tools)
     measured = [
         {"role": "system", "content": "system"},
-        {"role": "user", "content": "hello"},
+        {"role": "user", "content": [{"type": text_type, "text": "hello"}]},
     ]
-    expected = measure_provider_input(measured, tools)[2]
+    # Unknown image dimensions still reserve the documented fallback image budget.
+    expected = measure_provider_input(measured, tools)[2] + 2048
     assert usage.input_tokens == expected
     assert agent.hass.data == {}
     assert (payload, tools) == original

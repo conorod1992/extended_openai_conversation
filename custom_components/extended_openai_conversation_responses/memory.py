@@ -1768,14 +1768,24 @@ def _bm25_score(
     k1, b = 1.2, 0.75
     score = 0.0
     max_score = 0.0
-    for term in dict.fromkeys(query_terms):
+    weights = dict.fromkeys(query_terms, 1.0)
+    # Compound expansion improves recall, but must not multiply the influence
+    # of one query word and drown out other matching words in longer requests.
+    for term in weights:
+        parts = set(term.split("-")) if "-" in term else set()
+        if parts and parts <= weights.keys():
+            weight = 1.0 / (len(parts) + 1)
+            weights[term] = min(weights[term], weight)
+            for part in parts:
+                weights[part] = min(weights[part], weight)
+    for term, weight in weights.items():
         df = document_frequency.get(term, 0)
         idf = math.log(1 + (document_count - df + 0.5) / (df + 0.5))
         tf = frequencies.get(term, 0)
         denominator = tf + k1 * (1 - b + b * len(document_terms) / average_length)
         if tf:
-            score += idf * (tf * (k1 + 1) / denominator)
-        max_score += idf * (k1 + 1) / (1 + k1 * (1 - b))
+            score += weight * idf * (tf * (k1 + 1) / denominator)
+        max_score += weight * idf * (k1 + 1) / (1 + k1 * (1 - b))
     return score / max_score if max_score else 0.0
 
 

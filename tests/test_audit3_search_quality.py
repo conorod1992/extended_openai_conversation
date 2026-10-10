@@ -6,6 +6,20 @@ from tests.test_knowledge import FakeStorage as KnowledgeStorage, _library
 from tests.test_memory import FakeStorage as MemoryStorage, _memory
 
 
+async def test_compound_expansion_does_not_hide_memory_in_longer_request():
+    storage = MemoryStorage()
+    memory = await _memory(storage)
+    relevant = await memory.async_add(
+        "alice", "The user's calibration token is cobalt-zebra.", "preferences", "explicit"
+    )
+    await memory.async_add("alice", "The user's favourite soup is minestrone.", "food", "explicit")
+    await memory.async_add("bob", "The user's calibration token is amber-lynx.", "preferences", "explicit")
+    query = "What is my calibration token? Remember that my project codename is lattice-quartz."
+    for current in (memory, await _memory(storage)):
+        assert [item.memory_id for item in await current.async_search("alice", query)] == [relevant["memory"]["memory_id"]]
+        assert (await current.async_search("alice", "zebra"))[0].memory_id == relevant["memory"]["memory_id"]
+
+
 async def test_answer_passage_beats_title_only_opening_after_restart():
     storage = KnowledgeStorage()
     library = await _library(storage)
