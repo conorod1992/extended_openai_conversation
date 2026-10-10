@@ -42,7 +42,8 @@ function updateAgentPicker(panel, agent) {
       detail = document.createElement("small");
       picker.append(detail);
     }
-    detail.textContent = `${agent.provider} · ${agent.model}`;
+    const subtitle = `${agent.provider} · ${agent.model}`;
+    if (detail.textContent !== subtitle) detail.textContent = subtitle;
   } else {
     detail?.remove();
   }
