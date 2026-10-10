@@ -288,6 +288,7 @@ class BashFunction(Function):
         command = command_template.async_render(arguments, parse_result=False)
 
         default_workspace = self.get_working_dir(hass).resolve()
+        from .workspace import async_ensure_workspace
 
         # A configured cwd intentionally defines a custom workspace root. Relative
         # values remain relative to the integration's default workspace.
@@ -299,6 +300,7 @@ class BashFunction(Function):
         else:
             cwd = default_workspace
         cwd = cwd.resolve()
+        await async_ensure_workspace(hass, default_workspace, target=cwd)
 
         restrict_to_workspace = function_config.get("restrict_to_workspace", True)
 

@@ -331,7 +331,7 @@ def _validated_model_request(
     return config
 
 
-def _persist_function_configuration(
+async def _persist_function_configuration(
     hass: HomeAssistant,
     entry: Any,
     subentry: Any,
@@ -340,8 +340,31 @@ def _persist_function_configuration(
     *,
     extra_updates: dict[str, Any] | None = None,
     expected_revision: str | None = None,
+    renamed_function: tuple[str, str] | None = None,
+    rules_manager: Any = None,
 ) -> dict[str, Any]:
     """Persist one revision-checked tool edit without discarding quarantined siblings."""
+    from .management_function_repair import (
+        editable_function_tools,
+        isolated_function_tools,
+    )
+
+    _require_agent_config_revision(subentry, expected_revision)
+    _valid, invalid, _issue = isolated_function_tools(dict(subentry.data))
+    editable = editable_function_tools(dict(subentry.data)) if invalid else []
+    candidate_tools = [*tools, *(editable[item["index"]] for item in invalid)]
+    await _async_validate_configuration_dependencies(
+        hass,
+        entry,
+        subentry,
+        {
+            **subentry.data,
+            CONF_FUNCTION_TOOLS: candidate_tools,
+            CONF_FUNCTION_GROUPS: groups,
+        },
+        renamed_function=renamed_function,
+        rules_manager=rules_manager,
+    )
     return _tolerant_persist_function_configuration(
         hass,
         entry,
@@ -1194,6 +1217,11 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
 
     phase = perf_counter()
     normalized = validation["config"]
+    if tools_changed or groups_changed:
+        await _async_validate_configuration_dependencies(
+            hass, entry, subentry, normalized
+        )
+        _require_agent_config_revision(subentry, message["revision"])
     persisted = preserve_legacy_guest_policy(dict(subentry.data), deepcopy(normalized))
     saved_title = title.strip() if isinstance(title, str) else subentry.title
     refresh_local_handling = _local_handling_config_changed(
@@ -1487,6 +1515,14 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         _require_agent_config_revision(subentry, message["revision"])
         normalized = merge_agent_config(subentry.data, updates)
         _validated_model_request(normalized, entry.data, subentry.data)
+        if any(
+            normalized.get(key) != subentry.data.get(key)
+            for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS)
+        ):
+            await _async_validate_configuration_dependencies(
+                hass, entry, subentry, normalized
+            )
+            _require_agent_config_revision(subentry, message["revision"])
         if CONF_GUEST_POLICY_VERSION not in subentry.data:
             for key in GUEST_V2_FIELDS:
                 normalized.pop(key, None)
@@ -1660,15 +1696,56 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
 
 
 async def _async_validate_configuration_dependencies(
-    hass: HomeAssistant, entry: Any, subentry: Any, config: Mapping[str, Any]
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    config: Mapping[str, Any],
+    *,
+    renamed_function: tuple[str, str] | None = None,
+    rules_manager: Any = None,
 ) -> None:
     """Validate retained rules against the exact replacement configuration."""
     from .transfer import _async_validate_request_rule_function_dependencies
 
-    rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
-    await _async_validate_request_rule_function_dependencies(
-        hass, await rules.async_backup_data(), config
+    rules = rules_manager or await async_get_request_rules(
+        hass, entry.entry_id, subentry.subentry_id
     )
+    rules_revision = rules.revision()
+    document = await rules.async_backup_data()
+    if renamed_function is not None:
+        from .function_dependency_integrity import _rule_script_actions
+
+        document = deepcopy(document)
+        old_name, new_name = renamed_function
+        for rule in document.get("rules", []):
+            for action in _rule_script_actions(rule):
+                data = action.get("data", {})
+                if (
+                    action.get("action", action.get("service"))
+                    == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+                    and data.get("function") == old_name
+                ):
+                    data["function"] = new_name
+    # Deepcopy dehydrates runtime templates to their persisted source. Disabling
+    # a retained definition intentionally inactivates its rules; it is distinct
+    # from removing it or making its argument schema incompatible.
+    candidate = deepcopy(dict(config))
+    tools = candidate.get(CONF_FUNCTION_TOOLS)
+    if isinstance(tools, str):
+        tools = yaml.safe_load(tools)
+    if isinstance(tools, list):
+        for tool in tools:
+            if isinstance(tool, dict):
+                tool["enabled"] = True
+        candidate[CONF_FUNCTION_TOOLS] = tools
+    if document.get("rules"):
+        await _async_validate_request_rule_function_dependencies(
+            hass, document, candidate
+        )
+    if rules.revision() != rules_revision:
+        raise HomeAssistantError(
+            "Request Rules changed while validating Function Tools; reload before retrying."
+        )
 
 
 async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
@@ -1771,7 +1848,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             ha_existing[key] = ha_added_tool
             if ha_target_group is not None:
                 ha_target_group["functions"].append(ha_added_tool["spec"]["name"])
-        result = _persist_function_configuration(
+        result = await _persist_function_configuration(
             hass,
             entry,
             subentry,
@@ -1871,7 +1948,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             raise HomeAssistantError(f"Function Tool {saved_name} already exists")
         if existing_index is None:
             tools.append(saved_tool)
-            return _persist_function_configuration(
+            return await _persist_function_configuration(
                 hass,
                 entry,
                 subentry,
@@ -1882,7 +1959,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
 
         tools[existing_index] = saved_tool
         if original_name == saved_name:
-            return _persist_function_configuration(
+            return await _persist_function_configuration(
                 hass,
                 entry,
                 subentry,
@@ -1915,13 +1992,15 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         renamed_guest_names = [
             saved_name if name == original_name else name for name in guest_names
         ]
-        result = _persist_function_configuration(
+        result = await _persist_function_configuration(
             hass,
             entry,
             subentry,
             tools,
             groups,
             extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: renamed_guest_names},
+            renamed_function=(original_name, saved_name),
+            rules_manager=rules,
             expected_revision=operation_revision,
         )
         try:
@@ -1932,7 +2011,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             )
         except Exception as err:
             try:
-                _persist_function_configuration(
+                await _persist_function_configuration(
                     hass,
                     entry,
                     subentry,
@@ -1962,7 +2041,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         if tool is None:
             raise HomeAssistantError("The Function Tool no longer exists")
         tool["enabled"] = enabled
-        result = _persist_function_configuration(
+        result = await _persist_function_configuration(
             hass,
             entry,
             subentry,
@@ -2004,7 +2083,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             for group in groups
         ]
         phase = perf_counter()
-        result = _persist_function_configuration(
+        result = await _persist_function_configuration(
             hass,
             entry,
             subentry,
@@ -2052,7 +2131,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         validated_groups = validate_function_groups(
             [*remaining_groups, candidate], tools
         )
-        return _persist_function_configuration(
+        return await _persist_function_configuration(
             hass,
             entry,
             subentry,
@@ -2076,7 +2155,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         remaining = [group for group in groups if group["id"] != group_id]
         if len(remaining) == len(groups):
             raise HomeAssistantError("The Function Group no longer exists")
-        return _persist_function_configuration(
+        return await _persist_function_configuration(
             hass,
             entry,
             subentry,
