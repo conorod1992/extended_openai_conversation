@@ -777,9 +777,10 @@ function bindToolCollection(panel) {
       const copy = clone(tool);
       const names = new Set(panel._draft.functions.map(item => item.spec?.name));
       const original = copy.spec.name;
-      copy.spec.name = `${original}_copy`;
+      const duplicateName = (suffix) => `${original.slice(0, 64 - suffix.length)}${suffix}`;
+      copy.spec.name = duplicateName("_copy");
       let suffix = 2;
-      while (names.has(copy.spec.name)) copy.spec.name = `${original}_copy_${suffix++}`;
+      while (names.has(copy.spec.name)) copy.spec.name = duplicateName(`_copy_${suffix++}`);
       return openTool(panel, null, copy);
     }
     if (button.matches(".delete-tool")) {

@@ -239,6 +239,7 @@ async def test_request_rule_test_defaults_duplicate_move_and_errors(
     rules = SimpleNamespace(
         async_set_defaults=AsyncMock(return_value={"case_sensitive": True}),
         async_duplicate=AsyncMock(return_value={"id": "copy"}),
+        snapshot=lambda: {"diagnostics": {}},
         async_move=AsyncMock(return_value={"id": "rule", "priority": 2}),
         revision=lambda: "revision-2",
     )

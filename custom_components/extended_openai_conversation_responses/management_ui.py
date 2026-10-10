@@ -843,6 +843,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             "rule": rule,
             "sensitive_matching_warning": rule_has_sensitive_actions(rule),
             "revision": rules.revision(),
+            "diagnostics": rules.snapshot().get("diagnostics", {}),
         }
     rule_id = message.get("rule_id")
     if not isinstance(rule_id, str):
@@ -868,6 +869,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             "rule": rule,
             "sensitive_matching_warning": rule_has_sensitive_actions(rule),
             "revision": rules.revision(),
+            "diagnostics": rules.snapshot().get("diagnostics", {}),
         }
     if action == "delete":
         if message.get("confirm") is not True:
@@ -875,7 +877,11 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         deleted = await rules.async_delete(
             rule_id, expected_revision=message.get("revision")
         )
-        return {"deleted": deleted, "revision": rules.revision()}
+        return {
+            "deleted": deleted,
+            "revision": rules.revision(),
+            "diagnostics": rules.snapshot().get("diagnostics", {}),
+        }
     if action == "duplicate":
         rule = await rules.async_duplicate(
             rule_id, expected_revision=message.get("revision")
@@ -884,6 +890,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             "rule": rule,
             "sensitive_matching_warning": rule_has_sensitive_actions(rule),
             "revision": rules.revision(),
+            "diagnostics": rules.snapshot().get("diagnostics", {}),
         }
     if action == "move":
         direction = message.get("direction")
@@ -899,6 +906,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             "rule": rule,
             "sensitive_matching_warning": rule_has_sensitive_actions(rule),
             "revision": rules.revision(),
+            "diagnostics": rules.snapshot().get("diagnostics", {}),
         }
     raise HomeAssistantError(f"Unknown Request Rules action: {action}")
 

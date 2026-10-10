@@ -34,13 +34,18 @@ from homeassistant.config_entries import ConfigEntryState
 
 
 @pytest.fixture(autouse=True)
-async def retained_rules(monkeypatch):
+async def retained_rules(monkeypatch, hass):
     from tests.test_request_rules import MemoryStore
-    from custom_components.extended_openai_conversation_responses.request_rules import RequestRules
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRules,
+    )
+
     manager = RequestRules(MemoryStore())
     await manager.async_initialize()
+
     async def load(*args):
         return manager
+
     monkeypatch.setattr(management_ui, "async_get_request_rules", load)
     return manager
 
@@ -225,9 +230,9 @@ def test_function_health_cache_evicts_oldest_revision(monkeypatch) -> None:
     )
 
     for value in ("first", "second", "third"):
-        assert repair.management_function_tool_health(
-            {CONF_FUNCTION_TOOLS: value}
-        ) == {"value": value}
+        assert repair.management_function_tool_health({CONF_FUNCTION_TOOLS: value}) == {
+            "value": value
+        }
 
     assert len(cache) == 2
     assert repair.peek_function_tool_health({CONF_FUNCTION_TOOLS: "first"}) is None
@@ -555,8 +560,25 @@ async def test_save_one_repairs_and_renames_group_reference_without_touching_sib
     old_name = mixed[1]["spec"]["name"]
     from tests.test_request_rules import local_rule
     from custom_components.extended_openai_conversation_responses.const import DOMAIN
+
     rule = local_rule()
-    rule["action"]["actions"] = [{"action": f"{DOMAIN}.call_function", "data": {"function": old_name, "arguments": {"list": [{"domain": "light", "service": "turn_on", "service_data": {"entity_id": "light.kitchen"}}]}}}]
+    rule["action"]["actions"] = [
+        {
+            "action": f"{DOMAIN}.call_function",
+            "data": {
+                "function": old_name,
+                "arguments": {
+                    "list": [
+                        {
+                            "domain": "light",
+                            "service": "turn_on",
+                            "service_data": {"entity_id": "light.kitchen"},
+                        }
+                    ]
+                },
+            },
+        }
+    ]
     await retained_rules.async_create(rule)
     data["guest_allowed_function_names"] = [old_name]
     data[CONF_FUNCTION_GROUPS] = [
@@ -570,7 +592,11 @@ async def test_save_one_repairs_and_renames_group_reference_without_touching_sib
         }
     ]
     entry, subentry = _entry_and_subentry(data)
-    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries(), async_add_executor_job=AsyncMock(side_effect=lambda fn, *args: fn(*args)))
+    hass = SimpleNamespace(
+        data={},
+        config_entries=_FakeConfigEntries(),
+        async_add_executor_job=AsyncMock(side_effect=lambda fn, *args: fn(*args)),
+    )
     monkeypatch.setattr(
         management_ui,
         "entry_and_agent",
@@ -615,7 +641,12 @@ async def test_save_one_repairs_and_renames_group_reference_without_touching_sib
     assert result["function_repair"]["invalid_count"] == 0
     assert result["agent"] == {"id": "agent-1"}
     assert subentry.data["guest_allowed_function_names"] == ["repaired_tool"]
-    assert retained_rules.snapshot()["rules"][0]["action"]["actions"][0]["data"]["function"] == "repaired_tool"
+    assert (
+        retained_rules.snapshot()["rules"][0]["action"]["actions"][0]["data"][
+            "function"
+        ]
+        == "repaired_tool"
+    )
 
 
 @pytest.mark.asyncio

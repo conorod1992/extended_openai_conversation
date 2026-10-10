@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import yaml
+import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     management_function_quarantine as quarantine,
@@ -19,6 +20,12 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
 )
+
+
+@pytest.fixture(autouse=True)
+def ha_schema_context(hass):
+    """HA template validation requires a real instance even in pure seam tests."""
+    return hass
 
 
 def _mixed_grouped_data() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -53,7 +60,9 @@ def _mixed_grouped_data() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any
     )
 
 
-def test_effective_configuration_quarantines_tool_but_retains_group_assignment() -> None:
+def test_effective_configuration_quarantines_tool_but_retains_group_assignment() -> (
+    None
+):
     """Effective groups omit invalid members without rewriting persisted membership."""
     data, valid, invalid = _mixed_grouped_data()
 
@@ -62,9 +71,9 @@ def test_effective_configuration_quarantines_tool_but_retains_group_assignment()
     )
 
     assert issue is not None
-    assert [tool["spec"]["name"] for tool in yaml.safe_load(safe[CONF_FUNCTION_TOOLS])] == [
-        valid["spec"]["name"]
-    ]
+    assert [
+        tool["spec"]["name"] for tool in yaml.safe_load(safe[CONF_FUNCTION_TOOLS])
+    ] == [valid["spec"]["name"]]
     assert safe[CONF_FUNCTION_GROUPS][0]["functions"] == [valid["spec"]["name"]]
     assert persisted_groups[0]["functions"] == [
         valid["spec"]["name"],
@@ -94,7 +103,9 @@ def test_usable_tools_records_names_for_invalid_siblings() -> None:
         quarantine._QUARANTINED_FUNCTION_NAMES.reset(token)
 
 
-def test_tolerant_group_validation_ignores_only_quarantined_members(monkeypatch) -> None:
+def test_tolerant_group_validation_ignores_only_quarantined_members(
+    monkeypatch,
+) -> None:
     """Guest Mode and Functions validate the usable group view, not broken members."""
     observed: dict[str, Any] = {}
 
@@ -126,7 +137,9 @@ def test_tolerant_group_validation_ignores_only_quarantined_members(monkeypatch)
     assert observed["value"][0]["functions"] == ["valid_tool"]
 
 
-def test_group_quarantine_keeps_non_list_input_for_strict_validation(monkeypatch) -> None:
+def test_group_quarantine_keeps_non_list_input_for_strict_validation(
+    monkeypatch,
+) -> None:
     observed: list[object] = []
     monkeypatch.setattr(
         quarantine,
@@ -151,8 +164,9 @@ def test_management_merge_uses_strict_path_for_valid_functions(monkeypatch) -> N
     monkeypatch.setattr(
         quarantine,
         "_STRICT_MERGE_AGENT_CONFIG",
-        lambda source, updates: delegated.append((source, updates))
-        or {**source, **updates},
+        lambda source, updates: (
+            delegated.append((source, updates)) or {**source, **updates}
+        ),
     )
     allow_token = quarantine._ALLOW_QUARANTINED_TOOLS.set(True)
     try:
@@ -252,7 +266,9 @@ def test_tolerant_function_persist_keeps_invalid_raw_sibling_and_membership() ->
 
     class ConfigEntries:
         @staticmethod
-        def async_update_subentry(_entry: Any, target: Any, *, data: dict[str, Any], **_kwargs: Any) -> None:
+        def async_update_subentry(
+            _entry: Any, target: Any, *, data: dict[str, Any], **_kwargs: Any
+        ) -> None:
             target.data = data
 
     hass = SimpleNamespace(config_entries=ConfigEntries())

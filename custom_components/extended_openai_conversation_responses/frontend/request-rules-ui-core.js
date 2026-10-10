@@ -169,7 +169,7 @@ export function applyRulePackImportMutation(panel, result) {
   reconcileRequestRules(panel);
 }
 function finishMutation(panel,result,rules){
-  panel._result={...(panel._result||{}),rules,revision:result.revision};
+  panel._result={...(panel._result||{}),rules,revision:result.revision,...(result.diagnostics ? {diagnostics:result.diagnostics} : {})};
   const cacheKey=panel._sectionCacheKey?.(); if(cacheKey) panel._sectionCache?.delete(cacheKey);
   syncScopeRevision(panel,result);
   const reconciled = panel.shadowRoot ? reconcileRequestRules(panel) : false;
@@ -267,7 +267,7 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
       button.disabled=true;groupManager.dataset.eocMutationPending="true";
       try{
         const result=await panel._call("request_rules","groups",{groups});
-        panel._result={...(panel._result||{}),groups:result.groups,rules:result.rules,revision:result.revision};
+        panel._result={...(panel._result||{}),groups:result.groups,rules:result.rules,revision:result.revision,...(result.diagnostics ? {diagnostics:result.diagnostics} : {})};
         const cacheKey=panel._sectionCacheKey?.();if(cacheKey)panel._sectionCache?.delete(cacheKey);
         syncScopeRevision(panel,result);
         groupManager.querySelector(".rule-group-manager-rows").innerHTML=groupManagerRows(panel,result.groups,result.rules);
