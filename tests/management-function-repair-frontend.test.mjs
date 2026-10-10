@@ -59,8 +59,8 @@ function functionsView() {
   const html = renderFallbackRepair(
     {
       _result: {
-        tools: [{spec: {name: "good"}}, {spec: {name: "bad"}}],
         function_repair: {
+          tools: "malformed saved definitions",
           isolatable: false,
           validation_error: '<script>alert("x")</script>',
         },
@@ -79,6 +79,7 @@ function functionsView() {
   assert.ok(html.includes("saved Function Tools cannot be repaired individually"));
   assert.ok(!html.includes('<script>alert("x")</script>'));
   assert.ok(html.includes("&lt;script&gt;"));
+  assert.ok(html.includes("malformed saved definitions"));
 }
 
 

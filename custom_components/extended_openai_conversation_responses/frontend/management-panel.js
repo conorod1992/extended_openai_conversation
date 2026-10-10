@@ -32,7 +32,7 @@ import {
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
 const TOOL_MUTATIONS = new Set(["save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"]);
-const REQUEST_RULE_MUTATIONS = new Set(["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move"]);
+const REQUEST_RULE_MUTATIONS = new Set(["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move", "rule_pack_import"]);
 const REQUEST_RULE_CACHE_KEY = "capabilities/request-rules";
 
 const KNOWLEDGE_TITLE_LIMIT = 120;

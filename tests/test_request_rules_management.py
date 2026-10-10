@@ -868,6 +868,7 @@ async def test_management_create_assigns_id_and_validates_canonical_function_ref
     )
     assert updated["rule"]["id"] == created["rule"]["id"]
     assert updated["rule"]["enabled"] is False
+    assert updated["diagnostics"] == {}
 
 
 # Mutation-order and stale-writer regressions formerly split by roadmap provenance.
