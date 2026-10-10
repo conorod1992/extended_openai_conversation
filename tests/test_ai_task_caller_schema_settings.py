@@ -49,11 +49,11 @@ def test_caller_cleanup_handles_multiple_list_item_alternatives(nested_schema):
         "required": ["payload"],
     }
     result = parse_ai_task_structured_response(
-        '{"payload":[{"note":null},{"count":2}]}',
+        '{"payload":[{"note":null}]}',
         structure,
         original_schema=projection,
     )
-    assert result == {"payload": [{}, {"count": 2}]}
+    assert result == {"payload": [{}]}
     with pytest.raises(HomeAssistantError, match="does not match"):
         parse_ai_task_structured_response(
             '{"payload":[{"note":7}]}', structure, original_schema=projection
@@ -78,7 +78,7 @@ def test_caller_cleanup_retains_wrapped_union_required_policy(wrappers):
 
 def test_caller_cleanup_preserves_null_accepted_as_extra_by_another_item_branch():
     structure = vol.Schema(
-        {"payload": [{"note": str}, {"count": int}]}, extra=vol.ALLOW_EXTRA
+        {"payload": [{"count": int}, {"note": str}]}, extra=vol.ALLOW_EXTRA
     )
     projection = {
         "type": "object",
@@ -88,3 +88,25 @@ def test_caller_cleanup_preserves_null_accepted_as_extra_by_another_item_branch(
     assert parse_ai_task_structured_response(
         '{"payload":[{"note":null}]}', structure, original_schema=projection
     ) == {"payload": [{"note": None}]}
+
+
+@pytest.mark.parametrize("extra", [vol.ALLOW_EXTRA, vol.REMOVE_EXTRA])
+def test_list_cleanup_matches_actual_engine_branch_semantics(extra):
+    structure = vol.Schema({"payload": [{"note": str}, {"count": int}]}, extra=extra)
+    projection = {
+        "type": "object",
+        "properties": {"payload": {}},
+        "required": ["payload"],
+    }
+    # Legacy Voluptuous stops at a deeper error in the first branch. Current HA
+    # can accept the later branch. Cleanup must respect the active caller engine.
+    try:
+        expected = structure({"payload": [{"note": None}]})
+    except vol.Invalid:
+        expected = {"payload": [{}]}
+    assert (
+        parse_ai_task_structured_response(
+            '{"payload":[{"note":null}]}', structure, original_schema=projection
+        )
+        == expected
+    )

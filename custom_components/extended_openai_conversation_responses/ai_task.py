@@ -256,15 +256,23 @@ def _caller_null_plan(structure: Any) -> _OptionalNullPlan | None:
             if plan is not None:
                 properties[key] = plan
     elif isinstance(source, list) and source:
-        items = (
-            child(source[0])
-            if len(source) == 1
-            else _caller_null_plan(
-                vol.Schema(
-                    vol.Any(*source, required=required), required=required, extra=extra
-                )
+        if len(source) == 1:
+            items = child(source[0])
+        else:
+
+            class ListItemValidator:
+                def is_valid(self, value):
+                    # Legacy Voluptuous lists can stop at a deeper branch error;
+                    # they do not always have Any's alternative semantics.
+                    return CallerValidator().is_valid([value])
+
+            items = _OptionalNullPlan(
+                frozenset(),
+                {},
+                None,
+                [plan for value in source if (plan := child(value)) is not None],
+                ListItemValidator(),
             )
-        )
     elif isinstance(source, vol.Any):
         alternatives = [
             plan for value in source.validators if (plan := child(value)) is not None
