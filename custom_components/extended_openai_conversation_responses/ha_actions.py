@@ -14,6 +14,7 @@ from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_FLOOR_ID,
     ATTR_LABEL_ID,
+    ENTITY_MATCH_ALL,
 )
 from homeassistant.core import Context, HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
@@ -354,10 +355,18 @@ def resolve_action_entity_ids(
     | None = None,
 ) -> set[str]:
     """Resolve selectors using the registered service's actual participants."""
+    selection = _target_selection(data, target)
+    # HA expands this sentinel inside dispatch, after our participant lookup.
+    # Treating it as an entity ID would filter it out and authorize no targets
+    # while the original request still controls every entity in the domain.
+    if ENTITY_MATCH_ALL in selection.get(ATTR_ENTITY_ID, []):
+        raise HomeAssistantError(
+            "entity_id 'all' is not supported; select explicit entities, areas, "
+            "devices, floors or labels for authorization"
+        )
     selected = _resolve_target_entity_ids(hass, data, target)
     if not hasattr(hass, "services"):
         return selected
-    selection = _target_selection(data, target)
     explicit = set(selection.get(ATTR_ENTITY_ID, [])) - {"all", "none"}
     participating = service_target_entity_ids(
         hass, domain, service, selected, participants=participants

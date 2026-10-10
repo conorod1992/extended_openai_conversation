@@ -113,3 +113,7 @@ and it cannot roll back effects after unrelated runtime failures.
 The Guest schedule editor displays browser-local times and sends explicit UTC
 instants to Home Assistant. Existing unchanged instants retain their original
 offset and seconds, including during repeated daylight-saving hours.
+
+Home Assistant actions through EOAI require explicit entity IDs or area, device,
+floor or label selectors. The `entity_id: all` sentinel is rejected before dispatch:
+Home Assistant expands it too late for EOAI to authorize the actual targets.

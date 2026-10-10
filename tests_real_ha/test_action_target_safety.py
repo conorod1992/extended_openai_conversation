@@ -8,6 +8,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.extended_openai_conversation_responses.functions.native import (
     NativeFunction,
 )
+from custom_components.extended_openai_conversation_responses.functions.script import (
+    _AuthorizedScriptServices,
+)
 from custom_components.extended_openai_conversation_responses.ha_actions import (
     action_target_revalidation,
 )
@@ -177,3 +180,23 @@ async def test_satellite_and_device_same_destination_are_not_ambiguous(hass):
         {"entity_ids": [entity.entity_id]},
         "dinner is ready",
     )
+
+
+@pytest.mark.parametrize("target_field", ["service_data", "target"])
+async def test_script_all_target_cannot_skip_exposure_authorization(hass, target_field):
+    component = EntityComponent(logging.getLogger(__name__), "light", hass)
+    public = AuditLight()
+    public._attr_unique_id = "public-light"
+    private = AuditLight()
+    private._attr_unique_id = "private-light"
+    await component.async_add_entities([public, private])
+    component.async_register_entity_service("turn_on", {}, "async_turn_on")
+    services = _AuthorizedScriptServices(
+        hass, NativeFunction(), [{"entity_id": public.entity_id}]
+    )
+    with pytest.raises(HomeAssistantError, match="entity_id 'all' is not supported"):
+        await services.async_call(
+            "light", "turn_on", blocking=True, **{target_field: {"entity_id": "all"}}
+        )
+    assert hass.states.get(private.entity_id).state == "off"
+    assert hass.states.get(public.entity_id).state == "off"
