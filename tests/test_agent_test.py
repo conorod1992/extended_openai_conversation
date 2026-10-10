@@ -108,6 +108,35 @@ async def test_successful_agent_test() -> None:
     )
 
 
+async def test_azure_deployment_probe_uses_bound_underlying_capabilities() -> None:
+    hass, entry, subentry, client, usage = _objects(
+        {CONF_CHAT_MODEL: "ha-production", "azure_model": "gpt-4.1"}
+    )
+    entry.data = {"api_provider": "azure"}
+    with (
+        patch.object(agent_test, "get_exposed_entities", return_value=[{}]),
+        patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+    assert result.status == "Passed", result.as_text()
+    request = client.chat.completions.create.await_args.kwargs
+    assert request["model"] == "ha-production"
+    assert request["tools"]
+    assert usage.async_record_request.await_args.kwargs["model"] == "ha-production"
+
+
+async def test_underlying_model_binding_requires_azure_before_probe() -> None:
+    hass, entry, subentry, client, usage = _objects({"azure_model": "gpt-4.1"})
+    with (
+        patch.object(agent_test, "get_exposed_entities", return_value=[{}]),
+        patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)),
+    ):
+        result = await async_test_agent(hass, entry, subentry)
+    assert result.status == "Failed"
+    assert "only supported with Azure" in result.as_text()
+    client.chat.completions.create.assert_not_awaited()
+
+
 async def test_auto_web_search_probes_production_responses_path():
     hass, entry, subentry, client, usage = _objects({CONF_API_MODE: "auto", CONF_WEB_SEARCH: True})
     client.responses = SimpleNamespace(create=AsyncMock(return_value=SimpleNamespace(status="completed", error=None, usage=None)))

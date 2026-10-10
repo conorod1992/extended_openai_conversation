@@ -10,6 +10,11 @@ import {modelFieldPresentation, webSearchControlState} from "../custom_component
 {
   const panel = {_result:{model_capabilities:{service_tier_options:[]}}};
   assert.deepEqual(modelFieldPresentation(panel,"service_tier","default").options.map(({value})=>value),["default"]);
+  const stale = modelFieldPresentation(panel,"service_tier","priority");
+  assert.deepEqual(stale.options.map(({value})=>value),["default","priority"]);
+  assert.equal(stale.disabledOption("priority"),true);
+  assert.equal(stale.disabledOption("default"),false);
+  assert.match(stale.note,/unsupported/);
   panel._result.model_capabilities.service_tier_options = ["default","priority"];
   assert.deepEqual(modelFieldPresentation(panel,"service_tier","default").options.map(({value})=>value),["default","priority"]);
 }

@@ -858,22 +858,26 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
             )
 
-        service_tiers = metadata["service_tiers"]
-        if service_tiers:
-            schema[
-                vol.Optional(
-                    CONF_SERVICE_TIER,
-                    default=DEFAULT_SERVICE_TIER,
-                )
-            ] = SelectSelector(
-                SelectSelectorConfig(
-                    options=[
-                        SelectOptionDict(value=opt, label=opt.capitalize())
-                        for opt in service_tiers
-                    ],
-                    mode=SelectSelectorMode.DROPDOWN,
-                )
+        service_tiers = list(
+            dict.fromkeys([DEFAULT_SERVICE_TIER, *metadata["service_tiers"]])
+        )
+        schema[
+            vol.Optional(
+                CONF_SERVICE_TIER,
+                default=DEFAULT_SERVICE_TIER,
             )
+        ] = SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    SelectOptionDict(value=opt, label=opt.capitalize())
+                    for opt in service_tiers
+                ],
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        )
+        display_tier = effective_options.get(CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER)
+        if display_tier not in service_tiers:
+            display_tier = DEFAULT_SERVICE_TIER
 
         schema[
             vol.Optional(
@@ -889,7 +893,11 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             data_schema=schema_for_ha(
                 self.add_suggested_values_to_schema(
                     schema_for_ha(vol.Schema(schema)),
-                    {**effective_options, CONF_REASONING_EFFORT: display_effort},
+                    {
+                        **effective_options,
+                        CONF_REASONING_EFFORT: display_effort,
+                        CONF_SERVICE_TIER: display_tier,
+                    },
                 )
             ),
         )

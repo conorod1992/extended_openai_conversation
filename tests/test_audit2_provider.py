@@ -22,6 +22,11 @@ from custom_components.extended_openai_conversation_responses.entity import (
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
+from custom_components.extended_openai_conversation_responses.request_rules import (
+    RequestRuleRuntime,
+    RequestRules,
+    async_evaluate_rule,
+)
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_provider_tool_protocol import (
@@ -30,6 +35,7 @@ from tests.test_provider_tool_protocol import (
     _entity,
     _FakeStream,
 )
+from tests.test_request_rule_routing_semantics import MemoryStore, _rule
 
 
 @pytest.mark.parametrize(
@@ -143,6 +149,31 @@ def test_azure_deployment_identity_uses_explicit_underlying_capabilities():
         )
 
 
+async def test_azure_reasoning_only_rule_uses_bound_underlying_capabilities(hass):
+    rule = _rule(
+        "effort", "think", action={"reasoning_effort": "high", "scope": "conversation"}
+    )
+    rules = RequestRules(MemoryStore({"rules": [rule]}))
+    await rules.async_initialize()
+    runtime = RequestRuleRuntime()
+    result = await async_evaluate_rule(
+        hass,
+        rules,
+        runtime,
+        "think",
+        "session",
+        "ha-production",
+        request_options={
+            "chat_model": "ha-production",
+            "azure_model": "gpt-5.4",
+            "api_mode": "responses",
+        },
+        entry_data={"api_provider": "azure"},
+    )
+    assert result is not None
+    assert runtime.get("session") == {"reasoning_effort": "high"}
+
+
 def test_unsupported_tier_is_rejected_before_submission():
     with pytest.raises(HomeAssistantError, match="processing tier"):
         build_provider_request_snapshot(
@@ -253,3 +284,29 @@ async def test_advanced_model_change_displays_and_saves_one_effective_configurat
     saved = await Flow.async_step_advanced(handler, {"temperature": 0.4, "top_p": 0.8})
     assert saved["data"]["reasoning_effort"] == "none"
     assert saved["data"]["temperature"] == 0.4
+
+
+async def test_advanced_model_change_can_clear_an_unsupported_saved_tier():
+    handler = flow_handler(
+        {**DEFAULT_AI_TASK_OPTIONS, "chat_model": "gpt-4.1", "service_tier": "priority"}
+    )
+    handler._is_new = False
+    await Flow.async_step_init(
+        handler,
+        {
+            "chat_model": "gpt-5.4-pro",
+            "api_mode": "responses",
+            "advanced_options": True,
+        },
+    )
+    form = await Flow.async_step_advanced(handler)
+    assert "service_tier" in {str(key) for key in form["data_schema"].schema}
+    suggested = handler.add_suggested_values_to_schema.call_args.args[1]
+    assert suggested["service_tier"] == "default"
+    with pytest.raises(vol.Invalid):
+        form["data_schema"]({"service_tier": "priority"})
+
+    handler.async_update_and_abort = lambda *args, **kwargs: kwargs
+    handler._get_reconfigure_subentry = lambda: None
+    saved = await Flow.async_step_advanced(handler, {"service_tier": "default"})
+    assert saved["data"]["service_tier"] == "default"

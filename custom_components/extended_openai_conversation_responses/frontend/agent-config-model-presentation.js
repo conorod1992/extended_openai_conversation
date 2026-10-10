@@ -45,7 +45,14 @@ export function modelFieldPresentation(panel, key, value) {
     return {models:data.catalog_models || [], note, noteClass:"model-lifecycle-note"};
   }
   if (key === "service_tier") {
-    return {options:[...new Set(["default", ...(metadata.service_tier_options || metadata.service_tiers || [])])].map(value => ({value, label:String(value)}))};
+    const tiers = [...new Set(["default", ...(metadata.service_tier_options || metadata.service_tiers || [])])];
+    const selected = String(value || "default");
+    const unsupported = !tiers.includes(selected);
+    return {
+      options:[...tiers, ...(unsupported ? [selected] : [])].map(value => ({value, label:String(value)})),
+      disabledOption: choice => unsupported && choice === selected,
+      note:unsupported ? `The saved processing tier ${selected} is unsupported by this model. Choose a supported tier before saving.` : "",
+    };
   }
   if (key === "max_tokens") {
     const max = Number(metadata.limits?.max_output_tokens);

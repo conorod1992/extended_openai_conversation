@@ -617,7 +617,8 @@ async def test_ai_task_handler_covers_basic_and_advanced_lifecycle_paths() -> No
             handler
         )
         assert {str(key) for key in shown["data_schema"].schema} == {
-            CONF_SHORTEN_TOOL_CALL_ID
+            CONF_SHORTEN_TOOL_CALL_ID,
+            CONF_SERVICE_TIER,
         }
         updated = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_advanced(
             handler, {CONF_TEMPERATURE: 0.2, CONF_TOP_P: 0.7}
