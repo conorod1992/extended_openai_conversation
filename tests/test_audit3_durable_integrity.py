@@ -197,3 +197,8 @@ def test_group_rename_transfers_hidden_quarantined_members():
         {"id": "other", "functions": ["other_broken"]},
     ]
     assert edited[0]["functions"] == ["good"]
+
+
+@pytest.mark.parametrize("key", ["authorization_header", "clientSecretValue", "api_key_value", "password_value", "refreshTokenValue"])
+def test_nonstandard_credential_fields_remain_redacted(key):
+    assert redact_secrets({key: "private-value"}) == {key: REDACTED_SECRET_SENTINEL}

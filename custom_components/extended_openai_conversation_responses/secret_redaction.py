@@ -22,12 +22,28 @@ def _is_secret_key(key: Any) -> bool:
     """Classify credential-like keys without depending on separator spelling."""
     separated = _CAMEL_CASE_BOUNDARY.sub(" ", str(key))
     parts = tuple(part.casefold() for part in _KEY_SEPARATOR.split(separated) if part)
-    # Credential fields end in the credential name. Ordinary configuration
-    # values such as token_count, secret_name and password_enabled are data.
-    if parts and parts[-1] in _SECRET_KEY_PARTS:
+    # Named metadata fields are configuration, even when they describe a
+    # credential. Keep conservative matching for other credential-like names,
+    # including variants such as authorization_header and clientSecretValue.
+    if len(parts) > 1 and parts[-1] in {
+        "count",
+        "counts",
+        "name",
+        "names",
+        "enabled",
+        "disabled",
+        "limit",
+        "limits",
+        "length",
+        "size",
+        "usage",
+        "budget",
+    }:
+        return False
+    if any(part in _SECRET_KEY_PARTS for part in parts):
         return True
     canonical = "".join(parts)
-    return any(canonical.endswith(family) for family in _SECRET_KEY_FAMILIES)
+    return any(family in canonical for family in _SECRET_KEY_FAMILIES)
 
 
 def _sentinel() -> dict[str, bool]:
