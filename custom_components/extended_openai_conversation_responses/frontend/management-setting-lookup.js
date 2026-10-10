@@ -8,6 +8,10 @@ export const SETTING_LOOKUP = Object.freeze({
     "label": "Chat model",
     "aliases": "chat model provider model used for responses. model provider chat_model"
   },
+  "azure_model": {
+    "label": "Azure underlying model",
+    "aliases": "azure underlying model underlying model id used to select capabilities for a custom azure deployment name. azure deployment capabilities underlying model azure_model"
+  },
   "api_mode": {
     "label": "Provider API format",
     "aliases": "provider api format how requests are formatted for the configured provider. api responses chat completions auto provider format api_mode"

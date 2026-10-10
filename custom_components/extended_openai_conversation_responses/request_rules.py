@@ -3426,6 +3426,14 @@ async def _async_evaluate_matched_rule(
     selected_model = (
         model or conversation_override.get(CONF_CHAT_MODEL) or configured_model
     )
+    # Azure requests use deployment identities, with capabilities explicitly
+    # asserted by the agent's underlying-model binding just as provider setup does.
+    capability_model = (
+        str(request_options.get("azure_model") or selected_model)
+        if request_options is not None
+        and (entry_data or {}).get("api_provider") == "azure"
+        else selected_model
+    )
     if effort:
         captured_effort = bool(
             action["reasoning_effort"]
@@ -3435,7 +3443,7 @@ async def _async_evaluate_matched_rule(
             action["model"] and SLOT_REFERENCE.search(action["model"])
         )
         _validate_effective_reasoning(
-            selected_model,
+            capability_model,
             effort,
             captured=captured_effort and not captured_model,
         )
@@ -3449,7 +3457,7 @@ async def _async_evaluate_matched_rule(
     combined_model = combined_override.get(CONF_CHAT_MODEL, configured_model)
     combined_effort = combined_override.get(CONF_REASONING_EFFORT)
     if combined_effort and (not effort or combined_model != selected_model):
-        _validate_effective_reasoning(combined_model, combined_effort)
+        _validate_effective_reasoning(capability_model, combined_effort)
     if request_options is not None:
         validate_routed_request_options(
             {**request_options, **combined_override}, entry_data or {}

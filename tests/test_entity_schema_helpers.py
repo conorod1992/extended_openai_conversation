@@ -164,24 +164,39 @@ def test_adjust_schema_handles_compositions_arrays_and_explicit_settings() -> No
                 "items": {
                     "oneOf": [
                         {"type": "object", "properties": {"name": {"type": "string"}}},
-                        {"anyOf": [{"type": "object", "properties": {"count": {"type": "integer"}}}]},
+                        {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "properties": {"count": {"type": "integer"}},
+                                }
+                            ]
+                        },
                     ]
                 },
             },
             "composed": {
-                "anyOf": [{"type": "object", "properties": {"flag": {"type": "boolean"}}}]
+                "anyOf": [
+                    {"type": "object", "properties": {"flag": {"type": "boolean"}}}
+                ]
             },
         },
     }
+    with pytest.raises(HomeAssistantError, match="overlapping oneOf"):
+        _adjust_schema(nested)
+    nested["properties"]["entries"]["items"]["anyOf"] = nested["properties"]["entries"][
+        "items"
+    ].pop("oneOf")
     _adjust_schema(nested)
     assert nested["required"] == ["choice", "entries", "composed"]
     properties = nested["properties"]
     assert properties["choice"]["anyOf"][-1] == {"type": "null"}
     assert properties["choice"]["anyOf"][0]["anyOf"] == [
-        {"type": "string"}, {"type": "integer"}
+        {"type": "string"},
+        {"type": "integer"},
     ]
     assert properties["entries"]["type"] == ["array", "null"]
-    variants = properties["entries"]["items"]["oneOf"]
+    variants = properties["entries"]["items"]["anyOf"]
     assert variants[0]["required"] == ["name"]
     assert variants[0]["properties"]["name"]["type"] == ["string", "null"]
     any_of_object = variants[1]["anyOf"][0]
@@ -246,6 +261,7 @@ def test_normalize_function_result_preserves_json_and_stringifies_fallback() -> 
     assert _normalize_function_result(structured) is structured
     assert _normalize_function_result(UnsupportedResult()) == "unsupported-result"
 
+
 @pytest.mark.parametrize("constraint", [{"enum": ["red", "blue"]}, {"const": "red"}])
 def test_optional_constraints_accept_provider_null_without_losing_values(constraint):
     from jsonschema import Draft202012Validator
@@ -286,14 +302,14 @@ def test_openapi_nullable_is_adapted_to_json_schema_null():
 
 @pytest.mark.parametrize("location", ["property", "array", "definition", "union"])
 def test_adjust_schema_rejects_nested_intersections(location):
-    bad={"allOf":[{"type":"string"}]}
-    if location=="property":
-        schema={"type":"object","properties":{"value":bad}}
-    elif location=="array":
-        schema={"type":"array","items":bad}
-    elif location=="definition":
-        schema={"type":"object","$defs":{"value":bad}}
+    bad = {"allOf": [{"type": "string"}]}
+    if location == "property":
+        schema = {"type": "object", "properties": {"value": bad}}
+    elif location == "array":
+        schema = {"type": "array", "items": bad}
+    elif location == "definition":
+        schema = {"type": "object", "$defs": {"value": bad}}
     else:
-        schema={"anyOf":[bad,{"type":"integer"}]}
+        schema = {"anyOf": [bad, {"type": "integer"}]}
     with pytest.raises(HomeAssistantError, match="allOf compositions"):
         _adjust_schema(schema)

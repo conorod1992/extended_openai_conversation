@@ -14,11 +14,11 @@ function currentCatalogData(panel, model) {
 
 async function ensureCatalogData(panel) {
   const config = currentConfig(panel);
-  const model = String(config.chat_model || "");
+  const model = String(config.azure_model || config.chat_model || "");
   if (currentCatalogData(panel, model)) return;
   const searchTarget = panel._pendingSettingFocus;
   const agent = panel._agentId;
-  const current = () => panel._agentId === agent && String(currentConfig(panel).chat_model || "") === model;
+  const current = () => panel._agentId === agent && String(currentConfig(panel).azure_model || currentConfig(panel).chat_model || "") === model;
   try {
     await lookupModelData(panel, model, "lookup", current);
     if (!current()) return;
@@ -70,18 +70,19 @@ export function bindConfiguration(panel) {
 }
 
 export async function changeConfigurationModel(panel, control) {
+  const field = control.dataset?.config || "chat_model";
   const model = control.value;
   const agent = panel._agentId;
   const draft = panel._draft;
   const token = (panel._eocModelChangeToken || 0) + 1;
   panel._eocModelChangeToken = token;
   const current = () => panel._agentId === agent && panel._draft === draft
-    && panel._eocModelChangeToken === token && draft.chat_model === model;
+    && panel._eocModelChangeToken === token && draft[field] === model;
   try {
-    const data = await lookupModelData(panel, model, "lookup", current);
+    const data = await lookupModelData(panel, String(draft.azure_model || draft.chat_model || ""), "lookup", current);
     if (!current()) return;
     applyModelDefaults(panel, data);
-    applyTargetedConfigDirty(panel, ["chat_model", "reasoning_effort"], control, false);
+    applyTargetedConfigDirty(panel, [field, "reasoning_effort"], control, false);
     const validation = await panel._call("configuration", "validate", {config: panel._draft});
     if (!current() || !validation.valid) return;
     panel._result.model_capabilities = validation.model_capabilities;
@@ -89,7 +90,7 @@ export async function changeConfigurationModel(panel, control) {
     // move focus back while the user is already editing another field.
     const focused = panel.shadowRoot?.activeElement;
     if (focused && focused !== control) return;
-    if (focused === control) panel._configRestoreFocus = '[data-config="chat_model"]';
+    if (focused === control) panel._configRestoreFocus = `[data-config="${field}"]`;
     panel._render();
   } catch (err) {
     if (current()) panel._toast?.(`Unable to inspect model options: ${err.message || String(err)}`, true);
