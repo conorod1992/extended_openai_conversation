@@ -937,11 +937,7 @@ def guest_arguments_allowed_runtime(
         return True
 
     if control:
-        from .functions.security import contains_indirect_service_call
         from .ha_actions import _TARGET_KEYS, resolve_action_entity_ids
-
-        if contains_indirect_service_call(value, hass):
-            return False
 
         def normalized(item: Any) -> Any:
             if isinstance(item, Mapping):

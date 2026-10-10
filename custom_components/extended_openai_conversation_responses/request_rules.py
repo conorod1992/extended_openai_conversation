@@ -2566,7 +2566,11 @@ async def _async_guest_functions_allowed(
         _runtime_configured_function_tools,
         _runtime_validate_function_groups,
     )
-    from .functions.security import FunctionSecurity, classify_tool
+    from .functions.security import (
+        FunctionSecurity,
+        classify_tool,
+        contains_indirect_service_call,
+    )
 
     tools = None
     for step in _iter_script_actions(sequence):
@@ -2613,6 +2617,8 @@ async def _async_guest_functions_allowed(
             return False
         await async_validate_function_arguments(hass, tool["spec"], arguments)
         control = level == FunctionSecurity.CONTROL
+        if control and contains_indirect_service_call(arguments, hass):
+            return False
         if not guest_arguments_allowed_runtime(
             hass, arguments, policy, control=control
         ):

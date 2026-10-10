@@ -2,7 +2,7 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -168,15 +168,11 @@ def test_script_static_control_dynamic_and_indirect_classification() -> None:
         {"type": "script", "sequence": [None]},
         {
             "type": "script",
-            "sequence": [
-                {"service": 123, "target": {"entity_id": "light.a"}}
-            ],
+            "sequence": [{"service": 123, "target": {"entity_id": "light.a"}}],
         },
         {
             "type": "script",
-            "sequence": [
-                {"service": "light", "target": {"entity_id": "light.a"}}
-            ],
+            "sequence": [{"service": "light", "target": {"entity_id": "light.a"}}],
         },
         {
             "type": "script",
@@ -205,9 +201,7 @@ def test_script_static_control_dynamic_and_indirect_classification() -> None:
             classify_function(
                 {
                     "type": "script",
-                    "sequence": [
-                        {"service": "light.turn_on", "target": target}
-                    ],
+                    "sequence": [{"service": "light.turn_on", "target": target}],
                 }
             )
             == FunctionSecurity.UNSCOPABLE
@@ -256,18 +250,24 @@ def test_generic_wrapper_arguments_are_explicitly_indirect() -> None:
 
 def _execution_entity(tool: dict, policy: GuestCapabilityPolicy):
     from tests.entity_service_fixtures import registered_entity_service
+
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.entry = SimpleNamespace(entry_id="entry")
     entity.subentry = SimpleNamespace(subentry_id="agent", data={})
-    entity.hass = SimpleNamespace(
-        services=SimpleNamespace(async_services_for_domain=lambda _domain: {
-            name: registered_entity_service() for name in ("turn_on", "turn_off", "unlock")
-        }),
+    entity.hass = MagicMock(
+        data={},
+        states=SimpleNamespace(get=lambda _entity_id: None),
+        services=SimpleNamespace(
+            async_services_for_domain=lambda _domain: {
+                name: registered_entity_service()
+                for name in ("turn_on", "turn_off", "unlock")
+            }
+        ),
         config_entries=SimpleNamespace(
             async_get_entry=lambda _entry_id: SimpleNamespace(
                 subentries={"agent": SimpleNamespace(data={})}
             )
-        )
+        ),
     )
     entity._configured_function_tools_from_data = lambda _data: [tool]
     entity._effective_guest_policy = lambda: policy
@@ -454,14 +454,13 @@ async def test_request_rule_function_uses_structured_outcome(
     )
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.hass = SimpleNamespace(
-        config_entries=SimpleNamespace(
-            async_get_entry=lambda _entry_id: latest_entry
-        )
+        config_entries=SimpleNamespace(async_get_entry=lambda _entry_id: latest_entry)
     )
     entity.entry = SimpleNamespace(entry_id="entry-1")
     entity.subentry = SimpleNamespace(subentry_id="agent-1", data=latest_data)
     entity._configured_function_tools_from_data = lambda _data: [tool]
     entity._get_exposed_entities = lambda: []
+
     async def execute(_tool, tool_input, *_args):
         return entity._tool_result(tool_input, outcome)
 

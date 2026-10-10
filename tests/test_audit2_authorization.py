@@ -82,7 +82,7 @@ async def test_guest_function_preflight_checks_current_availability(hass, restri
 
 @pytest.mark.parametrize("domain", ["script", "automation", "scene"])
 @pytest.mark.parametrize("service", ["turn_on", "turn_off", "toggle"])
-def test_generic_aliases_preserve_guest_indirect_restrictions(
+async def test_generic_aliases_preserve_guest_indirect_restrictions(
     hass, monkeypatch, domain, service
 ):
     monkeypatch.setattr(
@@ -95,8 +95,25 @@ def test_generic_aliases_preserve_guest_indirect_restrictions(
         "target": {"area_id": "room"},
     }
     assert contains_indirect_service_call(action, hass)
-    assert not guest_arguments_allowed_runtime(
-        hass, action, GuestCapabilityPolicy(True), control=True
+    tool = {
+        "spec": {
+            "name": "control",
+            "description": "Control",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "execute_service"},
+    }
+    assert not await _async_guest_functions_allowed(
+        hass,
+        [
+            {
+                "action": "extended_openai_conversation_responses.call_function",
+                "data": {"function": "control", "arguments": action},
+            }
+        ],
+        GuestCapabilityPolicy(True),
+        {},
+        {"functions": [tool]},
     )
     # Only the directly requested action is inspected, not a script's contents.
     assert not contains_indirect_service_call(
