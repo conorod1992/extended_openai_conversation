@@ -35,3 +35,56 @@ def test_caller_cleanup_honors_nested_schema_required_policy(nested_schema, requ
         assert parse_ai_task_structured_response(
             '{"payload":{"note":null}}', structure, original_schema=projection
         ) == {"payload": {}}
+
+
+@pytest.mark.parametrize("nested_schema", [False, True])
+def test_caller_cleanup_handles_multiple_list_item_alternatives(nested_schema):
+    alternatives = [{"note": str}, {"count": int}]
+    if nested_schema:
+        alternatives = [vol.Schema(value) for value in alternatives]
+    structure = vol.Schema({"payload": alternatives}, required=nested_schema)
+    projection = {
+        "type": "object",
+        "properties": {"payload": {}},
+        "required": ["payload"],
+    }
+    result = parse_ai_task_structured_response(
+        '{"payload":[{"note":null},{"count":2}]}',
+        structure,
+        original_schema=projection,
+    )
+    assert result == {"payload": [{}, {"count": 2}]}
+    with pytest.raises(HomeAssistantError, match="does not match"):
+        parse_ai_task_structured_response(
+            '{"payload":[{"note":7}]}', structure, original_schema=projection
+        )
+
+
+@pytest.mark.parametrize("wrappers", [1, 2])
+def test_caller_cleanup_retains_wrapped_union_required_policy(wrappers):
+    child = vol.Any({"note": str}, {"count": int}, required=False)
+    for _ in range(wrappers):
+        child = vol.Schema(child, required=True)
+    structure = vol.Schema({"payload": child}, required=True)
+    projection = {
+        "type": "object",
+        "properties": {"payload": {}},
+        "required": ["payload"],
+    }
+    assert parse_ai_task_structured_response(
+        '{"payload":{"note":null}}', structure, original_schema=projection
+    ) == {"payload": {}}
+
+
+def test_caller_cleanup_preserves_null_accepted_as_extra_by_another_item_branch():
+    structure = vol.Schema(
+        {"payload": [{"note": str}, {"count": int}]}, extra=vol.ALLOW_EXTRA
+    )
+    projection = {
+        "type": "object",
+        "properties": {"payload": {}},
+        "required": ["payload"],
+    }
+    assert parse_ai_task_structured_response(
+        '{"payload":[{"note":null}]}', structure, original_schema=projection
+    ) == {"payload": [{"note": None}]}

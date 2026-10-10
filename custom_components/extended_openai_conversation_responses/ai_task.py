@@ -216,6 +216,10 @@ def _caller_null_plan(structure: Any) -> _OptionalNullPlan | None:
             "_extra",
             getattr(getattr(structure, "schema", None), "extra", extra),
         )
+    if isinstance(source, vol.Schema):
+        return _caller_null_plan(source)
+    if isinstance(source, vol.Any):
+        required = bool(source.required)
     if not isinstance(source, (dict, list, vol.Any)):
         return None
 
@@ -251,8 +255,16 @@ def _caller_null_plan(structure: Any) -> _OptionalNullPlan | None:
             plan = child(value)
             if plan is not None:
                 properties[key] = plan
-    elif isinstance(source, list) and len(source) == 1:
-        items = child(source[0])
+    elif isinstance(source, list) and source:
+        items = (
+            child(source[0])
+            if len(source) == 1
+            else _caller_null_plan(
+                vol.Schema(
+                    vol.Any(*source, required=required), required=required, extra=extra
+                )
+            )
+        )
     elif isinstance(source, vol.Any):
         alternatives = [
             plan for value in source.validators if (plan := child(value)) is not None
