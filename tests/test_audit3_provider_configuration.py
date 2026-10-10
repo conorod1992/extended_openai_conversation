@@ -30,6 +30,71 @@ def isolate_catalog():
     model_catalog.activate_catalog(None)
 
 
+def strict_object(properties):
+    return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
+
+
+@pytest.mark.parametrize("limit,accepted", [(10, True), (11, False)])
+@pytest.mark.parametrize("references", [False, True])
+def test_strict_nesting_limit_includes_referenced_definitions(limit, accepted, references):
+    node = {"type": "string"}
+    definitions = {}
+    for index in range(limit):
+        node = strict_object({"child": node})
+        if references and index < limit - 1:
+            definitions[f"level{index}"] = node
+            node = {"$ref": f"#/$defs/level{index}"}
+    if references:
+        node["$defs"] = definitions
+    if accepted:
+        validate_strict_function_schema(node)
+    else:
+        with pytest.raises(HomeAssistantError, match="10 levels"):
+            validate_strict_function_schema(node)
+
+
+@pytest.mark.parametrize("count,accepted", [(5000, True), (5001, False)])
+def test_strict_total_property_limit(count, accepted):
+    node = strict_object({f"p{index}": {"type": "string"} for index in range(count)})
+    if accepted:
+        validate_strict_function_schema(node)
+    else:
+        with pytest.raises(HomeAssistantError, match="5000"):
+            validate_strict_function_schema(node)
+
+
+@pytest.mark.parametrize("count,accepted", [(1000, True), (1001, False)])
+def test_strict_enum_limit_is_aggregate(count, accepted):
+    values = [str(index) for index in range(count)]
+    node = strict_object({"first": {"type": "string", "enum": values[:500]}, "second": {"type": "string", "enum": values[500:]}})
+    if accepted:
+        validate_strict_function_schema(node)
+    else:
+        with pytest.raises(HomeAssistantError, match="1000"):
+            validate_strict_function_schema(node)
+
+
+@pytest.mark.parametrize("size,accepted", [(120000, True), (120001, False)])
+def test_strict_aggregate_string_limit(size, accepted):
+    node = strict_object({"x": {"type": "string", "const": "a" * (size - 1)}})
+    if accepted:
+        validate_strict_function_schema(node)
+    else:
+        with pytest.raises(HomeAssistantError, match="120000"):
+            validate_strict_function_schema(node)
+
+
+def test_strict_large_single_enum_string_limit():
+    node = strict_object({"value": {"type": "string", "enum": [str(index).zfill(60) for index in range(251)]}})
+    with pytest.raises(HomeAssistantError, match="15000"):
+        validate_strict_function_schema(node)
+
+
+def test_strict_recursive_reference_is_not_expanded_forever():
+    node = strict_object({"children": {"type": "array", "items": {"$ref": "#"}}})
+    validate_strict_function_schema(node)
+
+
 @pytest.mark.parametrize("kind", ["conversation", "ai_task_data"])
 async def test_azure_catalog_validation_uses_underlying_model(hass, monkeypatch, kind):
     options = {
