@@ -436,6 +436,7 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
       const missingUsers = updateRestorePreviewStatus(panel, result.preview);
       apply.disabled = result.preview_token === null || missingUsers > 0;
       root.querySelector("#restore-dialog").showModal();
+      refreshImportPreview(panel);
     } catch (err) {
       panel._backupTransferSession = null;
       panel._backupTransferInspection = null;
