@@ -238,3 +238,36 @@ async def test_generic_power_retains_other_participating_domains(selected_home):
         hass, "homeassistant", "turn_on", {"switch.hidden", "light.kitchen"}
     ) == {"switch.hidden", "light.kitchen"}
     # Unknown light dispatch semantics stay conservative rather than being dropped.
+
+
+async def test_explicit_targets_recheck_participants_after_permission_await(
+    selected_home, monkeypatch
+):
+    hass = selected_home
+    registered = hass.services.async_services_for_domain("light")["turn_on"]
+    participants = registered.job.target.args[1]
+    monkeypatch.setattr(
+        ha_actions.target_helpers,
+        "async_extract_referenced_entity_ids",
+        lambda _hass, selection: SimpleNamespace(
+            referenced=selection.entity_ids, indirectly_referenced=set()
+        ),
+    )
+
+    async def check_permissions(_hass, entity_ids, **_kwargs):
+        assert entity_ids == {"light.kitchen"}
+        # HA can add an already-existing state to a component without replacing
+        # the service registration or the existing public target's identity.
+        participants["light.private"] = object()
+
+    monkeypatch.setattr(
+        ha_actions, "async_require_control_permission", check_permissions
+    )
+    with pytest.raises(HomeAssistantError, match="target changed"):
+        await ha_actions.async_call_ha_action(
+            hass,
+            "light",
+            "turn_on",
+            target={"entity_id": ["light.kitchen", "light.private"]},
+        )
+    hass.services.async_call.assert_not_awaited()
