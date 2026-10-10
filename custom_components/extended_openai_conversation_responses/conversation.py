@@ -2552,7 +2552,7 @@ class ExtendedOpenAIAgentEntity(
         if self._memory is None:
             raise RuntimeError("persistent memory is unavailable")
         readable_scope_ids = self._current_readable_memory_scope_ids(llm_context)
-        if not readable_scope_ids:
+        if operation in {"search", "list"} and not readable_scope_ids:
             raise RuntimeError("persistent memory is disabled for this data scope")
 
         if operation in {"add", "upsert"}:
@@ -2593,9 +2593,12 @@ class ExtendedOpenAIAgentEntity(
                 for name in ("subject", "key", "valid_from")
                 if name in arguments
             }
-            return _compact_memory_result(
-                await method(write_scope_id, content, category, source, **metadata)
-            )
+            result = await method(write_scope_id, content, category, source, **metadata)
+            # Write permission does not grant access to existing candidate records,
+            # including duplicate/conflict metadata returned by the memory store.
+            if write_scope_id not in readable_scope_ids:
+                return {"status": result["status"]}
+            return _compact_memory_result(result)
         if operation == "search":
             query = arguments.get("query")
             category = arguments.get("category")
@@ -2709,6 +2712,8 @@ class ExtendedOpenAIAgentEntity(
                 clear_fields=clear_fields,
                 source=source,
             )
+            if write_scope_id not in readable_scope_ids:
+                return {"status": "updated"}
             return {
                 "status": "updated",
                 "memory": model_memory_as_dict(

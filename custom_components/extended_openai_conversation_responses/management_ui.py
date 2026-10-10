@@ -343,6 +343,7 @@ async def _persist_function_configuration(
     extra_updates: dict[str, Any] | None = None,
     expected_revision: str | None = None,
     renamed_function: tuple[str, str] | None = None,
+    renamed_group: tuple[str, str] | None = None,
     rules_manager: Any = None,
 ) -> dict[str, Any]:
     """Persist one revision-checked tool edit without discarding quarantined siblings."""
@@ -375,6 +376,7 @@ async def _persist_function_configuration(
         groups,
         extra_updates=extra_updates,
         expected_revision=expected_revision,
+        renamed_group=renamed_group,
     )
 
 
@@ -2163,6 +2165,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             tools,
             validated_groups,
             expected_revision=message.get("revision"),
+            renamed_group=(original_id, candidate["id"])
+            if isinstance(original_id, str) and isinstance(candidate.get("id"), str)
+            else None,
             extra_updates=group_reference_updates(
                 subentry.data, original_id, candidate["id"]
             )
