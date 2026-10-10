@@ -268,7 +268,7 @@ async def test_non_reversible_actions_do_not_read_state(
         )
         == {}
     )
-    resolver.assert_called_once()
+    assert resolver.call_count == 2  # Resolve before and after permission checks.
     assert events == ["execute"]
 
 
