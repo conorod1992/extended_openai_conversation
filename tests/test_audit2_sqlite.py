@@ -28,7 +28,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 def examples():
     text = (
-        Path(__file__).parents[1] / "tests/fixtures/legacy_examples/sqlite.md"
+        Path(__file__).parents[1] / "tests/fixtures/legacy_examples/sqlite/sqlite.md"
     ).read_text()
     return {
         tool["spec"]["name"]: tool
