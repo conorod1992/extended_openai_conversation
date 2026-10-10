@@ -167,3 +167,63 @@ def test_parallel_normalization_preserves_templates_and_service_payload():
     normalized = rules._normalize_script_containers([{"parallel": [action]}])
     assert normalized == [{"parallel": [{"sequence": [action]}]}]
     assert action["data"]["sequence"]["text"] == "{{ message }}"
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+@pytest.mark.parametrize("value", ["123456", "True", "None", "[1,2]", '{"level":62}', "  spaced  ", False, 0, None, {"level": 62}, [1, 2]])
+async def test_alias_assignment_preserves_type_in_real_script(hass, legacy, value):
+    hass.config.legacy_templates = legacy
+
+    async def execute(*_args):
+        return value
+
+    outcome = await evaluate_functions(hass, [
+        function_step(response_variable="reply"),
+        {"set_conversation_response": "{{ lookup == reply.result }} / {{ lookup is string }} / {{ reply.result is string }}"},
+    ], execute)
+    expected = "True" if isinstance(value, str) else "False"
+    assert outcome.successful
+    assert outcome.response == f"True / {expected} / {expected}"
+
+
+async def test_guest_parallel_forbidden_event_rejected_before_any_effect(hass):
+    prepare_native(hass)
+    rule = local_rule(phrases=["run"])
+    rule["action"]["actions"] = [{"parallel": [{"sequence": [
+        {"event": "audit_forbidden"},
+    ]}]}]
+    outcome = await rules.async_evaluate_rule(hass, await manager(rule), rules.RequestRuleRuntime(), "run", "session", guest_policy=GuestCapabilityPolicy(True))
+    assert not outcome.successful
+    hass.bus.async_fire_internal.assert_not_called()
+    hass.services.async_call.assert_not_called()
+
+
+def test_sensitive_parallel_action_is_detected():
+    rule = local_rule()
+    rule["action"]["actions"] = [{"parallel": [{"sequence": [
+        {"action": "lock.unlock", "target": {"entity_id": "lock.front"}},
+    ]}]}]
+    assert rules.rule_has_sensitive_actions(rules.validate_rule(rule))
+
+
+async def test_parallel_guest_preflight_prevents_partial_effects(hass):
+    from homeassistant.core import Context
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+
+    prepare_native(hass)
+    policy = GuestCapabilityPolicy(True, configured_tool_names=frozenset({"lookup"}))
+    effects = []
+
+    async def execute(*_args):
+        effects.append("effect")
+        return "done"
+
+    rule = local_rule(phrases=["run"])
+    rule["action"]["actions"] = [{"parallel": [{"sequence": [
+        {"action": f"{DOMAIN}.call_function", "data": {"function": "lookup", "arguments": {}}},
+        {"event": "forbidden"},
+    ]}]}]
+    outcome = await rules.async_evaluate_rule(hass, await manager(rule), rules.RequestRuleRuntime(), "run", "session", guest_policy=policy, live_guest_policy=lambda: policy, function_executor=execute, context=Context(), request_options={"functions": []})
+    assert not outcome.successful
+    assert not effects
+    hass.services.async_call.assert_not_called()
