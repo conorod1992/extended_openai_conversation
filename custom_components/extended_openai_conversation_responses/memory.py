@@ -431,9 +431,17 @@ class PersistentMemory:
             if key is None:
                 duplicate = self._find_duplicate(user_id, content, subject)
                 if duplicate:
+                    changes: dict[str, Any] = {}
                     if duplicate.source == "implicit" and source == "explicit":
+                        changes["source"] = "explicit"
+                    if (
+                        subject
+                        and not duplicate.subject
+                        and (source == "explicit" or duplicate.source == "implicit")
+                    ):
+                        changes["subject"] = subject
+                    if changes:
                         timestamp = dt_util.utcnow().isoformat()
-                        changes = {"source": "explicit"}
                         _set_updated_at_if_substantive(duplicate, changes, timestamp)
                         duplicate = self._replace_record(duplicate, **changes)
                         await self._async_save_locked()

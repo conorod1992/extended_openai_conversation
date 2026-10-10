@@ -61,7 +61,54 @@ async def test_canonical_key_still_establishes_identity():
     assert second["status"] == "updated"
 
 
-@pytest.mark.parametrize("query", ["What is my dog's name?", "What is my dog\u2019s name?"])
+@pytest.mark.parametrize("operation", ["async_add", "async_upsert"])
+@pytest.mark.parametrize("legacy_source", ["implicit", "explicit"])
+async def test_subject_confirmation_prevents_legacy_fact_matching_other_subjects(
+    operation, legacy_source
+):
+    storage = FakeStorage()
+    memory = PersistentMemory(storage)
+    await memory.async_initialize()
+    original = await memory.async_add(
+        "user", "Likes chicken", "preferences", legacy_source
+    )
+    confirmed = await getattr(memory, operation)(
+        "user", "Likes chicken", "preferences", "explicit", subject="Oscar"
+    )
+    assert confirmed["memory"]["memory_id"] == original["memory"]["memory_id"]
+    assert confirmed["memory"]["subject"] == "Oscar"
+    assert confirmed["memory"]["source"] == "explicit"
+
+    reloaded = PersistentMemory(storage)
+    await reloaded.async_initialize()
+    other = await getattr(reloaded, operation)(
+        "user", "Likes chicken", "preferences", "explicit", subject="Luna"
+    )
+    assert other["status"] == "created"
+    assert {record.subject for record in await reloaded.async_list("user")} == {
+        "Oscar",
+        "Luna",
+    }
+
+
+async def test_implicit_add_does_not_assign_subject_to_explicit_legacy_fact():
+    storage = FakeStorage()
+    memory = PersistentMemory(storage)
+    await memory.async_initialize()
+    await memory.async_add("user", "Likes chicken", "preferences", "explicit")
+    saved = storage.save_count
+    result = await memory.async_add(
+        "user", "Likes chicken", "preferences", "implicit", subject="Oscar"
+    )
+    assert result["status"] == "duplicate"
+    assert result["memory"]["subject"] is None
+    assert result["memory"]["source"] == "explicit"
+    assert storage.save_count == saved
+
+
+@pytest.mark.parametrize(
+    "query", ["What is my dog's name?", "What is my dog\u2019s name?"]
+)
 async def test_possessive_search_retrieves_dog_name(query):
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()
