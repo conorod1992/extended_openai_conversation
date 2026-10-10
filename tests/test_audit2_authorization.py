@@ -129,7 +129,7 @@ def test_area_authorization_uses_participants_and_preserves_missing_explicit_ids
         "_resolve_target_entity_ids",
         lambda *_: {"light.public", "sensor.private"},
     )
-    monkeypatch.setattr(native, "_service_participants", lambda *_: {"light.public"})
+    monkeypatch.setattr(ha_actions, "_service_participants", lambda *_: {"light.public"})
     action = {"action": "light.turn_on", "target": {"area_id": "room"}}
     assert ha_actions.resolve_action_entity_ids(
         hass, "light", "turn_on", target=action["target"]
@@ -151,7 +151,7 @@ def test_area_authorization_uses_participants_and_preserves_missing_explicit_ids
 
 def test_generic_alias_checks_root_target_with_nested_service_data(hass, monkeypatch):
     hass.services.has_service.return_value = True
-    monkeypatch.setattr(native, "_service_participants", lambda *args: None)
+    monkeypatch.setattr(ha_actions, "_service_participants", lambda *args: None)
     monkeypatch.setattr(
         ha_actions,
         "_resolve_target_entity_ids",
@@ -170,7 +170,7 @@ def test_generic_alias_checks_root_target_with_nested_service_data(hass, monkeyp
 
 async def test_guest_preflight_checks_static_script_aliases(hass, monkeypatch):
     hass.services.has_service.return_value = True
-    monkeypatch.setattr(native, "_service_participants", lambda *args: None)
+    monkeypatch.setattr(ha_actions, "_service_participants", lambda *args: None)
     monkeypatch.setattr(
         ha_actions, "_resolve_target_entity_ids", lambda *args: {"script.public"}
     )

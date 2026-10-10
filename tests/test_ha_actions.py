@@ -21,6 +21,12 @@ _REAL_TARGET_IDENTITY = ha_actions._target_identity
 _REAL_SERVICE_IDENTITY = ha_actions._service_identity
 
 
+@pytest.fixture(autouse=True)
+def mock_service_participants(monkeypatch):
+    """These action/snapshot doubles have no registered entity dispatchers."""
+    monkeypatch.setattr(ha_actions, "_service_participants", lambda *_: None)
+
+
 def _state(entity_id: str, value: str, **attributes) -> State:
     return State(entity_id, value, attributes)
 
