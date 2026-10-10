@@ -250,8 +250,10 @@ def normalize_output_token_limit(
             f"Output token limit {value} exceeds {model}'s maximum of {ceiling}."
         )
     field = cast(str, capabilities["output_tokens"][api])
-    if field == "max_tokens":
-        raise ModelCapabilityError("Legacy max_tokens must never be emitted.")
+    if field == "max_tokens" and api != API_MODE_CHAT_COMPLETIONS:
+        raise ModelCapabilityError(
+            "Legacy max_tokens is only supported for Chat Completions."
+        )
     return field, value
 
 
