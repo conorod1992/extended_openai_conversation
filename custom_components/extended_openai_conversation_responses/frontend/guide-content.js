@@ -321,7 +321,7 @@ export const GUIDE_TOPICS = [
       {type: "p", text: "Request debugging records recent real requests so you can inspect the prompt, context, tools and request settings that were actually sent. Use it when Preview effective request is not enough to explain a real result."},
       {type: "note", title: "Treat captured requests as private", text: "A captured request can include conversation text and Home Assistant context. Use it for targeted troubleshooting and keep the retention period no longer than you need."},
     ],
-    action: {label: "Open request debugging", page: "usage-maintenance", section: "request-debugging"},
+    action: {label: "Open request debugging", page: "usage-maintenance", section: "request-debug"},
     terms: "request debugging inspect provider request prompt context tools parameters troubleshooting what was sent diagnostics",
     searchTermsOnly: true,
   },

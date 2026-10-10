@@ -238,6 +238,7 @@ class ModelCatalogManager:
         """Check concrete saved agent and routing choices before publication."""
         from .request import (
             build_provider_request_snapshot,
+            capability_model_identity,
             conversation_tools_required,
         )
 
@@ -246,7 +247,7 @@ class ModelCatalogManager:
                 if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                     continue
                 options = subentry.data
-                model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+                model = capability_model_identity(options, getattr(entry, "data", {}))
                 try:
                     build_provider_request_snapshot(
                         options,
@@ -291,7 +292,9 @@ class ModelCatalogManager:
                             tools_required=conversation_tools_required(effective),
                             model_capabilities=catalog_model_metadata(
                                 candidate,
-                                str(effective[CONF_CHAT_MODEL]),
+                                capability_model_identity(
+                                    effective, getattr(entry, "data", {})
+                                ),
                             ),
                         )
                     except Exception:

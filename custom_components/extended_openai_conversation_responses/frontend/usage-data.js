@@ -1,3 +1,5 @@
+import {invalidateUsageWindows} from "./usage-cache.js";
+
 const DAILY_PAGE_SIZE = 366;
 const MAX_DAILY_PAGES = 128;
 const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -46,12 +48,14 @@ export async function loadAllUsageDays(
   {pageSize = DAILY_PAGE_SIZE, maxPages = MAX_DAILY_PAGES, startDate = "0000-01-01", endDate = "9999-12-31"} = {},
 ) {
   const rows = [];
+  let localRunSummary;
   let cursor = startDate;
   for (let page = 0; page < maxPages; page += 1) {
     const response = await callPage(cursor, endDate);
     const current = Array.isArray(response?.days) ? response.days : [];
+    localRunSummary ||= response?.local_run_summary;
     rows.push(...current);
-    if (response?.has_more === false || current.length < pageSize) return {days: rows};
+    if (response?.has_more === false || current.length < pageSize) return {days: rows, ...(localRunSummary ? {local_run_summary: localRunSummary} : {})};
     const lastDate = String(current.at(-1)?.date || "");
     const nextDate = addUsageCalendarDays(lastDate, 1);
     if (!nextDate || nextDate <= cursor || nextDate > endDate) break;
@@ -83,6 +87,11 @@ export async function loadUsageWindow(
     : {};
   const key = usageCacheKey(panel, window, today);
   const cache = usageCache(panel);
+  panel._eocUsageWindowGenerations ||= new Map();
+  const generations = panel._eocUsageWindowGenerations;
+  const agentId = panel._agentId || "";
+  if (!useCache) invalidateUsageWindows(panel, agentId);
+  const generation = generations.get(agentId) || 0;
   if (useCache && cache.has(key)) return cache.get(key);
 
   const {startDate, endDate} = usageWindowBounds(window, today);
@@ -104,7 +113,7 @@ export async function loadUsageWindow(
     requested_window: String(window || DEFAULT_USAGE_WINDOW),
     complete_history: window === "all",
   };
-  cache.set(key, result);
+  if ((generations.get(agentId) || 0) === generation) cache.set(key, result);
   return result;
 }
 

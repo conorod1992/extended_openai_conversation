@@ -231,7 +231,11 @@ async def test_successful_loaded_restore_refreshes_live_subsystem_objects_and_tu
     assert len(knowledge_results) == 1
     assert knowledge_results[0].source_id == target_knowledge.source_id
     assert _TARGET_KNOWLEDGE in knowledge_results[0].excerpt
-    assert await live_agent._knowledge.async_search(_CURRENT_KNOWLEDGE) == []
+    with pytest.raises(ValueError):
+        await live_agent._knowledge.async_get(current_knowledge.source_id)
+    # Compound components can legitimately match the restored source via "orbit".
+    old_query_results = await live_agent._knowledge.async_search(_CURRENT_KNOWLEDGE)
+    assert all(item.source_id != current_knowledge.source_id and _CURRENT_KNOWLEDGE not in item.excerpt for item in old_query_results)
 
     # Finally exercise the restored objects through the actual loaded conversation
     # entity. Temporary Memory must already be injected into the next provider prompt,

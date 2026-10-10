@@ -739,3 +739,43 @@ async def test_archive_get_page_clamps_inputs_and_recovers_missing_total_metadat
     assert result["returned"] == 1
     assert result["total"] == 1
     assert result["has_more"] is False
+
+
+async def test_search_hit_opens_its_actual_later_transcript_page():
+    archive = ConversationArchive(_Storage(), "agent")
+    await archive.async_initialize()
+    session = _session(1, turn_count=45)
+    turns = [_turn(session.session_id, i, "needle" if i == 25 else "ordinary") for i in range(45)]
+    archive._sessions = {session.session_id: session}
+    archive._turns = {session.session_id: turns}
+    result = await archive_search_page(archive, "user:alice", "needle")
+    hit = result["results"][0]
+    assert hit["turn_index"] == 25
+    assert "needle" in hit["excerpt"]
+    page = await archive_get_page(archive, "user:alice", session.session_id,
+                                  start_turn=hit["turn_index"] // 20 * 20)
+    assert hit["turn_id"] in {turn["turn_id"] for turn in page["turns"]}
+    direct = await archive.async_search("user:alice", "needle")
+    assert direct["results"][0]["turn_index"] == 25
+
+
+def test_local_run_summary_counts_selected_period_beyond_latest_thirty(monkeypatch):
+    from dataclasses import replace
+    now = datetime(2026, 10, 10, 12, tzinfo=UTC)
+    with monkeypatch.context() as clock_patch:
+        clock_patch.setattr(dt_util, "utcnow", lambda: now)
+        clock_patch.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo("Europe/Dublin"))
+        def run(i, stamp, **extra):
+            return replace(_run(i), started_at=stamp, completed_at=stamp, **extra)
+        runs = [run(i, "2026-10-09T12:00:00Z") for i in range(45)]
+        runs += [run(100, "2026-09-20T12:00:00Z"), run(101, "2026-08-01T12:00:00Z"),
+                 run(102, "2026-10-09T12:00:00Z", request_count=1),
+                 run(103, "2026-10-08T23:30:00Z")]
+        manager = _Usage(runs=runs)
+        selected = usage_daily_page(manager, start_date="2026-10-09", end_date="2026-10-09")
+        assert selected["local_run_summary"]["count"] == 46  # includes local midnight crossover
+        wider = usage_daily_page(manager, start_date="2026-09-01", end_date="2026-10-10")
+        assert wider["local_run_summary"]["count"] == 47  # expired details excluded
+        assert wider["local_run_summary"]["retention_days"] == 30
+        manager.run_retention_days = 0
+        assert usage_daily_page(manager, start_date="0000-01-01", end_date="9999-12-31")["local_run_summary"]["count"] == 0

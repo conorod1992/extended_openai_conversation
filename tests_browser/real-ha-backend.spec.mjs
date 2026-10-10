@@ -595,11 +595,19 @@ for (const now of [false, true]) {
     expect(unchanged.status).toEqual(original.status);
     await expect(panel.locator("#guest-indefinite")).not.toBeChecked();
 
-    const end = new Date(Date.now() + 86_400_000).toISOString().slice(0, 16);
+    const future = new Date(Date.now() + 86_400_000);
+    future.setUTCSeconds(0, 0);
+    const expectedEnd = future.toISOString();
+    // The form uses HA's configured timezone, independently of the browser's zone.
+    const end = await panel.evaluate((host, instant) => {
+      const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: host._hass.config.time_zone, year: "numeric", month: "2-digit",
+        day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+      }).formatToParts(new Date(instant));
+      const fields = Object.fromEntries(parts.map(part => [part.type, part.value]));
+      return `${fields.year}-${fields.month}-${fields.day}T${fields.hour}:${fields.minute}`;
+    }, expectedEnd);
     await panel.locator("#guest-end").fill(end);
-    const expectedEnd = await panel.locator("#guest-end").evaluate(
-      input => new Date(input.value).toISOString(),
-    );
     await button.click();
     await expect(panel.locator("#toast")).toHaveText("Guest Mode updated");
     const finite = (await updates()).at(-1);

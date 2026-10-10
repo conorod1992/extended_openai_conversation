@@ -784,6 +784,7 @@ class ConversationArchive:
             if not isinstance(raw, dict):
                 raise ValueError("archive turn must be an object")
             turn = _validated_turn(raw)
+            turn = replace(turn, timestamp=_parse_time(turn.timestamp).isoformat())
             if turn.session_id in private_session_ids:
                 raise ValueError("private archive sessions cannot contain turns")
             if turn.turn_id in turn_ids or turn.session_id not in session_ids:
@@ -1217,9 +1218,9 @@ def _search_archive_snapshot(
     normalized_query = _normalize(query)
     time_zone = time_zone or dt_util.DEFAULT_TIME_ZONE
     start, end = _local_date_bounds(start_date, end_date, time_zone)
-    ranked: list[tuple[float, str, ArchiveSession, ArchiveTurn]] = []
+    ranked: list[tuple[float, str, ArchiveSession, ArchiveTurn, int]] = []
     for session, turns in snapshot:
-        for turn in turns:
+        for turn_index, turn in enumerate(turns):
             if (start_date or end_date) and not (
                 start <= _parse_time(turn.timestamp) < end
             ):
@@ -1243,7 +1244,7 @@ def _search_archive_snapshot(
             score = overlap / max(1, len(query_tokens))
             if literal_match:
                 score += 2
-            ranked.append((score, turn.timestamp, session, turn))
+            ranked.append((score, turn.timestamp, session, turn, turn_index))
     ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
     page = ranked[offset : offset + limit]
     return {
@@ -1251,6 +1252,7 @@ def _search_archive_snapshot(
             {
                 "session_id": session.session_id,
                 "turn_id": turn.turn_id,
+                "turn_index": turn_index,
                 "date": _parse_time(turn.timestamp)
                 .astimezone(time_zone)
                 .date()
@@ -1259,7 +1261,7 @@ def _search_archive_snapshot(
                 "title": session.title,
                 "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
             }
-            for _, _, session, turn in page
+            for _, _, session, turn, turn_index in page
         ],
         "offset": offset,
         "limit": limit,

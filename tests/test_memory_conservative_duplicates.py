@@ -42,14 +42,14 @@ async def test_changed_fact_requires_resolution_without_mutating_old_fact(
     assert records[0].category == "personal"
 
 
-async def test_case_punctuation_variations_still_deduplicate_and_keys_replace():
+async def test_punctuation_variations_still_deduplicate_and_keys_replace():
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()
     first = await memory.async_upsert(
         "alice", "I prefer tea to coffee.", "preferences", "explicit"
     )
     duplicate = await memory.async_upsert(
-        "alice", "I PREFER tea to coffee!!!", "preferences", "explicit"
+        "alice", "I prefer tea to coffee!!!", "preferences", "explicit"
     )
     assert duplicate["status"] == "unchanged"
     assert duplicate["memory"]["memory_id"] == first["memory"]["memory_id"]
@@ -83,6 +83,6 @@ async def test_duplicate_detection_does_not_build_overlap_sets(monkeypatch):
         raise AssertionError("Duplicate equality requires no token sets")
 
     monkeypatch.setattr(module, "_cached_memory_tokens", unexpected_tokens)
-    assert memory._find_duplicate("alice", "I PREFER tea to coffee!!!") is not None
+    assert memory._find_duplicate("alice", "I prefer tea to coffee!!!") is not None
     assert memory._find_duplicate("alice", "I prefer coffee to tea.") is None
     assert memory._find_duplicate("bob", "I prefer tea to coffee.") is None

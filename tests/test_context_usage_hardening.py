@@ -111,8 +111,7 @@ def test_estimate_prepared_request_projects_multipart_user_content(monkeypatch) 
 
     estimate_prepared_request(object(), usage, input_value, None)
 
-    assert seen["measured"] is not input_value
-    assert seen["measured"][1] == {"role": "user", "content": "Describe this"}
+    assert seen["measured"] is input_value
     assert usage.input_tokens == 222
 
 

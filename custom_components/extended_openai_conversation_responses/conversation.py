@@ -173,6 +173,7 @@ from .ha_permissions import bind_active_ha_context
 from .ha_tool_result_compat import make_tool_result_content, tool_result_data
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
+from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
 from .memory import (
     MemoryRecord,
@@ -397,7 +398,7 @@ class ExtendedOpenAIAgentEntity(
                 # Shared managers can retain a provider bound to the previous entity.
                 sync_memory_embedding_provider(self)
                 self._schedule_archive_retention()
-                conversation.async_set_agent(self.hass, self.entry, self)
+                register_legacy_agent(self.hass, self.entry, self)
         except BaseException:
             self._agent_initialization_failed = True
             raise
@@ -646,7 +647,7 @@ class ExtendedOpenAIAgentEntity(
 
     async def async_will_remove_from_hass(self) -> None:
         """When entity will be removed from Home Assistant."""
-        conversation.async_unset_agent(self.hass, self.entry)
+        unregister_legacy_agent(self.hass, self.entry, self)
         remove_function_group_runtime(
             self.hass, self.entry.entry_id, self.subentry.subentry_id
         )
@@ -2063,7 +2064,7 @@ class ExtendedOpenAIAgentEntity(
             with selected_skill_scope(
                 getattr(getattr(self, "subentry", None), "data", {})
             ):
-                record_dispatch(self, tool_input)
+                record_dispatch(self, tool_input, function_tool)
                 content = await self._async_dispatch_function_tool(
                     function_tool, tool_input, llm_context, exposed_entities
                 )
@@ -2551,7 +2552,7 @@ class ExtendedOpenAIAgentEntity(
         if self._memory is None:
             raise RuntimeError("persistent memory is unavailable")
         readable_scope_ids = self._current_readable_memory_scope_ids(llm_context)
-        if not readable_scope_ids:
+        if operation in {"search", "list"} and not readable_scope_ids:
             raise RuntimeError("persistent memory is disabled for this data scope")
 
         if operation in {"add", "upsert"}:
@@ -2592,9 +2593,12 @@ class ExtendedOpenAIAgentEntity(
                 for name in ("subject", "key", "valid_from")
                 if name in arguments
             }
-            return _compact_memory_result(
-                await method(write_scope_id, content, category, source, **metadata)
-            )
+            result = await method(write_scope_id, content, category, source, **metadata)
+            # Write permission does not grant access to existing candidate records,
+            # including duplicate/conflict metadata returned by the memory store.
+            if write_scope_id not in readable_scope_ids:
+                return {"status": result["status"]}
+            return _compact_memory_result(result)
         if operation == "search":
             query = arguments.get("query")
             category = arguments.get("category")
@@ -2708,6 +2712,8 @@ class ExtendedOpenAIAgentEntity(
                 clear_fields=clear_fields,
                 source=source,
             )
+            if write_scope_id not in readable_scope_ids:
+                return {"status": "updated"}
             return {
                 "status": "updated",
                 "memory": model_memory_as_dict(

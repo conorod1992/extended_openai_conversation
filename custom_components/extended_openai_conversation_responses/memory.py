@@ -662,7 +662,11 @@ class PersistentMemory:
                 )
                 lexical += _metadata_bonus(query_tokens, memory)
                 normalized_content = _normalize(memory.content)
-                if normalized_query and normalized_query in normalized_content:
+                if (
+                    normalized_query
+                    and query_tokens & token_set
+                    and normalized_query in normalized_content
+                ):
                     lexical += 0.35
                 elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
                     lexical += 0.18
@@ -1697,14 +1701,12 @@ def _memory_metadata_schema(*, include_scope: bool) -> dict[str, Any]:
 
 
 def _token_list(value: str) -> list[str]:
-    from .retrieval_text import cjk_terms
+    from .retrieval_text import cjk_terms, lexical_terms
 
     normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
     normalized = re.sub(r"(?<=\w)'s\b|(?<=s)'(?=\W|$)", "", normalized)
     terms = [
-        _stem(token)
-        for token in _TOKEN_PATTERN.findall(normalized)
-        if len(token) > 1 and token not in _STOP_WORDS
+        _stem(token) for token in lexical_terms(normalized) if token not in _STOP_WORDS
     ]
     return terms + sorted(cjk_terms(normalized) - set(terms))
 
@@ -1766,14 +1768,24 @@ def _bm25_score(
     k1, b = 1.2, 0.75
     score = 0.0
     max_score = 0.0
-    for term in dict.fromkeys(query_terms):
+    weights = dict.fromkeys(query_terms, 1.0)
+    # Compound expansion improves recall, but must not multiply the influence
+    # of one query word and drown out other matching words in longer requests.
+    for term in weights:
+        parts = set(term.split("-")) if "-" in term else set()
+        if parts and parts <= weights.keys():
+            weight = 1.0 / (len(parts) + 1)
+            weights[term] = min(weights[term], weight)
+            for part in parts:
+                weights[part] = min(weights[part], weight)
+    for term, weight in weights.items():
         df = document_frequency.get(term, 0)
         idf = math.log(1 + (document_count - df + 0.5) / (df + 0.5))
         tf = frequencies.get(term, 0)
         denominator = tf + k1 * (1 - b + b * len(document_terms) / average_length)
         if tf:
-            score += idf * (tf * (k1 + 1) / denominator)
-        max_score += idf * (k1 + 1) / (1 + k1 * (1 - b))
+            score += weight * idf * (tf * (k1 + 1) / denominator)
+        max_score += weight * idf * (k1 + 1) / (1 + k1 * (1 - b))
     return score / max_score if max_score else 0.0
 
 
@@ -1892,10 +1904,13 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
         or record.source not in {"explicit", "implicit"}
     ):
         raise ValueError("persistent memory metadata is invalid")
-    _clean_content(record.content)
-    _clean_category(record.category)
-    _clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH)
-    _clean_key(record.key)
+    record = replace(
+        record,
+        content=_clean_content(record.content),
+        category=_clean_category(record.category),
+        subject=_clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH),
+        key=_clean_key(record.key),
+    )
     _validate_privacy_fields(
         record.source, record.content, record.category, record.subject, record.key
     )
@@ -1924,10 +1939,8 @@ def _migrate_raw_record(raw: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _fact_equality(value: str) -> str:
-    """Fold case and whitespace without erasing meaning-bearing punctuation."""
-    return " ".join(unicodedata.normalize("NFC", value).casefold().split()).rstrip(
-        ".!?"
-    )
+    """Normalize whitespace while preserving case-sensitive facts such as paths."""
+    return " ".join(unicodedata.normalize("NFC", value).split()).rstrip(".!?")
 
 
 @lru_cache(maxsize=20_000)

@@ -49,6 +49,7 @@ from .backup import async_create_backup, async_restore_backup, inspect_backup
 from .built_in_functions import built_in_function_catalog
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
+    CONF_API_PROVIDER,
     CONF_CHAT_MODEL,
     CONF_CONVERSATION_TIMEOUT_MINUTES,
     CONF_FUNCTION_GROUPS,
@@ -60,6 +61,7 @@ from .const import (
     CONF_SHARED_MEMORY_MODE,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
+    DEFAULT_CHAT_MODEL,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_SHARED_MEMORY_MODE,
     DOMAIN,
@@ -341,6 +343,7 @@ async def _persist_function_configuration(
     extra_updates: dict[str, Any] | None = None,
     expected_revision: str | None = None,
     renamed_function: tuple[str, str] | None = None,
+    renamed_group: tuple[str, str] | None = None,
     rules_manager: Any = None,
 ) -> dict[str, Any]:
     """Persist one revision-checked tool edit without discarding quarantined siblings."""
@@ -373,6 +376,7 @@ async def _persist_function_configuration(
         groups,
         extra_updates=extra_updates,
         expected_revision=expected_revision,
+        renamed_group=renamed_group,
     )
 
 
@@ -800,6 +804,12 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             for tool in configured_tools
             if function_tool_enabled(tool) and not is_ha_tool(tool)
         ]
+        snapshot["effective_model"] = str(
+            subentry.data.get("azure_model")
+            if getattr(request.entry, "data", {}).get(CONF_API_PROVIDER) == "azure"
+            and subentry.data.get("azure_model")
+            else subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+        )
         return snapshot
     if action == "settings":
         return await rules.async_set_settings(
@@ -2155,6 +2165,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             tools,
             validated_groups,
             expected_revision=message.get("revision"),
+            renamed_group=(original_id, candidate["id"])
+            if isinstance(original_id, str) and isinstance(candidate.get("id"), str)
+            else None,
             extra_updates=group_reference_updates(
                 subentry.data, original_id, candidate["id"]
             )

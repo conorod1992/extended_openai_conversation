@@ -65,6 +65,7 @@ from .context import (
     select_summary_history,
 )
 from .context_summary_performance import (
+    async_apply_context_summary,
     context_summary_request,
     schedule_context_summary,
 )
@@ -952,6 +953,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         model=model,
                         api_mode=api_mode,
                     )
+                    # A preflight summary must settle before fallback pruning can
+                    # remove the exact prefix it owns. End-of-turn deferral remains.
+                    await async_apply_context_summary(self, chat_log)
                     messages = (
                         _convert_content_to_responses_param(
                             chat_log.content, prepared_user_content

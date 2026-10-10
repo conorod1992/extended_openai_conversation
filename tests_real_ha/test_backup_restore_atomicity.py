@@ -115,6 +115,9 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
     subentry_data_before = backup.preserve_legacy_guest_policy(
         dict(subentry.data), backup.agent_config_snapshot(subentry.data)
     )
+    # Rollback must preserve an unset provider setting rather than materialize a default.
+    if "reasoning_effort" not in subentry.data:
+        subentry_data_before.pop("reasoning_effort", None)
     subentry_title_before = subentry.title
 
     original_memory_replace = memory.async_replace_backup

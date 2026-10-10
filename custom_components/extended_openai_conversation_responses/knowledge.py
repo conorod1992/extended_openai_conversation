@@ -122,11 +122,11 @@ def _index_source(source: KnowledgeSource, index: _KnowledgeIndex) -> None:
             start=start,
             text=text,
             normalized_text=_normalize(text),
-            tokens=frozenset(_tokens(text) | metadata_tokens),
+            tokens=frozenset(_tokens(text)),
         )
         key = (source.source_id, chunk_id)
         index.chunks[key] = chunk
-        for token in chunk.tokens:
+        for token in chunk.tokens | metadata_tokens:
             index.token_index[token].add(key)
 
 
@@ -655,11 +655,14 @@ class KnowledgeLibrary:
         self._token_index = index.token_index
 
     def _unindex(self, source_id: str) -> None:
-        self._source_features.pop(source_id, None)
+        features = self._source_features.pop(source_id, None)
+        metadata_tokens = (
+            features.metadata_tokens if features is not None else frozenset()
+        )
         keys = [key for key in self._chunks if key[0] == source_id]
         for key in keys:
             chunk = self._chunks.pop(key)
-            for token in chunk.tokens:
+            for token in chunk.tokens | metadata_tokens:
                 indexed = self._token_index.get(token)
                 if indexed is None:
                     continue
@@ -979,15 +982,9 @@ def _clean_content(value: str) -> str:
 
 
 def _tokens(value: str) -> set[str]:
-    from .retrieval_text import cjk_terms
+    from .retrieval_text import cjk_terms, lexical_terms
 
-    return {
-        token
-        for token in _TOKEN_PATTERN.findall(
-            unicodedata.normalize("NFC", value).casefold()
-        )
-        if len(token) > 1
-    } | cjk_terms(value)
+    return set(lexical_terms(value)) | cjk_terms(value)
 
 
 def _normalize(value: str) -> str:

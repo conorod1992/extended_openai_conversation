@@ -119,6 +119,22 @@ def usage_daily_page(
     days = [_bounded_usage_day(manager.daily[date]) for date in page]
     return {
         "days": days,
+        "local_run_summary": {
+            "count": sum(
+                1
+                for run in manager.runs
+                if manager.detail_is_current(run.started_at)
+                and run.request_count == 0
+                and start_date
+                <= dt_util.as_local(_parse_time(run.completed_at or run.started_at))
+                .date()
+                .isoformat()
+                <= end_date
+            ),
+            "start_date": start_date,
+            "end_date": end_date,
+            "retention_days": manager.run_retention_days,
+        },
         **page_metadata(
             offset=safe_offset,
             limit=safe_limit,
@@ -339,12 +355,12 @@ def _archive_search_sync(
     normalized_query = _normalize(query)
     start, end = _local_date_bounds(start_date, end_date, time_zone)
     keep = offset + limit
-    heap: list[tuple[float, str, str, str, Any, Any]] = []
+    heap: list[tuple[float, str, str, str, Any, Any, int]] = []
     total = 0
     for session in sessions.values():
         if session.scope_id != scope_id or session.retention_state != "retained":
             continue
-        for turn in turns_by_session.get(session.session_id, ()):
+        for turn_index, turn in enumerate(turns_by_session.get(session.session_id, ())):
             timestamp = _parse_time(turn.timestamp)
             if (start_date or end_date) and not (start <= timestamp < end):
                 continue
@@ -372,6 +388,7 @@ def _archive_search_sync(
                 turn.turn_id,
                 session,
                 turn,
+                turn_index,
             )
             if len(heap) < keep:
                 heappush(heap, candidate)
@@ -383,6 +400,7 @@ def _archive_search_sync(
         {
             "session_id": session.session_id,
             "turn_id": turn.turn_id,
+            "turn_index": turn_index,
             "date": _parse_time(turn.timestamp)
             .astimezone(time_zone)
             .date()
@@ -391,7 +409,7 @@ def _archive_search_sync(
             "title": session.title,
             "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
         }
-        for _, _, _, _, session, turn in page
+        for _, _, _, _, session, turn, turn_index in page
     ]
     return {
         "results": records,

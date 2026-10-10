@@ -1,3 +1,5 @@
+import {invalidateUsageWindows} from "./usage-cache.js";
+import {scheduleWallTime, scheduleInstant} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
 import {stopLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
@@ -885,6 +887,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._invalidateCleanConfiguration(agentId);
     }
     if (agentId && section === "usage" && action === "clear_details") {
+      invalidateUsageWindows(this, agentId);
+      if (agentId === this._agentId) this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
       for (const key of this._sectionCache.keys()) {
         if (!key.startsWith(`${agentId}|usage-maintenance/usage`)) continue;
         this._sectionCache.delete(key);
@@ -1807,10 +1811,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _dateTimeLocal(value) {
-    if (!value) return "";
-    const date = new Date(value);
-    const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return shifted.toISOString().slice(0, 16);
+    return scheduleWallTime(value, this._hass?.config?.time_zone || "UTC");
   }
 
   _runGuestOperation(operation) {
@@ -1863,7 +1864,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
       const status = this._result?.status || {};
-      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : new Date(value).toISOString();
+      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : scheduleInstant(value, this._hass?.config?.time_zone || "UTC");
       try {
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");
@@ -2378,6 +2379,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (!this._ownsRetainedMutation(owner)) return;
       this._usageDetailGeneration = (this._usageDetailGeneration || 0) + 1;
       this._result = {...this._result, summary: {...this._result.summary, latest: null},
+        days: {...this._result.days, ...(this._result.days?.local_run_summary ? {
+          local_run_summary: {...this._result.days.local_run_summary, count: 0},
+        } : {})},
         runs: {...this._result.runs, runs: [], total: 0},
         loading: {...this._result.loading, runs: false}};
       writeSectionCache(this, this._sectionCacheKey(), {

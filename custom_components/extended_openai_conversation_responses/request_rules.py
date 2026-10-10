@@ -11,7 +11,6 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -1927,6 +1926,69 @@ def _legacy_action_slots(value: Any) -> set[str]:
     return result
 
 
+def _normalize_script_containers(value: Any) -> Any:
+    """Normalize HA action shorthand without replacing authored template text."""
+    if isinstance(value, Mapping):
+        value = [value]
+    if not isinstance(value, list):
+        return value
+    result = []
+    for action in value:
+        if not isinstance(action, Mapping):
+            result.append(action)
+            continue
+        normalized = deepcopy(dict(action))
+        for key in ("sequence", "then", "else", "default"):
+            if key in normalized:
+                normalized[key] = _normalize_script_containers(normalized[key])
+        if "parallel" in normalized:
+            branches = normalized["parallel"]
+            if isinstance(branches, Mapping):
+                branches = [branches]
+            if isinstance(branches, list):
+                parallel = []
+                for branch in branches:
+                    if isinstance(branch, Mapping) and "sequence" in branch:
+                        parallel.append(
+                            {
+                                **branch,
+                                "sequence": _normalize_script_containers(
+                                    branch["sequence"]
+                                ),
+                            }
+                        )
+                    elif isinstance(branch, (Mapping, list)):
+                        parallel.append(
+                            {"sequence": _normalize_script_containers(branch)}
+                        )
+                    else:
+                        parallel.append(branch)
+                normalized["parallel"] = parallel
+        if isinstance(normalized.get("repeat"), Mapping):
+            repeat = dict(normalized["repeat"])
+            if "sequence" in repeat:
+                repeat["sequence"] = _normalize_script_containers(repeat["sequence"])
+            normalized["repeat"] = repeat
+        if "choose" in normalized:
+            branches = normalized["choose"]
+            if isinstance(branches, Mapping):
+                branches = [branches]
+            if isinstance(branches, list):
+                normalized["choose"] = [
+                    {
+                        **branch,
+                        "sequence": _normalize_script_containers(
+                            branch.get("sequence", [])
+                        ),
+                    }
+                    if isinstance(branch, Mapping)
+                    else branch
+                    for branch in branches
+                ]
+        result.append(normalized)
+    return result
+
+
 def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
     """Validate native HA script syntax and enforce conservative size bounds."""
     migrated: list[dict[str, Any]] = []
@@ -1940,6 +2002,7 @@ def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
             migrated.append(_validate_local_action(item))
         else:
             migrated.append(dict(deepcopy(item)))
+    migrated = _normalize_script_containers(migrated)
     _validate_script_complexity(migrated)
     try:
         cv.SCRIPT_SCHEMA(_mask_script_templates(migrated))
@@ -2285,9 +2348,6 @@ async def async_call_active_function(
         payload = tool_result_data(result, default=result)
         if isinstance(payload, Mapping) and "result" in payload:
             payload = payload["result"]
-        if isinstance(payload, str):
-            with suppress(json.JSONDecodeError):
-                payload = json.loads(payload)
         results[result_alias] = _bounded_function_result(payload)
         return results[result_alias]
     return result
@@ -2390,7 +2450,9 @@ def resolve_result_values(
 
 
 def _native_result_sequence(
-    actions: Sequence[Mapping[str, Any]], slots: Mapping[str, str]
+    actions: Sequence[Mapping[str, Any]],
+    slots: Mapping[str, str],
+    alias_bindings: dict[str, tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Keep HA variables and waits in one script while exposing captured results."""
     aliases = {
@@ -2432,20 +2494,56 @@ def _native_result_sequence(
         data = step.get("data")
         alias = data.get("result_alias") if isinstance(data, Mapping) else None
         if alias:
-            response_name = f"__eoai_result_{alias}"
+            response_name = step.get("response_variable") or f"__eoai_result_{alias}"
+            binding = f"__eoai_alias_{uuid4().hex}"
+            if alias_bindings is not None:
+                alias_bindings[binding] = (alias, response_name)
             rendered["response_variable"] = response_name
             sequence.append(rendered)
             sequence.append(
                 {
                     "if": "{{ " + response_name + " is defined }}",
                     "then": [
-                        {"variables": {alias: "{{ " + response_name + ".result }}"}}
+                        {
+                            **(
+                                {"alias": binding} if alias_bindings is not None else {}
+                            ),
+                            "variables": {alias: "{{ " + response_name + ".result }}"},
+                        }
                     ],
                 }
             )
         else:
             sequence.append(rendered)
     return sequence
+
+
+class _ResultAliasVariables(ScriptVariables):
+    """Copy a captured result without HA interpreting strings as native literals."""
+
+    def __init__(self, variables: ScriptVariables, alias: str, response: str) -> None:
+        super().__init__(variables.as_dict())
+        self._alias = alias
+        self._response = response
+
+    def async_simple_render(self, run_variables: Mapping[str, Any]) -> dict[str, Any]:
+        return {self._alias: run_variables[self._response]["result"]}
+
+
+def _bind_result_aliases(value: Any, bindings: Mapping[str, tuple[str, str]]) -> Any:
+    """Bind only generated assignments after HA validation and template guards."""
+    if isinstance(value, Mapping):
+        result = {
+            key: _bind_result_aliases(item, bindings) for key, item in value.items()
+        }
+        marker = value.get("alias")
+        binding = bindings.get(marker) if isinstance(marker, str) else None
+        if binding is not None and isinstance(result.get("variables"), ScriptVariables):
+            result["variables"] = _ResultAliasVariables(result["variables"], *binding)
+        return result
+    if isinstance(value, list):
+        return [_bind_result_aliases(item, bindings) for item in value]
+    return value
 
 
 def _outcome_probes(
@@ -2834,6 +2932,10 @@ class _ResultReferenceTemplate(Template):
         self._source = source
         self._helper = helper
         self._on_error = on_error
+        self._exact_reference = re.fullmatch(
+            r"\{\{\s*" + re.escape(helper) + r"\('([A-Za-z_][A-Za-z0-9_.]*)'\)\s*\}\}",
+            source.template,
+        )
 
     def async_render_to_info(self, variables=None, **kwargs):
         scope = dict(variables or {})
@@ -2854,7 +2956,14 @@ class _ResultReferenceTemplate(Template):
         return info
 
     def async_render(self, *args, **kwargs):
-        return self.async_render_to_info(*args, **kwargs).result()
+        info = self.async_render_to_info(*args, **kwargs)
+        rendered = info.result()
+        if self._exact_reference is not None:
+            # A full authored result reference denotes its native value. HA's
+            # literal parser must not reinterpret a tool's JSON-looking text.
+            variables = args[0] if args else kwargs.get("variables")
+            return _lookup_result_value(self._exact_reference.group(1), variables or {})
+        return rendered
 
 
 def _guard_result_references(
@@ -3217,7 +3326,10 @@ async def _async_evaluate_matched_rule(
                 and step["data"].get("result_alias")
                 for step in executable_actions
             )
-            script_actions = _native_result_sequence(executable_actions, match.slots)
+            alias_bindings: dict[str, tuple[str, str]] = {}
+            script_actions = _native_result_sequence(
+                executable_actions, match.slots, alias_bindings
+            )
             if live_guest_policy is not None:
                 _ensure_action_guard_service(hass)
                 script_actions = _guard_native_actions(script_actions)
@@ -3239,11 +3351,6 @@ async def _async_evaluate_matched_rule(
                     # before a ready wait timeout can advance to another action.
                     result_reference_stop = create_eager_task(script.async_stop())
 
-            if captures_results:
-                validated_actions = _guard_result_references(
-                    validated_actions, stop_on_result_error
-                )
-
             def current_policy() -> GuestCapabilityPolicy:
                 nonlocal policy
                 if live_guest_policy is not None:
@@ -3255,8 +3362,15 @@ async def _async_evaluate_matched_rule(
                     validated_actions,
                     lambda value: _guard_template_reads(value, current_policy),
                 )
+            if captures_results:
+                # Keep result rendering outermost: the inner privacy wrapper
+                # authorizes reads, then exact references retain their raw type.
+                validated_actions = _guard_result_references(
+                    validated_actions, stop_on_result_error
+                )
             if require_matching_revision is not None:
                 require_matching_revision()
+            validated_actions = _bind_result_aliases(validated_actions, alias_bindings)
             # Once the validated native script starts, its frozen actions may
             # produce external effects. Later edits apply to future requests;
             # they must never invite a retry of an already executed action.

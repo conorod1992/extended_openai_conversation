@@ -152,7 +152,8 @@ for (const bundled of [false, true]) {
     await expect(panel.locator("main")).toContainText("This table shows saved individual runs.");
     await expect(panel.locator("main")).toContainText("Usage totals are kept even when detailed records are deleted.");
     await expect(panel.locator("main")).not.toContainText("loaded window");
-    await expect(panel.locator("main")).toContainText("Runs without provider requests");
+    await expect(panel.locator("main")).toContainText("Retained runs without provider requests");
+    await expect(panel.locator("main")).toContainText("individual run retention may exclude older runs.");
     await expect(panel.locator("main")).toContainText("Recent failed runs");
     await expect(panel.locator("main")).toContainText("Recent individual runs are stored separately, so they may cover a shorter period.");
   });
