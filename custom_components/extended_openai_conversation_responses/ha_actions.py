@@ -16,7 +16,7 @@ from homeassistant.const import (
     ATTR_LABEL_ID,
     ENTITY_MATCH_ALL,
 )
-from homeassistant.core import Context, HomeAssistant, State
+from homeassistant.core import Context, HomeAssistant, State, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import (
     device_registry as dr,
@@ -55,7 +55,8 @@ async def async_call_ha_action(
     target: Mapping[str, Any] | None = None,
     blocking: bool = False,
     context: Context | None = None,
-) -> dict[str, dict[str, Any]]:
+    include_response: bool = False,
+) -> dict[str, Any]:
     """Call one HA action through the integration's common authorization seam.
 
     Both model-driven native service calls and administrator-configured local
@@ -73,6 +74,7 @@ async def async_call_ha_action(
         target=target,
         blocking=blocking,
         context=context,
+        include_response=include_response,
     )
 
 
@@ -124,7 +126,8 @@ async def _async_call_ha_action_unchecked(
     target: Mapping[str, Any] | None = None,
     blocking: bool = False,
     context: Context | None = None,
-) -> dict[str, dict[str, Any]]:
+    include_response: bool = False,
+) -> dict[str, Any]:
     """Call an action after the caller completed policy enforcement."""
     if not hass.services.has_service(domain, service):
         raise ServiceNotFound(domain, service)
@@ -136,14 +139,29 @@ async def _async_call_ha_action_unchecked(
         kwargs["blocking"] = True
     if context is not None:
         kwargs["context"] = context
+    support = hass.services.supports_response(domain, service)
+    request_response = support is SupportsResponse.ONLY or (
+        include_response and support is SupportsResponse.OPTIONAL
+    )
+    if request_response:
+        kwargs.update(return_response=True, blocking=True)
     try:
-        await hass.services.async_call(domain=domain, service=service, **kwargs)
+        response = await hass.services.async_call(
+            domain=domain, service=service, **kwargs
+        )
     except _SERVICE_SCHEMA_ERRORS as err:
         # Home Assistant has transitioned service schemas from voluptuous to
         # probatio. Keep the integration's action boundary stable across both: a
         # schema rejection is an ordinary Home Assistant action failure that the
         # caller can surface to the model/user, not an uncaught conversation error.
         raise HomeAssistantError(str(err)) from err
+    if include_response:
+        result: dict[str, Any] = {}
+        if previous_state:
+            result["previous_state"] = previous_state
+        if request_response and response is not None:
+            result["response"] = response
+        return result
     return previous_state
 
 
