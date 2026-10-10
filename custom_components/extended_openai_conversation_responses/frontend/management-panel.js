@@ -1838,7 +1838,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
       const status = this._result?.status || {};
-      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : value;
+      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : new Date(value).toISOString();
       try {
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");

@@ -60,7 +60,11 @@ class _AuthorizedScriptServices:
             )
         if self._function is not None:
             self._function.validate_entity_ids(
-                self._hass, sorted(targets), self._exposed_entities
+                self._hass,
+                sorted(targets),
+                self._exposed_entities,
+                require_available=(domain, service)
+                != ("homeassistant", "update_entity"),
             )
         # Preserve HA's response variables, blocking and cancellation semantics.
         return await self._hass.services.async_call(

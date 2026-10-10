@@ -96,6 +96,7 @@ def _render_template(
     current_device_id: str | None,
     user_input: Any,
     skills: list[Any],
+    guest_policy: GuestCapabilityPolicy | None = None,
 ) -> str:
     """Render a prompt template without reparsing stable/static templates."""
     if not _template_requires_render(raw):
@@ -114,18 +115,25 @@ def _render_template(
             _TEMPLATE_CACHE.pop(next(iter(_TEMPLATE_CACHE)))
         rendered_template = template.Template(raw, hass)
         _TEMPLATE_CACHE[key] = rendered_template
-    return str(
-        rendered_template.async_render(
-            {
-                "ha_name": hass.config.location_name,
-                "exposed_entities": exposed_entities,
-                "current_device_id": current_device_id,
-                "user_input": user_input,
-                "skills": skills,
-            },
-            parse_result=False,
+    from .conversation import _ACTIVE_GUEST_POLICY
+
+    token = _ACTIVE_GUEST_POLICY.set(guest_policy) if guest_policy is not None else None
+    try:
+        return str(
+            rendered_template.async_render(
+                {
+                    "ha_name": hass.config.location_name,
+                    "exposed_entities": exposed_entities,
+                    "current_device_id": current_device_id,
+                    "user_input": user_input,
+                    "skills": skills,
+                },
+                parse_result=False,
+            )
         )
-    )
+    finally:
+        if token is not None:
+            _ACTIVE_GUEST_POLICY.reset(token)
 
 
 def _compact_json(value: Any) -> str:
@@ -285,6 +293,12 @@ def render_effective_prompt(
     memory_scope_available: bool | None = None,
 ) -> EffectivePrompt:
     """Render and assemble the production system prompt in deterministic order."""
+    if guest_policy is not None and guest_policy.guest_active:
+        exposed_entities = [
+            entity
+            for entity in exposed_entities
+            if guest_policy.allows_entity_read(entity["entity_id"])
+        ]
     exposed_entities = enrich_exposed_entities(hass, options, exposed_entities)
     raw_prompt: str = options.get(CONF_PROMPT, DEFAULT_PROMPT)
     if raw_prompt in LEGACY_DEFAULT_PROMPTS:
@@ -300,6 +314,7 @@ def render_effective_prompt(
         current_device_id=current_device_id,
         user_input=user_input,
         skills=skills,
+        guest_policy=guest_policy,
     )
     sections: list[PromptSection] = []
     policy = guest_policy or GuestCapabilityPolicy.unrestricted()
@@ -461,6 +476,7 @@ def render_effective_prompt(
                     current_device_id=current_device_id,
                     user_input=user_input,
                     skills=skills,
+                    guest_policy=guest_policy,
                 ),
                 "volatile",
             )
@@ -482,6 +498,7 @@ def render_effective_prompt(
                         current_device_id=current_device_id,
                         user_input=user_input,
                         skills=skills,
+                        guest_policy=guest_policy,
                     )
                     if configured_entities
                     else _default_exposed_entities_context(hass, exposed_entities)

@@ -501,7 +501,7 @@ class IntercomManager:
     def history(self) -> list[dict[str, Any]]:
         return [item.as_dict() for item in self._history]
 
-    def catalog(self) -> dict[str, Any]:
+    def catalog(self, *, entity_ids: set[str] | None = None) -> dict[str, Any]:
         areas = ar.async_get(self.hass)
         floors = fr.async_get(self.hass)
         labels = lr.async_get(self.hass)
@@ -513,6 +513,8 @@ class IntercomManager:
         relevant_label_ids: set[str] = set()
         relevant_floor_ids: set[str] = set()
         for state in self.hass.states.async_all("assist_satellite"):
+            if entity_ids is not None and state.entity_id not in entity_ids:
+                continue
             if not self._state_announce_capable(state):
                 continue
             entity = entity_registry.async_get(state.entity_id)

@@ -105,7 +105,17 @@ class ExtendedOpenAITemplateManager:
         self._entry_ids.discard(entry_id)
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
-        return get_exposed_entities(self.hass)
+        from .conversation import _ACTIVE_GUEST_POLICY
+
+        entities = get_exposed_entities(self.hass)
+        policy = _ACTIVE_GUEST_POLICY.get()
+        if policy is not None and policy.guest_active:
+            return [
+                entity
+                for entity in entities
+                if policy.allows_entity_read(entity["entity_id"])
+            ]
+        return entities
 
     def _get_working_directory(self) -> str:
         """Get the absolute working directory path."""
