@@ -134,6 +134,9 @@ async def test_failed_repair_rename_preserves_newer_configuration(
     original = deepcopy(data)
 
     class Rules:
+        async def async_backup_data(self):
+            return {"rules": []}
+
         def revision(self):
             return "rules-revision"
 

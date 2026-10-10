@@ -341,6 +341,7 @@ async def _persist_function_configuration(
     extra_updates: dict[str, Any] | None = None,
     expected_revision: str | None = None,
     renamed_function: tuple[str, str] | None = None,
+    rules_manager: Any = None,
 ) -> dict[str, Any]:
     """Persist one revision-checked tool edit without discarding quarantined siblings."""
     from .management_function_repair import (
@@ -348,6 +349,7 @@ async def _persist_function_configuration(
         isolated_function_tools,
     )
 
+    _require_agent_config_revision(subentry, expected_revision)
     _valid, invalid, _issue = isolated_function_tools(dict(subentry.data))
     editable = editable_function_tools(dict(subentry.data)) if invalid else []
     candidate_tools = [*tools, *(editable[item["index"]] for item in invalid)]
@@ -361,6 +363,7 @@ async def _persist_function_configuration(
             CONF_FUNCTION_GROUPS: groups,
         },
         renamed_function=renamed_function,
+        rules_manager=rules_manager,
     )
     return _tolerant_persist_function_configuration(
         hass,
@@ -1663,11 +1666,15 @@ async def _async_validate_configuration_dependencies(
     config: Mapping[str, Any],
     *,
     renamed_function: tuple[str, str] | None = None,
+    rules_manager: Any = None,
 ) -> None:
     """Validate retained rules against the exact replacement configuration."""
     from .transfer import _async_validate_request_rule_function_dependencies
 
-    rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
+    rules = rules_manager or await async_get_request_rules(
+        hass, entry.entry_id, subentry.subentry_id
+    )
+    rules_revision = rules.revision()
     document = await rules.async_backup_data()
     if renamed_function is not None:
         from .function_dependency_integrity import _rule_script_actions
@@ -1683,7 +1690,23 @@ async def _async_validate_configuration_dependencies(
                     and data.get("function") == old_name
                 ):
                     data["function"] = new_name
-    await _async_validate_request_rule_function_dependencies(hass, document, config)
+    # Deepcopy dehydrates runtime templates to their persisted source. Disabling
+    # a retained definition intentionally inactivates its rules; it is distinct
+    # from removing it or making its argument schema incompatible.
+    candidate = deepcopy(dict(config))
+    tools = candidate.get(CONF_FUNCTION_TOOLS)
+    if isinstance(tools, str):
+        tools = yaml.safe_load(tools)
+    if isinstance(tools, list):
+        for tool in tools:
+            if isinstance(tool, dict):
+                tool["enabled"] = True
+        candidate[CONF_FUNCTION_TOOLS] = tools
+    await _async_validate_request_rule_function_dependencies(hass, document, candidate)
+    if rules.revision() != rules_revision:
+        raise HomeAssistantError(
+            "Request Rules changed while validating Function Tools; reload before retrying."
+        )
 
 
 async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
@@ -1938,6 +1961,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             groups,
             extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: renamed_guest_names},
             renamed_function=(original_name, saved_name),
+            rules_manager=rules,
             expected_revision=operation_revision,
         )
         try:
