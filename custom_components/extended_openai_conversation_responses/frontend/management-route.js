@@ -625,7 +625,10 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   const selected = panel._selectedAgent?.();
   if (panel._agentId) writeOptionalStorage(AGENT_KEY, panel._agentId);
   if (selected?.entry_id) writeOptionalStorage(ENTRY_KEY, selected.entry_id);
-  if (previousAgentId !== panel._agentId) panel._scopeId = null;
+  if (previousAgentId !== panel._agentId) {
+    panel._scopeId = null;
+    panel._ruleGroupFilter = "all";
+  }
   panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
 
   const overviewSelected = panel._viewKey?.() === "overview" && Boolean(selected);

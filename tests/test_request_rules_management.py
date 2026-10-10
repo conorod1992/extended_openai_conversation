@@ -871,6 +871,48 @@ async def test_management_create_assigns_id_and_validates_canonical_function_ref
     assert updated["diagnostics"] == {}
 
 
+async def test_deleting_rule_returns_diagnostics_for_reactivated_patterns(
+    hass, monkeypatch
+) -> None:
+    from tests.test_request_rule_match_bounds import _rule
+
+    monkeypatch.setattr(rr, "MAX_AGENT_PATTERN_STATES", 8)
+    rules = RequestRules(MemoryStore())
+    await rules.async_replace_backup(
+        {"rules": [_rule(0, "first long command"), _rule(1, "second long command")]}
+    )
+    assert set(rules.snapshot()["diagnostics"]) == {"rule-1"}
+    subentry = SimpleNamespace(
+        subentry_id="agent", subentry_type="conversation", data={}
+    )
+    entry = SimpleNamespace(domain=DOMAIN, subentries={"agent": subentry})
+    hass.config_entries.async_get_entry.return_value = entry
+
+    async def get_rules(*_args):
+        return rules
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.management_ui.async_get_request_rules",
+        get_rules,
+    )
+    result = await async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "request_rules",
+            "action": "delete",
+            "entry_id": "entry",
+            "subentry_id": "agent",
+            "rule_id": "rule-0",
+            "revision": rules.revision(),
+            "confirm": True,
+        },
+    )
+    assert rules.match("second long command").rule["id"] == "rule-1"
+    assert result["diagnostics"] == rules.snapshot()["diagnostics"] == {}
+
+
 # Mutation-order and stale-writer regressions formerly split by roadmap provenance.
 
 from types import SimpleNamespace
