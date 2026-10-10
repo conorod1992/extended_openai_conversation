@@ -189,7 +189,10 @@ def test_strict_validation_reaches_union_branches_and_definitions():
         ("$defs", {"filter": {"type": "object"}}),
     ]:
         schema = strict_object()
-        schema[keyword] = child
+        if keyword == "anyOf":
+            schema = strict_object({"nested": {"anyOf": child}})
+        else:
+            schema[keyword] = child
         with pytest.raises(HomeAssistantError, match="additionalProperties"):
             validate_strict_function_schema(schema)
 
@@ -218,3 +221,32 @@ def test_backup_roundtrip_preserves_dynamic_reasoning_default(explicit, quaranti
         routed = {**restored, "chat_model": "gpt-5-pro", "functions": []}
         request = build_provider_request_snapshot(routed, {}, tools_required=False)
         assert request.api_kwargs["reasoning"]["effort"] == "high"
+
+
+@pytest.mark.parametrize("keyword,value", [
+    ("not", {"const": "blocked"}), ("allOf", [{"type": "string"}]),
+    ("oneOf", [{"type": "string"}]), ("if", {"const": "x"}),
+    ("then", {"const": "y"}), ("else", {"const": "z"}),
+    ("dependentRequired", {"a": ["b"]}), ("dependentSchemas", {"a": {}}),
+])
+def test_strict_rejects_unsupported_composition_at_save(keyword, value):
+    schema = {"type": "object", "properties": {"query": {"type": "string", keyword: value}},
+              "required": ["query"], "additionalProperties": False}
+    tool = {"spec": {"name": "demo", "strict": True, "parameters": schema},
+            "function": {"type": "native", "name": "execute_service"}}
+    with pytest.raises(HomeAssistantError, match=keyword):
+        agent_config.normalize_agent_config({"functions": [tool]})
+    tool["spec"]["strict"] = False
+    assert agent_config.normalize_agent_config({"functions": [tool]})["functions"]
+
+
+def test_strict_root_anyof_rejected_but_nested_unions_and_references_supported():
+    branch = {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
+    with pytest.raises(HomeAssistantError, match="root"):
+        validate_strict_function_schema({**branch, "anyOf": [branch]})
+    validate_strict_function_schema({
+        "type": "object", "properties": {"node": {"anyOf": [{"$ref": "#/$defs/node"}, {"type": "null"}]}},
+        "required": ["node"], "additionalProperties": False,
+        "$defs": {"node": {"type": "object", "properties": {"next": {"$ref": "#/$defs/node"}},
+                           "required": ["next"], "additionalProperties": False}},
+    })

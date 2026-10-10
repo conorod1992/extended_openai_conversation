@@ -160,12 +160,26 @@ def validate_strict_function_schema(schema: Mapping[str, Any]) -> None:
     """Reject provider-invalid strict object schemas at configuration time."""
     if schema.get("type") != "object":
         raise _schema_error("strict parameters.type must be object")
+    if "anyOf" in schema:
+        raise _schema_error("strict parameters must not use anyOf at the root")
+    unsupported = _UNSUPPORTED_SEMANTIC_SCHEMA_KEYWORDS - {
+        "anyOf",
+        "$ref",
+        "$defs",
+        "definitions",
+        "$schema",
+        "multipleOf",
+    }
 
     def visit(node: Any, path: str, depth: int = 0) -> None:
         if not isinstance(node, Mapping):
             raise _schema_error(f"strict schema at `{path}` must be an object")
         if depth > 64:
             raise _schema_error(f"strict schema at `{path}` is too deeply nested")
+        rejected = unsupported.intersection(node)
+        if rejected:
+            keyword = sorted(rejected)[0]
+            raise _schema_error(f"strict `{path}.{keyword}` is not supported")
         types = node.get("type", [])
         types = [types] if isinstance(types, str) else types
         if not isinstance(types, list) or not all(
@@ -201,7 +215,7 @@ def validate_strict_function_schema(schema: Mapping[str, Any]) -> None:
                 visit(child, f"{path}.{keyword}.{name}", depth + 1)
         if "items" in node:
             visit(node["items"], f"{path}.items", depth + 1)
-        for keyword in ("anyOf", "oneOf", "allOf"):
+        for keyword in ("anyOf",):
             children = node.get(keyword, [])
             if not isinstance(children, list):
                 raise _schema_error(
