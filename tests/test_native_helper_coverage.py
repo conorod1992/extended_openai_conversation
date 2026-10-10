@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import ha_actions
 from custom_components.extended_openai_conversation_responses.functions import native
 
 
@@ -23,7 +24,7 @@ def _services(hass, target):
 
 def test_service_participants_filters_mapping_entities(hass) -> None:
     entities = {"light.one": object(), "light.two": object()}
-    target = partial(native.service_helpers.entity_service_call, object(), entities)
+    target = partial(ha_actions.service_helpers.entity_service_call, object(), entities)
     _services(hass, target)
 
     assert native._service_participants(
@@ -37,7 +38,7 @@ def test_service_participants_filters_mapping_entities(hass) -> None:
 def test_service_participants_accepts_callable_entity_mapping(hass) -> None:
     entities = {"switch.one": object()}
     target = partial(
-        native.service_helpers.entity_service_call,
+        ha_actions.service_helpers.entity_service_call,
         object(),
         lambda: entities,
     )
@@ -56,7 +57,7 @@ def test_service_participants_filters_legacy_platform_collection(hass) -> None:
         SimpleNamespace(entities={"light.one": object()}),
         SimpleNamespace(entities={"light.two": object()}),
     ]
-    target = partial(native.service_helpers.entity_service_call, object(), platforms)
+    target = partial(ha_actions.service_helpers.entity_service_call, object(), platforms)
     _services(hass, target)
 
     assert native._service_participants(
@@ -72,10 +73,10 @@ def test_service_participants_filters_legacy_platform_collection(hass) -> None:
     [
         None,
         SimpleNamespace(job=SimpleNamespace(target=lambda: None)),
-        _registered(partial(native.service_helpers.entity_service_call, object())),
+        _registered(partial(ha_actions.service_helpers.entity_service_call, object())),
         _registered(
             partial(
-                native.service_helpers.entity_service_call,
+                ha_actions.service_helpers.entity_service_call,
                 object(),
                 object(),
             )
