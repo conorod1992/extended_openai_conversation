@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable
 from datetime import datetime, timedelta
-from functools import partial
 import logging
 import os
 from pathlib import Path
@@ -27,17 +26,17 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, State, valid_entity_id
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
-from homeassistant.helpers import (
-    llm,
-    service as service_helpers,
-    target as target_helpers,
-)
+from homeassistant.helpers import llm, target as target_helpers
 import homeassistant.util.dt as dt_util
 
 from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, NativeNotFound
 from ..function_execution import backend_failure
-from ..ha_actions import async_call_ha_action
+from ..ha_actions import (
+    _service_participants,
+    async_call_ha_action,
+    service_target_entity_ids,
+)
 from ..ha_permissions import entity_access_error, get_active_ha_context
 from ..intercom import async_get_intercom
 from ..intercom_permissions import async_authorized_broadcast_targets
@@ -61,38 +60,6 @@ _INDIRECT_TARGET_KEYS = (
 _AUTOMATION_WRITE_LOCK_KEY = f"{DOMAIN}.automation_write_lock"
 _UNCONDITIONAL_WRITE = object()
 _MAX_STATISTIC_IDS = 100
-
-
-def _service_participants(
-    hass: HomeAssistant, domain: str, service: str, selected: set[str]
-) -> set[str] | None:
-    """Read HA's registered entity-service candidates, without calling the service.
-
-    Entity services are registered as partials of HA's dispatch helpers. Other
-    services own their target semantics; returning None preserves their checks.
-    """
-    registered = hass.services.async_services_for_domain(domain).get(service)
-    target = registered.job.target if registered is not None else None
-    if not isinstance(target, partial) or target.func not in (
-        service_helpers.entity_service_call,
-        getattr(service_helpers, "batched_entity_service_call", None),
-    ):
-        return None
-    if len(target.args) < 2:
-        return None
-    entities = target.args[1]
-    if callable(entities):
-        entities = entities()
-    if isinstance(entities, Mapping):
-        return {entity_id for entity_id in selected if entity_id in entities}
-    # Older HA dispatch helpers receive the component's entity platforms.
-    if isinstance(entities, (list, tuple)):
-        return {
-            entity_id
-            for entity_id in selected
-            if any(entity_id in platform.entities for platform in entities)
-        }
-    return None
 
 
 async def _async_settle_automation_update(operation: Awaitable[str]) -> str:
@@ -414,33 +381,9 @@ class NativeFunction(Function):
             )
         participating = set(entity_ids)
         if domain is not None and service is not None:
-            if domain == "homeassistant" and service in {
-                "turn_on",
-                "turn_off",
-                "toggle",
-            }:
-                participating = set()
-                by_domain: dict[str, set[str]] = {}
-                for entity_id in entity_ids:
-                    by_domain.setdefault(entity_id.split(".", 1)[0], set()).add(
-                        entity_id
-                    )
-                for entity_domain, selected in by_domain.items():
-                    if (
-                        entity_domain == "homeassistant"
-                        or not hass.services.has_service(entity_domain, service)
-                    ):
-                        continue
-                    candidates = _service_participants(
-                        hass, entity_domain, service, selected
-                    )
-                    participating.update(
-                        selected if candidates is None else selected & candidates
-                    )
-            else:
-                candidates = _service_participants(hass, domain, service, participating)
-                if candidates is not None:
-                    participating.intersection_update(candidates)
+            participating = service_target_entity_ids(
+                hass, domain, service, participating, participants=_service_participants
+            )
             if not participating:
                 raise HomeAssistantError(
                     "Service target does not resolve to any participating entities"

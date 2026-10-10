@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
+from functools import partial
 from typing import Any
 
 from homeassistant.const import (
@@ -19,6 +20,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
+    service as service_helpers,
     target as target_helpers,
 )
 
@@ -84,7 +86,9 @@ async def async_authorize_ha_action(
 ) -> set[str]:
     """Authorize the exact dispatch without replacing native service responses."""
     context = context or get_active_ha_context()
-    entity_ids = _resolve_target_entity_ids(hass, data, target)
+    entity_ids = service_target_entity_ids(
+        hass, domain, service, _resolve_target_entity_ids(hass, data, target)
+    )
     target_identity = _target_identity(hass, entity_ids)
     service_identity = _service_identity(hass, domain, service)
     await async_require_control_permission(hass, entity_ids, context=context)
@@ -98,7 +102,13 @@ async def async_authorize_ha_action(
         for key in (ATTR_DEVICE_ID, ATTR_AREA_ID, ATTR_FLOOR_ID, ATTR_LABEL_ID)
     )
     if (
-        (indirect and _resolve_target_entity_ids(hass, data, target) != entity_ids)
+        (
+            indirect
+            and service_target_entity_ids(
+                hass, domain, service, _resolve_target_entity_ids(hass, data, target)
+            )
+            != entity_ids
+        )
         or not _same_target_identity(
             _target_identity(hass, entity_ids), target_identity
         )
@@ -408,3 +418,68 @@ def _action_supports_previous_state(domain: str, service: str) -> bool:
     if domain in _NON_REVERSIBLE_DOMAINS:
         return False
     return domain != "automation" or service in _AUTOMATION_STATE_SERVICES
+
+
+def _service_participants(
+    hass: HomeAssistant, domain: str, service: str, selected: set[str]
+) -> set[str] | None:
+    """Read HA's registered entity-service candidates, without calling the service.
+
+    Entity services are registered as partials of HA's dispatch helpers. Other
+    services own their target semantics; returning None preserves their checks.
+    """
+    registered = hass.services.async_services_for_domain(domain).get(service)
+    target = registered.job.target if registered is not None else None
+    if not isinstance(target, partial) or target.func not in (
+        service_helpers.entity_service_call,
+        getattr(service_helpers, "batched_entity_service_call", None),
+    ):
+        return None
+    if len(target.args) < 2:
+        return None
+    entities = target.args[1]
+    if callable(entities):
+        entities = entities()
+    if isinstance(entities, Mapping):
+        return {entity_id for entity_id in selected if entity_id in entities}
+    # Older HA dispatch helpers receive the component's entity platforms.
+    if isinstance(entities, (list, tuple)):
+        return {
+            entity_id
+            for entity_id in selected
+            if any(entity_id in platform.entities for platform in entities)
+        }
+    return None
+
+
+def service_target_entity_ids(
+    hass: HomeAssistant,
+    domain: str,
+    service: str,
+    selected: set[str],
+    *,
+    participants: Callable[[HomeAssistant, str, str, set[str]], set[str] | None]
+    | None = None,
+) -> set[str]:
+    """Limit policy checks to HA service participants; retain unknown semantics.
+
+    Generic power services dispatch to each selected domain with that service.
+    Other generic/custom services must retain every selected entity: filtering
+    them by the service domain would hide targets they can actually affect.
+    """
+    participants = participants or _service_participants
+    if domain == "homeassistant" and service in {"turn_on", "turn_off", "toggle"}:
+        result: set[str] = set()
+        by_domain: dict[str, set[str]] = {}
+        for entity_id in sorted(selected):
+            by_domain.setdefault(entity_id.split(".", 1)[0], set()).add(entity_id)
+        for entity_domain, entity_ids in by_domain.items():
+            if entity_domain == "homeassistant" or not hass.services.has_service(
+                entity_domain, service
+            ):
+                continue
+            candidates = participants(hass, entity_domain, service, entity_ids)
+            result.update(entity_ids if candidates is None else entity_ids & candidates)
+        return result
+    candidates = participants(hass, domain, service, selected)
+    return set(selected) if candidates is None else selected & candidates
