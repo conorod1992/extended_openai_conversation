@@ -1892,10 +1892,13 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
         or record.source not in {"explicit", "implicit"}
     ):
         raise ValueError("persistent memory metadata is invalid")
-    _clean_content(record.content)
-    _clean_category(record.category)
-    _clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH)
-    _clean_key(record.key)
+    record = replace(
+        record,
+        content=_clean_content(record.content),
+        category=_clean_category(record.category),
+        subject=_clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH),
+        key=_clean_key(record.key),
+    )
     _validate_privacy_fields(
         record.source, record.content, record.category, record.subject, record.key
     )
@@ -1924,10 +1927,8 @@ def _migrate_raw_record(raw: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _fact_equality(value: str) -> str:
-    """Fold case and whitespace without erasing meaning-bearing punctuation."""
-    return " ".join(unicodedata.normalize("NFC", value).casefold().split()).rstrip(
-        ".!?"
-    )
+    """Normalize whitespace while preserving case-sensitive facts such as paths."""
+    return " ".join(unicodedata.normalize("NFC", value).split()).rstrip(".!?")
 
 
 @lru_cache(maxsize=20_000)

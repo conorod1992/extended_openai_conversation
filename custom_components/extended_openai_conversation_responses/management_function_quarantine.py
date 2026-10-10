@@ -156,7 +156,10 @@ def merge_unchanged_function_configuration(
 
 
 def _restore_quarantined_group_members(
-    groups: list[dict[str, Any]], raw_groups: Any, quarantined: frozenset[str]
+    groups: list[dict[str, Any]],
+    raw_groups: Any,
+    quarantined: frozenset[str],
+    renamed_group: tuple[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Retain hidden invalid members in persisted groups while editing valid siblings."""
     restored = deepcopy(groups)
@@ -170,7 +173,10 @@ def _restore_quarantined_group_members(
     for group in restored:
         if not isinstance(group, dict) or not isinstance(group.get("functions"), list):
             continue
-        original = by_id.get(group.get("id"))
+        original_id = group.get("id")
+        if renamed_group is not None and original_id == renamed_group[1]:
+            original_id = renamed_group[0]
+        original = by_id.get(original_id)
         if not isinstance(original, dict):
             continue
         hidden = [
@@ -193,6 +199,7 @@ def _tolerant_persist_function_configuration(
     *,
     extra_updates: dict[str, Any] | None = None,
     expected_revision: str | None = None,
+    renamed_group: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Persist edits to valid siblings while retaining quarantined raw tools."""
     raw = dict(subentry.data)
@@ -244,6 +251,7 @@ def _tolerant_persist_function_configuration(
         groups,
         raw.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
         invalid_names,
+        renamed_group,
     )
     persisted = dict(raw)
     persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(

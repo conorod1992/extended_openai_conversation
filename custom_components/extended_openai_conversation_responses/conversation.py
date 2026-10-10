@@ -2551,7 +2551,7 @@ class ExtendedOpenAIAgentEntity(
         if self._memory is None:
             raise RuntimeError("persistent memory is unavailable")
         readable_scope_ids = self._current_readable_memory_scope_ids(llm_context)
-        if not readable_scope_ids:
+        if operation in {"search", "list"} and not readable_scope_ids:
             raise RuntimeError("persistent memory is disabled for this data scope")
 
         if operation in {"add", "upsert"}:
