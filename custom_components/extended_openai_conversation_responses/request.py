@@ -278,6 +278,16 @@ def _sampling_value(
     return None
 
 
+def capability_model_identity(
+    options: Mapping[str, Any], entry_data: Mapping[str, Any]
+) -> str:
+    """Resolve model metadata independently of an Azure deployment name."""
+    model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+    if entry_data.get(CONF_API_PROVIDER) == "azure":
+        return str(options.get("azure_model") or model)
+    return model
+
+
 def build_provider_request_snapshot(
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
@@ -301,12 +311,26 @@ def build_provider_request_snapshot(
         capabilities = (
             model_capabilities
             if model_capabilities is not None
-            else get_model_capabilities(
-                str(options.get("azure_model") or model)
-                if entry_data.get(CONF_API_PROVIDER) == "azure"
-                else model
-            )
+            else get_model_capabilities(capability_model_identity(options, entry_data))
         )
+        if (
+            capabilities.get("status") == "unknown"
+            and entry_data.get(CONF_API_PROVIDER) != "azure"
+            and entry_data.get(CONF_BASE_URL)
+            and not supports_openai_hosted_tools(
+                entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+            )
+        ):
+            # Unknown third-party Chat Completions models use the broadly
+            # supported field; exact catalog entries retain their own mapping.
+            capabilities = {
+                **capabilities,
+                "output_tokens": {
+                    **capabilities["output_tokens"],
+                    "chat_completions": "max_tokens",
+                    "legacy_max_tokens": "chat_completions_only",
+                },
+            }
         with model_capability_snapshot(model, capabilities):
             effort: str | None = None
             if capabilities["reasoning"]["supported"]:
@@ -345,8 +369,7 @@ def build_provider_request_snapshot(
                     and model not in _LEGACY_TOKEN_MIGRATION_LOGGED
                 ):
                     _LOGGER.debug(
-                        "Normalizing persisted max_tokens for %s to API-specific %s; "
-                        "deprecated max_tokens will not be sent",
+                        "Normalizing persisted output token limit for %s to API-specific %s",
                         model,
                         field,
                     )

@@ -156,6 +156,154 @@ def validate_function_schema(schema: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(warnings)
 
 
+def validate_strict_function_schema(schema: Mapping[str, Any]) -> None:
+    """Reject provider-invalid strict object schemas at configuration time."""
+    if schema.get("type") != "object":
+        raise _schema_error("strict parameters.type must be object")
+    if "anyOf" in schema:
+        raise _schema_error("strict parameters must not use anyOf at the root")
+    unsupported = _UNSUPPORTED_SEMANTIC_SCHEMA_KEYWORDS - {
+        "anyOf",
+        "$ref",
+        "$defs",
+        "definitions",
+        "$schema",
+        "multipleOf",
+    }
+    property_count = enum_count = string_size = 0
+    definitions: list[Mapping[str, Any]] = []
+
+    def visit(node: Any, path: str, depth: int = 0) -> None:
+        nonlocal property_count, enum_count, string_size
+        if not isinstance(node, Mapping):
+            raise _schema_error(f"strict schema at `{path}` must be an object")
+        if depth > 64:
+            raise _schema_error(f"strict schema at `{path}` is too deeply nested")
+        choices = node.get("enum", [])
+        if not isinstance(choices, list):
+            raise _schema_error(f"strict `{path}.enum` must be a list")
+        enum_count += len(choices)
+        enum_size = sum(len(item) for item in choices if isinstance(item, str))
+        string_size += enum_size
+        if len(choices) > 250 and enum_size > 15_000:
+            raise _schema_error(f"strict `{path}.enum` exceeds 15000 characters")
+        if isinstance(node.get("const"), str):
+            string_size += len(node["const"])
+        rejected = unsupported.intersection(node)
+        if rejected:
+            keyword = sorted(rejected)[0]
+            raise _schema_error(f"strict `{path}.{keyword}` is not supported")
+        types = node.get("type", [])
+        types = [types] if isinstance(types, str) else types
+        if not isinstance(types, list) or not all(
+            isinstance(item, str) for item in types
+        ):
+            raise _schema_error(f"strict `{path}.type` must name valid JSON types")
+        if "object" in types or "properties" in node:
+            if node.get("additionalProperties") is not False:
+                raise _schema_error(
+                    f"strict `{path}.additionalProperties` must be false"
+                )
+            properties = node.get("properties", {})
+            required = node.get("required", [])
+            if not isinstance(properties, Mapping):
+                raise _schema_error(f"strict `{path}.properties` must be an object")
+            if not isinstance(required, list) or not all(
+                isinstance(item, str) for item in required
+            ):
+                raise _schema_error(
+                    f"strict `{path}.required` must be a list of property names"
+                )
+            if set(required) != set(properties):
+                raise _schema_error(
+                    f"strict `{path}.required` must include every property"
+                )
+        if "array" in types and "items" not in node:
+            raise _schema_error(f"strict `{path}.items` is required")
+        for keyword in ("properties", "$defs", "definitions"):
+            children = node.get(keyword, {})
+            if not isinstance(children, Mapping):
+                raise _schema_error(f"strict `{path}.{keyword}` must be an object")
+            for name, child in children.items():
+                if not isinstance(name, str):
+                    raise _schema_error(
+                        f"strict `{path}.{keyword}` names must be strings"
+                    )
+                string_size += len(name)
+                if keyword == "properties":
+                    property_count += 1
+                else:
+                    definitions.append(child)
+                visit(child, f"{path}.{keyword}.{name}", depth + 1)
+        if "items" in node:
+            visit(node["items"], f"{path}.items", depth + 1)
+        for keyword in ("anyOf",):
+            children = node.get(keyword, [])
+            if not isinstance(children, list):
+                raise _schema_error(
+                    f"strict `{path}.{keyword}` must be a list of schemas"
+                )
+            for index, child in enumerate(children):
+                visit(child, f"{path}.{keyword}[{index}]", depth + 1)
+
+    visit(schema, "parameters")
+    if property_count > 5000:
+        raise _schema_error("strict schema exceeds 5000 object properties")
+    if enum_count > 1000:
+        raise _schema_error("strict schema exceeds 1000 enum values")
+    if string_size > 120_000:
+        raise _schema_error(
+            "strict schema exceeds 120000 characters in names and values"
+        )
+
+    def resolve_reference(reference: Any) -> Mapping[str, Any]:
+        if not isinstance(reference, str) or not (
+            reference == "#" or reference.startswith("#/")
+        ):
+            raise _schema_error("strict $ref must be a local schema reference")
+        target: Any = schema
+        for part in reference[2:].split("/") if reference != "#" else ():
+            key = part.replace("~1", "/").replace("~0", "~")
+            target = target.get(key) if isinstance(target, Mapping) else None
+        if not isinstance(target, Mapping):
+            raise _schema_error(
+                f"strict $ref `{reference}` does not resolve to a schema"
+            )
+        return target
+
+    seen_depth: dict[int, int] = {}
+
+    def check_nesting(
+        node: Mapping[str, Any], level: int, ancestors: frozenset[int]
+    ) -> None:
+        identity = id(node)
+        # Recursive schemas are supported. Check finite paths, not repeated
+        # expansion of a back-reference; count shared definitions only once above.
+        if identity in ancestors or seen_depth.get(identity, -1) >= level:
+            return
+        seen_depth[identity] = level
+        types = node.get("type", [])
+        types = [types] if isinstance(types, str) else types
+        level += int(
+            bool({"object", "array"}.intersection(types)) or "properties" in node
+        )
+        if level > 10:
+            raise _schema_error("strict schema exceeds 10 levels of nesting")
+        ancestors = ancestors | {identity}
+        if "$ref" in node:
+            check_nesting(resolve_reference(node["$ref"]), level, ancestors)
+        for child in node.get("properties", {}).values():
+            check_nesting(child, level, ancestors)
+        if "items" in node:
+            check_nesting(node["items"], level, ancestors)
+        for child in node.get("anyOf", []):
+            check_nesting(child, level, ancestors)
+
+    check_nesting(schema, 0, frozenset())
+    for definition in definitions:
+        check_nesting(definition, 0, frozenset())
+
+
 def _validate_schema_node(
     path: str, schema: Mapping[str, Any], warnings: list[str]
 ) -> None:

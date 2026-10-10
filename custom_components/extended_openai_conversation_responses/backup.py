@@ -132,7 +132,10 @@ def _configuration_snapshot_preserving_quarantine(
     known = {key: value for key, value in raw.items() if key in AGENT_CONFIG_FIELDS}
     normalize = agent_config_snapshot if frontend_shape else normalize_agent_config
     try:
-        return {**preserve_legacy_guest_policy(raw, normalize(known)), **opaque}
+        snapshot = {**preserve_legacy_guest_policy(raw, normalize(known)), **opaque}
+        if "reasoning_effort" not in raw:
+            snapshot.pop("reasoning_effort", None)
+        return snapshot
     except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
         # Backup/import is a recovery boundary: tolerate only a Function Tool
         # validation failure. Normalize every unrelated field strictly using a
@@ -167,6 +170,8 @@ def _configuration_snapshot_preserving_quarantine(
                         ) from err
             else:
                 snapshot.pop(key, None)
+        if "reasoning_effort" not in raw:
+            snapshot.pop("reasoning_effort", None)
         return snapshot
 
 

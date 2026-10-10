@@ -1,6 +1,6 @@
 {
-  "schema_version": 7,
-  "catalog_version": 12,
+  "schema_version": 8,
+  "catalog_version": 13,
   "compatibility": {"minimum_eoai_version": "6.8.3"},
   "defaults": {
     "status": "unknown",
