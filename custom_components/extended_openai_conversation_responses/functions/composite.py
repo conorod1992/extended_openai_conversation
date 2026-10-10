@@ -72,10 +72,19 @@ class CompositeFunction(Function):
         if not isinstance(function_config, dict):
             raise vol.Invalid("expected dictionary")
 
-        composite_schema = {vol.Optional("response_variable"): str}
         function = get_function(function_config["type"])
-
-        return dict(function.data_schema.extend(composite_schema)(function_config))
+        nested = dict(function_config)
+        response_variable = nested.pop("response_variable", None)
+        if "response_variable" in function_config and not isinstance(
+            response_variable, str
+        ):
+            raise vol.Invalid("response_variable must be a string")
+        # Use the Function's full validator, including controls enforced outside
+        # its underlying HA schema (for example transient Script concurrency).
+        validated = dict(function.validate_schema(nested))
+        if response_variable is not None:
+            validated["response_variable"] = response_variable
+        return validated
 
     async def execute(
         self,

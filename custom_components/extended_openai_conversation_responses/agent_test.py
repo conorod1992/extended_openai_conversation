@@ -146,7 +146,17 @@ async def async_test_agent(
             _check("API mode", "Failed", f"Unsupported mode: {configured_mode}")
         )
         return AgentTestResult(_overall(checks), checks)
-    metadata = model_metadata(model)
+    underlying_model = subentry.data.get("azure_model")
+    if underlying_model and entry.data.get(CONF_API_PROVIDER) != "azure":
+        checks.append(
+            _check(
+                "Configuration",
+                "Failed",
+                "Azure underlying model is only supported with Azure; clear the setting for this provider.",
+            )
+        )
+        return AgentTestResult(_overall(checks), checks)
+    metadata = model_metadata(str(underlying_model or model))
     try:
         with model_capability_snapshot(model, metadata):
             effort = (

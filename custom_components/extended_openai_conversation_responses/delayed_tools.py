@@ -22,9 +22,12 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, entity_registry as er, llm
 from homeassistant.util import dt as dt_util
 
-from .agent_config import configured_function_tools_from_data, function_tool_enabled
+from .agent_config import function_tool_enabled
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import DOMAIN
+from .function_tool_quarantine import (
+    _runtime_configured_function_tools as configured_function_tools_from_data,
+)
 from .function_tool_resolution import latest_function_tool_for_execution
 from .ha_permissions import bind_active_ha_context
 from .helpers import get_exposed_entities

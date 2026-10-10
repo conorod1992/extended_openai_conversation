@@ -161,6 +161,9 @@ async def test_guest_denial_happens_before_script_execution(
 @pytest.mark.asyncio
 async def test_failed_local_rule_is_archived_and_recorded_as_failed() -> None:
     class Usage:
+        def current_run(self):
+            return None
+
         def __init__(self) -> None:
             self.run = SimpleNamespace(run_id="run-1", successful=True, error_type=None)
 

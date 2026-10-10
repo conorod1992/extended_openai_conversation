@@ -154,7 +154,7 @@ export async function uploadFullBackup(panel, file) {
       }
     }
     if (sent !== file.size) throw new Error("The selected transfer file was not uploaded completely");
-    const inspection = await callBackupTransfer(panel, "import_inspect", {session_id: sessionId});
+    const inspection = await callBackupTransfer(panel, "import_inspect", {session_id: sessionId, inspect_only: true});
     if (!inspection?.valid) throw new Error("The transfer could not be validated");
     return {session_id: sessionId, ...inspection};
   } catch (err) {
@@ -436,6 +436,7 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
       const missingUsers = updateRestorePreviewStatus(panel, result.preview);
       apply.disabled = result.preview_token === null || missingUsers > 0;
       root.querySelector("#restore-dialog").showModal();
+      refreshImportPreview(panel);
     } catch (err) {
       panel._backupTransferSession = null;
       panel._backupTransferInspection = null;

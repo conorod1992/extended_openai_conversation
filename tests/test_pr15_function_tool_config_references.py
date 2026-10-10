@@ -116,6 +116,11 @@ def _setup_entry(hass, *, tool_name: str = "old_tool"):
 
 
 class _FakeRules:
+    async def async_backup_data(self):
+        return {
+            "rules": [_function_rule(self.function_name)] if self.referenced else []
+        }
+
     def __init__(self, function_name: str, *, referenced: bool = True) -> None:
         self.function_name = function_name
         self.referenced = referenced

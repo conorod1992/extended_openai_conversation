@@ -67,7 +67,12 @@ def _setup_entry(hass):
 
 
 class _Rules:
-    def __init__(self, *, rename_error: Exception | None = None, on_rename=None) -> None:
+    async def async_backup_data(self):
+        return {"rules": []}
+
+    def __init__(
+        self, *, rename_error: Exception | None = None, on_rename=None
+    ) -> None:
         self.rename_error = rename_error
         self.on_rename = on_rename
         self.expected_revision = None
@@ -133,7 +138,9 @@ async def test_tool_cross_store_mutation_rejects_agent_change_during_rule_lookup
     else:
         message.update(name="old_tool", confirm=True)
 
-    with pytest.raises(HomeAssistantError, match="Configuration changed in another tab"):
+    with pytest.raises(
+        HomeAssistantError, match="Configuration changed in another tab"
+    ):
         await async_management_command(hass, "admin", True, message)
 
     hass.config_entries.async_update_subentry.assert_not_called()

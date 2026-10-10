@@ -341,3 +341,21 @@ finishAgentChangeConfig({title:"A", config:{chat_model:"stale"}});
 await agentChangedLoad;
 assert.equal(agentChangedPanel._configData, null);
 assert.equal(agentChangedPanel._eocConfigurationReadDiagnostics.prefetch.reason, "stored-agent-mismatch");
+
+// Duplicate-agent selection and catalogue fallback also cross assistant ownership.
+for (const preferred of ["agent-b", "deleted-agent"]) {
+  const switchedPanel = {
+    ...panel,
+    _viewKey: () => "capabilities/request-rules",
+    _agentId: "agent-a",
+    _ruleGroupFilter: "agent-a-only-group",
+    _hass: {callWS: async () => ({agents: [{entry_id: "entry-b", subentry_id: "agent-b", title: "B"}]})},
+    async _loadSection() {},
+  };
+  await module.loadAgentsWithOverviewPrefetch(switchedPanel, preferred);
+  assert.equal(switchedPanel._agentId, "agent-b");
+  assert.equal(switchedPanel._ruleGroupFilter, "all", "catalogue selection must clear the previous assistant's group filter");
+  switchedPanel._ruleGroupFilter = "agent-b-group";
+  await module.loadAgentsWithOverviewPrefetch(switchedPanel, "agent-b");
+  assert.equal(switchedPanel._ruleGroupFilter, "agent-b-group", "refreshing the same assistant preserves its selected filter");
+}

@@ -9,7 +9,7 @@ export function reasoningEffortOptionsForResult(result = {}) {
 export function webSearchControlState(panel) {
   const config = panel?._draft || panel?._result?.config || {};
   const data = panel?._modelCatalogData;
-  const metadata = data?.requested_model === String(config.chat_model || "")
+  const metadata = data?.requested_model === String(config.azure_model || config.chat_model || "")
     ? data.model_capabilities : panel?._result?.model_capabilities;
   if (!metadata?.evaluations) return {disabled:false, note:""};
   const effort = config.reasoning_effort ?? metadata.recommended_profile?.reasoning_effort ?? null;
@@ -34,7 +34,7 @@ function toolsRequired(config) {
 export function modelFieldPresentation(panel, key, value) {
   const config = panel?._draft || panel?._result?.config || {};
   const catalog = panel?._modelCatalogData;
-  const data = catalog?.requested_model === String(config.chat_model || "") ? catalog : null;
+  const data = catalog?.requested_model === String(config.azure_model || config.chat_model || "") ? catalog : null;
   const metadata = data?.model_capabilities || data?.model_metadata || panel?._result?.model_capabilities || {};
   if (key === "chat_model" && data) {
     const note = metadata.status === "deprecated"
@@ -43,6 +43,16 @@ export function modelFieldPresentation(panel, key, value) {
         ? "Custom or unknown model. Extended OpenAI will use conservative capabilities until explicit metadata is available."
         : "";
     return {models:data.catalog_models || [], note, noteClass:"model-lifecycle-note"};
+  }
+  if (key === "service_tier") {
+    const tiers = [...new Set(["default", ...(metadata.service_tier_options || metadata.service_tiers || [])])];
+    const selected = String(value || "default");
+    const unsupported = !tiers.includes(selected);
+    return {
+      options:[...tiers, ...(unsupported ? [selected] : [])].map(value => ({value, label:String(value)})),
+      disabledOption: choice => unsupported && choice === selected,
+      note:unsupported ? `The saved processing tier ${selected} is unsupported by this model. Choose a supported tier before saving.` : "",
+    };
   }
   if (key === "max_tokens") {
     const max = Number(metadata.limits?.max_output_tokens);

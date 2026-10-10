@@ -33,7 +33,7 @@ function escapeHtml(panel, value) {
 
 function editableToolsText(tools) {
   if (typeof tools === "string") return tools;
-  return JSON.stringify(Array.isArray(tools) ? tools : [], null, 2);
+  return JSON.stringify(tools ?? [], null, 2);
 }
 
 function repairMetadata(panel) {
@@ -75,7 +75,7 @@ function renderFallbackRepair(panel, issue) {
     <h2 id="function-repair-title">Function Tools need repair</h2>
     <div class="error" role="alert">${escapeHtml(panel, validationError)}</div>
     <p>This recovery editor appears only when the saved Function Tools cannot be repaired individually.</p>
-    <label class="field"><span>Saved Function Tools</span><textarea id="function-repair-editor" rows="20" spellcheck="false">${escapeHtml(panel, editableToolsText(result.tools))}</textarea></label>
+    <label class="field"><span>Saved Function Tools</span><textarea id="function-repair-editor" rows="20" spellcheck="false">${escapeHtml(panel, editableToolsText(repair.tools ?? result.tools))}</textarea></label>
     <div class="actions"><button id="function-repair-save" type="button">Validate and save repair</button></div>
   </section>`;
 }

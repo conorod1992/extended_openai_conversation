@@ -44,3 +44,15 @@ This keeps AI Task configuration focused on generating task output rather than m
 Like conversation agents, AI Task agents can use the configured Chat Completions or Responses path according to the selected mode and provider compatibility.
 
 For provider limitations, see [Compatibility](../reference/compatibility.md).
+# Azure deployments and structured output
+
+For an Azure deployment with a custom name, keep the deployment name in **Model**
+and enter its actual model ID in **Azure underlying model**. For example, use
+`ha-production` and `gpt-4.1`. Requests use the deployment name; capability checks
+use the underlying model. This setting is also available in the assistant's
+advanced request settings. Other providers do not use the Azure binding.
+
+Strict structured outputs normalize nested `oneOf` only when alternatives have
+disjoint types or a required discriminator with disjoint values. Ambiguous
+alternatives are rejected before submission. Caller validation remains
+authoritative when removing optional null placeholders from a task result.

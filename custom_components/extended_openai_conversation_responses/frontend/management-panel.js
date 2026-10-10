@@ -32,7 +32,7 @@ import {
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
 const TOOL_MUTATIONS = new Set(["save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"]);
-const REQUEST_RULE_MUTATIONS = new Set(["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move"]);
+const REQUEST_RULE_MUTATIONS = new Set(["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move", "rule_pack_import"]);
 const REQUEST_RULE_CACHE_KEY = "capabilities/request-rules";
 
 const KNOWLEDGE_TITLE_LIMIT = 120;
@@ -629,6 +629,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const guidanceCall = section === "configuration"
       && ["get", "validate", "update", "save"].includes(action);
     const guidanceAgentId = this._agentId;
+    // A fresh list supersedes a previously tracked revision, unless navigation
+    // or a newer read/mutation made that response obsolete while it was in flight.
+    const ruleRead = section === "request_rules" && action === "list" ? {
+      agentId: this._agentId,
+      generation: this._cacheGeneration,
+      mutationEpoch: this._eocRequestRuleMutationEpoch || 0,
+      sequence: this._eocRequestRuleReadSequence = (this._eocRequestRuleReadSequence || 0) + 1,
+    } : null;
     const guidanceRevision = guidanceCall
       ? (this._eocGuidanceCallRevision = (this._eocGuidanceCallRevision || 0) + 1)
       : null;
@@ -646,6 +654,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._applyToolRevision(section, action, result);
     }
 
+    if (
+      ruleRead
+      && ruleRead.agentId === this._agentId
+      && ruleRead.generation === this._cacheGeneration
+      && ruleRead.mutationEpoch === (this._eocRequestRuleMutationEpoch || 0)
+      && ruleRead.sequence === this._eocRequestRuleReadSequence
+      && result?.revision !== undefined
+      && result?.revision !== null
+    ) {
+      this._eocRequestRuleRevision = {agentId: ruleRead.agentId, value: result.revision};
+    }
     if (
       guidanceCall
       && guidanceRevision === this._eocGuidanceCallRevision
@@ -726,18 +745,21 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _runAgentMutation(section, action, extra, mutationTrace = null) {
+    const ruleMutation = section === "request_rules" && REQUEST_RULE_MUTATIONS.has(action);
+    const agentId = this._agentId;
+    if (ruleMutation) this._eocRequestRuleMutationEpoch = (this._eocRequestRuleMutationEpoch || 0) + 1;
     this._eocAgentMutations = Number(this._eocAgentMutations || 0) + 1;
     syncAgentPicker(this);
     try {
       const result = await this._callCore(section, action, extra, mutationTrace);
       this._applyToolRevision(section, action, result);
       if (
-        section === "request_rules"
-        && REQUEST_RULE_MUTATIONS.has(action)
+        ruleMutation
+        && agentId === this._agentId
         && result?.revision !== undefined
         && result?.revision !== null
       ) {
-        this._eocRequestRuleRevision = {agentId: this._agentId, value: result.revision};
+        this._eocRequestRuleRevision = {agentId, value: result.revision};
       }
       if (mutationTrace) mutationTrace.status = "fulfilled";
       return result;
@@ -748,6 +770,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       throw err;
     } finally {
+      // Reads begun during the mutation must not overwrite its acknowledgement.
+      if (ruleMutation) this._eocRequestRuleMutationEpoch += 1;
       this._eocAgentMutations = Math.max(0, Number(this._eocAgentMutations || 1) - 1);
       syncAgentPicker(this);
     }
@@ -908,7 +932,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
 
     const affectsRequestRules = agentId && (
-      (section === "tools" && TOOL_MUTATIONS.has(action))
+      (section === "configuration" && ["save", "update", "import"].includes(action))
+      || (section === "tools" && TOOL_MUTATIONS.has(action))
       || (section === "function_repair" && isAgentMutation(section, action))
       || (section === "request_rules" && action === "move")
     );

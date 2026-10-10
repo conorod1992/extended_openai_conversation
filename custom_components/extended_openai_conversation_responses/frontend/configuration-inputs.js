@@ -75,7 +75,7 @@ export function bindConfigurationInputs(panel, handlers = {}) {
     if (!control?.matches?.(CONFIGURATION_CONTROLS)) return;
     const result = updateConfigurationControl(panel, control, event.type);
     if (!result || event.type !== "change") return;
-    if (result.key === "chat_model") void root.__eocConfigurationInputs.modelChanged?.(control);
+    if (["chat_model", "azure_model"].includes(result.key)) void root.__eocConfigurationInputs.modelChanged?.(control);
     if (result.key === "reasoning_effort") root.__eocConfigurationInputs.reasoningChanged?.(control);
     if (result.key === "api_mode" || result.key === "web_search") root.__eocConfigurationInputs.capabilityChanged?.(control);
   };

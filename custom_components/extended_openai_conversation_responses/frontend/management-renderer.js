@@ -42,7 +42,8 @@ function updateAgentPicker(panel, agent) {
       detail = document.createElement("small");
       picker.append(detail);
     }
-    if (!detail.textContent) detail.textContent = `${agent.provider} · ${agent.model}`;
+    const subtitle = `${agent.provider} · ${agent.model}`;
+    if (detail.textContent !== subtitle) detail.textContent = subtitle;
   } else {
     detail?.remove();
   }
@@ -163,6 +164,7 @@ function bindDynamicBase(panel) {
       control.value = nextAgent;
       panel._unsavedState?.scopes.clear();
       panel._agentId = nextAgent;
+      panel._ruleGroupFilter = "all";
       writeOptionalStorage("extended-openai-agent", panel._agentId);
       writeOptionalStorage("extended-openai-agent-entry", panel._selectedAgent()?.entry_id);
       panel._clearConfigDraft();

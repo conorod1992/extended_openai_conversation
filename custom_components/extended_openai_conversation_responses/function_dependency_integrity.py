@@ -22,9 +22,9 @@ _TEMPLATE_MARKERS = ("{{", "{%", "{#")
 
 def _is_template_string(value: Any) -> bool:
     """Return whether a saved Request Rule value is resolved only at runtime."""
-    return isinstance(value, str) and any(
-        marker in value for marker in _TEMPLATE_MARKERS
-    )
+    return (
+        isinstance(value, str) and any(marker in value for marker in _TEMPLATE_MARKERS)
+    ) or (isinstance(value, str) and bool(request_rules.RESULT_REFERENCE.search(value)))
 
 
 def _contains_template(value: Any) -> bool:

@@ -43,6 +43,7 @@ const panel = {
 };
 
 const markup = renderRetentionSettings(panel);
+assert.match(markup, /data-retention-config="usage_request_retention_days" data-type="number"/);
 assert.match(markup, /Retention periods/);
 assert.match(markup, /data-retention-config="usage_request_retention_days"/);
 assert.match(markup, /data-retention-config="usage_run_retention_days"/);
@@ -91,3 +92,11 @@ assert.equal(panel._draft.usage_request_retention_days, 0);
 assert.equal(panel._configDirty, true);
 assert.equal(panel._eocDirtyConfigKeys.has("usage_request_retention_days"), true);
 assert.equal(rerendered, false);
+
+const {applyConfigurationControl} = await import(frontend("configuration-controls.js"));
+requestControl.dataset = {config:"usage_request_retention_days", retentionConfig:"usage_request_retention_days", type:"number"};
+requestControl.value = "30";
+requestControl.handler();
+applyConfigurationControl(panel, requestControl);
+assert.equal(panel._draft.usage_request_retention_days, 30);
+assert.equal(panel._configDirty, false, "reverting retention clears unsaved state");
