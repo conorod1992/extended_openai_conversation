@@ -11,7 +11,6 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -1927,6 +1926,46 @@ def _legacy_action_slots(value: Any) -> set[str]:
     return result
 
 
+def _normalize_script_containers(value: Any) -> Any:
+    """Normalize HA action shorthand without replacing authored template text."""
+    if isinstance(value, Mapping):
+        value = [value]
+    if not isinstance(value, list):
+        return value
+    result = []
+    for action in value:
+        if not isinstance(action, Mapping):
+            result.append(action)
+            continue
+        normalized = deepcopy(dict(action))
+        for key in ("sequence", "then", "else", "default", "parallel"):
+            if key in normalized:
+                normalized[key] = _normalize_script_containers(normalized[key])
+        if isinstance(normalized.get("repeat"), Mapping):
+            repeat = dict(normalized["repeat"])
+            if "sequence" in repeat:
+                repeat["sequence"] = _normalize_script_containers(repeat["sequence"])
+            normalized["repeat"] = repeat
+        if "choose" in normalized:
+            branches = normalized["choose"]
+            if isinstance(branches, Mapping):
+                branches = [branches]
+            if isinstance(branches, list):
+                normalized["choose"] = [
+                    {
+                        **branch,
+                        "sequence": _normalize_script_containers(
+                            branch.get("sequence", [])
+                        ),
+                    }
+                    if isinstance(branch, Mapping)
+                    else branch
+                    for branch in branches
+                ]
+        result.append(normalized)
+    return result
+
+
 def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
     """Validate native HA script syntax and enforce conservative size bounds."""
     migrated: list[dict[str, Any]] = []
@@ -1940,6 +1979,7 @@ def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
             migrated.append(_validate_local_action(item))
         else:
             migrated.append(dict(deepcopy(item)))
+    migrated = _normalize_script_containers(migrated)
     _validate_script_complexity(migrated)
     try:
         cv.SCRIPT_SCHEMA(_mask_script_templates(migrated))
@@ -2285,9 +2325,6 @@ async def async_call_active_function(
         payload = tool_result_data(result, default=result)
         if isinstance(payload, Mapping) and "result" in payload:
             payload = payload["result"]
-        if isinstance(payload, str):
-            with suppress(json.JSONDecodeError):
-                payload = json.loads(payload)
         results[result_alias] = _bounded_function_result(payload)
         return results[result_alias]
     return result
@@ -2432,7 +2469,7 @@ def _native_result_sequence(
         data = step.get("data")
         alias = data.get("result_alias") if isinstance(data, Mapping) else None
         if alias:
-            response_name = f"__eoai_result_{alias}"
+            response_name = step.get("response_variable") or f"__eoai_result_{alias}"
             rendered["response_variable"] = response_name
             sequence.append(rendered)
             sequence.append(

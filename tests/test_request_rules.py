@@ -1346,7 +1346,7 @@ async def test_function_result_capture_feeds_later_step_and_response(
 
     async def execute(_name, _arguments):
         return SimpleNamespace(
-            tool_result={"result": json.dumps({"name": "Kitchen tablet", "level": 62})}
+            tool_result={"result": {"name": "Kitchen tablet", "level": 62}}
         )
 
     outcome = await async_evaluate_rule(
@@ -1401,7 +1401,7 @@ async def test_missing_function_result_path_stops_later_steps(
     ]
 
     async def execute(_name, _arguments):
-        return SimpleNamespace(tool_result={"result": json.dumps({"level": 0})})
+        return SimpleNamespace(tool_result={"result": {"level": 0}})
 
     outcome = await async_evaluate_rule(
         hass,
@@ -1428,7 +1428,7 @@ async def test_function_capture_accepts_false_zero_empty_and_null(value) -> None
     results = {}
 
     async def execute(_name, _arguments):
-        return SimpleNamespace(tool_result={"result": json.dumps(value)})
+        return SimpleNamespace(tool_result={"result": value})
 
     executor_token = module._ACTIVE_FUNCTION_EXECUTOR.set(execute)
     result_token = module._ACTIVE_FUNCTION_RESULTS.set(results)

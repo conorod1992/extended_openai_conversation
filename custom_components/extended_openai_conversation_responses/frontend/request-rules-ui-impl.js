@@ -291,6 +291,10 @@ function setReasoningOptions(root, efforts, selected = "") {
   select.value = selected;
 }
 
+export function requestRuleCapabilityModel(panel, override = "") {
+  return String(override || panel._result?.effective_model || panel._result?.config?.azure_model || panel._result?.config?.chat_model || "").trim();
+}
+
 export function syncRequestRuleRoutingControls(root, efforts = null, selectedEffort = null) {
   if (!root) return;
   const actionType = root.querySelector("#rule-action-type");
@@ -365,10 +369,10 @@ function refreshEditor(panel) {
   help.hidden=!invalid;
   help.textContent=!handoff ? "Enable Continue to AI or choose Original request." : q("#rule-match").value!=="sentence_pattern" ? "Captured value requires Sentence Pattern matching." : common.length ? "The selected captured value is not available in every trigger. Choose a common value or Original request." : "No captured values are available for every trigger. Use Sentence Pattern matching and make each trigger capture the same value, such as {question}.";
   syncRequestRuleRoutingControls(root);
-  if(local)return;
-  const model=q("#rule-model")?.value.trim();
-  if(!model || /\{[^{}]+\}/.test(model))return;
   const state=editorState(panel), current=++state.modelRevision;
+  if(local)return;
+  const model=requestRuleCapabilityModel(panel,q("#rule-model")?.value.trim());
+  if(!model || /\{[^{}]+\}/.test(model))return;
   void ensureModelCatalog().then((module)=>module.lookupModelData(panel,model)).then((data)=>{
     if(current===state.modelRevision && root.querySelector("#rule-dialog")?.open) syncRequestRuleRoutingControls(root,data.reasoning_effort_options);
   }).catch((err)=>panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true));
