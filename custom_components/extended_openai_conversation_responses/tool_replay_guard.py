@@ -33,7 +33,9 @@ def bind_dispatch_origin(
 
 
 def record_dispatch(
-    entity: Any, tool_input: llm.ToolInput, function_tool: Mapping[str, Any] | None = None
+    entity: Any,
+    tool_input: llm.ToolInput,
+    function_tool: Mapping[str, Any] | None = None,
 ) -> None:
     """Keep trusted dispatch provenance separately from model-facing outcomes."""
     dispatched = getattr(entity, "_dispatched_tool_inputs", None)

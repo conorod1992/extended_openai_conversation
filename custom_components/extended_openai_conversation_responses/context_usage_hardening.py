@@ -123,7 +123,7 @@ def _attachment_aware_input(input_value: Any) -> tuple[Any, int]:
         content = item.get("content")
         if not isinstance(content, list):
             continue
-        parts = []
+        parts: list[Any] = []
         for part in content:
             if not isinstance(part, dict):
                 parts.append(str(part))
