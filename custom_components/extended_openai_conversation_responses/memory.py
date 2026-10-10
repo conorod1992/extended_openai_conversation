@@ -1110,14 +1110,19 @@ class PersistentMemory:
         cannot establish equivalence (preferences, negation and numbers matter).
         """
         normalized = _fact_equality(content)
-        for memory in self._memories.values():
-            if memory.user_id != user_id:
-                continue
-            if (
-                _normalize(memory.subject or "") == _normalize(subject or "")
-                and _fact_equality(memory.content) == normalized
-            ):
+        matches = [
+            memory
+            for memory in self._memories.values()
+            if memory.user_id == user_id
+            and _fact_equality(memory.content) == normalized
+        ]
+        for memory in matches:
+            if _normalize(memory.subject or "") == _normalize(subject or ""):
                 return memory
+        # Omitted legacy metadata can be filled/preserved only when the content
+        # identifies one candidate. Two explicit subjects never establish a match.
+        if len(matches) == 1 and (not subject or not matches[0].subject):
+            return matches[0]
         return None
 
     def _find_related_candidate(
