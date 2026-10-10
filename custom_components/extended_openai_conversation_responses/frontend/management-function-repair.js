@@ -33,7 +33,7 @@ function escapeHtml(panel, value) {
 
 function editableToolsText(tools) {
   if (typeof tools === "string") return tools;
-  return JSON.stringify(Array.isArray(tools) ? tools : [], null, 2);
+  return JSON.stringify(tools ?? [], null, 2);
 }
 
 function repairMetadata(panel) {
