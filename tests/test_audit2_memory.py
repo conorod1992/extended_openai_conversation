@@ -15,18 +15,28 @@ from tests.test_memory import FakeStorage
 
 
 @pytest.mark.parametrize("operation", ["async_add", "async_upsert"])
-async def test_equal_content_for_distinct_subjects_remains_distinct(operation):
+@pytest.mark.parametrize(
+    ("first_subject", "second_subject"),
+    [("Oscar", "Luna"), ("C++", "C#"), ("Room 1.2", "Room 1/2")],
+)
+async def test_equal_content_for_distinct_subjects_remains_distinct(
+    operation, first_subject, second_subject
+):
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()
     add = getattr(memory, operation)
     first = await add(
-        "user", "Likes chicken", "preferences", "explicit", subject="Oscar"
+        "user", "Likes chicken", "preferences", "explicit", subject=first_subject
     )
     second = await add(
-        "user", "Likes chicken", "preferences", "explicit", subject="Luna"
+        "user", "Likes chicken", "preferences", "explicit", subject=second_subject
     )
     repeated = await add(
-        "user", "Likes chicken", "preferences", "explicit", subject="OSCAR"
+        "user",
+        "Likes chicken",
+        "preferences",
+        "explicit",
+        subject=first_subject.upper(),
     )
     assert first["status"] == second["status"] == "created"
     assert repeated["memory"]["memory_id"] == first["memory"]["memory_id"]
@@ -51,7 +61,7 @@ async def test_canonical_key_still_establishes_identity():
     assert second["status"] == "updated"
 
 
-@pytest.mark.parametrize("query", ["What is my dog's name?", "What is my dog’s name?"])
+@pytest.mark.parametrize("query", ["What is my dog's name?", "What is my dog\u2019s name?"])
 async def test_possessive_search_retrieves_dog_name(query):
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()

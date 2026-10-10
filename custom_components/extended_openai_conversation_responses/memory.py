@@ -1117,7 +1117,7 @@ class PersistentMemory:
             and _fact_equality(memory.content) == normalized
         ]
         for memory in matches:
-            if _normalize(memory.subject or "") == _normalize(subject or ""):
+            if _subject_identity(memory.subject) == _subject_identity(subject):
                 return memory
         # Omitted legacy metadata can be filled/preserved only when the content
         # identifies one candidate. Two explicit subjects never establish a match.
@@ -1135,7 +1135,7 @@ class PersistentMemory:
             if memory.user_id != user_id or (
                 subject
                 and memory.subject
-                and _normalize(subject) != _normalize(memory.subject)
+                and _subject_identity(subject) != _subject_identity(memory.subject)
             ):
                 continue
             existing = _cached_memory_tokens(memory.content)
@@ -1144,7 +1144,7 @@ class PersistentMemory:
             if (
                 subject
                 and memory.subject
-                and _normalize(subject) == _normalize(memory.subject)
+                and _subject_identity(subject) == _subject_identity(memory.subject)
             ) or (subject and _cached_memory_tokens(subject) & existing):
                 similarity += 0.3
             if key_root and memory.key and memory.key.startswith(f"{key_root}."):
@@ -1920,6 +1920,12 @@ def _fact_equality(value: str) -> str:
     return " ".join(unicodedata.normalize("NFC", value).casefold().split()).rstrip(
         ".!?"
     )
+
+
+@lru_cache(maxsize=20_000)
+def _subject_identity(value: str | None) -> str:
+    """Fold case and whitespace without erasing subject punctuation."""
+    return " ".join(unicodedata.normalize("NFC", value or "").casefold().split())
 
 
 @lru_cache(maxsize=20_000)
