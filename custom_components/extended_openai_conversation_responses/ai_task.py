@@ -204,9 +204,18 @@ def _normalize_caller_nullable(schema: dict[str, Any]) -> None:
 
 def _caller_null_plan(structure: Any) -> _OptionalNullPlan | None:
     """Use the caller's actual union semantics when its schema is inspectable."""
-    source = getattr(structure, "schema", structure)
+    # Voluptuous Any stores its containing Schema in .schema after compilation;
+    # that is context, rather than the union's own source definition.
+    union = isinstance(structure, vol.Any)
+    source = structure if union else getattr(structure, "schema", structure)
     required = bool(getattr(structure, "required", False))
     extra = getattr(structure, "extra", vol.PREVENT_EXTRA)
+    if union:
+        extra = getattr(
+            structure,
+            "_extra",
+            getattr(getattr(structure, "schema", None), "extra", extra),
+        )
     if not isinstance(source, (dict, list, vol.Any)):
         return None
 
@@ -219,6 +228,8 @@ def _caller_null_plan(structure: Any) -> _OptionalNullPlan | None:
             return True
 
     def child(value):
+        if isinstance(value, (vol.Schema, vol.Any)):
+            return _caller_null_plan(value)
         return _caller_null_plan(vol.Schema(value, required=required, extra=extra))
 
     properties = {}
