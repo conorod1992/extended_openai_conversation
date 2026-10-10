@@ -950,6 +950,8 @@ def guest_arguments_allowed_runtime(
                     domain, _, service = service.partition(".")
                 if isinstance(domain, str) and isinstance(service, str):
                     data = item.get("data", item.get("service_data", item))
+                    if isinstance(data, Mapping):
+                        data = {**item, **data}
                     target = item.get("target")
                     entities = resolve_action_entity_ids(
                         hass, domain, service, data, target
