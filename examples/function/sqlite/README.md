@@ -102,6 +102,8 @@
 
 Values are bound with SQLite named parameters. Dates use Home Assistant host-local
 `YYYY-MM-DD HH:MM:SS` times. SQL keywords/operators are explicitly whitelisted.
+String state parameters opt into `string_parameters` to preserve values such as
+`None`, `True`, and `[1]` through Home Assistant's native template-result parsing.
 Duration is calculated over the half-open interval `[start, min(end, now))`; missing initial
 history returns `unknown`, while a known zero duration returns `0s`.
 
@@ -227,6 +229,7 @@ history returns `unknown`, while a known zero duration returns `0s`.
         state: '{{ state | default('''') }}'
         offset: '{{ (page - 1) * limit }}'
         limit: '{{ limit }}'
+      string_parameters: [state]
     - type: sqlite
       single: true
       query: |-
@@ -246,6 +249,7 @@ history returns `unknown`, while a known zero duration returns `0s`.
         state: '{{ state | default('''') }}'
         offset: '{{ (page - 1) * limit }}'
         limit: '{{ limit }}'
+      string_parameters: [state]
     - type: template
       value_template: '{"data": {{data}}, "total": {{total.count}}}'
 ```
@@ -312,6 +316,7 @@ history returns `unknown`, while a known zero duration returns `0s`.
         start_datetime: '{{ validate_datetime(start_datetime) }}'
         end_datetime: '{{ validate_datetime(end_datetime) }}'
         state: '{{ state | default('''') }}'
+      string_parameters: [state]
     - type: template
       value_template: "{%- if result and result[0] and result[0].total_time_in_sec is not none -%}\n  {%- set duration\
         \ = result[0].total_time_in_sec | int -%}\n  \n  {%- set days = (duration // 86400) | int -%}\n  {%- set\

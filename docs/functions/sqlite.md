@@ -23,6 +23,7 @@ function:
 - `db_url` optionally chooses a database URL; it is converted to read-only mode.
 - `single` requests a single-result form.
 - `parameters` maps SQLite named placeholders to Jinja templates. Scalar values are bound separately from SQL. Bind caller-provided values rather than interpolating them into the query. SQL keywords and operators cannot be bound: choose them from an explicit whitelist.
+- `string_parameters` optionally lists parameter names whose rendered values must remain strings. Home Assistant otherwise parses strings such as `None`, `True`, and `[1]` as native values. Unknown names are rejected before SQL execution; other parameters retain native scalar parsing.
 - `max_rows`, `timeout`, and `max_result_bytes` bound results and execution. Current limits are enforced by configuration validation.
 
 The template receives reserved `exposed_entities`, `is_exposed(entity_id)`, `is_exposed_entity_in_query(query)`, `validate_datetime(value)`, and `raise(message)` context. Caller arguments cannot replace these values. `validate_datetime` accepts exactly `YYYY-MM-DD HH:MM:SS` for the host-local Recorder examples. Use these helpers to validate entity-backed access, but do not rely on string matching as a complete SQL authorization mechanism. Home Assistant's Recorder schema can change between releases; validate queries against your installation. For ordinary recent history, prefer the built-in `get_history` native Function Tool.

@@ -7,11 +7,23 @@ import sqlite3
 
 import pytest
 import yaml
-from homeassistant.exceptions import HomeAssistantError
 
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    configured_function_tools_from_data,
+)
+from custom_components.extended_openai_conversation_responses.const import (
+    CONF_FUNCTION_TOOLS,
+)
+from custom_components.extended_openai_conversation_responses.exceptions import (
+    InvalidFunction,
+)
+from custom_components.extended_openai_conversation_responses.functions import (
+    get_function,
+)
 from custom_components.extended_openai_conversation_responses.functions.sqlite import (
     SqliteFunction,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 def examples():
@@ -52,8 +64,8 @@ def history(tmp_path):
     return path
 
 
-async def run(hass, history, step, arguments):
-    hass.config.legacy_templates = False
+async def run(hass, history, step, arguments, *, legacy_templates=False):
+    hass.config.legacy_templates = legacy_templates
     function = SqliteFunction()
     config = {**step, "db_url": str(history)}
     return await function.execute(
@@ -205,6 +217,95 @@ async def test_both_history_queries_enforce_exposure_and_bind_state(hass, histor
                 step,
                 {**args, "entity_id": "light.private", "is_exposed": True},
             )
+
+
+@pytest.mark.parametrize(
+    "state", ["None", "True", "0.0", "[1]", '{"value": 1}', " on ", ""]
+)
+@pytest.mark.parametrize("legacy_templates", [False, True])
+async def test_examples_preserve_string_state_parameter_types(
+    hass, history, state, legacy_templates
+):
+    """HA native template parsing must not reinterpret a textual Recorder state."""
+    with sqlite3.connect(history) as conn:
+        conn.execute(
+            "INSERT INTO states VALUES (?, ?, ?, ?, ?)",
+            (5, 1, 1, state, datetime(2026, 1, 1, 1).timestamp()),
+        )
+    arguments = {
+        "entity_id": "light.public",
+        "state": state,
+        "start_datetime": "2026-01-01 01:00:00",
+        "end_datetime": "2026-01-01 02:00:00",
+        "order": "asc",
+        "page": 1,
+        "limit": 10,
+    }
+    tools = examples()
+    history_steps = tools["get_states_between"]["function"]["sequence"]
+    rows = await run(
+        hass, history, history_steps[0], arguments, legacy_templates=legacy_templates
+    )
+    assert [row["state"] for row in rows] == [state]
+    assert await run(
+        hass, history, history_steps[1], arguments, legacy_templates=legacy_templates
+    ) == {"count": 1}
+    duration_step = tools["get_total_time_of_entity_state"]["function"]["sequence"][0]
+    assert await run(
+        hass, history, duration_step, arguments, legacy_templates=legacy_templates
+    ) == [{"total_time_in_sec": 3600}]
+
+
+@pytest.mark.parametrize("names", [["missing"], ["state", "missing"]])
+async def test_unknown_string_parameters_fail_before_sql(hass, history, names):
+    with pytest.raises(HomeAssistantError, match="name configured parameters"):
+        await run(
+            hass,
+            history,
+            {
+                "query": "SELECT :state",
+                "parameters": {"state": "{{ state }}"},
+                "string_parameters": names,
+            },
+            {"state": "on"},
+        )
+
+
+@pytest.mark.parametrize("names", ["state", [1], {"state": True}])
+def test_invalid_string_parameters_rejected_by_schema(hass, names):
+    with pytest.raises(InvalidFunction):
+        SqliteFunction().validate_schema(
+            {
+                "type": "sqlite",
+                "parameters": {"state": "{{ state }}"},
+                "string_parameters": names,
+            }
+        )
+
+
+@pytest.mark.parametrize(("state", "expected"), [("on", "1h"), ("off", "0s")])
+async def test_cached_duration_example_retains_string_parameters(
+    hass, history, state, expected
+):
+    """Persisted composite config stays executable, including its formatter."""
+    hass.config.legacy_templates = False
+    tool = examples()["get_total_time_of_entity_state"]
+    tool["function"]["sequence"][0]["db_url"] = str(history)
+    data = {CONF_FUNCTION_TOOLS: yaml.safe_dump([tool])}
+    configured_function_tools_from_data(data)
+    cached = configured_function_tools_from_data(data)[0]["function"]
+    assert await get_function("composite").execute(
+        hass,
+        cached,
+        {
+            "entity_id": "light.public",
+            "state": state,
+            "start_datetime": "2026-01-01 01:00:00",
+            "end_datetime": "2026-01-01 02:00:00",
+        },
+        None,
+        [{"entity_id": "light.public"}],
+    ) == expected
 
 
 @pytest.mark.parametrize(

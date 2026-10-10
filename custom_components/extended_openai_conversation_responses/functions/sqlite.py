@@ -230,6 +230,7 @@ class SqliteFunction(Function):
                 {
                     vol.Optional("query"): str,
                     vol.Optional("parameters"): {str: cv.template},
+                    vol.Optional("string_parameters"): [str],
                     vol.Optional("db_url"): str,
                     vol.Optional("single"): bool,
                     vol.Optional("max_rows", default=_DEFAULT_MAX_ROWS): vol.All(
@@ -304,10 +305,23 @@ class SqliteFunction(Function):
         }
 
         q = Template(query, hass).async_render(template_arguments)
+        string_parameters = set(function_config.get("string_parameters", ()))
+        if string_parameters - function_config.get("parameters", {}).keys():
+            raise HomeAssistantError(
+                "SQLite string_parameters must name configured parameters"
+            )
         parameters = {}
         for name, raw in function_config.get("parameters", {}).items():
             value = raw if isinstance(raw, Template) else Template(str(raw), hass)
-            rendered = value.async_render(template_arguments)
+            if name in string_parameters:
+                # HA strips template output before returning it. Non-whitespace
+                # guards preserve whitespace that belongs to the string value.
+                value = Template(f".{value.template}.", hass)
+                rendered = value.async_render(template_arguments, parse_result=False)[
+                    1:-1
+                ]
+            else:
+                rendered = value.async_render(template_arguments)
             if not isinstance(rendered, (str, int, float, type(None))) or (
                 isinstance(rendered, float) and not math.isfinite(rendered)
             ):
