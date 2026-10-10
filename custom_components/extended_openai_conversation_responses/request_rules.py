@@ -3351,11 +3351,6 @@ async def _async_evaluate_matched_rule(
                     # before a ready wait timeout can advance to another action.
                     result_reference_stop = create_eager_task(script.async_stop())
 
-            if captures_results:
-                validated_actions = _guard_result_references(
-                    validated_actions, stop_on_result_error
-                )
-
             def current_policy() -> GuestCapabilityPolicy:
                 nonlocal policy
                 if live_guest_policy is not None:
@@ -3366,6 +3361,12 @@ async def _async_evaluate_matched_rule(
                 validated_actions = _map_script_effect_templates(
                     validated_actions,
                     lambda value: _guard_template_reads(value, current_policy),
+                )
+            if captures_results:
+                # Keep result rendering outermost: the inner privacy wrapper
+                # authorizes reads, then exact references retain their raw type.
+                validated_actions = _guard_result_references(
+                    validated_actions, stop_on_result_error
                 )
             if require_matching_revision is not None:
                 require_matching_revision()

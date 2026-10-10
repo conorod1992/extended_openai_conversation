@@ -187,17 +187,47 @@ async def test_alias_assignment_preserves_type_in_real_script(hass, legacy, valu
 
 
 @pytest.mark.parametrize("legacy", [True, False])
+@pytest.mark.parametrize("privacy_guard", [True, False])
 @pytest.mark.parametrize("value", ["123456", "False", "None", '{"level":62}', "  spaced  ", False, 0, None, {"level": 62}, [1, 2]])
-def test_exact_result_reference_preserves_native_type_at_render_boundary(hass, legacy, value):
+def test_exact_result_reference_preserves_native_type_at_render_boundary(hass, legacy, privacy_guard, value):
     from homeassistant.helpers.template import Template
 
     hass.config.legacy_templates = legacy
     helper = "__eoai_result_value_" + "a" * 32
     source = Template("{{ " + helper + "('answer') }}", hass)
-    wrapped = rules._ResultReferenceTemplate(source, helper, lambda error: pytest.fail(str(error)))
+    if privacy_guard:
+        source = rules._guard_template_reads(source, GuestCapabilityPolicy.unrestricted)
+    wrapped = rules._guard_result_references(source, lambda error: pytest.fail(str(error)))
     rendered = wrapped.async_render({"answer": value})
     assert rendered == value
     assert type(rendered) is type(value)
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+@pytest.mark.parametrize("value", ["123456", '{"level":62}', False, 0, None, {"level": 62}])
+async def test_exact_reference_preserves_type_in_script_with_live_privacy_guard(hass, legacy, value):
+    hass.config.legacy_templates = legacy
+    prepare_native(hass)
+    captured = []
+
+    async def execute(*_args):
+        return value
+
+    async def dispatch(domain, service, service_data, **_kwargs):
+        data = service_data
+        if service == "call_function":
+            return {"result": await rules.async_call_active_function(data["function"], data.get("arguments", {}), data.get("result_alias"))}
+        if domain == "rule_probe":
+            captured.append(data["message"])
+        return None
+
+    hass.services.async_call.side_effect = dispatch
+    rule = local_rule(phrases=["run"])
+    rule["action"]["actions"] = [function_step(), {"action": "rule_probe.record", "data": {"message": "{lookup}"}}]
+    outcome = await rules.async_evaluate_rule(hass, await manager(rule), rules.RequestRuleRuntime(), "run", "session", function_executor=execute, live_guest_policy=GuestCapabilityPolicy.unrestricted)
+    assert outcome.successful
+    assert captured == [value]
+    assert type(captured[0]) is type(value)
 
 
 async def test_guest_parallel_forbidden_event_rejected_before_any_effect(hass):
