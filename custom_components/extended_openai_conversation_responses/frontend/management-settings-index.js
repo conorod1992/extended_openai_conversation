@@ -9,6 +9,7 @@ export const SETTINGS_INDEX = [
   ...settingsFor("assistant", "basics", [
     ["Agent name", "Name shown for this conversation agent.", "title assistant", "__title", {format:"text"}],
     ["Chat model", "Provider model used for responses.", "model provider", "chat_model", {format:"text"}],
+    ["Azure underlying model", "Underlying model ID used to select capabilities for a custom Azure deployment name.", "azure deployment capabilities underlying model", "azure_model", {format:"text"}],
     ["Provider API format", "How requests are formatted for the configured provider.", "api responses chat completions auto provider format", "api_mode"],
     ["Maximum response length", "Maximum tokens the model may use in one response.", "tokens max output response length", "max_tokens", {suffix:" tokens"}],
     ["Maximum tool calls per request", "Limits tool calls within each request (conversation turn); resets on the next turn.", "function tools calls budget conversation", "max_function_calls_per_conversation"],

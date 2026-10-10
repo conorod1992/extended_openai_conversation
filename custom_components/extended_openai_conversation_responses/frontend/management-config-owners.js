@@ -2,6 +2,7 @@
 export const CONFIG_OWNER_BY_KEY = Object.freeze({
   "__title": "assistant/basics",
   "chat_model": "assistant/basics",
+  "azure_model": "assistant/basics",
   "api_mode": "assistant/basics",
   "max_tokens": "assistant/basics",
   "max_function_calls_per_conversation": "assistant/basics",
