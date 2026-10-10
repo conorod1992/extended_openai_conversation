@@ -1,6 +1,33 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+test("duplicating a maximum-length Function opens an editable unique name", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/functions", "&bundle=1"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".duplicate-tool").first()).toBeAttached();
+  await page.evaluate(() => {
+    const panel = window.browserHarness.panel;
+    const call = panel._call.bind(panel);
+    panel._call = (section, action, payload) => section === "tools" && action === "serialize"
+      ? Promise.resolve({yaml:JSON.stringify(payload.tool)}) : call(section, action, payload);
+    const tool = panel._draft.functions[0];
+    tool.spec.name = "a".repeat(64);
+    panel._draft.functions.push({...structuredClone(tool), spec:{...structuredClone(tool.spec), name:`${"a".repeat(59)}_copy`}});
+    panel._render();
+  });
+  const duplicate = panel.locator(".duplicate-tool").first();
+  await duplicate.evaluate(button => {
+    for (let parent = button.parentElement; parent; parent = parent.parentElement) {
+      if (parent.tagName === "DETAILS") parent.open = true;
+    }
+  });
+  await duplicate.click();
+  await expect(panel.locator("#tool-yaml")).toBeEditable();
+  await expect(panel.locator("#tool-yaml")).toHaveValue(new RegExp(`${"a".repeat(57)}_copy_2`));
+  await expectHarnessClean(page, errors);
+});
+
 test("switching assistants resets rule filtering and refreshes provider details", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules", "&bundle=1"));
