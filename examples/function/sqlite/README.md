@@ -100,6 +100,16 @@
 
 ### 2. Defined SQL manually
 
+Values are bound with SQLite named parameters. Dates use Home Assistant host-local
+`YYYY-MM-DD HH:MM:SS` times. SQL keywords/operators are explicitly whitelisted.
+Duration is calculated over the half-open interval `[start, end)`; missing initial
+history returns `unknown`, while a known zero duration returns `0s`.
+
+Values are bound with SQLite named parameters. Dates use Home Assistant host-local
+`YYYY-MM-DD HH:MM:SS` times. SQL keywords/operators are explicitly whitelisted.
+Duration is calculated over the half-open interval `[start, end)`; missing initial
+history returns `unknown`, while a known zero duration returns `0s`.
+
 #### 2-1. get_state_at_time
 <img width="300" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/19fac845-5cee-4d84-98b5-1e18994bb2ee">
 <img width="300" src="https://github.com/jekalmin/extended_openai_conversation/assets/2917984/af8a26d1-0525-4411-b323-29be92d8f368">
@@ -107,8 +117,7 @@
 ```yaml
 - spec:
     name: get_state_at_time
-    description: >
-      Use this function to get state at time
+    description: Use this function to get state at time
     parameters:
       type: object
       properties:
@@ -119,25 +128,28 @@
           type: string
           description: The datetime in '%Y-%m-%d %H:%M:%S' format
       required:
-        - entity_id
-        - datetime
-        - limit
+      - entity_id
+      - datetime
+      additionalProperties: false
   function:
     type: sqlite
-    query: >-
+    query: |-
       {%- if is_exposed(entity_id) -%}
         SELECT datetime(s.last_updated_ts, 'unixepoch', 'localtime') as state_updated_at, s.state
         FROM states s
                  INNER JOIN states_meta sm ON s.metadata_id = sm.metadata_id
                  INNER JOIN states old ON s.old_state_id = old.state_id
-        WHERE sm.entity_id = '{{entity_id}}'
+        WHERE sm.entity_id = :entity_id
           AND s.state != old.state
-          AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') < '{{datetime}}'
+          AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') < :datetime
         ORDER BY s.last_updated_ts DESC
         LIMIT 1
       {%- else -%}
         {{ raise("entity_id should be exposed.") }}
       {%- endif -%}
+    parameters:
+      entity_id: '{{ entity_id if is_exposed(entity_id) else raise("entity_id should be exposed.") }}'
+      datetime: '{{ validate_datetime(datetime) }}'
 ```
 
 
@@ -147,8 +159,7 @@
 ```yaml
 - spec:
     name: get_states_between
-    description: >
-      Use this function to get non-numeric states between two dates.
+    description: Use this function to get non-numeric states between two dates.
     parameters:
       type: object
       properties:
@@ -162,11 +173,11 @@
           type: string
           description: The state operator
           enum:
-          - ">"
-          - "<"
-          - "="
-          - ">="
-          - "<="
+          - '>'
+          - <
+          - '='
+          - '>='
+          - <=
         start_datetime:
           type: string
           description: The start datetime in '%Y-%m-%d %H:%M:%S' format
@@ -186,48 +197,62 @@
           type: integer
           description: The page size defaults to 10
       required:
-        - entity_id
-        - start_datetime
-        - end_datetime
-        - order
-        - page
-        - limit
+      - entity_id
+      - start_datetime
+      - end_datetime
+      - order
+      - page
+      - limit
+      additionalProperties: false
   function:
     type: composite
     sequence:
-      - type: sqlite
-        query: >-
-          {%- if is_exposed(entity_id) -%}
-            SELECT datetime(s.last_updated_ts, 'unixepoch', 'localtime') as updated_at, s.state
-            FROM states s
-                     INNER JOIN states_meta sm ON s.metadata_id = sm.metadata_id
-                     INNER JOIN states old ON s.old_state_id = old.state_id
-            WHERE sm.entity_id = '{{entity_id}}'
-              AND s.state != old.state
-              AND (('{{state | default('')}}' = '') OR (s.state {{state_operator | default('=')}} '{{state | default('')}}'))
-              AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') >= '{{start_datetime}}'
-              AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') < '{{end_datetime}}'
-            ORDER BY s.last_updated_ts {{order}}
-            LIMIT {{(page-1) * limit}}, {{limit}}
-          {%- else -%}
-            {{ raise("entity_id should be exposed.") }}
-          {%- endif -%}
-        response_variable: data
-      - type: sqlite
-        single: true
-        query: >-
-          SELECT count(*) as count
+    - type: sqlite
+      query: |-
+        {%- if is_exposed(entity_id) -%}
+          SELECT datetime(s.last_updated_ts, 'unixepoch', 'localtime') as updated_at, s.state
           FROM states s
                    INNER JOIN states_meta sm ON s.metadata_id = sm.metadata_id
                    INNER JOIN states old ON s.old_state_id = old.state_id
-          WHERE sm.entity_id = '{{entity_id}}'
+          WHERE sm.entity_id = :entity_id
             AND s.state != old.state
-            AND (('{{state | default('')}}' = '') OR (s.state {{state_operator | default('=')}} '{{state | default('')}}'))
-            AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') >= '{{start_datetime}}'
-            AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') < '{{end_datetime}}'
-        response_variable: total
-      - type: template
-        value_template: '{"data": {{data}}, "total": {{total.count}}}'
+            AND ((:state = '') OR (s.state {{ (state_operator | default('=')) if (state_operator | default('=')) in ['>', '<', '=', '>=', '<='] else raise('Invalid state operator') }} :state))
+            AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') >= :start_datetime
+            AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') < :end_datetime
+          ORDER BY s.last_updated_ts {{ order if order in ['asc', 'desc'] else raise('Invalid order') }}
+          LIMIT :offset, :limit
+        {%- else -%}
+          {{ raise("entity_id should be exposed.") }}
+        {%- endif -%}
+      response_variable: data
+      parameters:
+        entity_id: '{{ entity_id if is_exposed(entity_id) else raise("entity_id should be exposed.") }}'
+        start_datetime: '{{ validate_datetime(start_datetime) }}'
+        end_datetime: '{{ validate_datetime(end_datetime) }}'
+        state: '{{ state | default('''') }}'
+        offset: '{{ (page - 1) * limit }}'
+        limit: '{{ limit }}'
+    - type: sqlite
+      single: true
+      query: |-
+        SELECT count(*) as count FROM states s
+                 INNER JOIN states_meta sm ON s.metadata_id = sm.metadata_id
+                 INNER JOIN states old ON s.old_state_id = old.state_id
+        WHERE sm.entity_id = :entity_id
+          AND s.state != old.state
+          AND ((:state = '') OR (s.state {{ (state_operator | default('=')) if (state_operator | default('=')) in ['>', '<', '=', '>=', '<='] else raise('Invalid state operator') }} :state))
+          AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') >= :start_datetime
+          AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') < :end_datetime
+      response_variable: total
+      parameters:
+        entity_id: '{{ entity_id if is_exposed(entity_id) else raise("entity_id should be exposed.") }}'
+        start_datetime: '{{ validate_datetime(start_datetime) }}'
+        end_datetime: '{{ validate_datetime(end_datetime) }}'
+        state: '{{ state | default('''') }}'
+        offset: '{{ (page - 1) * limit }}'
+        limit: '{{ limit }}'
+    - type: template
+      value_template: '{"data": {{data}}, "total": {{total.count}}}'
 ```
 
 #### 2-3. get_total_time_of_entity_state
@@ -237,8 +262,7 @@
 ```yaml
 - spec:
     name: get_total_time_of_entity_state
-    description: >
-      Use this function to get total time of state of entity between two dates
+    description: Use this function to get total time of state of entity between two dates
     parameters:
       type: object
       properties:
@@ -255,60 +279,50 @@
           type: string
           description: The end datetime in '%Y-%m-%d %H:%M:%S' format
       required:
-        - entity_id
-        - state
-        - start_datetime
-        - end_datetime
+      - entity_id
+      - state
+      - start_datetime
+      - end_datetime
+      additionalProperties: false
   function:
     type: composite
     sequence:
-      - type: sqlite
-        query: >-
-          {%- if is_exposed(entity_id) -%}
-            WITH stat_data AS (
-              WITH lead_data AS (
-                SELECT datetime(old.last_updated_ts, 'unixepoch', 'localtime') AS prev_last_updated,
-                  old.state AS prev_state,
-                  datetime(s.last_updated_ts, 'unixepoch', 'localtime') AS last_updated,
-                  s.state,
-                  COALESCE(LEAD(datetime(s.last_updated_ts, 'unixepoch', 'localtime')) OVER (ORDER BY s.last_updated), '{{end_datetime}}') AS lead_last_updated,
-                  LEAD(s.state) OVER (ORDER BY s.last_updated) AS lead_state
-                FROM states s
-                  INNER JOIN states_meta sm ON s.metadata_id = sm.metadata_id
-                  INNER JOIN states old ON s.old_state_id = old.state_id
-                WHERE sm.entity_id = '{{entity_id}}'
-                  AND s.state != old.state
-                  AND datetime(s.last_updated_ts, 'unixepoch', 'localtime') BETWEEN '{{start_datetime}}' AND '{{end_datetime}}'
-                )
-              SELECT max(prev_last_updated, '{{start_datetime}}') AS prev_last_updated,
-                prev_state,
-                last_updated AS last_updated,
-                state
-              FROM lead_data
-              WHERE last_updated = (SELECT MIN(last_updated) FROM lead_data)
-    
-              UNION ALL
-              
-              SELECT last_updated AS prev_last_updated, state AS prev_state, min(lead_last_updated, strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')) AS last_updated, lead_state AS state
-              FROM lead_data
-            )
-            SELECT SUM(CASE WHEN prev_state = '{{state}}' THEN cast(strftime('%s', last_updated, 'utc') as real) - cast(strftime('%s', prev_last_updated, 'utc') as real) ELSE 0 END) AS total_time_in_sec FROM stat_data
-          {%- else -%}
-            {{ raise("entity_id should be exposed.") }}
-          {%- endif -%}
-        response_variable: result
-      - type: template
-        value_template: >-
-          {%- if result and result[0] and result[0].total_time_in_sec -%}
-            {%- set duration = result[0].total_time_in_sec | int -%}
-            
-            {%- set days = (duration // 86400) | int -%}
-            {%- set hours = ((duration % 86400) // 3600) | int -%}
-            {%- set minutes = ((duration % 3600) // 60) | int -%}
-            {%- set remaining_seconds = (duration % 60) | int -%}
-            
-            {{ "{0}d ".format(days) if days > 0 else "" }}{{ "{0}h ".format(hours) if hours > 0 else "" }}{{ "{0}m ".format(minutes) if minutes > 0 else "" }}{{ "{0}s".format(remaining_seconds) if remaining_seconds > 0 else "" }}
-          {%- else -%}
-            unkown
-          {%- endif -%}
+    - type: sqlite
+      query: |-
+        WITH bounds AS (
+          SELECT CAST(strftime('%s', :start_datetime, 'utc') AS REAL) AS start_ts,
+                 CAST(strftime('%s', :end_datetime, 'utc') AS REAL) AS end_ts
+        ), entity_states AS (
+          SELECT s.state_id, s.state, s.last_updated_ts AS ts
+          FROM states s JOIN states_meta sm ON s.metadata_id = sm.metadata_id
+          WHERE sm.entity_id = :entity_id
+        ), initial AS (
+          SELECT state_id, state, start_ts AS ts FROM entity_states, bounds
+          WHERE entity_states.ts <= start_ts ORDER BY entity_states.ts DESC, state_id DESC LIMIT 1
+        ), events AS (
+          SELECT state_id, state, ts FROM initial
+          UNION ALL
+          SELECT state_id, state, ts FROM entity_states, bounds WHERE ts > start_ts AND ts < end_ts
+        ), intervals AS (
+          SELECT state, ts, LEAD(ts, 1, (SELECT end_ts FROM bounds)) OVER (ORDER BY ts, state_id) AS until_ts
+          FROM events
+        )
+        SELECT CASE WHEN (SELECT end_ts > start_ts FROM bounds)
+          AND EXISTS (SELECT 1 FROM initial)
+          THEN COALESCE(SUM(CASE WHEN state = :state THEN MAX(0, until_ts - ts) ELSE 0 END), 0)
+          ELSE NULL END AS total_time_in_sec FROM intervals
+      response_variable: result
+      parameters:
+        entity_id: '{{ entity_id if is_exposed(entity_id) else raise("entity_id should be exposed.") }}'
+        start_datetime: '{{ validate_datetime(start_datetime) }}'
+        end_datetime: '{{ validate_datetime(end_datetime) }}'
+        state: '{{ state | default('''') }}'
+    - type: template
+      value_template: "{%- if result and result[0] and result[0].total_time_in_sec is not none -%}\n  {%- set duration\
+        \ = result[0].total_time_in_sec | int -%}\n  \n  {%- set days = (duration // 86400) | int -%}\n  {%- set\
+        \ hours = ((duration % 86400) // 3600) | int -%}\n  {%- set minutes = ((duration % 3600) // 60) | int -%}\n\
+        \  {%- set remaining_seconds = (duration % 60) | int -%}\n  \n  {{ \"{0}d \".format(days) if days > 0 else\
+        \ \"\" }}{{ \"{0}h \".format(hours) if hours > 0 else \"\" }}{{ \"{0}m \".format(minutes) if minutes > 0\
+        \ else \"\" }}{{ \"{0}s\".format(remaining_seconds) if remaining_seconds > 0 or duration == 0 else \"\"\
+        \ }}\n{%- else -%}\n  unknown\n{%- endif -%}"
 ```

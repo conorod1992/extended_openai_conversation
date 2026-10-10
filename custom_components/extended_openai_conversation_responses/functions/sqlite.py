@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 import math
 import os
@@ -16,7 +17,7 @@ import voluptuous as vol
 from homeassistant.components import recorder
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import llm
+from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.helpers.template import Template
 
 from .base import Function
@@ -119,6 +120,7 @@ def _execute_sqlite_query(
     max_rows: int,
     timeout_seconds: float = _DEFAULT_QUERY_TIMEOUT_SECONDS,
     max_result_bytes: int = _DEFAULT_MAX_RESULT_BYTES,
+    parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
     """Execute a time-, row-, and byte-bounded read-only SQLite query."""
     deadline = time.monotonic() + timeout_seconds
@@ -156,7 +158,11 @@ def _execute_sqlite_query(
         conn.set_authorizer(_read_only_authorizer)
         conn.set_progress_handler(progress_handler, _PROGRESS_HANDLER_STEPS)
         try:
-            cursor = conn.execute(query)
+            cursor = (
+                conn.execute(query)
+                if parameters is None
+                else conn.execute(query, parameters)
+            )
             check_deadline()
             if cursor.description is None:
                 raise HomeAssistantError("SQLite query did not return any columns")
@@ -223,6 +229,7 @@ class SqliteFunction(Function):
             vol.Schema(
                 {
                     vol.Optional("query"): str,
+                    vol.Optional("parameters"): {str: cv.template},
                     vol.Optional("db_url"): str,
                     vol.Optional("single"): bool,
                     vol.Optional("max_rows", default=_DEFAULT_MAX_ROWS): vol.All(
@@ -286,16 +293,26 @@ class SqliteFunction(Function):
         query = function_config.get("query", "{{query}}")
 
         template_arguments = {
+            **arguments,
             "is_exposed": lambda e: self.is_exposed(e, exposed_entities),
             "is_exposed_entity_in_query": lambda q: self.is_exposed_entity_in_query(
                 q, exposed_entities
             ),
             "exposed_entities": exposed_entities,
             "raise": self.raise_error,
+            "validate_datetime": _validate_datetime,
         }
-        template_arguments.update(arguments)
 
         q = Template(query, hass).async_render(template_arguments)
+        parameters = {}
+        for name, raw in function_config.get("parameters", {}).items():
+            value = raw if isinstance(raw, Template) else Template(str(raw), hass)
+            rendered = value.async_render(template_arguments)
+            if not isinstance(rendered, (str, int, float, type(None))) or (
+                isinstance(rendered, float) and not math.isfinite(rendered)
+            ):
+                raise HomeAssistantError("SQLite parameters must be scalar values")
+            parameters[name] = rendered
         _LOGGER.debug("SQLite query rendered characters=%d", len(q))
 
         try:
@@ -307,6 +324,22 @@ class SqliteFunction(Function):
                 int(function_config.get("max_rows", _DEFAULT_MAX_ROWS)),
                 float(function_config.get("timeout", _DEFAULT_QUERY_TIMEOUT_SECONDS)),
                 int(function_config.get("max_result_bytes", _DEFAULT_MAX_RESULT_BYTES)),
+                *([parameters] if "parameters" in function_config else []),
             )
         except sqlite3.Error as err:
             raise HomeAssistantError(f"SQLite query failed: {err}") from err
+
+
+def _validate_datetime(value: Any) -> str:
+    """Validate the local datetime convention used by the Recorder examples."""
+    if not isinstance(value, str):
+        raise HomeAssistantError("Expected a datetime in YYYY-MM-DD HH:MM:SS format")
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError as err:
+        raise HomeAssistantError(
+            "Expected a datetime in YYYY-MM-DD HH:MM:SS format"
+        ) from err
+    if parsed.strftime("%Y-%m-%d %H:%M:%S") != value:
+        raise HomeAssistantError("Expected a datetime in YYYY-MM-DD HH:MM:SS format")
+    return value
