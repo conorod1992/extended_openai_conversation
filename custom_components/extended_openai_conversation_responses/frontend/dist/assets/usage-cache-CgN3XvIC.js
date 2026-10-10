@@ -1,0 +1,1 @@
+function e(e,t=e._agentId||``){e._eocUsageWindowGenerations||=new Map;let n=e._eocUsageWindowGenerations;n.set(t,(n.get(t)||0)+1);for(let n of e._eocUsageWindowCache?.keys()||[])n.startsWith(`${t}|`)&&e._eocUsageWindowCache.delete(n)}export{e as t};

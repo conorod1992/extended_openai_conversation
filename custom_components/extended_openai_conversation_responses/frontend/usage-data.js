@@ -1,3 +1,5 @@
+import {invalidateUsageWindows} from "./usage-cache.js";
+
 const DAILY_PAGE_SIZE = 366;
 const MAX_DAILY_PAGES = 128;
 const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -88,12 +90,7 @@ export async function loadUsageWindow(
   panel._eocUsageWindowGenerations ||= new Map();
   const generations = panel._eocUsageWindowGenerations;
   const agentId = panel._agentId || "";
-  if (!useCache) {
-    generations.set(agentId, (generations.get(agentId) || 0) + 1);
-    for (const cachedKey of cache.keys()) {
-      if (cachedKey.startsWith(`${agentId}|`)) cache.delete(cachedKey);
-    }
-  }
+  if (!useCache) invalidateUsageWindows(panel, agentId);
   const generation = generations.get(agentId) || 0;
   if (useCache && cache.has(key)) return cache.get(key);
 

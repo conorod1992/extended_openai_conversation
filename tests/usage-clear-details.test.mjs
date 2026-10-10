@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+globalThis.window = {location: {pathname:'/extended-openai/usage-maintenance/usage'}, addEventListener(){}, removeEventListener(){}};
+globalThis.history={pushState(){}};
+globalThis.localStorage={getItem(){return null},setItem(){}};
+globalThis.HTMLElement=class{attachShadow(){this.shadowRoot={querySelector:()=>null,querySelectorAll:()=>[],hasChildNodes:()=>false}}};
+let defined;
+globalThis.customElements={get(){return defined},define(_name,value){defined=value},whenDefined(){return Promise.resolve()}};
+const path='../custom_components/extended_openai_conversation_responses/frontend/';
+const {ExtendedOpenAIManagementPanel}=await import(path+'management-panel.js');
+const {loadUsageWindow,loadUsageDaily}=await import(path+'usage-data.js');
+const {renderUsageDiagnostics,bindUsageDiagnostics,localUsageDateKey}=await import(path+'usage-chart.js');
+const today=localUsageDateKey(new Date(),'UTC');
+const start=new Date(today+'T00:00Z'); start.setUTCDate(start.getUTCDate()-29);
+const startDate=start.toISOString().slice(0,10);
+let count=46;
+const p=new ExtendedOpenAIManagementPanel();
+p._page='usage-maintenance';p._subsection='usage';p._agentId='one';p._scopeId='user:alice';p._usageHistoryWindow='30';
+p._data={is_admin:true,agents:[{entry_id:'entry',subentry_id:'one'}],scopes:[]};
+p._hass={user:{id:'alice'},config:{time_zone:'UTC'},callWS:async message=>{
+ if(message.action==='clear_details'){count=0;return {deleted_runs:46}}
+ if(message.action==='daily')return {days:[],local_run_summary:{count,start_date:message.start_date,end_date:message.end_date,retention_days:30}};
+ return {};
+}};
+p._render=()=>{};p._toast=()=>{};p._confirm=async()=>true;
+p._result={summary:{today:{date:today}},days:await loadUsageWindow(p,'30',today),runs:{runs:[{request_count:0}]}};
+const countInUI=()=>renderUsageDiagnostics(p,p._result).match(/Retained runs without provider requests<\/span><strong>([^<]+)/)[1];
+assert.equal(countInUI(),'46');
+// A response started before clearing cannot restore the cached count.
+const call = p._call.bind(p);
+let finish;
+p._call = () => new Promise(resolve => { finish = resolve; });
+const stale = loadUsageWindow(p, '90', today);
+p._call = call;
+p._eocUsageWindowCache.set('other|30|' + today, {untouched: true});
+const generation = p._usageWindowGeneration || 0;
+await p._clearUsageDetails();
+assert.ok(p._usageWindowGeneration > generation);
+finish({days:[], local_run_summary:{count:46}});
+await stale;
+assert.equal(p._eocUsageWindowCache.has('one|90|' + today),false);
+assert.deepEqual(p._eocUsageWindowCache.get('other|30|' + today),{untouched:true});
+assert.equal(count,0);
+console.log(JSON.stringify({case:'clear details',backendCount:count,visibleCount:countInUI(),cachedCount:(await loadUsageWindow(p,'30',today)).local_run_summary.count}));
+assert.equal(countInUI(),'0');
+assert.equal((await loadUsageWindow(p,'30',today)).local_run_summary.count,0);
+assert.equal(p._result.days.local_run_summary.retention_days,30);
+assert.equal(p._sectionCache.get(p._sectionCacheKey()).days.local_run_summary.count,0);
