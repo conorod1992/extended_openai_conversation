@@ -27,6 +27,7 @@ from homeassistant.components.conversation import (
     ConversationResult,
     async_get_chat_log,
 )
+from homeassistant.components.conversation.chat_log import current_chat_log
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -98,6 +99,7 @@ from .continuity import (
     GUEST_CONTINUITY_NAMESPACE,
     ConversationContinuity,
     async_get_continuity,
+    forward_chat_log_deltas,
 )
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
 from .conversation_id_ownership import (
@@ -814,10 +816,12 @@ class ExtendedOpenAIAgentEntity(
         """Process a request after continuity ownership has been claimed."""
         continuity = self._continuity
         assert continuity is not None
+        assist_chat_log = current_chat_log.get()
         user_input.conversation_id = resolution.conversation_id
         with (
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
+            forward_chat_log_deltas(assist_chat_log, chat_log, user_input.text),
         ):
             # HA allocates a ChatLog ID when the initial request has no ID.
             # Claim that actual ID before any processing can retain its history.

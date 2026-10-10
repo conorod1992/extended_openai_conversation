@@ -368,6 +368,8 @@ class RequestRules:
         self._initialized = False
         self._committed_state: dict[str, Any] | None = None
         self._generation = 0
+        self._revision_generation = 0
+        self._committed_revision_generation = 0
 
     async def async_initialize(self) -> None:
         """Load stored rules while preserving newly unsupported patterns for repair."""
@@ -387,10 +389,22 @@ class RequestRules:
                     )
                     migrated = True
                 else:
+                    generation = stored.get("revision_generation", 0)
+                    if type(generation) is int and generation >= 0:
+                        self._revision_generation = generation
+                    else:
+                        migrated = True
                     self._opaque_fields = {
                         key: deepcopy(value)
                         for key, value in stored.items()
-                        if key not in {"defaults", "wording_groups", "groups", "rules"}
+                        if key
+                        not in {
+                            "defaults",
+                            "wording_groups",
+                            "groups",
+                            "rules",
+                            "revision_generation",
+                        }
                     }
                     try:
                         self._groups = validate_rule_groups(stored.get("groups", []))
@@ -477,13 +491,15 @@ class RequestRules:
                 self._has_continuation = False
                 self._initialized = False
                 self._committed_state = None
+                self._revision_generation = 0
+                self._committed_revision_generation = 0
                 raise
 
     def revision(self) -> str:
         """Return a revision that also detects a committed A -> B -> A cycle."""
         payload = json.dumps(
             {
-                "generation": self._generation,
+                "generation": self._revision_generation,
                 "defaults": self._defaults,
                 "wording_groups": self._wording_groups,
                 "groups": self._groups,
@@ -1171,10 +1187,14 @@ class RequestRules:
 
     async def _async_save_locked(self, *, reconcile_failure: bool = True) -> None:
         """Settle each Store write before propagating failure or cancellation."""
+        # The counter belongs to the persisted transaction, so a manager reload
+        # keeps its revision and committed A -> B -> A changes remain detectable.
+        self._revision_generation += 1
         await _async_settle_transactional_save(
             self._store.async_save(
                 {
                     **self._opaque_fields,
+                    "revision_generation": self._revision_generation,
                     "defaults": self._defaults,
                     "wording_groups": self._wording_groups,
                     "groups": self._groups,
@@ -1203,11 +1223,13 @@ class RequestRules:
         }
         matches_candidate = (
             all(disk_snapshot[key] == getattr(self, f"_{key}") for key in disk_snapshot)
+            and disk_state._revision_generation == self._revision_generation
             and disk_state._opaque_fields == self._opaque_fields
         )
         matches_committed = (
             self._committed_state is not None
             and disk_snapshot == self._committed_state
+            and disk_state._revision_generation == self._committed_revision_generation
             and disk_state._opaque_fields == self._committed_opaque_fields
         )
         self._defaults = deepcopy(disk_state._defaults)
@@ -1215,20 +1237,24 @@ class RequestRules:
         self._wording_groups = deepcopy(disk_state._wording_groups)
         self._groups = deepcopy(disk_state._groups)
         self._rules = deepcopy(disk_state._rules)
+        self._revision_generation = disk_state._revision_generation
         self._sort_and_compile()
         if matches_committed and not matches_candidate:
             # The failed mutation did not reach disk. Keep its revision unchanged.
             self._committed_state = deepcopy(disk_snapshot)
             self._committed_opaque_fields = deepcopy(disk_state._opaque_fields)
+            self._committed_revision_generation = disk_state._revision_generation
         else:
             # The candidate, or another validated Store generation, is now the
-            # manager's committed baseline and receives a fresh revision.
+            # manager's committed baseline, including its durable revision.
             self._remember_committed_state()
 
     def _invalidate_after_unreadable_store(self) -> None:
         """Fail closed when the authoritative Request Rules file cannot be read."""
         self._initialized = False
         self._committed_state = None
+        self._revision_generation = 0
+        self._committed_revision_generation = 0
         self._defaults = dict(DEFAULT_MATCHING)
         self._opaque_fields = {}
         self._committed_opaque_fields = {}
@@ -1244,6 +1270,7 @@ class RequestRules:
         """Capture the exact last committed Request Rule configuration."""
         if self._initialized:
             self._generation += 1
+        self._committed_revision_generation = self._revision_generation
         self._committed_state = {
             "defaults": deepcopy(self._defaults),
             "wording_groups": deepcopy(self._wording_groups),
@@ -1268,6 +1295,7 @@ class RequestRules:
         self._wording_groups = deepcopy(snapshot["wording_groups"])
         self._groups = deepcopy(snapshot["groups"])
         self._rules = deepcopy(snapshot["rules"])
+        self._revision_generation = self._committed_revision_generation
         self._sort_and_compile()
 
 
