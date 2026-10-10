@@ -289,3 +289,16 @@ async def test_explicit_targets_recheck_participants_after_permission_await(
             target={"entity_id": ["light.kitchen", "light.private"]},
         )
     hass.services.async_call.assert_not_awaited()
+
+
+@pytest.mark.parametrize("domain", ["light", "homeassistant"])
+@pytest.mark.parametrize("source", ["data", "target"])
+@pytest.mark.parametrize("entity_ids", ["all", ["all"], "light.kitchen,all"])
+async def test_all_sentinel_is_rejected_before_participant_filtering(
+    selected_home, domain, source, entity_ids
+):
+    with pytest.raises(HomeAssistantError, match="entity_id 'all' is not supported"):
+        await ha_actions.async_call_ha_action(
+            selected_home, domain, "turn_on", **{source: {"entity_id": entity_ids}}
+        )
+    selected_home.services.async_call.assert_not_awaited()
