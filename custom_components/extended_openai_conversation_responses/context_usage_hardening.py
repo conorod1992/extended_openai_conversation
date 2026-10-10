@@ -105,6 +105,40 @@ def _serialized_characters(value: Any) -> tuple[int, int]:
     return len(serialized), non_ascii
 
 
+# Fallback budgets are deliberately independent of encoded transport size.
+# Provider-reported usage remains authoritative; model/image/PDF costs vary.
+_IMAGE_INPUT_TOKEN_BUDGET = 2048
+_FILE_INPUT_TOKEN_BUDGET = 4096
+
+
+def _attachment_aware_input(input_value: Any) -> tuple[Any, int]:
+    """Project user attachments out of text measurement without changing requests."""
+    if not isinstance(input_value, list):
+        return input_value, 0
+    projected = input_value
+    attachment_tokens = 0
+    for index, item in enumerate(input_value):
+        if not isinstance(item, dict) or item.get("role") != "user":
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        parts = []
+        for part in content:
+            if not isinstance(part, dict):
+                parts.append(str(part))
+            elif part.get("type") in {"input_image", "image_url"}:
+                attachment_tokens += _IMAGE_INPUT_TOKEN_BUDGET
+            elif part.get("type") in {"input_file", "file"}:
+                attachment_tokens += _FILE_INPUT_TOKEN_BUDGET
+            else:
+                parts.append(part)
+        if projected is input_value:
+            projected = list(input_value)
+        projected[index] = {**item, "content": parts}
+    return projected, attachment_tokens
+
+
 def measure_provider_input(
     input_value: Any,
     tools: Any = None,
@@ -112,7 +146,8 @@ def measure_provider_input(
     tool_measurement: tuple[int, int] | None = None,
 ) -> tuple[int, int, int]:
     """Return serialized input/tool characters and conservative context tokens."""
-    input_characters, input_non_ascii = _serialized_characters(input_value)
+    measured, attachment_tokens = _attachment_aware_input(input_value)
+    input_characters, input_non_ascii = _serialized_characters(measured)
     tool_characters = 0
     tool_non_ascii = 0
     if tools:
@@ -125,7 +160,7 @@ def measure_provider_input(
     ascii_characters = max(0, total_characters - non_ascii)
     conservative_tokens = max(
         1,
-        math.ceil(ascii_characters / 3) + (non_ascii * 2),
+        math.ceil(ascii_characters / 3) + (non_ascii * 2) + attachment_tokens,
     )
     return input_characters, tool_characters, conservative_tokens
 
@@ -229,37 +264,9 @@ def estimate_prepared_request(
     entity: Any, request_usage: RequestUsage, input_value: Any, tools: Any
 ) -> None:
     """Measure the already assembled provider round without rebuilding tools/history."""
-    # Attachments are excluded from the established character footprint. Avoid
-    # rebuilding the complete input list on the overwhelmingly common text-only path.
-    # Materialize non-list iterables once so the eligibility scan cannot consume them.
-    measurement_source = (
-        input_value if isinstance(input_value, list) else list(input_value)
-    )
-    has_multipart_user_content = any(
-        isinstance(item, dict)
-        and item.get("role") == "user"
-        and isinstance(item.get("content"), list)
-        for item in measurement_source
-    )
-    measured = (
-        [
-            {
-                **item,
-                "content": "".join(
-                    str(part.get("text", ""))
-                    for part in item["content"]
-                    if part.get("type") in {"text", "input_text"}
-                ),
-            }
-            if isinstance(item, dict)
-            and item.get("role") == "user"
-            and isinstance(item.get("content"), list)
-            else item
-            for item in measurement_source
-        ]
-        if has_multipart_user_content
-        else measurement_source
-    )
+    # Materialize once; the shared measurement handles encoded attachments for
+    # both preflight pruning and request diagnostics.
+    measured = input_value if isinstance(input_value, list) else list(input_value)
     tool_measurement = formatted_tool_measurement(tools) if tools else None
     if tools and tool_measurement is None:
         tool_measurement = _serialized_characters(tools)

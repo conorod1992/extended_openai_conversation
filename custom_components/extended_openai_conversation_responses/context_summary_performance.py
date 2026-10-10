@@ -45,12 +45,18 @@ async def _summarize_detached(
             run_context.reset(token)
 
 
+async def async_apply_context_summary(entity: Any, chat_log: Any) -> bool:
+    """Settle owned compaction before a provider round can prune its snapshot."""
+    conversation_id = str(getattr(chat_log, "conversation_id", "") or "")
+    if not conversation_id:
+        return False
+    return await _manager(entity).async_apply(conversation_id, chat_log.content)
+
+
 @asynccontextmanager
 async def context_summary_request(entity: Any, chat_log: Any) -> AsyncIterator[None]:
     """Apply a completed summary and scope deferral to one owned request."""
-    conversation_id = str(getattr(chat_log, "conversation_id", "") or "")
-    if conversation_id:
-        await _manager(entity).async_apply(conversation_id, chat_log.content)
+    await async_apply_context_summary(entity, chat_log)
     token = _DEFER_CONTEXT_SUMMARY.set(True)
     try:
         yield
