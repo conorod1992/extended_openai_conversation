@@ -2063,7 +2063,7 @@ class ExtendedOpenAIAgentEntity(
             with selected_skill_scope(
                 getattr(getattr(self, "subentry", None), "data", {})
             ):
-                record_dispatch(self, tool_input)
+                record_dispatch(self, tool_input, function_tool)
                 content = await self._async_dispatch_function_tool(
                     function_tool, tool_input, llm_context, exposed_entities
                 )
