@@ -96,3 +96,20 @@ def test_ending_continuity_invalidates_generations_without_touching_other_owners
     assert rules.get(other) == {"chat_model": "gpt-4.1"}
     assert set(groups._sessions) == {other}
     assert list(rules._requests.values()) == [other]
+
+
+def test_continuity_cleanup_handles_delimiter_in_conversation_and_owner_ids():
+    rules = RequestRuleRuntime()
+    groups = FunctionGroupRuntime()
+    owner = "device:owner:conversation:custom"
+    own = request_rule_session_id(owner, "external:conversation:identifier")
+    sibling = request_rule_session_id(
+        owner + "-other", "external:conversation:identifier"
+    )
+    for key in [own, sibling]:
+        rules.set(key, {"chat_model": "gpt-4.1"})
+        groups.begin(key, 5)
+    rules.reset_continuity(owner)
+    groups.end_continuity(owner)
+    assert rules.get(own) == {} and set(groups._sessions) == {sibling}
+    assert rules.get(sibling) == {"chat_model": "gpt-4.1"}

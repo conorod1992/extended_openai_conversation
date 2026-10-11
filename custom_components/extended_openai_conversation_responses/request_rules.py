@@ -22,6 +22,7 @@ import re
 from time import monotonic
 from typing import Any, cast
 import unicodedata
+from urllib.parse import quote
 from uuid import uuid4
 
 from homeassistant.core import Context, HomeAssistant, ServiceCall
@@ -1399,7 +1400,7 @@ class RequestRuleRuntime:
 def request_rule_session_id(continuity_key: str | None, conversation_id: str) -> str:
     """Use the resolved continuity identity, or Core's actual ChatLog identity."""
     return (
-        f"continuity:{continuity_key}:conversation:{conversation_id}"
+        f"continuity:{continuity_key}:conversation:{quote(conversation_id, safe='')}"
         if continuity_key
         else f"conversation:{conversation_id}"
     )
