@@ -11,6 +11,7 @@ from pathlib import Path
 import stat
 import tempfile
 from typing import Any, cast
+from weakref import WeakValueDictionary
 
 import voluptuous as vol
 
@@ -165,7 +166,11 @@ def _check_file_fingerprint(path: Path, expected: _FileFingerprint) -> None:
 
 def _get_edit_lock(hass: HomeAssistant, path: Path) -> asyncio.Lock:
     """Return the integration-wide lock for one canonical target path."""
-    locks: dict[str, asyncio.Lock] = hass.data.setdefault(_FILE_EDIT_LOCKS, {})
+    registry = hass.data.get(_FILE_EDIT_LOCKS)
+    if not isinstance(registry, WeakValueDictionary):
+        registry = WeakValueDictionary(registry or {})
+        hass.data[_FILE_EDIT_LOCKS] = registry
+    locks: WeakValueDictionary[str, asyncio.Lock] = registry
     key = os.path.normcase(str(path))
     lock = locks.get(key)
     if lock is None:
@@ -230,7 +235,7 @@ class FileFunction(Function):
         # /config/workspace but is not inside it.
         allowed = False
         for allow_dir in allow_dirs:
-            allowed_path = Path(allow_dir).resolve()
+            allowed_path = self.to_absolute_path(hass, allow_dir).resolve()
             if target == allowed_path or target.is_relative_to(allowed_path):
                 allowed = True
                 break

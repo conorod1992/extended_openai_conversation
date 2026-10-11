@@ -103,6 +103,23 @@ def _read_only_sqlite_uri(db_url: str) -> str:
     return parse.urlunsplit((scheme, netloc, path, new_query_string, fragment))
 
 
+def _unique_column_names(names: list[str]) -> list[str]:
+    """Keep every result column, reserving explicit aliases before suffixing duplicates."""
+    reserved = set(names)
+    used: set[str] = set()
+    result = []
+    for name in names:
+        candidate = name
+        if candidate in used:
+            suffix = 2
+            while f"{name}_{suffix}" in reserved or f"{name}_{suffix}" in used:
+                suffix += 1
+            candidate = f"{name}_{suffix}"
+        used.add(candidate)
+        result.append(candidate)
+    return result
+
+
 def _estimated_row_bytes(row: dict[str, Any]) -> int:
     """Return a conservative encoded-size estimate for one SQLite result row."""
     return len(repr(row).encode("utf-8", errors="replace"))
@@ -167,7 +184,9 @@ def _execute_sqlite_query(
             if cursor.description is None:
                 raise HomeAssistantError("SQLite query did not return any columns")
 
-            names = [description[0] for description in cursor.description]
+            names = _unique_column_names(
+                [description[0] for description in cursor.description]
+            )
             if single:
                 row = cursor.fetchone()
                 check_deadline()

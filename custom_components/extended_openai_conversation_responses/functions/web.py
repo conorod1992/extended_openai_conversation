@@ -182,6 +182,23 @@ def _decode_compressed_body(body: bytes, encoding: str, max_bytes: int) -> bytes
     return result
 
 
+def _decode_content_encodings(body: bytes, encoding: str, max_bytes: int) -> bytes:
+    """Undo stacked encodings in reverse order, bounding every intermediate body."""
+    encodings = [part.strip().lower() for part in encoding.split(",")]
+    if len(encodings) > 8 or any(
+        part not in {"identity", "gzip", "deflate", "br", "zstd"} for part in encodings
+    ):
+        raise aiohttp.ClientPayloadError("Unsupported response content encoding")
+    for part in reversed(encodings):
+        if part != "identity":
+            body = _decode_compressed_body(body, part, max_bytes)
+        if len(body) > max_bytes:
+            raise HomeAssistantError(
+                f"Remote response exceeds the configured safety limit of {max_bytes} bytes"
+            )
+    return body
+
+
 class _BoundedResponse:
     """Proxy one aiohttp response while bounding body materialization."""
 
@@ -229,7 +246,7 @@ class _BoundedResponse:
         encoding = self._response.headers.get("Content-Encoding", "").lower().strip()
         if encoding:
             body = await asyncio.to_thread(
-                _decode_compressed_body, body, encoding, self._max_bytes
+                _decode_content_encodings, body, encoding, self._max_bytes
             )
         self._body = body
         return body
