@@ -377,7 +377,7 @@ async def test_malformed_stream_values_are_not_logged(field, caplog):
         _chat_chunk(finish_reason="stop"),
     ])
     deltas = [delta async for delta in _entity()._transform_chat_stream(SimpleNamespace(), stream)]
-    assert any("PRIVATE_STREAM_MARKER" in str(delta) for delta in deltas)
+    assert any("PRIVATE_STREAM_MARKER" in str(delta) for delta in deltas) is (field == "refusal")
     assert "non-string" in caplog.text
     assert "PRIVATE_STREAM_MARKER" not in "\n".join(
         logging.Formatter().format(record) for record in caplog.records
