@@ -383,7 +383,7 @@ async def test_search_filter_limit_empty_update_and_delete() -> None:
     assert {
         result.source_id
         for result in await library.async_search("tea towels", source_ids=[])
-    } == {first.source_id, second.source_id}
+    } == set()
     await library.async_update(first.source_id, content="First aid kit above fridge")
     assert not await library.async_search("oven", [first.source_id])
     assert await library.async_search("first aid", [first.source_id])
@@ -407,7 +407,7 @@ async def test_catalog_is_bounded_filterable_paginated_and_content_free() -> Non
     assert [
         result.source_id
         for result in await library.async_search("dishwasher", source_ids=["household"])
-    ] == [first.source_id]
+    ] == []
 
     first_page = await library.async_catalog(limit=1)
     assert first_page["returned"] == 1
@@ -497,7 +497,7 @@ async def test_tool_list_returns_metadata_without_content() -> None:
     assert "content" not in result["sources"][0]
 
 
-async def test_tool_search_ignores_invented_source_ids_and_reports_fallback() -> None:
+async def test_tool_search_rejects_invented_source_ids_without_fallback() -> None:
     library = await _library()
     source = await library.async_create(
         "Home Devices & Equipment Inventory",
@@ -516,11 +516,11 @@ async def test_tool_search_ignores_invented_source_ids_and_reports_fallback() ->
                 "limit": 5,
             },
         )
-        assert result["results"][0]["source_id"] == source.source_id
+        assert result["results"] == []
         assert result["source_filter"] == {
             "applied_source_ids": [],
             "ignored_source_ids": [invented_id],
-            "fell_back_to_all_sources": True,
+            "fell_back_to_all_sources": False,
         }
 
 

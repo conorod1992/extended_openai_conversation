@@ -499,7 +499,7 @@ class KnowledgeLibrary:
     ) -> tuple[set[str] | None, list[str]]:
         """Resolve model-provided IDs against enabled sources only."""
         self._ensure_initialized()
-        if not source_ids:
+        if source_ids is None:
             return None, []
 
         valid: set[str] = set()
@@ -511,7 +511,7 @@ class KnowledgeLibrary:
                 valid.add(normalized_id)
             else:
                 ignored.append(requested_id)
-        return (valid or None), ignored
+        return valid, ignored
 
     async def async_revalidate_search_results(
         self, results: list[SearchResult]
