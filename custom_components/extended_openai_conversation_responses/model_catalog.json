@@ -1,6 +1,6 @@
 {
   "schema_version": 8,
-  "catalog_version": 13,
+  "catalog_version": 14,
   "compatibility": {"minimum_eoai_version": "6.8.3"},
   "defaults": {
     "status": "unknown",
@@ -254,8 +254,8 @@
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
-      "responses_web_search": false,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
+      "responses_web_search": true,
       "auto_api": "responses"
     },
     {
@@ -295,8 +295,8 @@
       "service_tiers": [],
       "explicit_prompt_cache": false,
       "structured_outputs": false,
-      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
-      "responses_web_search": false,
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
+      "responses_web_search": true,
       "auto_api": "responses"
     },
     {
@@ -423,7 +423,8 @@
       "service_tiers": ["auto","default"],
       "explicit_prompt_cache": false,
       "structured_outputs": true,
-      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
+      "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "conditional",
+          "requires": {"reasoning_effort": ["low", "medium", "high"]}}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true
     },
     {
@@ -603,7 +604,7 @@
       "recommended_profile": {"api": "responses","reasoning_effort": null,"temperature": "omit","top_p": "omit"},
       "service_tiers": [],
       "explicit_prompt_cache": false,
-      "structured_outputs": false,
+      "structured_outputs": true,
       "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
       "auto_api": "responses"
@@ -630,7 +631,7 @@
       "recommended_profile": {"api": "responses", "reasoning_effort": null, "temperature": "omit", "top_p": "omit"},
       "service_tiers": [],
       "explicit_prompt_cache": false,
-      "structured_outputs": true,
+      "structured_outputs": false,
       "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true,
       "lifecycle_note": "Deprecated legacy alias retained for existing configurations."
