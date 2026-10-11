@@ -1942,3 +1942,35 @@ async def test_manual_volume_change_is_not_reclaimed_on_config_update(
     )
     assert calls == []
     assert "media_player.bedroom" not in manager.active["controls"]
+
+
+@pytest.mark.asyncio
+async def test_retarget_lost_acknowledgement_restores_original_baseline(
+    monkeypatch, hass
+):
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.55)
+    manager = _stateful_public_manager(hass)
+    manager._config = _config(wake_sound="unchanged")
+    monkeypatch.setattr(manager, "_reschedule", lambda: None)
+    now = datetime(2026, 9, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    await _install_services(hass)
+    await manager.async_reconcile(now=now)
+    apply = hass.services.async_call.side_effect
+
+    async def apply_then_lose_ack(*args, **kwargs):
+        await apply(*args, **kwargs)
+        hass.states.get("media_player.bedroom").context = kwargs["context"]
+        raise HomeAssistantError("acknowledgement lost")
+
+    hass.services.async_call.side_effect = apply_then_lose_ack
+    await manager.async_update_config(
+        _config(max_volume=0.1, wake_sound="unchanged").as_dict()
+    )
+    assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.1
+    control = manager.active["controls"]["media_player.bedroom"]
+    assert control["quiet_value"] == 0.2 and control["pending_quiet_value"] == 0.1
+    calls, _ = await _install_services(hass)
+    await manager.async_update_config(_config(enabled=False).as_dict())
+    assert calls == [("media_player.bedroom", 0.55)]

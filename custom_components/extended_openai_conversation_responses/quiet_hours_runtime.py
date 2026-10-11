@@ -681,7 +681,7 @@ class QuietHoursManager:
                 if kind == "volume":
                     await self._async_set_volume(entity_id, value)
                 else:
-                    await self._async_set_switch(entity_id, value)
+                    await self._async_set_switch(entity_id, bool(value))
             except Exception as err:
                 self._log_control_failure(
                     "retarget", entity_id, kind, err, ownership="retained"
