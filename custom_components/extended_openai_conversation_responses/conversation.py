@@ -2475,7 +2475,7 @@ class ExtendedOpenAIAgentEntity(
                         },
                     }
             results = await self._knowledge.async_search(
-                query, sorted(allowed_ids) if allowed_ids else None, limit
+                query, sorted(allowed_ids) if allowed_ids is not None else None, limit
             )
             results = await KnowledgeLibrary.async_revalidate_search_results(
                 self._knowledge, results

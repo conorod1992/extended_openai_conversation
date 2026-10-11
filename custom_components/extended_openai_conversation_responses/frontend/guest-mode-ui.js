@@ -31,7 +31,7 @@ export function renderGuestWebSearchSetting(config = {}) {
 
 
 export function memorySearchProjection(memory) {
-  return `${memory?.content ?? ""} ${memory?.category ?? ""} ${memory?.source ?? ""}`.toLocaleLowerCase();
+  return `${memory?.content ?? ""} ${memory?.category ?? ""} ${memory?.source ?? ""} ${memory?.subject ?? ""} ${memory?.key ?? ""}`.trim().toLocaleLowerCase();
 }
 
 const memoryCollections = new WeakMap();
