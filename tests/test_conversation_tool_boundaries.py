@@ -267,7 +267,7 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
         limit=3,
     )
     entity._archive.async_get.assert_awaited_once_with(
-        "user:alice", "selected", 2, 4
+        "user:alice", "selected", 2, 4, text_offset=0
     )
     entity._archive.async_make_private.assert_awaited_once_with("session-1")
     entity._archive.async_resume_saving.assert_awaited_once_with(

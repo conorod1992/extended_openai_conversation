@@ -321,4 +321,4 @@ async def test_archive_non_search_operation_does_not_require_query():
     finally:
         owner._ACTIVE_SCOPE.reset(scope)
         owner._ACTIVE_ARCHIVE.reset(active)
-    get.assert_awaited_once_with("user:alice", "item-1", 0, 6)
+    get.assert_awaited_once_with("user:alice", "item-1", 0, 6, text_offset=0)
