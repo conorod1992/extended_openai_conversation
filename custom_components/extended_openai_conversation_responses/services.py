@@ -78,13 +78,14 @@ from .ha_tool_result_compat import tool_result_data
 from .helpers import get_api_mode, get_authenticated_client
 from .live_subentry_updates import update_live_subentry
 from .memory import async_get_memory, memory_as_dict, memory_user_id
-from .model_capabilities import ModelCapabilityError, normalize_output_token_limit
+from .model_capabilities import model_capability_snapshot
 from .provider_errors import (
     ensure_successful_responses_result,
     log_provider_failure,
     provider_user_message,
     request_reauthentication,
 )
+from .request import auxiliary_output_token_limit, request_model_capabilities
 from .request_rules import async_call_active_function
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
 from .skill_resource_limits import (
@@ -114,6 +115,7 @@ QUERY_IMAGE_SCHEMA = vol.Schema(
             [{"url": cv.string}],
         ),
         vol.Optional("max_tokens", default=300): cv.positive_int,
+        vol.Optional("azure_model"): cv.string,
     }
 )
 
@@ -363,23 +365,25 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         entry = None
         try:
             model = call.data["model"]
-            api_mode = get_api_mode(call.data[CONF_API_MODE], model)
-            try:
-                token_limit = normalize_output_token_limit(
-                    model, api_mode, call.data["max_tokens"]
-                )
-            except ModelCapabilityError as err:
-                raise HomeAssistantError(str(err)) from err
-            if token_limit is None:
+            if call.data.get("max_tokens") in (None, ""):
                 raise HomeAssistantError("Output token limit is required")
-            token_param, token_value = token_limit
-            image_params = await hass.async_add_executor_job(
-                prepare_image_params, hass, call.data["images"]
-            )
-
             entry = hass.config_entries.async_get_entry(call.data["config_entry"])
             if entry is None or entry.domain != DOMAIN:
                 raise HomeAssistantError("Config entry not found")
+            with model_capability_snapshot(
+                model, request_model_capabilities(call.data, getattr(entry, "data", {}))
+            ):
+                api_mode = get_api_mode(call.data[CONF_API_MODE], model)
+            token_param, token_value = auxiliary_output_token_limit(
+                model,
+                api_mode,
+                call.data["max_tokens"],
+                call.data,
+                getattr(entry, "data", {}),
+            )
+            image_params = await hass.async_add_executor_job(
+                prepare_image_params, hass, call.data["images"]
+            )
 
             client = entry.runtime_data
 
@@ -457,7 +461,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         if not entry or entry.domain != DOMAIN:
             raise HomeAssistantError(f"Config entry {entry_id} not found")
 
-        original_data = dict(entry.data)
+        original_data = dict(getattr(entry, "data", {}))
         updates = {}
         for key in (
             CONF_API_KEY,
@@ -551,7 +555,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 "Request Rules changed during provider validation; retry with the latest settings"
             )
 
-        if dict(entry.data) != original_data:
+        if dict(getattr(entry, "data", {})) != original_data:
             raise HomeAssistantError(
                 "Provider settings changed while this configuration was being "
                 "validated. No changes were saved by this operation. Try again."

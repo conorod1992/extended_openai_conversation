@@ -3072,6 +3072,21 @@ def validate_rule_model_request(
     validate_routed_request_options(candidate, entry_data)
 
 
+def validate_saved_model_routes(
+    rules: Sequence[Mapping[str, Any]],
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+) -> None:
+    """Validate enabled static routes against the proposed destination settings."""
+    for rule in rules:
+        if rule.get("enabled", True):
+            try:
+                validate_rule_model_request(rule, options, entry_data)
+            except HomeAssistantError as err:
+                label = rule.get("name", rule.get("id", "unnamed"))
+                raise HomeAssistantError(f"Request Rule `{label}`: {err}") from err
+
+
 def _resolved_routing_value(value: str, slots: Mapping[str, str], field: str) -> str:
     """Resolve one deterministic captured routing value and reject empty results."""
     resolved = resolve_slot_values(value, slots)
