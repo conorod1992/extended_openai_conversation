@@ -1614,6 +1614,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 content_value = answer_text(delta.content)
                 if content_value:
                     yield {"content": content_value}
+                elif not isinstance(delta.content, str):
+                    _LOGGER.warning(
+                        "Ignoring non-string content without typed answer text; type=%s",
+                        type(delta.content).__name__,
+                    )
 
             refusal_value = getattr(delta, "refusal", None)
             if refusal_value:
