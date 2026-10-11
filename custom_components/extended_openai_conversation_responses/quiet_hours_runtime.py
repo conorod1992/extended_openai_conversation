@@ -493,9 +493,36 @@ class QuietHoursManager:
             except BaseException:
                 self._config = previous
                 raise
-            await self._async_restore_locked()
-            self._reschedule()
-        await self.async_reconcile()
+            now = dt_util.now()
+            old_period = (
+                quiet_period_for(now, previous.start, previous.end)
+                if previous.enabled
+                else None
+            )
+            new_period = (
+                quiet_period_for(now, candidate.start, candidate.end)
+                if candidate.enabled
+                else None
+            )
+            if (
+                self._active is not None
+                and old_period is not None
+                and new_period is not None
+            ):
+                self._active.update(
+                    period_started_at=new_period.start.isoformat(),
+                    period_ends_at=new_period.end.isoformat(),
+                )
+                self._active["observed_controls"] = list(
+                    self._active.get("controls", {})
+                )
+                self._active["pending_controls"] = {}
+                await self._async_save_control_state_locked()
+        try:
+            await self.async_reconcile()
+        finally:
+            async with self._lock:
+                self._reschedule()
         return self.snapshot()
 
     async def async_reconcile(self, *, now: datetime | None = None) -> None:
@@ -536,6 +563,8 @@ class QuietHoursManager:
                         }
                     )
                     await self._async_save_locked()
+            capabilities = discover_satellite_capabilities(self.hass, self._config)
+            await self._async_reconcile_controls_locked(capabilities)
             await self._async_retry_pending_restores_locked()
 
             if self._active is None:
@@ -548,7 +577,7 @@ class QuietHoursManager:
                 await self._async_save_locked()
 
             controls = self._active.setdefault("controls", {})
-            for capability in discover_satellite_capabilities(self.hass, self._config):
+            for capability in capabilities:
                 if capability.media_player_entity_id:
                     await self._async_apply_volume_locked(
                         capability.satellite_entity_id,
@@ -565,6 +594,101 @@ class QuietHoursManager:
                         self._config.wake_sound == "on",
                         controls,
                     )
+
+    async def _async_save_control_state_locked(self) -> None:
+        await self._async_save_locked()
+
+    def _pending_quiet_attained(self, entity_id: str, control: dict[str, Any]) -> bool:
+        if "pending_quiet_value" not in control:
+            return False
+        current = (
+            _current_volume(self.hass, entity_id)
+            if control["kind"] == "volume"
+            else _current_switch(self.hass, entity_id)
+        )
+        desired = control["pending_quiet_value"]
+        same = current is not None and (
+            math.isclose(current, desired, abs_tol=_VOLUME_TOLERANCE)
+            if control["kind"] == "volume"
+            else current is desired
+        )
+        context_id = control.get("application_context_id")
+        state = self.hass.states.get(entity_id)
+        return same and (
+            not context_id
+            or getattr(getattr(state, "context", None), "id", None) == context_id
+        )
+
+    async def _async_reconcile_controls_locked(
+        self, capabilities: list[SatelliteCapabilities]
+    ) -> None:
+        """Retarget retained ownership directly and restore only departing controls."""
+        if self._active is None:
+            return
+        desired = {}
+        for item in capabilities:
+            if item.media_player_entity_id:
+                desired[item.media_player_entity_id] = (
+                    "volume",
+                    item.satellite_entity_id,
+                    self._config.max_volume,
+                )
+            if item.wake_sound_entity_id and self._config.wake_sound != "unchanged":
+                desired[item.wake_sound_entity_id] = (
+                    "switch",
+                    item.satellite_entity_id,
+                    self._config.wake_sound == "on",
+                )
+        controls = self._active.get("controls", {})
+        for entity_id, control in list(controls.items()):
+            target = desired.get(entity_id)
+            if target is None or target[:2] != (
+                control["kind"],
+                control["satellite_entity_id"],
+            ):
+                control["restoration_pending"] = True
+                continue
+            if self._pending_quiet_attained(entity_id, control):
+                control["quiet_value"] = control.pop("pending_quiet_value")
+                await self._async_save_control_state_locked()
+            kind, _, value = target
+            if kind == "volume":
+                value = min(value, control["original_value"])
+            if value == control["quiet_value"] and "pending_quiet_value" not in control:
+                control.pop("restoration_pending", None)
+                continue
+            current = (
+                _current_volume(self.hass, entity_id)
+                if kind == "volume"
+                else _current_switch(self.hass, entity_id)
+            )
+            if current is None:
+                continue
+            same = (
+                math.isclose(current, control["quiet_value"], abs_tol=_VOLUME_TOLERANCE)
+                if kind == "volume"
+                else current is control["quiet_value"]
+            )
+            if not same:
+                # An independent adjustment ends ownership; never claim its value as our baseline.
+                controls.pop(entity_id)
+                await self._async_save_control_state_locked()
+                continue
+            control["pending_quiet_value"] = value
+            control.pop("restoration_pending", None)
+            await self._async_save_control_state_locked()
+            try:
+                if kind == "volume":
+                    await self._async_set_volume(entity_id, value)
+                else:
+                    await self._async_set_switch(entity_id, value)
+            except Exception as err:
+                self._log_control_failure(
+                    "retarget", entity_id, kind, err, ownership="retained"
+                )
+                continue
+            control["quiet_value"] = control.pop("pending_quiet_value")
+            await self._async_save_control_state_locked()
 
     def _log_control_failure(
         self,
@@ -651,6 +775,8 @@ class QuietHoursManager:
                     continue
                 if pending_only and not raw.get("restoration_pending"):
                     continue
+                if self._pending_quiet_attained(entity_id, raw):
+                    raw["quiet_value"] = raw.pop("pending_quiet_value")
                 kind = raw.get("kind")
                 original = raw.get("original_value")
                 quiet = raw.get("quiet_value")
@@ -783,6 +909,17 @@ class QuietHoursManager:
                 }
             if entity_id in controls and raw.get("restoration_pending") is True:
                 controls[entity_id]["restoration_pending"] = True
+            pending_value = raw.get("pending_quiet_value")
+            if entity_id in controls and (
+                (
+                    kind == "volume"
+                    and isinstance(pending_value, (int, float))
+                    and not isinstance(pending_value, bool)
+                    and 0 <= pending_value <= 1
+                )
+                or (kind == "switch" and isinstance(pending_value, bool))
+            ):
+                controls[entity_id]["pending_quiet_value"] = pending_value
             identity = raw.get("registry_identity")
             if (
                 entity_id in controls

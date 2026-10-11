@@ -156,7 +156,9 @@ async def _install_services(hass):
     volume_calls: list[tuple[str, float]] = []
     switch_calls: list[tuple[str, bool]] = []
 
-    async def async_call(domain, service, data, *, blocking=False, context=None) -> None:
+    async def async_call(
+        domain, service, data, *, blocking=False, context=None
+    ) -> None:
         entity_id = data["entity_id"]
         if domain == "media_player" and service == "volume_set":
             volume = float(data["volume_level"])
@@ -1335,7 +1337,9 @@ async def test_restore_respects_manual_changes_and_retains_failed_ownership() ->
     manager._async_set_volume = AsyncMock(side_effect=RuntimeError("offline"))
     await manager._async_restore_locked()
     assert manager._active["controls"]["media_player.owned"]["original_value"] == 0.7
-    assert manager._active["controls"]["media_player.owned"]["restoration_pending"] is True
+    assert (
+        manager._active["controls"]["media_player.owned"]["restoration_pending"] is True
+    )
 
 
 async def test_service_save_shutdown_and_callbacks() -> None:
@@ -1567,6 +1571,7 @@ async def test_reconcile_reuses_existing_active_period(
         "applied_at": now.isoformat(),
         "controls": existing_controls,
     }
+    manager._async_reconcile_controls_locked = AsyncMock()
     original_active = manager._active
     manager._publish_state = MagicMock()
     manager._async_restore_locked = AsyncMock()
@@ -1837,3 +1842,103 @@ async def test_prepare_control_reuses_unapplied_intent_at_original_baseline() ->
 
     assert result is control
     manager._async_save_control_state_locked.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_active_config_changes_retarget_without_restoration_blip(
+    monkeypatch, hass
+):
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.55)
+    manager = _stateful_public_manager(hass)
+    manager._config = _config(wake_sound="unchanged")
+    monkeypatch.setattr(manager, "_reschedule", lambda: None)
+    now = datetime(2026, 9, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    volume_calls, _ = await _install_services(hass)
+    await manager.async_reconcile(now=now)
+    volume_calls.clear()
+    await manager.async_update_config(
+        _config(max_volume=0.1, start="21:00", wake_sound="unchanged").as_dict()
+    )
+    assert volume_calls == [("media_player.bedroom", 0.1)]
+    assert manager.active["controls"]["media_player.bedroom"]["original_value"] == 0.55
+    volume_calls.clear()
+    await manager.async_update_config(
+        _config(max_volume=0.3, start="21:00", wake_sound="unchanged").as_dict()
+    )
+    assert volume_calls == [("media_player.bedroom", 0.3)]
+    volume_calls.clear()
+    await manager.async_update_config(_config(enabled=False).as_dict())
+    assert volume_calls == [("media_player.bedroom", 0.55)]
+
+
+@pytest.mark.asyncio
+async def test_failed_retarget_preserves_baseline_for_disable(monkeypatch, hass):
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.55)
+    manager = _stateful_public_manager(hass)
+    manager._config = _config(wake_sound="unchanged")
+    monkeypatch.setattr(manager, "_reschedule", lambda: None)
+    now = datetime(2026, 9, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    await _install_services(hass)
+    await manager.async_reconcile(now=now)
+    hass.services.async_call.side_effect = HomeAssistantError("offline")
+    await manager.async_update_config(
+        _config(max_volume=0.1, wake_sound="unchanged").as_dict()
+    )
+    control = manager.active["controls"]["media_player.bedroom"]
+    assert control["original_value"] == 0.55
+    assert control["quiet_value"] == 0.2
+    assert control["pending_quiet_value"] == 0.1
+    assert (
+        manager._normalize_active(manager.active)["controls"]["media_player.bedroom"][
+            "pending_quiet_value"
+        ]
+        == 0.1
+    )
+    calls, _ = await _install_services(hass)
+    await manager.async_update_config(_config(enabled=False).as_dict())
+    assert calls == [("media_player.bedroom", 0.55)]
+
+
+@pytest.mark.asyncio
+async def test_wake_policy_release_does_not_restore_retained_volume(monkeypatch, hass):
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.55)
+    manager = _stateful_public_manager(hass)
+    manager._config = _config()
+    monkeypatch.setattr(manager, "_reschedule", lambda: None)
+    now = datetime(2026, 9, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    volumes, switches = await _install_services(hass)
+    await manager.async_reconcile(now=now)
+    volumes.clear()
+    switches.clear()
+    await manager.async_update_config(_config(wake_sound="unchanged").as_dict())
+    assert volumes == []
+    assert switches == [("switch.bedroom_wake_sound", True)]
+    assert "media_player.bedroom" in manager.active["controls"]
+
+
+@pytest.mark.asyncio
+async def test_manual_volume_change_is_not_reclaimed_on_config_update(
+    monkeypatch, hass
+):
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.55)
+    manager = _stateful_public_manager(hass)
+    manager._config = _config(wake_sound="unchanged")
+    monkeypatch.setattr(manager, "_reschedule", lambda: None)
+    now = datetime(2026, 9, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    calls, _ = await _install_services(hass)
+    await manager.async_reconcile(now=now)
+    hass.states.async_set("media_player.bedroom", "idle", {"volume_level": 0.4})
+    calls.clear()
+    await manager.async_update_config(
+        _config(max_volume=0.1, wake_sound="unchanged").as_dict()
+    )
+    assert calls == []
+    assert "media_player.bedroom" not in manager.active["controls"]

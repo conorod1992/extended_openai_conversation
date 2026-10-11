@@ -280,6 +280,8 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                         }
                     )
                     await self._async_save_locked()
+            capabilities = discover_satellite_capabilities(self.hass, self._config)
+            await self._async_reconcile_controls_locked(capabilities)
             await self._async_retry_pending_restores_locked()
 
             if self._active is None:
@@ -293,7 +295,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 await self._async_save_locked()
 
             controls = self._active.setdefault("controls", {})
-            for capability in discover_satellite_capabilities(self.hass, self._config):
+            for capability in capabilities:
                 if capability.media_player_entity_id:
                     await self._async_apply_volume_locked(
                         capability.satellite_entity_id,
