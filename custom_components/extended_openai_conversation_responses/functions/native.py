@@ -192,6 +192,7 @@ def _append_automation_atomic(
     """Append one automation without overwriting a concurrent external edit."""
     previous = _read_optional_text(path)
     existing_text = previous or ""
+    current_node = None
     if existing_text.strip():
         try:
             current_node = yaml.compose(existing_text, Loader=yaml.SafeLoader)
@@ -199,15 +200,18 @@ def _append_automation_atomic(
             raise HomeAssistantError(
                 f"Existing automations YAML is invalid: {err}"
             ) from err
-        if not isinstance(current_node, yaml.SequenceNode):
+        if current_node is not None and not isinstance(current_node, yaml.SequenceNode):
             raise HomeAssistantError("Existing automations YAML must contain a list")
-        current = current_node.value
+        current = current_node.value if current_node is not None else []
     else:
         current = []
 
     raw_config = yaml.safe_dump([config], allow_unicode=True, sort_keys=False)
     if not current:
-        updated = raw_config
+        prefix = existing_text if current_node is None else ""
+        if prefix and not prefix.endswith("\n"):
+            prefix += "\n"
+        updated = prefix + raw_config
     else:
         prefix = existing_text
         if not prefix.endswith("\n"):

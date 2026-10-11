@@ -27,3 +27,5 @@ function:
 - `max_rows`, `timeout`, and `max_result_bytes` bound results and execution. Current limits are enforced by configuration validation.
 
 The template receives reserved `exposed_entities`, `is_exposed(entity_id)`, `is_exposed_entity_in_query(query)`, `validate_datetime(value)`, and `raise(message)` context. Caller arguments cannot replace these values. `validate_datetime` accepts exactly `YYYY-MM-DD HH:MM:SS` for the host-local Recorder examples. Use these helpers to validate entity-backed access, but do not rely on string matching as a complete SQL authorization mechanism. Home Assistant's Recorder schema can change between releases; validate queries against your installation. For ordinary recent history, prefer the built-in `get_history` native Function Tool.
+
+Duplicate result-column names are retained by adding numeric suffixes (`id`, `id_2`, ...). Explicit aliases are reserved first, so an existing `id_2` alias is never overwritten. Prefer explicit SQL aliases when stable names matter.

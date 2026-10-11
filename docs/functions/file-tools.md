@@ -40,3 +40,5 @@ function:
 `path`, `old_text`, and `new_text` are required templates. The edit is applied only when the expected text and file version are still valid; concurrent changes cause a retryable error rather than silently overwriting newer content. Use a narrow `allow_dir` and clear tool descriptions so the model knows which files may be changed.
 
 These tools are not general backups. Review write/edit permissions and keep recovery copies of important configuration files.
+
+Relative `allow_dir` paths are anchored to Home Assistant's configuration directory, independent of the process working directory. Relative file targets continue to use the configured Function Tool working directory.

@@ -70,3 +70,7 @@ Recorder tools apply a shared budget of 1,000 database rows (including helper re
 ## Availability
 
 A Function Tool must be individually enabled and reachable through its Function Group to be offered for a request. **Load when needed** groups make their full schemas available after the model loads the group. Native tools do not bypass Home Assistant's Assist exposure or authorization checks. See [Function groups](../features/function-groups.md) and [Request debugging](../features/request-debugging.md).
+
+### Service batch failure behavior
+
+`execute_service` runs actions sequentially and returns one result per action, in input order. In normal execution, a backend service failure returns an `error` result and later actions still run. Inspect every result to detect partial failure; earlier successful actions are not rolled back. Validation or permission errors abort the batch. In strict execution, backend failures also raise and abort subsequent actions.
