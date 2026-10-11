@@ -43,6 +43,38 @@ import json
 import re
 import sys
 
+class OutputLimitError(Exception):
+    pass
+
+
+def bounded_sub(pattern, replacement, text, max_chars):
+    compiled = re.compile(pattern)
+    # Validate backreferences even when the pattern finds no matches.
+    compiled.sub(replacement, "", count=-1)
+    pieces = []
+    size = 0
+    end = 0
+    for match in compiled.finditer(text):
+        gap = match.start() - end
+        size += gap
+        if max_chars > 0 and size > max_chars:
+            raise OutputLimitError
+        if gap:
+            pieces.append(text[end:match.start()])
+        expanded = match.expand(replacement) if "\\" in replacement else replacement
+        size += len(expanded)
+        if max_chars > 0 and size > max_chars:
+            raise OutputLimitError
+        if expanded:
+            pieces.append(expanded)
+        end = match.end()
+    size += len(text) - end
+    if max_chars > 0 and size > max_chars:
+        raise OutputLimitError
+    pieces.append(text[end:])
+    return "".join(pieces)
+
+
 payload = json.load(sys.stdin)
 op = payload.get("op")
 if op == "search_many":
@@ -66,7 +98,12 @@ elif op == "sub_many":
     max_output_chars = int(payload.get("max_output_chars", 0))
     for item in payload.get("items", []):
         try:
-            candidate = re.sub(item["pattern"], item["replacement"], text)
+            candidate = bounded_sub(
+                item["pattern"], item["replacement"], text, max_output_chars
+            )
+        except OutputLimitError:
+            overflow = True
+            break
         except (re.error, IndexError) as err:
             invalid.append([item["index"], str(err)])
             if payload.get("continue_invalid"):

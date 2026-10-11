@@ -88,3 +88,54 @@ def test_configuration_validation_never_runs_matching(monkeypatch):
     monkeypatch.setattr(agent_config.re, "compile", NonMatchingPattern)
     rules = [{"pattern": r"(?P<answer>a?){1000000}", "replacement": r"\g<answer>"}]
     assert validate_speech_regex_replacements(rules) == rules
+
+
+@pytest.mark.parametrize(
+    "replacement", [r"\1\1", "y" * 1000], ids=["backreferences", "literal"]
+)
+def test_worker_bounds_allocation_during_zero_width_replacement(replacement):
+    import json
+    import subprocess
+    import sys
+
+    payload = {
+        "op": "sub_many",
+        "text": "x" * 4000,
+        "items": [{"index": 0, "pattern": "(?=(.*))", "replacement": replacement}],
+        "max_output_chars": 16000,
+    }
+    script = (
+        "import re, json, sys, tracemalloc\ntracemalloc.start()\n"
+        + regex._REGEX_WORKER
+        + "\nprint(tracemalloc.get_traced_memory()[1], file=sys.stderr)"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-I", "-c", script],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["text"] == payload["text"] and result["overflow"]
+    assert int(completed.stderr.strip()) < 2_000_000
+
+
+@pytest.mark.parametrize(
+    "pattern,replacement,text",
+    [
+        ("x*", "-", "abxd"),
+        (".*?", "-", "abc"),
+        (r"(?=(.))", r"[\1]", "abc"),
+        (r"(?P<word>\w+)", r"<\g<word>>", "hello world"),
+        (r"(a)?b", r"\1!", "b ab"),
+        ("never-matches", r"\n", "unchanged"),
+    ],
+)
+def test_incremental_replacements_preserve_stdlib_semantics(pattern, replacement, text):
+    import re
+
+    assert regex.apply_speech_replacements(
+        text, [{"pattern": pattern, "replacement": replacement}]
+    ) == re.sub(pattern, replacement, text)
