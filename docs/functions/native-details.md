@@ -59,6 +59,8 @@ Use the built-in preset to retain the current parameter schema.
 
 `get_statistics` requires `statistic_ids`, `start_time`, and `end_time`. Optional `period` values currently include `5minute`, `hour`, `day`, `week`, `month`, and `year`; `types` can select supported statistic values, and `units` maps Home Assistant unit classes to unit names. Use the current preset for the full schema.
 
+Recorder tools apply a shared budget of 1,000 database rows (including helper reads), 256,000 raw text bytes, 8,000 characters per state/attribute cell, and 24,000 UTF-8 bytes in the serialized result. Oversized requests fail explicitly without returning a partial series. Reduce the number of IDs or the time range; for Statistics, a coarser period can reduce output size, though its underlying hourly reads are also bounded. History conversion and size checking run in Recorder's executor. Limits apply before large SQL results or attribute values are materialized.
+
 ## Automation creation and Broadcast
 
 `add_automation` can create real Home Assistant automations. Restrict access to a trusted agent, use a complete valid configuration, and review what was registered. Do not grant this capability casually.
