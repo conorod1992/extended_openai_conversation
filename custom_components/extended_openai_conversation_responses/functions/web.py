@@ -243,7 +243,12 @@ class _BoundedResponse:
                 f"{self._max_bytes} bytes"
             )
 
-        encoding = self._response.headers.get("Content-Encoding", "").lower().strip()
+        # Multi-valued headers preserve wire order; every field contributes codings.
+        encoding = ",".join(
+            value
+            for name, value in self._response.headers.items()
+            if name.lower() == "content-encoding"
+        ).strip()
         if encoding:
             body = await asyncio.to_thread(
                 _decode_content_encodings, body, encoding, self._max_bytes

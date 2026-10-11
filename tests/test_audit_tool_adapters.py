@@ -12,14 +12,14 @@ import brotli
 import pytest
 import yaml
 
+from custom_components.extended_openai_conversation_responses.function_execution import (
+    propagate_function_execution_errors,
+)
 from custom_components.extended_openai_conversation_responses.functions import (
     file,
     native,
     sqlite,
     web,
-)
-from custom_components.extended_openai_conversation_responses.function_execution import (
-    propagate_function_execution_errors,
 )
 from homeassistant.exceptions import HomeAssistantError
 
@@ -148,16 +148,26 @@ async def test_native_batch_reports_failure_then_continues(
     assert hass.services.async_call.await_count == 1
 
 
-async def test_bounded_response_decodes_gzip_then_brotli():
+@pytest.mark.parametrize("separate_headers", [False, True])
+async def test_bounded_response_decodes_gzip_then_brotli(separate_headers):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
+    from multidict import CIMultiDict, CIMultiDictProxy
+
+    headers = CIMultiDictProxy(
+        CIMultiDict(
+            [("content-encoding", "gzip"), ("Content-Encoding", "br")]
+            if separate_headers
+            else [("Content-Encoding", "gzip, br")]
+        )
+    )
     original = b"answer" * 100
     encoded = brotli.compress(gzip.compress(original))
     response = SimpleNamespace(
         status=200,
         content_length=len(encoded),
-        headers={"Content-Encoding": "gzip, br"},
+        headers=headers,
         content=SimpleNamespace(
             readexactly=AsyncMock(
                 side_effect=asyncio.IncompleteReadError(encoded, 4097)
@@ -165,3 +175,5 @@ async def test_bounded_response_decodes_gzip_then_brotli():
         ),
     )
     assert await web._BoundedResponse(response, 4096).read() == original
+    with pytest.raises(HomeAssistantError, match="safety limit"):
+        await web._BoundedResponse(response, 100).read()
