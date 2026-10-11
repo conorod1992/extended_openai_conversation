@@ -7,6 +7,7 @@ from contextlib import suppress
 from http import HTTPStatus
 import logging
 from typing import Any, cast
+from uuid import uuid4
 import zlib
 
 import aiohttp
@@ -321,6 +322,28 @@ def _install_bounded_session(
     )
 
 
+def _payload_template(value: Any) -> Template:
+    """Validate Jinja while retaining source whitespace stripped by HA's constructor."""
+    result = cv.template(value)
+    if isinstance(value, str):
+        result.template = value
+        result._hash_cache = hash(value)
+    return result
+
+
+def _render_payload(
+    template: Template, arguments: dict[str, Any], hass: HomeAssistant
+) -> str:
+    """Keep boundary whitespace inside non-whitespace sentinels during HA rendering."""
+    marker = f"__eoai_payload_{uuid4().hex}__"
+    rendered: str = Template(marker + template.template + marker, hass).async_render(
+        arguments, parse_result=False
+    )
+    if not rendered.startswith(marker) or not rendered.endswith(marker):
+        raise HomeAssistantError("Payload template could not be rendered as exact text")
+    return rendered[len(marker) : -len(marker)]
+
+
 def get_rest_data(
     hass: HomeAssistant, rest_config: dict[str, Any], arguments: dict[str, Any]
 ) -> rest.data.RestData:
@@ -344,8 +367,8 @@ def get_rest_data(
     payload_template: Template | None = rendered_config.get(CONF_PAYLOAD_TEMPLATE)
     if payload_template is not None:
         rendered_config.pop(CONF_PAYLOAD_TEMPLATE)
-        rendered_config[CONF_PAYLOAD] = payload_template.async_render(
-            arguments, parse_result=False
+        rendered_config[CONF_PAYLOAD] = _render_payload(
+            payload_template, arguments, hass
         )
 
     for key in (CONF_HEADERS, CONF_PARAMS):
@@ -357,6 +380,14 @@ def get_rest_data(
     rest_data = rest.create_rest_data_from_config(hass, rendered_config)
     if isinstance(rest_data, rest.data.RestData):
         _install_bounded_session(hass, rest_data)
+        original_update = rest_data.async_update
+
+        async def sanitized_update(log_errors: bool = False) -> None:
+            # ScrapeCoordinator also calls this entry point without arguments.
+            # HA's ordinary error logger includes the credential-bearing URL.
+            await original_update(log_errors=False)
+
+        cast(Any, rest_data).async_update = sanitized_update
     return rest_data
 
 
@@ -386,7 +417,7 @@ class RestFunction(Function):
             vol.Schema(rest.RESOURCE_SCHEMA).extend(
                 {
                     vol.Optional("value_template"): cv.template,
-                    vol.Optional("payload_template"): cv.template,
+                    vol.Optional("payload_template"): _payload_template,
                 }
             )
         )
@@ -403,7 +434,7 @@ class RestFunction(Function):
         rest_data = get_rest_data(hass, function_config, arguments)
 
         try:
-            await rest_data.async_update()
+            await rest_data.async_update(log_errors=False)
         except (aiohttp.ClientError, TimeoutError) as transport_error:
             raise HomeAssistantError(
                 f"REST request failed: {type(transport_error).__name__}"
@@ -413,7 +444,7 @@ class RestFunction(Function):
             raise HomeAssistantError(
                 f"REST request failed: {type(error).__name__}"
             ) from error
-        value = rest_data.data_without_xml()
+        value = await hass.async_add_executor_job(rest_data.data_without_xml)
         value_template = function_config.get(CONF_VALUE_TEMPLATE)
 
         if value is not None and value_template is not None:
@@ -431,7 +462,7 @@ class ScrapeFunction(Function):
             scrape.COMBINED_SCHEMA.extend(
                 {
                     vol.Optional("value_template"): cv.template,
-                    vol.Optional("payload_template"): cv.template,
+                    vol.Optional("payload_template"): _payload_template,
                 }
             )
         )
