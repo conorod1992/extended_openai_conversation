@@ -46,6 +46,11 @@ async def execute_scrape(hass, monkeypatch):
     ):
         monkeypatch.setattr(integration, name, AsyncMock())
     monkeypatch.setattr(integration, "setup_provider_credentials_websocket", Mock())
+    from custom_components.extended_openai_conversation_responses import (
+        transfer_staging,
+    )
+
+    monkeypatch.setattr(transfer_staging, "async_get_transfer_staging", AsyncMock())
     await integration.async_setup(hass, {})
     hass.loop = asyncio.get_running_loop()
     hass.is_stopping = False
@@ -144,7 +149,8 @@ async def test_each_template_renders_once_with_arguments_and_ha_context(
     original = Template.async_render
 
     def render(self, *args, **kwargs):
-        counts[self.template] += 1
+        source = re.sub(r"__eoai_payload_[0-9a-f]{32}__", "", self.template)
+        counts[source] += 1
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Template, "async_render", render)

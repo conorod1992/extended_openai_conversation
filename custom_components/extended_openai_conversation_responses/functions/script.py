@@ -89,8 +89,9 @@ class _AuthorizedScriptServices:
                 self._hass,
                 sorted(targets),
                 self._exposed_entities,
-                require_available=(domain, service)
-                != ("homeassistant", "update_entity"),
+                require_available=ha_actions.action_requires_available_entities(
+                    domain, service
+                ),
             )
         # Preserve HA's response variables, blocking and cancellation semantics.
         return await self._hass.services.async_call(

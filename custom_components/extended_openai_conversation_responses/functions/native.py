@@ -31,7 +31,11 @@ import homeassistant.util.dt as dt_util
 from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, NativeNotFound
 from ..function_execution import backend_failure
-from ..ha_actions import _service_participants, async_call_ha_action
+from ..ha_actions import (
+    _service_participants,
+    action_requires_available_entities,
+    async_call_ha_action,
+)
 from ..ha_permissions import entity_access_error, get_active_ha_context
 from ..intercom import async_get_intercom
 from ..intercom_permissions import async_authorized_broadcast_targets
@@ -394,7 +398,7 @@ class NativeFunction(Function):
             hass,
             sorted(participating),
             exposed_entities,
-            require_available=(domain, service) != ("homeassistant", "update_entity"),
+            require_available=action_requires_available_entities(domain, service),
         )
 
     async def execute_service_single(
