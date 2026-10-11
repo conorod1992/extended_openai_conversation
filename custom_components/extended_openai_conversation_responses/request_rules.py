@@ -1366,6 +1366,17 @@ class RequestRuleRuntime:
             if active != session_id
         }
 
+    def reset_continuity(self, continuity_key: str) -> None:
+        """Invalidate every conversation generation owned by an ended continuity."""
+        owner = f"continuity:{continuity_key}"
+        sessions = set(self._conversation_overrides) | set(self._requests.values())
+        for session_id in sessions:
+            if (
+                session_id == owner
+                or session_id.rpartition(":conversation:")[0] == owner
+            ):
+                self.reset(session_id)
+
     def effective_options(
         self,
         defaults: Mapping[str, Any],
