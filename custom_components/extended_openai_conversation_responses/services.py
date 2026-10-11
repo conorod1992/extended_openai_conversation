@@ -47,6 +47,7 @@ from .const import (
     CONF_API_PROVIDER,
     CONF_API_VERSION,
     CONF_BASE_URL,
+    CONF_CHAT_MODEL,
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_ORGANIZATION,
@@ -371,7 +372,10 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             if entry is None or entry.domain != DOMAIN:
                 raise HomeAssistantError("Config entry not found")
             with model_capability_snapshot(
-                model, request_model_capabilities(call.data, getattr(entry, "data", {}))
+                model,
+                request_model_capabilities(
+                    {**call.data, CONF_CHAT_MODEL: model}, getattr(entry, "data", {})
+                ),
             ):
                 api_mode = get_api_mode(call.data[CONF_API_MODE], model)
             token_param, token_value = auxiliary_output_token_limit(

@@ -3063,12 +3063,30 @@ def validate_rule_model_request(
         CONF_CHAT_MODEL: action.get("model"),
         CONF_REASONING_EFFORT: action.get("reasoning_effort"),
     }
-    if any(
-        isinstance(value, str) and SLOT_REFERENCE.search(value)
-        for value in values.values()
-    ):
-        return  # Captures are validated once resolved, before storing runtime state.
+    model = values[CONF_CHAT_MODEL]
+    if isinstance(model, str) and SLOT_REFERENCE.search(model):
+        return  # A captured model is validated once resolved, before storing state.
     candidate = {**options, **{key: value for key, value in values.items() if value}}
+    effort = values[CONF_REASONING_EFFORT]
+    if isinstance(effort, str) and SLOT_REFERENCE.search(effort):
+        # Dynamic reasoning cannot excuse a statically incompatible model/API.
+        # Effort-dependent features still receive full validation at execution.
+        from .helpers import get_api_mode
+        from .model_capabilities import ModelCapabilityError, model_capability_snapshot
+        from .request import conversation_tools_required, request_model_capabilities
+
+        selected_model = str(candidate.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
+        capabilities = request_model_capabilities(candidate, entry_data)
+        with model_capability_snapshot(selected_model, capabilities):
+            try:
+                get_api_mode(
+                    str(candidate.get("api_mode", "auto")),
+                    selected_model,
+                    tools_required=conversation_tools_required(candidate),
+                )
+            except ModelCapabilityError as err:
+                raise HomeAssistantError(str(err)) from err
+        return
     validate_routed_request_options(candidate, entry_data)
 
 

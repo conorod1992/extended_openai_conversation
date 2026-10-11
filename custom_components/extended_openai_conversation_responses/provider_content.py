@@ -17,7 +17,7 @@ def answer_text(content: Any) -> str:
         if isinstance(content, Mapping)
         else getattr(content, "type", None)
     )
-    if kind not in {"text", "output_text"}:
+    if not isinstance(kind, str) or kind not in {"text", "output_text"}:
         return ""
     text = (
         content.get("text")

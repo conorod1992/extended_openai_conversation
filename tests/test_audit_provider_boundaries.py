@@ -189,3 +189,107 @@ async def test_restore_checks_destination_provider_before_any_write():
         await transfer.async_materialize_restore(
             SimpleNamespace(), entry, subentry, imported, current_snapshot=current
         )
+
+
+@pytest.mark.parametrize(
+    "model,provider,extra",
+    [
+        ("gpt-4", {}, {}),
+        (
+            "mistral-small-latest",
+            {"base_url": "https://api.mistral.ai/v1"},
+            {},
+        ),
+        (
+            "deployment",
+            {"api_provider": "azure"},
+            {"azure_model": "gpt-4"},
+        ),
+        ("gpt-4.1", {}, {}),
+    ],
+)
+async def test_image_auto_mode_uses_requested_model_capabilities(
+    hass, monkeypatch, model, provider, extra
+):
+    from custom_components.extended_openai_conversation_responses import services
+    from custom_components.extended_openai_conversation_responses.const import (
+        DOMAIN,
+        SERVICE_QUERY_IMAGE,
+    )
+
+    response = SimpleNamespace(model_dump=lambda: {}, status="completed")
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=AsyncMock(return_value=response))
+        ),
+        responses=SimpleNamespace(create=AsyncMock(return_value=response)),
+    )
+    hass.config_entries.async_get_entry.return_value = SimpleNamespace(
+        domain=DOMAIN, data=provider, runtime_data=client
+    )
+    monkeypatch.setattr(services, "_async_require_service_admin", AsyncMock())
+    monkeypatch.setattr(
+        services,
+        "prepare_image_params",
+        lambda *args: [{"url": "data:image/png;base64,AA=="}],
+    )
+    await services.async_setup_services(hass, {})
+    handler = next(
+        call.args[2]
+        for call in hass.services.async_register.call_args_list
+        if call.args[1] == SERVICE_QUERY_IMAGE
+    )
+    from custom_components.extended_openai_conversation_responses.request import (
+        request_model_capabilities,
+    )
+    from custom_components.extended_openai_conversation_responses.model_capabilities import (
+        model_capability_snapshot,
+    )
+
+    with model_capability_snapshot(
+        model, request_model_capabilities({"chat_model": model, **extra}, provider)
+    ):
+        expected = services.get_api_mode("auto", model)
+    await handler(
+        SimpleNamespace(
+            data={
+                "config_entry": "entry",
+                "model": model,
+                "api_mode": "auto",
+                "max_tokens": 300,
+                "prompt": "describe",
+                "images": [],
+                **extra,
+            }
+        )
+    )
+    if expected == "chat_completions":
+        client.chat.completions.create.assert_awaited_once()
+        client.responses.create.assert_not_called()
+    else:
+        client.responses.create.assert_awaited_once()
+        client.chat.completions.create.assert_not_called()
+
+
+def test_malformed_answer_part_type_is_ignored():
+    assert (
+        answer_text(
+            [{"type": ["text"], "text": "PRIVATE"}, {"type": "text", "text": "Answer"}]
+        )
+        == "Answer"
+    )
+
+
+def test_dynamic_reasoning_does_not_hide_static_model_api_incompatibility():
+    rule = {
+        "action_type": "model_routing",
+        "enabled": True,
+        "name": "route",
+        "action": {"model": "gpt-4", "reasoning_effort": "{effort}"},
+    }
+    with pytest.raises(HomeAssistantError):
+        validate_saved_model_routes(
+            [rule],
+            {"chat_model": "gpt-4.1", "api_mode": "responses", "functions": []},
+            {},
+        )
