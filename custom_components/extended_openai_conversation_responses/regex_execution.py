@@ -67,15 +67,17 @@ elif op == "sub_many":
     for item in payload.get("items", []):
         try:
             candidate = re.sub(item["pattern"], item["replacement"], text)
-        except re.error as err:
+        except (re.error, IndexError) as err:
             invalid.append([item["index"], str(err)])
+            if payload.get("continue_invalid"):
+                continue
             break
         if max_output_chars > 0 and len(candidate) > max_output_chars:
             overflow = True
             break
         text = candidate
     output = {
-        "text": original if invalid or overflow else text,
+        "text": original if overflow or (invalid and not payload.get("continue_invalid")) else text,
         "invalid": invalid,
         "overflow": overflow,
     }
@@ -335,3 +337,45 @@ async def async_process_speech_text(
         ),
     )
     return await hass.async_add_executor_job(_final_whitespace_cleanup, text)
+
+
+def apply_speech_replacements(text: str, rules: object) -> str:
+    """Bound the synchronous helper using the same killable worker as live TTS."""
+    if not isinstance(rules, list) or not rules:
+        return text
+    if (
+        len(rules) > MAX_SPEECH_REGEX_RULES
+        or len(text) > MAX_SPEECH_REPLACEMENT_INPUT_CHARS
+    ):
+        _LOGGER.warning(
+            "Skipping speech regex replacements because safety limits were exceeded"
+        )
+        return text
+    items = []
+    for index, rule in enumerate(rules):
+        validated = _speech_replacement_items([rule])
+        if not validated:
+            _LOGGER.warning("Skipping invalid speech regex replacement %s", index)
+            continue
+        items.append({**validated[0], "index": index})
+    if not items:
+        return text
+    try:
+        result = _run_regex_worker(
+            {
+                "op": "sub_many",
+                "text": text,
+                "items": items,
+                "max_output_chars": _speech_output_limit(len(text)),
+                "continue_invalid": True,
+            }
+        )
+    except HomeAssistantError, OSError:
+        _LOGGER.warning("Speech regex replacement failed; preserving spoken text")
+        return text
+    for invalid in result.get("invalid", []):
+        _LOGGER.warning("Skipping invalid speech regex replacement %s", invalid[0])
+    value = result.get("text")
+    if not isinstance(value, str) or len(value) > _speech_output_limit(len(text)):
+        return text
+    return value

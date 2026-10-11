@@ -764,7 +764,7 @@ def validate_speech_regex_replacements(value: Any) -> list[dict[str, str]]:
             ) from err
         try:
             compiled.sub(replacement, "")
-        except re.error as err:
+        except (re.error, IndexError) as err:
             raise AgentConfigError(
                 f"{field}.replacement", f"invalid replacement expression: {err}"
             ) from err

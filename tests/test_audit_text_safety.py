@@ -1,0 +1,64 @@
+"""Regression checks for reserved captures and synchronous regex isolation."""
+
+import time
+
+import pytest
+from jinja2 import Environment
+
+from custom_components.extended_openai_conversation_responses import (
+    request_rules as rr,
+    regex_execution as regex,
+)
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    AgentConfigError,
+    validate_speech_regex_replacements,
+)
+
+
+@pytest.mark.parametrize("name", ["context", "self", "request"])
+def test_reserved_capture_uses_explicit_namespace(name):
+    template = rr._migrate_slot_templates("{" + name + "}")
+    assert (
+        Environment().from_string(template).render(request={"slots": {name: "kitchen"}})
+        == "kitchen"
+    )
+    assert rr._migrate_slot_templates({"value_from": "slot", "slot": name}) == template
+    assert rr._resolve_guest_slot_templates(template, {name: "kitchen"}) == "kitchen"
+
+
+def test_unknown_replacement_group_is_configuration_error():
+    with pytest.raises(AgentConfigError, match="replacement"):
+        validate_speech_regex_replacements(
+            [{"pattern": "x", "replacement": r"\g<missing>"}]
+        )
+
+
+def test_sync_pathological_pattern_is_killed(monkeypatch):
+    monkeypatch.setattr(regex, "_CONFIGURED_REGEX_TIMEOUT_SECONDS", 0.1)
+    original = "a" * 1000 + "!"
+    started = time.monotonic()
+    assert (
+        regex.apply_speech_replacements(
+            original, [{"pattern": "(a+)+$", "replacement": "x"}]
+        )
+        == original
+    )
+    assert time.monotonic() - started < 3
+    monkeypatch.setattr(regex, "_CONFIGURED_REGEX_TIMEOUT_SECONDS", 1)
+    assert (
+        regex.apply_speech_replacements("x", [{"pattern": "x", "replacement": "y"}])
+        == "y"
+    )
+
+
+def test_sync_invalid_group_skips_rule_without_losing_valid_following_rule():
+    assert (
+        regex.apply_speech_replacements(
+            "x",
+            [
+                {"pattern": "x", "replacement": r"\g<missing>"},
+                {"pattern": "x", "replacement": "y"},
+            ],
+        )
+        == "y"
+    )

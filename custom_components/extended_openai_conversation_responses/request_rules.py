@@ -100,7 +100,10 @@ RESERVED_RESULT_ALIASES = {
 MAX_RESULT_BYTES = 16384
 MAX_RESULT_DEPTH = 8
 JINJA_SLOT_REFERENCE = re.compile(
-    r"\{\{\s*(?:request\.slots\.)?([A-Za-z_][A-Za-z0-9_]{0,63})\s*\}\}"
+    r"\{\{\s*(?:request\.slots\.([A-Za-z_][A-Za-z0-9_]{0,63})"
+    r"|request\.slots\['([A-Za-z_][A-Za-z0-9_]{0,63})'\]"
+    r'|request\.slots\["([A-Za-z_][A-Za-z0-9_]{0,63})"\]'
+    r"|([A-Za-z_][A-Za-z0-9_]{0,63}))\s*\}\}"
 )
 ROUTING_SCOPES = ("request", "conversation")
 _REQUEST_RESET_SENTINEL = "__request_rule_reset__"
@@ -1898,10 +1901,12 @@ def _validate_local_action(value: Any) -> dict[str, Any]:
 def _migrate_slot_templates(value: Any) -> Any:
     """Translate legacy braces into Home Assistant script templates."""
     if isinstance(value, str):
-        return SLOT_REFERENCE.sub(lambda match: f"{{{{ {match.group(1)} }}}}", value)
+        return SLOT_REFERENCE.sub(
+            lambda match: "{{ request.slots[" + repr(match.group(1)) + "] }}", value
+        )
     if isinstance(value, Mapping):
         if set(value) == {"value_from", "slot"} and value.get("value_from") == "slot":
-            return f"{{{{ {value['slot']} }}}}"
+            return f"{{{{ request.slots['{value['slot']}'] }}}}"
         return {key: _migrate_slot_templates(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_migrate_slot_templates(item) for item in value]
@@ -2475,7 +2480,7 @@ def _native_result_sequence(
                     result_template(match)
                     if match.group(1) in aliases
                     else (
-                        "{{ " + match.group(1) + " }}"
+                        "{{ request.slots[" + repr(match.group(1)) + "] }}"
                         if match.group(1) in slots
                         else match.group(0)
                     )
@@ -2618,7 +2623,7 @@ def _resolve_guest_slot_templates(value: Any, slots: Mapping[str, str]) -> Any:
     """Resolve only deterministic captured-value templates for Guest preflight."""
 
     def replace_slot(match: re.Match[str]) -> str:
-        name = match.group(1)
+        name = next(name for name in match.groups() if name is not None)
         if name not in slots:
             raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
         return slots[name]
