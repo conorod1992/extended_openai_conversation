@@ -37,4 +37,6 @@ Use delayed Function Tools when the eventual action needs the Function Tool path
 
 The scheduler accepts at most 256 persisted calls globally and 32 per agent, including calls already executing. Arguments must be JSON and fit within 16,384 encoded UTF-8 bytes. Rejected requests are neither saved nor armed. Completed or removed calls release capacity; a Home Assistant restart retains pending reservations.
 
-If an older persisted queue exceeds these limits, integration startup fails before Management services are registered and leaves storage unchanged. Reduce the stored queue below the limits while Home Assistant is stopped, then retry setup. Existing jobs are never silently discarded to satisfy capacity limits.
+If an older persisted queue exceeds the call-count or argument-size limits, EOAI and Management still start, but the delayed Function Tool scheduler stays disabled. Saved jobs remain unchanged, no jobs are armed, and new delayed requests are rejected. Home Assistant logs the reason and recovery instructions.
+
+To resolve this, remove affected agents through Management (which removes only their saved jobs), or reduce the saved queue while Home Assistant is stopped. Restart Home Assistant after the remaining queue fits all limits to retry recovery. Removing jobs never automatically resumes the scheduler in the same process. Existing jobs are never silently discarded to satisfy capacity limits.
