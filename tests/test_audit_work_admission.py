@@ -151,3 +151,23 @@ async def test_oversized_recovered_queue_is_preserved_and_not_armed(hass, monkey
         await manager._async_load_locked()
     manager._store.async_save.assert_not_called()
     assert not manager._setup_complete and not manager._tasks
+
+
+async def test_failed_save_preserves_capacity_for_live_executing_calls(
+    hass, monkeypatch
+):
+    manager = scheduler(hass)
+    record = await manager.async_schedule(agent(), "tool", {"delay": 60}, None)
+    executing = replace(record, status="executing")
+    manager._records[record.call_id] = executing
+    worker = asyncio.create_task(asyncio.Event().wait())
+    manager._tasks[record.call_id] = worker
+    manager._store.async_load = AsyncMock(return_value={"calls": [executing.as_dict()]})
+    monkeypatch.setattr(delayed, "MAX_DELAYED_CALLS", 1)
+    try:
+        await manager._async_reconcile_failed_save()
+        with pytest.raises(HomeAssistantError, match="capacity"):
+            await manager.async_schedule(agent("two"), "tool", {"delay": 60}, None)
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)

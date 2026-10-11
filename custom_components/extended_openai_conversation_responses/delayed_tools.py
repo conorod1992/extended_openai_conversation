@@ -426,8 +426,17 @@ class DelayedToolManager:
         records: dict[str, DelayedToolCall] = {}
         for raw in raw_calls:
             record = DelayedToolCall.from_dict(raw)
-            # Startup recovery never replays a call interrupted in execution.
-            if record.status != _EXECUTING:
+            previous = self._records.get(record.call_id)
+            task = self._tasks.get(record.call_id)
+            # An already executing live worker still consumes admission capacity.
+            # Interrupted calls and unacknowledged transitions are never replayed.
+            live_execution = (
+                previous is not None
+                and previous.status == _EXECUTING
+                and task is not None
+                and not task.done()
+            )
+            if record.status != _EXECUTING or live_execution:
                 records[record.call_id] = record
                 _validate_call_capacity(records)
         _validate_call_capacity(records)
