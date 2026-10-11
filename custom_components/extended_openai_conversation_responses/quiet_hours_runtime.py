@@ -842,6 +842,8 @@ class QuietHoursManager:
                             continue
                         if math.isclose(
                             current, float(quiet), abs_tol=_VOLUME_TOLERANCE
+                        ) and not math.isclose(
+                            current, float(original), abs_tol=_VOLUME_TOLERANCE
                         ):
                             await self._async_set_volume(entity_id, float(original))
                     elif (
@@ -852,7 +854,7 @@ class QuietHoursManager:
                         current_switch = _current_switch(self.hass, entity_id)
                         if current_switch is None:
                             continue
-                        if current_switch is quiet:
+                        if current_switch is quiet and current_switch is not original:
                             await self._async_set_switch(entity_id, original)
                     # A confirmed independent value releases ownership too.
                     controls.pop(entity_id)

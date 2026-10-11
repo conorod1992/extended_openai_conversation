@@ -2073,3 +2073,24 @@ async def test_same_physical_control_with_new_satellite_keeps_ownership(hass):
     assert not control.get("restoration_pending")
     assert control["satellite_entity_id"] == "assist_satellite.new"
     assert control["original_value"] == 0.55
+
+
+@pytest.mark.asyncio
+async def test_retarget_to_original_values_needs_no_second_restore(monkeypatch, hass):
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.55)
+    manager = _stateful_public_manager(hass)
+    manager._config = _config()
+    monkeypatch.setattr(manager, "_reschedule", lambda: None)
+    now = datetime(2026, 9, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    volume_calls, switch_calls = await _install_services(hass)
+    await manager.async_reconcile(now=now)
+    await manager.async_update_config(
+        _config(max_volume=0.8, wake_sound="on").as_dict()
+    )
+    volume_calls.clear()
+    switch_calls.clear()
+    await manager.async_update_config(_config(enabled=False).as_dict())
+    assert volume_calls == [] and switch_calls == []
+    assert manager.active is None
