@@ -129,6 +129,23 @@ try {
     assert.deepEqual(harness.editor.values, [], "invalid persisted YAML must never hydrate a partial/stale native value");
   }
 
+  {
+    const original = {spec: {name: "quarantined"}, function: {type: "native"}};
+    const replacement = {spec: {name: "replacement"}, function: {type: "native", name: "execute_service"}};
+    const harness = makeHarness("original YAML", null, {valid: true, config: replacement});
+    harness.panel._repairToolIndex = 0;
+    harness.panel._toolInitialYaml = "original YAML";
+    harness.panel._result = {function_repair: {invalid_tools: [{index: 0, tool: original}]}};
+    bindNativeToolYaml(harness.panel);
+    await flush();
+    assert.deepEqual(harness.editor.values.at(-1), original);
+    harness.panel._toolYamlEditorAdapter.setYaml("replacement YAML");
+    await flush();
+    assert.deepEqual(harness.editor.values.at(-1), replacement, "preset replacement must hydrate the replacement, not the quarantined tool");
+    assert.equal(harness.textarea.value, "replacement YAML");
+    assert.equal(harness.calls.at(-1).payload.yaml, "replacement YAML");
+  }
+
   console.log("Native YAML starter/invalid-hydration tests passed");
 } finally {
   if (originalDocument === undefined) delete globalThis.document;

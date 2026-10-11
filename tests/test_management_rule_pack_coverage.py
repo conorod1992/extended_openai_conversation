@@ -8,8 +8,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import management_ui
 from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
@@ -18,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.request_rules import (
     validate_rule,
 )
+from homeassistant.exceptions import HomeAssistantError
 from tests.test_request_rules import local_rule
 
 
@@ -95,9 +94,12 @@ async def test_rule_pack_review_reports_missing_dependencies_without_execution(
         else None
     )
     hass.services.has_service.side_effect = lambda domain, service: (
-        domain,
-        service,
-    ) in {("light", "turn_on"), ("switch", "turn_on")}
+        (
+            domain,
+            service,
+        )
+        in {("light", "turn_on"), ("switch", "turn_on")}
+    )
 
     review = await management_ui._review_rule_pack(
         hass, prepared, rules, configured_tools=[]
@@ -140,9 +142,7 @@ async def test_rule_pack_review_does_not_count_existing_group_name_as_new(
         "rules": [rule],
     }
     rules = _Rules(groups=[{"id": "target-group", "name": "Lighting"}])
-    monkeypatch.setattr(
-        management_ui, "_validate_request_rule_conditions", AsyncMock()
-    )
+    monkeypatch.setattr(management_ui, "_validate_request_rule_conditions", AsyncMock())
     monkeypatch.setattr(
         management_ui, "async_validate_request_rule_functions", AsyncMock()
     )
@@ -161,7 +161,12 @@ async def test_rule_pack_review_enforces_total_rule_limit(hass) -> None:
         "rules": [
             _canonical_rule(
                 "Extra",
-                [{"action": "light.turn_on", "target": {"entity_id": ["light.present"]}}],
+                [
+                    {
+                        "action": "light.turn_on",
+                        "target": {"entity_id": ["light.present"]},
+                    }
+                ],
             )
         ],
     }
@@ -181,8 +186,7 @@ async def test_rule_pack_review_enforces_total_group_limit(hass) -> None:
     }
     rules = _Rules(
         groups=[
-            {"id": f"group-{index}", "name": f"Group {index}"}
-            for index in range(100)
+            {"id": f"group-{index}", "name": f"Group {index}"} for index in range(100)
         ]
     )
 
@@ -255,9 +259,8 @@ def _management_request(hass, action, **fields):
 
 
 @pytest.mark.asyncio
-async def test_management_rule_pack_review_registers_token(
-    hass, monkeypatch
-) -> None:
+async def test_management_rule_pack_review_registers_token(hass, monkeypatch) -> None:
+    monkeypatch.setattr(management_ui, "prepare_rule_pack", lambda value: value)
     rules = SimpleNamespace()
     prepared = {"rules": [], "groups": []}
     monkeypatch.setattr(
@@ -308,6 +311,7 @@ async def test_management_rule_pack_review_registers_token(
 async def test_management_rule_pack_import_requires_confirmation(
     hass, monkeypatch
 ) -> None:
+    monkeypatch.setattr(management_ui, "prepare_rule_pack", lambda value: value)
     rules = SimpleNamespace()
     monkeypatch.setattr(
         management_ui,
@@ -345,6 +349,7 @@ async def test_management_rule_pack_import_requires_confirmation(
 async def test_management_rule_pack_import_rejects_changed_revision(
     hass, monkeypatch
 ) -> None:
+    monkeypatch.setattr(management_ui, "prepare_rule_pack", lambda value: value)
     rules = SimpleNamespace()
     monkeypatch.setattr(
         management_ui,
@@ -383,6 +388,7 @@ async def test_management_rule_pack_import_rejects_changed_revision(
 async def test_management_rule_pack_import_consumes_review_and_appends(
     hass, monkeypatch
 ) -> None:
+    monkeypatch.setattr(management_ui, "prepare_rule_pack", lambda value: value)
     from custom_components.extended_openai_conversation_responses import request_rules
 
     rules = SimpleNamespace()

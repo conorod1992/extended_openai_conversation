@@ -93,9 +93,20 @@ async function openInvalidToolEditor(panel, item) {
   const status = root?.querySelector("#tool-error");
   if (!dialog || !editor?.textarea) return;
   panel._repairToolIndex = Number(item.index);
+  const loadToken = {};
+  panel._repairToolLoad = loadToken;
+  const agentId = panel._agentId;
+  const isCurrent = () => dialog.open && panel._repairToolLoad === loadToken
+    && panel._agentId === agentId && root.querySelector("#tool-dialog") === dialog;
   panel._repairToolRevision = panel._result?.revision;
   panel._toolOriginalName = null;
-  editor.setYaml(item.yaml || JSON.stringify(item.tool || {}, null, 2));
+  panel._toolInitialYaml = item.yaml || JSON.stringify(item.tool || {}, null, 2);
+  panel._toolReplaceableYaml = null;
+  editor.setYaml(panel._toolInitialYaml);
+  const picker = root.querySelector("#built-in-function");
+  if (picker) picker.value = "";
+  const pickerContainer = root.querySelector("#built-in-picker");
+  if (pickerContainer) pickerContainer.hidden = false;
   if (status) {
     status.className = "validation invalid";
     status.textContent = item.validation_error || "This Function Tool needs repair.";
@@ -103,10 +114,21 @@ async function openInvalidToolEditor(panel, item) {
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.open = true;
   editor.focus?.();
+  if (picker) {
+    picker.disabled = true;
+    void Promise.all([
+      import("./agent-config-tools-base.js"),
+      panel._call("tools", "built_in_catalog", {tools: panel._result?.tools || []}),
+    ]).then(([{populateToolPresetPicker}, catalog]) => {
+      if (isCurrent()) {
+        populateToolPresetPicker(panel, catalog);
+        picker.disabled = false;
+      }
+    }).catch(() => { /* Keep manual YAML repair available if presets cannot load. */ });
+  }
   try {
     const {bindNativeToolYaml} = await import("./agent-config-native-yaml.js");
-    if (dialog.open && panel._repairToolIndex === Number(item.index)
-        && root.querySelector("#tool-dialog") === dialog) bindNativeToolYaml(panel);
+    if (isCurrent()) bindNativeToolYaml(panel);
   } catch (_err) {
     // The textarea stays usable when the optional native editor cannot load.
   }

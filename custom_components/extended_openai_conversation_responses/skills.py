@@ -51,6 +51,8 @@ class Skill:
             raise ValueError("Skill name is required")
         if len(self.name) > 64:
             raise ValueError("Skill name must be 64 characters or less")
+        if not isinstance(self.description, str):
+            raise ValueError("Skill description must be a string")
         if len(self.description) > 1024:
             raise ValueError("Skill description must be 1024 characters or less")
 

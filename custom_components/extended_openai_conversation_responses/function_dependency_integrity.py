@@ -239,13 +239,16 @@ async def async_validate_request_rule_functions(
     configured_tools: list[dict[str, Any]],
     *,
     quarantined_names: Collection[str] = (),
+    require_ready: bool | None = None,
 ) -> None:
-    """Validate Function calls, allowing explicitly quarantined unavailable tools."""
+    """Validate saved structure; require available dependencies on activation."""
+    if require_ready is None:
+        require_ready = bool(rule.get("enabled", True))
     service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
     by_name = {
         tool["spec"]["name"]: tool
         for tool in configured_tools
-        if function_tool_enabled(tool)
+        if not require_ready or function_tool_enabled(tool)
     }
     for action in _rule_script_actions(rule):
         if action.get("action", action.get("service")) != service_action:
@@ -259,7 +262,7 @@ async def async_validate_request_rule_functions(
         function_name = str(data["function"])
         tool = by_name.get(function_name)
         if tool is None:
-            if function_name in quarantined_names:
+            if not require_ready or function_name in quarantined_names:
                 continue
             raise HomeAssistantError(
                 f"Function Tool is unavailable or disabled: {function_name}"

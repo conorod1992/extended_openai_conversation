@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {confirmDialogClose} from "../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js";
 
 import {
   bindIsolatedRepair,
@@ -136,6 +137,9 @@ class RepairControl {
   const dialog = new RepairControl();
   const status = new RepairControl();
   const save = new RepairControl();
+  const picker = new RepairControl();
+  picker.value = "stale-preset";
+  const pickerContainer = {hidden: true};
   const editA = new RepairControl();
   const editB = new RepairControl();
   editA.dataset.repairIndex = "0";
@@ -160,6 +164,7 @@ class RepairControl {
   };
 
   const panel = {
+    _e: (value) => String(value),
     _viewKey: functionsView(),
     _result: {
       revision: "repair-revision",
@@ -174,6 +179,7 @@ class RepairControl {
     },
     async _call(section, action, payload) {
       calls.push({section, action, payload});
+      if (section === "tools" && action === "built_in_catalog") return {functions: []};
       if (section === "tools" && action === "validate_yaml") {
         return {valid: false, errors: {tool: "still invalid"}};
       }
@@ -186,6 +192,8 @@ class RepairControl {
           "#tool-yaml": textarea,
           "#tool-error": status,
           "#tool-save": save,
+          "#built-in-function": picker,
+          "#built-in-picker": pickerContainer,
         }[selector] || null;
       },
       querySelectorAll(selector) {
@@ -201,12 +209,21 @@ class RepairControl {
   editA.emit("click");
   assert.equal(adapter.yaml, invalidA.yaml, "opening an invalid tool must replace any previous editor value");
   assert.equal(panel._repairToolIndex, 0);
+  assert.equal(panel._toolInitialYaml, invalidA.yaml);
+  assert.equal(picker.value, "");
+  assert.equal(pickerContainer.hidden, false);
   assert.equal(dialog.open, true);
   assert.equal(adapter.focused, true);
 
   adapter.setYaml("spec:\n  name: valid_tool\n");
+  dialog.id = "tool-dialog";
+  dialog.querySelector = (selector) => selector === "#tool-yaml" ? textarea : status;
+  panel._confirm = async () => false;
+  assert.equal(await confirmDialogClose(panel, dialog), false, "shared close guard must preserve unsaved repair YAML");
+  assert.equal(dialog.open, true);
   editB.emit("click");
   assert.equal(adapter.yaml, invalidB.yaml, "a later invalid tool must replace YAML left by a valid-tool edit");
+  assert.equal(panel._toolInitialYaml, invalidB.yaml, "each repair must reset its dirty baseline");
   assert.deepEqual(adapter.setValues.slice(-2), ["spec:\n  name: valid_tool\n", invalidB.yaml]);
 
   adapter.yaml = "spec:\n  name: native_editor_current\n";

@@ -852,6 +852,14 @@ function setToolEditorLoading(root, loading) {
   root.querySelector("#tool-dialog").setAttribute("aria-busy", String(loading));
 }
 
+export function populateToolPresetPicker(panel, catalog) {
+  panel._builtInFunctions = catalog.functions || [];
+  const selector = panel.shadowRoot.querySelector("#built-in-function");
+  if (!selector) return;
+  selector.innerHTML = '<option value="">Insert Built-in Function…</option>' + panel._builtInFunctions.map((preset) => `<option value="${panel._e(preset.implementation)}" ${preset.already_configured ? "disabled" : ""}>${panel._e(preset.label)}${preset.already_configured ? " — Already configured" : ""}</option>`).join("");
+  selector.value = "";
+}
+
 export async function openTool(panel, index = null, initialTool = null) {
   const tool = initialTool || (index === null ? null : panel._draft.functions[index]);
   panel._toolIndex = index;
@@ -891,9 +899,7 @@ export async function openTool(panel, index = null, initialTool = null) {
     nativeYaml.bindNativeToolYaml(panel);
     editor = getToolYamlEditor(panel);
     if (catalog) {
-      panel._builtInFunctions = catalog.functions || [];
-      const selector = root.querySelector("#built-in-function");
-      selector.innerHTML = '<option value="">Insert Built-in Function…</option>' + panel._builtInFunctions.map((preset) => `<option value="${panel._e(preset.implementation)}" ${preset.already_configured ? "disabled" : ""}>${panel._e(preset.label)}${preset.already_configured ? " — Already configured" : ""}</option>`).join("");
+      populateToolPresetPicker(panel, catalog);
     }
     if (!isCurrent()) return;
     editor.setYaml(response.yaml);
