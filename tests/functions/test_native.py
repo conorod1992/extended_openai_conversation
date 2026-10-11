@@ -259,7 +259,7 @@ class TestNativeGetHistory:
         # Mock recorder
         mock_recorder_instance = MagicMock()
         mock_recorder_instance.async_add_executor_job = AsyncMock(
-            return_value={"light.living_room": []}
+            return_value=[[]]
         )
 
         with (
