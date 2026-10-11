@@ -219,7 +219,8 @@ export function bindNativeToolYaml(panel) {
       return;
     }
 
-    const repairConfig = repairToolConfig(panel);
+    const repairConfig = String(yaml ?? "") === String(panel._toolInitialYaml ?? "")
+      ? repairToolConfig(panel) : null;
     if (repairConfig) {
       if (isCurrent() && generation === syncGeneration) setNativeValue(repairConfig);
       return;

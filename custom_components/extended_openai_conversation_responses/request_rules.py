@@ -8,6 +8,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Collection,
+    Iterable,
     Mapping,
     Sequence,
 )
@@ -267,6 +268,7 @@ class _MatchCursor:
                     self._candidate(settings),
                     cast(str, compiled.normalized),
                     rule["match_type"],
+                    self.budget,
                 )
                 if score < settings["fuzzy_threshold"]:
                     continue
@@ -871,7 +873,10 @@ class RequestRules:
             if rule["id"] in excluded_ids:
                 continue
             score = _fuzzy_score(
-                candidate(settings), cast(str, compiled.normalized), rule["match_type"]
+                candidate(settings),
+                cast(str, compiled.normalized),
+                rule["match_type"],
+                sentence_budget,
             )
             if score >= settings["fuzzy_threshold"]:
                 result = RuleMatch(rule, compiled.original, True, score)
@@ -2041,10 +2046,24 @@ def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
     migrated = _normalize_script_containers(migrated)
     _validate_script_complexity(migrated)
     try:
+        _validate_template_syntax(migrated)
         cv.SCRIPT_SCHEMA(_mask_script_templates(migrated))
     except Exception as err:
         raise ValueError(f"invalid Home Assistant action sequence: {err}") from err
     return migrated
+
+
+def _validate_template_syntax(value: Any) -> None:
+    """Compile authored Jinja without evaluating runtime variables."""
+    if isinstance(value, str) and any(marker in value for marker in ("{{", "{%", "{#")):
+        cv.template(value)
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            _validate_template_syntax(key)
+            _validate_template_syntax(item)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_template_syntax(item)
 
 
 def _assign_missing_result_step_ids(value: Any) -> Any:
@@ -2498,6 +2517,7 @@ def _native_result_sequence(
     }
     # Each frozen script owns its helper; captured/native names cannot shadow it.
     lookup_name = f"__eoai_result_value_{uuid4().hex}"
+    slot_lookup_name = f"__eoai_slot_text_{uuid4().hex}"
 
     def result_template(match: re.Match[str]) -> str:
         token = match.group(0)[1:-1]
@@ -2511,7 +2531,7 @@ def _native_result_sequence(
                     result_template(match)
                     if match.group(1) in aliases
                     else (
-                        "{{ request.slots[" + repr(match.group(1)) + "] }}"
+                        "{{ " + slot_lookup_name + "(" + repr(match.group(1)) + ") }}"
                         if match.group(1) in slots
                         else match.group(0)
                     )
@@ -2952,6 +2972,37 @@ def _guard_template_reads(
         }
     if isinstance(value, list):
         return [_guard_template_reads(item, policy) for item in value]
+    return value
+
+
+class _SlotReferenceTemplate(Template):
+    """Keep captured sentence text as text through native Script rendering."""
+
+    def __init__(self, source: Template, helper: str) -> None:
+        super().__init__(source.template, source.hass)
+        self._source = source
+        self._helper = helper
+
+    def async_render_to_info(self, variables=None, **kwargs):
+        scope = dict(variables or {})
+        scope[self._helper] = lambda name: scope["request"]["slots"][name]
+        kwargs["parse_result"] = False
+        return self._source.async_render_to_info(scope, **kwargs)
+
+    def async_render(self, variables=None, **kwargs):
+        return self.async_render_to_info(variables, **kwargs).result()
+
+
+def _preserve_slot_text(value: Any) -> Any:
+    if isinstance(value, Template):
+        helper = re.search(r"\b__eoai_slot_text_[0-9a-f]{32}\b", value.template)
+        return _SlotReferenceTemplate(value, helper.group()) if helper else value
+    if isinstance(value, ScriptVariables):
+        return ScriptVariables(_preserve_slot_text(value.as_dict()))
+    if isinstance(value, Mapping):
+        return {key: _preserve_slot_text(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_preserve_slot_text(item) for item in value]
     return value
 
 
@@ -3461,6 +3512,8 @@ async def _async_evaluate_matched_rule(
                 )
             if require_matching_revision is not None:
                 require_matching_revision()
+            if match.slots:
+                validated_actions = _preserve_slot_text(validated_actions)
             validated_actions = _bind_result_aliases(validated_actions, alias_bindings)
             # Once the validated native script starts, its frozen actions may
             # produce external effects. Later edits apply to future requests;
@@ -3790,7 +3843,14 @@ def _deterministic_match(text: str, phrase: str, match_type: str) -> bool:
     return text == phrase or f" {phrase} " in f" {text} "
 
 
-def _fuzzy_score(text: str, phrase: str, match_type: str) -> float:
+def _fuzzy_score(
+    text: str, phrase: str, match_type: str, budget: MatchBudget | None = None
+) -> float:
+    """Rank candidates with a shared bound on worst-case comparison work."""
+    if budget is None:
+        budget = MatchBudget()
+    budget.consume(len(text) + len(phrase))
+    candidates: Iterable[str]
     if match_type == "equals":
         candidates = [text]
     else:
@@ -3801,17 +3861,25 @@ def _fuzzy_score(text: str, phrase: str, match_type: str) -> float:
         elif match_type == "ends_with":
             candidates = [" ".join(words[-size:])]
         else:
-            candidates = [
+            candidates = (
                 " ".join(words[index : index + size])
                 for index in range(max(1, len(words) - size + 1))
-            ]
-    return max(
-        (
-            SequenceMatcher(None, phrase, candidate).ratio() * 100
-            for candidate in candidates
-        ),
-        default=0.0,
-    )
+            )
+    best = 0.0
+    seen: set[str] = set()
+    for candidate in candidates:
+        budget.consume(len(candidate) + len(phrase))
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        matcher = SequenceMatcher(None, phrase, candidate)
+        if matcher.real_quick_ratio() <= best or matcher.quick_ratio() <= best:
+            continue
+        budget.consume(max(1, len(candidate) * len(phrase)))
+        best = max(best, matcher.ratio())
+        if best == 1:
+            break
+    return best * 100
 
 
 def _duplicate_rule_name(source_name: str, rules: Sequence[Mapping[str, Any]]) -> str:

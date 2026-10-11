@@ -93,8 +93,8 @@ def _migrate_pack(value: Mapping[str, Any]) -> Mapping[str, Any]:
     return value
 
 
-def validate_rule_pack(value: Any) -> dict[str, Any]:
-    """Fail closed before review or import, using the persisted rule validator."""
+def prepare_rule_pack(value: Any) -> dict[str, Any]:
+    """Perform bounded, context-free JSON and envelope validation off-loop."""
     if isinstance(value, str):
         if len(value.encode("utf-8")) > MAX_PACK_BYTES:
             raise ValueError("Rule pack exceeds the 2 MB safety limit")
@@ -147,7 +147,23 @@ def validate_rule_pack(value: Any) -> dict[str, Any]:
         for rule in raw_rules
     ):
         raise ValueError("Rule pack action is missing Continue to AI")
-    rules = [validate_rule(rule) for rule in raw_rules]
+    return {
+        "format": PACK_FORMAT,
+        "version": PACK_VERSION,
+        "groups": groups,
+        "rules": raw_rules,
+    }
+
+
+def validate_rule_pack(value: Any) -> dict[str, Any]:
+    """Run HA-aware rule validation on the event loop before review or import."""
+    return validate_prepared_rule_pack(prepare_rule_pack(value))
+
+
+def validate_prepared_rule_pack(prepared: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate an already bounded envelope using HA's event-loop schemas."""
+    groups = prepared["groups"]
+    rules = [validate_rule(rule) for rule in prepared["rules"]]
     if len({rule["id"] for rule in rules}) != len(rules):
         raise ValueError("Rule pack has duplicate rule IDs")
     if {rule["order"] for rule in rules} != set(range(len(rules))):

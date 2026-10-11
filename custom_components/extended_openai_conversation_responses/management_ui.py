@@ -160,7 +160,8 @@ from .request_rule_match_preview import async_request_rule_match_preview
 from .request_rule_packs import (
     async_append_rule_pack,
     export_rule_pack,
-    validate_rule_pack,
+    prepare_rule_pack,
+    validate_prepared_rule_pack as validate_rule_pack,
 )
 from .request_rules import (
     async_get_request_rules,
@@ -526,13 +527,15 @@ def _validate_request_rule_functions(
     missing = {
         str(call["function"]) for call in calls if call["function"] not in available
     }
-    if missing:
+    if missing and rule.get("enabled", True):
         raise HomeAssistantError(
             "Function Tool is unavailable or disabled: " + ", ".join(sorted(missing))
         )
     by_name = {tool["spec"]["name"]: tool for tool in configured_tools}
     for call in calls:
         function_name = str(call["function"])
+        if function_name not in by_name:
+            continue
         parameters = by_name[function_name]["spec"].get("parameters", {})
         required = (
             parameters.get("required", []) if isinstance(parameters, dict) else []
@@ -766,9 +769,10 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             message.get("rule_ids"),
         )
     if action in {"rule_pack_review", "rule_pack_import"}:
-        prepared = await hass.async_add_executor_job(
-            validate_rule_pack, message.get("pack")
+        parsed = await hass.async_add_executor_job(
+            prepare_rule_pack, message.get("pack")
         )
+        prepared = validate_rule_pack(parsed)
         from .request_rules import validate_rule_model_request
 
         for candidate in prepared["rules"]:
