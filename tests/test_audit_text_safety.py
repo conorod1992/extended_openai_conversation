@@ -2,12 +2,12 @@
 
 import time
 
-import pytest
 from jinja2 import Environment
+import pytest
 
 from custom_components.extended_openai_conversation_responses import (
-    request_rules as rr,
     regex_execution as regex,
+    request_rules as rr,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
