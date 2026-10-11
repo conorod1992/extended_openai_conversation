@@ -18,7 +18,12 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
-from .const import CONF_CHAT_MODEL, CONF_REASONING_EFFORT, DOMAIN
+from .const import (
+    CONF_CHAT_MODEL,
+    CONF_REASONING_EFFORT,
+    DEFAULT_CHAT_MODEL as DEFAULT_CHAT_MODEL,
+    DOMAIN,
+)
 from .ha_schema import websocket_command as ha_websocket_command
 from .model_capabilities import frontend_capabilities
 from .model_catalog import (

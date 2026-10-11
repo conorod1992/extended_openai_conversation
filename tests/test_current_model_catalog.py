@@ -244,7 +244,7 @@ def test_cache_and_flex_corrections():
         ),
         ("gpt-5.2-pro", ["medium", "high", "xhigh"], None, 400000, 128000, True, False),
         ("gpt-5-pro", ["high"], "high", 400000, 272000, True, True),
-        ("o3-pro", [], None, 200000, 100000, False, False),
+        ("o3-pro", [], None, 200000, 100000, False, True),
     ],
 )
 def test_pro_records_and_exact_output_ceiling(
