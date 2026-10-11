@@ -159,28 +159,29 @@ class _Delivery:
             self.events.append((status, reason))
 
 
-async def test_expire_pending_broadcasts_preserves_only_in_flight_delivery() -> None:
+async def test_expire_pending_broadcasts_preserves_only_in_flight_delivery(
+    hass,
+) -> None:
     """Disabling Broadcast expires queued work but never rewrites terminal/in-flight work."""
     entity_id = "assist_satellite.kitchen"
     pending = _Delivery("pending")
     delivering = _Delivery("delivering")
     delivered = _Delivery("delivered")
     missing = SimpleNamespace(deliveries={})
-    pending_item = SimpleNamespace(deliveries={entity_id: pending})
-    delivering_item = SimpleNamespace(deliveries={entity_id: delivering})
-    delivered_item = SimpleNamespace(deliveries={entity_id: delivered})
-    manager = SimpleNamespace(
-        _queues={
-            entity_id: deque([missing, pending_item, delivering_item, delivered_item]),
-            "assist_satellite.empty": deque(),
-        }
+    pending_item = SimpleNamespace(id="pending", deliveries={entity_id: pending})
+    delivering_item = SimpleNamespace(
+        id="delivering", deliveries={entity_id: delivering}
     )
-
+    delivered_item = SimpleNamespace(id="delivered", deliveries={entity_id: delivered})
     from custom_components.extended_openai_conversation_responses.intercom import (
         IntercomManager,
     )
 
-    manager._state_lock = asyncio.Lock()
+    manager = IntercomManager(hass)
+    manager._queues = {
+        entity_id: deque([missing, pending_item, delivering_item, delivered_item]),
+        "assist_satellite.empty": deque(),
+    }
     manager._store = SimpleNamespace(async_save=AsyncMock())
     await IntercomManager.async_set_enabled(manager, False)
 
@@ -193,6 +194,7 @@ async def test_expire_pending_broadcasts_preserves_only_in_flight_delivery() -> 
 @pytest.mark.asyncio
 async def test_broadcast_state_transactions_load_once_and_persist_before_expiry(
     monkeypatch,
+    hass,
 ) -> None:
     """Broadcast publication is serialized and durable before live queue mutation."""
     from custom_components.extended_openai_conversation_responses.intercom import (
@@ -213,14 +215,10 @@ async def test_broadcast_state_transactions_load_once_and_persist_before_expiry(
 
     entity_id = "assist_satellite.office"
     delivery = _Delivery("pending", events)
-    item = SimpleNamespace(deliveries={entity_id: delivery})
-    manager = SimpleNamespace(
-        _state_lock=asyncio.Lock(),
-        _loaded=False,
-        _enabled=False,
-        _store=SimpleNamespace(async_load=load, async_save=save),
-        _queues={entity_id: deque([item])},
-    )
+    item = SimpleNamespace(id="pending", deliveries={entity_id: delivery})
+    manager = IntercomManager(hass)
+    manager._store = SimpleNamespace(async_load=load, async_save=save)
+    manager._queues = {entity_id: deque([item])}
 
     await initialize(manager)
     assert manager._enabled is True
