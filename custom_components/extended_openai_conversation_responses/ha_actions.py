@@ -387,7 +387,7 @@ def resolve_action_entity_ids(
         return selected
     explicit = set(selection.get(ATTR_ENTITY_ID, [])) - {"all", "none"}
     participating = service_target_entity_ids(
-        hass, domain, service, selected, participants=participants
+        hass, domain, service, selected, participants=participants, explicit=explicit
     )
     # Explicit invalid IDs remain visible to the authorization/validation layer.
     return participating | {
@@ -504,6 +504,74 @@ def _service_participants(
     return None
 
 
+def _filter_service_features(
+    hass: HomeAssistant,
+    domain: str,
+    service: str,
+    selected: set[str],
+    explicit: set[str],
+) -> set[str]:
+    """HA skips indirectly selected unsupported entities; explicit ones must error."""
+    services_for_domain = getattr(hass.services, "async_services_for_domain", None)
+    if services_for_domain is None:
+        return selected
+    registered = services_for_domain(domain).get(service)
+    target = registered.job.target if registered is not None else None
+    if (
+        not isinstance(target, partial)
+        or target.func
+        not in (
+            service_helpers.entity_service_call,
+            getattr(service_helpers, "batched_entity_service_call", None),
+        )
+        or len(target.args) < 2
+    ):
+        return selected
+    required = target.keywords.get(
+        "required_features", target.args[4] if len(target.args) > 4 else None
+    )
+    classes = target.keywords.get("entity_device_classes")
+    if required is None and classes is None:
+        return selected
+    entities = target.args[1]
+    if callable(entities):
+        entities = entities()
+    if isinstance(entities, (list, tuple)):
+        entities = {
+            key: entity
+            for platform in entities
+            for key, entity in platform.entities.items()
+        }
+    if not isinstance(entities, Mapping):
+        return selected
+    return {
+        entity_id
+        for entity_id in selected
+        if entity_id in explicit
+        or (
+            (entity := entities.get(entity_id)) is not None
+            and (classes is None or entity.device_class in classes)
+            and (
+                required is None
+                or (
+                    entity.supported_features is not None
+                    and any(
+                        entity.supported_features & mask == mask for mask in required
+                    )
+                )
+            )
+        )
+    }
+
+
+def action_requires_available_entities(domain: str | None, service: str | None) -> bool:
+    """Recovery operations must be able to target an unavailable entity."""
+    return (domain, service) not in {
+        ("homeassistant", "update_entity"),
+        ("homeassistant", "reload_config_entry"),
+    }
+
+
 def service_target_entity_ids(
     hass: HomeAssistant,
     domain: str,
@@ -512,6 +580,7 @@ def service_target_entity_ids(
     *,
     participants: Callable[[HomeAssistant, str, str, set[str]], set[str] | None]
     | None = None,
+    explicit: set[str] | None = None,
 ) -> set[str]:
     """Limit policy checks to HA service participants; retain unknown semantics.
 
@@ -520,6 +589,17 @@ def service_target_entity_ids(
     them by the service domain would hide targets they can actually affect.
     """
     participants = participants or _service_participants
+    explicit = explicit or set()
+
+    def candidates_for(entity_domain: str, entity_ids: set[str]) -> set[str]:
+        candidates = participants(hass, entity_domain, service, entity_ids)
+        selected_candidates = (
+            entity_ids if candidates is None else entity_ids & candidates
+        )
+        return _filter_service_features(
+            hass, entity_domain, service, selected_candidates, explicit
+        )
+
     if domain == "homeassistant" and service in {"turn_on", "turn_off", "toggle"}:
         result: set[str] = set()
         by_domain: dict[str, set[str]] = {}
@@ -530,8 +610,6 @@ def service_target_entity_ids(
                 entity_domain, service
             ):
                 continue
-            candidates = participants(hass, entity_domain, service, entity_ids)
-            result.update(entity_ids if candidates is None else entity_ids & candidates)
+            result.update(candidates_for(entity_domain, entity_ids))
         return result
-    candidates = participants(hass, domain, service, selected)
-    return set(selected) if candidates is None else selected & candidates
+    return candidates_for(domain, selected)

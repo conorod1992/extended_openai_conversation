@@ -14,12 +14,13 @@ from homeassistant.const import CONF_ATTRIBUTE, CONF_VALUE_TEMPLATE
 
 @pytest.mark.asyncio
 async def test_rest_execute_preserves_none_without_rendering_value_template(
+    hass,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Do not render a REST value template when the response has no value."""
 
     class FakeRestData:
-        async def async_update(self) -> None:
+        async def async_update(self, log_errors=True) -> None:
             pass
 
         def data_without_xml(self) -> None:
@@ -32,7 +33,7 @@ async def test_rest_execute_preserves_none_without_rendering_value_template(
 
     result = await web.RestFunction.execute(
         web.RestFunction.__new__(web.RestFunction),
-        SimpleNamespace(),
+        hass,
         {CONF_VALUE_TEMPLATE: value_template},
         {"query": "test"},
         None,
@@ -134,7 +135,7 @@ async def test_rest_execute_propagates_recorded_transport_failure(monkeypatch, k
     class FailedRestData:
         last_exception = error
 
-        async def async_update(self):
+        async def async_update(self, log_errors=True):
             return None
 
         def data_without_xml(self):

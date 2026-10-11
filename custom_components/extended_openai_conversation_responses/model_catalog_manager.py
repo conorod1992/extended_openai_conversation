@@ -18,7 +18,12 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
-from .const import CONF_CHAT_MODEL, CONF_REASONING_EFFORT, DEFAULT_CHAT_MODEL, DOMAIN
+from .const import (
+    CONF_CHAT_MODEL,
+    CONF_REASONING_EFFORT,
+    DEFAULT_CHAT_MODEL as DEFAULT_CHAT_MODEL,
+    DOMAIN,
+)
 from .ha_schema import websocket_command as ha_websocket_command
 from .model_capabilities import frontend_capabilities
 from .model_catalog import (
@@ -267,7 +272,10 @@ class ModelCatalogManager:
                     self.hass, entry.entry_id, subentry.subentry_id
                 )
                 for rule in rules.snapshot()["rules"]:
-                    if rule.get("action_type") != "model_routing":
+                    if (
+                        not rule.get("enabled", True)
+                        or rule.get("action_type") != "model_routing"
+                    ):
                         continue
                     action = rule.get("action", {})
                     if action.get("reset"):
@@ -425,6 +433,7 @@ class ModelCatalogManager:
         """Check durable agent/rule choices before narrowing to bundled data."""
         if self.catalog is None:
             return False
+        from .request import capability_model_identity
 
         bundled_efforts = set(catalog_reasoning_efforts(None))
         for entry in self.hass.config_entries.async_entries(DOMAIN):
@@ -432,8 +441,8 @@ class ModelCatalogManager:
                 if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                     continue
 
-                configured_model = str(
-                    subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+                configured_model = capability_model_identity(
+                    subentry.data, getattr(entry, "data", {})
                 )
                 configured_effort = subentry.data.get(CONF_REASONING_EFFORT)
                 metadata = catalog_model_metadata(None, configured_model)
@@ -454,7 +463,10 @@ class ModelCatalogManager:
                     self.hass, entry.entry_id, subentry.subentry_id
                 )
                 for rule in rules.snapshot()["rules"]:
-                    if rule.get("action_type") != "model_routing":
+                    if (
+                        not rule.get("enabled", True)
+                        or rule.get("action_type") != "model_routing"
+                    ):
                         continue
                     action = rule.get("action", {})
                     if action.get("reset"):

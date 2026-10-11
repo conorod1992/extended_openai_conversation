@@ -377,7 +377,16 @@ class DebugTrace:
         for request in self.provider_requests:
             for key in usage:
                 usage[key] += int(request.usage.get(key, 0))
-        first_request = self.provider_requests[0] if self.provider_requests else None
+        # Request-relative latency of the first request that actually emits text.
+        # Embeddings and initial tool-only requests have no first-text sample.
+        first_request = next(
+            (
+                request
+                for request in self.provider_requests
+                if request.first_text_ms is not None
+            ),
+            None,
+        )
         data = {
             "debug_id": self.debug_id,
             "started_at": self.started_at,
