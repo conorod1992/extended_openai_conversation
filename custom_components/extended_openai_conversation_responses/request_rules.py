@@ -8,6 +8,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Collection,
+    Iterable,
     Mapping,
     Sequence,
 )
@@ -3849,6 +3850,7 @@ def _fuzzy_score(
     if budget is None:
         budget = MatchBudget()
     budget.consume(len(text) + len(phrase))
+    candidates: Iterable[str]
     if match_type == "equals":
         candidates = [text]
     else:

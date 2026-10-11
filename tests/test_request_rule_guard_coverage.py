@@ -96,11 +96,15 @@ def test_native_result_sequence_rewrites_nested_result_and_slot_references() -> 
     template = sequence[0]["data"]["attributes"]["template"]
     helper = template.split("(", 1)[0].removeprefix("{{ ")
     assert helper.startswith("__eoai_result_value_")
+    slot_helper = template.split(" }} {{ ", 1)[1].split("(", 1)[0]
+    assert slot_helper.startswith("__eoai_slot_text_")
     assert (
         template
         == "{{ "
         + helper
-        + "('reading.values.0') }} {{ request.slots['room'] }} {missing}"
+        + "('reading.values.0') }} {{ "
+        + slot_helper
+        + "('room') }} {missing}"
     )
     assert sequence[0]["response_variable"] == "__eoai_result_reading"
     assert sequence[1] == {

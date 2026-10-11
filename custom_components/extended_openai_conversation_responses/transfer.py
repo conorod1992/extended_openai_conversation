@@ -1028,7 +1028,7 @@ async def _async_validate_request_rule_function_dependencies(
                 rule,
                 tools,
                 quarantined_names=quarantined_names,
-                require_ready=False,
+                allow_disabled=True,
             )
         except (HomeAssistantError, ValueError) as err:
             label = rule.get("name", rule.get("id", "unnamed"))

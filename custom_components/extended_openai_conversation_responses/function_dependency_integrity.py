@@ -240,6 +240,7 @@ async def async_validate_request_rule_functions(
     *,
     quarantined_names: Collection[str] = (),
     require_ready: bool | None = None,
+    allow_disabled: bool = False,
 ) -> None:
     """Validate saved structure; require available dependencies on activation."""
     if require_ready is None:
@@ -248,7 +249,7 @@ async def async_validate_request_rule_functions(
     by_name = {
         tool["spec"]["name"]: tool
         for tool in configured_tools
-        if not require_ready or function_tool_enabled(tool)
+        if not require_ready or allow_disabled or function_tool_enabled(tool)
     }
     for action in _rule_script_actions(rule):
         if action.get("action", action.get("service")) != service_action:

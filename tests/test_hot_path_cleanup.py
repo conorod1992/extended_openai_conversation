@@ -180,7 +180,7 @@ def test_request_rule_fuzzy_matching_still_runs_as_fallback(monkeypatch) -> None
     manager = _compiled_manager()
     calls = 0
 
-    def fuzzy(_candidate: str, phrase: str, _match_type: str) -> float:
+    def fuzzy(_candidate: str, phrase: str, _match_type: str, _budget=None) -> float:
         nonlocal calls
         calls += 1
         return 95.0 if phrase == "something else" else 0.0
