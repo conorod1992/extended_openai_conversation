@@ -113,3 +113,72 @@ def test_continuity_cleanup_handles_delimiter_in_conversation_and_owner_ids():
     groups.end_continuity(owner)
     assert rules.get(own) == {} and set(groups._sessions) == {sibling}
     assert rules.get(sibling) == {"chat_model": "gpt-4.1"}
+
+
+@pytest.mark.parametrize("continuation", [False, True])
+@pytest.mark.parametrize("reset_first", [False, True])
+async def test_ended_conversation_cannot_be_recreated_by_inflight_route(
+    hass, continuation, reset_first
+):
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RuleMatch,
+        async_evaluate_rule,
+    )
+    from tests.test_request_rules import manager, routing_rule, validate_rule
+
+    runtime = RequestRuleRuntime()
+    session_id = request_rule_session_id("owner", "old")
+    token = runtime.begin_request(session_id, 5)
+    if reset_first:
+        runtime.reset(session_id)
+    rule = routing_rule()
+    rule["action"].update(scope="conversation", model="gpt-4.1", reasoning_effort=None)
+    rules = await manager(rule)
+
+    if continuation:
+
+        async def matches(*_args):
+            runtime.reset_continuity("owner")
+            yield RuleMatch(validate_rule(rule), "route", False, 100.0)
+
+        rules._has_continuation = True
+        rules.async_eligible_matches = matches
+    else:
+
+        async def match(*_args):
+            runtime.reset_continuity("owner")
+            return RuleMatch(validate_rule(rule), "route", False, 100.0)
+
+        rules.async_match = match
+
+    evaluation = await async_evaluate_rule(hass, rules, runtime, "route", session_id)
+    assert evaluation.request_override == {"chat_model": "gpt-4.1"}
+    assert runtime.get(session_id) == {}
+    assert token not in runtime._requests
+
+
+async def test_ended_request_reset_cannot_clear_a_new_request_route(hass):
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RuleMatch,
+        async_evaluate_rule,
+    )
+    from tests.test_request_rules import manager, routing_rule, validate_rule
+
+    runtime = RequestRuleRuntime()
+    session_id = request_rule_session_id("owner", "reused")
+    runtime.begin_request(session_id, 5)
+    rule = routing_rule(scope="conversation", reset=True)
+    rules = await manager(rule)
+
+    async def match(*_args):
+        runtime.reset_continuity("owner")
+        runtime.set(session_id, {"chat_model": "gpt-4.1"})
+        return RuleMatch(validate_rule(rule), "reset", False, 100.0)
+
+    rules.async_match = match
+    evaluation = await async_evaluate_rule(hass, rules, runtime, "reset", session_id)
+    assert evaluation.request_override
+    assert runtime.effective_options(
+        {"chat_model": "gpt-4"}, session_id, evaluation.request_override
+    ) == {"chat_model": "gpt-4"}
+    assert runtime.get(session_id) == {"chat_model": "gpt-4.1"}

@@ -1299,6 +1299,13 @@ class RequestRules:
         self._sort_and_compile()
 
 
+class _RuleRequestToken:
+    """Keep ended ownership visible to an in-flight evaluator after cleanup."""
+
+    ended = False
+    refresh_allowed = True
+
+
 class RequestRuleRuntime:
     """Per-agent, in-memory conversation routing overrides."""
 
@@ -1334,7 +1341,7 @@ class RequestRuleRuntime:
     def begin_request(self, session_id: str, timeout_minutes: int) -> object:
         """Resolve idle expiration before protecting an active request."""
         self.get(session_id, timeout_minutes)
-        token = object()
+        token = _RuleRequestToken()
         self._requests[token] = session_id
         return token
 
@@ -1342,7 +1349,12 @@ class RequestRuleRuntime:
         """Refresh surviving overrides after a successful request."""
         session_id = self._requests.pop(token, None)
         entry = self._conversation_overrides.get(session_id) if session_id else None
-        if successful and session_id is not None and entry is not None:
+        if (
+            successful
+            and session_id is not None
+            and entry is not None
+            and (not isinstance(token, _RuleRequestToken) or token.refresh_allowed)
+        ):
             values, _, timeout = entry
             self._conversation_overrides[session_id] = (values, monotonic(), timeout)
 
@@ -1360,12 +1372,11 @@ class RequestRuleRuntime:
         )
 
     def reset(self, session_id: str) -> None:
+        """Clear routing without ending the request that issued the reset."""
         self._conversation_overrides.pop(session_id, None)
-        self._requests = {
-            token: active
-            for token, active in self._requests.items()
-            if active != session_id
-        }
+        for token, active in self._requests.items():
+            if active == session_id and isinstance(token, _RuleRequestToken):
+                token.refresh_allowed = False
 
     def reset_continuity(self, continuity_key: str) -> None:
         """Invalidate every conversation generation owned by an ended continuity."""
@@ -1376,7 +1387,15 @@ class RequestRuleRuntime:
                 session_id == owner
                 or session_id.rpartition(":conversation:")[0] == owner
             ):
+                for token, active in self._requests.items():
+                    if active == session_id and isinstance(token, _RuleRequestToken):
+                        token.ended = True
                 self.reset(session_id)
+                self._requests = {
+                    token: active
+                    for token, active in self._requests.items()
+                    if active != session_id
+                }
 
     def effective_options(
         self,
@@ -3156,6 +3175,19 @@ async def async_evaluate_rule(
         rules._committed_matching_snapshot if isinstance(rules, RequestRules) else None
     )
 
+    ownership = (
+        tuple(
+            token
+            for token, active in runtime._requests.items()
+            if active == session_id and isinstance(token, _RuleRequestToken)
+        )
+        if isinstance(runtime, RequestRuleRuntime)
+        else ()
+    )
+
+    def can_retain_conversation_route() -> bool:
+        return not any(token.ended for token in ownership)
+
     execution_started = False
 
     def commit_execution_snapshot() -> None:
@@ -3203,6 +3235,7 @@ async def async_evaluate_rule(
             live_guest_policy=live_guest_policy,
             request_options=request_options,
             entry_data=entry_data,
+            can_retain_conversation_route=can_retain_conversation_route,
         )
         require_matching_revision()
         return evaluation
@@ -3230,16 +3263,23 @@ async def async_evaluate_rule(
                 live_guest_policy=live_guest_policy,
                 request_options=request_options,
                 entry_data=entry_data,
+                can_retain_conversation_route=can_retain_conversation_route,
             )
             require_matching_revision()
             action = match.rule["action"]
             if match.rule["action_type"] == "model_routing":
                 if action["reset"]:
-                    if action["scope"] == "conversation":
+                    if (
+                        action["scope"] == "conversation"
+                        and can_retain_conversation_route()
+                    ):
                         request_override.clear()
                     else:
                         request_override = dict(evaluation.request_override or {})
-                elif action["scope"] == "conversation":
+                elif (
+                    action["scope"] == "conversation"
+                    and can_retain_conversation_route()
+                ):
                     applied = runtime.get(session_id, timeout_minutes)
                     for key, value in (
                         (CONF_CHAT_MODEL, action["model"]),
@@ -3297,6 +3337,7 @@ async def _async_evaluate_matched_rule(
     live_guest_policy: Callable[[], GuestCapabilityPolicy] | None = None,
     request_options: Mapping[str, Any] | None = None,
     entry_data: Mapping[str, Any] | None = None,
+    can_retain_conversation_route: Callable[[], bool] | None = None,
 ) -> RuleEvaluation:
     """Execute one already matched and condition-eligible rule."""
     rule = match.rule
@@ -3541,7 +3582,9 @@ async def _async_evaluate_matched_rule(
         return RuleEvaluation(match, True, response, terminal=stopped)
 
     if action["reset"]:
-        if action["scope"] == "conversation":
+        if action["scope"] == "conversation" and (
+            can_retain_conversation_route is None or can_retain_conversation_route()
+        ):
             runtime.reset(session_id)
             request_override = None
         else:
@@ -3616,7 +3659,9 @@ async def _async_evaluate_matched_rule(
         validate_routed_request_options(
             {**request_options, **combined_override}, entry_data or {}
         )
-    if action["scope"] == "conversation":
+    if action["scope"] == "conversation" and (
+        can_retain_conversation_route is None or can_retain_conversation_route()
+    ):
         runtime.set(session_id, override, timeout_minutes)
         request_override = None
     else:
