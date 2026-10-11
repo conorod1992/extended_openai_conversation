@@ -173,7 +173,7 @@ async def test_query_image_builds_provider_request_for_each_api_mode(
         lambda _requested, _model: api_mode,
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.services.normalize_output_token_limit",
+        "custom_components.extended_openai_conversation_responses.request.normalize_output_token_limit",
         lambda _model, mode, value: (
             "max_output_tokens"
             if mode == API_MODE_RESPONSES
@@ -243,7 +243,7 @@ async def test_query_image_rejects_output_limit_before_provider_call(
         lambda _requested, _model: API_MODE_RESPONSES,
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.services.normalize_output_token_limit",
+        "custom_components.extended_openai_conversation_responses.request.normalize_output_token_limit",
         MagicMock(side_effect=ModelCapabilityError("limit exceeds model maximum")),
     )
     handlers = await _handlers(hass)

@@ -61,6 +61,7 @@ def test_default_materialization_is_unchanged_but_legacy_rewrites_require_reload
 async def test_ordinary_save_marks_only_authorized_writes(
     monkeypatch, updates, renamed, expected
 ):
+    monkeypatch.setattr(management_ui, "async_get_request_rules", AsyncMock(return_value=SimpleNamespace(snapshot=lambda: {"rules": []})))
     hass, entry, subentry = _hass_with_agent()
     # A non-reasoning model supports both sampling controls.
     subentry.data = normalize_agent_config(
