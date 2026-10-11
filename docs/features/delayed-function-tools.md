@@ -32,3 +32,9 @@ Delayed execution is also coordinated with maintenance operations such as full B
 Home Assistant may interpret both ordinary timers and delayed device requests through timer-related intents. Under **Capabilities → Home Assistant & local handling**, you can choose to send delayed device commands onward to AI/Function Tools while still allowing ordinary requests such as "set a 20 minute timer" to stay on the local Home Assistant path.
 
 Use delayed Function Tools when the eventual action needs the Function Tool path and its authorization checks; use Home Assistant timers when the request is simply a timer.
+
+### Capacity limits
+
+The scheduler accepts at most 256 persisted calls globally and 32 per agent, including calls already executing. Arguments must be JSON and fit within 16,384 encoded UTF-8 bytes. Rejected requests are neither saved nor armed. Completed or removed calls release capacity; a Home Assistant restart retains pending reservations.
+
+If an older persisted queue exceeds these limits, startup refuses to arm it and leaves storage unchanged. Reduce the stored queue below the limits while Home Assistant is stopped, or remove the relevant agent through EOAI before retrying setup. Existing jobs are never silently discarded to satisfy capacity limits.

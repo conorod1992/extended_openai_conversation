@@ -43,11 +43,49 @@ DATA_DELAYED_TOOL_MANAGER = "delayed_tool_manager"
 _DATA_DELAYED_STORE_LOCK = "delayed_tool_store_lock"
 DELAYED_TOOL_STORAGE_VERSION = 1
 DELAYED_TOOL_STORAGE_KEY = f"{DOMAIN}.delayed_tools"
+MAX_DELAYED_CALLS = 256
+MAX_DELAYED_CALLS_PER_AGENT = 32
+MAX_DELAYED_ARGUMENT_BYTES = 16384
 _AGENT_RETRY_SECONDS = 30
 _MAX_AGENT_RETRIES = 10
 _PENDING = "pending"
 _EXECUTING = "executing"
 _DELAYED_EXECUTION_MARKER = "_extended_openai_delayed_execution"
+
+
+def _validate_argument_budget(arguments: dict[str, Any]) -> None:
+    size = 0
+    try:
+        for chunk in json.JSONEncoder(ensure_ascii=False, allow_nan=False).iterencode(
+            arguments
+        ):
+            size += len(chunk.encode("utf-8"))
+            if size > MAX_DELAYED_ARGUMENT_BYTES:
+                raise HomeAssistantError(
+                    f"Delayed Function Tool arguments exceed {MAX_DELAYED_ARGUMENT_BYTES} bytes"
+                )
+    except (ValueError, TypeError, RecursionError) as err:
+        raise HomeAssistantError(
+            "Delayed Function Tool arguments must be bounded JSON"
+        ) from err
+
+
+def _validate_call_capacity(
+    records: dict[str, DelayedToolCall],
+    entry_id: str | None = None,
+    subentry_id: str | None = None,
+) -> None:
+    counts: dict[tuple[str, str], int] = {}
+    for record in records.values():
+        key = (record.entry_id, record.subentry_id)
+        counts[key] = counts.get(key, 0) + 1
+    if entry_id is not None:
+        key = (entry_id, subentry_id)
+        counts[key] = counts.get(key, 0) + 1
+    if len(records) + (entry_id is not None) > MAX_DELAYED_CALLS or any(
+        count > MAX_DELAYED_CALLS_PER_AGENT for count in counts.values()
+    ):
+        raise HomeAssistantError("Delayed Function Tool queue capacity reached")
 
 
 def tool_definition_fingerprint(tool: dict[str, Any]) -> str:
@@ -100,6 +138,7 @@ class DelayedToolCall:
                 raise ValueError(f"stored delayed call has invalid {key}")
         if not isinstance(raw.get("arguments"), dict):
             raise ValueError("stored delayed call has invalid arguments")
+        _validate_argument_budget(raw["arguments"])
         status = raw.get("status", _PENDING)
         if status not in {_PENDING, _EXECUTING}:
             raise ValueError("stored delayed call has invalid status")
@@ -275,7 +314,10 @@ class DelayedToolManager:
                 )
                 continue
             recovered[record.call_id] = record
+            _validate_call_capacity(recovered)
 
+        # Never truncate durable work to fit the new limits or arm an oversized store.
+        _validate_call_capacity(recovered)
         if dirty:
             await _async_settle_store_io(
                 self._store.async_save(self._storage_payload(recovered))
@@ -307,29 +349,37 @@ class DelayedToolManager:
         delay = _delay_as_timedelta(arguments.get("delay"))
         now = dt_util.utcnow()
         context = getattr(llm_context, "context", None)
-        record = DelayedToolCall(
-            call_id=uuid4().hex,
-            entry_id=entity.entry.entry_id,
-            subentry_id=entity.subentry.subentry_id,
-            tool_name=tool_name,
-            arguments=deepcopy(arguments),
-            due_at=(now + delay).isoformat(),
-            created_at=now.isoformat(),
-            user_id=getattr(context, "user_id", None),
-            device_id=getattr(llm_context, "device_id", None),
-            definition_fingerprint=tool_definition_fingerprint(function_tool)
-            if function_tool is not None
-            else None,
-        )
+        record = None
         try:
             async with self._lock:
+                if not self._setup_complete:
+                    raise HomeAssistantError(
+                        "Delayed Function Tool scheduler is unavailable"
+                    )
+                _validate_call_capacity(
+                    self._records, entity.entry.entry_id, entity.subentry.subentry_id
+                )
+                _validate_argument_budget(arguments)
+                record = DelayedToolCall(
+                    call_id=uuid4().hex,
+                    entry_id=entity.entry.entry_id,
+                    subentry_id=entity.subentry.subentry_id,
+                    tool_name=tool_name,
+                    arguments=deepcopy(arguments),
+                    due_at=(now + delay).isoformat(),
+                    created_at=now.isoformat(),
+                    user_id=getattr(context, "user_id", None),
+                    device_id=getattr(llm_context, "device_id", None),
+                    definition_fingerprint=tool_definition_fingerprint(function_tool)
+                    if function_tool is not None
+                    else None,
+                )
                 updated = dict(self._records)
                 updated[record.call_id] = record
                 await self._async_save_records_transactionally(updated)
         finally:
-            # A completed write remains scheduled even if cancellation hides the
-            # acknowledgement from the caller.
-            if self._started and record.call_id in self._records:
+            # A committed call survives a lost acknowledgement, but rejected work never arms.
+            if record is not None and self._started and record.call_id in self._records:
                 self._arm(record.call_id)
         return record
 
@@ -378,6 +428,8 @@ class DelayedToolManager:
             # Startup recovery never replays a call interrupted in execution.
             if record.status != _EXECUTING:
                 records[record.call_id] = record
+                _validate_call_capacity(records)
+        _validate_call_capacity(records)
         self._records = records
 
     def _invalidate_after_unreadable_store(self) -> None:
