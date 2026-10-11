@@ -103,9 +103,10 @@ from .ha_tool_result_compat import (
     make_tool_result_content,
     tool_result_data,
 )
-from .helpers import get_api_mode, get_model_config
+from .helpers import get_api_mode
 from .non_streaming import completed_chat_chunks, completed_responses_events
 from .operational_errors import log_handled_failure
+from .provider_content import answer_text
 from .provider_errors import (
     ProviderStreamError,
     ensure_successful_responses_result,
@@ -116,6 +117,7 @@ from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
     CONTINUE_CONVERSATION_TOOL_NAME,
+    auxiliary_output_token_limit,
     build_provider_request_snapshot,
     format_function_tools,
     provider_tool_limit,
@@ -1609,16 +1611,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             finish_reason = choice.finish_reason
 
             if delta.content:
-                # Ensure content is a string (Mistral might return unexpected types)
-                content_value = delta.content
-                if not isinstance(content_value, str):
-                    _LOGGER.warning(
-                        "Received non-string content from API; type=%s",
-                        type(content_value).__name__,
-                    )
-                    content_value = str(content_value) if content_value else ""
+                content_value = answer_text(delta.content)
                 if content_value:
                     yield {"content": content_value}
+                elif not isinstance(delta.content, str):
+                    _LOGGER.warning(
+                        "Ignoring non-string content without typed answer text; type=%s",
+                        type(delta.content).__name__,
+                    )
 
             refusal_value = getattr(delta, "refusal", None)
             if refusal_value:
@@ -2235,10 +2235,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
                 }
-                if get_model_config(model)["supports_max_completion_tokens"]:
-                    kwargs["max_completion_tokens"] = 256
-                else:
-                    kwargs["max_tokens"] = 256
+                token_param, token_value = auxiliary_output_token_limit(
+                    model,
+                    api_mode,
+                    256,
+                    getattr(getattr(self, "subentry", None), "data", {}),
+                    self.entry.data,
+                )
+                kwargs[token_param] = token_value
                 response = await self._client.chat.completions.create(**kwargs)
                 choices = getattr(response, "choices", [])
                 text = (

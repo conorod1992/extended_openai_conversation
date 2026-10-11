@@ -117,7 +117,7 @@ async def test_provider_change_validates_only_enabled_rules_and_llm_subentries(
 
 async def test_query_image_requires_token_limit_before_reading_files(hass, monkeypatch):
     monkeypatch.setattr(services, "get_api_mode", lambda *_: "responses")
-    monkeypatch.setattr(services, "normalize_output_token_limit", lambda *_: None)
+    monkeypatch.setattr("custom_components.extended_openai_conversation_responses.request.normalize_output_token_limit", lambda *_: None)
     handler = (await _handlers(hass))["query_image"]
     with pytest.raises(HomeAssistantError, match="Output token limit is required"):
         await handler(

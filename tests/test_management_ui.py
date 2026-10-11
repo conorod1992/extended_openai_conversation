@@ -619,7 +619,7 @@ async def test_conversation_cleanup_and_admin_temporary_delete(
     hass = _hass(entry)
     monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
     continuity = SimpleNamespace(async_end=AsyncMock(return_value=True))
-    runtime = SimpleNamespace(end=Mock())
+    runtime = SimpleNamespace(end_continuity=Mock())
     reset = Mock()
     monkeypatch.setattr(management_ui, "async_get_continuity", lambda *_: continuity)
     monkeypatch.setattr(management_ui, "get_function_group_runtime", lambda *_: runtime)
@@ -631,7 +631,7 @@ async def test_conversation_cleanup_and_admin_temporary_delete(
         True,
         _message("conversations", "end_active", continuity_key="key"),
     ) == {"ended": 1}
-    runtime.end.assert_called_once_with("continuity:key")
+    runtime.end_continuity.assert_called_once_with("key")
     reset.assert_called_once_with(hass, "entry-1", "agent-1", "key")
 
     temporary = SimpleNamespace(

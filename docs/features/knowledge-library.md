@@ -98,7 +98,7 @@ If expected information is not found:
 - verify that **Knowledge Library** is On for the same agent selected in the panel;
 - refresh the management panel and confirm the source is marked **Available**.
 
-The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` without a filter to inspect source metadata before concluding that the library lacks an answer. It must use only exact source IDs returned by Knowledge Library tools. Empty, blank, unknown, or disabled model-provided IDs are not treated as available sources. If discovery still finds nothing relevant, the assistant should say so rather than inventing a household-specific detail.
+The assistant is instructed to start with short keyword searches, broaden an empty search once, and then use `knowledge_list` without a filter to inspect source metadata before concluding that the library lacks an answer. It must use only exact source IDs returned by Knowledge Library tools. An omitted source filter searches all permitted sources. An explicitly empty filter, or one containing only blank, unknown, or disabled IDs, returns no matches; it never widens to all sources. Mixed filters search only the valid permitted IDs. If discovery still finds nothing relevant, the assistant should say so rather than inventing a household-specific detail.
 
 ## Guest Mode
 
