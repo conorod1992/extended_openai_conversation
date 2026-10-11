@@ -525,6 +525,19 @@ class QuietHoursManager:
                 self._reschedule()
         return self.snapshot()
 
+    def _active_period_overlaps(self, period: QuietPeriod) -> bool:
+        """Preserve ownership across a continuously quiet schedule change."""
+        if self._active is None:
+            return False
+        start = _safe_iso(self._active.get("period_started_at"))
+        end = _safe_iso(self._active.get("period_ends_at"))
+        return (
+            start is not None
+            and end is not None
+            and start <= period.end
+            and period.start <= end
+        )
+
     async def async_reconcile(self, *, now: datetime | None = None) -> None:
         now = now or dt_util.now()
         async with self._lock:
@@ -551,9 +564,10 @@ class QuietHoursManager:
                 self._active is not None
                 and self._active.get("period_started_at") != period_id
             ):
-                # If HA was unavailable across the old end boundary, first give back
-                # controls that still carry our old values, then begin the new period.
-                await self._async_restore_locked()
+                # Restore after a gap, but retain ownership when a partially saved
+                # schedule change leaves overlapping quiet periods in storage.
+                if not self._active_period_overlaps(period):
+                    await self._async_restore_locked()
                 if self._active is not None:
                     self._active.update(
                         {

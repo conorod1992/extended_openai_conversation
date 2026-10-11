@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -2127,3 +2128,49 @@ async def test_manual_same_value_adjustment_during_satellite_save_is_preserved(h
     )
     manager._async_set_volume.assert_not_awaited()
     assert "media_player.bedroom" not in manager.active["controls"]
+
+
+@pytest.mark.asyncio
+async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
+    monkeypatch, hass
+):
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.55)
+    manager = _stateful_public_manager(hass)
+    manager._config = _config(wake_sound="unchanged")
+    monkeypatch.setattr(manager, "_reschedule", lambda: None)
+    now = datetime(2026, 9, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    calls, _ = await _install_services(hass)
+    await manager.async_reconcile(now=now)
+    persisted = {}
+    failed = False
+
+    async def save(data):
+        nonlocal persisted, failed
+        active = data.get("active") or {}
+        if (
+            active.get("period_started_at") == "2026-09-11T21:00:00+00:00"
+            and not failed
+        ):
+            failed = True
+            raise OSError("period metadata write failed")
+        persisted = deepcopy(data)
+
+    async def load():
+        return deepcopy(persisted)
+
+    manager._store.async_save.side_effect = save
+    manager._store.async_load.side_effect = load
+    with pytest.raises(OSError, match="period metadata"):
+        await manager.async_update_config(
+            _config(start="21:00", max_volume=0.1, wake_sound="unchanged").as_dict()
+        )
+    assert manager._initialized
+    calls.clear()
+    await manager.async_reconcile(now=now)
+    assert calls == [("media_player.bedroom", 0.1)]
+    assert manager.active["controls"]["media_player.bedroom"]["original_value"] == 0.55
+    calls.clear()
+    await manager.async_update_config(_config(enabled=False).as_dict())
+    assert calls == [("media_player.bedroom", 0.55)]

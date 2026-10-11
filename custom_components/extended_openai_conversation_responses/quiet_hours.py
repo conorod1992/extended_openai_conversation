@@ -270,7 +270,8 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 self._active is not None
                 and self._active.get("period_started_at") != period_id
             ):
-                await self._async_restore_locked()
+                if not self._active_period_overlaps(period):
+                    await self._async_restore_locked()
                 if self._active is not None:
                     self._active.update(
                         {
