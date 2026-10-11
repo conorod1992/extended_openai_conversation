@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
+from copy import deepcopy
 import json
 from typing import Any
 
 from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
-from .ha_tool_result_compat import is_tool_result_content, tool_result_data
+from .function_execution import _schema_without_patterns, validate_function_arguments
+from .ha_tool_result_compat import is_tool_result_content
 from .parallel_tool_execution import is_parallel_safe_integration_tool
 
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
@@ -54,20 +57,41 @@ def record_dispatch(
     origin = _dispatch_origin.get()
     if origin is not None and origin[0] is tool_input:
         retained.append(origin[1])
+    canonical = getattr(entity, "_dispatched_tool_signatures", None)
+    if not isinstance(canonical, dict):
+        canonical = entity._dispatched_tool_signatures = {}
+    spec = deepcopy(function_tool.get("spec", {})) if function_tool is not None else {}
+    # Regex validation already belongs to the bounded execution validator. Only
+    # repeat its context-free canonicalization here, never configured regex work.
+    spec["parameters"] = _schema_without_patterns(spec.get("parameters", {}))
+    signature = (
+        _signature(tool_input, spec)
+        if isinstance(getattr(tool_input, "tool_name", None), str)
+        and isinstance(getattr(tool_input, "tool_args", None), Mapping)
+        else None
+    )
     for item in retained:
         dispatched[id(item)] = item
+        if signature is not None:
+            canonical[id(item)] = (signature, spec)
         if verified_read:
             read_only[id(item)] = item
         else:
             read_only.pop(id(item), None)
     while len(dispatched) > 4096:
+        canonical.pop(next(iter(dispatched)), None)
         read_only.pop(next(iter(dispatched)), None)
         dispatched.pop(next(iter(dispatched)))
 
 
-def _signature(tool_input: llm.ToolInput) -> str:
+def _signature(tool_input: llm.ToolInput, spec: Mapping[str, Any] | None = None) -> str:
+    arguments = tool_input.tool_args
+    if spec is not None:
+        # Invalid/externally owned arguments retain exact replay checks.
+        with suppress(HomeAssistantError, TypeError, ValueError):
+            arguments = validate_function_arguments(spec, arguments)
     return json.dumps(
-        [tool_input.tool_name, tool_input.tool_args],
+        [tool_input.tool_name, arguments],
         sort_keys=True,
         separators=(",", ":"),
         default=str,
@@ -93,10 +117,11 @@ def remember_unacknowledged_calls(
         for content in new_content
         if is_tool_result_content(content)
         and isinstance((call_id := getattr(content, "tool_call_id", None)), str)
-        and not _was_skipped(content)
     }
-    signatures = {
-        _signature(tool_input)
+    records = [
+        getattr(entity, "_dispatched_tool_signatures", {}).get(
+            id(tool_input), (_signature(tool_input), {})
+        )
         for content in new_content
         if isinstance(content, conversation.AssistantContent) and content.tool_calls
         for tool_input in content.tool_calls
@@ -105,7 +130,8 @@ def remember_unacknowledged_calls(
         is tool_input
         and getattr(entity, "_read_only_tool_inputs", {}).get(id(tool_input))
         is not tool_input
-    }
+    ]
+    signatures = {signature for signature, _spec in records}
     if not signatures:
         return
     ledger = getattr(entity, "_unacknowledged_tool_calls", None)
@@ -113,14 +139,13 @@ def remember_unacknowledged_calls(
         ledger = {}
         entity._unacknowledged_tool_calls = ledger
     ledger.setdefault(conversation_id, set()).update(signatures)
+    schemas = getattr(entity, "_unacknowledged_tool_schemas", None)
+    if not isinstance(schemas, dict):
+        schemas = entity._unacknowledged_tool_schemas = {}
+    schemas.setdefault(conversation_id, {}).update(dict(records))
     while len(ledger) > _MAX_AMBIGUOUS_CONVERSATIONS:
+        schemas.pop(next(iter(ledger)), None)
         ledger.pop(next(iter(ledger)))
-
-
-def _was_skipped(content: Any) -> bool:
-    data = tool_result_data(content)
-    result = data.get("result") if isinstance(data, dict) else None
-    return isinstance(result, dict) and result.get("status") == "skipped"
 
 
 def was_unacknowledged_equivalent(
@@ -130,7 +155,14 @@ def was_unacknowledged_equivalent(
     ledger = getattr(entity, "_unacknowledged_tool_calls", None)
     if not isinstance(ledger, dict):
         return False
-    return _signature(tool_input) in ledger.get(chat_log.conversation_id, ())
+    signatures = ledger.get(chat_log.conversation_id, ())
+    if _signature(tool_input) in signatures:
+        return True
+    schemas = getattr(entity, "_unacknowledged_tool_schemas", {})
+    return any(
+        signature in signatures and _signature(tool_input, spec) == signature
+        for signature, spec in schemas.get(chat_log.conversation_id, {}).items()
+    )
 
 
 def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None:
@@ -138,3 +170,4 @@ def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None
     ledger = getattr(entity, "_unacknowledged_tool_calls", None)
     if isinstance(ledger, dict) and isinstance(conversation_id, str):
         ledger.pop(conversation_id, None)
+        getattr(entity, "_unacknowledged_tool_schemas", {}).pop(conversation_id, None)
