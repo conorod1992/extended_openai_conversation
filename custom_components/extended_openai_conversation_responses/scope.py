@@ -81,6 +81,13 @@ def _device_id(context: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def normalized_voice_user_id(value: Any) -> str | None:
+    """Normalize only configured personal IDs; never infer a requesting user."""
+    if not isinstance(value, str):
+        return None
+    return value.removeprefix("user:") or None
+
+
 def user_scope(
     user_id: str, *, source: str, device_id: str | None = None
 ) -> ResolvedDataScope:
@@ -141,19 +148,19 @@ def resolve_data_scope(context: Any, options: Mapping[str, Any]) -> ResolvedData
 
     policy = str(options.get(CONF_VOICE_SCOPE_POLICY, DEFAULT_VOICE_SCOPE_POLICY))
     mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS, {})
-    if (
-        policy == VOICE_POLICY_DEVICE_MAPPING
-        and device_id
-        and isinstance(mappings, Mapping)
-    ):
-        mapped = mappings.get(device_id)
+    if policy == VOICE_POLICY_DEVICE_MAPPING:
+        mapped = (
+            mappings.get(device_id)
+            if device_id and isinstance(mappings, Mapping)
+            else None
+        )
         if mapped == UNRETAINED_SCOPE_ID:
             return unretained_scope(device_id=device_id)
         if isinstance(mapped, str) and mapped:
             if mapped in (VOICE_POLICY_SHARED, SHARED_HOUSEHOLD_SCOPE_ID):
                 return shared_scope(source="device_mapping", device_id=device_id)
             if mapped not in {"unretained", UNRETAINED_SCOPE_ID}:
-                mapped_user = mapped.removeprefix("user:")
+                mapped_user = normalized_voice_user_id(mapped)
                 if mapped_user and _configured_voice_user_available(mapped_user):
                     return user_scope(
                         mapped_user, source="device_mapping", device_id=device_id
@@ -163,7 +170,7 @@ def resolve_data_scope(context: Any, options: Mapping[str, Any]) -> ResolvedData
         )
 
     if policy == VOICE_POLICY_DEFAULT_USER:
-        owner = options.get(CONF_VOICE_DEFAULT_USER_ID)
+        owner = normalized_voice_user_id(options.get(CONF_VOICE_DEFAULT_USER_ID))
         if isinstance(owner, str) and owner and _configured_voice_user_available(owner):
             return user_scope(owner, source="agent_default_user", device_id=device_id)
     if policy == VOICE_POLICY_SHARED:

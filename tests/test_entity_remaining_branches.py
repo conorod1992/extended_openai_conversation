@@ -142,7 +142,7 @@ async def test_chat_stream_usage_coercion_and_partial_tool_deltas() -> None:
         _entity()._transform_chat_stream(trace, _Stream(chunks), request_usage)
     )
 
-    assert {"content": "{'unexpected': True}"} in deltas
+    assert {"content": "{'unexpected': True}"} not in deltas
     assert {"content": "123"} in deltas
     assert deltas[-1]["tool_calls"][0].tool_args == {}
     assert request_usage.total_tokens == 5
@@ -414,14 +414,10 @@ async def test_chat_history_summary_token_parameter(
     entity.entry.runtime_data = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=create))
     )
-    monkeypatch.setattr(
-        module,
-        "get_model_config",
-        lambda _model: {"supports_max_completion_tokens": modern},
-    )
+    entity.entry.data = {} if modern else {"base_url": "https://example.com/v1"}
 
     result = await entity._async_summarize_history(
-        [conversation.UserContent(content="remember this")], "model", "chat"
+        [conversation.UserContent(content="remember this")], "gpt-4.1" if modern else "custom-model", "chat_completions"
     )
 
     assert result == "summary"

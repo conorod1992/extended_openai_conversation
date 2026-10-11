@@ -30,7 +30,7 @@ MAX_TEXT_LENGTH = 40_000
 MAX_TITLE_LENGTH = 80
 MAX_EXCERPT_LENGTH = 500
 _ARCHIVE_MANAGERS = f"{DOMAIN}.archive_managers"
-_TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
+_TOKEN_PATTERN = re.compile(r"\w+(?:[+#]+|(?:['\u2019-]\w+)*)", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
 
 
@@ -1374,7 +1374,9 @@ def _title(value: str) -> str:
 
 def _normalize(value: str) -> str:
     return " ".join(
-        _TOKEN_PATTERN.findall(unicodedata.normalize("NFC", value).casefold())
+        _TOKEN_PATTERN.findall(
+            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+        )
     )
 
 
@@ -1394,23 +1396,23 @@ def _tokens(value: str) -> set[str]:
     return {
         _stem(token)
         for token in _TOKEN_PATTERN.findall(
-            unicodedata.normalize("NFC", value).casefold()
+            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
         )
-        if len(token) > 1 and token not in _STOP_WORDS
+        if token not in _STOP_WORDS
     } | cjk_terms(value)
 
 
 def _excerpt(value: str, query: str) -> str:
     normalized = _SPACE_PATTERN.sub(" ", unicodedata.normalize("NFC", value)).strip()
-    lower = normalized.casefold()
-    raw_query = unicodedata.normalize("NFC", query).casefold()
+    lower = normalized.casefold().replace("\u2019", "'")
+    raw_query = unicodedata.normalize("NFC", query).casefold().replace("\u2019", "'")
     terms = _tokens(query)
     matches = [lower.find(raw_query)] if raw_query.strip() else []
     if not any(position >= 0 for position in matches):
         matches = [
             lower.find(token)
             for token in _TOKEN_PATTERN.findall(raw_query)
-            if len(token) > 1 and token not in _STOP_WORDS
+            if token not in _STOP_WORDS
         ]
     if not any(position >= 0 for position in matches):
         matches.extend(lower.find(token) for token in terms)
@@ -1418,7 +1420,7 @@ def _excerpt(value: str, query: str) -> str:
         matches.extend(
             match.start()
             for match in _TOKEN_PATTERN.finditer(normalized)
-            if _stem(match.group().casefold()) in terms
+            if _stem(match.group().casefold().replace("\u2019", "'")) in terms
         )
     index = min((position for position in matches if position >= 0), default=0)
     start = max(0, index - MAX_EXCERPT_LENGTH // 3) if index >= 0 else 0

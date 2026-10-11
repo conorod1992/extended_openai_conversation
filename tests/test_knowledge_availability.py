@@ -109,10 +109,10 @@ async def test_disabled_requested_source_does_not_expand_search_filter() -> None
 
     allowed, ignored = library.resolve_source_filter([disabled.source_id])
 
-    assert allowed is None
+    assert allowed == set()
     assert ignored == [disabled.source_id]
     results = await library.async_search("shared needle", [disabled.source_id])
-    assert [result.source_id for result in results] == [enabled.source_id]
+    assert results == []
 
 
 async def test_guest_allowlist_cannot_reenable_disabled_source() -> None:

@@ -141,6 +141,16 @@ class FunctionGroupRuntime:
         }
         return session is not None
 
+    def end_continuity(self, continuity_key: str) -> None:
+        """End loaded groups and active requests for every continuity generation."""
+        owner = f"continuity:{continuity_key}"
+        for session_id in tuple(self._sessions):
+            if (
+                session_id == owner
+                or session_id.rpartition(":conversation:")[0] == owner
+            ):
+                self.end(session_id)
+
     def stats(self) -> dict[str, Any]:
         """Return non-sensitive runtime diagnostics."""
         return {
