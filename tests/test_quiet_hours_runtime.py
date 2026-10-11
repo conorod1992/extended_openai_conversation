@@ -2094,3 +2094,34 @@ async def test_retarget_to_original_values_needs_no_second_restore(monkeypatch, 
     await manager.async_update_config(_config(enabled=False).as_dict())
     assert volume_calls == [] and switch_calls == []
     assert manager.active is None
+
+
+@pytest.mark.asyncio
+async def test_manual_same_value_adjustment_during_satellite_save_is_preserved(hass):
+    manager = _stateful_public_manager(hass)
+    manager._config = _config(max_volume=0.1, wake_sound="unchanged")
+    _seed_room(hass, "bedroom", volume=0.2)
+    hass.states.get("media_player.bedroom").context = SimpleNamespace(id="quiet")
+    control = {
+        "kind": "volume",
+        "satellite_entity_id": "assist_satellite.old",
+        "original_value": 0.55,
+        "quiet_value": 0.2,
+        "application_state": "applied",
+    }
+    manager._active = {"controls": {"media_player.bedroom": control}}
+    manager._async_set_volume = AsyncMock()
+
+    async def save():
+        hass.states.get("media_player.bedroom").context = SimpleNamespace(id="manual")
+
+    manager._async_save_control_state_locked = AsyncMock(side_effect=save)
+    await manager._async_reconcile_controls_locked(
+        [SimpleNamespace(
+            media_player_entity_id="media_player.bedroom",
+            wake_sound_entity_id=None,
+            satellite_entity_id="assist_satellite.new",
+        )]
+    )
+    manager._async_set_volume.assert_not_awaited()
+    assert "media_player.bedroom" not in manager.active["controls"]

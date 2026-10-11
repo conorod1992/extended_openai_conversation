@@ -645,6 +645,9 @@ class QuietHoursManager:
             if target is None or target[0] != control["kind"]:
                 control["restoration_pending"] = True
                 continue
+            # Observe ownership before any persistence yields to another actor.
+            state = self.hass.states.get(entity_id)
+            observed_context = getattr(getattr(state, "context", None), "id", None)
             if control["satellite_entity_id"] != target[1]:
                 # Ownership follows the physical control, even if its satellite changes.
                 control["satellite_entity_id"] = target[1]
@@ -701,8 +704,6 @@ class QuietHoursManager:
                 controls.pop(entity_id)
                 await self._async_save_control_state_locked()
                 continue
-            state = self.hass.states.get(entity_id)
-            observed_context = getattr(getattr(state, "context", None), "id", None)
             control["pending_quiet_value"] = value
             control.pop("restoration_pending", None)
             await self._async_save_control_state_locked()
