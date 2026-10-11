@@ -168,6 +168,7 @@ class RepairControl {
     _viewKey: functionsView(),
     _result: {
       revision: "repair-revision",
+      config: {functions: [{spec: {name: "existing_tool"}}]},
       function_repair: {
         isolatable: true,
         invalid_tools: [invalidA, invalidB],
@@ -230,6 +231,11 @@ class RepairControl {
   textarea.value = "STALE HIDDEN TEXTAREA";
   save.emit("click");
   await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    calls.find((call) => call.action === "built_in_catalog").payload.tools,
+    panel._result.config.functions,
+    "repair presets must account for the valid tools in the configuration snapshot",
+  );
   assert.equal(calls.at(-1).section, "tools");
   assert.equal(calls.at(-1).action, "validate_yaml");
   assert.equal(

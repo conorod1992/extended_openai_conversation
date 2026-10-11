@@ -118,7 +118,7 @@ async function openInvalidToolEditor(panel, item) {
     picker.disabled = true;
     void Promise.all([
       import("./agent-config-tools-base.js"),
-      panel._call("tools", "built_in_catalog", {tools: panel._result?.tools || []}),
+      panel._call("tools", "built_in_catalog", {tools: panel._result?.config?.functions || []}),
     ]).then(([{populateToolPresetPicker}, catalog]) => {
       if (isCurrent()) {
         populateToolPresetPicker(panel, catalog);
