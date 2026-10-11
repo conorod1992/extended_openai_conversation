@@ -1974,3 +1974,102 @@ async def test_retarget_lost_acknowledgement_restores_original_baseline(
     calls, _ = await _install_services(hass)
     await manager.async_update_config(_config(enabled=False).as_dict())
     assert calls == [("media_player.bedroom", 0.55)]
+
+
+@pytest.mark.parametrize("manual_volume", [0.4, 0.2])
+@pytest.mark.asyncio
+async def test_manual_adjustment_during_retarget_save_is_preserved(
+    monkeypatch, hass, manual_volume
+):
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.55)
+    manager = _stateful_public_manager(hass)
+    manager._config = _config(wake_sound="unchanged")
+    monkeypatch.setattr(manager, "_reschedule", lambda: None)
+    now = datetime(2026, 9, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    calls, _ = await _install_services(hass)
+    await manager.async_reconcile(now=now)
+    calls.clear()
+
+    async def save(data):
+        control = (
+            (data.get("active") or {})
+            .get("controls", {})
+            .get("media_player.bedroom", {})
+        )
+        if "pending_quiet_value" in control:
+            hass.states.async_set(
+                "media_player.bedroom", "idle", {"volume_level": manual_volume}
+            )
+
+            hass.states.get("media_player.bedroom").context = SimpleNamespace(
+                id="manual"
+            )
+
+    manager._store.async_save.side_effect = save
+    await manager.async_update_config(
+        _config(max_volume=0.1, wake_sound="unchanged").as_dict()
+    )
+    assert calls == []
+    assert (
+        hass.states.get("media_player.bedroom").attributes["volume_level"]
+        == manual_volume
+    )
+    assert "media_player.bedroom" not in manager.active["controls"]
+
+
+@pytest.mark.asyncio
+async def test_prepared_volume_intent_survives_policy_change(monkeypatch, hass):
+    _install_registry(monkeypatch, "bedroom")
+    _seed_room(hass, "bedroom", volume=0.55)
+    manager = _stateful_public_manager(hass)
+    manager._config = _config(wake_sound="unchanged")
+    monkeypatch.setattr(manager, "_reschedule", lambda: None)
+    now = datetime(2026, 9, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    calls, _ = await _install_services(hass)
+    await manager.async_reconcile(now=now)
+    control = manager._active["controls"]["media_player.bedroom"]
+    control["application_state"] = "prepared"
+    hass.states.async_set("media_player.bedroom", "idle", {"volume_level": 0.55})
+    state = hass.states.get("media_player.bedroom")
+    state.context = SimpleNamespace(id="baseline")
+    control["baseline_context_id"] = "baseline"
+    calls.clear()
+    await manager.async_update_config(
+        _config(max_volume=0.1, wake_sound="unchanged").as_dict()
+    )
+    assert calls == [("media_player.bedroom", 0.1)]
+    assert manager.active["controls"]["media_player.bedroom"]["quiet_value"] == 0.1
+    calls.clear()
+    await manager.async_update_config(_config(enabled=False).as_dict())
+    assert calls == [("media_player.bedroom", 0.55)]
+
+
+@pytest.mark.asyncio
+async def test_same_physical_control_with_new_satellite_keeps_ownership(hass):
+    manager = _stateful_public_manager(hass)
+    manager._config = _config(wake_sound="unchanged")
+    _seed_room(hass, "bedroom", volume=0.2)
+    control = {
+        "kind": "volume",
+        "satellite_entity_id": "assist_satellite.old",
+        "original_value": 0.55,
+        "quiet_value": 0.2,
+        "application_state": "applied",
+    }
+    manager._active = {"controls": {"media_player.bedroom": control}}
+    manager._async_save_control_state_locked = AsyncMock()
+    await manager._async_reconcile_controls_locked(
+        [
+            SimpleNamespace(
+                media_player_entity_id="media_player.bedroom",
+                wake_sound_entity_id=None,
+                satellite_entity_id="assist_satellite.new",
+            )
+        ]
+    )
+    assert not control.get("restoration_pending")
+    assert control["satellite_entity_id"] == "assist_satellite.new"
+    assert control["original_value"] == 0.55

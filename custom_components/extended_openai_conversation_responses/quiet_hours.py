@@ -485,6 +485,13 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 controls.pop(entity_id)
                 await self._async_save_control_state_locked()
                 return None
+            if not needs_action:
+                controls.pop(entity_id)
+                await self._async_save_control_state_locked()
+                return None
+            if existing["quiet_value"] != desired:
+                existing["quiet_value"] = desired
+                await self._async_save_control_state_locked()
             return cast(dict[str, Any], existing)
         if entity_id in observed and entity_id not in pending:
             return None

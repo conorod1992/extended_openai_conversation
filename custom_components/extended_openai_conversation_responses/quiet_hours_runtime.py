@@ -642,12 +642,39 @@ class QuietHoursManager:
         controls = self._active.get("controls", {})
         for entity_id, control in list(controls.items()):
             target = desired.get(entity_id)
-            if target is None or target[:2] != (
-                control["kind"],
-                control["satellite_entity_id"],
-            ):
+            if target is None or target[0] != control["kind"]:
                 control["restoration_pending"] = True
                 continue
+            if control["satellite_entity_id"] != target[1]:
+                # Ownership follows the physical control, even if its satellite changes.
+                control["satellite_entity_id"] = target[1]
+                await self._async_save_control_state_locked()
+            if control.get("application_state") == "prepared":
+                state = self.hass.states.get(entity_id)
+                context_id = control.get("application_context_id")
+                attained = (
+                    _current_volume(self.hass, entity_id)
+                    if target[0] == "volume"
+                    else _current_switch(self.hass, entity_id)
+                )
+                at_quiet_value = (
+                    attained is not None
+                    and math.isclose(
+                        attained, control["quiet_value"], abs_tol=_VOLUME_TOLERANCE
+                    )
+                    if target[0] == "volume"
+                    else attained is control["quiet_value"]
+                )
+                if not (
+                    at_quiet_value
+                    and context_id
+                    and state
+                    and state.context.id == context_id
+                ):
+                    # The public apply path revalidates an unapplied baseline and intent.
+                    continue
+                control["application_state"] = "applied"
+                await self._async_save_control_state_locked()
             if self._pending_quiet_attained(entity_id, control):
                 control["quiet_value"] = control.pop("pending_quiet_value")
                 await self._async_save_control_state_locked()
@@ -674,9 +701,30 @@ class QuietHoursManager:
                 controls.pop(entity_id)
                 await self._async_save_control_state_locked()
                 continue
+            state = self.hass.states.get(entity_id)
+            observed_context = getattr(getattr(state, "context", None), "id", None)
             control["pending_quiet_value"] = value
             control.pop("restoration_pending", None)
             await self._async_save_control_state_locked()
+            # Saving can yield to a manual adjustment or an unavailable device.
+            current = (
+                _current_volume(self.hass, entity_id)
+                if kind == "volume"
+                else _current_switch(self.hass, entity_id)
+            )
+            if current is None:
+                continue
+            state = self.hass.states.get(entity_id)
+            current_context = getattr(getattr(state, "context", None), "id", None)
+            same = (
+                math.isclose(current, control["quiet_value"], abs_tol=_VOLUME_TOLERANCE)
+                if kind == "volume"
+                else current is control["quiet_value"]
+            )
+            if not same or current_context != observed_context:
+                controls.pop(entity_id)
+                await self._async_save_control_state_locked()
+                continue
             try:
                 if kind == "volume":
                     await self._async_set_volume(entity_id, value)
