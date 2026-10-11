@@ -493,7 +493,22 @@ def _convert_content_to_param(
             # Remove tool_calls field if it's an empty array to maintain compatibility
             if msg.get("tool_calls") == []:
                 msg.pop("tool_calls", None)
-            messages.append(msg)
+            if (
+                msg.get("tool_calls")
+                and messages
+                and messages[-1].get("role") == "assistant"
+                and messages[-1].get("tool_calls")
+            ):
+                previous = cast(ChatCompletionAssistantMessageParam, messages[-1])
+                previous["tool_calls"] = [*previous["tool_calls"], *msg["tool_calls"]]
+                if msg.get("content"):
+                    previous["content"] = "\n".join(
+                        str(part)
+                        for part in (previous.get("content"), msg["content"])
+                        if part
+                    )
+            else:
+                messages.append(msg)
         elif content.role == "tool_result":
             messages.append(
                 {
@@ -1717,6 +1732,43 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         )
 
     async def _transform_responses_stream(
+        self,
+        chat_log: conversation.ChatLog,
+        result: AsyncStream[Any],
+        request_usage: RequestUsage | None = None,
+    ) -> AsyncGenerator[
+        conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
+    ]:
+        """Retain reasoning only when its provider output group completes."""
+        existing = {id(content) for content in getattr(chat_log, "content", ())}
+        try:
+            async for (
+                delta
+            ) in ExtendedOpenAIBaseLLMEntity._transform_responses_stream_events(
+                self, chat_log, result, request_usage
+            ):
+                yield delta
+        except BaseException:
+            # Completed calls/results remain authoritative for side effects and
+            # replay protection. Only this failed request's native reasoning IDs
+            # are unsafe to send again without their associated complete output.
+            content = getattr(chat_log, "content", None)
+            if content is not None:
+                for item in list(content):
+                    if (
+                        id(item) not in existing
+                        and getattr(getattr(item, "native", None), "type", None)
+                        == "reasoning"
+                    ):
+                        if getattr(item, "tool_calls", None) or getattr(
+                            item, "content", None
+                        ):
+                            item.native = None
+                        else:
+                            content.remove(item)
+            raise
+
+    async def _transform_responses_stream_events(
         self,
         chat_log: conversation.ChatLog,
         result: AsyncStream[Any],

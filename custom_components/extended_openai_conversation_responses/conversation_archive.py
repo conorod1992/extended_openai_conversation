@@ -6,6 +6,7 @@ import asyncio
 from collections import defaultdict
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timedelta, tzinfo
+import json
 import logging
 import re
 from typing import Any, Protocol
@@ -18,6 +19,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .persistence_hardening import _async_settle_transactional_save
+from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .scope import ResolvedDataScope
 from .strict_store import PropagatingWriteStore
 
@@ -322,6 +324,9 @@ class ConversationArchive:
                 ):
                     current = replace(current, last_activity_at=now.isoformat())
                     if current.retention_state == "private":
+                        # Live activity is authoritative even when this optional
+                        # content-free refresh cannot be persisted.
+                        self._sessions[current.session_id] = current
                         # Persist only content-free metadata; private activity never
                         # rewrites transcript partitions or retains message text.
                         await self._async_publish_session_locked(session_key, current)
@@ -369,9 +374,9 @@ class ConversationArchive:
                 # A slow turn is active until completion too. Persist activity
                 # without retaining content or changing the active binding.
                 if timestamp != session.last_activity_at or self._pending_partitions:
-                    await self._async_publish_session_locked(
-                        None, replace(session, last_activity_at=timestamp)
-                    )
+                    session = replace(session, last_activity_at=timestamp)
+                    self._sessions[session.session_id] = session
+                    await self._async_publish_session_locked(None, session)
                 return None
             if session.retention_state != "retained":
                 return None
@@ -502,21 +507,80 @@ class ConversationArchive:
         )
 
     async def async_get(
-        self, scope_id: str, session_id: str, start_turn: int = 0, limit: int = 6
+        self,
+        scope_id: str,
+        session_id: str,
+        start_turn: int = 0,
+        limit: int = 6,
+        *,
+        text_offset: int = 0,
     ) -> dict[str, Any]:
         """Return bounded turns only after exact ownership validation."""
         session = self._require_owned_session(scope_id, session_id)
         start_turn = max(0, start_turn)
         limit = max(1, min(limit, MAX_GET_LIMIT))
         turns = self._turns.get(session_id, [])
-        page = turns[start_turn : start_turn + limit]
-        return {
+        result: dict[str, Any] = {
             "session": asdict(session),
-            "turns": [asdict(turn) for turn in page],
+            "turns": [],
             "start_turn": start_turn,
             "limit": limit,
-            "has_more": len(turns) > start_turn + limit,
+            "text_offset": max(0, text_offset),
+            "has_more": False,
+            "next_start_turn": None,
+            "next_text_offset": 0,
         }
+        # Bound the actual serialized result, including JSON escaping and session
+        # metadata, so the generic tool wrapper never cuts this structured page.
+        budget = MAX_MODEL_TOOL_RESULT_CHARACTERS - 1024
+        for index in range(start_turn, min(len(turns), start_turn + limit)):
+            turn = turns[index]
+            offset = max(0, text_offset) if index == start_turn else 0
+            total = len(turn.user_text) + len(turn.assistant_text)
+            if offset > total:
+                raise ValueError("text_offset exceeds turn text length")
+
+            def chunk(
+                length: int, turn: ArchiveTurn = turn, offset: int = offset
+            ) -> dict[str, Any]:
+                user_end = min(len(turn.user_text), offset + length)
+                return {
+                    **asdict(turn),
+                    "user_text": turn.user_text[
+                        min(offset, len(turn.user_text)) : user_end
+                    ],
+                    "assistant_text": turn.assistant_text[
+                        max(0, offset - len(turn.user_text)) : max(
+                            0, offset + length - len(turn.user_text)
+                        )
+                    ],
+                }
+
+            result["turns"].append(chunk(total - offset))
+            result.update(has_more=True, next_start_turn=index + 1, next_text_offset=0)
+            if len(json.dumps(result, ensure_ascii=False)) > budget:
+                if len(result["turns"]) > 1:
+                    result["turns"].pop()
+                    result.update(next_start_turn=index, next_text_offset=0)
+                    return result
+                low, high = 0, total - offset
+                while low < high:
+                    size = (low + high + 1) // 2
+                    result["turns"][0] = chunk(size)
+                    result.update(next_start_turn=index, next_text_offset=offset + size)
+                    if len(json.dumps(result, ensure_ascii=False)) <= budget:
+                        low = size
+                    else:
+                        high = size - 1
+                if low == 0:
+                    raise ValueError("archive page metadata exceeds result limit")
+                result["turns"][0] = chunk(low)
+                result.update(next_start_turn=index, next_text_offset=offset + low)
+                return result
+        next_turn = start_turn + len(result["turns"])
+        more = next_turn < len(turns)
+        result.update(has_more=more, next_start_turn=next_turn if more else None)
+        return result
 
     async def async_list_sessions(
         self, scope_id: str, *, limit: int = 50, offset: int = 0
@@ -1094,10 +1158,11 @@ def archive_tools() -> list[dict[str, Any]]:
         ),
         _tool(
             "conversation_get",
-            "Read a bounded page from one search result.",
+            "Read a bounded page from one search result. Continue with next_start_turn and next_text_offset as start_turn and text_offset until has_more is false.",
             {
                 "session_id": {"type": "string"},
                 "start_turn": {"type": "integer", "minimum": 0},
+                "text_offset": {"type": "integer", "minimum": 0},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 10},
             },
             ["session_id"],
