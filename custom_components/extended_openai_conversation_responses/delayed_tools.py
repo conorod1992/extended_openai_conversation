@@ -80,6 +80,7 @@ def _validate_call_capacity(
         key = (record.entry_id, record.subentry_id)
         counts[key] = counts.get(key, 0) + 1
     if entry_id is not None:
+        assert subentry_id is not None
         key = (entry_id, subentry_id)
         counts[key] = counts.get(key, 0) + 1
     if len(records) + (entry_id is not None) > MAX_DELAYED_CALLS or any(
