@@ -1156,6 +1156,17 @@ def merge_agent_config(
         validated_functions=validated_functions,
         function_tools_as_list=function_tools_as_list,
     )
+    # Recommended values are for creation/model changes, not unrelated
+    # edits to older/restored configurations whose omission is meaningful.
+    if (
+        CONF_REASONING_EFFORT not in current
+        and CONF_REASONING_EFFORT not in updates
+        and all(
+            updates.get(key, current.get(key)) == current.get(key)
+            for key in (CONF_CHAT_MODEL, "azure_model")
+        )
+    ):
+        normalized.pop(CONF_REASONING_EFFORT, None)
     return {
         **{
             key: deepcopy(value)
