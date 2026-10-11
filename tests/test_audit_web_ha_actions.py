@@ -3,6 +3,7 @@
 import asyncio
 from functools import partial
 import json
+import logging
 import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -36,7 +37,7 @@ from tests.test_remote_response_bounds import _FakeResponse, _FakeSession, _rest
     ids=["leading-space", "final-newlines", "ndjson-loop"],
 )
 async def test_literal_and_templated_payloads_transmit_identical_bytes(
-    hass, monkeypatch, scrape, source, expected
+    hass, monkeypatch, socket_enabled, scrape, source, expected
 ):
     hass.loop = asyncio.get_running_loop()
     hass.is_stopping = False
@@ -79,6 +80,7 @@ async def test_literal_and_templated_payloads_transmit_identical_bytes(
 async def test_real_rest_transport_failure_never_logs_url_secrets(
     hass, monkeypatch, caplog, scrape
 ):
+    caplog.set_level(logging.WARNING)
     hass.loop = asyncio.get_running_loop()
     hass.is_stopping = False
     secret_url = "https://user:password@example.invalid/api?token=PRIVATE_TOKEN"
