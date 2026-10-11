@@ -2117,11 +2117,13 @@ async def test_manual_same_value_adjustment_during_satellite_save_is_preserved(h
 
     manager._async_save_control_state_locked = AsyncMock(side_effect=save)
     await manager._async_reconcile_controls_locked(
-        [SimpleNamespace(
-            media_player_entity_id="media_player.bedroom",
-            wake_sound_entity_id=None,
-            satellite_entity_id="assist_satellite.new",
-        )]
+        [
+            SimpleNamespace(
+                media_player_entity_id="media_player.bedroom",
+                wake_sound_entity_id=None,
+                satellite_entity_id="assist_satellite.new",
+            )
+        ]
     )
     manager._async_set_volume.assert_not_awaited()
     assert "media_player.bedroom" not in manager.active["controls"]
