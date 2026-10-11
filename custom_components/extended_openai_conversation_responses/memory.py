@@ -615,80 +615,40 @@ class PersistentMemory:
         offset: int = 0,
     ) -> list[MemoryRecord]:
         """Return deterministic BM25-style lexical or hybrid results."""
+        limit = max(1, min(limit, MAX_LIST_LIMIT))
+        offset = max(0, offset)
+        category_filter = _clean_category(category) if category else None
+        scope_ids = {user_id} if isinstance(user_id, str) else set(user_id)
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
-            limit = max(1, min(limit, MAX_SEARCH_LIMIT))
-            offset = max(0, offset)
-            scope_ids = (
-                (user_id,)
-                if isinstance(user_id, str)
-                else tuple(dict.fromkeys(user_id))
-            )
-            query_terms = _token_list(query)
-            query_tokens = set(query_terms)
-            if not query_tokens and not (hybrid and query_embedding):
-                return []
-            category_filter = _clean_category(category) if category else None
-            corpus = [
+            corpus = tuple(
                 memory
                 for memory in self._memories.values()
                 if memory.user_id in scope_ids
                 and (category_filter is None or memory.category == category_filter)
+            )
+            cache = dict(self._embedding_cache) if hybrid else {}
+            model, space = self._embedding_model, self._embedding_space_id
+        ranked = await asyncio.to_thread(
+            _rank_memory_snapshot,
+            corpus,
+            query,
+            limit,
+            offset,
+            tuple(query_embedding) if query_embedding is not None else None,
+            hybrid,
+            cache,
+            model,
+            space,
+        )
+        async with async_storage_lock(self._storage, self._lock):
+            self._ensure_initialized()
+            # A concurrent delete, reassignment, or edit must not publish stale facts.
+            return [
+                memory
+                for memory in ranked
+                if self._memories.get(memory.memory_id) == memory
             ]
-            if not corpus:
-                return []
-            document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
-            document_frequency = {token: 0 for token in query_tokens}
-            total_length = 0
-            for memory in corpus:
-                terms = _cached_memory_record_terms(memory)
-                token_set = _cached_memory_record_token_set(memory)
-                document_data[memory.memory_id] = (terms, token_set)
-                total_length += len(terms)
-                for token in query_tokens:
-                    if token in token_set:
-                        document_frequency[token] += 1
-            average_length = max(1.0, total_length / len(corpus))
-            normalized_query = _normalize(query)
-            ranked: list[tuple[float, str, MemoryRecord]] = []
-            for memory in corpus:
-                terms, token_set = document_data[memory.memory_id]
-                lexical = _bm25_score(
-                    query_terms,
-                    terms,
-                    document_frequency,
-                    len(corpus),
-                    average_length,
-                )
-                lexical += _metadata_bonus(query_tokens, memory)
-                normalized_content = _normalize(memory.content)
-                if (
-                    normalized_query
-                    and query_tokens & token_set
-                    and normalized_query in normalized_content
-                ):
-                    lexical += 0.35
-                elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
-                    lexical += 0.18
-                if lexical <= 0:
-                    lexical = _fuzzy_relevance(query_tokens, token_set)
-                semantic = (
-                    _cosine_similarity(query_embedding, self._cached_embedding(memory))
-                    if hybrid
-                    else None
-                )
-                relevance = lexical
-                if semantic is not None:
-                    semantic = max(0.0, semantic)
-                    relevance = 0.58 * lexical + 0.42 * semantic
-                if not (
-                    lexical >= MIN_LEXICAL_RELEVANCE_SCORE
-                    or (semantic is not None and semantic >= MIN_SEMANTIC_SIMILARITY)
-                ):
-                    continue
-                ranked.append((relevance, memory.memory_id, memory))
-            ranked.sort(key=lambda item: (-item[0], item[1]))
-            return [memory for _, _, memory in ranked[offset : offset + limit]]
 
     async def async_prepare_hybrid(
         self, scope_ids: Sequence[str], query: str
@@ -833,7 +793,13 @@ class PersistentMemory:
                     "NFC",
                     " ".join(
                         str(value or "")
-                        for value in (memory.content, memory.category, memory.source)
+                        for value in (
+                            memory.content,
+                            memory.category,
+                            memory.source,
+                            memory.subject,
+                            memory.key,
+                        )
                     ),
                 ).casefold()
             ]
@@ -1751,6 +1717,98 @@ def _cached_memory_record_terms(memory: MemoryRecord) -> tuple[str, ...]:
 def _cached_memory_record_token_set(memory: MemoryRecord) -> frozenset[str]:
     """Return the immutable token membership set for one memory revision."""
     return frozenset(_cached_memory_record_terms(memory))
+
+
+def _snapshot_embedding(
+    memory: MemoryRecord,
+    cache: Mapping[str, EmbeddingCacheEntry],
+    model: str,
+    space: str,
+) -> Sequence[float] | None:
+    entry = cache.get(memory.memory_id)
+    if (
+        entry is None
+        or entry.model != model
+        or entry.space_id != space
+        or entry.fingerprint != _embedding_fingerprint(memory)
+    ):
+        return None
+    return entry.vector
+
+
+def _rank_memory_snapshot(
+    corpus: tuple[MemoryRecord, ...],
+    query: str,
+    limit: int,
+    offset: int,
+    query_embedding: Sequence[float] | None,
+    hybrid: bool,
+    embedding_cache: Mapping[str, EmbeddingCacheEntry],
+    embedding_model: str,
+    embedding_space_id: str,
+) -> list[MemoryRecord]:
+    """Rank an immutable generation without holding the live store lock."""
+    query_terms = _token_list(query)
+    query_tokens = set(query_terms)
+    if not corpus or (not query_tokens and not (hybrid and query_embedding)):
+        return []
+    document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
+    document_frequency = {token: 0 for token in query_tokens}
+    total_length = 0
+    for memory in corpus:
+        terms = _cached_memory_record_terms(memory)
+        token_set = _cached_memory_record_token_set(memory)
+        document_data[memory.memory_id] = (terms, token_set)
+        total_length += len(terms)
+        for token in query_tokens:
+            if token in token_set:
+                document_frequency[token] += 1
+    average_length = max(1.0, total_length / len(corpus))
+    normalized_query = _normalize(query)
+    ranked: list[tuple[float, str, MemoryRecord]] = []
+    for memory in corpus:
+        terms, token_set = document_data[memory.memory_id]
+        lexical = _bm25_score(
+            query_terms,
+            terms,
+            document_frequency,
+            len(corpus),
+            average_length,
+        )
+        lexical += _metadata_bonus(query_tokens, memory)
+        normalized_content = _normalize(memory.content)
+        if (
+            normalized_query
+            and query_tokens & token_set
+            and normalized_query in normalized_content
+        ):
+            lexical += 0.35
+        elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
+            lexical += 0.18
+        if lexical <= 0:
+            lexical = _fuzzy_relevance(query_tokens, token_set)
+        semantic = (
+            _cosine_similarity(
+                query_embedding,
+                _snapshot_embedding(
+                    memory, embedding_cache, embedding_model, embedding_space_id
+                ),
+            )
+            if hybrid
+            else None
+        )
+        relevance = lexical
+        if semantic is not None:
+            semantic = max(0.0, semantic)
+            relevance = 0.58 * lexical + 0.42 * semantic
+        if not (
+            lexical >= MIN_LEXICAL_RELEVANCE_SCORE
+            or (semantic is not None and semantic >= MIN_SEMANTIC_SIMILARITY)
+        ):
+            continue
+        ranked.append((relevance, memory.memory_id, memory))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [memory for _, _, memory in ranked[offset : offset + limit]]
 
 
 def _bm25_score(

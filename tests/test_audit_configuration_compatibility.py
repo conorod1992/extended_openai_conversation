@@ -3,14 +3,25 @@
 from copy import deepcopy
 from types import SimpleNamespace
 
-import pytest
 from jsonschema import Draft202012Validator
+import pytest
 
-from custom_components.extended_openai_conversation_responses.ai_task import _omit_optional_nulls
-from custom_components.extended_openai_conversation_responses.entity import _adjust_schema
-from custom_components.extended_openai_conversation_responses.ha_llm_tools import caller_api_tools
-from custom_components.extended_openai_conversation_responses.model_capabilities import normalize_output_token_limit, ModelCapabilityError
-from custom_components.extended_openai_conversation_responses.request import build_provider_request_snapshot
+from custom_components.extended_openai_conversation_responses.ai_task import (
+    _omit_optional_nulls,
+)
+from custom_components.extended_openai_conversation_responses.entity import (
+    _adjust_schema,
+)
+from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
+    caller_api_tools,
+)
+from custom_components.extended_openai_conversation_responses.model_capabilities import (
+    ModelCapabilityError,
+    normalize_output_token_limit,
+)
+from custom_components.extended_openai_conversation_responses.request import (
+    build_provider_request_snapshot,
+)
 
 
 def test_reference_cleanup_retains_root_context_and_nullable_fields():
@@ -63,18 +74,26 @@ async def test_configuration_replacement_rejects_retained_rule_dependency(hass, 
         return rules
     monkeypatch.setattr(management_ui, "async_get_request_rules", load)
     with pytest.raises(Exception, match="retained_function"):
-        await management_ui._async_validate_configuration_dependencies(hass, SimpleNamespace(entry_id="entry"), SimpleNamespace(subentry_id="agent"), {"functions": []})
+        await management_ui._async_validate_configuration_dependencies(hass, SimpleNamespace(entry_id="entry", data={}), SimpleNamespace(subentry_id="agent"), {"functions": []})
 
 
 async def test_fast_save_uses_canonical_title_limit():
-    from custom_components.extended_openai_conversation_responses.management_ui import _async_save_configuration
+    from custom_components.extended_openai_conversation_responses.management_ui import (
+        _async_save_configuration,
+    )
     request = SimpleNamespace(hass=None, is_admin=True, message={"title": "x" * 256}, entry=None, subentry=None)
     assert (await _async_save_configuration(request))["valid"] is False
 
 
 async def test_repair_rejects_incompatible_api_before_writing():
-    from custom_components.extended_openai_conversation_responses import management_function_repair as repair
-    from tests.test_management_function_repair import _mixed_legacy_tool_data, _entry_and_subentry, _FakeConfigEntries
+    from custom_components.extended_openai_conversation_responses import (
+        management_function_repair as repair,
+    )
+    from tests.test_management_function_repair import (
+        _entry_and_subentry,
+        _FakeConfigEntries,
+        _mixed_legacy_tool_data,
+    )
     data, tools, _ = _mixed_legacy_tool_data()
     data.update(chat_model="gpt-6-astra", api_mode="chat_completions")
     entry, subentry = _entry_and_subentry(data)

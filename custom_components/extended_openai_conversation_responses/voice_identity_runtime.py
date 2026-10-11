@@ -21,6 +21,7 @@ from .scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
     UNRETAINED_SCOPE_ID,
     bind_active_voice_identity_users,
+    normalized_voice_user_id,
 )
 
 
@@ -50,16 +51,18 @@ async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str
 
     if policy == VOICE_POLICY_DEVICE_MAPPING:
         mappings = options.get(CONF_VOICE_DEVICE_MAPPINGS, {})
-        if not device_id or not isinstance(mappings, Mapping):
-            return frozenset()
-        mapped = mappings.get(device_id)
+        mapped = (
+            mappings.get(device_id)
+            if device_id and isinstance(mappings, Mapping)
+            else None
+        )
         if mapped == UNRETAINED_SCOPE_ID:
             return frozenset()
         if isinstance(mapped, str) and mapped:
             if mapped in (VOICE_POLICY_SHARED, SHARED_HOUSEHOLD_SCOPE_ID):
                 return frozenset()
             if mapped not in {"unretained", UNRETAINED_SCOPE_ID}:
-                mapped_user = mapped.removeprefix("user:")
+                mapped_user = normalized_voice_user_id(mapped)
                 if mapped_user and await _user_is_active(agent, mapped_user):
                     return frozenset({mapped_user})
         # Missing, malformed, deleted, or inactive mappings
@@ -69,7 +72,7 @@ async def _active_configured_users(agent: Any, user_input: Any) -> frozenset[str
         )
 
     if policy == VOICE_POLICY_DEFAULT_USER:
-        default_user = options.get(CONF_VOICE_DEFAULT_USER_ID)
+        default_user = normalized_voice_user_id(options.get(CONF_VOICE_DEFAULT_USER_ID))
         if (
             isinstance(default_user, str)
             and default_user

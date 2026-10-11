@@ -238,7 +238,7 @@ async def test_worker_exit_race_does_not_mask_parent_cancellation(
     assert process.waited is True
 
 
-async def test_live_and_preview_async_isolation_are_installed() -> None:
+async def test_live_and_preview_async_isolation_are_installed(hass) -> None:
 
     from custom_components.extended_openai_conversation_responses import management_ui
     from custom_components.extended_openai_conversation_responses.conversation import (

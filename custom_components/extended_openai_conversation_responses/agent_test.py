@@ -52,7 +52,7 @@ from .provider_errors import (
     provider_user_message,
     request_reauthentication,
 )
-from .request import conversation_tools_required
+from .request import auxiliary_output_token_limit, conversation_tools_required
 from .skill_availability import skill_loader_status
 from .skills import SkillManager
 from .usage import async_get_usage, extract_usage
@@ -403,7 +403,13 @@ async def async_test_agent(
                 "model": model,
                 "messages": [{"role": "user", "content": "Reply OK."}],
                 "stream": False,
-                "max_completion_tokens": 16,
+                **dict(
+                    [
+                        auxiliary_output_token_limit(
+                            model, api_mode, 16, subentry.data, entry.data
+                        )
+                    ]
+                ),
                 **probe_reasoning,
             }
             if function_tools_required:

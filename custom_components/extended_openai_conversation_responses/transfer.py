@@ -1194,6 +1194,22 @@ async def async_materialize_restore(
         raise backup.BackupError(
             "Cannot safely restore unavailable secrets: " + ", ".join(missing[:50])
         )
+    from .request_rules import (
+        validate_routed_request_options,
+        validate_saved_model_routes,
+    )
+
+    try:
+        validate_routed_request_options(target.config, getattr(entry, "data", {}))
+        validate_saved_model_routes(
+            target.request_rules.get("rules", []),
+            target.config,
+            getattr(entry, "data", {}),
+        )
+    except HomeAssistantError as err:
+        raise backup.BackupError(
+            f"Restored request is incompatible with the destination provider: {err}"
+        ) from err
     await _async_validate_request_rule_function_dependencies(
         hass, target.request_rules, target.config
     )
