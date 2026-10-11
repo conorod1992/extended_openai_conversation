@@ -1742,8 +1742,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Retain reasoning only when its provider output group completes."""
         existing = {id(content) for content in getattr(chat_log, "content", ())}
         try:
-            async for delta in self._transform_responses_stream_events(
-                chat_log, result, request_usage
+            async for (
+                delta
+            ) in ExtendedOpenAIBaseLLMEntity._transform_responses_stream_events(
+                self, chat_log, result, request_usage
             ):
                 yield delta
         except BaseException:

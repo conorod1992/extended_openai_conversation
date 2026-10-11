@@ -64,10 +64,16 @@ def record_dispatch(
     # Regex validation already belongs to the bounded execution validator. Only
     # repeat its context-free canonicalization here, never configured regex work.
     spec["parameters"] = _schema_without_patterns(spec.get("parameters", {}))
-    signature = _signature(tool_input, spec)
+    signature = (
+        _signature(tool_input, spec)
+        if isinstance(getattr(tool_input, "tool_name", None), str)
+        and isinstance(getattr(tool_input, "tool_args", None), Mapping)
+        else None
+    )
     for item in retained:
         dispatched[id(item)] = item
-        canonical[id(item)] = (signature, spec)
+        if signature is not None:
+            canonical[id(item)] = (signature, spec)
         if verified_read:
             read_only[id(item)] = item
         else:
