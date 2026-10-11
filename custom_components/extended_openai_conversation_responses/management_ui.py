@@ -240,8 +240,8 @@ def _reset_request_rule_runtime(
     hass: HomeAssistant, entry_id: str, subentry_id: str, continuity_key: str
 ) -> None:
     """Clear Request Rule routing state for one ended continuity session."""
-    get_request_rule_runtime(hass, entry_id, subentry_id).reset(
-        f"continuity:{continuity_key}"
+    get_request_rule_runtime(hass, entry_id, subentry_id).reset_continuity(
+        continuity_key
     )
 
 
@@ -2359,7 +2359,7 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
         if ended:
             function_groups = get_function_group_runtime(hass, entry_id, subentry_id)
             if function_groups is not None:
-                function_groups.end(f"continuity:{continuity_key}")
+                function_groups.end_continuity(continuity_key)
             _reset_request_rule_runtime(hass, entry_id, subentry_id, continuity_key)
         return {"ended": int(ended)}
     archive = await async_get_archive(hass, entry_id, subentry_id)
