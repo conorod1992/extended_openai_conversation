@@ -51,6 +51,13 @@ def bounded_sub(pattern, replacement, text, max_chars):
     compiled = re.compile(pattern)
     # Validate backreferences even when the pattern finds no matches.
     compiled.sub(replacement, "", count=-1)
+    # CPython 3.14 exposes literal/group pieces here. Account for each group
+    # before joining it: even one expanded match can otherwise exceed the budget.
+    template = re._parser.parse_template(replacement, compiled)
+    if not isinstance(template, list) or not all(
+        isinstance(part, (str, int)) for part in template
+    ):
+        raise re.error("Unsupported replacement template format")
     pieces = []
     size = 0
     end = 0
@@ -61,12 +68,13 @@ def bounded_sub(pattern, replacement, text, max_chars):
             raise OutputLimitError
         if gap:
             pieces.append(text[end:match.start()])
-        expanded = match.expand(replacement) if "\\" in replacement else replacement
-        size += len(expanded)
-        if max_chars > 0 and size > max_chars:
-            raise OutputLimitError
-        if expanded:
-            pieces.append(expanded)
+        for part in template:
+            expanded = (match.group(part) or "") if isinstance(part, int) else part
+            size += len(expanded)
+            if max_chars > 0 and size > max_chars:
+                raise OutputLimitError
+            if expanded:
+                pieces.append(expanded)
         end = match.end()
     size += len(text) - end
     if max_chars > 0 and size > max_chars:

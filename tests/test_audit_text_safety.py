@@ -91,18 +91,20 @@ def test_configuration_validation_never_runs_matching(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "replacement", [r"\1\1", "y" * 1000], ids=["backreferences", "literal"]
+    "size,replacement",
+    [(4000, r"\1\1"), (4000, "y" * 1000), (32768, r"\1" * 333)],
+    ids=["zero-width-backreferences", "literal", "single-large-expansion"],
 )
-def test_worker_bounds_allocation_during_zero_width_replacement(replacement):
+def test_worker_bounds_allocation_during_replacement(size, replacement):
     import json
     import subprocess
     import sys
 
     payload = {
         "op": "sub_many",
-        "text": "x" * 4000,
+        "text": "x" * size,
         "items": [{"index": 0, "pattern": "(?=(.*))", "replacement": replacement}],
-        "max_output_chars": 16000,
+        "max_output_chars": 65536,
     }
     script = (
         "import re, json, sys, tracemalloc\ntracemalloc.start()\n"
