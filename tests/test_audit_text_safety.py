@@ -62,3 +62,29 @@ def test_sync_invalid_group_skips_rule_without_losing_valid_following_rule():
         )
         == "y"
     )
+
+
+@pytest.mark.parametrize("replacement", [r"\g<missing>", r"\2"])
+def test_zero_match_validation_still_rejects_invalid_references(replacement):
+    with pytest.raises(AgentConfigError, match="replacement"):
+        validate_speech_regex_replacements(
+            [{"pattern": "(?P<answer>x)", "replacement": replacement}]
+        )
+
+
+def test_configuration_validation_never_runs_matching(monkeypatch):
+    from custom_components.extended_openai_conversation_responses import agent_config
+
+    compile_pattern = agent_config.re.compile
+
+    class NonMatchingPattern:
+        def __init__(self, pattern):
+            self.compiled = compile_pattern(pattern)
+
+        def sub(self, replacement, text, *, count):
+            assert count < 0
+            return self.compiled.sub(replacement, text, count=count)
+
+    monkeypatch.setattr(agent_config.re, "compile", NonMatchingPattern)
+    rules = [{"pattern": r"(?P<answer>a?){1000000}", "replacement": r"\g<answer>"}]
+    assert validate_speech_regex_replacements(rules) == rules
