@@ -43,11 +43,54 @@ DATA_DELAYED_TOOL_MANAGER = "delayed_tool_manager"
 _DATA_DELAYED_STORE_LOCK = "delayed_tool_store_lock"
 DELAYED_TOOL_STORAGE_VERSION = 1
 DELAYED_TOOL_STORAGE_KEY = f"{DOMAIN}.delayed_tools"
+MAX_DELAYED_CALLS = 256
+MAX_DELAYED_CALLS_PER_AGENT = 32
+MAX_DELAYED_ARGUMENT_BYTES = 16384
 _AGENT_RETRY_SECONDS = 30
 _MAX_AGENT_RETRIES = 10
 _PENDING = "pending"
 _EXECUTING = "executing"
 _DELAYED_EXECUTION_MARKER = "_extended_openai_delayed_execution"
+
+
+class _DelayedQueueLimitError(HomeAssistantError):
+    """A saved queue cannot safely be admitted to the scheduler."""
+
+
+def _validate_argument_budget(arguments: dict[str, Any]) -> None:
+    size = 0
+    try:
+        for chunk in json.JSONEncoder(ensure_ascii=False, allow_nan=False).iterencode(
+            arguments
+        ):
+            size += len(chunk.encode("utf-8"))
+            if size > MAX_DELAYED_ARGUMENT_BYTES:
+                raise _DelayedQueueLimitError(
+                    f"Delayed Function Tool arguments exceed {MAX_DELAYED_ARGUMENT_BYTES} bytes"
+                )
+    except (ValueError, TypeError, RecursionError) as err:
+        raise HomeAssistantError(
+            "Delayed Function Tool arguments must be bounded JSON"
+        ) from err
+
+
+def _validate_call_capacity(
+    records: dict[str, DelayedToolCall],
+    entry_id: str | None = None,
+    subentry_id: str | None = None,
+) -> None:
+    counts: dict[tuple[str, str], int] = {}
+    for record in records.values():
+        key = (record.entry_id, record.subentry_id)
+        counts[key] = counts.get(key, 0) + 1
+    if entry_id is not None:
+        assert subentry_id is not None
+        key = (entry_id, subentry_id)
+        counts[key] = counts.get(key, 0) + 1
+    if len(records) + (entry_id is not None) > MAX_DELAYED_CALLS or any(
+        count > MAX_DELAYED_CALLS_PER_AGENT for count in counts.values()
+    ):
+        raise _DelayedQueueLimitError("Delayed Function Tool queue capacity reached")
 
 
 def tool_definition_fingerprint(tool: dict[str, Any]) -> str:
@@ -100,6 +143,7 @@ class DelayedToolCall:
                 raise ValueError(f"stored delayed call has invalid {key}")
         if not isinstance(raw.get("arguments"), dict):
             raise ValueError("stored delayed call has invalid arguments")
+        _validate_argument_budget(raw["arguments"])
         status = raw.get("status", _PENDING)
         if status not in {_PENDING, _EXECUTING}:
             raise ValueError("stored delayed call has invalid status")
@@ -223,6 +267,7 @@ class DelayedToolManager:
         self._setup_lock = asyncio.Lock()
         self._started = False
         self._setup_complete = False
+        self._quarantined = False
 
     async def async_setup(self) -> None:
         """Load persisted calls and arm recovery once Home Assistant is running."""
@@ -247,7 +292,21 @@ class DelayedToolManager:
                 )
 
             async with self._lock:
-                await self._async_load_locked()
+                try:
+                    await self._async_load_locked()
+                except _DelayedQueueLimitError as err:
+                    # Keep the authoritative store intact and allow the rest of EOAI
+                    # to load. Empty runtime records must never overwrite this queue.
+                    self._records.clear()
+                    self._quarantined = True
+                    self._setup_complete = True
+                    _LOGGER.error(
+                        "Delayed Function Tool scheduler disabled: %s. Saved jobs "
+                        "are preserved; remove affected agents in Management or "
+                        "reduce the saved queue while Home Assistant is stopped, "
+                        "then restart Home Assistant to retry recovery",
+                        err,
+                    )
 
     async def _async_load_locked(self) -> None:
         """Publish startup recovery without overlapping another store owner."""
@@ -275,7 +334,10 @@ class DelayedToolManager:
                 )
                 continue
             recovered[record.call_id] = record
+            _validate_call_capacity(recovered)
 
+        # Never truncate durable work to fit the new limits or arm an oversized store.
+        _validate_call_capacity(recovered)
         if dirty:
             await _async_settle_store_io(
                 self._store.async_save(self._storage_payload(recovered))
@@ -302,34 +364,47 @@ class DelayedToolManager:
         function_tool: dict[str, Any] | None = None,
     ) -> DelayedToolCall:
         """Persist a delayed call before exposing it as scheduled."""
+        if self._quarantined:
+            raise HomeAssistantError(
+                "Delayed Function Tool scheduler is disabled because the saved queue "
+                "exceeds its limits; resolve the saved queue and restart Home Assistant"
+            )
         if not self._setup_complete:
             raise HomeAssistantError("Delayed Function Tool scheduler is unavailable")
         delay = _delay_as_timedelta(arguments.get("delay"))
         now = dt_util.utcnow()
         context = getattr(llm_context, "context", None)
-        record = DelayedToolCall(
-            call_id=uuid4().hex,
-            entry_id=entity.entry.entry_id,
-            subentry_id=entity.subentry.subentry_id,
-            tool_name=tool_name,
-            arguments=deepcopy(arguments),
-            due_at=(now + delay).isoformat(),
-            created_at=now.isoformat(),
-            user_id=getattr(context, "user_id", None),
-            device_id=getattr(llm_context, "device_id", None),
-            definition_fingerprint=tool_definition_fingerprint(function_tool)
-            if function_tool is not None
-            else None,
-        )
+        record = None
         try:
             async with self._lock:
+                if not self._setup_complete or self._quarantined:
+                    raise HomeAssistantError(
+                        "Delayed Function Tool scheduler is unavailable"
+                    )
+                _validate_call_capacity(
+                    self._records, entity.entry.entry_id, entity.subentry.subentry_id
+                )
+                _validate_argument_budget(arguments)
+                record = DelayedToolCall(
+                    call_id=uuid4().hex,
+                    entry_id=entity.entry.entry_id,
+                    subentry_id=entity.subentry.subentry_id,
+                    tool_name=tool_name,
+                    arguments=deepcopy(arguments),
+                    due_at=(now + delay).isoformat(),
+                    created_at=now.isoformat(),
+                    user_id=getattr(context, "user_id", None),
+                    device_id=getattr(llm_context, "device_id", None),
+                    definition_fingerprint=tool_definition_fingerprint(function_tool)
+                    if function_tool is not None
+                    else None,
+                )
                 updated = dict(self._records)
                 updated[record.call_id] = record
                 await self._async_save_records_transactionally(updated)
         finally:
-            # A completed write remains scheduled even if cancellation hides the
-            # acknowledgement from the caller.
-            if self._started and record.call_id in self._records:
+            # A committed call survives a lost acknowledgement, but rejected work never arms.
+            if record is not None and self._started and record.call_id in self._records:
                 self._arm(record.call_id)
         return record
 
@@ -340,9 +415,9 @@ class DelayedToolManager:
 
     async def _async_remove_agent_locked(self, entry_id: str, subentry_id: str) -> None:
         """Erase one agent from the current authoritative storage generation."""
-        if not self._setup_complete:
-            # A published manager may still be awaiting setup or recovery. Its
-            # empty in-memory records are not evidence that storage is empty.
+        if not self._setup_complete or self._quarantined:
+            # Setup or quarantine can leave runtime records empty while storage
+            # still contains jobs. Delete from the authoritative generation.
             await _async_remove_stored_agent_calls_locked(
                 self.hass, entry_id, subentry_id
             )
@@ -375,9 +450,20 @@ class DelayedToolManager:
         records: dict[str, DelayedToolCall] = {}
         for raw in raw_calls:
             record = DelayedToolCall.from_dict(raw)
-            # Startup recovery never replays a call interrupted in execution.
-            if record.status != _EXECUTING:
+            previous = self._records.get(record.call_id)
+            task = self._tasks.get(record.call_id)
+            # An already executing live worker still consumes admission capacity.
+            # Interrupted calls and unacknowledged transitions are never replayed.
+            live_execution = (
+                previous is not None
+                and previous.status == _EXECUTING
+                and task is not None
+                and not task.done()
+            )
+            if record.status != _EXECUTING or live_execution:
                 records[record.call_id] = record
+                _validate_call_capacity(records)
+        _validate_call_capacity(records)
         self._records = records
 
     def _invalidate_after_unreadable_store(self) -> None:
@@ -405,7 +491,7 @@ class DelayedToolManager:
     @callback
     def _handle_started(self, _event: Any = None) -> None:
         """Arm all pending calls after startup or an in-process setup."""
-        if self._started:
+        if self._started or self._quarantined:
             return
         self._started = True
         for call_id in tuple(self._records):
@@ -422,6 +508,8 @@ class DelayedToolManager:
 
     def _arm(self, call_id: str) -> None:
         """Create one waiter for a pending persisted call."""
+        if self._quarantined:
+            return
         existing = self._tasks.get(call_id)
         if existing is not None and not existing.done():
             return

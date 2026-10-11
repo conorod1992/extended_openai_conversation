@@ -30,6 +30,11 @@ DATA_KEY = f"{DOMAIN}.intercom"
 STORAGE_KEY = f"{DOMAIN}.broadcast"
 STORAGE_VERSION = 1
 HISTORY_LIMIT = 50
+MAX_BROADCAST_MESSAGE_CHARACTERS = 4096
+MAX_BROADCAST_TARGETS = 32
+MAX_BROADCAST_MESSAGES = 100
+MAX_BROADCAST_DELIVERIES = 256
+MAX_BROADCAST_QUEUE_PER_TARGET = 16
 DEFAULT_TTL_SECONDS = 120
 IDLE_STABILITY_SECONDS = 0.5
 # Matches Home Assistant's AssistSatelliteEntityFeature.ANNOUNCE without importing
@@ -114,6 +119,7 @@ class IntercomManager:
         self._closed = False
         self._drain_tasks: set[asyncio.Task[Any]] = set()
         self._expiry_unsubscribers: set[Any] = set()
+        self._expiry_by_message: dict[str, Any] = {}
         self._loaded = False
         self._state_lock = asyncio.Lock()
         self._refresh_state_listener()
@@ -151,6 +157,7 @@ class IntercomManager:
                             continue
                         if delivery.status not in {"delivered", "failed", "expired"}:
                             delivery.set("expired", "broadcast_disabled")
+                        self._release_completed_message(item)
                     queue.clear()
                     queue.extend(retained)
                     if not queue:
@@ -166,6 +173,7 @@ class IntercomManager:
         for unsubscribe in self._expiry_unsubscribers:
             unsubscribe()
         self._expiry_unsubscribers.clear()
+        self._expiry_by_message.clear()
         for entity_id, queue in self._queues.items():
             for item in queue:
                 item.deliveries[entity_id].set("expired", "integration_removed")
@@ -313,6 +321,12 @@ class IntercomManager:
             raise HomeAssistantError(
                 "Broadcast is disabled. Enable it from the Extended OpenAI Overview."
             )
+        if self._closed:
+            raise HomeAssistantError("Broadcast is unavailable")
+        if len(message) > MAX_BROADCAST_MESSAGE_CHARACTERS:
+            raise HomeAssistantError(
+                f"Broadcast message exceeds {MAX_BROADCAST_MESSAGE_CHARACTERS} characters"
+            )
         text = message.strip()
         if not text:
             raise HomeAssistantError("Broadcast message cannot be empty")
@@ -330,6 +344,25 @@ class IntercomManager:
             raise HomeAssistantError(
                 "No matching announcement-capable Assist satellites found"
             )
+        # No awaits between admission and insertion: a multi-target send is atomic.
+        if len(targets) > MAX_BROADCAST_TARGETS:
+            raise HomeAssistantError("Broadcast target limit reached")
+        active_messages = set(self._expiry_by_message)
+        active_messages.update(
+            item.id for queue in self._queues.values() for item in queue
+        )
+        if len(active_messages) >= MAX_BROADCAST_MESSAGES:
+            raise HomeAssistantError("Broadcast message capacity reached")
+        if (
+            sum(map(len, self._queues.values())) + len(targets)
+            > MAX_BROADCAST_DELIVERIES
+        ):
+            raise HomeAssistantError("Broadcast delivery capacity reached")
+        if any(
+            len(self._queues.get(target, ())) >= MAX_BROADCAST_QUEUE_PER_TARGET
+            for target in targets
+        ):
+            raise HomeAssistantError("Broadcast satellite queue capacity reached")
         now = datetime.now(UTC)
         bounded_ttl = max(5, min(ttl_seconds, 3600))
         item = BroadcastMessage(
@@ -356,10 +389,12 @@ class IntercomManager:
         @callback
         def expire_message(_now: datetime) -> None:
             self._expiry_unsubscribers.discard(unsubscribe)
+            self._expiry_by_message.pop(item.id, None)
             self._expire(item.id)
 
         unsubscribe = async_call_later(self.hass, bounded_ttl, expire_message)
         self._expiry_unsubscribers.add(unsubscribe)
+        self._expiry_by_message[item.id] = unsubscribe
         return item.as_dict()
 
     @callback
@@ -379,10 +414,12 @@ class IntercomManager:
                 delivery = item.deliveries[entity_id]
                 if not self._enabled:
                     delivery.set("expired", "broadcast_disabled")
+                    self._release_completed_message(item)
                     queue.popleft()
                     continue
                 if datetime.now(UTC) >= item.expires_at:
                     delivery.set("expired")
+                    self._release_completed_message(item)
                     queue.popleft()
                     continue
                 state = self.hass.states.get(entity_id)
@@ -399,10 +436,12 @@ class IntercomManager:
                     continue
                 if not self._enabled:
                     delivery.set("expired", "broadcast_disabled")
+                    self._release_completed_message(item)
                     queue.popleft()
                     continue
                 if datetime.now(UTC) >= item.expires_at:
                     delivery.set("expired")
+                    self._release_completed_message(item)
                     queue.popleft()
                     continue
                 state = self.hass.states.get(entity_id)
@@ -426,6 +465,7 @@ class IntercomManager:
                     delivery.set("failed", type(err).__name__)
                 else:
                     delivery.set("delivered")
+                self._release_completed_message(item)
                 if queue and queue[0] is item:
                     queue.popleft()
             if queue is not None and not queue and self._queues.get(entity_id) is queue:
@@ -464,8 +504,22 @@ class IntercomManager:
         ):
             self._schedule_drain(entity_id)
 
+    def _release_completed_message(self, item: BroadcastMessage) -> None:
+        if all(
+            delivery.status in {"delivered", "failed", "expired"}
+            for delivery in item.deliveries.values()
+        ):
+            unsubscribe = self._expiry_by_message.pop(item.id, None)
+            if unsubscribe is not None:
+                self._expiry_unsubscribers.discard(unsubscribe)
+                unsubscribe()
+
     @callback
     def _expire(self, message_id: str) -> None:
+        unsubscribe = self._expiry_by_message.pop(message_id, None)
+        if unsubscribe is not None:
+            self._expiry_unsubscribers.discard(unsubscribe)
+            unsubscribe()
         history_item = next(
             (item for item in self._history if item.id == message_id), None
         )

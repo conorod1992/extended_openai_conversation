@@ -15,7 +15,6 @@ import voluptuous as vol
 import yaml
 
 from homeassistant.components import automation, energy, recorder
-from homeassistant.components.recorder import history as recorder_history
 from homeassistant.config import AUTOMATION_CONFIG_PATH
 from homeassistant.const import (
     ATTR_AREA_ID,
@@ -37,6 +36,7 @@ from ..ha_permissions import entity_access_error, get_active_ha_context
 from ..intercom import async_get_intercom
 from ..intercom_permissions import async_authorized_broadcast_targets
 from ..operational_errors import log_handled_failure
+from ..recorder_budget import bounded_history, bounded_statistics
 from ..safety_hardening import (
     _async_require_admin,
     _normalized_statistics_arguments,
@@ -573,7 +573,7 @@ class NativeFunction(Function):
 
         try:
             result = await recorder.get_instance(hass).async_add_executor_job(
-                recorder_history.get_significant_states,
+                bounded_history,
                 hass,
                 start_time,
                 end_time,
@@ -587,7 +587,7 @@ class NativeFunction(Function):
         except (RuntimeError, OSError) as err:
             raise HomeAssistantError("History is temporarily unavailable") from err
 
-        return [[self.as_dict(item) for item in sublist] for sublist in result.values()]
+        return result
 
     async def get_energy(
         self,
@@ -680,7 +680,7 @@ class NativeFunction(Function):
         )
 
         return await recorder.get_instance(hass).async_add_executor_job(
-            recorder.statistics.statistics_during_period,
+            bounded_statistics,
             hass,
             start_time,
             end_time,

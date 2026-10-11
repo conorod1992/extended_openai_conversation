@@ -484,6 +484,7 @@ async def test_function_repair_rejects_malformed_action_payloads(
 
 async def test_function_repair_rejects_calls_when_tools_are_already_valid(
     monkeypatch: pytest.MonkeyPatch,
+    hass,
 ) -> None:
     entry, subentry = _entry_and_subentry(agent_config_defaults())
     hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())

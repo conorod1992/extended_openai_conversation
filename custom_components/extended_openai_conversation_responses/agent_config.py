@@ -763,8 +763,10 @@ def validate_speech_regex_replacements(value: Any) -> list[dict[str, str]]:
                 f"{field}.pattern", f"invalid regular expression: {err}"
             ) from err
         try:
-            compiled.sub(replacement, "")
-        except re.error as err:
+            # A negative count validates replacement references without matching.
+            # Even an empty input can be expensive for a configured pattern.
+            compiled.sub(replacement, "", count=-1)
+        except (re.error, IndexError) as err:
             raise AgentConfigError(
                 f"{field}.replacement", f"invalid replacement expression: {err}"
             ) from err

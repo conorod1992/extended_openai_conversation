@@ -12,7 +12,7 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
 )
 from custom_components.extended_openai_conversation_responses.memory import (
-    MAX_SEARCH_LIMIT as MEMORY_MAX_SEARCH_LIMIT,
+    MAX_LIST_LIMIT as MEMORY_MAX_SEARCH_LIMIT,
     PersistentMemory,
 )
 
