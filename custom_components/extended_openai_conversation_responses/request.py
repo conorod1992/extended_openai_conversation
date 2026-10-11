@@ -288,6 +288,59 @@ def capability_model_identity(
     return model
 
 
+def request_model_capabilities(
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+    model_capabilities: Mapping[str, Any] | None = None,
+) -> Mapping[str, Any]:
+    """Resolve provider-aware capabilities independently of request purpose."""
+    capabilities = (
+        model_capabilities
+        if model_capabilities is not None
+        else get_model_capabilities(capability_model_identity(options, entry_data))
+    )
+    if (
+        capabilities.get("status") == "unknown"
+        and entry_data.get(CONF_API_PROVIDER) != "azure"
+        and entry_data.get(CONF_BASE_URL)
+        and not supports_openai_hosted_tools(
+            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+        )
+    ):
+        # Unknown third-party Chat Completions models use the broadly
+        # supported field; exact catalog entries retain their own mapping.
+        capabilities = {
+            **capabilities,
+            "output_tokens": {
+                **capabilities["output_tokens"],
+                "chat_completions": "max_tokens",
+                "legacy_max_tokens": "chat_completions_only",
+            },
+        }
+    return capabilities
+
+
+def auxiliary_output_token_limit(
+    model: str,
+    api_mode: str,
+    limit: int | str | None,
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+) -> tuple[str, int]:
+    """Select a small auxiliary request's token field using live provider rules."""
+    capabilities = request_model_capabilities(
+        {**options, CONF_CHAT_MODEL: model}, entry_data
+    )
+    with model_capability_snapshot(model, capabilities):
+        try:
+            result = normalize_output_token_limit(model, api_mode, limit)
+        except ModelCapabilityError as err:
+            raise HomeAssistantError(str(err)) from err
+    if result is None:
+        raise HomeAssistantError("Output token limit is required")
+    return result
+
+
 def build_provider_request_snapshot(
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
@@ -308,29 +361,9 @@ def build_provider_request_snapshot(
     )
     configured_api = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
     try:
-        capabilities = (
-            model_capabilities
-            if model_capabilities is not None
-            else get_model_capabilities(capability_model_identity(options, entry_data))
+        capabilities = request_model_capabilities(
+            options, entry_data, model_capabilities
         )
-        if (
-            capabilities.get("status") == "unknown"
-            and entry_data.get(CONF_API_PROVIDER) != "azure"
-            and entry_data.get(CONF_BASE_URL)
-            and not supports_openai_hosted_tools(
-                entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
-            )
-        ):
-            # Unknown third-party Chat Completions models use the broadly
-            # supported field; exact catalog entries retain their own mapping.
-            capabilities = {
-                **capabilities,
-                "output_tokens": {
-                    **capabilities["output_tokens"],
-                    "chat_completions": "max_tokens",
-                    "legacy_max_tokens": "chat_completions_only",
-                },
-            }
         with model_capability_snapshot(model, capabilities):
             effort: str | None = None
             if capabilities["reasoning"]["supported"]:

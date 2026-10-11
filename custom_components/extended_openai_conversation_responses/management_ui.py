@@ -305,6 +305,7 @@ def _validated_model_request(
     """Use the live resolver only at a configuration mutation boundary."""
     relevant = {
         "chat_model",
+        "azure_model",
         "max_function_calls_per_conversation",
         "continue_conversation",
         "api_mode",
@@ -331,6 +332,16 @@ def _validated_model_request(
     except HomeAssistantError as err:
         raise AgentConfigError("api_mode", str(err)) from err
     return config
+
+
+async def _async_validate_model_routes(
+    hass: HomeAssistant, entry: Any, subentry: Any, config: Mapping[str, Any]
+) -> None:
+    """Check retained routing dependencies before changing their request defaults."""
+    from .request_rules import validate_saved_model_routes
+
+    rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
+    validate_saved_model_routes(rules.snapshot().get("rules", []), config, entry.data)
 
 
 async def _persist_function_configuration(
@@ -1235,6 +1246,8 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
 
     phase = perf_counter()
     normalized = validation["config"]
+    await _async_validate_model_routes(hass, entry, subentry, normalized)
+    _require_agent_config_revision(subentry, message["revision"])
     if tools_changed or groups_changed:
         await _async_validate_configuration_dependencies(
             hass, entry, subentry, normalized
@@ -1521,6 +1534,12 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             )
         )
         if result["valid"]:
+            try:
+                await _async_validate_model_routes(
+                    hass, entry, subentry, result["config"]
+                )
+            except HomeAssistantError as err:
+                return {"valid": False, "errors": {"api_mode": str(err)}}
             result["model_capabilities"] = model_capabilities(
                 str(
                     result["config"].get("azure_model")
@@ -1540,6 +1559,8 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         _require_agent_config_revision(subentry, message["revision"])
         normalized = merge_agent_config(subentry.data, updates)
         _validated_model_request(normalized, entry.data, subentry.data)
+        await _async_validate_model_routes(hass, entry, subentry, normalized)
+        _require_agent_config_revision(subentry, message["revision"])
         if any(
             normalized.get(key) != subentry.data.get(key)
             for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS)
@@ -1739,6 +1760,9 @@ async def _async_validate_configuration_dependencies(
     )
     rules_revision = rules.revision()
     document = await rules.async_backup_data()
+    from .request_rules import validate_saved_model_routes
+
+    validate_saved_model_routes(document.get("rules", []), config, entry.data)
     if renamed_function is not None:
         from .function_dependency_integrity import _rule_script_actions
 
@@ -2754,6 +2778,8 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
         _require_agent_config_revision(subentry, message["revision"])
         candidate = merge_agent_config(subentry.data, normalized)
         _validated_model_request(candidate, entry.data, subentry.data)
+        await _async_validate_model_routes(hass, entry, subentry, candidate)
+        _require_agent_config_revision(subentry, message["revision"])
         live = configuration_supports_live_update(
             subentry.data, candidate, title_changed=False
         )
