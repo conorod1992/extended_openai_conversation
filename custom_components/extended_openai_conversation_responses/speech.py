@@ -560,17 +560,12 @@ def process_speech_text(original_text: str, agent_config: Mapping[str, Any]) -> 
         ),
         urls=agent_config.get(CONF_SPEECH_STRIP_URLS, DEFAULT_SPEECH_STRIP_URLS),
     )
-    rules = agent_config.get(
-        CONF_SPEECH_REGEX_REPLACEMENTS, DEFAULT_SPEECH_REGEX_REPLACEMENTS
+    from .regex_execution import apply_speech_replacements
+
+    text = apply_speech_replacements(
+        text,
+        agent_config.get(
+            CONF_SPEECH_REGEX_REPLACEMENTS, DEFAULT_SPEECH_REGEX_REPLACEMENTS
+        ),
     )
-    if isinstance(rules, list):
-        for index, rule in enumerate(rules):
-            try:
-                if not isinstance(rule, dict):
-                    raise TypeError("rule is not an object")
-                text = re.sub(str(rule["pattern"]), str(rule["replacement"]), text)
-            except KeyError, TypeError, re.error:
-                _LOGGER.warning(
-                    "Skipping invalid speech regex replacement %s", index, exc_info=True
-                )
     return _final_whitespace_cleanup(text)

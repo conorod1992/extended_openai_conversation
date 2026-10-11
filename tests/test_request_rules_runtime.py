@@ -327,8 +327,8 @@ def test_legacy_slot_migration_recurses_and_slot_discovery_ignores_native_action
             "nested": [{"value_from": "slot", "slot": "room"}],
         }
     ) == {
-        "text": "Weather in {{ place }}",
-        "nested": ["{{ room }}"],
+        "text": "Weather in {{ request.slots['place'] }}",
+        "nested": ["{{ request.slots['room'] }}"],
     }
 
     assert rr._legacy_action_slots(
