@@ -168,8 +168,8 @@ def test_slot_template_migration_recurses_through_lists_and_mappings() -> None:
             {"nested": ["brightness {level}", 7]},
         ]
     ) == [
-        "{{ room }}",
-        {"nested": ["brightness {{ level }}", 7]},
+        "{{ request.slots['room'] }}",
+        {"nested": ["brightness {{ request.slots['level'] }}", 7]},
     ]
 
 
@@ -197,7 +197,9 @@ async def test_bounded_sentence_matching_failure_skips_request_rules() -> None:
     assert result is None
 
 
-async def test_guest_authorization_denial_returns_generic_unavailable(monkeypatch) -> None:
+async def test_guest_authorization_denial_returns_generic_unavailable(
+    monkeypatch,
+) -> None:
     rules, _store = await manager(validate_rule(local_rule()))
 
     def deny_templates(*args, **kwargs):
@@ -314,7 +316,9 @@ def residual_function_rule(function_name: str = "weather") -> dict:
     )
 
 
-async def residual_initialized_manager(data=None) -> tuple[rr.RequestRules, ResidualMemoryStore]:
+async def residual_initialized_manager(
+    data=None,
+) -> tuple[rr.RequestRules, ResidualMemoryStore]:
     store = ResidualMemoryStore(data)
     manager = rr.RequestRules(store)
     await manager.async_initialize()
@@ -357,7 +361,9 @@ async def test_initialize_truncates_oversized_stored_rules(monkeypatch) -> None:
 
 
 async def test_function_references_and_rename_cover_noop_and_save() -> None:
-    manager, store = await residual_initialized_manager({"rules": [residual_function_rule()]})
+    manager, store = await residual_initialized_manager(
+        {"rules": [residual_function_rule()]}
+    )
     initial_saves = store.saves
     assert manager.function_references("missing") == []
     assert manager.function_references("weather") == [
@@ -378,12 +384,15 @@ async def test_manager_mutation_limits_and_shape_guards(monkeypatch) -> None:
         rr.RequestRules.validate_backup_data(
             {
                 "rules": [
-                    residual_local_rule(rule_id=str(index)) for index in range(rr.MAX_RULES + 1)
+                    residual_local_rule(rule_id=str(index))
+                    for index in range(rr.MAX_RULES + 1)
                 ]
             }
         )
 
-    manager, _store = await residual_initialized_manager({"rules": [residual_local_rule()]})
+    manager, _store = await residual_initialized_manager(
+        {"rules": [residual_local_rule()]}
+    )
     with pytest.raises(ValueError, match="rule must be an object"):
         await manager.async_create([])
     with pytest.raises(ValueError, match="rule must be an object"):
@@ -505,13 +514,15 @@ def test_legacy_function_binding_residual_edges(binding, message) -> None:
             "arguments": {"plain": "{room}"},
         }
     )
-    assert migrated["data"]["arguments"]["plain"] == "{{ room }}"
+    assert migrated["data"]["arguments"]["plain"] == "{{ request.slots['room'] }}"
 
 
 def test_slot_migration_resolution_and_complexity_helpers() -> None:
     assert rr._migrate_slot_templates(
         {"nested": ["hello {room}", {"value_from": "slot", "slot": "room"}]}
-    ) == {"nested": ["hello {{ room }}", "{{ room }}"]}
+    ) == {
+        "nested": ["hello {{ request.slots['room'] }}", "{{ request.slots['room'] }}"]
+    }
     assert rr._legacy_action_slots([]) == set()
     assert rr._legacy_action_slots({"actions": "bad"}) == set()
     assert rr.resolve_slot_values(
@@ -702,7 +713,9 @@ def _pattern_rule(rule_id: str, order: int, phrase: str) -> dict:
     }
 
 
-def test_sort_and_compile_deactivates_pattern_that_exceeds_aggregate_state_limit() -> None:
+def test_sort_and_compile_deactivates_pattern_that_exceeds_aggregate_state_limit() -> (
+    None
+):
     """The per-agent state ceiling applies across enabled patterns, not just per rule."""
     manager = rr.RequestRules(PatternMemoryStore())
     first = _pattern_rule("first-pattern", 0, "first")
@@ -722,7 +735,9 @@ def test_sort_and_compile_deactivates_pattern_that_exceeds_aggregate_state_limit
         ),
     }
 
-    with patch.object(rr, "_compile_sentence_pattern", side_effect=compiled.__getitem__):
+    with patch.object(
+        rr, "_compile_sentence_pattern", side_effect=compiled.__getitem__
+    ):
         changed = manager._sort_and_compile()
 
     assert changed is False

@@ -141,6 +141,7 @@ async def test_setup_import_rejects_provider_incompatibility(monkeypatch, action
 
 
 async def test_legacy_configuration_model_update_uses_reload_boundary(monkeypatch):
+    monkeypatch.setattr(management_ui, "async_get_request_rules", AsyncMock(return_value=SimpleNamespace(snapshot=lambda: {"rules": []})))
     entry, subentry = _residual_entry_pair()
     hass = _residual_hass(entry)
     monkeypatch.setattr(

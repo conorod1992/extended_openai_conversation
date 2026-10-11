@@ -128,7 +128,7 @@ async def _install_control_services(
 
 
 @pytest.mark.asyncio
-async def test_live_policy_replacement_restores_old_policy_before_applying_new_one(
+async def test_live_policy_replacement_retargets_without_restoring_retained_controls(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -171,7 +171,12 @@ async def test_live_policy_replacement_restores_old_policy_before_applying_new_o
     assert active is not None
     assert active["controls"]["media_player.bedroom"]["original_value"] == 0.55
     assert active["controls"]["media_player.bedroom"]["quiet_value"] == 0.35
-    assert "switch.bedroom_wake_sound" not in active["controls"]
+    assert active["controls"]["switch.bedroom_wake_sound"]["original_value"] is True
+    assert active["controls"]["switch.bedroom_wake_sound"]["quiet_value"] is True
+    assert volume_calls == [
+        ("media_player.bedroom", 0.20),
+        ("media_player.bedroom", 0.35),
+    ]
 
     disabled = manager.config.as_dict()
     disabled["enabled"] = False
@@ -182,7 +187,6 @@ async def test_live_policy_replacement_restores_old_policy_before_applying_new_o
     assert manager.active is None
     assert volume_calls == [
         ("media_player.bedroom", 0.20),
-        ("media_player.bedroom", 0.55),
         ("media_player.bedroom", 0.35),
         ("media_player.bedroom", 0.55),
     ]
@@ -225,9 +229,7 @@ async def test_control_failure_isolated_to_one_satellite_and_retried_cleanly(
     local_tz = dt_util.get_time_zone(hass.config.time_zone)
     assert local_tz is not None
 
-    await manager.async_reconcile(
-        now=datetime(2026, 9, 11, 22, 0, tzinfo=local_tz)
-    )
+    await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 0, tzinfo=local_tz))
 
     assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.60
     assert _state(hass, "media_player.kitchen").attributes["volume_level"] == 0.20
@@ -235,9 +237,7 @@ async def test_control_failure_isolated_to_one_satellite_and_retried_cleanly(
     assert active is not None
     assert set(active["controls"]) == {"media_player.kitchen"}
 
-    await manager.async_reconcile(
-        now=datetime(2026, 9, 11, 22, 5, tzinfo=local_tz)
-    )
+    await manager.async_reconcile(now=datetime(2026, 9, 11, 22, 5, tzinfo=local_tz))
 
     assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.20
     assert _state(hass, "media_player.kitchen").attributes["volume_level"] == 0.20
@@ -253,9 +253,7 @@ async def test_control_failure_isolated_to_one_satellite_and_retried_cleanly(
         ("media_player.bedroom", 0.20),
     ]
 
-    await manager.async_reconcile(
-        now=datetime(2026, 9, 12, 7, 0, tzinfo=local_tz)
-    )
+    await manager.async_reconcile(now=datetime(2026, 9, 12, 7, 0, tzinfo=local_tz))
     assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.60
     assert _state(hass, "media_player.kitchen").attributes["volume_level"] == 0.70
     assert manager.active is None

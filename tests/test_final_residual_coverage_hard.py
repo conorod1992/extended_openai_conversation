@@ -180,8 +180,10 @@ async def test_quiet_hours_failed_volume_apply_retains_changed_control(
 
 @pytest.mark.asyncio
 async def test_request_rule_live_guest_policy_reauthorizes_scene(hass, monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import guest_mode
-    from custom_components.extended_openai_conversation_responses import request_rules
+    from custom_components.extended_openai_conversation_responses import (
+        guest_mode,
+        request_rules,
+    )
 
     captured = {}
 
@@ -270,8 +272,7 @@ async def test_image_query_provider_failure_requests_reauthentication(hass, monk
     monkeypatch.setattr(services, "OpenAIError", RuntimeError)
     monkeypatch.setattr(services, "get_api_mode", Mock(return_value=services.API_MODE_RESPONSES))
     monkeypatch.setattr(
-        services,
-        "normalize_output_token_limit",
+        "custom_components.extended_openai_conversation_responses.request.normalize_output_token_limit",
         Mock(return_value=("max_output_tokens", 10)),
     )
     monkeypatch.setattr(services, "prepare_image_params", Mock(return_value=[]))
