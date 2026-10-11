@@ -27,6 +27,7 @@ _SECTIONS = (
     "restore_transaction",
 )
 _MANAGER_KEYS = (
+    "request_debug_managers",
     "memory_managers",
     "temporary_memory_managers",
     "knowledge_managers",
@@ -115,6 +116,8 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                 manager = hass.data.get(f"{DOMAIN}.{suffix}", {}).get(key)
                 if manager is None:
                     continue
+                if suffix == "request_debug_managers":
+                    manager.clear()
                 tasks = [
                     getattr(manager, attribute, None)
                     for attribute in ("_prune_task", "_prune_save_task")

@@ -2974,6 +2974,7 @@ class ExtendedOpenAIAgentEntity(
                     requested,
                     int(arguments.get("start_turn", 0)),
                     int(arguments.get("limit", 6)),
+                    text_offset=int(arguments.get("text_offset", 0)),
                 )
             if operation == "private":
                 return await self._archive.async_make_private(session_id)
