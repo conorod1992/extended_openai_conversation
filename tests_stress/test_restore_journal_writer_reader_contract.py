@@ -35,7 +35,9 @@ async def test_accepted_journal_is_readable_by_production_reader_on_disk(
     for label, prepared in (("target", target), ("rollback", rollback)):
         # Exercise real content in every durable category. Empty archive and
         # Guest Mode sections cannot witness lost transcript/schedule fields.
-        text = label + " " + extra
+        # Stay within record/title limits while retaining every escape shape;
+        # the configuration prompt above carries the full long payload.
+        text = label + " " + extra[:80]
         prepared.memories = [replace(row, content=text) for row in prepared.memories]
         prepared.temporary_memories = [replace(row, content=text) for row in prepared.temporary_memories]
         prepared.knowledge = [replace(row, content=text) for row in prepared.knowledge]
