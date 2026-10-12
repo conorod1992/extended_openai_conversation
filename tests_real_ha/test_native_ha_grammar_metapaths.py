@@ -50,7 +50,7 @@ def _script_shape(shape, value, gate):
                         ],
                     },
                 ],
-                "default": [base],
+                "default": [fallback],
             },
         ]
     raise AssertionError(shape)

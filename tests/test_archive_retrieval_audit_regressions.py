@@ -273,6 +273,8 @@ async def test_complete_model_list_pages_survive_outer_result_guard(hass, kind, 
     entity._memory = None
     if kind == "memory":
         rows = [_memory(i, '"\\' * 500) for i in range(101)]
+        for row in rows:
+            row["valid_from"] = row["created_at"]
         entity._memory = PersistentMemory(_MemoryStorage(rows))
         await entity._memory.async_initialize()
         records_key, id_key = "memories", "memory_id"
