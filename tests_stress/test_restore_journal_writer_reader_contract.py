@@ -37,9 +37,11 @@ async def test_accepted_journal_is_readable_by_production_reader_on_disk(
         # Guest Mode sections cannot witness lost transcript/schedule fields.
         # Stay within record/title limits while retaining every escape shape;
         # the configuration prompt above carries the full long payload.
-        text = label + " " + extra[:80]
-        prepared.memories = [replace(row, content=text) for row in prepared.memories]
-        prepared.temporary_memories = [replace(row, content=text) for row in prepared.temporary_memories]
+        text = (label + " " + extra[:60]).strip()
+        # Memory stores canonicalize whitespace before it becomes durable.
+        memory_text = " ".join(text.split())
+        prepared.memories = [replace(row, content=memory_text) for row in prepared.memories]
+        prepared.temporary_memories = [replace(row, content=memory_text) for row in prepared.temporary_memories]
         prepared.knowledge = [replace(row, content=text) for row in prepared.knowledge]
         prepared.archive_sessions = [replace(
             _session(), agent_subentry_id="agent-new", title=text,
