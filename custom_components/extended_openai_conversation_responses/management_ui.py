@@ -32,13 +32,13 @@ from .agent_config import (
     agent_config_defaults,
     agent_config_options,
     agent_config_snapshot,
-    configured_function_tools_from_data as _strict_configured_function_tools,
     function_tool_enabled,
     function_tool_yaml,
     merge_agent_config as merge_validated_agent_config,
     model_capabilities,
     normalize_agent_config,
     preserve_legacy_guest_policy,
+    project_agent_config_updates,
     starter_function_tool_yaml,
     validate_agent_title,
     validate_function_tools,
@@ -58,6 +58,7 @@ from .const import (
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
+    CONF_REASONING_EFFORT,
     CONF_SHARED_MEMORY_MODE,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
@@ -436,6 +437,9 @@ def _export_agent(subentry) -> dict[str, Any]:
     snapshot = preserve_legacy_guest_policy(
         dict(subentry.data), agent_config_snapshot(dict(subentry.data))
     )
+    # Omission selects the routed model's own recommendation at execution time.
+    if CONF_REASONING_EFFORT not in subentry.data:
+        snapshot.pop(CONF_REASONING_EFFORT, None)
     return {
         "schema": "extended_openai_conversation.agent",
         "version": AGENT_CONFIG_EXPORT_VERSION,
@@ -482,11 +486,14 @@ def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, 
         )
     if not isinstance(config, dict):
         raise AgentConfigError("config", "must be an object")
+    normalized = preserve_legacy_guest_policy(config, normalize_agent_config(config))
+    if CONF_REASONING_EFFORT not in config:
+        normalized.pop(CONF_REASONING_EFFORT, None)
     return {
         "title": validate_agent_title(
             value.get("title"), default="Imported conversation agent"
         ),
-        "config": preserve_legacy_guest_policy(config, normalize_agent_config(config)),
+        "config": normalized,
     }
 
 
@@ -506,7 +513,50 @@ def _prepare_request_rule(
         and rule_id is not None
         and rules.preserves_inactive_pattern(rule_id, raw)
     )
-    return validate_rule(raw, validate_sentence_pattern=not preserve_inactive)
+    return validate_rule(
+        raw,
+        validate_sentence_pattern=not preserve_inactive,
+        validate_script_schema=not preserve_inactive,
+    )
+
+
+def _request_rule_function_tools(
+    rule: Mapping[str, Any], data: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Parse only the Function Tools referenced by this native action tree."""
+    from .function_dependency_integrity import _rule_script_actions
+    from .management_function_repair import editable_function_tools
+
+    service = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+    names = set()
+    for step in _rule_script_actions(rule):
+        if step.get("action", step.get("service")) != service:
+            continue
+        call = step.get("data")
+        if not isinstance(call, Mapping) or not isinstance(call.get("function"), str):
+            raise HomeAssistantError("Configured Function action is invalid")
+        names.add(call["function"])
+    if not names:
+        return []
+    raw = editable_function_tools(dict(data))
+    if not isinstance(raw, list):
+        if rule.get("enabled", True):
+            raise HomeAssistantError("Referenced Function Tools need repair")
+        return []
+    selected = [
+        tool
+        for tool in raw
+        if isinstance(tool, Mapping)
+        and isinstance(tool.get("spec"), Mapping)
+        and isinstance(tool["spec"].get("name"), str)
+        and tool["spec"].get("name") in names
+    ]
+    if not rule.get("enabled", True):
+        # Disabling must remain possible even when its dependency is quarantined.
+        from .management_function_repair import isolated_function_tools
+
+        return isolated_function_tools({CONF_FUNCTION_TOOLS: selected})[0]
+    return validate_function_tools(selected)
 
 
 def _validate_request_rule_functions(
@@ -859,7 +909,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         await _validate_request_rule_conditions(hass, candidate)
         _validate_request_rule_functions(
             candidate,
-            configured_function_tools_from_data(subentry.data)
+            _request_rule_function_tools(candidate, subentry.data)
             if hasattr(subentry, "data")
             else [],
         )
@@ -885,7 +935,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         await _validate_request_rule_conditions(hass, candidate)
         _validate_request_rule_functions(
             candidate,
-            configured_function_tools_from_data(subentry.data)
+            _request_rule_function_tools(candidate, subentry.data)
             if hasattr(subentry, "data")
             else [],
         )
@@ -1264,7 +1314,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             hass, entry, subentry, normalized
         )
         _require_agent_config_revision(subentry, message["revision"])
-    persisted = preserve_legacy_guest_policy(dict(subentry.data), deepcopy(normalized))
+    persisted = project_agent_config_updates(subentry.data, updates, normalized)
     saved_title = title.strip() if isinstance(title, str) else subentry.title
     refresh_local_handling = _local_handling_config_changed(
         subentry.data, persisted, updates
@@ -1287,13 +1337,13 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     # merge_agent_config validated both fields before persistence. Decode the
     # normalized YAML for the editor without repeating schema validation.
     phase = perf_counter()
-    response_data = persisted
+    response_data = normalized
     if repair_state is not None:
-        response_data = dict(persisted)
+        response_data = dict(normalized)
         response_data[CONF_FUNCTION_TOOLS] = repair_state.valid
         response_data[CONF_FUNCTION_GROUPS] = repair_state.groups
     elif validated_functions is not None:
-        response_data = dict(persisted)
+        response_data = dict(normalized)
         response_data[CONF_FUNCTION_TOOLS] = validated_functions[0]
     snapshot = _snapshot_normalized_configuration(response_data, validated=True)
     timings["response_snapshot_ms"] = _elapsed_ms(phase)
@@ -1580,9 +1630,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 hass, entry, subentry, normalized
             )
             _require_agent_config_revision(subentry, message["revision"])
-        if CONF_GUEST_POLICY_VERSION not in subentry.data:
-            for key in GUEST_V2_FIELDS:
-                normalized.pop(key, None)
+        normalized = project_agent_config_updates(subentry.data, updates, normalized)
         requested_title = message.get("title")
         saved_title = (
             validate_agent_title(requested_title)
@@ -1672,10 +1720,13 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             await _async_validate_configuration_dependencies(
                 hass, entry, subentry, parsed["config"]
             )
+        preview_config = agent_config_snapshot(parsed["config"])
+        if CONF_REASONING_EFFORT not in parsed["config"]:
+            preview_config.pop(CONF_REASONING_EFFORT, None)
         return {
             "valid": True,
             "title": parsed["title"],
-            "config": agent_config_snapshot(parsed["config"]),
+            "config": preview_config,
             "summary": {
                 "model": parsed["config"][CONF_CHAT_MODEL],
                 "tools": len(
@@ -2964,7 +3015,7 @@ async def _async_management_request(
             existing_rules,
         )
         await async_validate_request_rule_functions(
-            hass, candidate, _strict_configured_function_tools(subentry.data)
+            hass, candidate, _request_rule_function_tools(candidate, subentry.data)
         )
     elif is_admin and section == "tools" and action in _TOOL_MUTATIONS:
         _require_agent_config_revision(subentry, message.get("revision"))

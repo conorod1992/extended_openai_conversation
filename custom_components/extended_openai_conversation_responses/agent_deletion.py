@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+from homeassistant.config_entries import SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntryChange
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
 
 from .agent_maintenance import (
@@ -16,6 +22,9 @@ from .const import DOMAIN
 from .strict_store import PropagatingWriteStore
 
 KNOWN_AGENTS = f"{DOMAIN}.known_agents"
+_LOGGER = logging.getLogger(__name__)
+_LISTENER = f"{DOMAIN}.agent_deletion_listener"
+_RETRY = f"{DOMAIN}.agent_deletion_retry"
 _SECTIONS = (
     "memory",
     "temporary_memory",
@@ -67,6 +76,54 @@ def _storage_names(
                 names.append(path.name)
             break
     return names
+
+
+def _stored_provider_ids(hass: Any) -> set[str]:
+    """Discover only EOAI's exact private-store namespaces, including orphans."""
+    directory = Path(hass.config.path(".storage"))
+    if not directory.exists():
+        return set()
+    result = set()
+    prefixes = tuple(f"{DOMAIN}.{section}." for section in _SECTIONS)
+    for path in directory.iterdir():
+        for prefix in prefixes:
+            if path.name.startswith(prefix):
+                entry_id, separator, subentry = path.name[len(prefix) :].partition(".")
+                if entry_id and separator and subentry:
+                    result.add(entry_id)
+                break
+    return result
+
+
+def async_setup_agent_deletion(hass: Any) -> None:
+    """Observe native assistant deletion for the integration's whole lifetime."""
+    if _LISTENER in hass.data:
+        return
+
+    async def reconcile(*_: Any) -> None:
+        hass.data.pop(_RETRY, lambda: None)()
+        try:
+            await async_reconcile_agent_storage(hass)
+        except Exception:
+            _LOGGER.exception("Private agent data cleanup failed; retrying")
+            if _RETRY not in hass.data:
+                hass.data[_RETRY] = async_call_later(hass, 60, reconcile)
+
+    async def changed(change: ConfigEntryChange, entry: Any) -> None:
+        if entry.domain == DOMAIN and change in {
+            ConfigEntryChange.UPDATED,
+            ConfigEntryChange.REMOVED,
+        }:
+            await reconcile()
+
+    unsubscribe = async_dispatcher_connect(hass, SIGNAL_CONFIG_ENTRY_CHANGED, changed)
+    hass.data[_LISTENER] = unsubscribe
+
+    def stop(_: Any) -> None:
+        hass.data.pop(_LISTENER, lambda: None)()
+        hass.data.pop(_RETRY, lambda: None)()
+
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
 
 
 def _owned_stores(owner: Any) -> list[Store[Any]]:
@@ -183,8 +240,21 @@ async def async_delete_removed_subentries(hass: Any, entry: Any) -> None:
 
 async def async_reconcile_agent_storage(hass: Any) -> None:
     """Reconcile disabled parents too, before recovery and delayed work starts."""
-    for entry in hass.config_entries.async_entries(DOMAIN):
+    entries = list(hass.config_entries.async_entries(DOMAIN))
+    for entry in entries:
         await async_delete_removed_subentries(hass, entry)
+    stored = await hass.async_add_executor_job(_stored_provider_ids, hass)
+    known = hass.data.get(KNOWN_AGENTS, {})
+    for entry_id in stored | set(known):
+        # Re-read after awaits: a provider added during enumeration is live.
+        if any(
+            entry.entry_id == entry_id
+            for entry in hass.config_entries.async_entries(DOMAIN)
+        ):
+            continue
+        await async_delete_entry_data(
+            hass, SimpleNamespace(entry_id=entry_id, subentries={})
+        )
 
 
 async def async_delete_entry_data(hass: Any, entry: Any) -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any, cast
 
@@ -142,6 +142,28 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         super().__init__(hass)
         self._registered_state_entity_id: str | None = None
         self._published_state: State | None = None
+        self._registry_unsubscribe: Callable[[], None] | None = None
+
+    async def async_setup(self) -> None:
+        await super().async_setup()
+        if self._registry_unsubscribe is None:
+            self._registry_unsubscribe = self.hass.bus.async_listen(
+                er.EVENT_ENTITY_REGISTRY_UPDATED, self._async_registry_updated
+            )
+
+    async def _async_registry_updated(self, event: Any) -> None:
+        """Republish renamed/disabled state even when the schedule is disabled."""
+        if (
+            self._registry_unsubscribe is None
+            or self.hass.data.get(f"{DOMAIN}.removed") is True
+        ):
+            return
+        entity_id = event.data.get("entity_id")
+        current = er.async_get(self.hass).async_get_entity_id(
+            "binary_sensor", DOMAIN, _STATE_UNIQUE_ID
+        )
+        if entity_id in {self._registered_state_entity_id, current}:
+            await self.async_reconcile()
 
     def _state_entity_id(self) -> str:
         registry = er.async_get(self.hass)
@@ -730,6 +752,9 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             control["baseline_context_id"] = context_id
 
     async def async_shutdown(self) -> None:
+        if self._registry_unsubscribe is not None:
+            self._registry_unsubscribe()
+            self._registry_unsubscribe = None
         async with self._lock:
             for unsubscribe in self._unsubscribers:
                 unsubscribe()
@@ -740,6 +765,23 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 entity_id = self._state_entity_id()
                 self._remove_previous_publication(entity_id)
                 self.hass.states.async_remove(entity_id)
+
+
+def async_remove_quiet_hours_entity(hass: HomeAssistant) -> None:
+    """Delete only EOAI's registry identity after final provider removal."""
+    registry = er.async_get(hass)
+    try:
+        entity_id = registry.async_get_entity_id(
+            "binary_sensor", DOMAIN, _STATE_UNIQUE_ID
+        )
+    except AttributeError as err:
+        # Partial bootstrap has no loaded registry collection to remove from.
+        if err.name != "entities":
+            raise
+        return
+    if entity_id is not None:
+        hass.states.async_remove(entity_id)
+        registry.async_remove(entity_id)
 
 
 async def _async_require_admin(hass: HomeAssistant, call: ServiceCall) -> None:

@@ -95,6 +95,12 @@ def _compact_json_result_content(result: Any) -> Any:
     value = tool_result.get("result")
     if not isinstance(value, str):
         return result
+    from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
+
+    # Oversized opaque output will be bounded by the caller. Parsing the entire
+    # response here adds event-loop work and allocations that are discarded.
+    if len(value) > MAX_MODEL_TOOL_RESULT_CHARACTERS:
+        return result
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError:

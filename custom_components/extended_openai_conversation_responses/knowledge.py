@@ -6,6 +6,7 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
+import json
 import logging
 import re
 from typing import Any, Protocol, cast
@@ -17,6 +18,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .persistence_hardening import _async_settle_transactional_save
+from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .strict_store import PropagatingWriteStore, async_storage_lock
 
 _LOGGER = logging.getLogger(__name__)
@@ -553,21 +555,45 @@ class KnowledgeLibrary:
             source = self._available_source(source_id)
             total = len(source.content)
             start = min(start_character, total)
-            content = source.content[start : start + max_characters]
-            next_start = start + len(content)
-            has_more = next_start < total
-            return {
+            page = {
                 "source_id": source.source_id,
                 "title": source.title,
                 "description": source.description,
-                "content": content,
+                "content": "",
                 "start_character": start,
-                "returned_characters": len(content),
+                "returned_characters": 0,
                 "total_characters": total,
-                "has_more": has_more,
-                "next_start_character": next_start if has_more else None,
+                "has_more": start < total,
+                "next_start_character": start if start < total else None,
                 "updated_at": source.updated_at,
             }
+            # Budget the wire representation, including escaping and cursors.
+            # Bisection preserves a contiguous section without quadratic retries.
+            low, high = 0, min(max_characters, total - start)
+            while low < high:
+                count = (low + high + 1) // 2
+                page.update(
+                    content=source.content[start : start + count],
+                    returned_characters=count,
+                    has_more=start + count < total,
+                    next_start_character=start + count
+                    if start + count < total
+                    else None,
+                )
+                if (
+                    len(json.dumps(page, ensure_ascii=False))
+                    <= MAX_MODEL_TOOL_RESULT_CHARACTERS
+                ):
+                    low = count
+                else:
+                    high = count - 1
+            page.update(
+                content=source.content[start : start + low],
+                returned_characters=low,
+                has_more=start + low < total,
+                next_start_character=start + low if start + low < total else None,
+            )
+            return page
 
     def stats(self) -> dict[str, Any]:
         """Return non-sensitive diagnostics."""

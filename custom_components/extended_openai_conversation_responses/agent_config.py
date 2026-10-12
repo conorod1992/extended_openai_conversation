@@ -352,11 +352,35 @@ GUEST_V2_FIELDS = frozenset(
 def preserve_legacy_guest_policy(
     source: dict[str, Any], normalized: dict[str, Any]
 ) -> dict[str, Any]:
-    """Keep an absent v2 marker absent across generic configuration workflows."""
+    """Retain authored legacy fields without adopting absent v2 defaults."""
     if CONF_GUEST_POLICY_VERSION not in source:
         for key in GUEST_V2_FIELDS:
-            normalized.pop(key, None)
+            if key in source:
+                normalized[key] = deepcopy(source[key])
+            else:
+                normalized.pop(key, None)
     return normalized
+
+
+def project_agent_config_updates(
+    current: Mapping[str, Any],
+    updates: Mapping[str, Any],
+    normalized: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Persist validated edits without rewriting untouched retained settings."""
+    result = deepcopy(dict(current))
+    changed = set(updates)
+    if any(
+        key in updates and updates[key] != current.get(key)
+        for key in (CONF_CHAT_MODEL, "azure_model")
+    ):
+        changed.add(CONF_REASONING_EFFORT)
+    for key in changed:
+        if key in normalized:
+            result[key] = deepcopy(normalized[key])
+        else:
+            result.pop(key, None)
+    return result
 
 
 def agent_config_defaults() -> dict[str, Any]:
@@ -821,6 +845,25 @@ def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
                 continue
 
 
+def normalize_reasoning_defaults(config: dict[str, Any], *, explicit: bool) -> None:
+    """Apply the same model-aware omitted-value contract to reads and saves."""
+    selected_model = str(
+        config.get("azure_model") or config.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+    )
+    if not get_reasoning_effort_options(selected_model):
+        config.pop(CONF_REASONING_EFFORT, None)
+    elif not explicit:
+        recommended = (
+            get_model_config(selected_model)
+            .get("recommended_profile", {})
+            .get("reasoning_effort")
+        )
+        if recommended is None:
+            config.pop(CONF_REASONING_EFFORT, None)
+        else:
+            config[CONF_REASONING_EFFORT] = recommended
+
+
 def normalize_agent_config(
     data: dict[str, Any],
     *,
@@ -854,20 +897,7 @@ def normalize_agent_config(
         result.get("azure_model") or result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
     )
     reasoning_options = get_reasoning_effort_options(selected_model)
-    if not reasoning_options:
-        # Hidden defaults/drafts from another model are inactive, not request
-        # parameters. Keep explicit enum validation for reasoning-capable models.
-        result.pop(CONF_REASONING_EFFORT, None)
-    elif not reasoning_effort_explicit:
-        recommended_effort = (
-            get_model_config(selected_model)
-            .get("recommended_profile", {})
-            .get("reasoning_effort")
-        )
-        if recommended_effort is None:
-            result.pop(CONF_REASONING_EFFORT, None)
-        else:
-            result[CONF_REASONING_EFFORT] = recommended_effort
+    normalize_reasoning_defaults(result, explicit=reasoning_effort_explicit)
 
     _require_type(
         result,

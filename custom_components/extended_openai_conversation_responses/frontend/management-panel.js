@@ -307,12 +307,20 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   set route(value) {
     this._route = value;
     const route = routeFromPath(window.location.pathname);
-    if (route.page !== this._page || route.section !== this._subsection) this._handleRouteChange(route);
+    if (route.page !== this._page || route.section !== this._subsection) void this._syncRouteFromLocation();
     else if (!this.shadowRoot.querySelector("[data-eoc-persistent-shell]")) this._render();
   }
 
   connectedCallback() {
     this._markColdLifecycle("connected");
+    if (!this._onHistoryNavigation) {
+      this._onHistoryNavigation = () => {
+        const path = window.location.pathname;
+        if (path !== "/extended-openai" && !path.startsWith("/extended-openai/")) return;
+        this.route = this._route;
+      };
+      window.addEventListener("popstate", this._onHistoryNavigation);
+    }
     // Home Assistant can assign properties before custom-element upgrade. Replay
     // own properties so the class setters receive the values after definition.
     for (const name of ["hass", "route"]) {
@@ -335,6 +343,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   disconnectedCallback() {
+    if (this._onHistoryNavigation) {
+      window.removeEventListener("popstate", this._onHistoryNavigation);
+      this._onHistoryNavigation = null;
+    }
     stopLiveStatus(this);
     getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     cleanupStateSafety(this);
@@ -531,6 +543,26 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _confirmUnsavedNavigation(destination) {
     return confirmStateSafeNavigation(this, destination);
+  }
+
+  _syncRouteFromLocation() {
+    // HA route notifications and popstate can describe the same transition.
+    // Serialize them and reread the URL after any asynchronous discard prompt.
+    if (this._routeSyncPromise) return this._routeSyncPromise;
+    this._routeSyncPromise = Promise.resolve().then(async () => {
+      while (true) {
+        const path = window.location.pathname;
+        if (path !== "/extended-openai" && !path.startsWith("/extended-openai/")) return;
+        const route = routeFromPath(path);
+        if (route.page === this._page && route.section === this._subsection) return;
+        await this._handleRouteChange(route);
+        if (path === window.location.pathname) return;
+      }
+    }).catch((error) => {
+      this._error = error.message || String(error);
+      this._render();
+    }).finally(() => { this._routeSyncPromise = null; });
+    return this._routeSyncPromise;
   }
 
   async _handleRouteChange(route) {

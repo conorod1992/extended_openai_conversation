@@ -37,7 +37,11 @@ function editableToolsText(tools) {
 }
 
 function repairMetadata(panel) {
-  return panel._result?.function_repair || null;
+  const repair = panel._result?.function_repair;
+  if (!repair) return null;
+  return repair.validation_error || repair.invalid_count > 0 || repair.invalid_tools?.length
+    ? repair
+    : null;
 }
 
 function invalidToolGroups(repair, item) {

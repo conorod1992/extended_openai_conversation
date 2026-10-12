@@ -490,6 +490,7 @@ def _public_manager(
     manager._unsubscribers = []
     manager._registered_state_entity_id = None
     manager._published_state = None
+    manager._registry_unsubscribe = None
     return manager
 
 

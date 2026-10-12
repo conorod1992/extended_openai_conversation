@@ -8,6 +8,29 @@ const realFixtureUrl = (route) =>
   `/tests_browser/real-ha-fixture.html?route=${encodeURIComponent(route)}&backend=${encodeURIComponent(backendUrl)}`;
 
 const MEMORY = "Real HA refresh-boundary memory";
+
+test("browser history retains the visible Assistant draft against genuine HA", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(realFixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  const title = panel.locator('[data-config="__title"]');
+  await expect(title).toBeVisible();
+  const original = await title.inputValue();
+  await title.fill("Unsaved history draft");
+  await panel.locator("#local-section").selectOption("model-responses", {force: true});
+  await expect(panel.locator("#local-section")).toHaveValue("model-responses");
+  await page.goBack();
+  await expect(page).toHaveURL(/\/assistant\/basics$/);
+  await expect(title).toHaveValue("Unsaved history draft");
+  await page.goForward();
+  await expect(page).toHaveURL(/\/assistant\/model-responses$/);
+  await expect(panel.locator("#local-section")).toHaveValue("model-responses");
+  await page.goBack();
+  await expect(title).toHaveValue("Unsaved history draft");
+  await title.fill(original);
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toHaveCount(0);
+  await expectHarnessClean(page, errors);
+});
 test("hard refresh after committed Memory mutation converges without replay", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(realFixtureUrl("data-memory/memories"));

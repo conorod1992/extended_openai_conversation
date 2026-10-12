@@ -210,7 +210,7 @@ class TemporaryMemory:
             for current in self._records.values():
                 if (
                     _matches_owner(current, scope_id, owner_scope_id)
-                    and current.content.casefold() == content.casefold()
+                    and current.content == content
                 ):
                     # Explicitly created short-term memories are authoritative.
                     # A later proactive model write may coalesce with them, but it
