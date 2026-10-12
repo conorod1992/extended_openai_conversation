@@ -711,7 +711,7 @@ def test_archive_list_sync_filters_sorts_and_pages() -> None:
 
 
 @pytest.mark.asyncio
-async def test_archive_query_defers_cancellation_until_worker_settles(monkeypatch) -> None:
+async def test_archive_query_cancels_without_waiting_for_snapshot_worker(monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses import (
         management_history_queries as history,
     )
@@ -733,19 +733,20 @@ async def test_archive_query_defers_cancellation_until_worker_settles(monkeypatc
     monkeypatch.setattr(history.asyncio, "to_thread", to_thread)
     archive = SimpleNamespace(
         _lock=asyncio.Lock(),
+        _sessions={},
         _ensure_initialized=Mock(),
     )
 
-    task = asyncio.create_task(history._async_archive_query(archive, query))
+    task = asyncio.create_task(history._async_archive_query(archive, query, "scope"))
     await started.wait()
     task.cancel()
     await asyncio.sleep(0)
-    assert not task.done()
+    assert task.done() and not archive._lock.locked()
 
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert completed
+    assert not completed
     archive._ensure_initialized.assert_called_once()
 
 

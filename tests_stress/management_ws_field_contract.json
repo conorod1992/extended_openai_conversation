@@ -277,6 +277,10 @@
       "required": false,
       "kind": "string"
     },
+    "text_offset": {
+      "required": false,
+      "kind": "integer"
+    },
     "title": {
       "required": false,
       "kind": "string"

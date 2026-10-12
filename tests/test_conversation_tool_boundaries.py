@@ -84,7 +84,7 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
     entity = _agent()
     record = _memory_record()
     entity._memory = SimpleNamespace(
-        async_list=AsyncMock(return_value=[record]),
+        async_list_page=AsyncMock(return_value=([record], False)),
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),
     )
@@ -117,7 +117,7 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
     entity._async_search_memories.assert_awaited_once_with(
         ["user-1"], "dog", 3, "pets"
     )
-    entity._memory.async_list.assert_awaited_once_with(
+    entity._memory.async_list_page.assert_awaited_once_with(
         ["user-1"], "pets", 4, 2
     )
     entity._memory.async_update.assert_awaited_once_with(

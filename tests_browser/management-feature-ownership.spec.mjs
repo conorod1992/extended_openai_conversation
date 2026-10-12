@@ -104,7 +104,15 @@ test("lazy history helpers retain search pages and guard session dialogs", async
       if (message.section === "conversations") {
         window.featureCalls.push(message);
         if (message.action === "search") return {results:[{session_id:"s-1",title:`Match ${message.offset}`,timestamp:"2026-09-01"}],offset:message.offset,limit:20,returned:1,total:2,has_more:message.offset === 0,next_offset:20};
-        if (message.action === "get") return {session:{title:"Retained session"},turns:[{user_text:`Question ${message.start_turn}`,assistant_text:"Answer"}],offset:message.start_turn,limit:20,returned:1,total:2,has_more:message.start_turn === 0,next_offset:20};
+        if (message.action === "get") return {
+          session:{title:"Retained session"},
+          turns:[{user_text:`Question ${message.start_turn} fragment ${message.text_offset}`,assistant_text:"Answer"}],
+          start_turn:message.start_turn,text_offset:message.text_offset,
+          offset:message.start_turn,limit:20,returned:1,total:21,
+          has_more:message.start_turn === 0,
+          next_start_turn:message.text_offset === 0 ? 0 : 20,
+          next_text_offset:message.text_offset === 0 ? 30000 : 0,
+        };
       }
       return original(message);
     };
@@ -124,13 +132,19 @@ test("lazy history helpers retain search pages and guard session dialogs", async
   await panel.locator(".open-session").press("Enter");
   await expect(panel.locator("#session-body")).toContainText("Question 0");
   await panel.getByRole("button", {name:"Next turns",exact:true}).click();
-  await expect(panel.locator("#session-body")).toContainText("Question 20");
+  await expect(panel.locator("#session-body")).toContainText("Question 0 fragment 30000");
   await expect(panel.locator(".eoc-turn-pager")).toHaveCount(1);
-  expect(await page.evaluate(() => window.featureCalls.filter((c) => c.action === "get").map((c) => [c.start_turn,c.limit]))).toEqual([[0,20],[20,20]]);
+  expect(await page.evaluate(() => window.featureCalls.filter((c) => c.action === "get").map((c) => [c.start_turn,c.text_offset,c.limit]))).toEqual([[0,0,20],[0,30000,20]]);
+  await panel.getByRole("button", {name:"Previous turns",exact:true}).click();
+  await expect(panel.locator("#session-body")).toContainText("Question 0 fragment 0");
+  await panel.getByRole("button", {name:"Next turns",exact:true}).click();
+  await expect(panel.locator("#session-body")).toContainText("Question 0 fragment 30000");
+  await panel.getByRole("button", {name:"Next turns",exact:true}).click();
+  await expect(panel.locator("#session-body")).toContainText("Question 20 fragment 0");
   await page.keyboard.press("Escape");
   await expect(panel.locator("#session-dialog")).toHaveJSProperty("open", false);
   await panel.locator(".view-session").click();
   await expect(panel.locator("#session-body")).toContainText("Question 0");
-  expect(await page.evaluate(() => window.featureCalls.filter(c => c.action === "get").length)).toBe(3);
+  expect(await page.evaluate(() => window.featureCalls.filter(c => c.action === "get").length)).toBe(6);
   await expectHarnessClean(page, errors);
 });

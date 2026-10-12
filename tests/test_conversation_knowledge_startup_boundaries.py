@@ -88,7 +88,7 @@ async def test_guest_knowledge_list_is_scoped_to_policy_sources() -> None:
         0,
         ("allowed",),
     )
-    assert result == {"sources": [], "total": 0}
+    assert result == {"sources": [], "total": 0, "returned": 0, "has_more": False}
 
 
 @pytest.mark.asyncio
