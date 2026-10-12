@@ -93,10 +93,12 @@ async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening
         "async_setup_intercom_services",
         "async_setup_debug_ui",
         "async_setup_management_ui",
-        "async_get_transfer_staging",
     ):
         monkeypatch.setattr(integration, name, AsyncMock())
 
+    from custom_components.extended_openai_conversation_responses import transfer_staging
+
+    monkeypatch.setattr(transfer_staging, "async_get_transfer_staging", AsyncMock())
     assert await integration.async_setup(hass, {}) is True
     async_setup_delayed_tools.assert_awaited_once_with(hass)
     assert order == ["delayed"]
