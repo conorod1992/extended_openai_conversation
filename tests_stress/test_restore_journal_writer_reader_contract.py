@@ -24,7 +24,7 @@ from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 @pytest.mark.usefixtures("real_store_io")
 @pytest.mark.parametrize("phase", ["applying", "committed"])
-@pytest.mark.parametrize("extra", ["", ("é\n東京 " + chr(34) + "quoted" + chr(34) + " \\ path ") * 200])
+@pytest.mark.parametrize("extra", ["", ("é\n東京 " + chr(34) + "quoted" + chr(34) + " \\ path ") * 200], ids=["plain", "escaped-unicode"])
 async def test_accepted_journal_is_readable_by_production_reader_on_disk(
     hass, phase, extra
 ):
