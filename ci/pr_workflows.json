@@ -205,6 +205,9 @@
     "paths": [
       "custom_components/extended_openai_conversation_responses/**",
       "tests_real_ha/**",
+      "tests/resource_lifecycle_ledger.py",
+      "tests/functions/behaviour_generators.py",
+      "tests_stress/test_os_storage_faults.py",
       "requirements_test.txt",
       "pyproject.toml",
       "ci/**",
