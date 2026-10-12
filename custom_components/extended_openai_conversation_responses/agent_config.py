@@ -352,11 +352,33 @@ GUEST_V2_FIELDS = frozenset(
 def preserve_legacy_guest_policy(
     source: dict[str, Any], normalized: dict[str, Any]
 ) -> dict[str, Any]:
-    """Keep an absent v2 marker absent across generic configuration workflows."""
+    """Retain authored legacy fields without adopting absent v2 defaults."""
     if CONF_GUEST_POLICY_VERSION not in source:
         for key in GUEST_V2_FIELDS:
-            normalized.pop(key, None)
+            if key in source:
+                normalized[key] = deepcopy(source[key])
+            else:
+                normalized.pop(key, None)
     return normalized
+
+
+def project_agent_config_updates(
+    current: dict[str, Any], updates: dict[str, Any], normalized: dict[str, Any]
+) -> dict[str, Any]:
+    """Persist validated edits without rewriting untouched retained settings."""
+    result = deepcopy(dict(current))
+    changed = set(updates)
+    if any(
+        key in updates and updates[key] != current.get(key)
+        for key in (CONF_CHAT_MODEL, "azure_model")
+    ):
+        changed.add(CONF_REASONING_EFFORT)
+    for key in changed:
+        if key in normalized:
+            result[key] = deepcopy(normalized[key])
+        else:
+            result.pop(key, None)
+    return result
 
 
 def agent_config_defaults() -> dict[str, Any]:

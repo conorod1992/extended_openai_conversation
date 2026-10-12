@@ -38,6 +38,7 @@ from .agent_config import (
     model_capabilities,
     normalize_agent_config,
     preserve_legacy_guest_policy,
+    project_agent_config_updates,
     starter_function_tool_yaml,
     validate_agent_title,
     validate_function_tools,
@@ -57,6 +58,7 @@ from .const import (
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
+    CONF_REASONING_EFFORT,
     CONF_SHARED_MEMORY_MODE,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
@@ -435,6 +437,9 @@ def _export_agent(subentry) -> dict[str, Any]:
     snapshot = preserve_legacy_guest_policy(
         dict(subentry.data), agent_config_snapshot(dict(subentry.data))
     )
+    # Omission selects the routed model's own recommendation at execution time.
+    if CONF_REASONING_EFFORT not in subentry.data:
+        snapshot.pop(CONF_REASONING_EFFORT, None)
     return {
         "schema": "extended_openai_conversation.agent",
         "version": AGENT_CONFIG_EXPORT_VERSION,
@@ -481,11 +486,14 @@ def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, 
         )
     if not isinstance(config, dict):
         raise AgentConfigError("config", "must be an object")
+    normalized = preserve_legacy_guest_policy(config, normalize_agent_config(config))
+    if CONF_REASONING_EFFORT not in config:
+        normalized.pop(CONF_REASONING_EFFORT, None)
     return {
         "title": validate_agent_title(
             value.get("title"), default="Imported conversation agent"
         ),
-        "config": preserve_legacy_guest_policy(config, normalize_agent_config(config)),
+        "config": normalized,
     }
 
 
@@ -1306,7 +1314,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             hass, entry, subentry, normalized
         )
         _require_agent_config_revision(subentry, message["revision"])
-    persisted = preserve_legacy_guest_policy(dict(subentry.data), deepcopy(normalized))
+    persisted = project_agent_config_updates(subentry.data, updates, normalized)
     saved_title = title.strip() if isinstance(title, str) else subentry.title
     refresh_local_handling = _local_handling_config_changed(
         subentry.data, persisted, updates
@@ -1329,13 +1337,13 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     # merge_agent_config validated both fields before persistence. Decode the
     # normalized YAML for the editor without repeating schema validation.
     phase = perf_counter()
-    response_data = persisted
+    response_data = normalized
     if repair_state is not None:
-        response_data = dict(persisted)
+        response_data = dict(normalized)
         response_data[CONF_FUNCTION_TOOLS] = repair_state.valid
         response_data[CONF_FUNCTION_GROUPS] = repair_state.groups
     elif validated_functions is not None:
-        response_data = dict(persisted)
+        response_data = dict(normalized)
         response_data[CONF_FUNCTION_TOOLS] = validated_functions[0]
     snapshot = _snapshot_normalized_configuration(response_data, validated=True)
     timings["response_snapshot_ms"] = _elapsed_ms(phase)
@@ -1622,9 +1630,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 hass, entry, subentry, normalized
             )
             _require_agent_config_revision(subentry, message["revision"])
-        if CONF_GUEST_POLICY_VERSION not in subentry.data:
-            for key in GUEST_V2_FIELDS:
-                normalized.pop(key, None)
+        normalized = project_agent_config_updates(subentry.data, updates, normalized)
         requested_title = message.get("title")
         saved_title = (
             validate_agent_title(requested_title)
@@ -1714,10 +1720,13 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             await _async_validate_configuration_dependencies(
                 hass, entry, subentry, parsed["config"]
             )
+        preview_config = agent_config_snapshot(parsed["config"])
+        if CONF_REASONING_EFFORT not in parsed["config"]:
+            preview_config.pop(CONF_REASONING_EFFORT, None)
         return {
             "valid": True,
             "title": parsed["title"],
-            "config": agent_config_snapshot(parsed["config"]),
+            "config": preview_config,
             "summary": {
                 "model": parsed["config"][CONF_CHAT_MODEL],
                 "tools": len(

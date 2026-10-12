@@ -63,10 +63,7 @@ def test_export_redaction_preserves_schema_fields_but_removes_values() -> None:
     assert redacted["function"]["clientSecret"] == REDACTED_SECRET_SENTINEL
     assert redacted["function"]["accessToken"] == REDACTED_SECRET_SENTINEL
     assert redacted["function"]["refreshToken"] == REDACTED_SECRET_SENTINEL
-    assert (
-        redacted["function"]["headers"]["Authorization"]
-        == REDACTED_SECRET_SENTINEL
-    )
+    assert redacted["function"]["headers"]["Authorization"] == REDACTED_SECRET_SENTINEL
     assert redacted["function"]["headers"]["Accept"] == "json"
     assert "password" in redacted["spec"]["parameters"]["properties"]
 
@@ -84,6 +81,29 @@ def test_import_applies_defaults_and_preserves_tools(hass) -> None:
     assert parsed["config"]["function_groups"] == []
     assert parsed["config"]["max_tokens"] > 0
     assert GUEST_V2_FIELDS.isdisjoint(parsed["config"])
+
+
+@pytest.mark.parametrize("effort", [None, "none", "low"])
+def test_portable_round_trip_preserves_reasoning_presence(hass, effort) -> None:
+    data = {"chat_model": "gpt-5.2", "functions": []}
+    if effort is not None:
+        data["reasoning_effort"] = effort
+    exported = _export_agent(SimpleNamespace(title="Retained", data=data))
+    assert ("reasoning_effort" in exported["config"]) is (effort is not None)
+    parsed = _parse_import_document(exported)
+    assert ("reasoning_effort" in parsed["config"]) is (effort is not None)
+    if effort is not None:
+        assert parsed["config"]["reasoning_effort"] == effort
+    assert data.get("reasoning_effort") == effort
+
+
+def test_portable_transfer_preserves_unversioned_authored_guest_fields(hass) -> None:
+    data = {"chat_model": "gpt-5.2", "functions": [], "guest_function_policy": "on"}
+    parsed = _parse_import_document(
+        _export_agent(SimpleNamespace(title="Old", data=data))
+    )
+    assert parsed["config"]["guest_function_policy"] == "on"
+    assert "guest_policy_version" not in parsed["config"]
 
 
 def test_legacy_export_does_not_silently_accept_guest_v2(hass) -> None:

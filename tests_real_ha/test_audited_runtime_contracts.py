@@ -29,6 +29,7 @@ from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
     _chat_sse_tool_call,
     _install_wire,
+    _responses_sse_text,
 )
 from tests_real_ha.test_request_rules_script_semantics import _local
 
@@ -292,6 +293,77 @@ async def test_guest_partial_service_batch_stops_provider_loop(hass, monkeypatch
     assert "private backend" not in json.dumps(result.as_dict())
     assert hass.states.get(entity_id).state == "1"
     assert len(wire.requests) == 1
+
+
+@pytest.mark.parametrize("writer", ["save", "update", "import"])
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+async def test_retained_settings_survive_public_writes_and_reload(
+    hass, monkeypatch, writer, api_mode
+):
+    from tests_real_ha.test_cross_feature_acceptance import _rule
+
+    agent = await _agent(hass, chat_model="gpt-5.2", api_mode=api_mode)
+    entry = agent.entry
+    subentry_id = agent.subentry.subentry_id
+    raw = dict(agent.subentry.data)
+    raw.pop("reasoning_effort", None)
+    raw.pop("guest_policy_version", None)
+    raw["guest_function_policy"] = "on"
+    hass.config_entries.async_update_subentry(entry, agent.subentry, data=raw)
+    await hass.async_block_till_done()
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    command = await _management(hass, agent)
+    await command(
+        "create",
+        section="request_rules",
+        rule=_rule(
+            "model_routing",
+            {"model": "o3", "continue_to_ai": True},
+            phrase="think carefully",
+        ),
+        revision=agent._request_rules.revision(),
+    )
+    before = deepcopy(dict(entry.subentries[subentry_id].data))
+    current = await command("get")
+    if writer == "import":
+        document = (await command("export"))["document"]
+        assert "reasoning_effort" not in document["config"]
+        preview = await command("import_preview", document=document)
+        assert preview["valid"]
+        assert "reasoning_effort" not in preview["config"]
+        assert dict(entry.subentries[subentry_id].data) == before
+        await command(
+            "import", document=document, confirm=True, revision=current["revision"]
+        )
+    else:
+        result = await command(
+            writer,
+            config={"max_tokens": 777},
+            title="Edited",
+            revision=current["revision"],
+        )
+        assert result.get("valid", True)
+        assert dict(entry.subentries[subentry_id].data) == {**before, "max_tokens": 777}
+    await hass.async_block_till_done()
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    assert "reasoning_effort" not in agent.subentry.data
+    assert "guest_policy_version" not in agent.subentry.data
+    assert agent.subentry.data["guest_function_policy"] == "on"
+    reply = _chat_sse_text if api_mode == "chat_completions" else _responses_sse_text
+    wire = _install_wire(monkeypatch, agent, [reply("Routed correctly.")])
+    assert _speech(await _say(hass, agent, "think carefully")) == "Routed correctly."
+    assert len(wire.requests) == 1
+    assert wire.requests[0]["body"]["model"] == "o3"
+    body = wire.requests[0]["body"]
+    assert (
+        body["reasoning_effort"]
+        if api_mode == "chat_completions"
+        else body["reasoning"]["effort"]
+    ) == "low"
 
 
 async def test_native_rule_management_ignores_unrelated_quarantined_schema(hass):
