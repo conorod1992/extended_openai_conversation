@@ -125,3 +125,46 @@ async def test_replay_guard_differentiates_canonical_and_distinct_inputs(
         )
         assert len(effects) == 2
         assert_typed_value(effects[-1], repeated)
+
+
+@pytest.mark.parametrize(
+    "leaf,raw,expected",
+    [
+        ({"type": "string"}, "0012", "0012"),
+        ({"type": "boolean"}, False, False),
+        ({"type": ["integer", "null"]}, None, None),
+        ({"type": "array", "items": {"type": ["integer", "null"]}},
+         [0, None, 2], [0, None, 2]),
+        ({"type": "object", "properties": {
+            "flag": {"type": "boolean"}, "code": {"type": "string"},
+        }, "required": ["flag", "code"]},
+         {"flag": False, "code": "000"}, {"flag": False, "code": "000"}),
+    ],
+    ids=["numeric-looking-string", "false-is-not-zero", "null-is-not-zero",
+         "nested-nullable-array", "nested-distinct-scalars"],
+)
+async def test_validated_arguments_reach_actual_exchange_dispatch_with_types(
+    hass, leaf, raw, expected
+):
+    """Verify observable dispatch arguments, not only validator return values."""
+    entity, log = _entity(hass), _chat_log(hass)
+    tool = _tool("effect", parameters={
+        "type": "object", "properties": {"payload": leaf},
+        "required": ["payload"], "additionalProperties": False,
+    })
+    seen = []
+
+    async def dispatch(definition, validated, *_args):
+        record_dispatch(entity, validated, definition)
+        seen.append(deepcopy(validated.tool_args))
+        return _result(entity, validated)
+
+    entity._execute_function_tool.side_effect = dispatch
+    call = _call("typed", "effect", {"payload": raw})
+    _retain_calls(log, [call])
+    await async_execute_tool_exchange(
+        entity, log, [call], [tool], FunctionCallBudget(2), None, [],
+        recovery_state=ToolRecoveryState(enabled=True),
+    )
+    assert len(seen) == 1
+    assert_typed_value(seen[0], {"payload": expected})
