@@ -17,6 +17,10 @@ def _script_shape(shape, value, gate):
     """Construct semantically equivalent scripts using different HA syntax."""
     template = "{{ marker }}"
     base = {"action": "grammar_probe.record", "data": {"message": template}}
+    # Distinct branch markers ensure a broken selector cannot pass by
+    # executing the default path instead of the intended branch.
+    fallback = {"action": "grammar_probe.record",
+                "data": {"message": "default:" + template}}
     if shape == "variables":
         return [{"variables": {"marker": value}}, base]
     if shape == "choose":
@@ -26,7 +30,7 @@ def _script_shape(shape, value, gate):
                 "choose": [
                     {"conditions": "{{ gate }}", "sequence": [base]},
                 ],
-                "default": [base],
+                "default": [fallback],
             },
         ]
     if shape == "repeat":
@@ -80,4 +84,5 @@ async def test_generated_native_script_grammar_preserves_output(
     )
     answer = await _say(hass, agent, "run grammar")
     assert _speech(answer) == "Done"
-    assert recorded == [value], (shape, value, gate, recorded)
+    expected = f"default:{value}" if shape in ("choose", "nested_choose") and not gate else value
+    assert recorded == [expected], (shape, value, gate, recorded)
