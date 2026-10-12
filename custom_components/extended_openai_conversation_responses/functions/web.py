@@ -170,32 +170,39 @@ def _decode_compressed_body(body: bytes, encoding: str, max_bytes: int) -> bytes
             and int.from_bytes(body[:2], "big") % 31 == 0
         ):
             wbits = -zlib.MAX_WBITS
-        decoded = bytearray()
-        while body:
-            decoder = zlib.decompressobj(wbits)
+
+        def decode(window_bits: int) -> bytes:
+            decoded = bytearray()
+            pending = body
+            while pending:
+                decoder = zlib.decompressobj(window_bits)
+                decoded.extend(
+                    decoder.decompress(pending, max_bytes + 1 - len(decoded))
+                )
+                if len(decoded) > max_bytes:
+                    raise _response_limit_error(max_bytes)
+                if not decoder.eof:
+                    raise aiohttp.ClientPayloadError("Incomplete compressed response")
+                pending = decoder.unused_data
+            return bytes(decoded)
+
+        try:
             try:
-                decoded.extend(decoder.decompress(body, max_bytes + 1 - len(decoded)))
-            except zlib.error as err:
-                raise aiohttp.ClientPayloadError(
-                    "Malformed compressed response"
-                ) from err
-            if len(decoded) > max_bytes:
-                break
-            if not decoder.eof:
-                raise aiohttp.ClientPayloadError("Incomplete compressed response")
-            body = decoder.unused_data
-        result = bytes(decoded)
+                return decode(wbits)
+            except zlib.error, aiohttp.ClientPayloadError:
+                if encoding != "deflate" or wbits < 0:
+                    raise
+                # A valid raw stored block can coincidentally have a full zlib
+                # header. Retry from the original input with the same output cap.
+                return decode(-zlib.MAX_WBITS)
+        except zlib.error as err:
+            raise aiohttp.ClientPayloadError("Malformed compressed response") from err
     elif encoding == "br":
         return _decode_brotli(body, max_bytes)
     elif encoding == "zstd":
         return _decode_zstd(body, max_bytes)
     else:
         return body
-    if len(result) > max_bytes:
-        raise HomeAssistantError(
-            f"Remote response exceeds the configured safety limit of {max_bytes} bytes"
-        )
-    return result
 
 
 def _decode_content_encodings(body: bytes, encoding: str, max_bytes: int) -> bytes:

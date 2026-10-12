@@ -180,3 +180,39 @@ async def test_finalizer_retry_rejects_unadvertised_calls(hass, name, api_mode):
         await entity._async_handle_chat_log(log, [_tool("effect")], [], conditional_continue=True, function_group_loader=loader)
     entity._execute_function_tool.assert_not_awaited()
     loader.assert_not_called()
+
+
+def test_raw_deflate_can_have_a_complete_valid_zlib_header():
+    # Non-final stored block with ignored padding, LEN=156, NLEN=~156.
+    body = bytes.fromhex("78 9c 00 63 ff") + b"A" * 156 + bytes.fromhex("01 00 00 ff ff")
+    assert int.from_bytes(body[:2], "big") % 31 == 0
+    assert zlib.decompress(body, -zlib.MAX_WBITS) == b"A" * 156
+    assert web._decode_compressed_body(body, "deflate", 156) == b"A" * 156
+    with pytest.raises(HomeAssistantError, match="safety limit"):
+        web._decode_compressed_body(body, "deflate", 155)
+
+
+async def test_nullable_delay_survives_real_store_restart(hass, monkeypatch):
+    from tests.test_delayed_tool_recovery_round_trip import _setup_without_waiters, _entity
+    from custom_components.extended_openai_conversation_responses.function_execution import (
+        validate_function_arguments, split_legacy_execution_delay,
+    )
+    first, _ = await _setup_without_waiters(hass, monkeypatch)
+    args = {"delay": {"hours": None, "minutes": 5, "seconds": None}}
+    tool = _tool("effect", parameters={"type": "object", "properties": {"delay": {
+        "type": "object", "properties": {key: {"type": ["integer", "null"]} for key in args["delay"]},
+        "required": list(args["delay"]),
+    }}, "required": ["delay"]})
+    record = await first.async_schedule(
+        _entity(), "effect", args, None, function_tool=tool, execution_delay={"minutes": 5}
+    )
+    first._handle_stop()
+    second, arm = await _setup_without_waiters(hass, monkeypatch)
+    try:
+        restored = second._records[record.call_id]
+        assert restored.arguments == args
+        arm.assert_called_once_with(record.call_id)
+        validated = validate_function_arguments(tool["spec"], restored.arguments)
+        assert split_legacy_execution_delay(tool["spec"], validated) == ({}, {"minutes": 5})
+    finally:
+        second._handle_stop()
