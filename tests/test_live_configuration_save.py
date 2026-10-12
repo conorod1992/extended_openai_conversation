@@ -115,16 +115,17 @@ async def test_ordinary_save_marks_only_authorized_writes(
 
 
 @pytest.mark.parametrize(
-    "sampling",
+    "model,sampling",
     [
-        {},
-        {"temperature": 0.0},
-        {"temperature": 0.5, "top_p": 0.9},
+        ("gpt-4o", {}),
+        ("gpt-4o", {"temperature": 0.0, "top_p": 0.0}),
+        ("gpt-4o", {"temperature": 0.5, "top_p": 0.9}),
+        ("gpt-5-mini", {"reasoning_effort": "high"}),
     ],
-    ids=["omitted-legacy-settings", "explicit-zero", "explicit-sampling"],
+    ids=["omitted-legacy-settings", "explicit-zero", "explicit-sampling", "explicit-reasoning"],
 )
 async def test_unrelated_save_preserves_effective_provider_sampling_contract(
-    monkeypatch, sampling
+    monkeypatch, model, sampling
 ):
     """An unrelated change must not introduce, drop or change sampling kwargs."""
     from custom_components.extended_openai_conversation_responses.request import (
@@ -146,7 +147,7 @@ async def test_unrelated_save_preserves_effective_provider_sampling_contract(
     # would hide the omitted-field regression.
     baseline = {
         **subentry.data,
-        "chat_model": "gpt-4o",
+        "chat_model": model,
         "api_mode": "chat_completions",
     }
     for key in ("temperature", "top_p", "reasoning_effort"):
@@ -163,6 +164,8 @@ async def test_unrelated_save_preserves_effective_provider_sampling_contract(
         }
 
     before = effective(subentry.data)
+    for key, value in sampling.items():
+        assert before[key] == value, (model, key, before)
     request = management_ui._ManagementRequest(
         hass, "admin", True,
         {"config": {"max_tokens": 777}, "revision": revision},
