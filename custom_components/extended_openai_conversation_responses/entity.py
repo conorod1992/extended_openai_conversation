@@ -1159,8 +1159,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 round_tool_calls = list(pending_tool_calls)
                 if force_finalizer_only:
                     unexpected = next(
-                        (call for call in round_tool_calls
-                         if call.tool_name != CONTINUE_CONVERSATION_TOOL_NAME),
+                        (
+                            call
+                            for call in round_tool_calls
+                            if call.tool_name != CONTINUE_CONVERSATION_TOOL_NAME
+                        ),
                         None,
                     )
                     if unexpected is not None:
@@ -1168,8 +1171,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             f"Tool `{unexpected.tool_name}` was not advertised for finalization"
                         )
                         append_unresolved_tool_results(
-                            chat_log, self.entity_id, round_tool_calls,
-                            failed_call_id=unexpected.id, error=error,
+                            chat_log,
+                            self.entity_id,
+                            round_tool_calls,
+                            failed_call_id=unexpected.id,
+                            error=error,
                         )
                         raise error
                 pending_tool_calls, loader_calls, control_calls = (

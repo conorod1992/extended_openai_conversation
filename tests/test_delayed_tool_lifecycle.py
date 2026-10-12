@@ -93,6 +93,7 @@ async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening
         "async_setup_intercom_services",
         "async_setup_debug_ui",
         "async_setup_management_ui",
+        "async_get_transfer_staging",
     ):
         monkeypatch.setattr(integration, name, AsyncMock())
 
@@ -168,6 +169,7 @@ async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> No
         arguments,
         None,
         function_tool=_tool(_legacy_delay_schema()),
+        execution_delay={"seconds": 5},
     )
     assert tool_result_data(result) == {"result": "Scheduled"}
 
