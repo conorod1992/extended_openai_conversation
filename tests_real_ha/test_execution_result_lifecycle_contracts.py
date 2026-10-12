@@ -432,6 +432,30 @@ async def test_ha_source_defaults_are_actual_replay_defaults(
     )
 
     source = AcceptanceEchoTool()
+    from custom_components.extended_openai_conversation_responses import (
+        ha_llm_tools,
+        ha_tool_result_compat,
+    )
+
+    unwrap_calls = []
+    unwrap = ha_tool_result_compat.execution_tool_result
+
+    def observed_unwrap(value):
+        result = unwrap(value)
+        current_type = getattr(ha_tool_result_compat.llm, "ToolResult", None)
+        unwrap_calls.append(
+            {
+                "incoming_type": repr(type(value)),
+                "outgoing_type": repr(type(result)),
+                "canonical_type": repr(current_type),
+                "same_class": current_type is type(value),
+                "helper_source": unwrap.__code__.co_filename,
+            }
+        )
+        return result
+
+    monkeypatch.setattr(ha_llm_tools, "execution_tool_result", observed_unwrap)
+    monkeypatch.setattr(entity_module, "execution_tool_result", observed_unwrap)
     if envelopes:
         result_type = getattr(llm, "ToolResult", None)
         if result_type is None:
@@ -495,7 +519,11 @@ async def test_ha_source_defaults_are_actual_replay_defaults(
             and item.get("call_id") == "first"
         )
         payload = json.loads(item["output"])
-    assert payload["result"] == {"echo": "one", "user_id": None}
+    assert payload["result"] == {"echo": "one", "user_id": None}, {
+        "unwrap_calls": unwrap_calls,
+        "agent_class": repr(type(agent)),
+        "dispatch_source": agent._async_dispatch_function_tool.__func__.__code__.co_filename,
+    }
     _install_wire(
         monkeypatch,
         agent,
