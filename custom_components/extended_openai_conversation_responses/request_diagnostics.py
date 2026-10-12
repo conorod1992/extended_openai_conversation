@@ -301,3 +301,15 @@ def record_tool_assembly(agent: Any, result: Any, started: float) -> None:
             )
             if runtime is not None:
                 trace.memory[_INTERNAL_PREPARATION]["function_groups"] = runtime.stats()
+
+
+def first_text_latency(requests: Any) -> int | None:
+    """Select the first request-relative text sample, including a zero latency."""
+    return next(
+        (
+            request.first_text_ms
+            for request in requests
+            if request.first_text_ms is not None
+        ),
+        None,
+    )

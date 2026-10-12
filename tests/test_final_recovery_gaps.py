@@ -32,13 +32,13 @@ from tests.test_usage import FakeStorage
 
 
 @pytest.mark.parametrize("worker_fails", [False, True])
-async def test_archive_query_repeated_cancellation_retains_lock_until_worker_settles(
+async def test_archive_query_cancellation_never_holds_mutation_lock(
     worker_fails,
 ):
     started, release, settled = Event(), Event(), Event()
-    archive = SimpleNamespace(_lock=asyncio.Lock(), _ensure_initialized=Mock())
+    archive = SimpleNamespace(_lock=asyncio.Lock(), _ensure_initialized=Mock(), _sessions={})
 
-    def query():
+    def query(*_args):
         started.set()
         try:
             assert release.wait(5)
@@ -48,18 +48,20 @@ async def test_archive_query_repeated_cancellation_retains_lock_until_worker_set
         finally:
             settled.set()
 
-    owner = asyncio.create_task(history._async_archive_query(archive, query))
+    owner = asyncio.create_task(history._async_archive_query(archive, query, "scope"))
     try:
         assert await asyncio.to_thread(started.wait, 5)
         owner.cancel("first cancellation")
         await asyncio.sleep(0)
         owner.cancel("second cancellation")
         await asyncio.sleep(0)
-        assert archive._lock.locked() and not owner.done()
+        assert not archive._lock.locked() and owner.done()
+        assert not settled.is_set()
         release.set()
         with pytest.raises(asyncio.CancelledError, match="first cancellation"):
             await owner
-        assert settled.is_set() and not archive._lock.locked()
+        assert await asyncio.to_thread(settled.wait, 2)
+        assert not archive._lock.locked()
         archive._ensure_initialized.assert_called_once()
     finally:
         release.set()

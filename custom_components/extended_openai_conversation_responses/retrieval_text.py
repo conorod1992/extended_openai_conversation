@@ -1,5 +1,6 @@
 """Bounded lexical terms for continuous East Asian text."""
 
+from collections.abc import Iterable
 import re
 import unicodedata
 
@@ -21,8 +22,13 @@ _LEXICAL_TOKEN = re.compile(r"\w+(?:[+#]+|(?:['-]\w+)*)", re.UNICODE)
 def lexical_terms(value: str) -> list[str]:
     """Keep short identifiers and index compounds alongside their components."""
     normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+    return lexical_terms_from_tokens(_LEXICAL_TOKEN.findall(normalized))
+
+
+def lexical_terms_from_tokens(tokens: Iterable[str]) -> list[str]:
+    """Expand already normalized lexical tokens without rescanning their text."""
     terms: list[str] = []
-    for token in _LEXICAL_TOKEN.findall(normalized):
+    for token in tokens:
         terms.append(token)
         stem = token[:-2] if token.endswith("'s") else token
         if stem != token:

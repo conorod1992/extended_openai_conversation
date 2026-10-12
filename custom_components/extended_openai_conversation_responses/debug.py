@@ -28,6 +28,7 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .provider_errors import provider_error_metadata
 from .request_diagnostics import (
+    first_text_latency,
     provider_diagnostics,
     record_provider_metrics,
     summary_diagnostics,
@@ -377,16 +378,6 @@ class DebugTrace:
         for request in self.provider_requests:
             for key in usage:
                 usage[key] += int(request.usage.get(key, 0))
-        # Request-relative latency of the first request that actually emits text.
-        # Embeddings and initial tool-only requests have no first-text sample.
-        first_request = next(
-            (
-                request
-                for request in self.provider_requests
-                if request.first_text_ms is not None
-            ),
-            None,
-        )
         data = {
             "debug_id": self.debug_id,
             "started_at": self.started_at,
@@ -404,9 +395,7 @@ class DebugTrace:
                 self.continuity.get("restored_history_items") or 0
             ),
             "provider_request_count": len(self.provider_requests),
-            "first_text_ms": (
-                first_request.first_text_ms if first_request is not None else None
-            ),
+            "first_text_ms": first_text_latency(self.provider_requests),
             **usage,
         }
         return summary_diagnostics(self, data)

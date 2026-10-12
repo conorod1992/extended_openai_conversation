@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from contextlib import suppress
 from dataclasses import asdict
 from heapq import heappush, heapreplace
 from typing import Any
@@ -17,6 +16,7 @@ from .conversation_archive import (
     _local_date_bounds,
     _normalize,
     _parse_time,
+    _search_features,
     _tokens,
 )
 from .management_result_limits import (
@@ -271,26 +271,51 @@ def _validate_archive_page(offset: int, limit: int, maximum: int) -> tuple[int, 
     return safe_offset, max(1, min(int(limit), maximum))
 
 
-async def _async_archive_query[T](
-    archive: Any, query: Callable[..., T], *args: Any
-) -> T:
-    """Keep archive state immutable while a CPU-heavy query runs off-loop."""
+async def _async_archive_query(
+    archive: Any,
+    query: Callable[..., dict[str, Any]],
+    scope_id: str,
+    *args: Any,
+    include_turns: bool = False,
+) -> dict[str, Any]:
+    """Snapshot retained records under the lock; rank without blocking mutations."""
     async with archive._lock:
         archive._ensure_initialized()
-        task = asyncio.ensure_future(asyncio.to_thread(query, *args))
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError as cancelled:
-            while not task.done():
-                try:
-                    await asyncio.shield(task)
-                except asyncio.CancelledError:
-                    continue
-                except BaseException:
-                    break
-            with suppress(BaseException):
-                task.result()
-            raise cancelled
+        sessions = {
+            key: session
+            for key, session in archive._sessions.items()
+            if session.scope_id == scope_id and session.retention_state == "retained"
+        }
+        if include_turns:
+            turns = {key: tuple(archive._turns.get(key, ())) for key in sessions}
+            snapshot_args = (sessions, turns, scope_id, *args)
+        else:
+            snapshot_args = (sessions, scope_id, *args)
+    result = await asyncio.to_thread(query, *snapshot_args)
+    # Deletion/privacy changes may occur while ranking. Never publish their old text.
+    async with archive._lock:
+        for record in result.get("results", result.get("sessions", ())):
+            session_id = record["session_id"]
+            current = archive._sessions.get(session_id)
+            if (
+                current is None
+                or current.scope_id != scope_id
+                or current.retention_state != "retained"
+            ):
+                raise HomeAssistantError(
+                    "Archive changed during search; retry the query"
+                )
+            if "turn_id" in record:
+                index = record["turn_index"]
+                original = turns[session_id][index]
+                current_turns = archive._turns.get(session_id, ())
+                # Appends preserve indices. Pruning/replacement invalidates the
+                # cursor, so retry rather than scanning whole histories here.
+                if index >= len(current_turns) or current_turns[index] is not original:
+                    raise HomeAssistantError(
+                        "Archive changed during search; retry the query"
+                    )
+    return result
 
 
 def _archive_list_sync(
@@ -333,7 +358,6 @@ async def archive_list_page(
     return await _async_archive_query(
         archive,
         _archive_list_sync,
-        archive._sessions,
         scope_id,
         safe_offset,
         safe_limit,
@@ -364,9 +388,7 @@ def _archive_search_sync(
             timestamp = _parse_time(turn.timestamp)
             if (start_date or end_date) and not (start <= timestamp < end):
                 continue
-            combined = f"{turn.user_text} {turn.assistant_text}"
-            normalized_combined = _normalize(combined)
-            tokens = _tokens(combined)
+            normalized_combined, tokens = _search_features(turn)
             overlap = len(query_tokens & tokens)
             literal_match = bool(
                 normalized_query
@@ -442,8 +464,6 @@ async def archive_search_page(
     return await _async_archive_query(
         archive,
         _archive_search_sync,
-        archive._sessions,
-        archive._turns,
         scope_id,
         query,
         start_date,
@@ -451,6 +471,7 @@ async def archive_search_page(
         safe_offset,
         safe_limit,
         dt_util.DEFAULT_TIME_ZONE,
+        include_turns=True,
     )
 
 
@@ -460,13 +481,18 @@ async def archive_get_page(
     session_id: str,
     *,
     start_turn: int = 0,
+    text_offset: int = 0,
     limit: int = MANAGEMENT_ARCHIVE_TURN_PAGE_MAX,
 ) -> dict[str, Any]:
     """Return one management turn page with explicit continuation metadata."""
     safe_start = max(0, int(start_turn))
     safe_limit = max(1, min(int(limit), MANAGEMENT_ARCHIVE_TURN_PAGE_MAX))
     result: dict[str, Any] = await archive.async_get(
-        scope_id, session_id, safe_start, safe_limit
+        scope_id,
+        session_id,
+        safe_start,
+        safe_limit,
+        text_offset=max(0, int(text_offset)),
     )
     returned = len(result.get("turns", []))
     result.update(
@@ -478,5 +504,7 @@ async def archive_get_page(
             total=int(result.get("session", {}).get("turn_count", returned)),
         )
     )
+    # Preserve the archive cursor even when this page ends within a turn.
+    result["next_offset"] = result.get("next_start_turn")
     result["start_turn"] = safe_start
     return result

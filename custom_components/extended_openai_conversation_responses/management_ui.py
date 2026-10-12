@@ -2397,6 +2397,7 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
             scope_id,
             str(message.get("session_id", "")),
             start_turn=int(message.get("start_turn", 0)),
+            text_offset=int(message.get("text_offset", 0)),
             limit=int(message.get("limit", 20)),
         )
     if action == "delete":
@@ -3092,6 +3093,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("limit"): int,
         vol.Optional("offset"): int,
         vol.Optional("start_turn"): int,
+        vol.Optional("text_offset"): int,
         vol.Optional("successful"): bool,
         vol.Optional("confirm"): bool,
     }

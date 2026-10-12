@@ -139,7 +139,7 @@ function renderTurns(panel, data) {
   return (data.turns || []).map((turn) => `<article class="turn"><div class="message user"><strong>You</strong><p>${panel._e(turn.user_text)}</p></div><div class="message assistant"><strong>Assistant</strong><p>${panel._e(turn.assistant_text)}</p></div><small>${panel._e(panel._formatDate(turn.timestamp))}</small></article>`).join("") || panel._empty("No turns retained on this page.");
 }
 
-function appendTurnPager(panel, body, sessionId, data) {
+function appendTurnPager(panel, body, sessionId, data, history) {
   const pager = document.createElement("div");
   pager.className = "section-actions eoc-turn-pager";
   const status = document.createElement("small");
@@ -148,14 +148,15 @@ function appendTurnPager(panel, body, sessionId, data) {
   status.textContent = pageLabel(data, "turns");
   pager.append(status);
 
-  const offset = integer(data.offset, integer(data.start_turn));
-  const limit = Math.max(1, integer(data.limit, TURN_PAGE_LIMIT));
   const previous = document.createElement("button");
   previous.type = "button";
   previous.className = "secondary";
   previous.textContent = "Previous turns";
-  previous.disabled = offset === 0;
-  previous.addEventListener("click", () => void openSession(panel, sessionId, Math.max(0, offset - limit)));
+  previous.disabled = history.length === 0;
+  previous.addEventListener("click", () => {
+    const cursor = history.at(-1);
+    if (cursor) void openSession(panel, sessionId, cursor.start_turn, cursor.text_offset, history.slice(0, -1));
+  });
   pager.append(previous);
 
   const next = document.createElement("button");
@@ -163,10 +164,10 @@ function appendTurnPager(panel, body, sessionId, data) {
   next.className = "secondary";
   next.textContent = "Next turns";
   next.disabled = !data.has_more;
-  const nextOffset = data.next_offset == null
-    ? offset + integer(data.returned, (data.turns || []).length)
-    : integer(data.next_offset);
-  next.addEventListener("click", () => void openSession(panel, sessionId, nextOffset));
+  next.addEventListener("click", () => {
+    const cursor = {start_turn: integer(data.start_turn), text_offset: integer(data.text_offset)};
+    void openSession(panel, sessionId, data.next_start_turn, data.next_text_offset, [...history, cursor]);
+  });
   pager.append(next);
   body.append(pager);
 }
@@ -195,7 +196,9 @@ async function searchArchive(panel, offset = 0) {
   await loadConversationPage(panel, offset);
 }
 
-async function openSession(panel, sessionId, startTurn = 0) {
+async function openSession(panel, sessionId, startTurn = 0, textOffset = 0, history = []) {
+  const agentId = panel._agentId;
+  const scopeId = panel._scopeId;
   panel._ensureOwnedDialog("session-dialog");
   const root = panel.shadowRoot;
   const dialog = root.querySelector("#session-dialog");
@@ -211,14 +214,15 @@ async function openSession(panel, sessionId, startTurn = 0) {
       scope_id: panel._scopeId,
       session_id: sessionId,
       start_turn: integer(startTurn),
+      text_offset: integer(textOffset),
       limit: TURN_PAGE_LIMIT,
     });
-    if (panel._eocSessionLoadToken !== token || !dialog.open) return;
+    if (panel._eocSessionLoadToken !== token || !dialog.open || panel._agentId !== agentId || panel._scopeId !== scopeId) return;
     title.textContent = data.session?.title || "Untitled conversation";
     body.innerHTML = renderTurns(panel, data);
-    appendTurnPager(panel, body, sessionId, data);
+    appendTurnPager(panel, body, sessionId, data, history);
   } catch (err) {
-    if (panel._eocSessionLoadToken !== token || !dialog.open) return;
+    if (panel._eocSessionLoadToken !== token || !dialog.open || panel._agentId !== agentId || panel._scopeId !== scopeId) return;
     title.textContent = "Unable to load conversation";
     body.innerHTML = `<div class="error" role="alert">${panel._e(err.message || String(err))}</div>`;
   }
@@ -233,6 +237,7 @@ export {
   searchSessionRows,
   loadConversationPage,
   searchArchive,
+  openSession,
 };
 
 function activeConversationMarkup(panel, result) {
