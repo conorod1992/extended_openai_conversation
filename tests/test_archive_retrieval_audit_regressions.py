@@ -283,6 +283,15 @@ async def test_complete_model_list_pages_survive_outer_result_guard(hass, kind, 
         entity._knowledge = KnowledgeLibrary(_KnowledgeStorage(rows))
         await entity._knowledge.async_initialize()
         records_key, id_key = "sources", "source_id"
+    # Assert the documented list payload, not just IDs that can survive corruption.
+    if kind == "memory":
+        fields = ("memory_id", "content", "category", "source", "subject",
+                  "key", "valid_from", "created_at", "updated_at")
+    else:
+        # Knowledge catalog deliberately returns metadata, not full source text.
+        fields = ("source_id", "title", "description", "enabled",
+                  "created_at", "updated_at")
+    expected = {row[id_key]: {field: row[field] for field in fields} for row in rows}
     seen, offset = [], 0
     for _ in range(30):
         arguments = {"offset": offset}
@@ -304,7 +313,13 @@ async def test_complete_model_list_pages_survive_outer_result_guard(hass, kind, 
         assert len(wire) <= MAX_MODEL_TOOL_RESULT_CHARACTERS
         page = json.loads(wire)
         assert records_key in page, page
-        seen.extend(row[id_key] for row in page[records_key])
+        for row in page[records_key]:
+            assert row[id_key] in expected
+            assert {field: row[field] for field in fields} == expected[row[id_key]]
+            if kind == "knowledge":
+                original = next(source for source in rows if source[id_key] == row[id_key])
+                assert row["character_count"] == len(original["content"])
+            seen.append(row[id_key])
         assert page["returned"] == len(page[records_key])
         if not page["has_more"]:
             break
