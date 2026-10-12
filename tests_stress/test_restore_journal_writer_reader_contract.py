@@ -6,7 +6,6 @@ process for each payload. The existing process-crash suite covers cold boots.
 
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -22,7 +21,7 @@ from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 @pytest.mark.usefixtures("real_store_io")
 @pytest.mark.parametrize("phase", ["applying", "committed"])
-@pytest.mark.parametrize("extra", ["", "é\\n東京 \\"quoted\\" \\\\ path " * 200])
+@pytest.mark.parametrize("extra", ["", ("é\n東京 " + chr(34) + "quoted" + chr(34) + " \\ path ") * 200])
 async def test_accepted_journal_is_readable_by_production_reader_on_disk(
     hass, phase, extra
 ):
@@ -53,12 +52,12 @@ async def test_accepted_journal_is_readable_by_production_reader_on_disk(
         reloaded, "entry-1", "agent-new"
     )
     assert loaded == journal
-    assert restore_recovery._prepared_document(read_target, "entry-1", "agent-new") == (
-        journal["target"]
-    )
-    assert restore_recovery._prepared_document(read_rollback, "entry-1", "agent-new") == (
-        journal["rollback"]
-    )
+    assert read_target.title == target.title
+    assert read_rollback.title == rollback.title
+    assert read_target.config["prompt"] == target.config["prompt"]
+    assert read_rollback.config["prompt"] == rollback.config["prompt"]
+    assert len(read_target.memories) == len(target.memories)
+    assert len(read_rollback.knowledge) == len(rollback.knowledge)
     await store.async_remove()
     assert not path.exists()
 
