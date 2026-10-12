@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses import agent_config
 from custom_components.extended_openai_conversation_responses.knowledge import (
@@ -16,8 +17,8 @@ from custom_components.extended_openai_conversation_responses.memory import (
 from custom_components.extended_openai_conversation_responses.request_rules import (
     STORAGE_KEY_PREFIX as RULES_STORAGE_KEY_PREFIX,
     STORAGE_VERSION as RULES_STORAGE_VERSION,
-    RequestRuleStore,
     RequestRules,
+    RequestRuleStore,
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context
@@ -50,7 +51,7 @@ async def test_management_runtime_and_durable_state_reconcile(
     agent = conversation.async_get_agent(hass, entry.entry_id)
     assert agent is not None
 
-    owner = await hass.auth.async_create_user("Reconciliation owner")
+    owner = MockUser(name="Reconciliation owner", is_owner=True).add_to_hass(hass)
     client = await _admin_client(
         hass, hass_ws_client, user_id="reconciliation-admin", name="Reconciliation Admin"
     )

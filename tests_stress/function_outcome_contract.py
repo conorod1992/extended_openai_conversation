@@ -1,5 +1,6 @@
 """Independent result shapes shared by real backends and enclosing workflows."""
 
+import ast
 import json
 
 BACKENDS = (
@@ -113,10 +114,14 @@ def expected_business_result(kind, value, root):
 
 
 def expected_consumer_result(kind, value, root, workflow):
-    # Request Rule captures explicitly decode received JSON text. Other callers
-    # preserve REST/scrape text, including an HTTP error body's business fields.
+    # Native HA action templates parse Python literals in captured text.
     if workflow == "request_rule" and kind in {"rest", "scrape"}:
-        return value
+        text = json.dumps(value)
+        try:
+            parsed = ast.literal_eval(text)
+            return text if isinstance(parsed, str) else parsed
+        except ValueError, SyntaxError:
+            return text
     if workflow == "provider" and kind in {"rest", "scrape"}:
         return json.dumps(value, separators=(",", ":"))
     return expected_business_result(kind, value, root)

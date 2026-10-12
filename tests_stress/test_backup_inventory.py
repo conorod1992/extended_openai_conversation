@@ -96,6 +96,8 @@ BACKED_UP_AGENT_FIELDS = {
     "CONF_WEB_SEARCH_CONTEXT",
 }
 
+PROVIDER_BACKED_UP_FIELDS = {"azure_model"}
+
 BACKED_UP_SUBSYSTEMS = {
     "agent",
     "memories",
@@ -110,14 +112,18 @@ BACKED_UP_SUBSYSTEMS = {
 
 def test_every_persisted_agent_field_has_backup_classification() -> None:
     classified = {getattr(agent_config, name) for name in BACKED_UP_AGENT_FIELDS}
-    assert classified == set(agent_config.AGENT_CONFIG_FIELDS), (
+    assert classified | PROVIDER_BACKED_UP_FIELDS == set(
+        agent_config.AGENT_CONFIG_FIELDS
+    ), (
         "A persistent agent field was added or removed. Review its backup semantics "
         "and update BACKED_UP_AGENT_FIELDS explicitly."
     )
     exported = backup.export_configuration_snapshot(
         agent_config.agent_config_defaults()
     )
-    assert set(exported) == classified
+    assert set(exported) == classified | PROVIDER_BACKED_UP_FIELDS
+    configured = backup.export_configuration_snapshot({"azure_model": "gpt-5.6"})
+    assert configured["azure_model"] == "gpt-5.6"
 
 
 def test_every_agent_field_has_lifecycle_contract() -> None:
@@ -125,7 +131,7 @@ def test_every_agent_field_has_lifecycle_contract() -> None:
     contracts = json.loads(path.read_text(encoding="utf-8"))
     assert contracts["schema_version"] == 3
     fields = contracts["fields"]
-    assert set(fields) == BACKED_UP_AGENT_FIELDS, (
+    assert set(fields) == BACKED_UP_AGENT_FIELDS | PROVIDER_BACKED_UP_FIELDS, (
         "Agent configuration changed: classify each field's save, persistence, "
         "backup, and migration semantics in agent_field_contract.json"
     )

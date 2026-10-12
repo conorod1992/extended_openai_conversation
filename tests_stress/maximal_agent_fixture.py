@@ -10,6 +10,7 @@ from __future__ import annotations
 from custom_components.extended_openai_conversation_responses import agent_config
 
 FIXTURE_EXCEPTIONS = {
+    "azure_model": "Azure-only underlying model; covered by backup inventory",
     "guest_policy_version": "only the current schema version validates",
     "skills": "requires an installed skill outside this hermetic HA fixture",
     "memory_auto_create": "derived from memory_mode; manual avoids provider writes",
@@ -125,8 +126,8 @@ def maximal_agent_options() -> dict:
         agent_config.AGENT_CONFIG_FIELDS
     ), "Classify every persistent field in the maximal backup fixture"
     for key, value in FIXTURE_OVERRIDES.items():
-        assert value != defaults[key], f"{key} must exercise a non-default value"
+        assert value != defaults.get(key), f"{key} must exercise a non-default value"
     normalized = agent_config.normalize_agent_config(FIXTURE_OVERRIDES)
     for key in FIXTURE_OVERRIDES:
-        assert normalized[key] != defaults[key], f"{key} normalized to its default"
+        assert normalized[key] != defaults.get(key), f"{key} normalized to its default"
     return normalized

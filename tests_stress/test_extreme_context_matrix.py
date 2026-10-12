@@ -777,12 +777,16 @@ async def test_noncompleted_summary_text_is_rejected_and_recovers(
 ):
     """HTTP-success generation failures never replace public Assist history."""
     import asyncio
+
     import httpx
+
     from custom_components.extended_openai_conversation_responses.const import (
         CONTEXT_TRUNCATE_SUMMARIZE,
     )
     from tests_real_ha.test_provider_wire_e2e import (
-        _raw_client, _response_object, _responses_sse_text,
+        _raw_client,
+        _response_object,
+        _responses_sse_text,
     )
 
     owner = MockUser(id="summary-recovery-owner", name="Summary owner", is_owner=True).add_to_hass(hass)
@@ -881,11 +885,13 @@ async def test_noncompleted_summary_text_is_rejected_and_recovers(
 async def _pending_summary_journey(hass, monkeypatch, *, title="Summary replacement"):
     """Warm real public history until a detached SDK summary has entered transport."""
     import asyncio
+
     import httpx
-    from tests_real_ha.test_provider_wire_e2e import _raw_client
+
     from custom_components.extended_openai_conversation_responses.const import (
         CONTEXT_TRUNCATE_SUMMARIZE,
     )
+    from tests_real_ha.test_provider_wire_e2e import _raw_client
 
     owner = MockUser(
         id="pending-summary-owner", name="Summary owner", is_owner=True
@@ -897,7 +903,7 @@ async def _pending_summary_journey(hass, monkeypatch, *, title="Summary replacem
             CONF_API_MODE: API_MODE_CHAT_COMPLETIONS,
             CONF_FUNCTION_TOOLS: [],
             CONF_ARCHIVE_ENABLED: True,
-            CONF_CONTEXT_THRESHOLD: 1000,
+            CONF_CONTEXT_THRESHOLD: 5000,
             CONF_CONTEXT_TRUNCATE_STRATEGY: CONTEXT_TRUNCATE_SUMMARIZE,
         },
     )
@@ -989,13 +995,14 @@ async def test_pending_summary_lifecycle_cannot_mutate_replacement_history(
     import gc
     from types import MappingProxyType
     import weakref
-    from homeassistant.config_entries import ConfigSubentry
+
     from custom_components.extended_openai_conversation_responses.conversation_lifecycle import (
         async_reset_conversation_context,
     )
     from custom_components.extended_openai_conversation_responses.management_ui import (
         async_management_command,
     )
+    from homeassistant.config_entries import ConfigSubentry
 
     state = await _pending_summary_journey(hass, monkeypatch)
     entry, old_agent = state["entry"], state["agent"]

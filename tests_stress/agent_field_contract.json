@@ -10,6 +10,16 @@
     "presentation": {"dimensions": ["exposed_entities_enabled", "speech_processing_enabled", "speech_behavior", "template_context", "advanced_options"], "transition": "generated_valid_transitions", "journey": "extensive-backup-restore"}
   },
   "fields": {
+    "azure_model": {
+      "save_reload": "config_subentry",
+      "persistence": "ha_config_entries",
+      "backup": "full_and_setup",
+      "migration": "standard",
+      "coverage": {
+        "kind": "covered_separately",
+        "reason": "Azure-only underlying model is preserved by configuration backup; non-Azure wire journeys keep the default empty value"
+      }
+    },
     "CONF_ADVANCED_OPTIONS": {
       "save_reload": "config_subentry",
       "persistence": "ha_config_entries",

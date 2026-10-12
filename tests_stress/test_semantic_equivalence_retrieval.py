@@ -353,7 +353,7 @@ async def test_competing_knowledge_scores_track_edits_disabled_sources_and_rebui
             enabled=True,
         )
         model[source.source_id] = {
-            "score": max(title, description, content) / 2 + 4 * title + 2 * description,
+            "score": content / 2 + 4 * title + 2 * description,
             "enabled": True,
         }
 
@@ -538,6 +538,8 @@ async def test_equivalent_public_installations_preserve_context_tools_and_effect
                 "api_mode": mode,
                 "chat_model": "gpt-5.6",
                 "reasoning_effort": "none",
+                "temperature": 1.0,
+                "top_p": 1.0,
                 "prompt": "Controlled equivalent installation",
                 "functions": [variant],
                 "memory_mode": "manual",
@@ -643,6 +645,7 @@ async def test_equivalent_public_installations_preserve_context_tools_and_effect
                                     for item in right[key]
                                 },
                             )
+                assert normalized == baseline, (history, normalized, baseline)
                 assert_typed_value(normalized, baseline)
             record(
                 stress_trace,

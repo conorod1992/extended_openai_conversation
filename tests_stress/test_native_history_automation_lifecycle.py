@@ -10,7 +10,7 @@ from custom_components.extended_openai_conversation_responses.functions.native i
     NativeFunction,
 )
 from homeassistant.components import automation, conversation, recorder
-from homeassistant.core import HomeAssistant
+from homeassistant.components.recorder import history as recorder_history
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_native_recorder_acceptance import _EXPOSED
@@ -25,6 +25,7 @@ async def test_native_automation_success_requires_generated_id_loaded(
 ):
     """Reload success alone cannot acknowledge an automation HA never loaded."""
     from pytest_homeassistant_custom_component.common import MockUser
+
     from custom_components.extended_openai_conversation_responses.const import (
         CONF_FUNCTION_TOOLS,
         EVENT_AUTOMATION_REGISTERED,
@@ -142,10 +143,8 @@ async def test_native_history_worker_owns_session_until_query_finishes(
     """Cancellation cannot return a genuine Recorder connection before its worker."""
     import asyncio
     import threading
+
     from sqlalchemy import event
-    from custom_components.extended_openai_conversation_responses.functions import (
-        native,
-    )
 
     assert await async_setup_component(
         hass,
@@ -167,7 +166,7 @@ async def test_native_history_worker_owns_session_until_query_finishes(
     entered, release, returned = threading.Event(), threading.Event(), threading.Event()
     owner = {}
     checkouts, checkins = [], []
-    original = native.recorder_history.get_significant_states_with_session
+    original = recorder_history.get_significant_states_with_session
 
     def gated_query(*args, **kwargs):
         if owner:
@@ -192,7 +191,7 @@ async def test_native_history_worker_owns_session_until_query_finishes(
             returned.set()
 
     monkeypatch.setattr(
-        native.recorder_history, "get_significant_states_with_session", gated_query
+        recorder_history, "get_significant_states_with_session", gated_query
     )
     event.listen(instance.engine, "checkout", checkout)
     event.listen(instance.engine, "checkin", checkin)

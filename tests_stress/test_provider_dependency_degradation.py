@@ -15,9 +15,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
     CONF_FUNCTION_TOOLS,
 )
-from custom_components.extended_openai_conversation_responses.functions import native
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+from homeassistant.components.recorder import history as recorder_history
 from homeassistant.core import HomeAssistant
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_knowledge_provider_wire_e2e import _chat_sse_tool_call
@@ -74,7 +74,7 @@ async def test_history_dependency_failure_is_tool_scoped_and_recovers(
     assert agent._archive is not None
 
     calls = 0
-    original = native.recorder_history.get_significant_states_with_session
+    original = recorder_history.get_significant_states_with_session
 
     def failing_history(*args: Any, **kwargs: Any):
         del args, kwargs
@@ -88,7 +88,7 @@ async def test_history_dependency_failure_is_tool_scoped_and_recovers(
         raise TimeoutError("history query delayed past deadline for nightly probe")
 
     monkeypatch.setattr(
-        native.recorder_history, "get_significant_states_with_session", failing_history
+        recorder_history, "get_significant_states_with_session", failing_history
     )
     call_id = "call-history-fault"
     provider = ProviderFaultTransport(
@@ -121,7 +121,7 @@ async def test_history_dependency_failure_is_tool_scoped_and_recovers(
     assert agent._archive.stats()["turn_count"] == 1
 
     monkeypatch.setattr(
-        native.recorder_history,
+        recorder_history,
         "get_significant_states_with_session",
         original,
     )

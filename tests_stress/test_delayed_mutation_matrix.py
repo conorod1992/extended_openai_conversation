@@ -19,8 +19,10 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
     CONF_GUEST_FUNCTION_POLICY,
     CONF_GUEST_MODE_ENABLED,
+    CONF_GUEST_POLICY_VERSION,
     DEFAULT_CONF_FUNCTION_TOOLS,
     DOMAIN,
+    GUEST_POLICY_VERSION,
 )
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
     DATA_DELAYED_TOOL_MANAGER,
@@ -42,6 +44,7 @@ from tests_real_ha.test_delayed_tool_due_reauthorization import (
     _set_control_permission,
 )
 from tests_stress.conftest import record
+from tests_stress.native_light_fixture import install_lights
 
 MUTATIONS = (
     "tool_disabled",
@@ -76,7 +79,7 @@ async def test_delayed_tool_uses_live_state_at_due_time(
     async def turn_off(call: Any) -> None:
         calls.append(call)
 
-    hass.services.async_register("light", "turn_off", turn_off)
+    await install_lights(hass, [_ENTITY_ID], turn_off)
     hass.states.async_set(_ENTITY_ID, "on")
     async_expose_entity(hass, conversation.DOMAIN, _ENTITY_ID, True)
     tool = deepcopy(DEFAULT_CONF_FUNCTION_TOOLS[0])
@@ -96,6 +99,7 @@ async def test_delayed_tool_uses_live_state_at_due_time(
             CONF_FUNCTION_TOOLS: [tool],
             CONF_FUNCTION_GROUPS: [group] if grouped else [],
             CONF_GUEST_MODE_ENABLED: True,
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
             CONF_GUEST_FUNCTION_POLICY: "on"
             if mutation == "guest_policy_edited"
             else "off",

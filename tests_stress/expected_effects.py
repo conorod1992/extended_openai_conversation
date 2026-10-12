@@ -42,7 +42,10 @@ class ExpectedEffects:
             assert item["match_type"] == "equals"
             assert item["action_type"] == "local_action"
             assert item["action"]["actions"] == [
-                {"action": "chaos_probe.record", "data": {"message": marker}}
+                {
+                    "action": "chaos_probe.record",
+                    "data": {"message": marker, "entity_id": "light.chaos_probe"},
+                }
             ]
             assert item["action"]["success_response"] == (
                 "Local effect " + marker.removeprefix("rule effect ")

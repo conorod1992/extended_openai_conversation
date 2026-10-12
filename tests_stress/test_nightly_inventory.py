@@ -53,7 +53,11 @@ def test_every_real_ha_test_is_selected_or_explicitly_excluded() -> None:
     assert set(alternatives) == excluded
     for path, evidence in alternatives.items():
         assert evidence["reason"].strip(), path
-        jobs = yaml.safe_load((ROOT / ".github/workflows" / evidence["workflow"]).read_text(encoding="utf-8"))["jobs"]
+        jobs = yaml.safe_load(
+            (ROOT / ".github/workflows" / evidence["workflow"]).read_text(
+                encoding="utf-8"
+            )
+        )["jobs"]
         job = jobs[evidence["job"]]
         commands = "\n".join(step.get("run", "") for step in job["steps"])
         if "matrix.test-paths" in commands:
@@ -71,14 +75,22 @@ def test_every_real_ha_test_is_selected_or_explicitly_excluded() -> None:
         assert path in selected and path not in excluded
         assert classification["remaining_evidence"].strip()
         nodes = set(re.findall(rf"{re.escape(path)}::([A-Za-z0-9_]+)", workflow))
-        assert nodes == set(classification["nodes"]), f"{path}: partial selection drifted"
+        assert nodes == set(classification["nodes"]), (
+            f"{path}: partial selection drifted"
+        )
         source = (ROOT / path).read_text(encoding="utf-8")
         for node in nodes:
-            assert re.search(rf"(?:async )?def {re.escape(node)}\(", source), f"{path}::{node} missing"
+            assert re.search(rf"(?:async )?def {re.escape(node)}\(", source), (
+                f"{path}::{node} missing"
+            )
         # A bare file selection would make the partial classification obsolete.
         assert not re.search(rf"{re.escape(path)}(?![A-Za-z0-9_.:/-])", workflow)
-    node_files = {path for path in selected if re.search(rf"{re.escape(path)}::", workflow)}
-    assert node_files == set(partial), "node-only selections must explicitly classify the remainder"
+    node_files = {
+        path for path in selected if re.search(rf"{re.escape(path)}::", workflow)
+    }
+    assert node_files == set(partial), (
+        "node-only selections must explicitly classify the remainder"
+    )
 
     assert selected.isdisjoint(excluded)
     assert selected | excluded == actual
@@ -89,9 +101,11 @@ def test_evidence_filenames_bound_parametrized_node_ids() -> None:
     one = evidence_filename(f"{base}[chat_completions-{'x' * 4000}]")
     two = evidence_filename(f"{base}[responses-{'x' * 4000}]")
     assert one != two
-    assert one.startswith("tests_stress_test_provider_event_sequences.py_test_duplicate_events-")
+    assert one.startswith(
+        "tests_stress_test_provider_event_sequences.py_test_duplicate_events-"
+    )
     assert len(one.encode("utf-8")) < 200
-    assert all(character not in one for character in ':\\/[]')
+    assert all(character not in one for character in ":\\/[]")
 
 
 def test_native_browser_version_matrix_stays_compact_and_names_its_points() -> None:
@@ -101,7 +115,10 @@ def test_native_browser_version_matrix_stays_compact_and_names_its_points() -> N
     text = workflow.read_text(encoding="utf-8")
     jobs = yaml.safe_load(text)["jobs"]
     smoke = jobs["native-browser"]
-    assert set(smoke["strategy"]["matrix"]["ha-version"]) == {"oldest", "stable", "dev"}
+    assert (
+        smoke["strategy"]["matrix"]["ha-version"]
+        == '${{ fromJSON(github.event_name == \'schedule\' && github.event.schedule == \'45 3 * * 1-6\' && \'["stable","dev"]\' || \'["oldest","stable","dev"]\') }}'
+    )
     commands = "\n".join(step.get("run", "") for step in smoke["steps"])
     paths = set(re.findall(r"tests_real_ha/[A-Za-z0-9_./-]+\.py", commands))
     assert paths == {"tests_real_ha/test_browser_compatibility_acceptance.py"}
