@@ -171,8 +171,8 @@ async def test_seeded_competing_rules_preserve_eligible_public_effects(
     "text,expected",
     [
         ("0", 0),
-        ("false", False),
-        ("null", None),
+        ("false", "false"),
+        ("null", "null"),
         ("[]", []),
         ('{"level":62}', {"level": 62}),
         ("plain text", "plain text"),
@@ -246,8 +246,10 @@ async def test_function_result_values_survive_public_request_rule(
     )
     assert calls == ["before", "after"]
     if capture:
-        assert captured == [expected]
-        assert type(captured[0]) is type(expected)
+        # Text mode preserves JSON-looking text; HA parses Python literals only.
+        captured_value = expected if parse_result else text
+        assert captured == [captured_value]
+        assert type(captured[0]) is type(captured_value)
     assert agent._usage.runs[-1].successful is True
     record(
         stress_trace,
@@ -314,7 +316,9 @@ async def test_function_execution_failure_stops_rule_independently_of_capture(
         _local([_record_action("healthy")], phrase="healthy")
     )
     assert (
-        _cross_feature_speech(await _cross_feature_say(hass, agent, "run rule"), successful=False)
+        _cross_feature_speech(
+            await _cross_feature_say(hass, agent, "run rule"), successful=False
+        )
         == "Failed safely"
     )
     expected = ["before"] if failure_kind == "service" else ["before", "tool before"]
@@ -616,7 +620,9 @@ async def test_matcher_route_scope_reaches_wire_and_next_turn(
             "model_routing",
             {
                 "model": routed_model,
-                "reasoning_effort": "none" if api_mode == API_MODE_CHAT_COMPLETIONS else "xhigh",
+                "reasoning_effort": "none"
+                if api_mode == API_MODE_CHAT_COMPLETIONS
+                else "xhigh",
                 "scope": scope,
                 "reset": False,
                 "continue_to_ai": True,

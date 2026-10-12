@@ -237,6 +237,9 @@ async def test_populated_export_mutate_restore_is_semantically_equal(
         language="en",
         agent_id=entry.entry_id,
     )
+    assert guest_result.response.error_code is None, json.dumps(
+        guest_result.response.as_dict()
+    )
     assert _speech(guest_result) == "Guest backup restored"
     assert agent._guest_mode.is_active()
     guest_request = wire.requests[0]["body"]

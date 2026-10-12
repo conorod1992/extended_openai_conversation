@@ -282,7 +282,10 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
                         "actions": [
                             {
                                 "action": "chaos_probe.record",
-                                "data": {"message": f"rule effect {step}"},
+                                "data": {
+                                    "message": f"rule effect {step}",
+                                    "entity_id": "light.chaos_probe",
+                                },
                             }
                         ],
                         "success_response": f"Local effect {step}",
@@ -541,7 +544,13 @@ async def test_seeded_cross_store_chaos_preserves_valid_agent_state(
                 assert local.response.as_dict()["speech"]["plain"][
                     "speech"
                 ] == "Local effect " + marker.removeprefix("rule effect ")
-                expected_new = [("chaos_probe", "record", {"message": marker})]
+                expected_new = [
+                    (
+                        "chaos_probe",
+                        "record",
+                        {"message": marker, "entity_id": "light.chaos_probe"},
+                    )
+                ]
                 assert effects[baseline:] == expected_new
                 expected.effects.extend(expected_new)
                 assert effects == expected.effects

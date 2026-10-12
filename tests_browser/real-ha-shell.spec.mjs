@@ -280,9 +280,11 @@ test.describe("nightly native", () => {
       });
       expect(blocked).toMatch(/active|transfer|limit|session/i);
       expect(blocked).not.toBe("unexpected admission");
-      // No test clock jump or explicit cancellation: backend expiry is lazy.
-      await replacement.waitForTimeout(11000);
-      expect(await state()).toMatchObject({imports:1, files_present:true});
+      // Let the real backend timer reclaim the abandoned upload without a clock jump.
+      await expect.poll(async () => {
+        const current = await state();
+        return {imports:current.imports, files:current.owned_files_on_disk};
+      }, {timeout:15000}).toEqual({imports:0, files:0});
       await fresh.locator("#backup-file-transfer").setInputFiles(archive);
       await expect(fresh.locator("#restore-dialog")).toHaveJSProperty("open", true);
       await expect(fresh.locator("#restore-transfer-apply")).toBeEnabled();

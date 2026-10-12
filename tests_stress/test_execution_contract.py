@@ -323,7 +323,10 @@ def test_only_stable_adds_native_browser_engines():
         )
     )["jobs"]
     matrix = jobs["native-browser"]["strategy"]["matrix"]
-    assert matrix["ha-version"] == ["oldest", "stable", "dev"]
+    assert (
+        matrix["ha-version"]
+        == '${{ fromJSON(github.event_name == \'schedule\' && github.event.schedule == \'45 3 * * 1-6\' && \'["stable","dev"]\' || \'["oldest","stable","dev"]\') }}'
+    )
     assert matrix["profile"] == ["chromium"]
     assert (
         matrix["include"] == "${{ fromJson(needs.prepare.outputs.nightly-browsers) }}"
@@ -797,7 +800,7 @@ def test_native_request_rule_semantics_are_mandatory():
     cases = expected_cases(policy, "request-rules")
     prefix = "tests_real_ha/test_request_rules_script_semantics.py::"
     for name, count in {
-        "test_nested_function_results_agree_in_native_action_and_speech": 5,
+        "test_nested_function_results_agree_in_native_action_and_speech": 6,
         "test_native_stop_enabled_decision_does_not_mask_later_abort": 15,
         "test_instrumented_stops_preserve_native_nested_scope": 8,
     }.items():

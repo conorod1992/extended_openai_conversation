@@ -25,6 +25,7 @@ from .const import (
     CONF_ARCHIVE_RETENTION_DAYS,
     CONF_ARCHIVE_SESSION_TIMEOUT_MINUTES,
     CONF_BASE_URL,
+    CONF_CHAT_MODEL,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_CURRENT_DATETIME_ENABLED,
     CONF_CURRENT_DATETIME_TEMPLATE,
@@ -49,6 +50,7 @@ from .const import (
     CONF_MEMORY_MODE,
     CONF_ORGANIZATION,
     CONF_PROMPT,
+    CONF_SERVICE_TIER,
     CONF_SHARED_ARCHIVE_ENABLED,
     CONF_SHARED_MEMORY_MODE,
     CONF_SKIP_AUTHENTICATION,
@@ -69,10 +71,12 @@ from .const import (
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
     DEFAULT_ARCHIVE_RETENTION_DAYS,
     DEFAULT_ARCHIVE_SESSION_TIMEOUT_MINUTES,
+    DEFAULT_CHAT_MODEL,
     DEFAULT_CURRENT_DATETIME_TEMPLATE,
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_PROMPT,
+    DEFAULT_SERVICE_TIER,
     DEFAULT_SHARED_ARCHIVE_ENABLED,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_SKIP_AUTHENTICATION,
@@ -94,7 +98,11 @@ from .debug import DebugOpenAIClientProxy
 from .debug_ui import async_setup_debug_ui
 from .delayed_tools import async_setup_delayed_tools
 from .ha_permissions import async_setup_ha_permissions
-from .helpers import get_authenticated_client, supports_openai_hosted_tools
+from .helpers import (
+    get_authenticated_client,
+    get_model_config,
+    supports_openai_hosted_tools,
+)
 from .intercom_services import async_setup_intercom_services
 from .live_subentry_updates import is_live_subentry_update
 from .management_function_repair import async_prewarm_persisted_config_projection
@@ -359,6 +367,28 @@ def _migrate_saved_default_prompt(data: dict) -> bool:
     return True
 
 
+def _migrate_saved_service_tier(data: dict) -> bool:
+    """Repair the historical gpt-5-mini/Flex default before reads or requests.
+
+    Releases through 6.7.0 persisted this pair on agent creation. The current
+    catalogue rejects Flex for that model, including on configuration reads.
+    Keep this compatibility repair separate from strict validation of new edits.
+    """
+    model = data.get("azure_model") or data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+    if (
+        model != "gpt-5-mini"
+        or data.get(CONF_SERVICE_TIER) != "flex"
+        or "flex" in get_model_config(model).get("service_tier_options", [])
+    ):
+        return False
+    data[CONF_SERVICE_TIER] = DEFAULT_SERVICE_TIER
+    _LOGGER.warning(
+        "Migrating saved gpt-5-mini processing tier from historical Flex default to %s",
+        DEFAULT_SERVICE_TIER,
+    )
+    return True
+
+
 def _migrate_saved_native_function_schemas(data: dict) -> bool:
     """Persist exact-stock native schema upgrades in one agent data mapping."""
     migrated_yaml, changed = migrate_legacy_stock_native_function_tools_yaml(
@@ -370,7 +400,7 @@ def _migrate_saved_native_function_schemas(data: dict) -> bool:
 
 
 async def async_migrate_integration(hass: HomeAssistant) -> None:
-    """Migrate entry structure plus exact historical stock prompts and tool schemas."""
+    """Migrate entry structure and historical stock configuration defaults."""
 
     entries = sorted(
         hass.config_entries.async_entries(DOMAIN),
@@ -389,6 +419,7 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             data = dict(subentry.data)
             changed = _migrate_saved_native_function_schemas(data)
             changed = _migrate_saved_default_prompt(data) or changed
+            changed = _migrate_saved_service_tier(data) or changed
             if changed:
                 hass.config_entries.async_update_subentry(entry, subentry, data=data)
 
@@ -434,6 +465,7 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             data = dict(subentry.data)
             _migrate_saved_native_function_schemas(data)
             _migrate_saved_default_prompt(data)
+            _migrate_saved_service_tier(data)
             mode = get_memory_mode(data)
             data[CONF_MEMORY_MODE] = mode
             data[CONF_MEMORY_ENABLED] = mode != MEMORY_MODE_OFF

@@ -138,10 +138,10 @@ async def test_function_tools_and_groups_commit_as_one_subentry_revision(
 
     monkeypatch.setattr(hass.config_entries, "async_update_subentry", fail_before_write)
     with pytest.raises(RuntimeError, match="injected subentry"):
-        _persist_function_configuration(hass, entry, subentry, tools, groups)
+        await _persist_function_configuration(hass, entry, subentry, tools, groups)
     assert dict(subentry.data) == original
     monkeypatch.setattr(hass.config_entries, "async_update_subentry", update)
-    _persist_function_configuration(hass, entry, subentry, tools, groups)
+    await _persist_function_configuration(hass, entry, subentry, tools, groups)
     assert {
         tool["spec"]["name"]
         for tool in configured_function_tools_from_data(subentry.data)
@@ -218,6 +218,7 @@ async def test_composite_native_yaml_management_ingestion_preserves_authority(
 ):
     """Native YAML validation and real save reject unsafe trees before authority changes."""
     import yaml
+
     from custom_components.extended_openai_conversation_responses.management_ui import (
         async_management_command,
     )
@@ -315,8 +316,8 @@ async def test_mixed_maintenance_waiters_storage_failure_and_management_progress
 ):
     """Finite mixed contention drains despite a cancelled writer and a failed store."""
     from custom_components.extended_openai_conversation_responses.agent_maintenance import (
-        get_agent_maintenance_gate,
         _async_run_exclusive_operation,
+        get_agent_maintenance_gate,
     )
     from custom_components.extended_openai_conversation_responses.management_ui import (
         async_management_command,

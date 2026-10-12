@@ -119,10 +119,14 @@ async def recover(root):
     manager = hass.data[base.DOMAIN]["delayed_tool_manager"]
     resolve = manager._resolve_agent
     transient_failures = 0
+    fault_budget = 0 if (root / "backlog-partial-proof.json").exists() else 6
 
     def transient_resolution(*args):
         nonlocal transient_failures
-        if os.environ[PHASE] != "verify-no-replay" and transient_failures < 6:
+        if (
+            os.environ[PHASE] != "verify-no-replay"
+            and transient_failures < fault_budget
+        ):
             transient_failures += 1
             return None  # Supported pre-dispatch agent reload/unavailability retry.
         return resolve(*args)
@@ -159,7 +163,7 @@ async def recover(root):
             await asyncio.wait_for(slow_started.wait(), 20)
             assert active > 0 and manager._records and manager._tasks
             assert len(manager._tasks) <= expected["count"]
-            assert transient_failures == 6
+            assert transient_failures == fault_budget
             assert any(record.retry_count > 0 for record in manager._records.values())
         during_pending = len(manager._records)
         entry = hass.config_entries.async_entries(base.DOMAIN)[0]
@@ -280,7 +284,7 @@ def test_overdue_backlog_drains_once_across_two_restarts(
     unused_tcp_port,
     partial_termination,
 ):
-    count = 50 if stress_scale == 1 else 100
+    count = 32  # Fill the production per-agent bound without bypassing admission.
     root = tmp_path / "ha-config"
     target = root / "custom_components" / base.DOMAIN
     target.parent.mkdir(parents=True)

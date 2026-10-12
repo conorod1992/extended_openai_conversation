@@ -54,6 +54,7 @@ from tests_real_ha.test_provider_wire_e2e import (
     _speech,
 )
 from tests_stress.conftest import record
+from tests_stress.native_light_fixture import install_lights
 
 _OWNER = "enhanced-guest-owner"
 _PRIVATE = "GUEST-PRIVATE-PERSISTENT-東京"
@@ -75,7 +76,7 @@ async def _say(hass: HomeAssistant, entry_id: str, text: str):
 
 
 def _native_tool_result(body: dict, call_id: str):
-    """Native tools serialize a JSON list, unlike the Knowledge tool payload."""
+    """Decode the native Function result envelope."""
     message = next(
         item
         for item in body["messages"]
@@ -202,7 +203,7 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
     async def turn_off(call):
         calls.append(call)
 
-    hass.services.async_register("light", "turn_off", turn_off)
+    await install_lights(hass, ["light.guest_matrix"], turn_off)
     hass.states.async_set("light.guest_matrix", "on")
     async_expose_entity(hass, conversation.DOMAIN, "light.guest_matrix", True)
     assert user.permissions.check_entity("light.guest_matrix", POLICY_CONTROL)
@@ -328,7 +329,11 @@ async def test_guest_wire_only_subtracts_private_context_and_function_capabiliti
         service_result = _native_tool_result(
             tool_wire.requests[2]["body"], "call-guest-service"
         )
+        assert len(service_result) == 1
         assert service_result[0]["success"] is True
+        assert service_result[0]["previous_state"] == {
+            "light.guest_matrix": {"state": "on"}
+        }
         assert len(calls) == 1
         executed_functions = 2  # loader and the actual HA service Function
         provider_requests += 3

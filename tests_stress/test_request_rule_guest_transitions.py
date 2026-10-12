@@ -16,6 +16,7 @@ from homeassistant.components.homeassistant.exposed_entities import async_expose
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _say, _speech
 from tests_real_ha.test_request_rules_script_semantics import _local
 from tests_stress.conftest import record
+from tests_stress.native_light_fixture import install_lights
 
 
 @pytest.mark.parametrize(
@@ -35,7 +36,9 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
     )
     _provider(monkeypatch, agent, [])
     for entity_id in ["light.before", "light.pending", "light.healthy"]:
-        hass.states.async_set(entity_id, "on")
+        async_expose_entity(hass, "conversation", entity_id, True)
+    for entity_id in ("sensor.rule_gate", "sensor.second_gate"):
+        hass.states.async_set(entity_id, "closed")
         async_expose_entity(hass, "conversation", entity_id, True)
     entered = asyncio.Event()
     second_wait = asyncio.Event()
@@ -52,7 +55,9 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
         if entity_id == "light.healthy":
             second_wait.set()
 
-    hass.services.async_register("light", "turn_off", turn_off)
+    await install_lights(
+        hass, ["light.before", "light.pending", "light.healthy"], turn_off
+    )
     if not transition.startswith("activate"):
         await agent._guest_mode.async_update_trusted(indefinite=True)
 
@@ -119,7 +124,9 @@ async def test_waiting_native_rule_obeys_live_guest_restrictions(
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
     denied = transition != "deactivate"
-    assert _speech(response, successful=not denied) == (GUEST_MODE_UNAVAILABLE if denied else "Done")
+    assert _speech(response, successful=not denied) == (
+        GUEST_MODE_UNAVAILABLE if denied else "Done"
+    )
     assert effects == (
         ["light.before", "light.healthy"]
         if transition == "activate_then_disable"
