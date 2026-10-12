@@ -306,12 +306,12 @@ async def _async_archive_query(
                     "Archive changed during search; retry the query"
                 )
             if "turn_id" in record:
-                original = next(
-                    turn
-                    for turn in turns[session_id]
-                    if turn.turn_id == record["turn_id"]
-                )
-                if original not in archive._turns.get(session_id, ()):
+                index = record["turn_index"]
+                original = turns[session_id][index]
+                current_turns = archive._turns.get(session_id, ())
+                # Appends preserve indices. Pruning/replacement invalidates the
+                # cursor, so retry rather than scanning whole histories here.
+                if index >= len(current_turns) or current_turns[index] is not original:
                     raise HomeAssistantError(
                         "Archive changed during search; retry the query"
                     )

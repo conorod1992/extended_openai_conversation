@@ -314,3 +314,27 @@ async def test_complete_model_list_pages_survive_outer_result_guard(hass, kind, 
         pytest.fail("list cursor did not terminate")
     assert len(seen) == len(set(seen)) == len(rows)
     assert set(seen) == {row[id_key] for row in rows}
+
+
+async def test_management_revalidation_does_not_scan_turns_under_lock():
+    archive, _, session = await retained_archive()
+    class NoLockedScans(list):
+        def __contains__(self, value):
+            assert not archive._lock.locked(), "linear membership scan under archive lock"
+            return super().__contains__(value)
+    archive._turns[session.session_id] = NoLockedScans(archive._turns[session.session_id])
+    assert (await history.archive_search_page(archive, "user:alice", "alpha"))["results"]
+
+
+async def test_management_revalidation_rejects_replaced_turn(monkeypatch):
+    archive, _, session = await retained_archive()
+    async def query_then_replace(query, *args):
+        result = query(*args)
+        async with archive._lock:
+            archive._turns[session.session_id][0] = replace(
+                archive._turns[session.session_id][0], user_text="replacement"
+            )
+        return result
+    monkeypatch.setattr(history.asyncio, "to_thread", query_then_replace)
+    with pytest.raises(HomeAssistantError, match="changed during search"):
+        await history.archive_search_page(archive, "user:alice", "alpha")
