@@ -20,6 +20,16 @@ class ResourceLedger:
     retirement_fences: tuple[object, ...] = ()
 
 
+def _owned_storage_name(name: str, entry_id: str, subentry_id: str) -> bool:
+    """Match the complete, dot-delimited assistant identity, not prefixes."""
+    identity = f".{entry_id}.{subentry_id}"
+    start = name.find(identity)
+    if start < 0:
+        return False
+    end = start + len(identity)
+    return end == len(name) or name[end] == "."
+
+
 def capture_owned(hass, entry_id: str, subentry_id: str):
     key = (entry_id, subentry_id)
     managers = {}
@@ -41,7 +51,7 @@ def capture_owned(hass, entry_id: str, subentry_id: str):
                     callbacks.append(handle)
     config = Path(hass.config.path(".storage"))
     paths = (
-        frozenset(p for p in config.iterdir() if entry_id in p.name and subentry_id in p.name)
+        frozenset(p for p in config.iterdir() if _owned_storage_name(p.name, entry_id, subentry_id))
         if config.is_dir() else frozenset()
     )
     return ResourceLedger(frozenset((k, subentry_id) for k in managers), paths, tuple(callbacks), tuple(retirement_fences))
