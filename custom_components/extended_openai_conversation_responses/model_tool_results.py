@@ -79,7 +79,9 @@ async def project_tool_result(content: Any) -> Any:
             }
         )
     # Never mutate the retained execution result or a backend-owned object.
-    if projected is not value:
+    # The ownership marker is internal: HA's dataclasses.asdict reconstructs
+    # dict subclasses with an iterator, incompatible with its value constructor.
+    if owned or projected is not value:
         if owned:
             projected = compact_tool_json(projected)
         from .ha_tool_result_compat import make_tool_result_content

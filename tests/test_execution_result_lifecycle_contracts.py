@@ -1,6 +1,6 @@
 """Combined guarantees for execution provenance, local dataflow and durable cleanup."""
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from io import BytesIO
 import json
 from types import SimpleNamespace
@@ -28,13 +28,16 @@ from custom_components.extended_openai_conversation_responses.functions import (
     NativeFunction,
 )
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    make_tool_result_content,
     tool_result_data,
 )
 from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
 )
 from custom_components.extended_openai_conversation_responses.model_tool_results import (
+    OwnedJSONPayload,
     local_function_results,
+    project_tool_result,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
@@ -138,6 +141,32 @@ async def test_local_results_and_model_text_preserve_type_and_value(hass, value)
         actual = tool_result_data(output)["result"]
         assert type(actual) is type(value)
         assert actual == value
+
+
+@pytest.mark.parametrize("value", [{"answer": False}, {"large": "x" * 33000}])
+async def test_owned_projection_survives_ha_dataclass_serialization(hass, value):
+    @dataclass
+    class Envelope:
+        data: dict
+
+    entity = _entity(hass)
+    content = make_tool_result_content(
+        agent_id=entity.entity_id,
+        tool_call_id="owned",
+        tool_name="produce",
+        tool_result=OwnedJSONPayload(value),
+    )
+    projected = await project_tool_result(content)
+    payload = tool_result_data(projected)
+    assert type(payload) is dict
+    assert json.loads(json.dumps(asdict(Envelope(payload))))["data"] == payload
+    actual = json.loads(payload["result"])
+    assert (
+        actual == value
+        if len(json.dumps(value)) < 32000
+        else actual["execution_completed"] is True
+    )
+    assert tool_result_data(content).value == value
 
 
 async def test_structured_overflow_is_complete_and_does_not_mutate_local_result(hass):
@@ -522,6 +551,7 @@ async def test_unknown_concrete_jinja_capture_is_rejected_at_save(hass):
 
 async def test_memory_ranked_pages_reconstruct_after_serialized_budget_reduction(hass):
     from types import MethodType
+
     from custom_components.extended_openai_conversation_responses.memory import (
         PersistentMemory,
     )
