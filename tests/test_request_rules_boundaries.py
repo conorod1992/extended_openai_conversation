@@ -720,6 +720,8 @@ def test_sort_and_compile_deactivates_pattern_that_exceeds_aggregate_state_limit
     manager = rr.RequestRules(PatternMemoryStore())
     first = _pattern_rule("first-pattern", 0, "first")
     overflow = _pattern_rule("overflow-pattern", 1, "overflow")
+    for rule in (first, overflow):
+        rule["action"]["actions"] = [{"set_conversation_response": "Done"}]
     manager._rules = [deepcopy(first), deepcopy(overflow)]
 
     compiled = {

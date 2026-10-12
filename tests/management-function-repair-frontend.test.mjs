@@ -56,6 +56,17 @@ function functionsView() {
   };
   assert.equal(repairMetadata({_result: {function_repair: repair}}), repair);
   assert.equal(repairMetadata({_result: {}}), null);
+  const healthy = {
+    invalid_count: 0, invalid_tools: [], isolatable: false, validation_error: null,
+  };
+  const panel = {
+    _viewKey: functionsView(),
+    _selectedAgent: repairableAgent,
+    _result: {config: {functions: [{spec: {name: "repaired"}}]}, function_repair: healthy},
+  };
+  assert.equal(repairMetadata(panel), null);
+  assert.equal(repairIssue(panel), null, "completed repair overrides stale catalogue diagnostics");
+  assert.equal(repairMetadata({_result: {function_repair: {validation_error: "Invalid YAML"}}})?.validation_error, "Invalid YAML");
 }
 
 {

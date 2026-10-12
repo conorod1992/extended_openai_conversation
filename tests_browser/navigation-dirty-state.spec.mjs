@@ -14,6 +14,24 @@ async function navigateSection(panel, section) {
   await select.selectOption(section, {force: true});
 }
 
+test("Back and Forward synchronize the visible subsection and retain its draft", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator('[data-config="__title"]').fill("History draft");
+  await navigateSection(panel, "model-responses");
+  await expect(panel.locator("#local-section")).toHaveValue("model-responses");
+  await page.goBack();
+  await expect(page).toHaveURL(/\/assistant\/basics$/);
+  await expect(panel.locator("#local-section")).toHaveValue("basics");
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("History draft");
+  await page.goForward();
+  await expect(page).toHaveURL(/\/assistant\/model-responses$/);
+  await expect(panel.locator("#local-section")).toHaveValue("model-responses");
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
+  await expectHarnessClean(page, errors);
+});
+
 test("dirty navigation survives subsection changes and clears when the draft returns to baseline", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));

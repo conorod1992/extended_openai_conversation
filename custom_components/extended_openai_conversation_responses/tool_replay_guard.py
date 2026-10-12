@@ -14,6 +14,7 @@ from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
+from .execution_arguments import prepare_execution_arguments
 from .function_execution import _schema_without_patterns, validate_function_arguments
 from .ha_tool_result_compat import is_tool_result_content
 from .parallel_tool_execution import is_parallel_safe_integration_tool
@@ -65,6 +66,9 @@ def record_dispatch(
     # Regex validation already belongs to the bounded execution validator. Only
     # repeat its context-free canonicalization here, never configured regex work.
     spec["parameters"] = _schema_without_patterns(spec.get("parameters", {}))
+    spec["_execution_config"] = (
+        deepcopy(function_tool.get("function", {})) if function_tool is not None else {}
+    )
     signature = (
         _signature(tool_input, spec)
         if isinstance(getattr(tool_input, "tool_name", None), str)
@@ -102,6 +106,9 @@ def _signature(tool_input: llm.ToolInput, spec: Mapping[str, Any] | None = None)
         # Invalid/externally owned arguments retain exact replay checks.
         with suppress(HomeAssistantError, TypeError, ValueError):
             arguments = validate_function_arguments(spec, arguments)
+            arguments = prepare_execution_arguments(
+                spec.get("_execution_config", {}), arguments
+            )
             arguments = _canonical_numbers(arguments)
     return json.dumps(
         [tool_input.tool_name, arguments],

@@ -2076,8 +2076,12 @@ class ExtendedOpenAIAgentEntity(
                 serialized = (
                     value
                     if isinstance(value, str)
-                    else json.dumps(
-                        value, ensure_ascii=False, separators=(",", ":"), default=str
+                    else await asyncio.to_thread(
+                        json.dumps,
+                        value,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        default=str,
                     )
                 )
                 bounded = bounded_tool_result_text(serialized)
@@ -2242,6 +2246,20 @@ class ExtendedOpenAIAgentEntity(
             except Exception:
                 if policy.guest_active:
                     _LOGGER.warning("Guest-permitted tool execution failed")
+                    from .function_execution import function_execution_errors_propagate
+                    from .function_tool_recovery import (
+                        strict_execution_failures_enabled,
+                    )
+
+                    if (
+                        strict_execution_failures_enabled()
+                        or function_execution_errors_propagate()
+                    ):
+                        # Keep the terminal execution boundary without exposing
+                        # private backend details or the original exception chain.
+                        raise HomeAssistantError(
+                            "Guest-permitted tool execution failed"
+                        ) from None
                     return self._tool_result(
                         tool_input,
                         execution_failure_result(),

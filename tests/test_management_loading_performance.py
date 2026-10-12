@@ -41,8 +41,10 @@ from homeassistant.exceptions import HomeAssistantError
 
 @pytest.fixture(autouse=True)
 async def retained_rules(monkeypatch):
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRules,
+    )
     from tests.test_request_rules import MemoryStore
-    from custom_components.extended_openai_conversation_responses.request_rules import RequestRules
     manager = RequestRules(MemoryStore())
     await manager.async_initialize()
     async def load(*args):
@@ -1280,6 +1282,41 @@ async def test_configuration_get_reports_phase_timings(monkeypatch) -> None:
             "command_total_ms",
         )
     ) <= performance.keys()
+
+
+@pytest.mark.parametrize("action", ["save", "update"])
+async def test_settings_edit_preserves_raw_unrelated_fields(action, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import (
+        management_configuration_guidance as guidance,
+    )
+
+    hass, _entry, subentry = _hass_with_agent()
+    subentry.data = {
+        "chat_model": "gpt-5.2",
+        "functions": [],
+        "guest_function_policy": "on",
+        "temperature": "0.2",
+        "retained_extension": {"null": None, "false": False, "zero": 0, "list": []},
+    }
+    before = deepcopy(subentry.data)
+    monkeypatch.setattr(management_ui, "local_handling_snapshot", lambda *_: {})
+    monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
+    result = await management_ui.async_management_command(
+        hass, "admin", True,
+        {
+            "entry_id": "entry-1", "subentry_id": "agent-1",
+            "section": "configuration", "action": action,
+            "revision": management_ui._agent_config_revision(subentry.data, subentry.title),
+            "title": "Renamed", "config": {"max_tokens": 777},
+        },
+    )
+    assert result.get("valid", True)
+    assert subentry.data == {**before, "max_tokens": 777}
+    assert subentry.title == "Renamed"
+    assert result["config"]["guest_function_policy"] == "on"
+    assert result["config"]["temperature"] == 0.2
+    assert "reasoning_effort" not in subentry.data
+    assert "guest_policy_version" not in subentry.data
 
 
 async def test_configuration_save_normalizes_once(monkeypatch) -> None:

@@ -31,6 +31,8 @@ def test_request_rule_match_reuses_normalization_by_profile(monkeypatch: Any) ->
             "matching_behavior": "custom",
             "matching": settings,
             "phrases": [phrase],
+            "action_type": "local_action",
+            "action": {"actions": [{"set_conversation_response": "Done"}]},
         }
         for order, (phrase, settings) in enumerate(
             [

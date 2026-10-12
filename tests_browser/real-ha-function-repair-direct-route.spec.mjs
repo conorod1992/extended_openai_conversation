@@ -26,6 +26,8 @@ test("cold Functions route exposes and repairs a quarantined tool", async ({page
   await panel.locator("#tool-save").click();
 
   await expect(panel.locator(".tool-card-invalid")).toHaveCount(0);
+  await expect(panel.getByRole("heading", {name: "generated_repaired", exact: true})).toBeVisible();
+  await expect(panel.locator("#function-repair-editor")).toHaveCount(0);
   const saved = await page.evaluate(() => window.browserHarness.panel._call("configuration", "get"));
   expect(saved.config.functions.map((tool) => tool.spec.name)).toEqual(
     expect.arrayContaining(["generated_repaired", "generated_valid_sibling"]),

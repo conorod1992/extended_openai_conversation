@@ -86,7 +86,7 @@ async def main():
     hass.data = {}
     hass.config_entries.async_entries.return_value = []
     hass.http.async_register_static_paths = AsyncMock()
-    hass.async_add_executor_job = AsyncMock(side_effect=lambda callback: callback())
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda callback, *args: callback(*args))
     async_io = (
         "async_setup_model_catalog", "async_get_quiet_hours", "async_setup_delayed_tools",
         "async_migrate_integration", "async_recover_pending_restores", "async_setup_ha_permissions",
@@ -357,7 +357,8 @@ async def test_strict_rule_preflight_precedes_quarantine_scope(
     candidate = {"name": "Rule", "action": {"actions": []}}
     monkeypatch.setattr(ui, "_prepare_request_rule", lambda *_: candidate)
 
-    def strict(_data):
+    def strict(rule, _data):
+        assert rule is candidate
         assert not quarantine._ALLOW_QUARANTINED_TOOLS.get()
         seen.append("strict")
         return []
@@ -373,7 +374,7 @@ async def test_strict_rule_preflight_precedes_quarantine_scope(
         seen.append("route")
         return {"ok": True}
 
-    monkeypatch.setattr(ui, "_strict_configured_function_tools", strict)
+    monkeypatch.setattr(ui, "_request_rule_function_tools", strict)
     monkeypatch.setattr(ui, "async_validate_request_rule_functions", validate)
     monkeypatch.setattr(ui, "_MANAGEMENT_SECTION_HANDLERS", {"request_rules": handler})
     assert await ui.async_management_command(

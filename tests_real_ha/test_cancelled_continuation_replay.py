@@ -20,11 +20,13 @@ from tests_real_ha.test_provider_wire_e2e import (
 
 @pytest.mark.parametrize("repeat", [0])
 @pytest.mark.parametrize("failure", ["cancel", "disconnect"])
+@pytest.mark.parametrize("retry_form", ["same", "string", "top-level"])
 async def test_completed_counter_effect_is_not_replayed_after_lost_continuation(
     hass,
     monkeypatch,
     failure,
     repeat,
+    retry_form,
 ):
     agent = await _agent(hass, "chat_completions")
     assert await async_setup_component(
@@ -56,9 +58,17 @@ async def test_completed_counter_effect_is_not_replayed_after_lost_continuation(
         requests.append(body)
         index = len(requests) - 1
         if index in (0, 2):
+            dispatched_arguments = json.loads(json.dumps(arguments))
+            if index == 2 and retry_form != "same":
+                step = dispatched_arguments["list"][0]
+                if retry_form == "string":
+                    step["service_data"]["entity_id"] = entity_id
+                else:
+                    step.pop("service_data")
+                    step["entity_id"] = entity_id
             payload = _chat_sse_tool_call(
                 call_id="original-call" if index == 0 else "retry-new-call",
-                arguments=arguments,
+                arguments=dispatched_arguments,
             )
         elif index == 1:
             assert hass.states.get(entity_id).state == "1"
