@@ -87,9 +87,66 @@ assert.deepEqual(upgradedPanel._hass, {connected: true});
 assert.deepEqual(upgradedPanel._route, {path: "/extended-openai/overview"});
 assert.equal(windowListeners.has("beforeunload"), true);
 assert.equal(windowListeners.has("focus"), true);
+assert.equal(windowListeners.has("popstate"), true);
+// Back/Forward reach the same guarded route transition as HA route updates.
+const routes = [];
+upgradedPanel._handleRouteChange = async (route) => {
+  routes.push(route.section);
+  upgradedPanel._page = route.page;
+  upgradedPanel._subsection = route.section;
+};
+window.location.pathname = "/extended-openai/assistant/basics";
+windowListeners.get("popstate")();
+upgradedPanel.route = {path: window.location.pathname};
+await upgradedPanel._routeSyncPromise;
+assert.deepEqual(routes, ["basics"], "duplicate HA notifications must not repeat the transition");
+window.location.pathname = "/extended-openai/assistant/model-responses";
+windowListeners.get("popstate")();
+await upgradedPanel._routeSyncPromise;
+assert.deepEqual(routes, ["basics", "model-responses"]);
+// A second browser move while a route load awaits must converge on the latest URL.
+let releaseRoute;
+const routeGate = new Promise((resolve) => { releaseRoute = resolve; });
+upgradedPanel._handleRouteChange = async (route) => {
+  await routeGate;
+  upgradedPanel._page = route.page;
+  upgradedPanel._subsection = route.section;
+};
+window.location.pathname = "/extended-openai/assistant/basics";
+windowListeners.get("popstate")();
+await Promise.resolve();
+window.location.pathname = "/extended-openai/assistant/prompt-context";
+windowListeners.get("popstate")();
+releaseRoute();
+await upgradedPanel._routeSyncPromise;
+assert.equal(upgradedPanel._subsection, "prompt-context");
+// Exercise the real discard guard: a declined navigation restores the current URL.
+upgradedPanel._handleRouteChange = ExtendedOpenAIManagementPanel.prototype._handleRouteChange;
+upgradedPanel._configDirty = true;
+upgradedPanel._draftAgentId = "agent-a";
+upgradedPanel._agentId = "agent-a";
+let discardPrompts = 0;
+upgradedPanel._confirm = async () => { discardPrompts += 1; return false; };
+const {pageCoordinator} = await import(frontend("management-page-drafts.js"));
+pageCoordinator(upgradedPanel).register("history-test-editor", {
+  dirty: () => true,
+  owns: () => false,
+  discard: () => { throw new Error("declined navigation discarded the editor"); },
+});
+history.pushState = (_state, _title, path) => { window.location.pathname = path; };
+window.location.pathname = "/extended-openai/guide";
+windowListeners.get("popstate")();
+await upgradedPanel._routeSyncPromise;
+assert.equal(upgradedPanel._subsection, "prompt-context");
+assert.equal(window.location.pathname, "/extended-openai/assistant/prompt-context");
+assert.equal(discardPrompts, 1);
+window.location.pathname = "/lovelace";
+windowListeners.get("popstate")();
+assert.equal(upgradedPanel._page, "assistant", "ignore history outside the EOAI panel");
 upgradedPanel.disconnectedCallback();
 assert.equal(windowListeners.has("beforeunload"), false);
 assert.equal(windowListeners.has("focus"), false);
+assert.equal(windowListeners.has("popstate"), false);
 
 const guestPanel = {
   _agentId: "agent-a",

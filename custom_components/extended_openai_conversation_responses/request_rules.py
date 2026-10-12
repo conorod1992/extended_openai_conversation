@@ -12,10 +12,12 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from functools import lru_cache
 from hashlib import sha256
 import json
 import logging
@@ -465,7 +467,9 @@ class RequestRules:
                             )
                             migrated = True
                         validated = validate_rule(
-                            candidate, validate_sentence_pattern=False
+                            candidate,
+                            validate_sentence_pattern=False,
+                            validate_script_schema=False,
                         )
                         if validated["id"] in seen_ids:
                             _LOGGER.warning(
@@ -591,7 +595,13 @@ class RequestRules:
         rules = []
         for item in raw_rules:
             candidate, _ = _normalize_legacy_consumed_request_scope(item)
-            rules.append(validate_rule(candidate, validate_sentence_pattern=False))
+            rules.append(
+                validate_rule(
+                    candidate,
+                    validate_sentence_pattern=False,
+                    validate_script_schema=False,
+                )
+            )
         if len({rule["id"] for rule in rules}) != len(rules):
             raise ValueError("duplicate Request Rule id")
         if any(
@@ -618,6 +628,7 @@ class RequestRules:
                 validate_rule(
                     _assign_missing_result_step_ids(rule),
                     validate_sentence_pattern=False,
+                    validate_script_schema=False,
                 )
                 for rule in prepared["rules"]
             ]
@@ -705,10 +716,28 @@ class RequestRules:
         if rule_id not in self._diagnostics:
             return False
         previous = self._rules[self._index(rule_id)]
+        try:
+            action = _validate_action(
+                previous["action_type"],
+                value.get("action", previous["action"]),
+                validate_script_schema=False,
+            )
+        except ValueError:
+            return False
         return (
             value.get("phrases") == previous["phrases"]
             and value.get("match_type", "equals") == previous["match_type"]
             and value.get("enabled") is False
+            and action == previous["action"]
+            and all(
+                value.get(key, previous.get(key)) == previous.get(key)
+                for key in (
+                    "action_type",
+                    "conditions",
+                    "ai_input_mode",
+                    "ai_input_capture",
+                )
+            )
         )
 
     async def async_update(
@@ -732,6 +761,7 @@ class RequestRules:
             rule = validate_rule(
                 _assign_missing_result_step_ids(raw),
                 validate_sentence_pattern=not preserve_inactive,
+                validate_script_schema=not preserve_inactive,
             )
             self._require_group(rule)
             prospective = deepcopy(self._rules)
@@ -749,7 +779,9 @@ class RequestRules:
                 "matching",
                 "order",
             )
-            if all(previous[key] == rule[key] for key in match_fields):
+            if rule_id not in self._diagnostics and all(
+                previous[key] == rule[key] for key in match_fields
+            ):
                 self._refresh_snapshot_rule(rule_id, rule)
             else:
                 self._sort_and_compile()
@@ -1130,6 +1162,11 @@ class RequestRules:
         total_pattern_states = 0
         for stored_rule in self._rules:
             rule = deepcopy(stored_rule)
+            try:
+                _validate_action(rule["action_type"], rule["action"])
+            except ValueError as err:
+                diagnostics[rule["id"]] = f"Action is inactive: {err}"
+                continue
             settings = (
                 self._defaults
                 if rule["matching_behavior"] == "defaults"
@@ -1494,6 +1531,8 @@ def validate_wording_groups(value: Any) -> list[dict[str, Any]]:
             raise ValueError("wording groups contain an ambiguous duplicate phrase")
         claimed.update(normalized)
         result.append({"canonical": canonical, "alternatives": alternatives})
+    for group in result:
+        _normalize_wording(group["canonical"], result)
     return result
 
 
@@ -1527,7 +1566,10 @@ def validate_rule_groups(value: Any) -> list[dict[str, str]]:
 
 
 def validate_rule(
-    value: Any, *, validate_sentence_pattern: bool = True
+    value: Any,
+    *,
+    validate_sentence_pattern: bool = True,
+    validate_script_schema: bool = True,
 ) -> dict[str, Any]:
     """Validate and normalize the persisted rule contract."""
     if not isinstance(value, Mapping):
@@ -1610,7 +1652,9 @@ def validate_rule(
             **raw_action,
             "continue_to_ai": match_type not in {"equals", "sentence_pattern"},
         }
-    action = _validate_action(action_type, raw_action)
+    action = _validate_action(
+        action_type, raw_action, validate_script_schema=validate_script_schema
+    )
     continue_matching = value.get("continue_matching", False)
     if not isinstance(continue_matching, bool):
         raise ValueError("continue_matching must be true or false")
@@ -1621,12 +1665,14 @@ def validate_rule(
     if ai_input_mode == "capture":
         if match_type != "sentence_pattern" or not isinstance(ai_input_capture, str):
             raise ValueError("Captured AI input requires a Sentence Pattern capture")
-        if not sentence_valid or ai_input_capture not in slot_names:
+        if sentence_valid and ai_input_capture not in slot_names:
             raise ValueError("Captured AI input must exist in every trigger")
         required_phrases = (
             compiled_phrases
             if validate_sentence_pattern
             else [_compile_sentence_pattern(phrase) for phrase in phrases]
+            if sentence_valid
+            else []
         )
         if any(
             ai_input_capture
@@ -1753,7 +1799,9 @@ def _validate_total_pattern_states(
         total += state_count
 
 
-def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
+def _validate_action(
+    action_type: str, value: Any, *, validate_script_schema: bool = True
+) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("action must be an object")
     if action_type == "local_action":
@@ -1774,7 +1822,9 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
             raise ValueError("actions must be a list")
         if not actions_value or len(actions_value) > MAX_ACTIONS:
             raise ValueError(f"actions must contain 1 to {MAX_ACTIONS} items")
-        actions = _validate_script_sequence(actions_value)
+        actions = _validate_script_sequence(
+            actions_value, validate_schema=validate_script_schema
+        )
         continue_to_ai = value.get("continue_to_ai", False)
         if not isinstance(continue_to_ai, bool):
             raise ValueError("continue_to_ai must be true or false")
@@ -1978,6 +2028,12 @@ def _normalize_script_containers(value: Any) -> Any:
             result.append(action)
             continue
         normalized = deepcopy(dict(action))
+        # Store HA's historical service-name alias in the common service form so
+        # validation, dependency inspection and Guest preflight agree with HA.
+        if "service_template" in normalized and not (
+            "service" in normalized or "action" in normalized
+        ):
+            normalized["service"] = normalized.pop("service_template")
         for key in ("sequence", "then", "else", "default"):
             if key in normalized:
                 normalized[key] = _normalize_script_containers(normalized[key])
@@ -2029,7 +2085,9 @@ def _normalize_script_containers(value: Any) -> Any:
     return result
 
 
-def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
+def _validate_script_sequence(
+    value: Sequence[Any], *, validate_schema: bool = True
+) -> list[dict[str, Any]]:
     """Validate native HA script syntax and enforce conservative size bounds."""
     migrated: list[dict[str, Any]] = []
     for item in value:
@@ -2044,6 +2102,8 @@ def _validate_script_sequence(value: Sequence[Any]) -> list[dict[str, Any]]:
             migrated.append(dict(deepcopy(item)))
     migrated = _normalize_script_containers(migrated)
     _validate_script_complexity(migrated)
+    if not validate_schema:
+        return migrated
     try:
         _validate_template_syntax(migrated)
         cv.SCRIPT_SCHEMA(_mask_script_templates(migrated))
@@ -2204,6 +2264,16 @@ def _mask_script_templates(
     value: Any, *, key: str | None = None, parent_key: str | None = None
 ) -> Any:
     """Permit context-free schema validation while preserving stored templates."""
+    if (
+        isinstance(value, str)
+        and key in {"entity_id", "target"}
+        and SLOT_REFERENCE.search(value)
+    ):
+        return (
+            {"entity_id": "light.request_rule_template"}
+            if key == "target"
+            else "light.request_rule_template"
+        )
     if isinstance(value, str) and ("{{" in value or "{%" in value or "{#" in value):
         # Home Assistant's script schema natively accepts templates for dynamic
         # durations/timeouts, repeat iteration sources and shorthand conditions.
@@ -3787,6 +3857,56 @@ def _basic_normalize(text: str) -> str:
     return value
 
 
+@lru_cache(maxsize=16)
+def _compiled_wording_replacements(
+    groups: tuple[tuple[str, tuple[str, ...]], ...],
+) -> tuple[tuple[re.Pattern[str], str], ...]:
+    """Compile one bounded catalog once, including during catalog validation."""
+    replacements = sorted(
+        (
+            (_basic_normalize(alternative), _basic_normalize(canonical))
+            for canonical, alternatives in groups
+            for alternative in alternatives
+        ),
+        key=lambda item: (-len(item[0]), item[0], item[1]),
+    )
+    return tuple(
+        (re.compile(rf"(?<= ){re.escape(alternative)}(?= )"), canonical)
+        for alternative, canonical in replacements
+    )
+
+
+def _normalize_wording(text: str, wording_groups: Sequence[Mapping[str, Any]]) -> str:
+    """Reach a bounded fixed point, rejecting cycles and expanding rewrites."""
+    value = _basic_normalize(text)
+    replacements = _compiled_wording_replacements(
+        tuple(
+            (group["canonical"], tuple(group["alternatives"]))
+            for group in wording_groups
+        )
+    )
+    seen = {value}
+    limit = max(32_000, len(value) * 4)
+    for _ in range(128):
+        padded = f" {value} "
+        for pattern, canonical in replacements:
+            # Lookarounds keep a shared word boundary available to the next
+            # adjacent occurrence, unlike consuming both surrounding spaces.
+            padded = pattern.sub(canonical, padded)
+            if len(padded) > limit + 2:
+                raise ValueError(
+                    "wording alternatives expand beyond the normalization limit"
+                )
+        updated = padded.strip()
+        if updated == value:
+            return updated
+        if updated in seen:
+            raise ValueError("wording alternatives contain a replacement cycle")
+        seen.add(updated)
+        value = updated
+    raise ValueError("wording alternatives exceed the normalization pass limit")
+
+
 def normalize_text(
     text: str,
     settings: Mapping[str, Any],
@@ -3795,19 +3915,11 @@ def normalize_text(
     """Apply deterministic, conservative speech-text normalization."""
     value = _basic_normalize(text)
     if settings.get("wording_alternatives"):
-        padded = f" {value} "
-        replacements = sorted(
-            (
-                (_basic_normalize(alternative), _basic_normalize(group["canonical"]))
-                for group in wording_groups
-                for alternative in group["alternatives"]
-            ),
-            key=lambda item: len(item[0]),
-            reverse=True,
-        )
-        for alternative, canonical in replacements:
-            padded = padded.replace(f" {alternative} ", f" {canonical} ")
-        value = padded.strip()
+        # Individually safe phrases can interact across input boundaries.
+        # If those rewrites do not converge, keep the original words rather
+        # than aborting the request or matching a partially rewritten phrase.
+        with suppress(ValueError):
+            value = _normalize_wording(value, wording_groups)
     if settings.get("word_forms"):
         value = " ".join(_singularize(token) for token in value.split())
     return value

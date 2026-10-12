@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
     agent_config_defaults,
+    normalize_reasoning_defaults,
     validate_function_groups,
     validate_function_tools,
 )
@@ -25,6 +26,7 @@ from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
+    CONF_REASONING_EFFORT,
     CONF_TEMPORARY_MEMORY,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
@@ -563,6 +565,7 @@ def _snapshot_normalized_configuration(
             if key in AGENT_CONFIG_FIELDS
         }
     )
+    normalize_reasoning_defaults(snapshot, explicit=CONF_REASONING_EFFORT in config)
     if validated:
         function_tools = snapshot[CONF_FUNCTION_TOOLS]
         if isinstance(function_tools, str):
