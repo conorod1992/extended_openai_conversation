@@ -96,6 +96,9 @@ async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening
     ):
         monkeypatch.setattr(integration, name, AsyncMock())
 
+    from custom_components.extended_openai_conversation_responses import transfer_staging
+
+    monkeypatch.setattr(transfer_staging, "async_get_transfer_staging", AsyncMock())
     assert await integration.async_setup(hass, {}) is True
     async_setup_delayed_tools.assert_awaited_once_with(hass)
     assert order == ["delayed"]
@@ -168,6 +171,7 @@ async def test_legacy_delay_object_is_scheduled_durably(hass, monkeypatch) -> No
         arguments,
         None,
         function_tool=_tool(_legacy_delay_schema()),
+        execution_delay={"seconds": 5},
     )
     assert tool_result_data(result) == {"result": "Scheduled"}
 
