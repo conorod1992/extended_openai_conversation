@@ -116,6 +116,7 @@ async def test_saved_reasoning_defaults_validate_through_management(hass):
     assert saved["valid"], saved
     assert saved["config"].get("reasoning_effort") in {None, "medium", "high", "xhigh"}
     assert (await command("validate", config=saved["config"]))["valid"]
+    await hass.async_block_till_done()
 
 
 @pytest.mark.parametrize(
@@ -265,12 +266,12 @@ async def test_guest_partial_service_batch_stops_provider_loop(hass, monkeypatch
             {
                 "domain": "counter",
                 "service": "increment",
-                "service_data": {"entity_id": entity_id},
+                "service_data": {"entity_id": [entity_id]},
             },
             {
                 "domain": "counter",
                 "service": "audit_fail",
-                "service_data": {"entity_id": entity_id},
+                "service_data": {"entity_id": [entity_id]},
             },
         ]
     }
@@ -334,6 +335,7 @@ async def test_native_rule_management_ignores_unrelated_quarantined_schema(hass)
     assert agent._request_rules.snapshot()["rules"][0]["enabled"] is False
 
 
+@pytest.mark.usefixtures("socket_enabled")
 async def test_large_rest_json_reaches_provider_without_full_event_loop_parse(
     hass, monkeypatch
 ):

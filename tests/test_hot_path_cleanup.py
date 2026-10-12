@@ -150,6 +150,8 @@ def _compiled_manager() -> RequestRules:
             "matching_behavior": "custom",
             "matching": settings,
             "phrases": [phrase],
+            "action_type": "local_action",
+            "action": {"actions": [{"set_conversation_response": "Done"}]},
         }
         for order, (kind, phrase) in enumerate(
             [("equals", "turn on"), ("contains", "something else")]

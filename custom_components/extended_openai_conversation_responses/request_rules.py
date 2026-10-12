@@ -12,6 +12,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -593,7 +594,13 @@ class RequestRules:
         rules = []
         for item in raw_rules:
             candidate, _ = _normalize_legacy_consumed_request_scope(item)
-            rules.append(validate_rule(candidate, validate_sentence_pattern=False))
+            rules.append(
+                validate_rule(
+                    candidate,
+                    validate_sentence_pattern=False,
+                    validate_script_schema=False,
+                )
+            )
         if len({rule["id"] for rule in rules}) != len(rules):
             raise ValueError("duplicate Request Rule id")
         if any(
@@ -620,6 +627,7 @@ class RequestRules:
                 validate_rule(
                     _assign_missing_result_step_ids(rule),
                     validate_sentence_pattern=False,
+                    validate_script_schema=False,
                 )
                 for rule in prepared["rules"]
             ]
@@ -3861,10 +3869,16 @@ def _normalize_wording(text: str, wording_groups: Sequence[Mapping[str, Any]]) -
     )
     seen = {value}
     limit = max(32_000, len(value) * 4)
-    for _ in range(min(128, len(replacements) + 2)):
+    for _ in range(128):
         padded = f" {value} "
         for alternative, canonical in replacements:
-            padded = padded.replace(f" {alternative} ", f" {canonical} ")
+            # Lookarounds keep a shared word boundary available to the next
+            # adjacent occurrence, unlike consuming both surrounding spaces.
+            padded = re.sub(
+                rf"(?<= ){re.escape(alternative)}(?= )",
+                lambda _match, canonical=canonical: canonical,
+                padded,
+            )
             if len(padded) > limit + 2:
                 raise ValueError(
                     "wording alternatives expand beyond the normalization limit"
@@ -3887,7 +3901,11 @@ def normalize_text(
     """Apply deterministic, conservative speech-text normalization."""
     value = _basic_normalize(text)
     if settings.get("wording_alternatives"):
-        value = _normalize_wording(value, wording_groups)
+        # Individually safe phrases can interact across input boundaries.
+        # If those rewrites do not converge, keep the original words rather
+        # than aborting the request or matching a partially rewritten phrase.
+        with suppress(ValueError):
+            value = _normalize_wording(value, wording_groups)
     if settings.get("word_forms"):
         value = " ".join(_singularize(token) for token in value.split())
     return value

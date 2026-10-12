@@ -205,6 +205,25 @@ async def test_invalid_legacy_action_is_retained_for_repair():
     assert manager.match("good night") is not None
 
 
+async def test_inactive_legacy_action_survives_backup_restore_and_reload():
+    rule = local_rule()
+    rule["action"]["actions"] = [{"action": "invalid-service"}]
+    original = rr.RequestRules(MemoryStore({"rules": [rule]}))
+    await original.async_initialize()
+    backup = await original.async_backup_data()
+    store = MemoryStore()
+    restored = rr.RequestRules(store)
+    await restored.async_replace_backup(backup)
+    for manager in (restored, rr.RequestRules(store)):
+        await manager.async_initialize()
+        snapshot = manager.snapshot()
+        assert snapshot["rules"][0]["action"]["actions"] == [
+            {"action": "invalid-service"}
+        ]
+        assert rule["id"] in snapshot["diagnostics"]
+        assert manager.match("good night") is None
+
+
 async def test_unrelated_save_returns_supported_model_reasoning(
     hass, management_agent, management_message, monkeypatch
 ):
@@ -478,6 +497,47 @@ async def test_chained_wording_matches_independently_of_catalog_order():
         )
     with pytest.raises(ValueError, match=r"expand|cycle|limit"):
         rr.validate_wording_groups([{"canonical": "x x", "alternatives": ["x"]}])
+
+
+@pytest.mark.parametrize(
+    "groups, utterance, expected",
+    [
+        (
+            [
+                {"canonical": "a c", "alternatives": ["c c"]},
+                {"canonical": "b b c", "alternatives": ["a a a"]},
+            ],
+            "c c c c",
+            "a c a c",
+        ),
+        (
+            [
+                {"canonical": "b c", "alternatives": ["b b"]},
+                {"canonical": "b b c", "alternatives": ["c a"]},
+            ],
+            "c a a a",
+            "b c b c b c c",
+        ),
+        (
+            [
+                {"canonical": "c b c", "alternatives": ["c a"]},
+                {"canonical": "a a c", "alternatives": ["b c b"]},
+            ],
+            "a c a a",
+            "a c a a",
+        ),
+    ],
+    ids=["adjacent-overlap", "context-needs-more-passes", "context-does-not-converge"],
+)
+async def test_contextual_wording_stays_bounded_without_aborting_matching(
+    groups, utterance, expected
+):
+    manager = rr.RequestRules(MemoryStore())
+    await manager.async_initialize()
+    await manager.async_set_wording_groups(groups)
+    await manager.async_create({**local_rule(), "phrases": [expected]})
+    assert rr.normalize_text(utterance, rr.DEFAULT_MATCHING, groups) == expected
+    assert manager.match(utterance) is not None
 
 
 @pytest.mark.parametrize("key", ["service_template", "service", "action"])
