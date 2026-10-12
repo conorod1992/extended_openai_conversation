@@ -85,3 +85,31 @@ async def test_corrupt_disk_journal_cannot_be_accepted_or_silently_removed(hass)
     )._async_load_data() == journal
     await store.async_remove()
     assert not path.exists()
+
+
+@pytest.mark.usefixtures("real_store_io")
+@pytest.mark.parametrize("corruption", ["wrong-key", "wrong-version", "missing-data"])
+async def test_reader_rejects_foreign_or_incomplete_store_envelopes(
+    hass, corruption
+):
+    """The reader must not reinterpret another store's bytes as our journal."""
+    target, rollback = _states()
+    journal = restore_recovery._new_journal("entry-1", "agent-new", target, rollback)
+    store = restore_recovery._journal_store(hass, "entry-1", "agent-new")
+    assert await restore_recovery._async_write_journal_verified(store, journal)
+    path = Path(store.path)
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    if corruption == "wrong-key":
+        envelope["key"] += ".sibling"
+    elif corruption == "wrong-version":
+        envelope["version"] += 1
+    else:
+        envelope.pop("data")
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+    damaged = path.read_bytes()
+    reader = restore_recovery._journal_store(hass, "entry-1", "agent-new")
+    with pytest.raises(backup.BackupError, match="corrupted"):
+        await reader._async_load_data()
+    assert path.read_bytes() == damaged
+    assert not list(path.parent.glob(path.name + ".corrupt*"))
+    await store.async_remove()
