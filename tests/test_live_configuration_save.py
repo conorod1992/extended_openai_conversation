@@ -112,3 +112,64 @@ async def test_ordinary_save_marks_only_authorized_writes(
     assert not is_live_subentry_update(), (
         "the marker must not leak to a subsequent write"
     )
+
+
+@pytest.mark.parametrize(
+    "sampling",
+    [
+        {},
+        {"temperature": 0.0},
+        {"temperature": 0.5, "top_p": 0.9},
+    ],
+    ids=["omitted-legacy-settings", "explicit-zero", "explicit-sampling"],
+)
+async def test_unrelated_save_preserves_effective_provider_sampling_contract(
+    monkeypatch, sampling
+):
+    """An unrelated change must not introduce, drop or change sampling kwargs."""
+    from custom_components.extended_openai_conversation_responses.request import (
+        build_provider_request_snapshot,
+    )
+
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_request_rules",
+        AsyncMock(return_value=SimpleNamespace(snapshot=lambda: {"rules": []})),
+    )
+    monkeypatch.setattr(
+        management_ui,
+        "async_get_guest_mode",
+        AsyncMock(return_value=SimpleNamespace(status=lambda: {})),
+    )
+    hass, entry, subentry = _hass_with_agent()
+    # Construct a legacy option set directly: normalization before the test
+    # would hide the omitted-field regression.
+    baseline = {
+        **subentry.data,
+        "chat_model": "gpt-4o",
+        "api_mode": "chat_completions",
+    }
+    for key in ("temperature", "top_p", "reasoning_effort"):
+        baseline.pop(key, None)
+    baseline.update(sampling)
+    subentry.data = baseline
+    _, revision = warm(subentry)
+
+    def effective(config):
+        request = build_provider_request_snapshot(config, {}, tools_required=False)
+        return {
+            key: request.api_kwargs.get(key, "<omitted>")
+            for key in ("temperature", "top_p", "reasoning_effort")
+        }
+
+    before = effective(subentry.data)
+    request = management_ui._ManagementRequest(
+        hass, "admin", True,
+        {"config": {"max_tokens": 777}, "revision": revision},
+        entry.entry_id, subentry.subentry_id, entry, subentry,
+    )
+    saved = await management_ui._async_save_configuration(request)
+    assert saved["valid"]
+    after = effective(subentry.data)
+    assert after == before, (sampling, before, after)
+    assert subentry.data["max_tokens"] == 777
