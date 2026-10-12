@@ -15,6 +15,7 @@ from .management_result_limits import (
     page_metadata,
 )
 from .request_diagnostics import (
+    first_text_latency,
     provider_diagnostics,
     summary_diagnostics,
     trace_diagnostics,
@@ -143,7 +144,6 @@ def _summary(trace: Any) -> dict[str, Any]:
     error, error_meta = _bounded_value(
         trace.error, MANAGEMENT_DEBUG_SUMMARY_VALUE_CHARACTERS
     )
-    first_request = trace.provider_requests[0] if trace.provider_requests else None
     return summary_diagnostics(
         trace,
         {
@@ -163,9 +163,7 @@ def _summary(trace: Any) -> dict[str, Any]:
             "continuity_resumed": trace.continuity.get("resumed"),
             "continuity_mode": trace.continuity.get("mode"),
             "provider_request_count": len(trace.provider_requests),
-            "first_text_ms": (
-                first_request.first_text_ms if first_request is not None else None
-            ),
+            "first_text_ms": first_text_latency(trace.provider_requests),
             **usage,
         },
     )

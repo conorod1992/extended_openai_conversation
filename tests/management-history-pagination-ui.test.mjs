@@ -148,3 +148,49 @@ function historyPanel() {
   assert.equal(panel._contentData.sessions.sessions[0].session_id, "new-scope",
     "a late response from the previous scope must not overwrite the new scope");
 }
+
+// Exercise real dialog navigation: a page can continue within the same turn.
+{
+  class Element {
+    constructor() { this.children = []; this.style = {}; this.listeners = {}; this._html = ""; }
+    append(element) { this.children.push(element); }
+    addEventListener(name, callback) { this.listeners[name] = callback; }
+    set innerHTML(value) { this._html = value; this.children = []; }
+    get innerHTML() { return this._html; }
+    click() { if (!this.disabled) this.listeners.click?.(); }
+  }
+  globalThis.document = {createElement: () => new Element()};
+  const body = new Element();
+  const title = new Element();
+  const dialog = {open: false, showModal() { this.open = true; }};
+  const requests = [];
+  const panel = {
+    _agentId: "agent", _scopeId: "scope",
+    shadowRoot: {querySelector: selector => ({"#session-dialog": dialog, "#session-body": body, "#session-title": title})[selector]},
+    _ensureOwnedDialog() {}, _loading: () => "loading", _e: value => String(value),
+    _formatDate: value => value, _empty: value => value,
+    async _call(section, action, cursor) {
+      requests.push(cursor);
+      return {
+        session: {title: "Long conversation"}, start_turn: cursor.start_turn,
+        text_offset: cursor.text_offset, offset: cursor.start_turn, returned: 1, total: 1,
+        turns: [{user_text: `fragment ${cursor.text_offset}`, assistant_text: "", timestamp: "now"}],
+        has_more: cursor.text_offset === 0, next_start_turn: 0, next_text_offset: 30000,
+      };
+    },
+  };
+  const button = label => body.children[0].children.find(item => item.textContent === label);
+  await pagination.openSession(panel, "session");
+  assert.equal(button("Previous turns").disabled, true);
+  button("Next turns").click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests[1].start_turn, 0, "Next must stay within the long turn");
+  assert.equal(requests[1].text_offset, 30000);
+  assert.equal(button("Previous turns").disabled, false, "Previous uses actual cursor history even at turn zero");
+  button("Previous turns").click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests[2].start_turn, 0);
+  assert.equal(requests[2].text_offset, 0);
+  await pagination.openSession(panel, "another-session", 40);
+  assert.equal(button("Previous turns").disabled, true, "Opening another session resets cursor history");
+}

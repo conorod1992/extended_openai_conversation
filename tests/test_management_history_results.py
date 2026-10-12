@@ -662,8 +662,6 @@ async def test_management_archive_search_uses_home_assistant_local_calendar_date
     result = await management_history_queries._async_archive_query(
         archive,
         management_history_queries._archive_search_sync,
-        archive._sessions,
-        archive._turns,
         "user:alice",
         "alpha",
         "2026-06-02",
@@ -671,6 +669,7 @@ async def test_management_archive_search_uses_home_assistant_local_calendar_date
         0,
         10,
         ZoneInfo("Europe/Dublin"),
+        include_turns=True,
     )
 
     assert [item["turn_id"] for item in result["results"]] == ["local-june-2"]
@@ -679,14 +678,15 @@ async def test_management_archive_search_uses_home_assistant_local_calendar_date
 
 
 @pytest.mark.asyncio
-async def test_async_archive_query_waits_for_worker_cleanup_when_cancelled() -> None:
-    """Cancellation does not abandon the protected off-loop archive query."""
+async def test_async_archive_query_cancellation_releases_snapshot_without_waiting() -> None:
+    """A read-only snapshot worker never owns the mutation lock while cancelled."""
     started = Event()
     release = Event()
 
     class _Archive:
         def __init__(self):
             self._lock = asyncio.Lock()
+            self._sessions = {}
             self.initialized_checks = 0
 
         def _ensure_initialized(self):
@@ -694,25 +694,28 @@ async def test_async_archive_query_waits_for_worker_cleanup_when_cancelled() -> 
 
     archive = _Archive()
 
-    def query():
+    def query(*_args):
         started.set()
         assert release.wait(timeout=5)
         return "done"
 
-    task = asyncio.create_task(_async_archive_query(archive, query))
+    task = asyncio.create_task(_async_archive_query(archive, query, "user:alice"))
     for _ in range(100):
         if started.is_set():
             break
         await asyncio.sleep(0)
     assert started.is_set()
 
-    task.cancel()
-    release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert archive.initialized_checks == 1
-    assert archive._lock.locked() is False
+    try:
+        assert not archive._lock.locked()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+        assert not release.is_set()
+        assert archive.initialized_checks == 1
+        assert archive._lock.locked() is False
+    finally:
+        release.set()
 
 
 @pytest.mark.asyncio
@@ -732,7 +735,7 @@ async def test_archive_get_page_clamps_inputs_and_recovers_missing_total_metadat
     )
 
     async_get.assert_awaited_once_with(
-        "user:alice", "session-1", 0, MANAGEMENT_ARCHIVE_TURN_PAGE_MAX
+        "user:alice", "session-1", 0, MANAGEMENT_ARCHIVE_TURN_PAGE_MAX, text_offset=0
     )
     assert result["start_turn"] == 0
     assert result["limit"] == MANAGEMENT_ARCHIVE_TURN_PAGE_MAX

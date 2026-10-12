@@ -104,3 +104,30 @@ def _compact_json_result_content(result: Any) -> Any:
         return result
     tool_result["result"] = compacted
     return result
+
+
+def bounded_record_page(result: dict[str, Any], records_key: str) -> dict[str, Any]:
+    """Fit complete records and their continuation cursor within the wire budget."""
+    from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
+
+    records = result[records_key]
+    page = {**result, records_key: []}
+    offset = max(0, int(result.get("offset", 0)))
+    for record in records:
+        page[records_key].append(record)
+        returned = len(page[records_key])
+        page.update(returned=returned, has_more=True, next_offset=offset + returned)
+        # Reserve room for the final boolean/cursor and future wrapper metadata.
+        if len(compact_tool_json(page)) > MAX_MODEL_TOOL_RESULT_CHARACTERS - 1024:
+            page[records_key].pop()
+            break
+    returned = len(page[records_key])
+    if records and not returned:
+        raise ValueError("record exceeds model tool result budget")
+    more = bool(result.get("has_more")) or returned < len(records)
+    page.update(
+        returned=returned,
+        has_more=more,
+        next_offset=offset + returned if more else None,
+    )
+    return page

@@ -6,12 +6,16 @@ import asyncio
 from collections import defaultdict
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timedelta, tzinfo
+from heapq import heappush, heapreplace
 import json
 import logging
 import re
+import sys
+from threading import RLock
 from typing import Any, Protocol
 import unicodedata
 from uuid import uuid4
+import weakref
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -27,6 +31,12 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 STORAGE_KEY_PREFIX = f"{DOMAIN}.archive"
 MAX_SEARCH_LIMIT = 50
+MAX_SEARCH_OFFSET = 10_000
+_SEARCH_CACHE_BYTES = 8 * 1024 * 1024
+_SEARCH_CACHE_TURNS = 4096
+_SEARCH_FEATURES: dict[int, tuple[Any, str, frozenset[str], int]] = {}
+_SEARCH_FEATURE_BYTES = 0
+_SEARCH_FEATURE_LOCK = RLock()
 MAX_GET_LIMIT = 50
 MAX_TEXT_LENGTH = 40_000
 MAX_TITLE_LENGTH = 80
@@ -82,7 +92,7 @@ class ArchiveSession:
     last_activity_at: str | None = None
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(slots=True, frozen=True, weakref_slot=True)
 class ArchiveTurn:
     """Exactly one user message and final assistant response."""
 
@@ -487,6 +497,10 @@ class ConversationArchive:
             raise ValueError("query must not be blank")
         limit = max(1, min(limit, MAX_SEARCH_LIMIT))
         offset = max(0, offset)
+        if offset > MAX_SEARCH_OFFSET:
+            raise ValueError(
+                f"offset must not exceed {MAX_SEARCH_OFFSET}; narrow the query"
+            )
         async with self._lock:
             self._ensure_initialized()
             snapshot = tuple(
@@ -1283,16 +1297,16 @@ def _search_archive_snapshot(
     normalized_query = _normalize(query)
     time_zone = time_zone or dt_util.DEFAULT_TIME_ZONE
     start, end = _local_date_bounds(start_date, end_date, time_zone)
-    ranked: list[tuple[float, str, ArchiveSession, ArchiveTurn, int]] = []
+    keep = offset + limit
+    ranked: list[tuple[float, str, int, ArchiveSession, ArchiveTurn, int]] = []
+    total = 0
     for session, turns in snapshot:
         for turn_index, turn in enumerate(turns):
             if (start_date or end_date) and not (
                 start <= _parse_time(turn.timestamp) < end
             ):
                 continue
-            combined = f"{turn.user_text} {turn.assistant_text}"
-            normalized_combined = _normalize(combined)
-            tokens = _tokens(combined)
+            normalized_combined, tokens = _search_features(turn)
             overlap = len(query_tokens & tokens)
             literal_match = bool(
                 normalized_query
@@ -1309,8 +1323,14 @@ def _search_archive_snapshot(
             score = overlap / max(1, len(query_tokens))
             if literal_match:
                 score += 2
-            ranked.append((score, turn.timestamp, session, turn, turn_index))
-    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            # The sequence key preserves the previous stable ordering of ties.
+            candidate = (score, turn.timestamp, -total, session, turn, turn_index)
+            total += 1
+            if len(ranked) < keep:
+                heappush(ranked, candidate)
+            elif candidate[:3] > ranked[0][:3]:
+                heapreplace(ranked, candidate)
+    ranked.sort(key=lambda item: item[:3], reverse=True)
     page = ranked[offset : offset + limit]
     return {
         "results": [
@@ -1326,11 +1346,11 @@ def _search_archive_snapshot(
                 "title": session.title,
                 "excerpt": _excerpt(f"{turn.user_text}\n{turn.assistant_text}", query),
             }
-            for _, _, session, turn, turn_index in page
+            for _, _, _, session, turn, turn_index in page
         ],
         "offset": offset,
         "limit": limit,
-        "has_more": len(ranked) > offset + limit,
+        "has_more": total > offset + limit,
     }
 
 
@@ -1456,15 +1476,53 @@ def _stem(token: str) -> str:
 
 
 def _tokens(value: str) -> set[str]:
-    from .retrieval_text import cjk_terms
+    from .retrieval_text import cjk_terms, lexical_terms
 
     return {
-        _stem(token)
-        for token in _TOKEN_PATTERN.findall(
-            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
-        )
-        if token not in _STOP_WORDS
+        _stem(token) for token in lexical_terms(value) if token not in _STOP_WORDS
     } | cjk_terms(value)
+
+
+def _search_features(turn: ArchiveTurn) -> tuple[str, frozenset[str]]:
+    """Reuse immutable lexical features within a bounded, weakly owned cache."""
+    global _SEARCH_FEATURE_BYTES
+    key = id(turn)
+    with _SEARCH_FEATURE_LOCK:
+        cached = _SEARCH_FEATURES.get(key)
+        if cached is not None and cached[0]() is turn:
+            return cached[1], cached[2]
+    combined = f"{turn.user_text} {turn.assistant_text}"
+    normalized, tokens = _normalize(combined), frozenset(_tokens(combined))
+    size = (
+        sys.getsizeof(normalized)
+        + sys.getsizeof(tokens)
+        + sum(map(sys.getsizeof, tokens))
+        + 640
+    )
+    if size > _SEARCH_CACHE_BYTES:
+        return normalized, tokens
+
+    def discard(reference: Any) -> None:
+        global _SEARCH_FEATURE_BYTES
+        with _SEARCH_FEATURE_LOCK:
+            current = _SEARCH_FEATURES.get(key)
+            if current is not None and current[0] is reference:
+                _SEARCH_FEATURE_BYTES -= _SEARCH_FEATURES.pop(key)[3]
+
+    with _SEARCH_FEATURE_LOCK:
+        previous = _SEARCH_FEATURES.pop(key, None)
+        if previous is not None:
+            _SEARCH_FEATURE_BYTES -= previous[3]
+        # Admit only within the budget. Evicting for every scanned turn causes
+        # sequential searches larger than the cache to miss on every revisit.
+        if (
+            _SEARCH_FEATURE_BYTES + size > _SEARCH_CACHE_BYTES
+            or len(_SEARCH_FEATURES) >= _SEARCH_CACHE_TURNS
+        ):
+            return normalized, tokens
+        _SEARCH_FEATURES[key] = (weakref.ref(turn, discard), normalized, tokens, size)
+        _SEARCH_FEATURE_BYTES += size
+    return normalized, tokens
 
 
 def _excerpt(value: str, query: str) -> str:

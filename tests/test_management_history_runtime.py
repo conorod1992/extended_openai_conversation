@@ -275,7 +275,7 @@ async def test_conversation_mutations_remain_owned_by_conversation_section(
             {"session_id": 456, "start_turn": "2", "limit": "11"},
             "archive_get_page",
             ("ARCHIVE", "scope", "456"),
-            {"start_turn": 2, "limit": 11},
+            {"start_turn": 2, "text_offset": 0, "limit": 11},
         ),
     ],
 )

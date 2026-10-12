@@ -188,6 +188,7 @@ from .model_search_hardening import _require_nonblank_query
 from .model_tool_results import (
     _compact_json_result_content,
     _compact_memory_result,
+    bounded_record_page,
     knowledge_search_payload,
     model_memory_as_dict,
     omit_null_paging_cursor,
@@ -2506,14 +2507,14 @@ class ExtendedOpenAIAgentEntity(
                 or isinstance(offset, bool)
             ):
                 raise ValueError("query, limit, or offset has an invalid type")
+            page = await self._knowledge.async_catalog(
+                query,
+                limit,
+                offset,
+                self._effective_guest_policy().knowledge_source_ids,
+            )
             return omit_null_paging_cursor(
-                await self._knowledge.async_catalog(
-                    query,
-                    limit,
-                    offset,
-                    self._effective_guest_policy().knowledge_source_ids,
-                ),
-                "next_offset",
+                bounded_record_page(page, "sources"), "next_offset"
             )
         if operation == "get":
             source_id = arguments.get("source_id")
@@ -2644,21 +2645,23 @@ class ExtendedOpenAIAgentEntity(
             list_scopes = self._filter_read_scopes(
                 readable_scope_ids, arguments.get("scope")
             )
-            memories = await self._memory.async_list(
-                list_scopes,
-                category,
-                limit,
-                offset,
+            memories, has_more = await self._memory.async_list_page(
+                list_scopes, category, limit, offset
             )
             personal_id = self._personal_memory_scope_id(llm_context)
-            return {
+            page = {
                 "memories": [
                     model_memory_as_dict(
                         memory, include_scope=True, personal_scope_id=personal_id
                     )
                     for memory in memories
-                ]
+                ],
+                "offset": max(0, offset),
+                "has_more": has_more,
             }
+            return omit_null_paging_cursor(
+                bounded_record_page(page, "memories"), "next_offset"
+            )
         if operation == "update":
             memory_id = arguments.get("memory_id")
             content = arguments.get("content")
