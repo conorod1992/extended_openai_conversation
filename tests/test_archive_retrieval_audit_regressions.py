@@ -139,14 +139,14 @@ def test_search_heap_preserves_ties_and_reuses_bounded_weak_features(monkeypatch
         for i in range(1000)
     )
     calls = 0
-    original = archive_module._tokens
+    original = archive_module._tokens_from_normalized
 
     def tokens(value):
         nonlocal calls
         calls += 1
         return original(value)
 
-    monkeypatch.setattr(archive_module, "_tokens", tokens)
+    monkeypatch.setattr(archive_module, "_tokens_from_normalized", tokens)
     peak = 0
     push = archive_module.heappush
 
@@ -338,3 +338,56 @@ async def test_management_revalidation_rejects_replaced_turn(monkeypatch):
     monkeypatch.setattr(history.asyncio, "to_thread", query_then_replace)
     with pytest.raises(HomeAssistantError, match="changed during search"):
         await history.archive_search_page(archive, "user:alice", "alpha")
+
+
+def test_repeated_turn_words_are_stemmed_once_per_distinct_term(monkeypatch):
+    sentence = "Oscar's bread-making uses Wi-Fi, C++, C# and R. "
+    calls = []
+    original = archive_module._stem
+    def stem(token):
+        calls.append(token)
+        return original(token)
+    monkeypatch.setattr(archive_module, "_stem", stem)
+    expected = archive_module._tokens(sentence)
+    single_calls = len(calls)
+    calls.clear()
+    assert archive_module._tokens(sentence * 1000) == expected
+    assert len(calls) == single_calls
+    assert {"oscar", "bread", "wi", "fi", "c++", "c#", "r"} <= expected
+
+
+@pytest.mark.parametrize("text", [
+    "Oscar's Oscar\u2019s bread-making notes and Wi-Fi",
+    "C++ C# R r R2 test_id O'Neill's",
+    "\u65e5\u672c\u8a9e \u4e2d\u6587\u641c\u7d22 \ud55c\uad6d\uc5b4",
+    "\u65e5++\u672c \u65e5-\u672c \u65e5\u0301\u672c \u65e5_\u672c",
+    "mixed e\u0301cole CAF\u00c9 123456 foo---bar foo's-bar's",
+    "quote \u201cword\u201d and emoji \U0001f600 with\nline\tbreaks",
+])
+def test_single_pass_features_preserve_lexical_and_cjk_semantics(text):
+    from custom_components.extended_openai_conversation_responses.retrieval_text import (
+        cjk_terms,
+        lexical_terms,
+    )
+    expected = {
+        archive_module._stem(term)
+        for term in lexical_terms(text)
+        if term not in archive_module._STOP_WORDS
+    } | cjk_terms(text)
+    assert archive_module._tokens(text) == expected
+
+
+def test_full_feature_cache_skips_admission_accounting(monkeypatch):
+    monkeypatch.setattr(archive_module, "_SEARCH_CACHE_TURNS", 0)
+    turn = _turn("session", 0)
+    calls = []
+    original = archive_module.sys.getsizeof
+    with monkeypatch.context() as patch:
+        def size(value):
+            calls.append(value)
+            return original(value)
+        patch.setattr(archive_module.sys, "getsizeof", size)
+        normalized, tokens = archive_module._search_features(turn)
+    assert normalized and tokens
+    assert not calls
+    assert id(turn) not in archive_module._SEARCH_FEATURES

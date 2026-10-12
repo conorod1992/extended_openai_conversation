@@ -1476,11 +1476,19 @@ def _stem(token: str) -> str:
 
 
 def _tokens(value: str) -> set[str]:
-    from .retrieval_text import cjk_terms, lexical_terms
+    return _tokens_from_normalized(_normalize(value))
 
-    return {
-        _stem(token) for token in lexical_terms(value) if token not in _STOP_WORDS
-    } | cjk_terms(value)
+
+def _tokens_from_normalized(value: str) -> set[str]:
+    """Expand and stem each distinct word once; preserve CJK run boundaries."""
+    from .retrieval_text import cjk_terms, lexical_terms_from_tokens
+
+    words = set(value.split())
+    if "'" in value or "-" in value:
+        words.update(lexical_terms_from_tokens(words))
+    return {_stem(token) for token in words if token not in _STOP_WORDS} | (
+        set() if value.isascii() else cjk_terms(value)
+    )
 
 
 def _search_features(turn: ArchiveTurn) -> tuple[str, frozenset[str]]:
@@ -1491,15 +1499,21 @@ def _search_features(turn: ArchiveTurn) -> tuple[str, frozenset[str]]:
         cached = _SEARCH_FEATURES.get(key)
         if cached is not None and cached[0]() is turn:
             return cached[1], cached[2]
+        available = (
+            _SEARCH_CACHE_BYTES - _SEARCH_FEATURE_BYTES
+            if len(_SEARCH_FEATURES) < _SEARCH_CACHE_TURNS
+            else 0
+        )
     combined = f"{turn.user_text} {turn.assistant_text}"
-    normalized, tokens = _normalize(combined), frozenset(_tokens(combined))
-    size = (
-        sys.getsizeof(normalized)
-        + sys.getsizeof(tokens)
-        + sum(map(sys.getsizeof, tokens))
-        + 640
-    )
-    if size > _SEARCH_CACHE_BYTES:
+    normalized = _normalize(combined)
+    tokens = frozenset(_tokens_from_normalized(normalized))
+    if available <= 0:
+        return normalized, tokens
+    size = sys.getsizeof(normalized) + sys.getsizeof(tokens) + 640
+    if size > available:
+        return normalized, tokens
+    size += sum(map(sys.getsizeof, tokens))
+    if size > available:
         return normalized, tokens
 
     def discard(reference: Any) -> None:
