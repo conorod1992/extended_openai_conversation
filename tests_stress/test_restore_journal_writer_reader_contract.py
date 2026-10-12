@@ -56,8 +56,16 @@ async def test_accepted_journal_is_readable_by_production_reader_on_disk(
     assert read_rollback.title == rollback.title
     assert read_target.config["prompt"] == target.config["prompt"]
     assert read_rollback.config["prompt"] == rollback.config["prompt"]
-    assert len(read_target.memories) == len(target.memories)
-    assert len(read_rollback.knowledge) == len(rollback.knowledge)
+    # Count-only checks can miss field corruption. Compare the complete
+    # serialized durable categories using the production format.
+    for section in ("memories", "temporary_memories", "knowledge", "archive",
+                    "usage", "guest_mode", "request_rules"):
+        assert restore_recovery._prepared_document(
+            read_target, "entry-1", "agent-new"
+        )[section] == journal["target"][section]
+        assert restore_recovery._prepared_document(
+            read_rollback, "entry-1", "agent-new"
+        )[section] == journal["rollback"][section]
     await store.async_remove()
     assert not path.exists()
 
