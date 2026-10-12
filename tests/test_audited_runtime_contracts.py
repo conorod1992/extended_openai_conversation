@@ -540,6 +540,33 @@ async def test_contextual_wording_stays_bounded_without_aborting_matching(
     assert manager.match(utterance) is not None
 
 
+async def test_large_wording_catalog_compiles_once_across_validation_and_reload(
+    monkeypatch,
+):
+    store = MemoryStore()
+    manager = rr.RequestRules(store)
+    await manager.async_initialize()
+    groups = [
+        {
+            "canonical": f"canonical{i}",
+            "alternatives": [f"alternative{i}item{j}" for j in range(25)],
+        }
+        for i in range(100)
+    ]
+    rr._compiled_wording_replacements.cache_clear()
+    compile_pattern = Mock(wraps=rr.re.compile)
+    monkeypatch.setattr(rr.re, "compile", compile_pattern)
+    await manager.async_set_wording_groups(groups)
+    assert (
+        rr.normalize_text("alternative99item24", rr.DEFAULT_MATCHING, groups)
+        == "canonical99"
+    )
+    reloaded = rr.RequestRules(store)
+    await reloaded.async_initialize()
+    assert reloaded.snapshot()["wording_groups"] == groups
+    assert compile_pattern.call_count == 2500
+
+
 @pytest.mark.parametrize("key", ["service_template", "service", "action"])
 async def test_native_service_name_aliases_validate_consistently(hass, key):
     actions = [{key: "{{ 'light.turn_off' }}", "target": {"entity_id": "light.x"}}]

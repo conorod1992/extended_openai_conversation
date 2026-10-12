@@ -17,6 +17,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from functools import lru_cache
 from hashlib import sha256
 import json
 import logging
@@ -3856,29 +3857,42 @@ def _basic_normalize(text: str) -> str:
     return value
 
 
+@lru_cache(maxsize=16)
+def _compiled_wording_replacements(
+    groups: tuple[tuple[str, tuple[str, ...]], ...],
+) -> tuple[tuple[re.Pattern[str], str], ...]:
+    """Compile one bounded catalog once, including during catalog validation."""
+    replacements = sorted(
+        (
+            (_basic_normalize(alternative), _basic_normalize(canonical))
+            for canonical, alternatives in groups
+            for alternative in alternatives
+        ),
+        key=lambda item: (-len(item[0]), item[0], item[1]),
+    )
+    return tuple(
+        (re.compile(rf"(?<= ){re.escape(alternative)}(?= )"), canonical)
+        for alternative, canonical in replacements
+    )
+
+
 def _normalize_wording(text: str, wording_groups: Sequence[Mapping[str, Any]]) -> str:
     """Reach a bounded fixed point, rejecting cycles and expanding rewrites."""
     value = _basic_normalize(text)
-    replacements = sorted(
-        (
-            (_basic_normalize(alternative), _basic_normalize(group["canonical"]))
+    replacements = _compiled_wording_replacements(
+        tuple(
+            (group["canonical"], tuple(group["alternatives"]))
             for group in wording_groups
-            for alternative in group["alternatives"]
-        ),
-        key=lambda item: (-len(item[0]), item[0], item[1]),
+        )
     )
     seen = {value}
     limit = max(32_000, len(value) * 4)
     for _ in range(128):
         padded = f" {value} "
-        for alternative, canonical in replacements:
+        for pattern, canonical in replacements:
             # Lookarounds keep a shared word boundary available to the next
             # adjacent occurrence, unlike consuming both surrounding spaces.
-            padded = re.sub(
-                rf"(?<= ){re.escape(alternative)}(?= )",
-                lambda _match, canonical=canonical: canonical,
-                padded,
-            )
+            padded = pattern.sub(canonical, padded)
             if len(padded) > limit + 2:
                 raise ValueError(
                     "wording alternatives expand beyond the normalization limit"
