@@ -380,7 +380,7 @@ async def test_schedule_equivalence_counts_durable_records(
         DATA_DELAYED_TOOL_MANAGER,
     )
 
-    agent, call, text = await _counter(hass, monkeypatch, mode, depth=2)
+    agent, call, _text = await _counter(hass, monkeypatch, mode, depth=2)
     first_delay, retry_delay = delay_pair
     initial = _arguments()
     if first_delay is not None:
@@ -443,7 +443,7 @@ async def test_ha_source_defaults_are_actual_replay_defaults(hass, monkeypatch, 
     call = (
         _chat_sse_tool_call if mode == "chat_completions" else _responses_sse_tool_call
     )
-    _install_wire(
+    wire = _install_wire(
         monkeypatch,
         agent,
         [
@@ -463,6 +463,23 @@ async def test_ha_source_defaults_are_actual_replay_defaults(hass, monkeypatch, 
     assert first.response.error_code is not None
     assert len(source.calls) == 1
     assert source.calls[0][0].tool_args["repeat"] == 1
+    import json
+
+    body = wire.requests[-1]["body"]
+    if mode == "chat_completions":
+        message = next(
+            item for item in body["messages"] if item.get("tool_call_id") == "first"
+        )
+        payload = json.loads(message["content"])
+    else:
+        item = next(
+            item
+            for item in body["input"]
+            if item.get("type") == "function_call_output"
+            and item.get("call_id") == "first"
+        )
+        payload = json.loads(item["output"])
+    assert payload["result"] == {"echo": "one", "user_id": None}
     _install_wire(
         monkeypatch,
         agent,
@@ -479,9 +496,10 @@ async def test_knowledge_search_wire_pages_reconstruct_ranked_matches(
     hass, monkeypatch, mode
 ):
     import json
+
     from tests_real_ha.test_knowledge_provider_wire_e2e import (
-        _knowledge_agent,
         _chat_tool_result,
+        _knowledge_agent,
         _responses_tool_result,
     )
 
@@ -529,15 +547,16 @@ async def test_knowledge_search_wire_pages_reconstruct_ranked_matches(
 async def test_canonical_durable_records_reload_and_reexport_actual_store(hass):
     from dataclasses import asdict
     from datetime import timedelta
-    from homeassistant.util import dt as dt_util
+
     from custom_components.extended_openai_conversation_responses.knowledge import (
-        KnowledgeLibrary,
         HomeAssistantKnowledgeStorage,
+        KnowledgeLibrary,
     )
     from custom_components.extended_openai_conversation_responses.temporary_memory import (
         TemporaryMemory,
         TemporaryMemoryStore,
     )
+    from homeassistant.util import dt as dt_util
 
     stamp = dt_util.utcnow().isoformat()
     raw = {
@@ -662,8 +681,8 @@ async def test_typed_and_exact_text_results_survive_local_and_provider_consumers
     hass, monkeypatch, value
 ):
     import json
-
     from unittest.mock import AsyncMock
+
     from custom_components.extended_openai_conversation_responses.functions import (
         get_function,
     )

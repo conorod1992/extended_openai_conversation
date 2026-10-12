@@ -8,6 +8,8 @@ from contextvars import ContextVar
 import json
 from typing import Any
 
+import orjson
+
 from .ha_tool_result_compat import tool_result_data
 from .memory import MemoryRecord, memory_as_dict
 
@@ -98,7 +100,10 @@ async def project_tool_result(content: Any) -> Any:
 
 def compact_tool_json(value: Any) -> str:
     """Serialize model-facing tool data without semantically irrelevant whitespace."""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    # Match Function normalization and provider serialization, including their
+    # supported dataclass, datetime and UUID values. Decode before measuring:
+    # the model limit is in characters, not UTF-8 bytes.
+    return orjson.dumps(value).decode("utf-8")
 
 
 def model_memory_as_dict(

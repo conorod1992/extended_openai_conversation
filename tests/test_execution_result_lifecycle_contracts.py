@@ -169,6 +169,34 @@ async def test_owned_projection_survives_ha_dataclass_serialization(hass, value)
     assert tool_result_data(content).value == value
 
 
+async def test_projection_accepts_the_function_normalizers_serializable_types(hass):
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    import orjson
+
+    from custom_components.extended_openai_conversation_responses.entity import (
+        _normalize_function_result,
+    )
+
+    @dataclass
+    class Record:
+        answer: int
+
+    value = {
+        "record": Record(42),
+        "timestamp": datetime(2026, 10, 13, tzinfo=UTC),
+        "id": UUID(int=1),
+        "text": "é" * 20000,
+    }
+    assert _normalize_function_result(value) is value
+    entity = _entity(hass)
+    content = _result(entity, _call("typed", "produce"), value)
+    projected = await project_tool_result(content)
+    assert tool_result_data(projected)["result"] is value
+    assert orjson.loads(orjson.dumps(value))["record"] == {"answer": 42}
+
+
 async def test_structured_overflow_is_complete_and_does_not_mutate_local_result(hass):
     entity = _entity(hass)
     call = _call("large", "produce")
