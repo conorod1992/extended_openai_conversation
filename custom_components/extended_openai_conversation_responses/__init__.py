@@ -195,8 +195,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_setup_model_catalog(hass)
     await async_get_quiet_hours(hass)
     apply_openai_compatibility()
-    await async_setup_delayed_tools(hass)
     await async_migrate_integration(hass)
+    from .agent_deletion import async_reconcile_agent_storage
+
+    await async_reconcile_agent_storage(hass)
+    await async_setup_delayed_tools(hass)
     # Resolve any interrupted cross-store restore before conversation agents load.
     await async_recover_pending_restores(hass)
     await async_setup_ha_permissions(hass)
@@ -221,10 +224,14 @@ async def async_setup_entry(
 ) -> bool:
     """Set up Extended OpenAI Conversation (Responses) from a config entry."""
 
-    from .agent_deletion import KNOWN_AGENTS
+    from .agent_deletion import KNOWN_AGENTS, async_delete_removed_subentries
     from .provider_errors import provider_authentication_snapshot
 
     authentication_snapshot = provider_authentication_snapshot(entry)
+
+    # Re-enable can follow subentry deletion while the parent was unloaded.
+    # Cleanup must not depend on successful provider authentication.
+    await async_delete_removed_subentries(hass, entry)
 
     try:
         client = await get_authenticated_client(

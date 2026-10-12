@@ -445,7 +445,7 @@ def test_resolve_target_ids_short_circuits_empty_selection(
     resolver.assert_not_called()
 
 
-def test_target_selection_merges_scalar_and_list_values() -> None:
+def test_target_selection_uses_target_precedence_and_preserves_other_keys() -> None:
     assert ha_actions._target_selection(
         {
             "entity_id": "light.one",
@@ -458,8 +458,8 @@ def test_target_selection_merges_scalar_and_list_values() -> None:
             "label_id": "important",
         },
     ) == {
-        "entity_id": ["light.one", "light.two", "light.three"],
-        "area_id": ["kitchen", "hall", "office"],
+        "entity_id": ["light.two", "light.three"],
+        "area_id": ["office"],
         "label_id": ["important"],
     }
 

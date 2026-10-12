@@ -101,16 +101,26 @@ def _decode_zstd(body: bytes, max_bytes: int) -> bytes:
     if _ZSTD_COMPAT is not None:
         decoded = bytearray()
         try:
+            # The compatibility EOF API cannot cap output. Establish the output
+            # bound with its streaming reader before using that API to validate
+            # frame completion (the reader alone accepts truncated final frames).
+            with _ZSTD_COMPAT.ZstdDecompressor().stream_reader(
+                body, read_size=_DECODE_CHUNK_BYTES, read_across_frames=True
+            ) as reader:
+                while chunk := reader.read(
+                    min(_DECODE_CHUNK_BYTES, max_bytes + 1 - len(decoded))
+                ):
+                    if len(chunk) > max_bytes - len(decoded):
+                        raise _response_limit_error(max_bytes)
+                    decoded.extend(chunk)
             decoder = _ZSTD_COMPAT.ZstdDecompressor().decompressobj()
-            for offset in range(len(body)):
-                if decoder.eof:
-                    decoder = _ZSTD_COMPAT.ZstdDecompressor().decompressobj()
-                # One input byte cannot complete more than one Zstd block.
-                # Bound expansion per call and explicitly require frame EOF.
-                chunk = decoder.decompress(body[offset : offset + 1])
-                if len(chunk) > max_bytes - len(decoded):
-                    raise _response_limit_error(max_bytes)
-                decoded.extend(chunk)
+            for offset in range(0, len(body), _DECODE_CHUNK_BYTES):
+                pending = body[offset : offset + _DECODE_CHUNK_BYTES]
+                while pending:
+                    if decoder.eof:
+                        decoder = _ZSTD_COMPAT.ZstdDecompressor().decompressobj()
+                    decoder.decompress(pending)
+                    pending = decoder.unused_data
             if not decoder.eof:
                 raise aiohttp.ClientPayloadError("Incomplete compressed response")
         except _ZSTD_COMPAT.ZstdError as err:
@@ -153,34 +163,51 @@ def _decode_compressed_body(body: bytes, encoding: str, max_bytes: int) -> bytes
             raise aiohttp.ClientPayloadError("Empty compressed response")
         wbits = 16 + zlib.MAX_WBITS if encoding == "gzip" else zlib.MAX_WBITS
         # aiohttp also accepts the legacy raw-deflate representation.
-        if encoding == "deflate" and body and body[0] & 0x0F != 8:
+        if encoding == "deflate" and not (
+            len(body) >= 2
+            and body[0] & 0x0F == 8
+            and body[0] >> 4 <= 7
+            and int.from_bytes(body[:2], "big") % 31 == 0
+        ):
             wbits = -zlib.MAX_WBITS
-        decoded = bytearray()
-        while body:
-            decoder = zlib.decompressobj(wbits)
+
+        def decode(window_bits: int) -> bytes:
+            decoded = bytearray()
+            pending = body
+            while pending:
+                decoder = zlib.decompressobj(window_bits)
+                decoded.extend(
+                    decoder.decompress(pending, max_bytes + 1 - len(decoded))
+                )
+                if len(decoded) > max_bytes:
+                    raise _response_limit_error(max_bytes)
+                if not decoder.eof:
+                    raise aiohttp.ClientPayloadError("Incomplete compressed response")
+                pending = decoder.unused_data
+            return bytes(decoded)
+
+        try:
             try:
-                decoded.extend(decoder.decompress(body, max_bytes + 1 - len(decoded)))
-            except zlib.error as err:
-                raise aiohttp.ClientPayloadError(
-                    "Malformed compressed response"
-                ) from err
-            if len(decoded) > max_bytes:
-                break
-            if not decoder.eof:
-                raise aiohttp.ClientPayloadError("Incomplete compressed response")
-            body = decoder.unused_data
-        result = bytes(decoded)
+                return decode(wbits)
+            except (zlib.error, aiohttp.ClientPayloadError) as wrapped_error:
+                if encoding != "deflate" or wbits < 0:
+                    raise
+                # A valid raw stored block can coincidentally have a full zlib
+                # header. Retry from the original input with the same output cap.
+                try:
+                    return decode(-zlib.MAX_WBITS)
+                except zlib.error, aiohttp.ClientPayloadError:
+                    # Keep the wrapped stream's diagnostic if neither format is
+                    # valid, including streams missing their final checksum.
+                    raise wrapped_error from None
+        except zlib.error as err:
+            raise aiohttp.ClientPayloadError("Malformed compressed response") from err
     elif encoding == "br":
         return _decode_brotli(body, max_bytes)
     elif encoding == "zstd":
         return _decode_zstd(body, max_bytes)
     else:
         return body
-    if len(result) > max_bytes:
-        raise HomeAssistantError(
-            f"Remote response exceeds the configured safety limit of {max_bytes} bytes"
-        )
-    return result
 
 
 def _decode_content_encodings(body: bytes, encoding: str, max_bytes: int) -> bytes:

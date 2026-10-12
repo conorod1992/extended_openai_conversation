@@ -362,6 +362,7 @@ class DelayedToolManager:
         llm_context: llm.LLMContext | None,
         *,
         function_tool: dict[str, Any] | None = None,
+        execution_delay: dict[str, Any] | None = None,
     ) -> DelayedToolCall:
         """Persist a delayed call before exposing it as scheduled."""
         if self._quarantined:
@@ -371,7 +372,9 @@ class DelayedToolManager:
             )
         if not self._setup_complete:
             raise HomeAssistantError("Delayed Function Tool scheduler is unavailable")
-        delay = _delay_as_timedelta(arguments.get("delay"))
+        delay = _delay_as_timedelta(
+            execution_delay if execution_delay is not None else arguments.get("delay")
+        )
         now = dt_util.utcnow()
         context = getattr(llm_context, "context", None)
         record = None

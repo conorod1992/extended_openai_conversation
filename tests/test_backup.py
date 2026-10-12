@@ -791,7 +791,7 @@ async def test_restore_rollback_failure_escalates(monkeypatch, hass) -> None:
     )
     prepared = _prepared()
     rollback = _prepared()
-    monkeypatch.setattr(backup, "inspect_backup", lambda _value, _agent: prepared)
+    monkeypatch.setattr(backup, "inspect_backup", lambda _value, _agent, **_kwargs: prepared)
     monkeypatch.setattr(
         restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),))
     )
