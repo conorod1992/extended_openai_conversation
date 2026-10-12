@@ -502,7 +502,8 @@ def _prepare_request_rule(
     elif not isinstance(raw.get("id"), str) or not str(raw["id"]).strip():
         raw["id"] = uuid4().hex
     preserve_inactive = (
-        rules is not None and rule_id is not None
+        rules is not None
+        and rule_id is not None
         and rules.preserves_inactive_pattern(rule_id, raw)
     )
     return validate_rule(raw, validate_sentence_pattern=not preserve_inactive)
@@ -2953,10 +2954,12 @@ async def _async_management_request(
         rule_id = message.get("rule_id") if action == "update" else None
         existing_rules = (
             await async_get_request_rules(hass, entry_id, subentry_id)
-            if action == "update" else None
+            if action == "update"
+            else None
         )
         candidate = _prepare_request_rule(
-            message.get("rule"), rule_id if isinstance(rule_id, str) else None,
+            message.get("rule"),
+            rule_id if isinstance(rule_id, str) else None,
             existing_rules,
         )
         await async_validate_request_rule_functions(

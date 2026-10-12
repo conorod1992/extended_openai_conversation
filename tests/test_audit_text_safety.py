@@ -2,7 +2,7 @@
 
 import time
 
-from jinja2 import Environment
+from homeassistant.helpers.template import Template
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
@@ -16,14 +16,14 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 
 
 @pytest.mark.parametrize("name", ["context", "self", "request"])
-def test_reserved_capture_uses_explicit_namespace(name):
+def test_reserved_capture_uses_explicit_namespace(hass, name):
     template = rr._migrate_slot_templates("{" + name + "}")
-    assert (
-        Environment().from_string(template).render(request={"slots": {name: "kitchen"}})
-        == "kitchen"
-    )
+    slots = {name: "123456"}
+    native = rr._native_result_sequence([{"variables": {"capture": template}}], slots)
+    protected = rr._preserve_slot_text(Template(native[0]["variables"]["capture"], hass))
+    assert protected.async_render({"request": {"slots": slots}}) == "123456"
     assert rr._migrate_slot_templates({"value_from": "slot", "slot": name}) == template
-    assert rr._resolve_guest_slot_templates(template, {name: "kitchen"}) == "kitchen"
+    assert rr.resolve_slot_values(rr._resolve_guest_slot_templates(template, slots), slots) == "123456"
 
 
 def test_unknown_replacement_group_is_configuration_error():

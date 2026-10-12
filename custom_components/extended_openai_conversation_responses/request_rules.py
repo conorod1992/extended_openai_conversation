@@ -698,7 +698,9 @@ class RequestRules:
             await self._async_save_locked()
         return dict(rule)
 
-    def preserves_inactive_pattern(self, rule_id: str, value: Mapping[str, Any]) -> bool:
+    def preserves_inactive_pattern(
+        self, rule_id: str, value: Mapping[str, Any]
+    ) -> bool:
         """Allow disabling an unchanged retained invalid pattern, never activation."""
         if rule_id not in self._diagnostics:
             return False
