@@ -423,7 +423,7 @@ async def test_automatic_duplicate_does_not_overwrite_manual_record() -> None:
 
     automatic = await manager.async_add(
         "conversation:first",
-        "PARCEL ARRIVES TOMORROW",
+        "Parcel arrives tomorrow",
         _future(hours=1),
         "general",
         owner_scope_id="user:alice",
@@ -453,7 +453,7 @@ async def test_manual_duplicate_promotes_automatic_record() -> None:
 
     manual = await manager.async_add(
         "user:alice",
-        "PARCEL ARRIVES TOMORROW",
+        "Parcel arrives tomorrow",
         _future(hours=4),
         "delivery",
         owner_scope_id="user:alice",
@@ -481,7 +481,7 @@ async def test_add_coalesces_duplicate_for_same_owner_and_persists_update() -> N
 
     updated = await manager.async_add(
         "conversation:first",
-        "PARCEL ARRIVES TOMORROW",
+        "Parcel arrives tomorrow",
         _future(hours=2),
         "schedule",
         owner_scope_id="user:alice",

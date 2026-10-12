@@ -196,8 +196,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_get_quiet_hours(hass)
     apply_openai_compatibility()
     await async_migrate_integration(hass)
-    from .agent_deletion import async_reconcile_agent_storage
+    from .agent_deletion import (
+        async_reconcile_agent_storage,
+        async_setup_agent_deletion,
+    )
 
+    async_setup_agent_deletion(hass)
     await async_reconcile_agent_storage(hass)
     await async_setup_delayed_tools(hass)
     # Resolve any interrupted cross-store restore before conversation agents load.
@@ -334,13 +338,24 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Erase private agent data and stop global effects after the final removal."""
     from .agent_deletion import async_delete_entry_data
+
+    try:
+        await async_delete_entry_data(hass, entry)
+    finally:
+        if not hass.config_entries.async_entries(DOMAIN):
+            await _async_remove_global_effects(hass)
+
+
+async def _async_remove_global_effects(hass: HomeAssistant) -> None:
+    """Release integration-global effects even when private erasure must retry."""
     from .intercom import DATA_KEY
     from .intercom_services import SERVICE_BROADCAST
-    from .quiet_hours import SERVICE_DISABLE_QUIET_HOURS, SERVICE_ENABLE_QUIET_HOURS
+    from .quiet_hours import (
+        SERVICE_DISABLE_QUIET_HOURS,
+        SERVICE_ENABLE_QUIET_HOURS,
+        async_remove_quiet_hours_entity,
+    )
 
-    await async_delete_entry_data(hass, entry)
-    if hass.config_entries.async_entries(DOMAIN):
-        return
     hass.data[f"{DOMAIN}.removed"] = True
     quiet_hours = hass.data.get(DOMAIN, {}).get("quiet_hours_manager")
     try:
@@ -358,6 +373,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 finally:
                     hass.data.pop(DATA_KEY, None)
         finally:
+            async_remove_quiet_hours_entity(hass)
             for service in (
                 SERVICE_BROADCAST,
                 SERVICE_ENABLE_QUIET_HOURS,

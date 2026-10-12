@@ -268,6 +268,9 @@ class NativeFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> Any:
+        from ..execution_arguments import prepare_execution_arguments
+
+        arguments = prepare_execution_arguments(function_config, arguments)
         name = function_config["name"]
         if name == "execute_service":
             return await self.execute_service(
@@ -409,22 +412,17 @@ class NativeFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        from ..execution_arguments import prepare_service_arguments
+
+        service_argument = prepare_service_arguments(service_argument)
         domain = service_argument["domain"]
         service = service_argument["service"]
-        raw_service_data = service_argument.get(
-            "service_data", service_argument.get("data", {})
-        )
-        service_data = dict(raw_service_data)
-        entity_id = service_data.get("entity_id", service_argument.get("entity_id"))
+        service_data = dict(service_argument["service_data"])
+        entity_id = service_data.get("entity_id")
         area_id = service_data.get("area_id")
         device_id = service_data.get("device_id")
         floor_id = service_data.get("floor_id")
         label_id = service_data.get("label_id")
-
-        if isinstance(entity_id, str):
-            entity_id = [e.strip() for e in entity_id.split(",") if e.strip()]
-        if entity_id is not None:
-            service_data["entity_id"] = entity_id
 
         if (
             entity_id is None

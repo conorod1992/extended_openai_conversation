@@ -40,7 +40,8 @@ async def test_startup_reconciles_disabled_parent_without_tracking(hass, tmp_pat
         Path(store.path).unlink(missing_ok=True)
     monkeypatch.setattr(Store, "async_remove", remove)
     entry = SimpleNamespace(entry_id="entry", disabled_by="user", subentries={"kept": object(), "removed_other": object()})
-    hass.config_entries.async_entries.return_value = [entry]
+    other = SimpleNamespace(entry_id="other", subentries={"removed": object()})
+    hass.config_entries.async_entries.return_value = [entry, other]
     hass.data.pop(agent_deletion.KNOWN_AGENTS, None)
     await agent_deletion.async_reconcile_agent_storage(hass)
     assert sorted(path.name for path in root.iterdir()) == sorted(retained)

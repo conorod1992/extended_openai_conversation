@@ -32,7 +32,6 @@ from .agent_config import (
     agent_config_defaults,
     agent_config_options,
     agent_config_snapshot,
-    configured_function_tools_from_data as _strict_configured_function_tools,
     function_tool_enabled,
     function_tool_yaml,
     merge_agent_config as merge_validated_agent_config,
@@ -506,7 +505,50 @@ def _prepare_request_rule(
         and rule_id is not None
         and rules.preserves_inactive_pattern(rule_id, raw)
     )
-    return validate_rule(raw, validate_sentence_pattern=not preserve_inactive)
+    return validate_rule(
+        raw,
+        validate_sentence_pattern=not preserve_inactive,
+        validate_script_schema=not preserve_inactive,
+    )
+
+
+def _request_rule_function_tools(
+    rule: Mapping[str, Any], data: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Parse only the Function Tools referenced by this native action tree."""
+    from .function_dependency_integrity import _rule_script_actions
+    from .management_function_repair import editable_function_tools
+
+    service = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+    names = set()
+    for step in _rule_script_actions(rule):
+        if step.get("action", step.get("service")) != service:
+            continue
+        call = step.get("data")
+        if not isinstance(call, Mapping) or not isinstance(call.get("function"), str):
+            raise HomeAssistantError("Configured Function action is invalid")
+        names.add(call["function"])
+    if not names:
+        return []
+    raw = editable_function_tools(dict(data))
+    if not isinstance(raw, list):
+        if rule.get("enabled", True):
+            raise HomeAssistantError("Referenced Function Tools need repair")
+        return []
+    selected = [
+        tool
+        for tool in raw
+        if isinstance(tool, Mapping)
+        and isinstance(tool.get("spec"), Mapping)
+        and isinstance(tool["spec"].get("name"), str)
+        and tool["spec"].get("name") in names
+    ]
+    if not rule.get("enabled", True):
+        # Disabling must remain possible even when its dependency is quarantined.
+        from .management_function_repair import isolated_function_tools
+
+        return isolated_function_tools({CONF_FUNCTION_TOOLS: selected})[0]
+    return validate_function_tools(selected)
 
 
 def _validate_request_rule_functions(
@@ -859,7 +901,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         await _validate_request_rule_conditions(hass, candidate)
         _validate_request_rule_functions(
             candidate,
-            configured_function_tools_from_data(subentry.data)
+            _request_rule_function_tools(candidate, subentry.data)
             if hasattr(subentry, "data")
             else [],
         )
@@ -885,7 +927,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         await _validate_request_rule_conditions(hass, candidate)
         _validate_request_rule_functions(
             candidate,
-            configured_function_tools_from_data(subentry.data)
+            _request_rule_function_tools(candidate, subentry.data)
             if hasattr(subentry, "data")
             else [],
         )
@@ -2964,7 +3006,7 @@ async def _async_management_request(
             existing_rules,
         )
         await async_validate_request_rule_functions(
-            hass, candidate, _strict_configured_function_tools(subentry.data)
+            hass, candidate, _request_rule_function_tools(candidate, subentry.data)
         )
     elif is_admin and section == "tools" and action in _TOOL_MUTATIONS:
         _require_agent_config_revision(subentry, message.get("revision"))

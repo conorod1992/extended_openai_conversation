@@ -821,6 +821,25 @@ def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
                 continue
 
 
+def normalize_reasoning_defaults(config: dict[str, Any], *, explicit: bool) -> None:
+    """Apply the same model-aware omitted-value contract to reads and saves."""
+    selected_model = str(
+        config.get("azure_model") or config.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+    )
+    if not get_reasoning_effort_options(selected_model):
+        config.pop(CONF_REASONING_EFFORT, None)
+    elif not explicit:
+        recommended = (
+            get_model_config(selected_model)
+            .get("recommended_profile", {})
+            .get("reasoning_effort")
+        )
+        if recommended is None:
+            config.pop(CONF_REASONING_EFFORT, None)
+        else:
+            config[CONF_REASONING_EFFORT] = recommended
+
+
 def normalize_agent_config(
     data: dict[str, Any],
     *,
@@ -854,20 +873,7 @@ def normalize_agent_config(
         result.get("azure_model") or result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
     )
     reasoning_options = get_reasoning_effort_options(selected_model)
-    if not reasoning_options:
-        # Hidden defaults/drafts from another model are inactive, not request
-        # parameters. Keep explicit enum validation for reasoning-capable models.
-        result.pop(CONF_REASONING_EFFORT, None)
-    elif not reasoning_effort_explicit:
-        recommended_effort = (
-            get_model_config(selected_model)
-            .get("recommended_profile", {})
-            .get("reasoning_effort")
-        )
-        if recommended_effort is None:
-            result.pop(CONF_REASONING_EFFORT, None)
-        else:
-            result[CONF_REASONING_EFFORT] = recommended_effort
+    normalize_reasoning_defaults(result, explicit=reasoning_effort_explicit)
 
     _require_type(
         result,
