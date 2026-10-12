@@ -44,10 +44,14 @@ class HAToolResultError(HomeAssistantError):
 def execution_tool_result(value: Any) -> Any:
     """Translate failure metadata only at dispatch, before unwrapping data."""
     tool_result_type = getattr(llm, "ToolResult", None)
-    if tool_result_type is not None and isinstance(value, tool_result_type):
+    seen: set[int] = set()
+    while tool_result_type is not None and isinstance(value, tool_result_type):
+        if id(value) in seen:
+            raise HomeAssistantError("Cyclic Home Assistant tool result envelope")
+        seen.add(id(value))
         if getattr(value, "error", False):
             raise HAToolResultError(value.data)
-        return value.data
+        value = value.data
     return value
 
 

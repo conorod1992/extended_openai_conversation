@@ -418,7 +418,10 @@ async def test_schedule_equivalence_counts_durable_records(
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])
-async def test_ha_source_defaults_are_actual_replay_defaults(hass, monkeypatch, mode):
+@pytest.mark.parametrize("envelopes", [0, 1, 2])
+async def test_ha_source_defaults_are_actual_replay_defaults(
+    hass, monkeypatch, mode, envelopes
+):
     from custom_components.extended_openai_conversation_responses.ha_llm_tools import (
         new_reference_tool,
     )
@@ -429,6 +432,19 @@ async def test_ha_source_defaults_are_actual_replay_defaults(hass, monkeypatch, 
     )
 
     source = AcceptanceEchoTool()
+    if envelopes:
+        result_type = getattr(llm, "ToolResult", None)
+        if result_type is None:
+            pytest.skip("HA version predates tool result envelopes")
+        original_call = source.async_call
+
+        async def wrapped_call(hass, tool_input, llm_context):
+            result = await original_call(hass, tool_input, llm_context)
+            for _ in range(envelopes):
+                result = result_type(data=result)
+            return result
+
+        monkeypatch.setattr(source, "async_call", wrapped_call)
     api = AcceptanceAPI(hass, source)
     llm.async_register_api(hass, api)
     reference = {
