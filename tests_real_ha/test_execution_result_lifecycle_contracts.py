@@ -418,7 +418,7 @@ async def test_schedule_equivalence_counts_durable_records(
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])
-@pytest.mark.parametrize("envelopes", [0, 1, 2])
+@pytest.mark.parametrize("envelopes", [0, 1, 2, 3])
 async def test_ha_source_defaults_are_actual_replay_defaults(
     hass, monkeypatch, mode, envelopes
 ):
@@ -436,6 +436,15 @@ async def test_ha_source_defaults_are_actual_replay_defaults(
         result_type = getattr(llm, "ToolResult", None)
         if result_type is None:
             pytest.skip("HA version predates tool result envelopes")
+        if envelopes == 3:
+            from dataclasses import make_dataclass
+            from typing import Any
+
+            result_type = make_dataclass(
+                "ToolResult",
+                [("data", Any), ("error", bool, False)],
+                module="homeassistant.helpers.llm",
+            )
         original_call = source.async_call
 
         async def wrapped_call(hass, tool_input, llm_context):

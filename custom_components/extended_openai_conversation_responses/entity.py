@@ -99,6 +99,7 @@ from .ha_llm_tools import async_discover, current_snapshot, is_ha_tool, referenc
 from .ha_schema import SchemaValidator
 from .ha_tool_result_compat import (
     HAToolResultError,
+    execution_tool_result,
     is_tool_result_content,
     make_tool_result_content,
     tool_result_data,
@@ -2151,7 +2152,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 guest_policy = getattr(self, "_effective_guest_policy", None)
                 if callable(guest_policy) and guest_policy().guest_active:
                     raise HomeAssistantError("HA tools are unavailable in Guest Mode")
-                ha_result = await live.async_call(tool_input)
+                ha_result = execution_tool_result(await live.async_call(tool_input))
                 return make_tool_result_content(
                     agent_id=self.entity_id,
                     tool_call_id=tool_input.id,

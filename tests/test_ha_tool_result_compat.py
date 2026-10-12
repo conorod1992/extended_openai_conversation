@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, make_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,40 @@ def test_execution_unwraps_all_ha_envelopes_without_losing_failure_metadata(
         assert raised.value.data is payload
     else:
         assert ha_tool_result_compat.execution_tool_result(wrapped) is payload
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_retained_core_result_class_survives_class_reload(monkeypatch, failed):
+    old_type = make_dataclass(
+        "ToolResult",
+        [("data", Any), ("error", bool, False)],
+        module="homeassistant.helpers.llm",
+    )
+    new_type = make_dataclass("ToolResult", [("data", Any), ("error", bool, False)])
+    monkeypatch.setattr(
+        ha_tool_result_compat.llm, "ToolResult", new_type, raising=False
+    )
+    payload = {"data": "business data", "error": True}
+    retained = old_type(payload, error=failed)
+    assert not isinstance(retained, new_type)
+    assert ha_tool_result_compat.unwrap_tool_result(retained) is payload
+    if failed:
+        with pytest.raises(ha_tool_result_compat.HAToolResultError) as raised:
+            ha_tool_result_compat.execution_tool_result(new_type(retained))
+        assert raised.value.data is payload
+    else:
+        assert (
+            ha_tool_result_compat.execution_tool_result(new_type(retained)) is payload
+        )
+    assert ha_tool_result_compat.execution_tool_result(payload) is payload
+
+
+def test_unrelated_dataclass_named_tool_result_remains_business_data(monkeypatch):
+    business_type = make_dataclass(
+        "ToolResult", [("data", Any), ("error", bool, False)]
+    )
+    business = business_type({"value": 42}, error=True)
+    assert ha_tool_result_compat.execution_tool_result(business) is business
 
 
 def test_cyclic_ha_envelope_is_rejected(monkeypatch: Any) -> None:
