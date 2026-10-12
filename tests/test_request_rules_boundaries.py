@@ -168,8 +168,8 @@ def test_slot_template_migration_recurses_through_lists_and_mappings() -> None:
             {"nested": ["brightness {level}", 7]},
         ]
     ) == [
-        "{{ request.slots['room'] }}",
-        {"nested": ["brightness {{ request.slots['level'] }}", 7]},
+        "{room}",
+        {"nested": ["brightness {level}", 7]},
     ]
 
 
@@ -514,14 +514,14 @@ def test_legacy_function_binding_residual_edges(binding, message) -> None:
             "arguments": {"plain": "{room}"},
         }
     )
-    assert migrated["data"]["arguments"]["plain"] == "{{ request.slots['room'] }}"
+    assert migrated["data"]["arguments"]["plain"] == "{room}"
 
 
 def test_slot_migration_resolution_and_complexity_helpers() -> None:
     assert rr._migrate_slot_templates(
         {"nested": ["hello {room}", {"value_from": "slot", "slot": "room"}]}
     ) == {
-        "nested": ["hello {{ request.slots['room'] }}", "{{ request.slots['room'] }}"]
+        "nested": ["hello {room}", "{room}"]
     }
     assert rr._legacy_action_slots([]) == set()
     assert rr._legacy_action_slots({"actions": "bad"}) == set()

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
-import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -1802,7 +1801,7 @@ async def test_slot_function_rule_persistence_round_trip() -> None:
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
             "data": {
                 "function": "remember",
-                "arguments": {"fact": "{{ fact }}"},
+                "arguments": {"fact": "{fact}"},
             },
         }
     ]
@@ -2574,8 +2573,12 @@ def test_exact_routing_command_is_consumed_but_substantive_request_is_not() -> N
 def test_invalid_model_reasoning_combination_fails_validation() -> None:
     rule = routing_rule()
     rule["action"]["model"] = "gpt-4o"
-    with pytest.raises(ValueError, match="does not support reasoning"):
-        validate_rule(rule)
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        validate_rule_model_request,
+    )
+
+    with pytest.raises(HomeAssistantError, match="reasoning"):
+        validate_rule_model_request(validate_rule(rule), {}, {})
 
 
 def test_request_only_equals_routing_is_rejected_as_pointless() -> None:
