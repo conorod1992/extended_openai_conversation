@@ -159,7 +159,6 @@ async def async_delete_removed_subentries(hass: Any, entry: Any) -> None:
     known = hass.data.setdefault(KNOWN_AGENTS, {}).setdefault(
         entry.entry_id, set(entry.subentries)
     )
-    current = set(entry.subentries)
     # The parent's update listener is absent while unloaded, and KNOWN_AGENTS
     # disappears on restart. Discover exact owners from durable private stores.
     names = await hass.async_add_executor_job(_storage_names, hass, entry.entry_id)
@@ -171,10 +170,15 @@ async def async_delete_removed_subentries(hass: Any, entry: Any) -> None:
                 if identity:
                     known.add(identity)
                 break
+    # A subentry can be added while the executor enumerates its new store.
+    # Read configuration after the scan, and again after each awaited deletion.
+    current = set(entry.subentries)
     for subentry_id in known - current:
+        if subentry_id in entry.subentries:
+            continue
         await async_delete_agent_data(hass, entry.entry_id, subentry_id)
         known.discard(subentry_id)
-    known.update(current)
+    known.update(entry.subentries)
 
 
 async def async_reconcile_agent_storage(hass: Any) -> None:

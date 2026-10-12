@@ -103,3 +103,16 @@ async def test_older_committed_oversized_rollback_recovers_authoritative_target(
     assert selected == ["Restored"]
     assert subentry.title == "Restored"
     assert store.data is None
+
+
+async def test_reconciliation_preserves_assistant_added_during_storage_scan(hass, monkeypatch):
+    entry = SimpleNamespace(entry_id="entry", subentries={})
+    async def scan(*_):
+        entry.subentries["new"] = object()
+        return [f"{DOMAIN}.memory.entry.new"]
+    hass.async_add_executor_job.side_effect = scan
+    delete = AsyncMock()
+    monkeypatch.setattr(agent_deletion, "async_delete_agent_data", delete)
+    await agent_deletion.async_delete_removed_subentries(hass, entry)
+    delete.assert_not_awaited()
+    assert "new" in hass.data[agent_deletion.KNOWN_AGENTS]["entry"]
