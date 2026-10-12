@@ -257,10 +257,14 @@ async def test_guest_partial_service_batch_stops_provider_loop(hass, monkeypatch
     async_expose_entity(hass, "conversation", entity_id, True)
     await agent._guest_mode.async_update_trusted(indefinite=True)
 
-    async def fail(_call):
+    async def fail(_entity):
         raise HomeAssistantError("private backend detail")
 
-    hass.services.async_register("counter", "audit_fail", fail)
+    from homeassistant.components.counter import Counter
+
+    # Preserve HA entity-service registration so Guest preflight permits the
+    # batch and the second operation fails after the first has executed.
+    monkeypatch.setattr(Counter, "async_reset", fail)
     arguments = {
         "list": [
             {
@@ -270,7 +274,7 @@ async def test_guest_partial_service_batch_stops_provider_loop(hass, monkeypatch
             },
             {
                 "domain": "counter",
-                "service": "audit_fail",
+                "service": "reset",
                 "service_data": {"entity_id": [entity_id]},
             },
         ]
