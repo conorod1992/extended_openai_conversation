@@ -187,8 +187,10 @@ def _load_journal(
             if phase != _PHASE_COMMITTED or "safety limit" not in str(err):
                 raise
             rollback = backup.inspect_backup(
-                value["target"], subentry_id,
-                max_bytes=backup.MAX_BACKUP_BYTES, private_journal=True,
+                value["target"],
+                subentry_id,
+                max_bytes=backup.MAX_BACKUP_BYTES,
+                private_journal=True,
             )
         try:
             target = backup.inspect_backup(
@@ -547,8 +549,10 @@ async def _async_restore_backup_recoverably(
         for section in ("target", "rollback"):
             try:
                 backup.inspect_backup(
-                    journal[section], subentry_id,
-                    max_bytes=backup.MAX_BACKUP_BYTES, private_journal=True,
+                    journal[section],
+                    subentry_id,
+                    max_bytes=backup.MAX_BACKUP_BYTES,
+                    private_journal=True,
                 )
             except HomeAssistantError as err:
                 raise backup.BackupError(

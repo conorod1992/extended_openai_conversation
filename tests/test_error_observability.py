@@ -420,6 +420,10 @@ async def test_startup_passes_safe_guidance_to_ha_retry(
         SECRET, code="insufficient_quota", request_id="req_safe"
     )
     monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.agent_deletion.async_delete_removed_subentries",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
         integration, "get_authenticated_client", AsyncMock(side_effect=error)
     )
     with pytest.raises(ConfigEntryNotReady) as caught:

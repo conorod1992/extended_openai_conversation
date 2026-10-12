@@ -26,7 +26,11 @@ def _authentication_error() -> AuthenticationError:
     )
 
 
-async def test_setup_invalid_credentials_requests_reauthentication() -> None:
+async def test_setup_invalid_credentials_requests_reauthentication(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.agent_deletion.async_delete_removed_subentries",
+        AsyncMock(),
+    )
     entry = SimpleNamespace(
         data={CONF_API_KEY: "expired"}, entry_id="entry", runtime_data=None
     )
@@ -40,7 +44,11 @@ async def test_setup_invalid_credentials_requests_reauthentication() -> None:
         await async_setup_entry(MagicMock(), entry)
 
 
-async def test_setup_transient_connection_failure_remains_not_ready() -> None:
+async def test_setup_transient_connection_failure_remains_not_ready(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.agent_deletion.async_delete_removed_subentries",
+        AsyncMock(),
+    )
     entry = SimpleNamespace(
         data={CONF_API_KEY: "valid"}, entry_id="entry", runtime_data=None
     )
