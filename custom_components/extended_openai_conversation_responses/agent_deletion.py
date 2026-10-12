@@ -160,10 +160,27 @@ async def async_delete_removed_subentries(hass: Any, entry: Any) -> None:
         entry.entry_id, set(entry.subentries)
     )
     current = set(entry.subentries)
+    # The parent's update listener is absent while unloaded, and KNOWN_AGENTS
+    # disappears on restart. Discover exact owners from durable private stores.
+    names = await hass.async_add_executor_job(_storage_names, hass, entry.entry_id)
+    for name in names:
+        for section in _SECTIONS:
+            prefix = f"{DOMAIN}.{section}.{entry.entry_id}."
+            if name.startswith(prefix):
+                identity = name[len(prefix) :].split(".", 1)[0]
+                if identity:
+                    known.add(identity)
+                break
     for subentry_id in known - current:
         await async_delete_agent_data(hass, entry.entry_id, subentry_id)
         known.discard(subentry_id)
     known.update(current)
+
+
+async def async_reconcile_agent_storage(hass: Any) -> None:
+    """Reconcile disabled parents too, before recovery and delayed work starts."""
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        await async_delete_removed_subentries(hass, entry)
 
 
 async def async_delete_entry_data(hass: Any, entry: Any) -> None:
