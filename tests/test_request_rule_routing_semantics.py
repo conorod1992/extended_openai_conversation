@@ -15,13 +15,14 @@ from custom_components.extended_openai_conversation_responses.request_rule_match
     request_rule_match_preview,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
+    _REQUEST_RESET_SENTINEL,
     DEFAULT_MATCHING,
     RequestRuleRuntime,
     RequestRules,
     RuleMatch,
-    _REQUEST_RESET_SENTINEL,
     async_evaluate_rule,
     validate_rule,
+    validate_rule_model_request,
 )
 from homeassistant.exceptions import HomeAssistantError
 
@@ -218,8 +219,8 @@ def test_astra_reasoning_values_are_model_specific() -> None:
         )
     )["action"]["reasoning_effort"] == "none"
 
-    with pytest.raises(ValueError, match="not supported by model"):
-        validate_rule(
+    with pytest.raises(HomeAssistantError, match="[Rr]easoning"):
+        validate_rule_model_request(validate_rule(
             _rule(
                 "astra-none",
                 "none",
@@ -231,7 +232,7 @@ def test_astra_reasoning_values_are_model_specific() -> None:
                     "success_response": "Updated",
                 },
             )
-        )
+        ), {}, {})
 
 
 async def test_captured_reasoning_uses_effective_routed_model_before_publish() -> None:

@@ -490,7 +490,9 @@ def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, 
     }
 
 
-def _prepare_request_rule(value: Any, rule_id: str | None = None) -> dict[str, Any]:
+def _prepare_request_rule(
+    value: Any, rule_id: str | None = None, rules: Any = None
+) -> dict[str, Any]:
     """Assign/preserve rule identity before canonical validation."""
     if not isinstance(value, Mapping):
         raise HomeAssistantError("rule must be an object")
@@ -499,7 +501,11 @@ def _prepare_request_rule(value: Any, rule_id: str | None = None) -> dict[str, A
         raw["id"] = rule_id
     elif not isinstance(raw.get("id"), str) or not str(raw["id"]).strip():
         raw["id"] = uuid4().hex
-    return validate_rule(raw)
+    preserve_inactive = (
+        rules is not None and rule_id is not None
+        and rules.preserves_inactive_pattern(rule_id, raw)
+    )
+    return validate_rule(raw, validate_sentence_pattern=not preserve_inactive)
 
 
 def _validate_request_rule_functions(
@@ -874,7 +880,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
     if not isinstance(rule_id, str):
         raise HomeAssistantError("rule_id is required")
     if action == "update":
-        candidate = _prepare_request_rule(message.get("rule"), rule_id)
+        candidate = _prepare_request_rule(message.get("rule"), rule_id, rules)
         await _validate_request_rule_conditions(hass, candidate)
         _validate_request_rule_functions(
             candidate,
@@ -2945,8 +2951,13 @@ async def _async_management_request(
     # or revision diagnostics. Rule mutations retain strict dependency validation.
     if is_admin and section == "request_rules" and action in {"create", "update"}:
         rule_id = message.get("rule_id") if action == "update" else None
+        existing_rules = (
+            await async_get_request_rules(hass, entry_id, subentry_id)
+            if action == "update" else None
+        )
         candidate = _prepare_request_rule(
-            message.get("rule"), rule_id if isinstance(rule_id, str) else None
+            message.get("rule"), rule_id if isinstance(rule_id, str) else None,
+            existing_rules,
         )
         await async_validate_request_rule_functions(
             hass, candidate, _strict_configured_function_tools(subentry.data)

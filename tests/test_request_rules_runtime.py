@@ -237,7 +237,6 @@ def test_ending_continuity_clears_request_rule_routing_state() -> None:
 
 # Runtime and authorization boundary coverage consolidated from the residual layer.
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -327,8 +326,8 @@ def test_legacy_slot_migration_recurses_and_slot_discovery_ignores_native_action
             "nested": [{"value_from": "slot", "slot": "room"}],
         }
     ) == {
-        "text": "Weather in {{ request.slots['place'] }}",
-        "nested": ["{{ request.slots['room'] }}"],
+        "text": "Weather in {place}",
+        "nested": ["{room}"],
     }
 
     assert rr._legacy_action_slots(

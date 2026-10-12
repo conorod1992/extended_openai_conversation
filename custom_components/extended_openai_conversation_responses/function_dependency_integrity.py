@@ -24,7 +24,10 @@ def _is_template_string(value: Any) -> bool:
     """Return whether a saved Request Rule value is resolved only at runtime."""
     return (
         isinstance(value, str) and any(marker in value for marker in _TEMPLATE_MARKERS)
-    ) or (isinstance(value, str) and bool(request_rules.RESULT_REFERENCE.search(value)))
+    ) or (isinstance(value, str) and bool(
+        request_rules.RESULT_REFERENCE.search(value)
+        or request_rules.SLOT_REFERENCE.search(value)
+    ))
 
 
 def _contains_template(value: Any) -> bool:
@@ -221,7 +224,15 @@ async def async_rename_function_reference_recursive(
                         raise ValueError("Request Rule action is not mutable")
                     action["data"] = {**data, "function": new_name}
                     changed += 1
-            updated_rules.append(request_rules.validate_rule(updated))
+            if updated == rule:
+                updated_rules.append(updated)
+            else:
+                updated_rules.append(request_rules.validate_rule(
+                    updated,
+                    validate_sentence_pattern=not manager.preserves_inactive_pattern(
+                        updated["id"], updated
+                    ),
+                ))
         if not changed:
             return 0
 

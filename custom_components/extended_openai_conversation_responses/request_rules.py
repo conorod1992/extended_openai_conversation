@@ -698,6 +698,17 @@ class RequestRules:
             await self._async_save_locked()
         return dict(rule)
 
+    def preserves_inactive_pattern(self, rule_id: str, value: Mapping[str, Any]) -> bool:
+        """Allow disabling an unchanged retained invalid pattern, never activation."""
+        if rule_id not in self._diagnostics:
+            return False
+        previous = self._rules[self._index(rule_id)]
+        return (
+            value.get("phrases") == previous["phrases"]
+            and value.get("match_type", "equals") == previous["match_type"]
+            and value.get("enabled") is False
+        )
+
     async def async_update(
         self,
         rule_id: str,
@@ -715,12 +726,7 @@ class RequestRules:
             raw["id"] = rule_id
             raw.setdefault("order", self._rules[index]["order"])
             previous = self._rules[index]
-            preserve_inactive = (
-                rule_id in self._diagnostics
-                and raw.get("phrases") == previous["phrases"]
-                and raw.get("match_type", "equals") == previous["match_type"]
-                and not raw.get("enabled", True)
-            )
+            preserve_inactive = self.preserves_inactive_pattern(rule_id, raw)
             rule = validate_rule(
                 _assign_missing_result_step_ids(raw),
                 validate_sentence_pattern=not preserve_inactive,
@@ -1815,23 +1821,13 @@ def _validate_action(action_type: str, value: Any) -> dict[str, Any]:
             raise ValueError(
                 "model routing captured values must use simple {name} references"
             )
-    model_dynamic = bool(SLOT_REFERENCE.search(model))
     effort_dynamic = bool(SLOT_REFERENCE.search(effort))
     if effort_dynamic and SLOT_REFERENCE.fullmatch(effort) is None:
         raise ValueError("captured reasoning effort must be a single {name} reference")
-    if effort and not effort_dynamic:
-        if model and not model_dynamic:
-            if not get_model_config(model).get("supports_reasoning_effort"):
-                raise ValueError(f"model {model} does not support reasoning effort")
-            if effort not in get_reasoning_effort_options(model):
-                raise ValueError(
-                    f"reasoning effort {effort} is not supported by model {model}"
-                )
-        elif effort not in all_reasoning_efforts():
-            # The effective model may come from the configured/conversation route.
-            # Accept every currently supported value here; runtime validates it
-            # against that effective model before publishing any route change.
-            raise ValueError("unsupported reasoning effort")
+    # Model strings can be Azure deployments. Capability checks require provider
+    # context and belong to validate_rule_model_request and runtime routing.
+    if effort and not effort_dynamic and effort not in all_reasoning_efforts():
+        raise ValueError("unsupported reasoning effort")
     return {
         "model": model or None,
         "reasoning_effort": effort or None,
@@ -1907,7 +1903,7 @@ def _validate_local_action(value: Any) -> dict[str, Any]:
                 slot = binding.get("slot")
                 if not isinstance(slot, str) or not SLOT_NAME.fullmatch(slot):
                     raise ValueError("slot argument must name a captured value")
-                normalized_arguments[name] = f"{{{{ {slot} }}}}"
+                normalized_arguments[name] = "{" + slot + "}"
             elif source == "fixed":
                 if set(binding) - {"source", "value"}:
                     raise ValueError("fixed arguments need only source and value")
@@ -1935,14 +1931,15 @@ def _validate_local_action(value: Any) -> dict[str, Any]:
 
 
 def _migrate_slot_templates(value: Any) -> Any:
-    """Translate legacy braces into Home Assistant script templates."""
+    """Preserve captured strings in legacy native script bindings."""
     if isinstance(value, str):
-        return SLOT_REFERENCE.sub(
-            lambda match: "{{ request.slots[" + repr(match.group(1)) + "] }}", value
-        )
+        # Native execution protects brace captures with _SlotReferenceTemplate.
+        # Preserve authored Jinja: prior migrations have no provenance that can
+        # distinguish generated Jinja from an intentionally authored template.
+        return value
     if isinstance(value, Mapping):
         if set(value) == {"value_from", "slot"} and value.get("value_from") == "slot":
-            return f"{{{{ request.slots['{value['slot']}'] }}}}"
+            return "{" + str(value["slot"]) + "}"
         return {key: _migrate_slot_templates(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_migrate_slot_templates(item) for item in value]
@@ -3174,6 +3171,12 @@ def validate_rule_model_request(
             except ModelCapabilityError as err:
                 raise HomeAssistantError(str(err)) from err
         return
+    if effort:
+        from .request import capability_model_identity
+
+        _validate_effective_reasoning(
+            capability_model_identity(candidate, entry_data), effort
+        )
     validate_routed_request_options(candidate, entry_data)
 
 
