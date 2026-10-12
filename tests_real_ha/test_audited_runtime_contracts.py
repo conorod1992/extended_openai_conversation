@@ -395,6 +395,8 @@ async def test_large_rest_json_reaches_provider_without_full_event_loop_parse(
         )
         result = original(message["content"])["result"]
         assert len(result) == 32_000
-        assert result.endswith("...[tool result truncated]")
+        assert result.endswith(
+            f"...[tool result truncated] original_characters={len(value)}"
+        )
     finally:
         await runner.cleanup()
