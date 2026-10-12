@@ -22,6 +22,7 @@ async def test_tool_result_guard_bounds_outermost_string_result() -> None:
     class FakeEntity(ExtendedOpenAIAgentEntity):
         async def _async_dispatch_function_tool(self, *_args):
             return SimpleNamespace(
+                agent_id="test", tool_call_id="call", tool_name="test",
                 tool_result={
                     "result": "x"
                     * (runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS + 100)

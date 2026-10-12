@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 import logging
 import re
@@ -163,6 +163,33 @@ def _load_index(
     return sources, _build_index(tuple(sources.values()))
 
 
+def _canonical_stored_sources(
+    raw_sources: list[Any], sources: dict[str, KnowledgeSource]
+) -> list[Any]:
+    """Normalize accepted records without repairing discarded siblings by identity."""
+    normalized: list[Any] = []
+    seen: set[str] = set()
+    for raw in raw_sources:
+        try:
+            source = _source_from_stored(raw)
+        except KeyError, TypeError, ValueError:
+            normalized.append(raw)
+            continue
+        if source.source_id not in sources or source.source_id in seen:
+            normalized.append(raw)
+            continue
+        seen.add(source.source_id)
+        normalized.append(
+            {
+                **raw,
+                "title": source.title,
+                "description": source.description,
+                "content": source.content,
+            }
+        )
+    return normalized
+
+
 class KnowledgeStorage(Protocol):
     """Persistence boundary for future alternative knowledge backends."""
 
@@ -225,7 +252,7 @@ class KnowledgeLibrary:
         """Return whether sources and indexes are authoritative."""
         return self._initialized
 
-    async def async_initialize(self) -> None:
+    async def async_initialize(self, *, persist_normalization: bool = True) -> None:
         """Load and index the library exactly once."""
         async with async_storage_lock(self._storage, self._lock):
             if self._initialized:
@@ -248,6 +275,21 @@ class KnowledgeLibrary:
                 self._publish_index(index)
                 self._remember_committed_state()
                 self._initialized = True
+                normalized = await asyncio.to_thread(
+                    _canonical_stored_sources, raw_sources, sources
+                )
+                if persist_normalization and normalized != raw_sources:
+                    # Canonicalize accepted fields without erasing malformed siblings
+                    # or modifying independent restore-journal evidence.
+                    await _async_settle_transactional_save(
+                        self._storage.async_save(
+                            {**(data or {}), "sources": normalized}
+                        ),
+                        self._invalidate_after_unreadable_store,
+                        self._remember_committed_state,
+                        self._async_reconcile_failed_save,
+                        self._invalidate_after_unreadable_store,
+                    )
             except BaseException:
                 self._sources.clear()
                 self._chunks.clear()
@@ -428,6 +470,9 @@ class KnowledgeLibrary:
         query: str,
         source_ids: list[str] | None = None,
         limit: int = 5,
+        *,
+        offset: int = 0,
+        lookahead: bool = False,
     ) -> list[SearchResult]:
         """Search enabled indexed chunks and return at most one excerpt per source."""
         async with async_storage_lock(self._storage, self._lock):
@@ -435,6 +480,8 @@ class KnowledgeLibrary:
             if not isinstance(limit, int) or isinstance(limit, bool):
                 raise ValueError("limit must be an integer")
             limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+            if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+                raise ValueError("offset must be a nonnegative integer")
             query_tokens = _tokens(query)
             normalized_query = _normalize(query)
             if not query_tokens or not normalized_query:
@@ -482,7 +529,9 @@ class KnowledgeLibrary:
             ]
             ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
             results: list[SearchResult] = []
-            for score, _, source_id, chunk in ranked[:limit]:
+            for score, _, source_id, chunk in ranked[
+                offset : offset + limit + int(lookahead)
+            ]:
                 source = self._sources[source_id]
                 results.append(
                     SearchResult(
@@ -593,6 +642,10 @@ class KnowledgeLibrary:
                 has_more=start + low < total,
                 next_start_character=start + low if start + low < total else None,
             )
+            if start < total and low == 0:
+                raise ValueError(
+                    "Knowledge record metadata exceeds model output budget"
+                )
             return page
 
     def stats(self) -> dict[str, Any]:
@@ -713,7 +766,7 @@ class KnowledgeLibrary:
     async def _async_reconcile_failed_save(self) -> None:
         """Reload validated sources and reconstruct every search index."""
         disk_state = KnowledgeLibrary(self._storage)
-        await disk_state.async_initialize()
+        await disk_state.async_initialize(persist_normalization=False)
         self._sources = disk_state._sources
         self._publish_index(
             _KnowledgeIndex(
@@ -812,7 +865,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
                 "name": "knowledge_search",
                 "description": (
                     "Search the agent's local Knowledge Library for relevant "
-                    "deliberately maintained reference information."
+                    "deliberately maintained reference information. Continue ranked results using next_offset as offset with the same query and filters. Restart at zero if sources change."
                 ),
                 "parameters": {
                     "type": "object",
@@ -822,6 +875,7 @@ def knowledge_tools() -> list[dict[str, Any]]:
                             "minLength": 1,
                             "description": "What information to find in the local knowledge library.",
                         },
+                        "offset": {"type": "integer", "minimum": 0, "default": 0},
                         "source_ids": {
                             "type": "array",
                             "items": {"type": "string"},
@@ -964,10 +1018,12 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
         )
     ):
         raise ValueError("record fields must be strings")
-    _validated_fields(source.title, source.description, source.content)
+    title, description, content = _validated_fields(
+        source.title, source.description, source.content
+    )
     if not source.source_id or len(source.source_id) > 128:
         raise ValueError("invalid source ID")
-    return source
+    return replace(source, title=title, description=description, content=content)
 
 
 def _validated_enabled(value: Any) -> bool:

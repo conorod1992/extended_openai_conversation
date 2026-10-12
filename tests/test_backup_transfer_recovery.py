@@ -23,6 +23,7 @@ def allocated_staging_directory(monkeypatch, tmp_path):
     monkeypatch.setattr(
         transfer_staging, "async_get_transfer_staging", AsyncMock(return_value=tmp_path)
     )
+    monkeypatch.setattr(backup_transfer, "_schedule_expiry", lambda _hass: None)
 
 
 def test_restore_journal_uses_scalable_backup_limit(monkeypatch) -> None:
@@ -64,7 +65,7 @@ async def test_delete_sessions_preserves_first_of_multiple_cancellations(monkeyp
     """Later cancellation must not replace the cancellation already being propagated."""
     first_error = asyncio.CancelledError("first")
     second_error = asyncio.CancelledError("second")
-    sessions = [SimpleNamespace(path="first"), SimpleNamespace(path="second")]
+    sessions = [SimpleNamespace(path="first", size=0), SimpleNamespace(path="second", size=0)]
     calls: list[str] = []
 
     async def delete(_hass, session):
@@ -74,7 +75,7 @@ async def test_delete_sessions_preserves_first_of_multiple_cancellations(monkeyp
     monkeypatch.setattr(backup_transfer, "_async_delete_session_file", delete)
 
     with pytest.raises(asyncio.CancelledError) as raised:
-        await backup_transfer._async_delete_sessions(object(), sessions)
+        await backup_transfer._async_delete_sessions(SimpleNamespace(data={}), sessions)
 
     assert raised.value is first_error
     assert calls == ["first", "second"]
@@ -90,7 +91,7 @@ async def test_remove_path_finishes_executor_cleanup_before_cancellation(tmp_pat
         await release.wait()
         return func(*args)
 
-    hass = SimpleNamespace(async_add_executor_job=executor_job)
+    hass = SimpleNamespace(data={}, async_add_executor_job=executor_job)
     task = asyncio.create_task(backup_transfer._async_remove_path(hass, str(path)))
     await asyncio.sleep(0)
     task.cancel()
@@ -103,8 +104,8 @@ async def test_remove_path_finishes_executor_cleanup_before_cancellation(tmp_pat
 
 async def test_delete_sessions_continues_after_one_cleanup_is_cancelled(monkeypatch):
     """All detached files are attempted before cancellation is re-raised."""
-    first = SimpleNamespace(path="first")
-    second = SimpleNamespace(path="second")
+    first = SimpleNamespace(path="first", size=0)
+    second = SimpleNamespace(path="second", size=0)
     calls: list[str] = []
 
     async def delete(_hass, session):
@@ -115,7 +116,7 @@ async def test_delete_sessions_continues_after_one_cleanup_is_cancelled(monkeypa
     monkeypatch.setattr(backup_transfer, "_async_delete_session_file", delete)
 
     with pytest.raises(asyncio.CancelledError):
-        await backup_transfer._async_delete_sessions(object(), [first, second])
+        await backup_transfer._async_delete_sessions(SimpleNamespace(data={}), [first, second])
     assert calls == ["first", "second"]
 
 
@@ -131,7 +132,7 @@ async def test_async_build_archive_cancellation_cleans_late_result(
         await asyncio.sleep(0.01)
         return {"path": str(path)}
 
-    hass = SimpleNamespace(async_add_executor_job=executor_job)
+    hass = SimpleNamespace(data={}, async_add_executor_job=executor_job)
     task = asyncio.create_task(backup_transfer._async_build_archive_file(hass, {}))
     await asyncio.sleep(0)
     task.cancel()
@@ -146,7 +147,7 @@ async def test_async_build_archive_cancellation_preserves_cancellation_if_worker
         await asyncio.sleep(0.01)
         raise RuntimeError("worker failed")
 
-    hass = SimpleNamespace(async_add_executor_job=executor_job)
+    hass = SimpleNamespace(data={}, async_add_executor_job=executor_job)
     task = asyncio.create_task(backup_transfer._async_build_archive_file(hass, {}))
     await asyncio.sleep(0)
     task.cancel()
@@ -164,7 +165,7 @@ async def test_async_create_upload_cancellation_cleans_late_file(tmp_path, monke
         await asyncio.sleep(0.01)
         return str(path)
 
-    hass = SimpleNamespace(async_add_executor_job=executor_job)
+    hass = SimpleNamespace(data={}, async_add_executor_job=executor_job)
     task = asyncio.create_task(backup_transfer._async_create_upload_file(hass))
     await asyncio.sleep(0)
     task.cancel()
@@ -179,7 +180,7 @@ async def test_async_create_upload_cancellation_preserves_cancellation_if_worker
         await asyncio.sleep(0.01)
         raise OSError("disk failed")
 
-    hass = SimpleNamespace(async_add_executor_job=executor_job)
+    hass = SimpleNamespace(data={}, async_add_executor_job=executor_job)
     task = asyncio.create_task(backup_transfer._async_create_upload_file(hass))
     await asyncio.sleep(0)
     task.cancel()
@@ -199,7 +200,7 @@ async def test_async_append_waits_for_executor_before_propagating_cancellation(
         await release.wait()
         return func(*args)
 
-    hass = SimpleNamespace(async_add_executor_job=executor_job)
+    hass = SimpleNamespace(data={}, async_add_executor_job=executor_job)
     task = asyncio.create_task(
         backup_transfer._async_append_file(
             hass, str(path), base64.b64encode(b"data").decode(), 4

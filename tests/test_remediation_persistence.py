@@ -128,14 +128,14 @@ async def test_same_model_different_embedding_spaces_rebuild_cache_after_restart
     assert all(item.get("space_id") for item in cache.data["embeddings"].values())
 
 
-async def test_idle_usage_read_paths_hide_expired_details(freezer):
+async def test_idle_usage_read_paths_hide_expired_details(monkeypatch):
     manager = _manager(DetailStorage(), request_retention_days=1, run_retention_days=1)
     await manager.async_initialize()
     now = dt_util.utcnow()
     manager.runs = [_run("run-one", now.isoformat())]
     manager.requests = [_request("one", now.isoformat())]
     assert usage_runs_page(manager)["runs"]
-    freezer.move_to(now + timedelta(days=2))
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now + timedelta(days=2))
     assert usage_runs_page(manager)["runs"] == []
     assert usage_requests_page(manager, "run-one")["requests"] == []
     assert manager.latest_run is None

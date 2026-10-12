@@ -312,7 +312,7 @@ def test_model_tool_result_compact_json_mutates_mapping_only_when_needed(monkeyp
         Mock(return_value=data),
     )
 
-    assert model_tool_results._compact_json_result_content(original) is original
+    assert model_tool_results._compact_json_result_content(original, integration_owned=True) is original
     assert data["result"] == '{"a":1}'
 
 

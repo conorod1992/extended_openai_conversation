@@ -61,7 +61,7 @@ def test_tool_result_content_compaction_keeps_non_json_unchanged() -> None:
     )
     text_result = SimpleNamespace(tool_result={"result": "plain custom tool output"})
 
-    _compact_json_result_content(json_result)
+    _compact_json_result_content(json_result, integration_owned=True)
     _compact_json_result_content(text_result)
 
     assert tool_result_data(json_result)["result"] == '{"a":1,"b":[2,3]}'

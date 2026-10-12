@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 import voluptuous as vol
@@ -11,7 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
 
 from ..function_execution import propagate_function_execution_errors
-from .base import Function
+from .base import Function, _RuntimeFunctionConfig
 
 MAX_COMPOSITE_DEPTH = 32
 MAX_COMPOSITE_FUNCTIONS = 256
@@ -73,7 +74,7 @@ class CompositeFunction(Function):
             raise vol.Invalid("expected dictionary")
 
         function = get_function(function_config["type"])
-        nested = dict(function_config)
+        nested = deepcopy(function_config)
         response_variable = nested.pop("response_variable", None)
         if "response_variable" in function_config and not isinstance(
             response_variable, str
@@ -81,9 +82,16 @@ class CompositeFunction(Function):
             raise vol.Invalid("response_variable must be a string")
         # Use the Function's full validator, including controls enforced outside
         # its underlying HA schema (for example transient Script concurrency).
-        validated = dict(function.validate_schema(nested))
+        try:
+            validated = function.validate_schema(nested)
+        except HomeAssistantError as err:
+            raise vol.Invalid(str(err)) from err
         if response_variable is not None:
-            validated["response_variable"] = response_variable
+            persisted = deepcopy(validated)
+            persisted["response_variable"] = response_variable
+            validated = _RuntimeFunctionConfig(
+                {**validated, "response_variable": response_variable}, persisted
+            )
         return validated
 
     async def execute(
@@ -96,7 +104,8 @@ class CompositeFunction(Function):
     ) -> Any:
         from . import get_function
 
-        _validate_resources(function_config)
+        # Preflight every child before allowing any earlier child to execute.
+        function_config = self.validate_schema(deepcopy(function_config))
         sequence = function_config["sequence"]
         if not sequence:
             raise HomeAssistantError(
@@ -109,7 +118,10 @@ class CompositeFunction(Function):
         for next_function_config in sequence:
             next_function = get_function(next_function_config["type"])
             with propagate_function_execution_errors():
-                result = await next_function.execute(
+                from ..execution_outcomes import execute_backend
+
+                result = await execute_backend(
+                    next_function,
                     hass,
                     next_function_config,
                     new_arguments,

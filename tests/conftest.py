@@ -42,7 +42,7 @@ if "result" in signature(conversation.ToolResultContent).parameters:
 
 
 @pytest.fixture
-def hass(tmp_path: Path) -> MagicMock:
+def hass(tmp_path: Path, monkeypatch) -> MagicMock:
     """Mock Home Assistant instance."""
     hass = MagicMock()
     # Create extended_openai_conversation_responses directory in tmp_path
@@ -77,6 +77,9 @@ def hass(tmp_path: Path) -> MagicMock:
 
     # Set hass in thread-local storage for cv.template validation
     cv._hass.hass = hass
+    # Current HA obtains schema context from the event loop before the legacy
+    # thread-local fallback. Unit schemas must use this test's own HA double.
+    monkeypatch.setattr(cv, "_async_get_hass_or_none", lambda: hass, raising=False)
 
     return hass
 

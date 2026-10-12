@@ -186,7 +186,7 @@ def test_tool_result_data_never_reads_new_api_deprecated_property(
     content = ModernContent(payload)
     assert ha_tool_result_compat.tool_result_data(content) is payload
     assert request_diagnostics._result_characters(content) == len(payload["result"])
-    assert model_tool_results._compact_json_result_content(content) is content
+    assert model_tool_results._compact_json_result_content(content, integration_owned=True) is content
     assert payload["result"] == '{"a":1,"b":[2,3]}'
     assert content.result.data is payload
 

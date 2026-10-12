@@ -624,7 +624,7 @@ def test_model_tool_result_compaction_returns_original_for_already_compact_json(
         model_tool_results, "tool_result_data", Mock(return_value=data)
     )
 
-    assert model_tool_results._compact_json_result_content(result) is result
+    assert model_tool_results._compact_json_result_content(result, integration_owned=True) is result
     assert data["result"] == '{"ok":true}'
 
 
@@ -648,7 +648,7 @@ def test_model_tool_result_compaction_preserves_non_json_shapes(
         model_tool_results, "tool_result_data", Mock(return_value=value)
     )
 
-    assert model_tool_results._compact_json_result_content(result) is result
+    assert model_tool_results._compact_json_result_content(result, integration_owned=True) is result
 
 
 def test_model_payload_preserves_malformed_user_owned_tool_entries() -> None:
@@ -1843,7 +1843,7 @@ def test_model_tool_result_compaction_rewrites_pretty_json(monkeypatch) -> None:
         Mock(return_value=data),
     )
 
-    assert model_tool_results._compact_json_result_content(result) is result
+    assert model_tool_results._compact_json_result_content(result, integration_owned=True) is result
     assert data["result"] == '{"ok":true,"items":[1,2]}'
 
 

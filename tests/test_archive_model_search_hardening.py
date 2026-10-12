@@ -294,10 +294,10 @@ async def test_knowledge_search_with_valid_query_delegates():
         async_search=search,
         resolve_source_filter=lambda _ids: (None, []),
     )
-    assert await agent._async_execute_knowledge_tool(
-        "search", {"query": "temperature"}
-    ) == {"results": []}
-    search.assert_awaited_once_with("temperature", None, 5)
+    result = await agent._async_execute_knowledge_tool("search", {"query": "temperature"})
+    assert result["results"] == []
+    assert result["has_more"] is False
+    search.assert_awaited_once_with("temperature", None, 5, lookahead=True)
 
 
 @pytest.mark.asyncio

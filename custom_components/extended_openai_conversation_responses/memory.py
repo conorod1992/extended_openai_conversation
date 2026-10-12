@@ -1559,11 +1559,12 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_search",
-                "description": "Search relevant durable facts for the current user.",
+                "description": "Search ranked memories. Continue with next_offset as offset and identical query, category and scope. Restart at zero if memories change.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "minLength": 1},
+                        "offset": {"type": "integer", "minimum": 0, "default": 0},
                         "category": {"type": "string"},
                         "scope": {"type": "string", "enum": ["personal", "household"]},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 50},

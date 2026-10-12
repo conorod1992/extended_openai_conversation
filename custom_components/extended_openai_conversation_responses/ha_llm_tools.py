@@ -160,9 +160,18 @@ class LiveTool:
             raise HomeAssistantError(
                 "Home Assistant tool arguments do not match the requested schema"
             ) from None
+        from .execution_outcomes import (
+            execution_completed,
+            execution_prepared,
+            execution_started,
+        )
+
+        execution_prepared(args, ha_parameters=self.tool.parameters)
+        execution_started()
         result = await self.instance.async_call_tool(
             llm.ToolInput(tool_name=self.tool.name, tool_args=args, id=tool_input.id)
         )
+        execution_completed()
         return execution_tool_result(result)
 
 
