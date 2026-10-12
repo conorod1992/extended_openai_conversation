@@ -363,7 +363,7 @@ def preserve_legacy_guest_policy(
 
 
 def project_agent_config_updates(
-    current: dict[str, Any], updates: dict[str, Any], normalized: dict[str, Any]
+    current: Mapping[str, Any], updates: Mapping[str, Any], normalized: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Persist validated edits without rewriting untouched retained settings."""
     result = deepcopy(dict(current))
