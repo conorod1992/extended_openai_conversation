@@ -189,12 +189,17 @@ def _decode_compressed_body(body: bytes, encoding: str, max_bytes: int) -> bytes
         try:
             try:
                 return decode(wbits)
-            except zlib.error, aiohttp.ClientPayloadError:
+            except (zlib.error, aiohttp.ClientPayloadError) as wrapped_error:
                 if encoding != "deflate" or wbits < 0:
                     raise
                 # A valid raw stored block can coincidentally have a full zlib
                 # header. Retry from the original input with the same output cap.
-                return decode(-zlib.MAX_WBITS)
+                try:
+                    return decode(-zlib.MAX_WBITS)
+                except zlib.error, aiohttp.ClientPayloadError:
+                    # Keep the wrapped stream's diagnostic if neither format is
+                    # valid, including streams missing their final checksum.
+                    raise wrapped_error from None
         except zlib.error as err:
             raise aiohttp.ClientPayloadError("Malformed compressed response") from err
     elif encoding == "br":
