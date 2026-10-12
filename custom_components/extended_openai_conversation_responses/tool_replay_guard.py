@@ -7,6 +7,7 @@ from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from copy import deepcopy
 import json
+import math
 from typing import Any
 
 from homeassistant.components import conversation
@@ -84,12 +85,24 @@ def record_dispatch(
         dispatched.pop(next(iter(dispatched)))
 
 
+def _canonical_numbers(value: Any) -> Any:
+    """Normalize equivalent JSON numbers without rounding integers through float."""
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    if isinstance(value, Mapping):
+        return {key: _canonical_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_canonical_numbers(item) for item in value]
+    return value
+
+
 def _signature(tool_input: llm.ToolInput, spec: Mapping[str, Any] | None = None) -> str:
     arguments = tool_input.tool_args
     if spec is not None:
         # Invalid/externally owned arguments retain exact replay checks.
         with suppress(HomeAssistantError, TypeError, ValueError):
             arguments = validate_function_arguments(spec, arguments)
+            arguments = _canonical_numbers(arguments)
     return json.dumps(
         [tool_input.tool_name, arguments],
         sort_keys=True,

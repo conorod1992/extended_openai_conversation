@@ -447,6 +447,8 @@ class EditFileFunction(FileFunction):
         path_str = path_template.async_render(arguments, parse_result=False)
         old_text_template = function_config.get("old_text")
         old_text = _render_exact_text(old_text_template, arguments)
+        if not old_text:
+            return backend_failure("Search text must not be empty")
         new_text_template = function_config.get("new_text")
         new_text = _render_exact_text(new_text_template, arguments)
         allow_dirs = self._render_allow_dirs(
