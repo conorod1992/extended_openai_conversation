@@ -174,12 +174,24 @@ def _load_journal(
         raise backup.BackupError("Pending restore transaction is corrupted")
     journal = dict(value)
     try:
-        rollback = backup.inspect_backup(
-            value["rollback"],
-            subentry_id,
-            max_bytes=backup.MAX_BACKUP_BYTES,
-            private_journal=True,
-        )
+        try:
+            rollback = backup.inspect_backup(
+                value["rollback"],
+                subentry_id,
+                max_bytes=backup.MAX_BACKUP_BYTES,
+                private_journal=True,
+            )
+        except backup.BackupError as err:
+            # Older writers could journal an oversized rollback. Once committed,
+            # only the target is authoritative; never replay that rollback.
+            if phase != _PHASE_COMMITTED or "safety limit" not in str(err):
+                raise
+            rollback = backup.inspect_backup(
+                value["target"],
+                subentry_id,
+                max_bytes=backup.MAX_BACKUP_BYTES,
+                private_journal=True,
+            )
         try:
             target = backup.inspect_backup(
                 value["target"],
@@ -532,6 +544,20 @@ async def _async_restore_backup_recoverably(
         managers = await _durable_managers(hass, entry_id, subentry_id)
         rollback = await backup._snapshot_for_restore(managers, subentry)
         journal = _new_journal(entry_id, subentry_id, prepared, rollback)
+        # PreparedRestore bypasses inspect_backup's serialized-size validation.
+        # Validate the actual journal documents before even the write-ahead save.
+        for section in ("target", "rollback"):
+            try:
+                backup.inspect_backup(
+                    journal[section],
+                    subentry_id,
+                    max_bytes=backup.MAX_BACKUP_BYTES,
+                    private_journal=True,
+                )
+            except HomeAssistantError as err:
+                raise backup.BackupError(
+                    f"Restore cannot start because its {section} recovery snapshot is not recoverable: {err}"
+                ) from err
 
         # This is the write-ahead boundary. If it cannot be verified, no category
         # has changed and a possibly-written journal remains harmless recovery data.

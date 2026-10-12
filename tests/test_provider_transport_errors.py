@@ -83,7 +83,11 @@ async def test_authentication_probe_timeout_normalizes_before_config_callers() -
     assert isinstance(caught.value.__cause__, TimeoutError)
 
 
-async def test_setup_treats_normalized_timeout_as_retryable() -> None:
+async def test_setup_treats_normalized_timeout_as_retryable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.agent_deletion.async_delete_removed_subentries",
+        AsyncMock(),
+    )
     """Startup transport failures should ask HA to retry instead of failing config."""
     entry = SimpleNamespace(data={CONF_API_KEY: "sk-test"})
     error = ProviderTransportError("Provider request timed out")
