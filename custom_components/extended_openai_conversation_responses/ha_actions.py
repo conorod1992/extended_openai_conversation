@@ -445,19 +445,18 @@ def _target_selection(
     data: Mapping[str, Any] | None, target: Mapping[str, Any] | None
 ) -> dict[str, Any]:
     selection: dict[str, Any] = {}
+    merged = {**(data or {}), **(target or {})}
     for key in _TARGET_KEYS:
-        values: list[Any] = []
-        for source in (data, target):
-            if source is None or source.get(key) is None:
-                continue
-            value = source[key]
-            items = value if isinstance(value, list) else [value]
-            values.extend(
-                part.strip()
-                for item in items
-                for part in (item.split(",") if isinstance(item, str) else [item])
-                if not isinstance(part, str) or part.strip()
-            )
+        if merged.get(key) is None:
+            continue
+        value = merged[key]
+        items = value if isinstance(value, list) else [value]
+        values = [
+            part.strip() if isinstance(part, str) else part
+            for item in items
+            for part in (item.split(",") if isinstance(item, str) else [item])
+            if not isinstance(part, str) or part.strip()
+        ]
         if values:
             selection[key] = values
     return selection
