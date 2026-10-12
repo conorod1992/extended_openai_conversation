@@ -1031,7 +1031,8 @@ async def test_owned_executor_schedules_background_call_and_returns_receipt(
     result = await executor(entity, tool, tool_input, context, [])
 
     manager.async_schedule.assert_awaited_once_with(
-        entity, "control_light", arguments, context, function_tool=tool
+        entity, "control_light", arguments, context, function_tool=tool,
+        execution_delay=timedelta(seconds=10),
     )
     assert tool_result_data(result) == {"result": "Scheduled"}
 

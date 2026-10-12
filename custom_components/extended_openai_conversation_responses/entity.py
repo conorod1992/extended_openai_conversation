@@ -1157,6 +1157,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         ", ".join(call.tool_name for call in pending_tool_calls),
                     )
                 round_tool_calls = list(pending_tool_calls)
+                if force_finalizer_only:
+                    unexpected = next(
+                        (call for call in round_tool_calls
+                         if call.tool_name != CONTINUE_CONVERSATION_TOOL_NAME),
+                        None,
+                    )
+                    if unexpected is not None:
+                        error = HomeAssistantError(
+                            f"Tool `{unexpected.tool_name}` was not advertised for finalization"
+                        )
+                        append_unresolved_tool_results(
+                            chat_log, self.entity_id, round_tool_calls,
+                            failed_call_id=unexpected.id, error=error,
+                        )
+                        raise error
                 pending_tool_calls, loader_calls, control_calls = (
                     _partition_provider_tool_calls(
                         pending_tool_calls,
@@ -1245,7 +1260,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     self,
                     chat_log,
                     pending_tool_calls,
-                    request_function_tools,
+                    [] if force_finalizer_only else request_function_tools,
                     function_call_budget,
                     llm_context,
                     exposed_entities,
@@ -2089,6 +2104,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     arguments,
                     llm_context,
                     function_tool=function_tool,
+                    execution_delay=execution_delay,
                 )
                 return make_tool_result_content(
                     agent_id=self.entity_id,

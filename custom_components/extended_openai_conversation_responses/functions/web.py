@@ -101,16 +101,26 @@ def _decode_zstd(body: bytes, max_bytes: int) -> bytes:
     if _ZSTD_COMPAT is not None:
         decoded = bytearray()
         try:
+            # The compatibility EOF API cannot cap output. Establish the output
+            # bound with its streaming reader before using that API to validate
+            # frame completion (the reader alone accepts truncated final frames).
+            with _ZSTD_COMPAT.ZstdDecompressor().stream_reader(
+                body, read_size=_DECODE_CHUNK_BYTES, read_across_frames=True
+            ) as reader:
+                while chunk := reader.read(
+                    min(_DECODE_CHUNK_BYTES, max_bytes + 1 - len(decoded))
+                ):
+                    if len(chunk) > max_bytes - len(decoded):
+                        raise _response_limit_error(max_bytes)
+                    decoded.extend(chunk)
             decoder = _ZSTD_COMPAT.ZstdDecompressor().decompressobj()
-            for offset in range(len(body)):
-                if decoder.eof:
-                    decoder = _ZSTD_COMPAT.ZstdDecompressor().decompressobj()
-                # One input byte cannot complete more than one Zstd block.
-                # Bound expansion per call and explicitly require frame EOF.
-                chunk = decoder.decompress(body[offset : offset + 1])
-                if len(chunk) > max_bytes - len(decoded):
-                    raise _response_limit_error(max_bytes)
-                decoded.extend(chunk)
+            for offset in range(0, len(body), _DECODE_CHUNK_BYTES):
+                pending = body[offset : offset + _DECODE_CHUNK_BYTES]
+                while pending:
+                    if decoder.eof:
+                        decoder = _ZSTD_COMPAT.ZstdDecompressor().decompressobj()
+                    decoder.decompress(pending)
+                    pending = decoder.unused_data
             if not decoder.eof:
                 raise aiohttp.ClientPayloadError("Incomplete compressed response")
         except _ZSTD_COMPAT.ZstdError as err:
@@ -153,7 +163,12 @@ def _decode_compressed_body(body: bytes, encoding: str, max_bytes: int) -> bytes
             raise aiohttp.ClientPayloadError("Empty compressed response")
         wbits = 16 + zlib.MAX_WBITS if encoding == "gzip" else zlib.MAX_WBITS
         # aiohttp also accepts the legacy raw-deflate representation.
-        if encoding == "deflate" and body and body[0] & 0x0F != 8:
+        if encoding == "deflate" and not (
+            len(body) >= 2
+            and body[0] & 0x0F == 8
+            and body[0] >> 4 <= 7
+            and int.from_bytes(body[:2], "big") % 31 == 0
+        ):
             wbits = -zlib.MAX_WBITS
         decoded = bytearray()
         while body:
