@@ -6,6 +6,7 @@ process for each payload. The existing process-crash suite covers cold boots.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from custom_components.extended_openai_conversation_responses import (
     backup,
     restore_recovery,
 )
+from custom_components.extended_openai_conversation_responses.guest_mode import GuestModeSchedule
+from tests.test_conversation_archive import _session, _turn
 from tests.test_restore_recovery import _states
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
@@ -29,6 +32,22 @@ async def test_accepted_journal_is_readable_by_production_reader_on_disk(
     target, rollback = _states()
     target.config = {**target.config, "prompt": "target " + extra}
     rollback.config = {**rollback.config, "prompt": "rollback " + extra}
+    for label, prepared in (("target", target), ("rollback", rollback)):
+        # Exercise real content in every durable category. Empty archive and
+        # Guest Mode sections cannot witness lost transcript/schedule fields.
+        text = label + " " + extra
+        prepared.memories = [replace(row, content=text) for row in prepared.memories]
+        prepared.temporary_memories = [replace(row, content=text) for row in prepared.temporary_memories]
+        prepared.knowledge = [replace(row, content=text) for row in prepared.knowledge]
+        prepared.archive_sessions = [replace(
+            _session(), agent_subentry_id="agent-new", title=text,
+        )]
+        prepared.archive_turns = [_turn(user_text=text, assistant_text="reply " + text)]
+        prepared.guest_mode_schedule = GuestModeSchedule(
+            active_from=prepared.created_at, active_until=None,
+            source=label, updated_at=prepared.created_at,
+        )
+        prepared.request_rules["rules"][0]["name"] = label + " rule"
     journal = restore_recovery._new_journal("entry-1", "agent-new", target, rollback)
     journal["phase"] = phase
     # Confirm writer-side acceptance before saving any journal.
