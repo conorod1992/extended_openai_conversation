@@ -30,16 +30,30 @@ def execution_identity(
         return prepare_execution_arguments(function_config, arguments)
     sequence = function_config.get("sequence", [])
 
-    # Responses feed later arguments. Their runtime values cannot be statically
-    # predicted, so preserve the shared representation for these compositions.
-    def feeds_arguments(config: Mapping[str, Any]) -> bool:
-        return bool(config.get("response_variable")) or any(
-            feeds_arguments(child) for child in config.get("sequence", [])
+    # A response variable is written only *after* its child has executed.
+    # Earlier child identities can therefore be normalized safely. From the
+    # first assignment onward, retain the original shared input representation:
+    # later children may inspect it, including through nested composites.
+    identities: list[Any] = []
+    response_assigned = False
+    for child in sequence:
+        identities.append(
+            dict(arguments)
+            if response_assigned
+            else execution_identity(child, arguments)
         )
+        if _assigns_response_variable(child):
+            response_assigned = True
+    return {"composite": identities}
 
-    if feeds_arguments(function_config):
-        return dict(arguments)
-    return {"composite": [execution_identity(child, arguments) for child in sequence]}
+
+def _assigns_response_variable(config: Mapping[str, Any]) -> bool:
+    """Whether this subtree may publish an output to following siblings."""
+    if config.get("response_variable"):
+        return True
+    return config.get("type") == "composite" and any(
+        _assigns_response_variable(child) for child in config.get("sequence", [])
+    )
 
 
 def prepare_execution_arguments(
