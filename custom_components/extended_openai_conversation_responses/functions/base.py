@@ -100,7 +100,7 @@ class Function(ABC):
             if not isinstance(result, dict):
                 return {}
             return _RuntimeFunctionConfig(dict(result), persisted_config)
-        except SCHEMA_ERRORS as e:
+        except (vol.error.Error, *SCHEMA_ERRORS) as e:
             from . import FUNCTIONS
 
             function_type = next(

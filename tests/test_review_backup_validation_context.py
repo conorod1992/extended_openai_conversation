@@ -7,6 +7,7 @@ import threading
 from unittest.mock import Mock
 
 import pytest
+from voluptuous import SchemaError
 
 from custom_components.extended_openai_conversation_responses import (
     backup,
@@ -136,7 +137,7 @@ def test_scrape_preserves_supported_sensor_normalization(hass):
     assert config["sensor"][0]["select"] == ".value"
 
 
-@pytest.mark.parametrize("error_type", SCHEMA_ERRORS)
+@pytest.mark.parametrize("error_type", (SchemaError, *SCHEMA_ERRORS))
 def test_public_function_validator_wraps_supported_schema_errors(error_type):
     function = RestFunction()
     function.data_schema = Mock(side_effect=error_type("malformed configuration"))
