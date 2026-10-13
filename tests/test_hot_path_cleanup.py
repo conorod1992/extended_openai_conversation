@@ -132,6 +132,8 @@ async def test_non_broadcast_local_intent_does_not_initialize_intercom(
 
 
 def _compiled_manager() -> RequestRules:
+    # Call from an async test with the hass fixture: compiling the response
+    # action validates an HA template and must not inherit another test's context.
     manager = RequestRules(None)
     manager._wording_groups = []
     settings = {
@@ -162,7 +164,10 @@ def _compiled_manager() -> RequestRules:
     return manager
 
 
-def test_request_rule_deterministic_match_never_runs_fuzzy_scoring(monkeypatch) -> None:
+async def test_request_rule_deterministic_match_never_runs_fuzzy_scoring(
+    hass,
+    monkeypatch,
+) -> None:
     """Existing deterministic precedence should short-circuit fuzzy work entirely."""
     manager = _compiled_manager()
 
@@ -177,7 +182,9 @@ def test_request_rule_deterministic_match_never_runs_fuzzy_scoring(monkeypatch) 
     assert match.phrase == "turn on"
 
 
-def test_request_rule_fuzzy_matching_still_runs_as_fallback(monkeypatch) -> None:
+async def test_request_rule_fuzzy_matching_still_runs_as_fallback(
+    hass, monkeypatch
+) -> None:
     """Fuzzy behavior remains available when no deterministic candidate matches."""
     manager = _compiled_manager()
     calls = 0
