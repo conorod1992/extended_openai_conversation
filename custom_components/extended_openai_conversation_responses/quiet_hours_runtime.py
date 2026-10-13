@@ -558,6 +558,9 @@ class QuietHoursManager:
 
     async def _async_reload_generation_locked(self) -> None:
         """Validate both halves before installing an authoritative generation."""
+        recovering = (
+            getattr(self, "_config_recovery_pending", False) or not self._initialized
+        )
         stored = await self._store.async_load()
         if stored is not None and not isinstance(stored, Mapping):
             raise ValueError("Quiet Hours configuration storage is invalid")
@@ -571,6 +574,10 @@ class QuietHoursManager:
         self._config = config
         self._active = active
         self._mark_generation_available()
+        # Installing a readback generation must also secure its callbacks before
+        # deferred caller cancellation can leave the recovery operation.
+        if recovering:
+            self._reschedule()
 
     def _mark_generation_available(self) -> None:
         self._config_recovery_pending = False
@@ -604,8 +611,6 @@ class QuietHoursManager:
                 return
             if not await self._async_recover_configuration_locked():
                 return
-            if recovering:
-                self._reschedule()
             period = (
                 quiet_period_for(now, self._config.start, self._config.end)
                 if self._config.enabled

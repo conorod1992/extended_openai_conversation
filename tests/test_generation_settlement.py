@@ -203,3 +203,32 @@ async def test_unreadable_generation_blocks_direct_restore_and_shutdown_actions(
     hass.services.async_call.assert_not_awaited()
     assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.2
     assert manager._config_recovery_pending
+
+
+async def test_cancelled_recovery_rearms_timers_for_the_installed_generation(
+    hass, monkeypatch, timers
+):
+    manager = await _manager(hass, monkeypatch, False)
+    manager._config_recovery_pending = True
+    manager._initialized = False
+    manager._reschedule()
+    assert len(manager._unsubscribers) == 1
+    entered, finish = asyncio.Event(), asyncio.Event()
+
+    async def load():
+        entered.set()
+        await finish.wait()
+        return {"config": _config(enabled=True).as_dict(), "active": None}
+
+    manager._store.async_load = load
+    task = asyncio.create_task(manager.async_reconcile())
+    await entered.wait()
+    task.cancel()
+    finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert manager.config.enabled
+    assert not manager._config_recovery_pending
+    assert len(manager._unsubscribers) == 3
+    await manager.async_reconcile()
+    assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.2

@@ -273,8 +273,6 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 return
             if not await self._async_recover_configuration_locked():
                 return
-            if recovering:
-                self._reschedule()
             if self._migrate_control_entity_ids():
                 await self._async_save_control_state_locked()
             period = (
