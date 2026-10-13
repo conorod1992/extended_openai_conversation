@@ -163,7 +163,16 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install "ruff==0.16.8"
+          pip install "ruff==0.16.8" "pytest==9.0.3" "PyYAML==6.0.3"
+
+      - name: Guard nightly selection and reviewed execution inventory
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          PYTHONPATH: ${{ github.workspace }}
+        run: >-
+          python -m pytest --noconftest -q
+          tests_stress/test_execution_contract.py
+          tests_stress/test_nightly_inventory.py
 
       - name: Run Ruff linter
         run: ruff check custom_components/
@@ -361,6 +370,14 @@ jobs:
             --cov-report=xml \
             --cov-report=term-missing
 
+      - name: Check Composite workflow and resource boundaries
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: >-
+          python -m pytest -q --timeout=120
+          tests_stress/test_function_provider_wire_remaining.py::test_shared_backend_business_outcomes_survive_enclosing_workflows
+          tests_stress/test_function_provider_wire_remaining.py::test_composite_resource_tree_rejected_before_effects
+
   dev-test:
     name: Test (HA dev)
     runs-on: ubuntu-latest
@@ -443,6 +460,12 @@ jobs:
       - name: Install Home Assistant dev fallback
         if: steps.dev-image.outputs.available != 'true'
         run: pip install "${RUNNER_TEMP}"/ha-dev-wheel/homeassistant-*.whl
+
+      - name: Install HA integration dependencies for fallback
+        if: steps.dev-image.outputs.available != 'true'
+        run: >-
+          python ci/install_ha_dependencies.py
+          --manifest custom_components/extended_openai_conversation_responses/manifest.json
 
       - name: Install AI Task media dependencies for fallback
         if: steps.dev-image.outputs.available != 'true'

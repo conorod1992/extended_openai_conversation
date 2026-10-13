@@ -116,6 +116,11 @@ jobs:
     if: ${{ fromJSON(needs.select.outputs.plan)['ipv6-only-networking-acceptance'] }}
     uses: ./.github/workflows/ipv6-only-networking-acceptance.yml
 
+  openai-sdk-compatibility:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['openai-sdk-compatibility'] }}
+    uses: ./.github/workflows/openai-sdk-compatibility.yml
+
   official-ha-container:
     needs: select
     if: ${{ fromJSON(needs.select.outputs.plan)['official-ha-container'] }}
@@ -154,7 +159,7 @@ jobs:
   validation:
     name: PR validation
     if: always()
-    needs: [select, android-companion-app, ci-image-dev, ci-image-stable, ci, cross-browser-smoke, deployment-recovery, docs, frontend-backend-version-skew, frontend, ha-browser-compatibility, ha-version-upgrade-acceptance, hacs-install-update-acceptance, hacs, haos-supervisor-vm-acceptance, ipv6-only-networking-acceptance, official-ha-container, real-ha, release-smoke, resource-constrained, side-by-side-isolation, upgrade-acceptance, version-check]
+    needs: [select, android-companion-app, ci-image-dev, ci-image-stable, ci, cross-browser-smoke, deployment-recovery, docs, frontend-backend-version-skew, frontend, ha-browser-compatibility, ha-version-upgrade-acceptance, hacs-install-update-acceptance, hacs, haos-supervisor-vm-acceptance, ipv6-only-networking-acceptance, openai-sdk-compatibility, official-ha-container, real-ha, release-smoke, resource-constrained, side-by-side-isolation, upgrade-acceptance, version-check]
     runs-on: ubuntu-latest
     permissions:
       contents: read

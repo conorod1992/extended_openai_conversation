@@ -120,6 +120,22 @@ windowListeners.get("popstate")();
 releaseRoute();
 await upgradedPanel._routeSyncPromise;
 assert.equal(upgradedPanel._subsection, "prompt-context");
+// The real handler must release route synchronization before a backend read settles.
+upgradedPanel._handleRouteChange = ExtendedOpenAIManagementPanel.prototype._handleRouteChange;
+upgradedPanel._hydrateCleanConfiguration = () => true;
+let releaseRead;
+const readGate = new Promise((resolve) => { releaseRead = resolve; });
+upgradedPanel._loadSection = () => readGate;
+window.location.pathname = "/extended-openai/assistant/basics";
+windowListeners.get("popstate")();
+await upgradedPanel._routeSyncPromise;
+assert.equal(upgradedPanel._subsection, "basics");
+window.location.pathname = "/extended-openai/assistant/prompt-context";
+windowListeners.get("popstate")();
+await upgradedPanel._routeSyncPromise;
+assert.equal(upgradedPanel._subsection, "prompt-context", "pending data must not block the next route");
+releaseRead();
+await readGate;
 // Exercise the real discard guard: a declined navigation restores the current URL.
 upgradedPanel._handleRouteChange = ExtendedOpenAIManagementPanel.prototype._handleRouteChange;
 upgradedPanel._configDirty = true;

@@ -292,5 +292,19 @@
       "ci/pr_workflows.json",
       ".github/workflows/pr-validation.yml"
     ]
+  },
+  "openai-sdk-compatibility": {
+    "workflow": "openai-sdk-compatibility.yml",
+    "paths": [
+      "custom_components/extended_openai_conversation_responses/manifest.json",
+      "custom_components/extended_openai_conversation_responses/openai_compat.py",
+      "tests/test_openai*",
+      "ci/release_certification.py",
+      "ci/install_ha_dependencies.py",
+      ".github/workflows/openai-sdk-compatibility.yml",
+      "ci/pr_validation.py",
+      "ci/pr_workflows.json",
+      ".github/workflows/pr-validation.yml"
+    ]
   }
 }

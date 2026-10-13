@@ -122,6 +122,6 @@ def expected_consumer_result(kind, value, root, workflow):
             return text if isinstance(parsed, str) else parsed
         except ValueError, SyntaxError:
             return text
-    if workflow == "provider" and kind in {"rest", "scrape"}:
-        return json.dumps(value, separators=(",", ":"))
+    # REST/Scrape return literal text. Provider presentation preserves that text,
+    # including JSON whitespace, rather than parsing and reserializing business data.
     return expected_business_result(kind, value, root)

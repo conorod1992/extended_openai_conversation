@@ -724,6 +724,7 @@
     "tests_real_ha/test_active_request_shutdown_recovery.py::test_shutdown_cancels_inflight_provider_request_and_next_boot_is_healthy[provider]",
     "tests_real_ha/test_active_request_shutdown_recovery.py::test_shutdown_cancels_inflight_provider_request_and_next_boot_is_healthy[slow-native-function]",
     "tests_real_ha/test_agent_private_data_deletion.py::test_subentry_removal_purges_private_stores_then_last_entry_stops_globals",
+    "tests_real_ha/test_agent_private_data_deletion.py::test_provider_erasure_failure_is_rediscovered_without_provider_or_tracking",
     "tests_real_ha/test_ai_task_lifecycle.py::test_ai_task_entity_survives_unload_reload_and_stale_id_fails_cleanly",
     "tests_real_ha/test_ai_task_provider_wire.py::test_caller_tool_round_trip_crosses_sdk_wire_with_ha_context[chat_completions]",
     "tests_real_ha/test_ai_task_provider_wire.py::test_caller_tool_round_trip_crosses_sdk_wire_with_ha_context[responses]",

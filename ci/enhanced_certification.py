@@ -9,11 +9,13 @@ import sys
 from urllib.request import Request, urlopen
 
 try:
+    from .actions_schedule import CAMPAIGNS
     from .candidate_evidence import check_candidate, valid_sha
     from .compatibility_evidence import check_ha_environment, check_stable_point
     from .enhanced_evidence import SCHEMA, write_json
     from .execution_contract import CONTRACT, check_execution, expected_cases
 except ImportError:
+    from actions_schedule import CAMPAIGNS
     from candidate_evidence import check_candidate, valid_sha
     from compatibility_evidence import check_ha_environment, check_stable_point
     from enhanced_evidence import SCHEMA, write_json
@@ -90,13 +92,29 @@ def main(root: Path) -> int:
         assert key not in found, key
         found[key] = item
         artifact_names[key] = path.parent.name
+    full_programme = (
+        selected == "all"
+        and set(campaigns) == set(CAMPAIGNS)
+        and set(intensities) == {"normal", "heavy"}
+    )
+    scope = "full-programme" if full_programme else "selected-campaigns"
     lines = [
-        "## Enhanced nightly certification",
+        f"## Enhanced certification — {scope}",
         "",
         f"Intended candidate SHA: `{candidate_sha}`",
         "",
         f"Run: `{os.environ.get('GITHUB_RUN_ID', 'local')}` · Seed: `{seed}` · Selected: `{selected}`",
         "",
+        f"Scope: **{scope}** · Intensities: `{', '.join(intensities)}` · Expected rows: **{len(expected)}**",
+        "",
+        *(
+            []
+            if full_programme
+            else [
+                "This run certifies only the selected campaigns and intensities. It does not certify the full Enhanced programme.",
+                "",
+            ]
+        ),
         "| Campaign | Intensity / HA | Result | SHA | HA | Evidence |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
@@ -132,16 +150,30 @@ def main(root: Path) -> int:
             if point in {None, "stable"}:
                 if not expected_stable:
                     identity_errors.append("Stable lane has no intended HA version")
-                identity_errors.extend(check_ha_environment(item, version=expected_stable, plugin_version=os.environ.get("ENHANCED_EXPECTED_HA_TEST_PLUGIN_VERSION")))
+                identity_errors.extend(
+                    check_ha_environment(
+                        item,
+                        version=expected_stable,
+                        plugin_version=os.environ.get(
+                            "ENHANCED_EXPECTED_HA_TEST_PLUGIN_VERSION"
+                        ),
+                    )
+                )
             elif point == "oldest":
-                minimum = json.loads((Path(__file__).resolve().parents[1] / "hacs.json").read_text(encoding="utf-8"))["homeassistant"]
+                minimum = json.loads(
+                    (Path(__file__).resolve().parents[1] / "hacs.json").read_text(
+                        encoding="utf-8"
+                    )
+                )["homeassistant"]
                 identity_errors.extend(check_ha_environment(item, version=minimum))
             elif point == "dev":
                 intended_dev = os.environ.get("ENHANCED_EXPECTED_HA_DEV_SHA")
                 if not valid_sha(intended_dev):
                     identity_errors.append("Dev lane has no intended HA source SHA")
                 else:
-                    identity_errors.extend(check_ha_environment(item, source_sha=intended_dev))
+                    identity_errors.extend(
+                        check_ha_environment(item, source_sha=intended_dev)
+                    )
             identity_errors.extend(
                 check_stable_point(
                     item, point, expected_stable, require_reported_version=True
@@ -195,6 +227,15 @@ def main(root: Path) -> int:
                     f"{name}={value}" for name, value in sorted(metrics.items())[:12]
                 )
             )
+    lines += [
+        "",
+        f"Selected scope: **{'FAILED' if failed else 'PASSED'}**. "
+        + (
+            "Full Enhanced programme: **PASSED**."
+            if full_programme and not failed
+            else "Full Enhanced programme has not been certified by this run."
+        ),
+    ]
     summary = "\n".join(lines) + "\n"
     print(summary)
     destination = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -210,6 +251,10 @@ def main(root: Path) -> int:
             "identity_errors": identity_errors,
             "seed": seed,
             "selected": selected,
+            "scope": scope,
+            "intensities": intensities,
+            "expected_rows": len(expected),
+            "full_programme_passed": full_programme and not failed,
             "passed": not failed,
             "jobs": list(found.values()),
             "execution_errors": execution_errors,

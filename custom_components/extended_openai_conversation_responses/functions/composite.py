@@ -105,6 +105,8 @@ class CompositeFunction(Function):
         from . import get_function
 
         # Preflight every child before allowing any earlier child to execute.
+        # Bound the authored tree before deepcopy can recurse into it.
+        _validate_resources(function_config)
         function_config = self.validate_schema(deepcopy(function_config))
         sequence = function_config["sequence"]
         if not sequence:

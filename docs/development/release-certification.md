@@ -29,7 +29,7 @@ actual released source version/commit. The existing 6.2.0 specialised Function
 Tool omission remains documented in the workflow; its config-flow/Assist/browser
 migration journeys remain mandatory.
 
-Supported SDK lanes are `2.21.0`, `2.45.0` and `3.10.0`; these match the manifest's
+Supported SDK lanes are `2.21.0`, `2.45.0`, `3.10.0` and `3.26.0`; these match the manifest's
 reviewed floor and ceiling. Each needs a successful job and an envelope recording
 that actual installed SDK on the candidate SHA. `latest-3x-early-warning` remains
 advisory beyond that ceiling and cannot replace a supported lane. These are offline
