@@ -16,6 +16,9 @@ from homeassistant.helpers import llm
 from ..exceptions import EntityNotFound, InvalidFunction
 from ..ha_permissions import entity_access_error
 from ..ha_schema import ExtendableSchema
+from ..schema_errors import SCHEMA_ERRORS
+
+_FUNCTION_SCHEMA_ERRORS: tuple[type[Exception], ...] = (vol.error.Error, *SCHEMA_ERRORS)
 
 
 class _RuntimeFunctionConfig(dict[str, Any]):
@@ -99,7 +102,7 @@ class Function(ABC):
             if not isinstance(result, dict):
                 return {}
             return _RuntimeFunctionConfig(dict(result), persisted_config)
-        except vol.error.Error as e:
+        except _FUNCTION_SCHEMA_ERRORS as e:
             from . import FUNCTIONS
 
             function_type = next(

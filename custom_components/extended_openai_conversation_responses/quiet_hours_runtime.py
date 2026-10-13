@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 import logging
@@ -27,7 +28,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .operational_errors import log_handled_failure
-from .strict_store import PropagatingWriteStore
+from .strict_store import PropagatingWriteStore, _async_settle_store_io
 
 _STORAGE_VERSION = 2
 _STORAGE_KEY = f"{DOMAIN}.quiet_hours"
@@ -421,6 +422,7 @@ class QuietHoursManager:
         self._active: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._config_recovery_pending = False
         self._unsubscribers: list[Callable[[], None]] = []
 
     @property
@@ -450,6 +452,7 @@ class QuietHoursManager:
             except ValueError:
                 self._config = QuietHoursConfig()
             self._active = self._normalize_active(raw.get("active"))
+            self._config_recovery_pending = False
             self._initialized = True
             self._reschedule()
         await self.async_reconcile()
@@ -485,45 +488,90 @@ class QuietHoursManager:
 
     async def async_update_config(self, value: Any) -> dict[str, Any]:
         candidate = _config_from_data(value)
+        failure: BaseException | None = None
         async with self._lock:
+            if not await self._async_recover_configuration_locked():
+                raise ValueError(
+                    "Quiet Hours configuration recovery is pending; retry later"
+                )
             previous = self._config
             self._config = candidate
             try:
-                await self._async_save_locked()
-            except BaseException:
+                # Observe a surviving native write before cancellation/readback.
+                await _async_settle_store_io(self._async_save_locked())
+                now = dt_util.now()
+                old_period = (
+                    quiet_period_for(now, previous.start, previous.end)
+                    if previous.enabled
+                    else None
+                )
+                new_period = (
+                    quiet_period_for(now, candidate.start, candidate.end)
+                    if candidate.enabled
+                    else None
+                )
+                if (
+                    self._active is not None
+                    and old_period is not None
+                    and new_period is not None
+                ):
+                    self._active.update(
+                        period_started_at=new_period.start.isoformat(),
+                        period_ends_at=new_period.end.isoformat(),
+                    )
+                    self._active["observed_controls"] = list(
+                        self._active.get("controls", {})
+                    )
+                    self._active["pending_controls"] = {}
+                    await _async_settle_store_io(
+                        self._async_save_control_state_locked()
+                    )
+            except BaseException as err:
+                failure = err
                 self._config = previous
-                raise
-            now = dt_util.now()
-            old_period = (
-                quiet_period_for(now, previous.start, previous.end)
-                if previous.enabled
-                else None
-            )
-            new_period = (
-                quiet_period_for(now, candidate.start, candidate.end)
-                if candidate.enabled
-                else None
-            )
-            if (
-                self._active is not None
-                and old_period is not None
-                and new_period is not None
-            ):
-                self._active.update(
-                    period_started_at=new_period.start.isoformat(),
-                    period_ends_at=new_period.end.isoformat(),
-                )
-                self._active["observed_controls"] = list(
-                    self._active.get("controls", {})
-                )
-                self._active["pending_controls"] = {}
-                await self._async_save_control_state_locked()
+                self._config_recovery_pending = True
+                # Keep the original failure and an explicit retry obligation.
+                with suppress(BaseException):
+                    await self._async_recover_configuration_locked()
+            needs_reconcile = failure is None or self._config != previous
+            needs_schedule = needs_reconcile or self._config_recovery_pending
         try:
-            await self.async_reconcile()
+            if needs_reconcile and not self._config_recovery_pending:
+                await self.async_reconcile()
+        except BaseException as recovery_error:
+            if failure is not None:
+                raise failure from recovery_error
+            raise
         finally:
-            async with self._lock:
-                self._reschedule()
+            if needs_schedule:
+                async with self._lock:
+                    self._reschedule()
+        if failure is not None:
+            raise failure
         return self.snapshot()
+
+    async def _async_recover_configuration_locked(self) -> bool:
+        """Suspend device changes until an ambiguous config write is read back."""
+        if not getattr(self, "_config_recovery_pending", False):
+            self._config_recovery_pending = False
+            return True
+        try:
+            stored = await self._store.async_load()
+            if stored is not None and not isinstance(stored, Mapping):
+                raise ValueError("Quiet Hours configuration storage is invalid")
+            config = _config_from_data((stored or {}).get("config"))
+            active = self._active
+            if stored is not None and "active" in stored:
+                active = self._normalize_active(stored["active"])
+                if stored["active"] is not None and active is None:
+                    raise ValueError("Quiet Hours saved ownership is invalid")
+        except Exception:
+            return False
+        self._config_recovery_pending = False
+        self._config = config
+        self._active = active
+        self._initialized = True
+        return True
 
     def _active_period_overlaps(self, period: QuietPeriod) -> bool:
         """Preserve ownership across a continuously quiet schedule change."""
@@ -541,8 +589,13 @@ class QuietHoursManager:
     async def async_reconcile(self, *, now: datetime | None = None) -> None:
         now = now or dt_util.now()
         async with self._lock:
-            if not self._initialized:
+            recovering = getattr(self, "_config_recovery_pending", False)
+            if not self._initialized and not recovering:
                 return
+            if not await self._async_recover_configuration_locked():
+                return
+            if recovering:
+                self._reschedule()
             period = (
                 quiet_period_for(now, self._config.start, self._config.end)
                 if self._config.enabled
@@ -1021,15 +1074,18 @@ class QuietHoursManager:
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
+        if getattr(self, "_config_recovery_pending", False):
+            self._unsubscribers.append(
+                async_track_time_interval(
+                    self.hass, self._handle_discovery_tick, _DISCOVERY_INTERVAL
+                )
+            )
+            return
         # Even when disabled we publish the entity immediately; only scheduled
         # callbacks are unnecessary.
         if not self._config.enabled:
             self._publish_state(None)
-            if not any(
-                control.get("restoration_pending")
-                for control in (self._active or {}).get("controls", {}).values()
-                if isinstance(control, dict)
-            ):
+            if not (self._active or {}).get("controls"):
                 return
         for value in (
             (self._config.start, self._config.end) if self._config.enabled else ()

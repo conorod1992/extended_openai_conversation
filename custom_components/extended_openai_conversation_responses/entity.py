@@ -2111,6 +2111,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     raise HomeAssistantError(
                         "Delayed Function Tool scheduler is unavailable"
                     )
+                # The scheduler owns the receipt at its transactional write,
+                # after admission checks and before a durable effect is possible.
                 await manager.async_schedule(
                     self,
                     str(spec.get("name", tool_input.tool_name)),

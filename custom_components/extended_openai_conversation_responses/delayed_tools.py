@@ -405,6 +405,17 @@ class DelayedToolManager:
                 updated = dict(self._records)
                 updated[record.call_id] = record
                 await self._async_save_records_transactionally(updated)
+        except BaseException:
+            # Transactional readback can settle this particular queue write.
+            # An unreadable generation invalidates the manager and stays unknown.
+            if record is not None and self._setup_complete and not self._quarantined:
+                from .execution_outcomes import execution_completed, execution_rejected
+
+                if record.call_id in self._records:
+                    execution_completed()
+                else:
+                    execution_rejected()
+            raise
         finally:
             # A committed call survives a lost acknowledgement, but rejected work never arms.
             if record is not None and self._started and record.call_id in self._records:

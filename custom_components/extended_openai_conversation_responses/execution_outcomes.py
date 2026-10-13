@@ -19,6 +19,7 @@ class ExecutionAttempt:
     completed: int = 0
     inflight: bool = False
     failed: bool = False
+    uncertain: bool = False
 
 
 _ATTEMPT: ContextVar[ExecutionAttempt | None] = ContextVar(
@@ -40,7 +41,7 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
             outcomes = entity._execution_tool_outcomes = {}
         outcome = (
             "uncertain"
-            if attempt.inflight or attempt.failed
+            if attempt.inflight or attempt.failed or attempt.uncertain
             else "completed"
             if attempt.completed
             else "rejected"
@@ -64,6 +65,8 @@ def execution_started() -> None:
     if attempt := _ATTEMPT.get():
         from .tool_replay_guard import record_dispatch
 
+        # A new child cannot settle an earlier child's unknown outcome.
+        attempt.uncertain |= attempt.inflight
         attempt.inflight = True
         record_dispatch(
             attempt.entity,
@@ -75,7 +78,7 @@ def execution_started() -> None:
 
 
 def execution_completed() -> None:
-    if attempt := _ATTEMPT.get():
+    if (attempt := _ATTEMPT.get()) and attempt.inflight:
         attempt.completed += 1
         attempt.inflight = False
 
@@ -83,9 +86,10 @@ def execution_completed() -> None:
 def execution_rejected() -> None:
     """Authoritative pre-execution rejection does not imply an effect."""
     if attempt := _ATTEMPT.get():
+        # Settle this child only. execution_started already retained any
+        # unresolved earlier child before marking the current one in flight.
         attempt.inflight = False
-        # A preceding successful child still makes the whole call partial.
-        attempt.failed = bool(attempt.completed)
+        attempt.failed |= bool(attempt.completed)
 
 
 async def execute_backend(

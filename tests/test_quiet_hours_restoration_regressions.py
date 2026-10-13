@@ -72,6 +72,10 @@ async def test_failed_configuration_save_leaves_devices_and_active_baseline_unto
     manager._config = runtime.QuietHoursConfig(enabled=True)
     manager._active = _active("media_player.bedroom", "volume")
     before = deepcopy(manager.active)
+    manager._store.async_load.return_value = {
+        "config": manager.config.as_dict(),
+        "active": deepcopy(before),
+    }
     manager._store.async_save.side_effect = OSError("settings not saved")
     manager._async_set_volume = AsyncMock()
     manager._async_set_switch = AsyncMock()
@@ -79,7 +83,7 @@ async def test_failed_configuration_save_leaves_devices_and_active_baseline_unto
     with pytest.raises(OSError, match="not saved"):
         await manager.async_update_config({"enabled": False})
     assert manager.config.enabled
-    assert manager.active == before
+    assert manager.active == manager._normalize_active(before)
     manager._async_set_volume.assert_not_awaited()
     manager._async_set_switch.assert_not_awaited()
     manager._reschedule.assert_not_called()

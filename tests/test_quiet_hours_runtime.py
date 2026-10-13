@@ -1470,6 +1470,7 @@ def test_publish_snapshot_and_reschedule(monkeypatch) -> None:
     old = Mock()
     manager._unsubscribers = [old]
     manager._config = runtime.QuietHoursConfig(enabled=False)
+    manager._active = None
     manager._reschedule()
     old.assert_called_once_with()
     assert manager._unsubscribers == []
@@ -2168,9 +2169,11 @@ async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
             _config(start="21:00", max_volume=0.1, wake_sound="unchanged").as_dict()
         )
     assert manager._initialized
+    # A committed policy change is reconciled before reporting its lost ack.
+    assert calls[-1] == ("media_player.bedroom", 0.1)
     calls.clear()
     await manager.async_reconcile(now=now)
-    assert calls == [("media_player.bedroom", 0.1)]
+    assert calls == []
     assert manager.active["controls"]["media_player.bedroom"]["original_value"] == 0.55
     calls.clear()
     await manager.async_update_config(_config(enabled=False).as_dict())

@@ -326,6 +326,7 @@ async def test_caller_llm_tool_executes_with_the_original_home_assistant_context
     caller_api = CallerAPI(hass=hass, id="runtime-probe", name="Runtime Probe")
     caller_api.tools = [tool]
     user = MockUser(id="ai-task-runtime-user", name="AI Task Runtime User")
+    user.mock_policy({"entities": {"entity_ids": {entity_id: {"control": True}}}})
     user.add_to_hass(hass)
     context = Context(user_id=user.id)
 
@@ -354,7 +355,7 @@ async def test_caller_llm_tool_executes_with_the_original_home_assistant_context
 async def test_ai_task_tool_budget_rejects_an_over_limit_provider_batch(
     hass: HomeAssistant,
 ) -> None:
-    """The AI Task runtime applies the same request-local tool execution budget."""
+    """Serial caller tools execute the allowed prefix and refuse the excess call."""
 
     def over_budget(kwargs: dict[str, Any]) -> list[Any]:
         alias = kwargs["tools"][0]["function"]["name"]
@@ -379,6 +380,9 @@ async def test_ai_task_tool_budget_rejects_an_over_limit_provider_batch(
     tool = ContextProbeTool()
     caller_api = CallerAPI(hass=hass, id="budget-probe", name="Budget Probe")
     caller_api.tools = [tool]
+    user = MockUser(id="budget-user", name="Budget User")
+    user.mock_policy({"entities": {"entity_ids": {entity_id: {"control": True}}}})
+    user.add_to_hass(hass)
 
     with pytest.raises(
         HomeAssistantError,
@@ -393,10 +397,18 @@ async def test_ai_task_tool_budget_rejects_an_over_limit_provider_batch(
             entity_id=entity_id,
             instructions="Attempt too many tool calls.",
             llm_api=caller_api,
-            context=Context(user_id="budget-user"),
+            context=Context(user_id=user.id),
         )
 
-    assert tool.calls == []
+    assert [call.id for call, _context in tool.calls] == [
+        f"call-{index}" for index in range(DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION)
+    ]
+    assert all(
+        call.tool_args == {"value": "budget"}
+        and llm_context.context.user_id == user.id
+        for call, llm_context in tool.calls
+    )
+    assert len(_client.completions.calls) == 1
 
 
 @pytest.mark.asyncio

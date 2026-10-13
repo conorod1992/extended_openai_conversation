@@ -483,6 +483,15 @@ class RestFunction(Function):
 class ScrapeFunction(Function):
     """Scrape tool for HTML content extraction."""
 
+    def validate_schema(self, function_config: dict[str, Any]) -> dict[str, Any]:
+        """Require an extraction without changing the shared REST schema."""
+        from ..exceptions import InvalidFunction
+
+        validated = super().validate_schema(function_config)
+        if not isinstance(validated.get("sensor"), list) or not validated["sensor"]:
+            raise InvalidFunction("scrape")
+        return validated
+
     def __init__(self) -> None:
         """Initialize Scrape tool."""
         super().__init__(

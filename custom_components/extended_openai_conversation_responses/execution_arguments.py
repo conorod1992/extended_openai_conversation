@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -22,24 +23,49 @@ def prepare_service_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+@dataclass(frozen=True)
+class _ResponseIdentity:
+    """Symbolic child output; never passed to an executor or template."""
+
+    path: tuple[int, ...]
+
+
 def execution_identity(
     function_config: Mapping[str, Any], arguments: Mapping[str, Any]
 ) -> Any:
     """Compare every child observer without rewriting Composite shared inputs."""
-    if function_config.get("type") != "composite":
-        return prepare_execution_arguments(function_config, arguments)
-    sequence = function_config.get("sequence", [])
 
-    # Responses feed later arguments. Their runtime values cannot be statically
-    # predicted, so preserve the shared representation for these compositions.
-    def feeds_arguments(config: Mapping[str, Any]) -> bool:
-        return bool(config.get("response_variable")) or any(
-            feeds_arguments(child) for child in config.get("sequence", [])
-        )
+    def identity(
+        config: Mapping[str, Any], inputs: Mapping[str, Any], path: tuple[int, ...]
+    ) -> Any:
+        if config.get("type") != "composite":
+            # Only the mapping this executor reads can prevent preparation. A
+            # single service ignores "list", and service_data takes precedence
+            # over "data", even when a response replaces one of those inputs.
+            if config.get("type") == "native":
+                name = config.get("name")
+                mapping = (
+                    inputs.get("service_data", inputs.get("data"))
+                    if name == "execute_service_single"
+                    else inputs.get("list")
+                    if name == "execute_service"
+                    else None
+                )
+                if isinstance(mapping, _ResponseIdentity):
+                    return deepcopy(dict(inputs))
+            return prepare_execution_arguments(config, inputs)
+        shared = deepcopy(dict(inputs))
+        identities = []
+        for index, child in enumerate(config.get("sequence", [])):
+            child_path = (*path, index)
+            identities.append(identity(child, shared, child_path))
+            if variable := child.get("response_variable"):
+                shared[variable] = _ResponseIdentity(child_path)
+        # Each nested composite has its own shared-input copy. Only its own
+        # response_variable publishes an output to its parent's later siblings.
+        return {"composite": identities}
 
-    if feeds_arguments(function_config):
-        return dict(arguments)
-    return {"composite": [execution_identity(child, arguments) for child in sequence]}
+    return identity(function_config, arguments, ())
 
 
 def prepare_execution_arguments(
