@@ -326,6 +326,7 @@ async def test_caller_llm_tool_executes_with_the_original_home_assistant_context
     caller_api = CallerAPI(hass=hass, id="runtime-probe", name="Runtime Probe")
     caller_api.tools = [tool]
     user = MockUser(id="ai-task-runtime-user", name="AI Task Runtime User")
+    user.mock_policy({"entities": {"entity_ids": {entity_id: {"control": True}}}})
     user.add_to_hass(hass)
     context = Context(user_id=user.id)
 
@@ -379,6 +380,9 @@ async def test_ai_task_tool_budget_rejects_an_over_limit_provider_batch(
     tool = ContextProbeTool()
     caller_api = CallerAPI(hass=hass, id="budget-probe", name="Budget Probe")
     caller_api.tools = [tool]
+    user = MockUser(id="budget-user", name="Budget User")
+    user.mock_policy({"entities": {"entity_ids": {entity_id: {"control": True}}}})
+    user.add_to_hass(hass)
 
     with pytest.raises(
         HomeAssistantError,
@@ -393,7 +397,7 @@ async def test_ai_task_tool_budget_rejects_an_over_limit_provider_batch(
             entity_id=entity_id,
             instructions="Attempt too many tool calls.",
             llm_api=caller_api,
-            context=Context(user_id="budget-user"),
+            context=Context(user_id=user.id),
         )
 
     assert tool.calls == []

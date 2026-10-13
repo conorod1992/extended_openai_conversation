@@ -56,6 +56,11 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util, file as ha_file
 from tests_stress.conftest import record
 
+# Capture HA's implementation during collection, before pytest-HA replaces it
+# with its in-memory shim. This preserves the native writer on stable and dev,
+# including versions that no longer expose the synchronous _write_data helper.
+_REAL_STORE_ASYNC_WRITE_DATA = Store._async_write_data
+
 
 @pytest.mark.parametrize(
     "phase,boundary,timing",
@@ -438,11 +443,6 @@ def real_store_io(
     """Undo pytest-HA's in-memory Store shim for these OS-boundary probes."""
     hass.config.config_dir = str(tmp_path)
 
-    async def write_to_disk(store: Store, data: dict) -> None:
-        # All selected EOAI stores serialize in the executor; retain HA's real
-        # _write_data -> write_utf8_file_atomic -> fsync/replace path.
-        await store.hass.async_add_executor_job(store._write_data, data)
-
     async def load_from_disk(store: Store):
         return await store._async_load_data()
 
@@ -456,7 +456,7 @@ def real_store_io(
     # Restore the plugin's Store shim before its own fixture tears down. A
     # function-scoped monkeypatch teardown runs too late for its autospec.
     with monkeypatch.context() as scoped:
-        scoped.setattr(Store, "_async_write_data", write_to_disk)
+        scoped.setattr(Store, "_async_write_data", _REAL_STORE_ASYNC_WRITE_DATA)
         scoped.setattr(Store, "_async_load", load_from_disk)
         scoped.setattr(Store, "async_remove", remove_from_disk)
         yield
