@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
@@ -46,7 +45,7 @@ from .agent_config import (
     validate_single_function_tool,
 )
 from .agent_maintenance import management_command_lease
-from .backup import async_create_backup, async_restore_backup, inspect_backup
+from .backup import async_create_backup, async_inspect_backup, async_restore_backup
 from .built_in_functions import built_in_function_catalog
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
@@ -1189,8 +1188,8 @@ async def async_backup_command(request: _ManagementRequest) -> dict[str, Any]:
     if action == "create":
         return await async_create_backup(hass, entry, subentry)
     if action == "inspect":
-        prepared = await asyncio.to_thread(
-            inspect_backup, message.get("document"), subentry.subentry_id
+        prepared = await async_inspect_backup(
+            message.get("document"), subentry.subentry_id
         )
         return {
             "valid": True,

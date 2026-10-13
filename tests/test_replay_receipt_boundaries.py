@@ -4,16 +4,25 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.execution_arguments import execution_identity
+from custom_components.extended_openai_conversation_responses.execution_arguments import (
+    execution_identity,
+)
 from custom_components.extended_openai_conversation_responses.execution_outcomes import (
-    execution_attempt, execution_completed, execution_prepared, execution_rejected,
+    execution_attempt,
+    execution_completed,
+    execution_prepared,
+    execution_rejected,
     execution_started,
 )
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
-    remember_unacknowledged_calls, was_unacknowledged_equivalent,
+    remember_unacknowledged_calls,
+    was_unacknowledged_equivalent,
 )
 from tests.test_function_tool_error_recovery import (
-    _call, _chat_log, _retain_calls, _result,
+    _call,
+    _chat_log,
+    _retain_calls,
+    _result,
 )
 
 
@@ -52,7 +61,8 @@ def _attempt_outcome(entity, call, tool, steps):
     [
         (["start", "complete"], "completed"),
         (["start", "start", "complete"], "uncertain"),
-        (["start", "reject"], "uncertain"),
+        (["start", "reject"], "rejected"),
+        (["start", "start", "reject"], "uncertain"),
         (["start", "complete", "start", "reject"], "uncertain"),
         (["start", "complete", "reject"], "uncertain"),
         (["reject"], "rejected"),
@@ -61,7 +71,15 @@ def _attempt_outcome(entity, call, tool, steps):
 def test_attempt_never_discards_earlier_uncertainty(steps, expected):
     entity = SimpleNamespace()
     call = _call("first", "effect", {"domain": "light", "service": "toggle"})
-    assert _attempt_outcome(entity, call, _effect_tool({"type": "native", "name": "execute_service_single"}), steps) == expected
+    assert (
+        _attempt_outcome(
+            entity,
+            call,
+            _effect_tool({"type": "native", "name": "execute_service_single"}),
+            steps,
+        )
+        == expected
+    )
 
 
 async def test_scheduled_commit_is_replay_protected_after_lost_acknowledgement(hass):
@@ -76,9 +94,13 @@ async def test_scheduled_commit_is_replay_protected_after_lost_acknowledgement(h
         # The queue commit has the same side-effect receipt as a native action.
         execution_started()
         execution_completed()
-    log.async_add_assistant_content_without_tools(_result(entity, call, {"result": "Scheduled"}))
+    log.async_add_assistant_content_without_tools(
+        _result(entity, call, {"result": "Scheduled"})
+    )
     remember_unacknowledged_calls(entity, log, before)
-    assert was_unacknowledged_equivalent(entity, log, _call("queue-2", "effect", call.tool_args))
+    assert was_unacknowledged_equivalent(
+        entity, log, _call("queue-2", "effect", call.tool_args)
+    )
 
 
 def test_composite_response_variable_preserves_first_child_effect_identity():
@@ -89,23 +111,31 @@ def test_composite_response_variable_preserves_first_child_effect_identity():
     }
     raw = {"domain": "light", "service": "toggle", "entity_id": "light.kitchen"}
     alternative = {
-        "domain": "light", "service": "toggle",
+        "domain": "light",
+        "service": "toggle",
         "service_data": {"entity_id": ["light.kitchen"]},
     }
-    assert execution_identity(composite, raw) == execution_identity(composite, alternative)
+    assert execution_identity(composite, raw) == execution_identity(
+        composite, alternative
+    )
 
 
 def test_composite_later_child_retains_shared_input_after_response_assignment():
     config = {
         "type": "composite",
         "sequence": [
-            {"type": "native", "name": "execute_service_single", "response_variable": "previous"},
+            {
+                "type": "native",
+                "name": "execute_service_single",
+                "response_variable": "previous",
+            },
             {"type": "template", "template": "{{ entity_id }}"},
         ],
     }
     first = {"domain": "light", "service": "toggle", "entity_id": "light.kitchen"}
     second = {
-        "domain": "light", "service": "toggle",
+        "domain": "light",
+        "service": "toggle",
         "service_data": {"entity_id": ["light.kitchen"]},
     }
     left = execution_identity(config, first)["composite"]

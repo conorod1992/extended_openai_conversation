@@ -78,7 +78,7 @@ def execution_started() -> None:
 
 
 def execution_completed() -> None:
-    if attempt := _ATTEMPT.get():
+    if (attempt := _ATTEMPT.get()) and attempt.inflight:
         attempt.completed += 1
         attempt.inflight = False
 
@@ -86,9 +86,8 @@ def execution_completed() -> None:
 def execution_rejected() -> None:
     """Authoritative pre-execution rejection does not imply an effect."""
     if attempt := _ATTEMPT.get():
-        # Rejection is authoritative for this child only. An earlier
-        # dispatched action may already have had an indeterminate outcome.
-        attempt.uncertain |= attempt.inflight
+        # Settle this child only. execution_started already retained any
+        # unresolved earlier child before marking the current one in flight.
         attempt.inflight = False
         attempt.failed |= bool(attempt.completed)
 

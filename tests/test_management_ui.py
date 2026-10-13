@@ -294,10 +294,10 @@ async def test_backup_preview_and_diagnostics_success_routes(
     hass = _hass(entry)
     monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
     prepared = SimpleNamespace(title="Backup", summary=lambda: {"agents": 1})
-    inspect = Mock(return_value=prepared)
+    inspect = AsyncMock(return_value=prepared)
     restore = AsyncMock(return_value={"restored": True})
     preview = AsyncMock(return_value={"preview": True})
-    monkeypatch.setattr(management_ui, "inspect_backup", inspect)
+    monkeypatch.setattr(management_ui, "async_inspect_backup", inspect)
     monkeypatch.setattr(management_ui, "async_restore_backup", restore)
     monkeypatch.setattr(management_ui, "_async_preview_effective_request", preview)
     monkeypatch.setattr(

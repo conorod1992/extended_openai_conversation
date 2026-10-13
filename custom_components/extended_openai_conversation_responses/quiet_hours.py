@@ -268,9 +268,15 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         """Reconcile the scheduled policy using cross-version-safe discovery."""
         now = dt_util.now() if now is None else dt_util.as_local(now)
         async with self._lock:
-            if not self._initialized:
+            recovering = getattr(self, "_config_recovery_pending", False)
+            if not self._initialized and not recovering:
                 return
-            self._migrate_control_entity_ids()
+            if not await self._async_recover_configuration_locked():
+                return
+            if recovering:
+                self._reschedule()
+            if self._migrate_control_entity_ids():
+                await self._async_save_control_state_locked()
             period = (
                 quiet_period_for(now, self._config.start, self._config.end)
                 if self._config.enabled
@@ -599,7 +605,8 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         )
 
     async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
-        self._migrate_control_entity_ids()
+        if self._migrate_control_entity_ids():
+            await self._async_save_control_state_locked()
         if self._active is not None:
             controls = self._active.get("controls", {})
             for entity_id, control in list(controls.items()):
@@ -617,33 +624,57 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                     controls.pop(entity_id)
         await super()._async_restore_locked(pending_only=pending_only)
 
-    def _migrate_control_entity_ids(self) -> None:
+    def _migrate_control_entity_ids(self) -> bool:
         """Follow registry identities when owned speakers or switches are renamed."""
         if self._active is None:
-            return
+            return False
+        destinations: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
+        moves: dict[str, str | None] = {}
         for key in ("controls", "pending_controls"):
             controls = self._active.get(key, {})
-            for old_id, control in list(controls.items()):
+            for old_id, control in controls.items():
                 identity = control.get("registry_identity")
-                if not isinstance(identity, list) or len(identity) != 3:
-                    continue
-                registry = er.async_get(self.hass)
-                new_id = registry.async_get_entity_id(*identity)
+                new_id = (
+                    er.async_get(self.hass).async_get_entity_id(*identity)
+                    if isinstance(identity, list) and len(identity) == 3
+                    else old_id
+                )
+                moves[old_id] = new_id if isinstance(new_id, str) else None
                 if not isinstance(new_id, str):
-                    # The original registry entity no longer exists. Its old ID
-                    # may now belong to a different device; release ownership.
-                    controls.pop(old_id)
-                    observed = self._active.get("observed_controls", [])
-                    if old_id in observed:
-                        observed.remove(old_id)
                     continue
-                if new_id == old_id or new_id in controls:
-                    continue
-                controls[new_id] = controls.pop(old_id)
-                self._active["observed_controls"] = [
-                    new_id if entity_id == old_id else entity_id
-                    for entity_id in self._active.get("observed_controls", [])
+                destinations.setdefault(new_id, []).append((key, old_id, control))
+        rebuilt: dict[str, dict[str, Any]] = {"controls": {}, "pending_controls": {}}
+        ambiguous = []
+        for destination, records in destinations.items():
+            # Resolve the entire mapping before moving anything: swaps and rename
+            # chains must carry each identity's baseline to its current ID.
+            anchored = [record for record in records if record[1] == destination]
+            selected = (
+                anchored[:1] if anchored else records if len(records) == 1 else []
+            )
+            if not selected:
+                ambiguous.append(destination)
+            for key, _old_id, control in selected:
+                rebuilt[key][destination] = control
+            # A collision without a canonical destination owner is ambiguous.
+            # Release its claims, retaining observation to avoid reclaiming it.
+        observed = list(
+            dict.fromkeys(
+                [
+                    observed_id
+                    for old_id in self._active.get("observed_controls", [])
+                    if (observed_id := moves.get(old_id, old_id)) is not None
                 ]
+                + ambiguous
+            )
+        )
+        changed = (
+            any(self._active.get(key, {}) != value for key, value in rebuilt.items())
+            or self._active.get("observed_controls", []) != observed
+        )
+        if changed:
+            self._active.update(rebuilt, observed_controls=observed)
+        return changed
 
     async def _async_set_switch(self, entity_id: str, enabled: bool) -> None:
         await self._async_call_control_service(

@@ -5,10 +5,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.exceptions import InvalidFunction
+from custom_components.extended_openai_conversation_responses.exceptions import (
+    InvalidFunction,
+)
 
 from custom_components.extended_openai_conversation_responses import quiet_hours as qh
-from custom_components.extended_openai_conversation_responses.functions.web import ScrapeFunction
+from custom_components.extended_openai_conversation_responses.functions.web import (
+    ScrapeFunction,
+)
 
 
 def test_scrape_requires_nonempty_sensor_before_any_network_request():
@@ -16,10 +20,10 @@ def test_scrape_requires_nonempty_sensor_before_any_network_request():
     # Missing extraction is not a valid executable Scrape configuration.
     with pytest.raises(InvalidFunction):
         function.validate_schema({"type": "scrape", "resource": "https://example.com"})
-    with pytest.raises((vol.Invalid, KeyError, ValueError)):
-        function.validate_schema({
-            "type": "scrape", "resource": "https://example.com", "sensor": []
-        })
+    with pytest.raises(InvalidFunction):
+        function.validate_schema(
+            {"type": "scrape", "resource": "https://example.com", "sensor": []}
+        )
 
 
 def test_missing_registry_identity_releases_stale_quiet_hours_ownership(monkeypatch):
@@ -34,7 +38,8 @@ def test_missing_registry_identity_releases_stale_quiet_hours_ownership(monkeypa
             "controls": {
                 "switch.reused": {
                     "registry_identity": ["switch", "example", "old-device"],
-                    "original_value": True, "quiet_value": False,
+                    "original_value": True,
+                    "quiet_value": False,
                 }
             },
             "pending_controls": {},
@@ -48,22 +53,32 @@ def test_missing_registry_identity_releases_stale_quiet_hours_ownership(monkeypa
 
 async def test_legacy_backup_finalization_uses_executor(monkeypatch):
     from custom_components.extended_openai_conversation_responses import backup
+
     captured = []
-    snapshot = {"agent": {"title": "Test", "config": {}}, "request_rules": {}, "created_at": "2026-10-13"}
+    snapshot = {
+        "agent": {"title": "Test", "config": {}},
+        "request_rules": {},
+        "created_at": "2026-10-13",
+    }
 
     class Gate:
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *_args):
             return False
 
     monkeypatch.setattr(
-        backup, "get_agent_maintenance_gate",
+        backup,
+        "get_agent_maintenance_gate",
         lambda *_args: SimpleNamespace(exclusive=lambda: Gate()),
     )
     monkeypatch.setattr(
-        backup, "async_collect_backup_snapshot", AsyncMock(return_value=snapshot),
+        backup,
+        "async_collect_backup_snapshot",
+        AsyncMock(return_value=snapshot),
     )
+
     async def fake_to_thread(func, *args):
         captured.append((func, args))
         return {"json": "done"}

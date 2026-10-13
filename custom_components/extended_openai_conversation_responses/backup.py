@@ -287,6 +287,26 @@ def inspect_backup(
     """Parse and validate every category without mutating agent state."""
     if isinstance(value, PreparedRestore):
         return value
+    return _inspect_decoded_backup(
+        _decode_backup_document(value, max_bytes),
+        target_agent_id,
+        private_journal=private_journal,
+        header_only=header_only,
+    )
+
+
+async def async_inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
+    """Decode bounded legacy JSON off-loop, then validate in HA's loop context."""
+    if isinstance(value, PreparedRestore):
+        return value
+    document = await asyncio.to_thread(
+        _decode_backup_document, value, MAX_LEGACY_EXPORT_BYTES
+    )
+    return _inspect_decoded_backup(document, target_agent_id)
+
+
+def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
+    """Perform only context-free JSON processing and transport size checks."""
     if (
         isinstance(max_bytes, bool)
         or not isinstance(max_bytes, int)
@@ -315,6 +335,17 @@ def inspect_backup(
             raise BackupError(f"The backup exceeds the {limit_mb} MB safety limit")
     if not isinstance(value, dict):
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
+    return value
+
+
+def _inspect_decoded_backup(
+    value: dict[str, Any],
+    target_agent_id: str,
+    *,
+    private_journal: bool = False,
+    header_only: bool = False,
+) -> PreparedRestore:
+    """Validate the decoded envelope and categories, including HA-aware schemas."""
     if value.get("format") != BACKUP_FORMAT:
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     version = value.get("version")

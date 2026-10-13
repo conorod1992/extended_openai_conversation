@@ -2096,12 +2096,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         if not is_ha_tool(function_tool):
             spec = function_tool.get("spec", {})
             arguments = await async_execution_arguments(self.hass, spec, tool_input)
-            from .execution_outcomes import (
-                execute_backend,
-                execution_completed,
-                execution_prepared,
-                execution_started,
-            )
+            from .execution_outcomes import execute_backend, execution_prepared
 
             execution_prepared(arguments)
             execution_arguments, execution_delay = split_legacy_execution_delay(
@@ -2116,9 +2111,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     raise HomeAssistantError(
                         "Delayed Function Tool scheduler is unavailable"
                     )
-                # Queue persistence is itself an effect: the eventual action
-                # must not be scheduled again after a lost provider continuation.
-                execution_started()
+                # The scheduler owns the receipt at its transactional write,
+                # after admission checks and before a durable effect is possible.
                 await manager.async_schedule(
                     self,
                     str(spec.get("name", tool_input.tool_name)),
@@ -2127,7 +2121,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     function_tool=function_tool,
                     execution_delay=execution_delay,
                 )
-                execution_completed()
                 return make_tool_result_content(
                     agent_id=self.entity_id,
                     tool_call_id=tool_input.id,
