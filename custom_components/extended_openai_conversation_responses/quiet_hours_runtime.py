@@ -486,12 +486,12 @@ class QuietHoursManager:
 
     async def async_shutdown(self) -> None:
         async with self._lock:
-            for unsubscribe in self._unsubscribers:
-                unsubscribe()
-            self._unsubscribers.clear()
+            self._cancel_scheduled_callbacks()
             try:
                 await self._async_restore_locked()
             finally:
+                # Recovery can rearm an authoritative generation while stopping.
+                self._cancel_scheduled_callbacks()
                 self._unpublish_state()
 
     def _discover_capabilities(self) -> list[SatelliteCapabilities]:
@@ -1519,10 +1519,13 @@ class QuietHoursManager:
     def _unpublish_state(self) -> None:
         self.hass.states.async_remove(_STATE_ENTITY_ID)
 
-    def _reschedule(self) -> None:
+    def _cancel_scheduled_callbacks(self) -> None:
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
+
+    def _reschedule(self) -> None:
+        self._cancel_scheduled_callbacks()
         if getattr(self, "_config_recovery_pending", False):
             self._unsubscribers.append(
                 async_track_time_interval(

@@ -232,3 +232,28 @@ async def test_cancelled_recovery_rearms_timers_for_the_installed_generation(
     assert len(manager._unsubscribers) == 3
     await manager.async_reconcile()
     assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.2
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_shutdown_cancels_callbacks_rearmed_by_successful_recovery(
+    hass, monkeypatch, timers, enabled
+):
+    manager = await _manager(hass, monkeypatch, True)
+    authoritative = {
+        "config": _config(enabled=enabled).as_dict(),
+        "active": deepcopy(manager.active),
+    }
+    manager._active["controls"]["media_player.bedroom"]["original_value"] = 0.6
+    manager._store = SimpleNamespace(
+        async_save=AsyncMock(side_effect=OSError("write acknowledgement lost")),
+        async_load=AsyncMock(side_effect=OSError("read unavailable")),
+    )
+    with pytest.raises(OSError):
+        await manager._async_save_control_state_locked()
+    manager._store.async_load.side_effect = None
+    manager._store.async_load.return_value = authoritative
+    manager._store.async_save.side_effect = None
+    await manager.async_shutdown()
+    assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.8
+    assert manager.active is None
+    assert not manager._unsubscribers
