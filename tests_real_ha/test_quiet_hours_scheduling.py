@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -110,7 +111,9 @@ def _install_control_services(
             calls.append(("turn_on", entity_id))
         state = hass.states.get(entity_id)
         assert state is not None
-        hass.states.async_set(entity_id, "on", dict(state.attributes), context=call.context)
+        hass.states.async_set(
+            entity_id, "on", dict(state.attributes), context=call.context
+        )
 
     async def turn_off(call: ServiceCall) -> None:
         entity_id = call.data["entity_id"]
@@ -118,7 +121,9 @@ def _install_control_services(
             calls.append(("turn_off", entity_id))
         state = hass.states.get(entity_id)
         assert state is not None
-        hass.states.async_set(entity_id, "off", dict(state.attributes), context=call.context)
+        hass.states.async_set(
+            entity_id, "off", dict(state.attributes), context=call.context
+        )
 
     hass.services.async_register("media_player", "volume_set", volume_set)
     hass.services.async_register("switch", "turn_on", turn_on)
@@ -149,7 +154,7 @@ async def test_real_ha_clock_callbacks_activate_and_restore(
                 "overrides": {},
             }
         )
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
 
         media_state = hass.states.get(media_player_id)
         wake_state = hass.states.get(wake_sound_id)
@@ -163,7 +168,8 @@ async def test_real_ha_clock_callbacks_activate_and_restore(
         assert len(manager._unsubscribers) == 3
 
         async_fire_time_changed(hass, start_at.astimezone(UTC))
-        await hass.async_block_till_done()
+        # HA timer callbacks are background tasks; include their settled writes.
+        await hass.async_block_till_done(wait_background_tasks=True)
 
         media_state = hass.states.get(media_player_id)
         wake_state = hass.states.get(wake_sound_id)
@@ -176,7 +182,7 @@ async def test_real_ha_clock_callbacks_activate_and_restore(
         assert quiet_state.state == "on"
 
         async_fire_time_changed(hass, end_at.astimezone(UTC))
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
 
         media_state = hass.states.get(media_player_id)
         wake_state = hass.states.get(wake_sound_id)
@@ -189,6 +195,50 @@ async def test_real_ha_clock_callbacks_activate_and_restore(
         assert quiet_state.state == "off"
         assert manager.active is None
     finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_timer_waits_for_generation_persistence_before_device_effect(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A registered background callback cannot act before its write settles."""
+    _, media, wake = _install_satellite_entities(hass, slug="blocked-write")
+    _install_control_services(hass)
+    start = (dt_util.now() + timedelta(minutes=2)).replace(second=0, microsecond=0)
+    end = start + timedelta(minutes=4)
+    manager = await async_get_quiet_hours(hass)
+    entered, finish = asyncio.Event(), asyncio.Event()
+    try:
+        await manager.async_update_config(
+            {
+                "enabled": True,
+                "start": start.strftime("%H:%M"),
+                "end": end.strftime("%H:%M"),
+                "max_volume": 0.2,
+                "wake_sound": "off",
+            }
+        )
+        original_save = manager._store.async_save
+
+        async def blocked_save(data):
+            entered.set()
+            await finish.wait()
+            await original_save(data)
+
+        monkeypatch.setattr(manager._store, "async_save", blocked_save)
+        async_fire_time_changed(hass, start.astimezone(UTC))
+        await asyncio.wait_for(entered.wait(), 5)
+        assert manager._lock.locked()
+        assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.6)
+        assert hass.states.get(wake).state == "on"
+        finish.set()
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.2)
+        assert hass.states.get(wake).state == "off"
+        assert manager.active["controls"][media]["original_value"] == pytest.approx(0.6)
+    finally:
+        finish.set()
         await manager.async_shutdown()
 
 
@@ -226,17 +276,17 @@ async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock
                 "overrides": {},
             }
         )
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
         calls.clear()
 
         # Cross the configured start boundary through HA's already-registered
         # wall-clock listener. Do not call the manager's reconciliation method.
         wall_clock = start_at
         async_fire_time_changed(hass, start_at.astimezone(UTC))
-        await hass.async_block_till_done()
-        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
-            0.20
-        )
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert hass.states.get(media_player_id).attributes[
+            "volume_level"
+        ] == pytest.approx(0.20)
         assert hass.states.get(wake_sound_id).state == "off"
         assert hass.states.get(_STATE_ENTITY_ID).state == "on"
         assert len(calls) == 2
@@ -247,15 +297,15 @@ async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock
         corrected = start_at - timedelta(minutes=10)
         wall_clock = corrected
         async_fire_time_changed(hass, corrected.astimezone(UTC))
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
         wall_clock = corrected + timedelta(minutes=5)
         async_fire_time_changed(
             hass, (corrected + timedelta(minutes=5)).astimezone(UTC)
         )
-        await hass.async_block_till_done()
-        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
-            0.60
-        )
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert hass.states.get(media_player_id).attributes[
+            "volume_level"
+        ] == pytest.approx(0.60)
         assert hass.states.get(wake_sound_id).state == "on"
         assert hass.states.get(_STATE_ENTITY_ID).state == "off"
         assert len(calls) == 4
@@ -264,12 +314,12 @@ async def test_real_ha_registered_listeners_reconcile_forward_and_backward_clock
         # the correction did not duplicate or strand listener ownership.
         wall_clock = start_at
         async_fire_time_changed(hass, start_at.astimezone(UTC))
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
         assert hass.states.get(_STATE_ENTITY_ID).state == "on"
         assert len(calls) == 6
         wall_clock = end_at
         async_fire_time_changed(hass, end_at.astimezone(UTC))
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
         assert hass.states.get(_STATE_ENTITY_ID).state == "off"
         assert len(calls) == 8
     finally:
@@ -298,9 +348,7 @@ async def test_real_ha_discovery_tick_normalizes_utc_to_ha_local_time(
             }
         )
 
-        await manager.async_reconcile(
-            now=datetime(2026, 7, 15, 22, 0, tzinfo=_DUBLIN)
-        )
+        await manager.async_reconcile(now=datetime(2026, 7, 15, 22, 0, tzinfo=_DUBLIN))
         media_state = hass.states.get(media_player_id)
         wake_state = hass.states.get(wake_sound_id)
         assert media_state is not None
@@ -325,9 +373,7 @@ async def test_real_ha_discovery_tick_normalizes_utc_to_ha_local_time(
         assert kitchen_wake.state == "on"
 
         # async_track_time_interval supplies UTC. 21:05 UTC is 22:05 in Dublin.
-        await manager._handle_discovery_tick(
-            datetime(2026, 7, 15, 21, 5, tzinfo=UTC)
-        )
+        await manager._handle_discovery_tick(datetime(2026, 7, 15, 21, 5, tzinfo=UTC))
 
         media_state = hass.states.get(media_player_id)
         wake_state = hass.states.get(wake_sound_id)
@@ -347,6 +393,7 @@ async def test_real_ha_discovery_tick_normalizes_utc_to_ha_local_time(
         assert manager.active is not None
     finally:
         await manager.async_shutdown()
+
 
 @pytest.mark.asyncio
 async def test_real_ha_spring_forward_normalizes_nonexistent_start_time(
@@ -378,16 +425,16 @@ async def test_real_ha_spring_forward_normalizes_nonexistent_start_time(
         # to 01:00 UTC / 02:00 local. The requested 01:30 wall time therefore
         # normalizes to the corresponding real instant at 02:30 local.
         await manager.async_reconcile(now=datetime(2026, 3, 29, 1, 15, tzinfo=UTC))
-        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
-            0.60
-        )
+        assert hass.states.get(media_player_id).attributes[
+            "volume_level"
+        ] == pytest.approx(0.60)
         assert hass.states.get(wake_sound_id).state == "on"
         assert hass.states.get(_STATE_ENTITY_ID).state == "off"
 
         await manager.async_reconcile(now=datetime(2026, 3, 29, 1, 35, tzinfo=UTC))
-        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
-            0.20
-        )
+        assert hass.states.get(media_player_id).attributes[
+            "volume_level"
+        ] == pytest.approx(0.20)
         assert hass.states.get(wake_sound_id).state == "off"
         quiet_state = hass.states.get(_STATE_ENTITY_ID)
         assert quiet_state.state == "on"
@@ -396,9 +443,9 @@ async def test_real_ha_spring_forward_normalizes_nonexistent_start_time(
         )
 
         await manager.async_reconcile(now=datetime(2026, 3, 29, 2, 30, tzinfo=UTC))
-        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
-            0.60
-        )
+        assert hass.states.get(media_player_id).attributes[
+            "volume_level"
+        ] == pytest.approx(0.60)
         assert hass.states.get(wake_sound_id).state == "on"
         assert hass.states.get(_STATE_ENTITY_ID).state == "off"
         assert manager.active is None
@@ -441,24 +488,24 @@ async def test_real_ha_fall_back_duplicate_time_is_one_quiet_period(
         await manager.async_reconcile(now=datetime(2026, 10, 25, 0, 30, tzinfo=UTC))
         assert len(calls) == 2
         first_period_id = manager.active["period_started_at"]
-        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
-            0.20
-        )
+        assert hass.states.get(media_player_id).attributes[
+            "volume_level"
+        ] == pytest.approx(0.20)
         assert hass.states.get(wake_sound_id).state == "off"
 
         await manager.async_reconcile(now=datetime(2026, 10, 25, 1, 30, tzinfo=UTC))
         assert len(calls) == 2
         assert manager.active["period_started_at"] == first_period_id
-        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
-            0.20
-        )
+        assert hass.states.get(media_player_id).attributes[
+            "volume_level"
+        ] == pytest.approx(0.20)
         assert hass.states.get(wake_sound_id).state == "off"
 
         await manager.async_reconcile(now=datetime(2026, 10, 25, 3, 30, tzinfo=UTC))
         assert len(calls) == 4
-        assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
-            0.60
-        )
+        assert hass.states.get(media_player_id).attributes[
+            "volume_level"
+        ] == pytest.approx(0.60)
         assert hass.states.get(wake_sound_id).state == "on"
         assert manager.active is None
     finally:
