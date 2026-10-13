@@ -648,9 +648,14 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         for destination, records in destinations.items():
             # Resolve the entire mapping before moving anything: swaps and rename
             # chains must carry each identity's baseline to its current ID.
-            anchored = [record for record in records if record[1] == destination]
+            # Pending intents have not altered a device. They cannot displace
+            # an applied (or possibly applied prepared) control's restoration
+            # obligation merely because their old key matches the destination.
+            owned = [record for record in records if record[0] == "controls"]
+            candidates = owned or records
+            anchored = [record for record in candidates if record[1] == destination]
             selected = (
-                anchored[:1] if anchored else records if len(records) == 1 else []
+                anchored[:1] if anchored else candidates if len(candidates) == 1 else []
             )
             if not selected:
                 ambiguous.append(destination)

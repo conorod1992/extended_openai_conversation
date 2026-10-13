@@ -39,13 +39,20 @@ def execution_identity(
         config: Mapping[str, Any], inputs: Mapping[str, Any], path: tuple[int, ...]
     ) -> Any:
         if config.get("type") != "composite":
-            # A response can replace a native data mapping. Its shape is unknown:
-            # preserve these inputs conservatively rather than inventing fields.
-            if any(
-                isinstance(inputs.get(key), _ResponseIdentity)
-                for key in ("data", "service_data", "list")
-            ):
-                return deepcopy(dict(inputs))
+            # Only the mapping this executor reads can prevent preparation. A
+            # single service ignores "list", and service_data takes precedence
+            # over "data", even when a response replaces one of those inputs.
+            if config.get("type") == "native":
+                name = config.get("name")
+                mapping = (
+                    inputs.get("service_data", inputs.get("data"))
+                    if name == "execute_service_single"
+                    else inputs.get("list")
+                    if name == "execute_service"
+                    else None
+                )
+                if isinstance(mapping, _ResponseIdentity):
+                    return deepcopy(dict(inputs))
             return prepare_execution_arguments(config, inputs)
         shared = deepcopy(dict(inputs))
         identities = []

@@ -238,18 +238,22 @@ async def test_scheduler_receipts_follow_authoritative_queue_generation(hass, mo
 
 
 @pytest.mark.parametrize("depth", [0, 1, 3])
+@pytest.mark.parametrize("variable", ["previous", "list", "data"])
 async def test_equivalent_multi_child_composite_cannot_repeat_effects(
-    hass, monkeypatch, depth
+    hass, monkeypatch, depth, variable
 ):
     _install_native_boundary(hass, monkeypatch)
     config = {
         "type": "composite",
-        "sequence": [{**NATIVE, "response_variable": "previous"}, NATIVE],
+        "sequence": [{**NATIVE, "response_variable": variable}, NATIVE],
     }
     for _ in range(depth):
         config = {"type": "composite", "sequence": [config, NATIVE]}
     entity, log, tool = _entity(hass), _chat_log(hass), _tool(config)
-    call = _call("first", "effect", RAW)
+    # Concrete service_data wins over a later response named data. Both forms
+    # dispatch the same effective target, despite their raw representation.
+    raw = RAW if variable != "data" else {**RAW, "service_data": {}}
+    call = _call("first", "effect", raw)
     _retain_calls(log, [call])
     await _execute(entity, tool, call)
     count = hass.services.async_call.await_count
@@ -271,6 +275,30 @@ async def test_equivalent_multi_child_composite_cannot_repeat_effects(
         entity, log, _call("other", "effect", {**RAW, "entity_id": "light.other"})
     )
     assert hass.services.async_call.await_count == count
+
+
+@pytest.mark.parametrize(
+    "native_config,variable,arguments",
+    [
+        (NATIVE, "service_data", RAW),
+        (NATIVE, "data", RAW),
+        ({"type": "native", "name": "execute_service"}, "list", {"list": [RAW]}),
+    ],
+)
+def test_composite_unknown_consumed_mapping_retains_raw_inputs(
+    native_config, variable, arguments
+):
+    config = {
+        "type": "composite",
+        "sequence": [{**NATIVE, "response_variable": variable}, native_config],
+    }
+    before = deepcopy(arguments)
+    # An unknown response mapping must not be converted into an invented empty
+    # mapping or batch. Symbolic values stay confined to replay identity.
+    result = execution_identity(config, arguments)
+    child = result["composite"][1]
+    assert child[variable].path == (0,)
+    assert arguments == before
 
 
 @pytest.mark.parametrize("variable", ["previous", "entity_id", "service_data"])

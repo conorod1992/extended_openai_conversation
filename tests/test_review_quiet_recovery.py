@@ -331,13 +331,89 @@ def test_conflicting_unanchored_ownership_is_released_without_reclaim(
         ),
     )
     manager._active = {
-        "controls": {"media_player.first": _control("A", 0.8)},
-        "pending_controls": {"media_player.second": _control("A", 0.6)},
+        "controls": {
+            "media_player.first": _control("A", 0.8),
+            "media_player.second": _control("A", 0.6),
+        },
+        "pending_controls": {},
     }
     assert manager._migrate_control_entity_ids()
     assert manager._active["controls"] == {}
     assert manager._active["pending_controls"] == {}
     assert manager._active["observed_controls"] == ["media_player.current"]
+
+
+@pytest.mark.parametrize("kind", ["volume", "switch"])
+@pytest.mark.parametrize("pending_anchored", [False, True])
+@pytest.mark.parametrize("pending_identity", [False, True])
+async def test_pending_collision_preserves_applied_restoration_across_restart(
+    hass, monkeypatch, kind, pending_anchored, pending_identity
+):
+    manager = _stateful_public_manager(hass)
+    domain = "media_player" if kind == "volume" else "switch"
+    old, new, other = (f"{domain}.{name}" for name in ("old", "new", "other"))
+    monkeypatch.setattr(
+        qh.er,
+        "async_get",
+        lambda h: SimpleNamespace(async_get_entity_id=lambda *identity: new),
+    )
+    for entity_id in (old, new, other):
+        hass.states.async_set(
+            entity_id, "idle" if kind == "volume" else "off", {"volume_level": 0.2}
+        )
+    calls, switches = await _install_services(hass)
+    owned, pending = _control("A", 0.8), _control("A", 0.6)
+    if kind == "switch":
+        for control, baseline in ((owned, True), (pending, False)):
+            control.update(
+                kind="switch",
+                registry_identity=[domain, "example", "A"],
+                original_value=baseline,
+                quiet_value=False,
+            )
+    if not pending_identity:
+        pending.pop("registry_identity")
+    pending_id = new if pending_anchored else other
+    # Include the persisted envelope and use the public normalizer: legacy
+    # identityless pending records remain supported after a restart.
+    manager._active = manager._normalize_active(
+        {
+            "period_started_at": "2026-09-11T22:00:00+00:00",
+            "period_ends_at": "2026-09-12T07:00:00+00:00",
+            "controls": {old: owned},
+            "pending_controls": {pending_id: pending},
+            "observed_controls": [old, pending_id],
+        }
+    )
+    generations = []
+    manager._store.async_save.side_effect = lambda data: generations.append(
+        deepcopy(data)
+    )
+    await manager._async_restore_locked()
+    assert (calls if kind == "volume" else switches) == [
+        (new, 0.8 if kind == "volume" else True)
+    ]
+    migrated = generations[0]["active"]
+    assert migrated["controls"][new]["original_value"] == (
+        0.8 if kind == "volume" else True
+    )
+    assert old not in migrated["controls"]
+    assert new not in migrated["pending_controls"]
+    assert manager.active is None
+
+    # Restart at the persisted migration boundary, before the device action.
+    hass.states.async_set(
+        new, "idle" if kind == "volume" else "off", {"volume_level": 0.2}
+    )
+    restarted = _stateful_public_manager(hass)
+    restarted._active = restarted._normalize_active(migrated)
+    calls.clear()
+    switches.clear()
+    await restarted._async_restore_locked()
+    assert (calls if kind == "volume" else switches) == [
+        (new, 0.8 if kind == "volume" else True)
+    ]
+    assert restarted.active is None
 
 
 @pytest.mark.parametrize("kind", ["volume", "switch"])
