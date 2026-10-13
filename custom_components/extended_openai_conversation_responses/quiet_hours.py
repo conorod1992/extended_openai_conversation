@@ -739,24 +739,6 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         await self._async_save_control_state_locked()
         return False
 
-    async def _async_save_control_state_locked(self) -> None:
-        """A reported control-write failure must reconcile its actual generation."""
-        try:
-            await self._async_save_locked()
-        except Exception:
-            try:
-                persisted = await self._store.async_load()
-                if not isinstance(persisted, Mapping):
-                    raise ValueError("Quiet Hours control state cannot be reconciled")
-                active = self._normalize_active(persisted.get("active"))
-                if active is None and persisted.get("active") is not None:
-                    raise ValueError("Quiet Hours control state is invalid")
-                self._active = active
-            except Exception:
-                self._active = None
-                self._initialized = False
-            raise
-
     def _normalize_active(self, value: Any) -> dict[str, Any] | None:
         normalized = super()._normalize_active(value)
         if normalized is None:
