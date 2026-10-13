@@ -798,12 +798,12 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             self._registry_unsubscribe()
             self._registry_unsubscribe = None
         async with self._lock:
-            for unsubscribe in self._unsubscribers:
-                unsubscribe()
-            self._unsubscribers.clear()
+            self._cancel_scheduled_callbacks()
             try:
                 await self._async_restore_locked()
             finally:
+                # Recovery can rearm an authoritative generation while stopping.
+                self._cancel_scheduled_callbacks()
                 entity_id = self._state_entity_id()
                 self._remove_previous_publication(entity_id)
                 self.hass.states.async_remove(entity_id)
