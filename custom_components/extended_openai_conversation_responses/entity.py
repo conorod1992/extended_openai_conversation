@@ -2097,7 +2097,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             spec = function_tool.get("spec", {})
             arguments = await async_execution_arguments(self.hass, spec, tool_input)
             from .execution_outcomes import (
-                execute_backend, execution_prepared, execution_started, execution_completed
+                execute_backend,
+                execution_completed,
+                execution_prepared,
+                execution_started,
             )
 
             execution_prepared(arguments)
