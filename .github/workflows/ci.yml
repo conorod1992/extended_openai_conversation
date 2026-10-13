@@ -461,6 +461,12 @@ jobs:
         if: steps.dev-image.outputs.available != 'true'
         run: pip install "${RUNNER_TEMP}"/ha-dev-wheel/homeassistant-*.whl
 
+      - name: Install HA integration dependencies for fallback
+        if: steps.dev-image.outputs.available != 'true'
+        run: >-
+          python ci/install_ha_dependencies.py
+          --manifest custom_components/extended_openai_conversation_responses/manifest.json
+
       - name: Install AI Task media dependencies for fallback
         if: steps.dev-image.outputs.available != 'true'
         run: |
