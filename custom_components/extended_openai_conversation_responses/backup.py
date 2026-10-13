@@ -273,7 +273,7 @@ async def async_create_backup(
         hass, entry.entry_id, subentry.subentry_id
     ).exclusive():
         snapshot = await async_collect_backup_snapshot(hass, entry, subentry)
-    return finalize_backup_snapshot(snapshot)
+    return await hass.async_add_executor_job(finalize_backup_snapshot, snapshot)
 
 
 def inspect_backup(
