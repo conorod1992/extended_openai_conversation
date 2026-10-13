@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields, is_dataclass
 from inspect import signature
 from typing import Any, cast
 
@@ -41,11 +42,27 @@ class HAToolResultError(HomeAssistantError):
         self.data = data
 
 
+def _is_ha_tool_result(value: Any) -> bool:
+    """Recognize HA's envelope even across a module/class reload."""
+    tool_result_type = getattr(llm, "ToolResult", None)
+    if tool_result_type is not None and isinstance(value, tool_result_type):
+        return True
+    # A retained API instance can return the previous Core class after reload.
+    # Match only HA's named dataclass contract, never arbitrary data/error keys.
+    value_type = type(value)
+    return (
+        value_type.__module__ == "homeassistant.helpers.llm"
+        and value_type.__qualname__ == "ToolResult"
+        and is_dataclass(value)
+        and {field.name for field in fields(value)} == {"data", "error"}
+        and isinstance(getattr(value, "error", None), bool)
+    )
+
+
 def execution_tool_result(value: Any) -> Any:
     """Translate failure metadata only at dispatch, before unwrapping data."""
-    tool_result_type = getattr(llm, "ToolResult", None)
     seen: set[int] = set()
-    while tool_result_type is not None and isinstance(value, tool_result_type):
+    while _is_ha_tool_result(value):
         if id(value) in seen:
             raise HomeAssistantError("Cyclic Home Assistant tool result envelope")
         seen.add(id(value))
@@ -57,8 +74,7 @@ def execution_tool_result(value: Any) -> Any:
 
 def unwrap_tool_result(value: Any) -> Any:
     """Return legacy raw tool-result data when HA wraps it in llm.ToolResult."""
-    tool_result_type = getattr(llm, "ToolResult", None)
-    if tool_result_type is not None and isinstance(value, tool_result_type):
+    if _is_ha_tool_result(value):
         return value.data
     return value
 
