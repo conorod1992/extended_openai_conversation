@@ -686,6 +686,17 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
     ) -> None:
         """Associate an observable HA effect with its persisted prepared intent."""
         control = (self._active or {}).get("controls", {}).get(entity_id, {})
+        identity = control.get("registry_identity")
+        if (
+            isinstance(identity, list)
+            and len(identity) == 3
+            and er.async_get(self.hass).async_get_entity_id(*identity) != entity_id
+        ):
+            # Migration persistence awaits storage. A rename or ID reuse during
+            # that await must not redirect the subsequent action to another owner.
+            raise HomeAssistantError(
+                "Quiet Hours control identity changed; retry reconciliation"
+            )
         context_id = control.get("application_context_id")
         await self.hass.services.async_call(
             domain,

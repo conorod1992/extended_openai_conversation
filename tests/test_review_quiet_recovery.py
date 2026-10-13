@@ -338,3 +338,45 @@ def test_conflicting_unanchored_ownership_is_released_without_reclaim(
     assert manager._active["controls"] == {}
     assert manager._active["pending_controls"] == {}
     assert manager._active["observed_controls"] == ["media_player.current"]
+
+
+@pytest.mark.parametrize("kind", ["volume", "switch"])
+async def test_registry_change_during_migration_save_cannot_redirect_restoration(
+    hass, monkeypatch, kind
+):
+    manager = _stateful_public_manager(hass)
+    domain = "media_player" if kind == "volume" else "switch"
+    old, new, other = (f"{domain}.{name}" for name in ("old", "new", "other"))
+    lookup = {"A": new}
+    monkeypatch.setattr(
+        qh.er,
+        "async_get",
+        lambda h: SimpleNamespace(async_get_entity_id=lambda d, p, u: lookup.get(u)),
+    )
+    for entity_id in (old, new, other):
+        hass.states.async_set(
+            entity_id, "idle" if kind == "volume" else "off", {"volume_level": 0.2}
+        )
+    calls, switches = await _install_services(hass)
+    control = _control("A", 0.8)
+    if kind == "switch":
+        control.update(
+            kind="switch",
+            registry_identity=["switch", "example", "A"],
+            original_value=True,
+            quiet_value=False,
+        )
+    manager._active = {"controls": {old: control}, "observed_controls": [old]}
+
+    async def save(_data):
+        lookup["A"] = other
+
+    manager._store.async_save.side_effect = save
+    await manager._async_restore_locked()
+    assert calls == [] and switches == []
+    assert manager.active["controls"][new]["restoration_pending"]
+    await manager._async_restore_locked()
+    assert (calls if kind == "volume" else switches) == [
+        (other, 0.8 if kind == "volume" else True)
+    ]
+    assert manager.active is None
