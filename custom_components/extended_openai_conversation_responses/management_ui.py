@@ -1188,7 +1188,9 @@ async def async_backup_command(request: _ManagementRequest) -> dict[str, Any]:
     if action == "create":
         return await async_create_backup(hass, entry, subentry)
     if action == "inspect":
-        prepared = inspect_backup(message.get("document"), subentry.subentry_id)
+        prepared = await hass.async_add_executor_job(
+            inspect_backup, message.get("document"), subentry.subentry_id
+        )
         return {
             "valid": True,
             "title": prepared.title,
