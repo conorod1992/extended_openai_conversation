@@ -19,6 +19,7 @@ class ExecutionAttempt:
     completed: int = 0
     inflight: bool = False
     failed: bool = False
+    uncertain: bool = False
 
 
 _ATTEMPT: ContextVar[ExecutionAttempt | None] = ContextVar(
@@ -40,7 +41,7 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
             outcomes = entity._execution_tool_outcomes = {}
         outcome = (
             "uncertain"
-            if attempt.inflight or attempt.failed
+            if attempt.inflight or attempt.failed or attempt.uncertain
             else "completed"
             if attempt.completed
             else "rejected"
@@ -83,9 +84,11 @@ def execution_completed() -> None:
 def execution_rejected() -> None:
     """Authoritative pre-execution rejection does not imply an effect."""
     if attempt := _ATTEMPT.get():
+        # Rejection is authoritative for this child only. An earlier
+        # dispatched action may already have had an indeterminate outcome.
+        attempt.uncertain |= attempt.inflight
         attempt.inflight = False
-        # A preceding successful child still makes the whole call partial.
-        attempt.failed = bool(attempt.completed)
+        attempt.failed |= bool(attempt.completed)
 
 
 async def execute_backend(
