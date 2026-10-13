@@ -503,7 +503,8 @@ class QuietHoursManager:
                     )
                 except Exception:
                     self._config = candidate
-                self._reschedule()
+                if self._config != previous:
+                    self._reschedule()
                 raise
             now = dt_util.now()
             old_period = (
