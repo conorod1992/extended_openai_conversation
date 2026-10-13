@@ -1053,6 +1053,7 @@
     "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_fall_back_duplicate_time_is_one_quiet_period",
     "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_registered_listeners_reconcile_forward_and_backward_clock_correction",
     "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_spring_forward_normalizes_nonexistent_start_time",
+    "tests_real_ha/test_quiet_hours_scheduling.py::test_timer_waits_for_generation_persistence_before_device_effect",
     "tests_real_ha/test_release_upgrade_acceptance.py::test_active_published_release_upgrade_recovers_without_replay",
     "tests_real_ha/test_release_upgrade_acceptance.py::test_published_release_upgrades_to_candidate_and_survives_restart",
     "tests_real_ha/test_request_rules_script_semantics.py::test_concurrent_rules_keep_ha_variables_request_local",
