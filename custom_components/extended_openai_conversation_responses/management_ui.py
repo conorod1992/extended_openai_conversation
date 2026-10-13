@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
@@ -1188,7 +1190,7 @@ async def async_backup_command(request: _ManagementRequest) -> dict[str, Any]:
     if action == "create":
         return await async_create_backup(hass, entry, subentry)
     if action == "inspect":
-        prepared = await hass.async_add_executor_job(
+        prepared = await asyncio.to_thread(
             inspect_backup, message.get("document"), subentry.subentry_id
         )
         return {
