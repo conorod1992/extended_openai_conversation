@@ -629,11 +629,15 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                     continue
                 registry = er.async_get(self.hass)
                 new_id = registry.async_get_entity_id(*identity)
-                if (
-                    not isinstance(new_id, str)
-                    or new_id == old_id
-                    or new_id in controls
-                ):
+                if not isinstance(new_id, str):
+                    # The original registry entity no longer exists. Its old ID
+                    # may now belong to a different device; release ownership.
+                    controls.pop(old_id)
+                    observed = self._active.get("observed_controls", [])
+                    if old_id in observed:
+                        observed.remove(old_id)
+                    continue
+                if new_id == old_id or new_id in controls:
                     continue
                 controls[new_id] = controls.pop(old_id)
                 self._active["observed_controls"] = [
