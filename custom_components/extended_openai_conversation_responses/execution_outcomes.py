@@ -65,6 +65,8 @@ def execution_started() -> None:
     if attempt := _ATTEMPT.get():
         from .tool_replay_guard import record_dispatch
 
+        # A new child cannot settle an earlier child's unknown outcome.
+        attempt.uncertain |= attempt.inflight
         attempt.inflight = True
         record_dispatch(
             attempt.entity,
