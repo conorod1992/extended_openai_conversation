@@ -81,7 +81,7 @@ def test_result_resolution_recurses_through_authored_response_values() -> None:
 def test_native_result_sequence_rewrites_nested_result_and_slot_references() -> None:
     actions = [
         {
-            "action": "test.read",
+            "action": "extended_openai_conversation_responses.call_function",
             "enabled": False,
             "data": {
                 "result_alias": "reading",
@@ -108,8 +108,7 @@ def test_native_result_sequence_rewrites_nested_result_and_slot_references() -> 
     )
     assert sequence[0]["response_variable"] == "__eoai_result_reading"
     assert sequence[1] == {
-        "if": "{{ __eoai_result_reading is defined }}",
-        "then": [{"variables": {"reading": "{{ __eoai_result_reading.result }}"}}],
+        "variables": {"reading": "{{ __eoai_result_reading.result }}"},
     }
     assert sequence[2]["data"]["values"][0]["template"] == (
         "{{ " + helper + "('reading.value') }}"

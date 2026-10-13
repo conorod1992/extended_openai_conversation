@@ -554,12 +554,21 @@ async def test_removed_user_is_not_authorized_by_management_preview(hass):
     assert api.contexts[-1].context.user_id == "removed"
 
 
-async def test_executor_does_not_interpret_external_delay_schema(hass, monkeypatch):
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+async def test_executor_does_not_interpret_external_delay_schema(
+    hass, monkeypatch, result_type, wrapped, failed
+):
     from custom_components.extended_openai_conversation_responses import entity as base
 
     saved = new_reference_tool(reference(), set())
     saved["spec"]["parameters"] = {"anyOf": [{"type": "object"}]}
-    live = SimpleNamespace(async_call=AsyncMock(return_value="external result"))
+    payload = {"status": "error", "value": False}
+    live = SimpleNamespace(
+        async_call=AsyncMock(
+            return_value=result_type(data=payload, error=failed) if wrapped else payload
+        )
+    )
     snapshot = SimpleNamespace(caller_provided=True, tools={"reference": live})
     monkeypatch.setattr(base, "current_snapshot", lambda: snapshot)
     monkeypatch.setattr(base, "reference_key", lambda _ref: "reference")
@@ -586,7 +595,12 @@ async def test_executor_does_not_interpret_external_delay_schema(hass, monkeypat
         tool_name=saved["spec"]["name"], tool_args={"delay": {"seconds": 10}}
     )
     result = await entity._execute_function_tool(saved, call, context(), [])
-    assert tool_result_data(result) == {"result": "external result"}
+    if wrapped and failed:
+        outcome = tool_result_data(result)["result"]
+        assert outcome["status"] == "error"
+        assert outcome["data"] == payload
+    else:
+        assert tool_result_data(result) == {"result": payload}
     live.async_call.assert_awaited_once_with(call)
 
 

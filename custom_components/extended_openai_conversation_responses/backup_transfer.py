@@ -9,9 +9,10 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
+import logging
 import math
 import os
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
 import stat
 import tempfile
@@ -55,6 +56,34 @@ _WS_SETUP_KEY = f"{DOMAIN}.backup_transfer_ws_setup"
 _EXPIRY_CANCEL_KEY = f"{DOMAIN}.backup_transfer_expiry_cancel"
 _LATEST_PREVIEW_KEY = f"{DOMAIN}.backup_transfer_latest_previews"
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_PENDING_KEY = f"{DOMAIN}.backup_transfer_cleanup_pending"
+_PENDING_SCANS_KEY = f"{DOMAIN}.backup_transfer_scans_pending"
+_SHUTDOWN_KEY = f"{DOMAIN}.backup_transfer_shutdown"
+_LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class PendingDeletion:
+    """Retired files remain quota-accounted and unusable until removed."""
+
+    size: int
+    attempts: int = 0
+    retry_at: float = 0
+
+
+def _pending(hass: HomeAssistant) -> dict[str, PendingDeletion]:
+    return cast(dict[str, PendingDeletion], hass.data.setdefault(_PENDING_KEY, {}))
+
+
+def _pending_scans(hass: HomeAssistant) -> dict[str, PendingDeletion]:
+    return cast(
+        dict[str, PendingDeletion], hass.data.setdefault(_PENDING_SCANS_KEY, {})
+    )
+
+
+def _retire(hass: HomeAssistant, session: ExportSession | ImportSession) -> None:
+    size = session.expected_size if isinstance(session, ImportSession) else session.size
+    _pending(hass).setdefault(session.path, PendingDeletion(size))
 
 
 @dataclass(slots=True)
@@ -142,18 +171,39 @@ def _remove_file(path: str) -> None:
 
 async def _async_remove_path(hass: HomeAssistant, path: str) -> None:
     """Finish deleting a private temp file before propagating caller cancellation."""
+    pending = _pending(hass).setdefault(
+        path, PendingDeletion(MAX_BACKUP_UNCOMPRESSED_BYTES)
+    )
     task = asyncio.ensure_future(hass.async_add_executor_job(_remove_file, path))
     try:
         await asyncio.shield(task)
     except asyncio.CancelledError:
-        with suppress(BaseException):
+        try:
             await task
+        except BaseException:
+            pending.attempts += 1
+            pending.retry_at = time.monotonic() + min(
+                300, 5 * 2 ** min(pending.attempts, 6)
+            )
+        else:
+            _pending(hass).pop(path, None)
+        _schedule_expiry(hass)
         raise
+    except OSError:
+        pending.attempts += 1
+        pending.retry_at = time.monotonic() + min(
+            300, 5 * 2 ** min(pending.attempts, 6)
+        )
+        _schedule_expiry(hass)
+        raise
+    else:
+        _pending(hass).pop(path, None)
 
 
 async def _async_delete_session_file(
     hass: HomeAssistant, session: ExportSession | ImportSession
 ) -> None:
+    _retire(hass, session)
     async with session.lock:
         await _async_remove_path(hass, session.path)
 
@@ -163,14 +213,21 @@ async def _async_delete_sessions(
 ) -> None:
     """Delete every detached session even if cleanup itself is cancelled."""
     cancellation: asyncio.CancelledError | None = None
+    failure: OSError | None = None
+    for session in sessions:
+        _retire(hass, session)
     for session in sessions:
         try:
             await _async_delete_session_file(hass, session)
         except asyncio.CancelledError as err:
             if cancellation is None:
                 cancellation = err
+        except OSError as err:
+            failure = failure or err
     if cancellation is not None:
         raise cancellation
+    if failure is not None:
+        raise failure
 
 
 def _schedule_expiry(hass: HomeAssistant) -> None:
@@ -181,13 +238,24 @@ def _schedule_expiry(hass: HomeAssistant) -> None:
         *_exports(hass).values(),
         *_imports(hass).values(),
     ]
-    if not sessions:
+    deadlines = [session.expires_at for session in sessions]
+    deadlines.extend(
+        item.retry_at
+        for item in [*_pending(hass).values(), *_pending_scans(hass).values()]
+        if item.attempts < 5
+    )
+    if not deadlines:
         return
-    delay = max(0, min(session.expires_at for session in sessions) - time.monotonic())
+    delay = max(0, min(deadlines) - time.monotonic())
 
     async def expire(_now: Any) -> None:
         hass.data.pop(_EXPIRY_CANCEL_KEY, None)
-        await _async_cleanup_expired(hass)
+        try:
+            await _async_cleanup_expired(hass)
+        except OSError:
+            _LOGGER.warning(
+                "Private backup cleanup is pending; ownership and accounting are retained"
+            )
 
     hass.data[_EXPIRY_CANCEL_KEY] = async_call_later(hass, delay, expire)
 
@@ -217,6 +285,15 @@ async def async_remove_agent_transfers(
 async def _async_cleanup_expired(hass: HomeAssistant) -> None:
     """Discard abandoned transfer files without a perpetual cleanup task."""
     now = time.monotonic()
+    for directory, item in tuple(_pending_scans(hass).items()):
+        if item.retry_at <= now:
+            await _async_own_unregistered_files(hass, Path(directory))
+    for path, item in tuple(_pending(hass).items()):
+        if item.retry_at <= now:
+            try:
+                await _async_remove_path(hass, path)
+            except OSError:
+                _LOGGER.warning("Private backup cleanup remains pending")
     expired: list[ExportSession | ImportSession] = []
     async with _registry_lock(hass):
         exports = _exports(hass)
@@ -234,14 +311,30 @@ async def _async_cleanup_expired(hass: HomeAssistant) -> None:
     await _async_delete_sessions(hass, expired)
 
 
+def _all_sessions(hass: HomeAssistant) -> list[ExportSession | ImportSession]:
+    return [*_exports(hass).values(), *_imports(hass).values()]
+
+
 def _temporary_bytes(hass: HomeAssistant) -> int:
-    return sum(session.size for session in _exports(hass).values()) + sum(
-        session.expected_size for session in _imports(hass).values()
+    sizes = {path: item.size for path, item in _pending(hass).items()}
+    for session in _all_sessions(hass):
+        size = (
+            session.expected_size
+            if isinstance(session, ImportSession)
+            else session.size
+        )
+        sizes[session.path] = max(size, sizes.get(session.path, 0))
+    return sum(sizes.values()) + sum(
+        item.size for item in _pending_scans(hass).values()
     )
 
 
 def _ensure_session_capacity(hass: HomeAssistant, requested_bytes: int = 0) -> None:
-    session_count = len(_exports(hass)) + len(_imports(hass))
+    if hass.data.get(_SHUTDOWN_KEY):
+        raise backup.BackupError("Backup transfers are shutting down")
+    session_count = len(
+        set(_pending(hass)) | {session.path for session in _all_sessions(hass)}
+    )
     if session_count >= MAX_TRANSFER_SESSIONS:
         raise backup.BackupError(
             "Too many full backup transfers are already pending; finish or cancel one first"
@@ -377,9 +470,12 @@ async def _async_build_archive_file(
         try:
             result = await task
         except BaseException:
-            pass
+            await _async_own_unregistered_files(hass, directory)
         else:
             await _async_remove_path(hass, result["path"])
+        raise
+    except BaseException:
+        await _async_own_unregistered_files(hass, directory)
         raise
 
 
@@ -414,10 +510,49 @@ async def _async_create_upload_file(hass: HomeAssistant) -> str:
         try:
             path = await task
         except BaseException:
-            pass
+            await _async_own_unregistered_files(hass, directory)
         else:
             await _async_remove_path(hass, path)
         raise
+    except BaseException:
+        await _async_own_unregistered_files(hass, directory)
+        raise
+
+
+async def _async_own_unregistered_files(hass: HomeAssistant, directory: Path) -> None:
+    """Recover allocations whose worker failed before returning their identity."""
+
+    def scan() -> dict[str, int]:
+        return {
+            str(path): path.stat().st_size
+            for path in directory.iterdir()
+            if path.name.startswith("extended-openai-backup-")
+            and not path.is_symlink()
+            and path.is_file()
+        }
+
+    try:
+        files = await hass.async_add_executor_job(scan)
+    except Exception:
+        # The staging owner still owns this directory for shutdown/restart
+        # reconciliation. A second filesystem failure must not replace the
+        # original operation failure or cancellation.
+        item = _pending_scans(hass).setdefault(
+            str(directory), PendingDeletion(MAX_TRANSFER_TEMP_BYTES)
+        )
+        item.attempts += 1
+        item.retry_at = time.monotonic() + min(300, 5 * 2 ** min(item.attempts, 6))
+        _LOGGER.exception(
+            "Unable to enumerate unregistered private transfers; staging-owner cleanup is still required"
+        )
+        _schedule_expiry(hass)
+        return
+    _pending_scans(hass).pop(str(directory), None)
+    active = {session.path for session in _all_sessions(hass)}
+    for path, size in files.items():
+        if path not in active:
+            _pending(hass).setdefault(path, PendingDeletion(size))
+    _schedule_expiry(hass)
 
 
 def _decode_append_file(path: str, encoded: str, expected_length: int) -> int:
@@ -1117,9 +1252,11 @@ async def _restore_import(
                 )
             _imports(hass).pop(session.session_id, None)
             _forget_preview(hass, session)
+            _retire(hass, session)
 
+    restored: dict[str, Any] | None = None
     try:
-        return await transfer.async_restore_transfer(
+        restored = await transfer.async_restore_transfer(
             hass,
             entry,
             subentry,
@@ -1131,7 +1268,14 @@ async def _restore_import(
         )
     finally:
         if _imports(hass).get(session.session_id) is not session:
-            await _async_remove_path(hass, session.path)
+            _retire(hass, session)
+            try:
+                await _async_remove_path(hass, session.path)
+            except OSError:
+                _LOGGER.warning("Restore upload cleanup is pending")
+                if restored is not None:
+                    restored = {**restored, "cleanup_pending": True}
+    return restored
 
 
 async def async_backup_transfer_command(
@@ -1205,6 +1349,14 @@ async def websocket_backup_transfer(
 
 
 async def _async_cleanup_all(hass: HomeAssistant) -> None:
+    hass.data[_SHUTDOWN_KEY] = True
+    # Allocation workers are owned by transfer starts. Settle them before the
+    # native owner can remove their staging directory.
+    async with _start_lock(hass):
+        await _async_cleanup_all_settled(hass)
+
+
+async def _async_cleanup_all_settled(hass: HomeAssistant) -> None:
     async with _registry_lock(hass):
         sessions: list[ExportSession | ImportSession] = [
             *_exports(hass).values(),
@@ -1214,11 +1366,38 @@ async def _async_cleanup_all(hass: HomeAssistant) -> None:
         _imports(hass).clear()
         _latest_previews(hass).clear()
         _schedule_expiry(hass)
-    await _async_delete_sessions(hass, sessions)
+    try:
+        await _async_delete_sessions(hass, sessions)
+    except OSError:
+        _LOGGER.warning(
+            "Individual private transfer deletion failed; attempting owner-wide cleanup"
+        )
+    finally:
+        from .transfer_staging import async_close_transfer_staging
 
-    from .transfer_staging import async_close_transfer_staging
+        await async_close_transfer_staging(hass)
+        paths = tuple(set(_pending(hass)) | set(_pending_scans(hass)))
 
-    await async_close_transfer_staging(hass)
+        def remaining_files() -> set[str]:
+            remaining = set()
+            for path in paths:
+                try:
+                    os.lstat(path)
+                except FileNotFoundError:
+                    continue
+                remaining.add(path)
+            return remaining
+
+        remaining = await hass.async_add_executor_job(remaining_files)
+        for path in paths:
+            if path not in remaining:
+                _pending(hass).pop(path, None)
+                _pending_scans(hass).pop(path, None)
+        _schedule_expiry(hass)
+        if remaining:
+            raise OSError(
+                "Private transfer cleanup remains pending after owner-wide cleanup"
+            )
 
 
 def setup_backup_transfer_websocket(hass: HomeAssistant) -> bool:

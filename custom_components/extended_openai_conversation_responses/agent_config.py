@@ -553,17 +553,12 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
             get_function(function_type).validate_schema(deepcopy(function_config))
         except Exception as err:
             raise AgentConfigError(
-                f"{field}.function",
+                f"{field}.function.name"
+                if function_type == "native"
+                and function_config.get("name") not in NATIVE_FUNCTION_IMPLEMENTATIONS
+                else f"{field}.function",
                 f"configuration is invalid for {function_type}: {err}",
             ) from err
-        if (
-            function_type == "native"
-            and function_config.get("name") not in NATIVE_FUNCTION_IMPLEMENTATIONS
-        ):
-            raise AgentConfigError(
-                f"{field}.function.name",
-                f"unknown native implementation: {function_config.get('name')}",
-            )
         normalized = deepcopy(tool)
         normalized["spec"] = deepcopy(spec)
         normalized["function"] = deepcopy(function_config)

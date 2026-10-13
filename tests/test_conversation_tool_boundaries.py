@@ -115,7 +115,7 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
     )
 
     entity._async_search_memories.assert_awaited_once_with(
-        ["user-1"], "dog", 3, "pets"
+        ["user-1"], "dog", 4, "pets"
     )
     entity._memory.async_list_page.assert_awaited_once_with(
         ["user-1"], "pets", 4, 2

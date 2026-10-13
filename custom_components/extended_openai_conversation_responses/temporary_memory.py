@@ -104,6 +104,8 @@ class TemporaryMemory:
             for raw in raw_records:
                 try:
                     record = _record_from_storage(raw)
+                    if asdict(record) != raw:
+                        self._normalization_pending = True
                     if _parse_expiry(record.expires_at) > dt_util.utcnow():
                         self._records[record.memory_id] = record
                     else:
@@ -178,7 +180,7 @@ class TemporaryMemory:
             if len(selected) >= MAX_INJECT_RECORDS:
                 break
             size = len(record.content)
-            if selected and characters + size > MAX_INJECT_CHARACTERS:
+            if characters + size > MAX_INJECT_CHARACTERS:
                 continue
             selected.append(record)
             characters += size
@@ -521,7 +523,7 @@ class TemporaryMemory:
             if normalized is None:
                 invalid_owners += 1
                 continue
-            normalized_owners += normalized != record
+            normalized_owners += normalized != record or asdict(record) != raw
             records.append(normalized)
         overflow = max(0, len(records) - MAX_ACTIVE_RECORDS)
         if overflow:
@@ -729,7 +731,11 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
         raise ValueError("temporary memory fields must be strings")
     validate_memory_privacy(record.content, automatic=record.source == "automatic")
     validate_memory_privacy(record.category, automatic=record.source == "automatic")
-    return record
+    return replace(
+        record,
+        content=_clean(record.content, MAX_CONTENT_LENGTH, "content"),
+        category=_clean(record.category, MAX_CATEGORY_LENGTH, "category"),
+    )
 
 
 def _matches_owner(

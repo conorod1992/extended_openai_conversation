@@ -8,7 +8,6 @@ from contextlib import nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime, timedelta
-import json
 import logging
 from pathlib import Path
 import time
@@ -170,7 +169,7 @@ from .ha_llm_tools import (
     tool_snapshot_scope,
 )
 from .ha_permissions import bind_active_ha_context
-from .ha_tool_result_compat import make_tool_result_content, tool_result_data
+from .ha_tool_result_compat import make_tool_result_content
 from .helpers import get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
@@ -186,7 +185,6 @@ from .memory import (
 from .model_lifecycle import clear_entity_retirement_failure
 from .model_search_hardening import _require_nonblank_query
 from .model_tool_results import (
-    _compact_json_result_content,
     _compact_memory_result,
     bounded_record_page,
     knowledge_search_payload,
@@ -218,7 +216,6 @@ from .request_rules import (
 )
 from .request_static_cache import formatted_tool_cache, tools_for_available_skills
 from .runtime_failure_hardening import _conversation_error_result
-from .runtime_hardening import bounded_tool_result_text
 from .scope import (
     SHARED_HOUSEHOLD_SCOPE_ID,
     ResolvedDataScope,
@@ -1225,6 +1222,7 @@ class ExtendedOpenAIAgentEntity(
         # Call the LLM
 
         existing_content_ids = {id(content) for content in chat_log.content}
+        continuation_accepted = False
         try:
             check_aba = getattr(self, "_assert_no_aba_configuration", None)
             if callable(check_aba):
@@ -1246,6 +1244,7 @@ class ExtendedOpenAIAgentEntity(
                 ),
                 request_options=request_options,
             )
+            continuation_accepted = True
         except asyncio.CancelledError:
             # A completed effect remains ambiguous even when Assist cancels the
             # provider continuation. Preserve replay protection and cancellation.
@@ -1263,9 +1262,16 @@ class ExtendedOpenAIAgentEntity(
                 conversation_id=(
                     None
                     if requested_conversation_reset() is not None
+                    else chat_log.conversation_id
+                    if getattr(self, "_unacknowledged_tool_calls", {}).get(
+                        chat_log.conversation_id
+                    )
                     else user_input.conversation_id
                 ),
             )
+        finally:
+            if not continuation_accepted:
+                remember_unacknowledged_calls(self, chat_log, existing_content_ids)
 
         clear_unacknowledged_calls(self, chat_log.conversation_id)
         clear_entity_retirement_failure(self)
@@ -1499,7 +1505,9 @@ class ExtendedOpenAIAgentEntity(
     ) -> Any:
         """Execute a configured function through the model-tool security seam."""
         function_tool = configured_function_tool_for_execution(self, function_name)
-        with propagate_function_execution_errors():
+        from .model_tool_results import local_function_results
+
+        with propagate_function_execution_errors(), local_function_results():
             return await self._execute_function_tool(
                 function_tool,
                 llm.ToolInput(
@@ -1629,6 +1637,8 @@ class ExtendedOpenAIAgentEntity(
         query: str,
         limit: int,
         category: str | None = None,
+        *,
+        offset: int = 0,
     ) -> list[MemoryRecord]:
         """Search using the configured lexical or Hybrid retrieval semantics."""
         assert self._memory is not None
@@ -1657,6 +1667,7 @@ class ExtendedOpenAIAgentEntity(
             limit,
             query_embedding=query_embedding,
             hybrid=hybrid and query_embedding is not None,
+            **({"offset": offset} if offset else {}),
         )
 
     async def _async_create_embeddings(
@@ -2052,7 +2063,7 @@ class ExtendedOpenAIAgentEntity(
         successful = False
         content: Any = None
         try:
-            from .tool_replay_guard import record_dispatch
+            from .execution_outcomes import execution_attempt
 
             # A provider response may arrive after HA exposure changes. Native
             # actions must use the current Assist-visible set at dispatch.
@@ -2062,31 +2073,19 @@ class ExtendedOpenAIAgentEntity(
                 exposed_entities = self._get_exposed_entities()
             from .skill_runtime_availability import selected_skill_scope
 
-            with selected_skill_scope(
-                getattr(getattr(self, "subentry", None), "data", {})
+            with (
+                selected_skill_scope(
+                    getattr(getattr(self, "subentry", None), "data", {})
+                ),
+                execution_attempt(self, tool_input, function_tool),
             ):
-                record_dispatch(self, tool_input, function_tool)
                 content = await self._async_dispatch_function_tool(
                     function_tool, tool_input, llm_context, exposed_entities
                 )
-            payload = tool_result_data(content)
-            content = _compact_json_result_content(content)
-            if isinstance(payload, dict) and "result" in payload:
-                value = payload["result"]
-                serialized = (
-                    value
-                    if isinstance(value, str)
-                    else await asyncio.to_thread(
-                        json.dumps,
-                        value,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                        default=str,
-                    )
-                )
-                bounded = bounded_tool_result_text(serialized)
-                if isinstance(value, str) or bounded != serialized:
-                    payload["result"] = bounded
+            from .model_tool_results import local_results_requested, project_tool_result
+
+            if not local_results_requested():
+                content = await project_tool_result(content)
             successful = True
             return cast(conversation.ToolResultContent, content)
         finally:
@@ -2330,11 +2329,15 @@ class ExtendedOpenAIAgentEntity(
                 raise GuestModeDenied(GUEST_MODE_UNAVAILABLE)
             if result.get("status") in {"error", "denied", "unavailable"}:
                 raise HomeAssistantError(EXECUTION_FAILED)
+        from .model_tool_results import OwnedJSONPayload, local_results_requested
+
         return make_tool_result_content(
             agent_id=self.entity_id,
             tool_call_id=tool_input.id,
             tool_name=tool_input.tool_name,
-            tool_result={"result": json.dumps(result, ensure_ascii=False)},
+            tool_result={"result": result}
+            if local_results_requested()
+            else OwnedJSONPayload(result),
         )
 
     def _execute_conversation_lifecycle_tool(self, operation: str) -> dict[str, Any]:
@@ -2493,16 +2496,28 @@ class ExtendedOpenAIAgentEntity(
                             "fell_back_to_all_sources": False,
                         },
                     }
+            offset = arguments.get("offset", 0)
+            if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+                raise ValueError("offset must be a nonnegative integer")
+            limit = max(1, min(limit, 10))
             results = await self._knowledge.async_search(
-                query, sorted(allowed_ids) if allowed_ids is not None else None, limit
+                query,
+                sorted(allowed_ids) if allowed_ids is not None else None,
+                limit,
+                lookahead=True,
+                **({"offset": offset} if offset else {}),
             )
             results = await KnowledgeLibrary.async_revalidate_search_results(
                 self._knowledge, results
             )
             filter_requested = bool(source_ids)
-            return knowledge_search_payload(
+            page = knowledge_search_payload(
                 {
-                    "results": [search_result_as_dict(result) for result in results],
+                    "results": [
+                        search_result_as_dict(result) for result in results[:limit]
+                    ],
+                    "offset": offset,
+                    "has_more": len(results) > limit,
                     "source_filter": {
                         "applied_source_ids": sorted(allowed_ids or []),
                         "ignored_source_ids": ignored_ids,
@@ -2513,6 +2528,7 @@ class ExtendedOpenAIAgentEntity(
                 filter_requested=filter_requested,
                 policy_filter_applied=policy_ids is not None,
             )
+            return bounded_record_page(page, "results")
         if operation == "list":
             query = arguments.get("query")
             limit = arguments.get("limit", 20)
@@ -2633,21 +2649,31 @@ class ExtendedOpenAIAgentEntity(
             search_scopes = self._filter_read_scopes(
                 readable_scope_ids, requested_scope
             )
+            offset = arguments.get("offset", 0)
+            if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+                raise ValueError("offset must be a nonnegative integer")
+            limit = max(1, min(limit, 50))
             memories = await self._async_search_memories(
                 search_scopes,
                 query,
-                limit,
+                limit + 1,
                 category,
+                **({"offset": offset} if offset else {}),
             )
             personal_id = self._personal_memory_scope_id(llm_context)
-            return {
-                "memories": [
-                    model_memory_as_dict(
-                        memory, include_scope=True, personal_scope_id=personal_id
-                    )
-                    for memory in memories
-                ]
-            }
+            return bounded_record_page(
+                {
+                    "memories": [
+                        model_memory_as_dict(
+                            memory, include_scope=True, personal_scope_id=personal_id
+                        )
+                        for memory in memories[:limit]
+                    ],
+                    "offset": offset,
+                    "has_more": len(memories) > limit,
+                },
+                "memories",
+            )
         if operation == "list":
             category = arguments.get("category")
             limit = arguments.get("limit", 50)

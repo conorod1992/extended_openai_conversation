@@ -38,6 +38,9 @@ async def _async_settle_transactional_save(
     invalidate_state: Callable[[], None],
 ) -> None:
     """Settle a write and reconcile actual disk state before reporting failure."""
+    from .execution_outcomes import execution_completed, execution_started
+
+    execution_started()
     save_task = asyncio.ensure_future(save)
     cancellation: asyncio.CancelledError | None = None
 
@@ -75,5 +78,6 @@ async def _async_settle_transactional_save(
         raise
 
     remember_committed_state()
+    execution_completed()
     if cancellation is not None:
         raise cancellation

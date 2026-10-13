@@ -52,8 +52,9 @@ async def rest_server(hass, socket_enabled, aiohttp_server, monkeypatch):
 async def test_http_failure_stops_composite(hass, rest_server, status, kind):
     # A template after the REST step raises if it is reached, proving the
     # composite stops for the status failure rather than interpreting the body.
-    follow = Template("{{ missing.child }}", hass)
+    follow = "{{ missing.child }}"
     config = {
+        "type": "composite",
         "sequence": [
             rest_server(status, kind),
             {"type": "template", "value_template": follow},
@@ -95,12 +96,13 @@ async def test_status_failure_closes_request_without_reading_body():
 
 async def test_rest_template_failure_stops_composite(hass, rest_server):
     config = {
+        "type": "composite",
         "sequence": [
             {
                 **rest_server(200, "json"),
-                "value_template": Template("{{ value_json.missing.child }}", hass),
+                "value_template": "{{ value_json.missing.child }}",
             },
-            {"type": "template", "value_template": Template("{{ later.child }}", hass)},
+            {"type": "template", "value_template": "{{ later.child }}"},
         ]
     }
     with pytest.raises(HomeAssistantError, match="missing"):

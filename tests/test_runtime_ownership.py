@@ -208,7 +208,7 @@ async def test_live_memory_gate_and_embedding_provider(runtime_agent):
         if enabled:
             assert await agent._async_execute_memory_tool(
                 "search", {"query": "query"}, None
-            ) == {"memories": []}
+            ) == {"memories": [], "offset": 0, "returned": 0, "has_more": False, "next_offset": None}
         else:
             with pytest.raises(RuntimeError, match="disabled"):
                 await agent._async_execute_memory_tool(

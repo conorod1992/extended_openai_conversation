@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 from typing import Any
+
+import orjson
 
 from .ha_tool_result_compat import tool_result_data
 from .memory import MemoryRecord, memory_as_dict
@@ -14,10 +19,91 @@ _OPTIONAL_MEMORY_FIELDS = {
     "valid_from",
 }
 
+_LOCAL_RESULTS: ContextVar[bool] = ContextVar(
+    "eoai_local_function_results", default=False
+)
+
+
+@contextmanager
+def local_function_results() -> Iterator[None]:
+    """Keep local dataflow outside model presentation and its bounds."""
+    token = _LOCAL_RESULTS.set(True)
+    try:
+        yield
+    finally:
+        _LOCAL_RESULTS.reset(token)
+
+
+def local_results_requested() -> bool:
+    return _LOCAL_RESULTS.get()
+
+
+class OwnedJSONPayload(dict[str, Any]):
+    """An explicitly integration-serialized envelope, never inferred from text."""
+
+    def __init__(self, value: Any) -> None:
+        super().__init__(result=compact_tool_json(value))
+        self.value = value
+
+
+async def project_tool_result(content: Any) -> Any:
+    """Bound presentation without parsing literal strings or truncating JSON."""
+    import asyncio
+
+    from .runtime_hardening import (
+        MAX_MODEL_TOOL_RESULT_CHARACTERS,
+        bounded_tool_result_text,
+    )
+
+    payload = tool_result_data(content)
+    if not isinstance(payload, dict) or "result" not in payload:
+        return content
+    owned = isinstance(payload, OwnedJSONPayload)
+    value = (
+        payload.value if isinstance(payload, OwnedJSONPayload) else payload["result"]
+    )
+    projected: Any
+    if isinstance(value, str) and not owned:
+        projected = bounded_tool_result_text(value)
+    else:
+        serialized = (
+            payload["result"]
+            if owned
+            else await asyncio.to_thread(compact_tool_json, value)
+        )
+        projected = (
+            value
+            if len(serialized) <= MAX_MODEL_TOOL_RESULT_CHARACTERS
+            else {
+                "status": "output_overflow",
+                "execution_completed": True,
+                "message": "The completed Function result exceeds the model output limit. Use a bounded query; do not repeat side effects.",
+            }
+        )
+    # Never mutate the retained execution result or a backend-owned object.
+    # The ownership marker is internal: HA's dataclasses.asdict reconstructs
+    # dict subclasses with an iterator, incompatible with its value constructor.
+    if owned or projected is not value:
+        if owned:
+            projected = compact_tool_json(projected)
+        from .ha_tool_result_compat import make_tool_result_content
+
+        return make_tool_result_content(
+            agent_id=content.agent_id,
+            tool_call_id=content.tool_call_id,
+            tool_name=content.tool_name,
+            tool_result={**payload, "result": projected},
+            error=getattr(getattr(content, "result", None), "error", False),
+        )
+    return content
+
 
 def compact_tool_json(value: Any) -> str:
     """Serialize model-facing tool data without semantically irrelevant whitespace."""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    # Match Function normalization and provider serialization, including their
+    # supported dataclass, datetime and UUID values. Decode before measuring:
+    # the model limit is in characters, not UTF-8 bytes.
+    return orjson.dumps(value).decode("utf-8")
 
 
 def model_memory_as_dict(
@@ -87,8 +173,12 @@ def knowledge_search_payload(
     return result
 
 
-def _compact_json_result_content(result: Any) -> Any:
+def _compact_json_result_content(
+    result: Any, *, integration_owned: bool = False
+) -> Any:
     """Compact a ToolResultContent JSON string while preserving parsed semantics."""
+    if not integration_owned:
+        return result
     tool_result = tool_result_data(result)
     if not isinstance(tool_result, dict):
         return result
@@ -136,4 +226,6 @@ def bounded_record_page(result: dict[str, Any], records_key: str) -> dict[str, A
         has_more=more,
         next_offset=offset + returned if more else None,
     )
+    if len(compact_tool_json(page)) > MAX_MODEL_TOOL_RESULT_CHARACTERS:
+        raise ValueError("record metadata exceeds model tool result budget")
     return page

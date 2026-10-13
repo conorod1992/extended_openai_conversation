@@ -2,13 +2,85 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, make_dataclass
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     ha_tool_result_compat,
 )
+
+
+@pytest.mark.parametrize("depth", [1, 2, 3])
+@pytest.mark.parametrize("failed", [False, True])
+def test_execution_unwraps_all_ha_envelopes_without_losing_failure_metadata(
+    monkeypatch: Any, depth: int, failed: bool
+) -> None:
+    @dataclass
+    class Result:
+        data: Any
+        error: bool = False
+
+    monkeypatch.setattr(ha_tool_result_compat.llm, "ToolResult", Result, raising=False)
+    payload = {"status": "error", "value": False}
+    wrapped: Any = Result(payload, error=failed)
+    for _ in range(depth - 1):
+        wrapped = Result(wrapped)
+    if failed:
+        with pytest.raises(ha_tool_result_compat.HAToolResultError) as raised:
+            ha_tool_result_compat.execution_tool_result(wrapped)
+        assert raised.value.data is payload
+    else:
+        assert ha_tool_result_compat.execution_tool_result(wrapped) is payload
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_retained_core_result_class_survives_class_reload(monkeypatch, failed):
+    old_type = make_dataclass(
+        "ToolResult",
+        [("data", Any), ("error", bool, False)],
+        module="homeassistant.helpers.llm",
+    )
+    new_type = make_dataclass("ToolResult", [("data", Any), ("error", bool, False)])
+    monkeypatch.setattr(
+        ha_tool_result_compat.llm, "ToolResult", new_type, raising=False
+    )
+    payload = {"data": "business data", "error": True}
+    retained = old_type(payload, error=failed)
+    assert not isinstance(retained, new_type)
+    assert ha_tool_result_compat.unwrap_tool_result(retained) is payload
+    if failed:
+        with pytest.raises(ha_tool_result_compat.HAToolResultError) as raised:
+            ha_tool_result_compat.execution_tool_result(new_type(retained))
+        assert raised.value.data is payload
+    else:
+        assert (
+            ha_tool_result_compat.execution_tool_result(new_type(retained)) is payload
+        )
+    assert ha_tool_result_compat.execution_tool_result(payload) is payload
+
+
+def test_unrelated_dataclass_named_tool_result_remains_business_data(monkeypatch):
+    business_type = make_dataclass(
+        "ToolResult", [("data", Any), ("error", bool, False)]
+    )
+    business = business_type({"value": 42}, error=True)
+    assert ha_tool_result_compat.execution_tool_result(business) is business
+
+
+def test_cyclic_ha_envelope_is_rejected(monkeypatch: Any) -> None:
+    @dataclass
+    class Result:
+        data: Any
+        error: bool = False
+
+    monkeypatch.setattr(ha_tool_result_compat.llm, "ToolResult", Result, raising=False)
+    value = Result(None)
+    value.data = value
+    with pytest.raises(ha_tool_result_compat.HomeAssistantError, match="Cyclic"):
+        ha_tool_result_compat.execution_tool_result(value)
 
 
 def test_make_tool_result_content_uses_legacy_api(monkeypatch: Any) -> None:
@@ -186,7 +258,10 @@ def test_tool_result_data_never_reads_new_api_deprecated_property(
     content = ModernContent(payload)
     assert ha_tool_result_compat.tool_result_data(content) is payload
     assert request_diagnostics._result_characters(content) == len(payload["result"])
-    assert model_tool_results._compact_json_result_content(content) is content
+    assert (
+        model_tool_results._compact_json_result_content(content, integration_owned=True)
+        is content
+    )
     assert payload["result"] == '{"a":1,"b":[2,3]}'
     assert content.result.data is payload
 

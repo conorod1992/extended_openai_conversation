@@ -1653,7 +1653,10 @@ def validate_rule(
             "continue_to_ai": match_type not in {"equals", "sentence_pattern"},
         }
     action = _validate_action(
-        action_type, raw_action, validate_script_schema=validate_script_schema
+        action_type,
+        raw_action,
+        validate_script_schema=validate_script_schema,
+        capture_names=set(slot_names),
     )
     continue_matching = value.get("continue_matching", False)
     if not isinstance(continue_matching, bool):
@@ -1800,7 +1803,11 @@ def _validate_total_pattern_states(
 
 
 def _validate_action(
-    action_type: str, value: Any, *, validate_script_schema: bool = True
+    action_type: str,
+    value: Any,
+    *,
+    validate_script_schema: bool = True,
+    capture_names: set[str] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("action must be an object")
@@ -1823,7 +1830,9 @@ def _validate_action(
         if not actions_value or len(actions_value) > MAX_ACTIONS:
             raise ValueError(f"actions must contain 1 to {MAX_ACTIONS} items")
         actions = _validate_script_sequence(
-            actions_value, validate_schema=validate_script_schema
+            actions_value,
+            validate_schema=validate_script_schema,
+            capture_names=capture_names,
         )
         continue_to_ai = value.get("continue_to_ai", False)
         if not isinstance(continue_to_ai, bool):
@@ -2086,7 +2095,10 @@ def _normalize_script_containers(value: Any) -> Any:
 
 
 def _validate_script_sequence(
-    value: Sequence[Any], *, validate_schema: bool = True
+    value: Sequence[Any],
+    *,
+    validate_schema: bool = True,
+    capture_names: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Validate native HA script syntax and enforce conservative size bounds."""
     migrated: list[dict[str, Any]] = []
@@ -2106,7 +2118,15 @@ def _validate_script_sequence(
         return migrated
     try:
         _validate_template_syntax(migrated)
-        cv.SCRIPT_SCHEMA(_mask_script_templates(migrated))
+        cv.SCRIPT_SCHEMA(
+            _prepare_concrete_captures(
+                migrated,
+                {name: "request_rule_template" for name in capture_names}
+                if capture_names is not None
+                else None,
+                validation=True,
+            )
+        )
     except Exception as err:
         raise ValueError(f"invalid Home Assistant action sequence: {err}") from err
     return migrated
@@ -2188,6 +2208,12 @@ def _result_paths_by_alias(value: Any) -> dict[str, set[str]]:
     return paths
 
 
+def _is_function_action(step: Mapping[str, Any]) -> bool:
+    """Recognize only a statically identified EOAI Function service action."""
+    name = step.get("action", step.get("service", step.get("service_template")))
+    return isinstance(name, str) and name == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+
+
 def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) -> None:
     produced: set[str] = set()
     step_ids: set[str] = set()
@@ -2195,7 +2221,8 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
     for nested in _iter_script_actions(action["actions"]):
         data = nested.get("data")
         if (
-            isinstance(data, Mapping)
+            _is_function_action(nested)
+            and isinstance(data, Mapping)
             and data.get("result_alias")
             and id(nested) not in top_level_ids
         ):
@@ -2203,7 +2230,9 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
     all_aliases = {
         step.get("data", {}).get("result_alias")
         for step in action["actions"]
-        if isinstance(step, Mapping) and isinstance(step.get("data"), Mapping)
+        if isinstance(step, Mapping)
+        and _is_function_action(step)
+        and isinstance(step.get("data"), Mapping)
     }
     for step in action["actions"]:
         if not isinstance(step, Mapping):
@@ -2217,9 +2246,7 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
                 + ", ".join(sorted(missing))
             )
         data = step.get("data", {})
-        if step.get(
-            "action", step.get("service")
-        ) != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}" or not isinstance(data, Mapping):
+        if not _is_function_action(step) or not isinstance(data, Mapping):
             continue
         alias = data.get("result_alias")
         if alias is None:
@@ -2263,54 +2290,108 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
 def _mask_script_templates(
     value: Any, *, key: str | None = None, parent_key: str | None = None
 ) -> Any:
-    """Permit context-free schema validation while preserving stored templates."""
-    if (
-        isinstance(value, str)
-        and key in {"entity_id", "target"}
-        and SLOT_REFERENCE.search(value)
-    ):
-        return (
-            {"entity_id": "light.request_rule_template"}
-            if key == "target"
-            else "light.request_rule_template"
-        )
-    if isinstance(value, str) and ("{{" in value or "{%" in value or "{#" in value):
-        # Home Assistant's script schema natively accepts templates for dynamic
-        # durations/timeouts, repeat iteration sources and shorthand conditions.
-        # Keep those templates intact so type-aware validation sees a template
-        # instead of an arbitrary placeholder string that is invalid for the field.
-        if key in {
-            "delay",
-            "timeout",
-            "for_each",
-            "conditions",
-            "if",
-            "while",
-            "until",
-        } or parent_key in {
-            "delay",
-            "timeout",
-        }:
-            return value
-        if key == "target":
-            return {"entity_id": "light.request_rule_template"}
-        if key == "entity_id":
-            return "light.request_rule_template"
-        return (
-            "homeassistant.update_entity"
-            if key in {"action", "service"}
-            else "request_rule_template"
-        )
+    """Validate the same native structure used at runtime, with sample captures."""
+    return _prepare_concrete_captures(value, None, validation=True)
+
+
+def _prepare_concrete_captures(
+    value: Any,
+    slots: Mapping[str, str] | None,
+    *,
+    validation: bool = False,
+    concrete: bool = False,
+    key: str | None = None,
+    native_context: bool = True,
+) -> Any:
+    """Resolve concrete HA selectors; leave native lazy fields to HA templates."""
     if isinstance(value, Mapping):
+        selector_context = native_context and (
+            "condition" in value or "platform" in value or "trigger" in value
+        )
         return {
-            item_key: _mask_script_templates(item, key=str(item_key), parent_key=key)
-            for item_key, item in value.items()
+            name: _prepare_concrete_captures(
+                item,
+                slots,
+                validation=validation,
+                key=str(name),
+                concrete=(
+                    selector_context and name in {"entity_id", "zone", "device_id"}
+                )
+                or (native_context and name == "scene"),
+                native_context=native_context
+                and name not in {"data", "data_template", "variables", "target"},
+            )
+            for name, item in value.items()
         }
     if isinstance(value, list):
         return [
-            _mask_script_templates(item, key=key, parent_key=parent_key)
+            _prepare_concrete_captures(
+                item,
+                slots,
+                validation=validation,
+                concrete=concrete,
+                key=key,
+                native_context=native_context,
+            )
             for item in value
         ]
+    if not isinstance(value, str):
+        return value
+    if concrete:
+
+        def capture(match: re.Match[str]) -> str:
+            name = match.group(1)
+            if validation:
+                if slots is not None and name not in slots:
+                    raise ValueError(
+                        f"Home Assistant {key} requires a capture available before execution"
+                    )
+                return "request_rule_template"
+            if slots is None or name not in slots:
+                raise ValueError(f"Captured selector {name} is unavailable")
+            return slots[name]
+
+        rendered = SLOT_REFERENCE.sub(capture, value)
+
+        # Deterministic authored slot expressions have the same concrete contract.
+        def concrete_jinja(match: re.Match[str]) -> str:
+            name = next(name for name in match.groups() if name is not None)
+            if match.group(4) is not None and (slots is None or name not in slots):
+                raise ValueError(
+                    f"Home Assistant {key} requires a concrete selector; use a capture"
+                )
+            if validation:
+                if slots is not None and name not in slots:
+                    raise ValueError(
+                        f"Home Assistant {key} requires a capture available before execution"
+                    )
+                return "request_rule_template"
+            if slots is None or name not in slots:
+                raise ValueError(f"Captured selector {name} is unavailable")
+            return slots[name]
+
+        rendered = JINJA_SLOT_REFERENCE.sub(concrete_jinja, rendered)
+        if any(marker in rendered for marker in ("{{", "{%", "{#")):
+            raise ValueError(
+                f"Home Assistant {key} requires a concrete selector; use a capture"
+            )
+        if (
+            validation
+            and key in {"entity_id", "scene", "zone"}
+            and rendered == "request_rule_template"
+        ):
+            rendered = (
+                "zone.request_rule_template"
+                if key == "zone"
+                else "light.request_rule_template"
+            )
+        return rendered
+    if validation:
+        # Native HA accepts templates only in its supported lazy fields. Do not
+        # hide unsupported placements behind arbitrary field-name substitutes.
+        return SLOT_REFERENCE.sub(
+            lambda match: "{{ request.slots[" + repr(match.group(1)) + "] }}", value
+        )
     return value
 
 
@@ -2582,7 +2663,9 @@ def _native_result_sequence(
     aliases = {
         step["data"]["result_alias"]
         for step in actions
-        if isinstance(step.get("data"), Mapping) and step["data"].get("result_alias")
+        if _is_function_action(step)
+        and isinstance(step.get("data"), Mapping)
+        and step["data"].get("result_alias")
     }
     # Each frozen script owns its helper; captured/native names cannot shadow it.
     lookup_name = f"__eoai_result_value_{uuid4().hex}"
@@ -2615,9 +2698,13 @@ def _native_result_sequence(
 
     sequence: list[dict[str, Any]] = []
     for step in actions:
-        rendered = native_templates(step)
+        rendered = native_templates(_prepare_concrete_captures(step, slots))
         data = step.get("data")
-        alias = data.get("result_alias") if isinstance(data, Mapping) else None
+        alias = (
+            data.get("result_alias")
+            if _is_function_action(step) and isinstance(data, Mapping)
+            else None
+        )
         if alias:
             response_name = step.get("response_variable") or f"__eoai_result_{alias}"
             binding = f"__eoai_alias_{uuid4().hex}"
@@ -2627,15 +2714,8 @@ def _native_result_sequence(
             sequence.append(rendered)
             sequence.append(
                 {
-                    "if": "{{ " + response_name + " is defined }}",
-                    "then": [
-                        {
-                            **(
-                                {"alias": binding} if alias_bindings is not None else {}
-                            ),
-                            "variables": {alias: "{{ " + response_name + ".result }}"},
-                        }
-                    ],
+                    **({"alias": binding} if alias_bindings is not None else {}),
+                    "variables": {alias: "{{ " + response_name + ".result }}"},
                 }
             )
         else:
@@ -2652,7 +2732,10 @@ class _ResultAliasVariables(ScriptVariables):
         self._response = response
 
     def async_simple_render(self, run_variables: Mapping[str, Any]) -> dict[str, Any]:
-        return {self._alias: run_variables[self._response]["result"]}
+        # The producer publishes only after this invocation returns successfully.
+        # Authored HA response variables may contain any earlier service's value.
+        results = _ACTIVE_FUNCTION_RESULTS.get() or {}
+        return {self._alias: results[self._alias]} if self._alias in results else {}
 
 
 def _bind_result_aliases(value: Any, bindings: Mapping[str, tuple[str, str]]) -> Any:
@@ -3539,6 +3622,7 @@ async def _async_evaluate_matched_rule(
         try:
             captures_results = any(
                 isinstance(step, Mapping)
+                and _is_function_action(step)
                 and isinstance(step.get("data"), Mapping)
                 and step["data"].get("result_alias")
                 for step in executable_actions

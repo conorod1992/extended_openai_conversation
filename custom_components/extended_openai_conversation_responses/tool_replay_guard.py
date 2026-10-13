@@ -14,10 +14,11 @@ from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
-from .execution_arguments import prepare_execution_arguments
+from .execution_arguments import execution_identity
 from .function_execution import _schema_without_patterns, validate_function_arguments
 from .ha_tool_result_compat import is_tool_result_content
 from .parallel_tool_execution import is_parallel_safe_integration_tool
+from .schema_errors import SCHEMA_ERRORS
 
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
 _dispatch_origin: ContextVar[tuple[llm.ToolInput, llm.ToolInput] | None] = ContextVar(
@@ -41,6 +42,9 @@ def record_dispatch(
     entity: Any,
     tool_input: llm.ToolInput,
     function_tool: Mapping[str, Any] | None = None,
+    *,
+    prepared_arguments: Mapping[str, Any] | None = None,
+    ha_parameters: Any = None,
 ) -> None:
     """Keep trusted dispatch provenance separately from model-facing outcomes."""
     dispatched = getattr(entity, "_dispatched_tool_inputs", None)
@@ -55,10 +59,7 @@ def record_dispatch(
         # Scheduling even a read creates a durable side effect.
         and "delay" not in tool_input.tool_args
     )
-    retained = [tool_input]
-    origin = _dispatch_origin.get()
-    if origin is not None and origin[0] is tool_input:
-        retained.append(origin[1])
+    retained = dispatch_inputs(tool_input)
     canonical = getattr(entity, "_dispatched_tool_signatures", None)
     if not isinstance(canonical, dict):
         canonical = entity._dispatched_tool_signatures = {}
@@ -69,8 +70,19 @@ def record_dispatch(
     spec["_execution_config"] = (
         deepcopy(function_tool.get("function", {})) if function_tool is not None else {}
     )
+    if ha_parameters is not None:
+        spec["_ha_parameters"] = ha_parameters
+    prepared_call = (
+        llm.ToolInput(
+            tool_name=tool_input.tool_name,
+            tool_args=dict(prepared_arguments),
+            id=tool_input.id,
+        )
+        if prepared_arguments is not None
+        else tool_input
+    )
     signature = (
-        _signature(tool_input, spec)
+        _signature(prepared_call, spec, prepared=prepared_arguments is not None)
         if isinstance(getattr(tool_input, "tool_name", None), str)
         and isinstance(getattr(tool_input, "tool_args", None), Mapping)
         else None
@@ -100,15 +112,43 @@ def _canonical_numbers(value: Any) -> Any:
     return value
 
 
-def _signature(tool_input: llm.ToolInput, spec: Mapping[str, Any] | None = None) -> str:
+def dispatch_inputs(tool_input: llm.ToolInput) -> list[llm.ToolInput]:
+    retained = [tool_input]
+    origin = _dispatch_origin.get()
+    if origin is not None and origin[0] is tool_input:
+        retained.append(origin[1])
+    return retained
+
+
+def _signature(
+    tool_input: llm.ToolInput,
+    spec: Mapping[str, Any] | None = None,
+    *,
+    prepared: bool = False,
+) -> str:
     arguments = tool_input.tool_args
     if spec is not None:
         # Invalid/externally owned arguments retain exact replay checks.
-        with suppress(HomeAssistantError, TypeError, ValueError):
-            arguments = validate_function_arguments(spec, arguments)
-            arguments = prepare_execution_arguments(
-                spec.get("_execution_config", {}), arguments
-            )
+        with suppress(HomeAssistantError, TypeError, ValueError, *SCHEMA_ERRORS):
+            if not prepared:
+                arguments = (
+                    spec["_ha_parameters"](deepcopy(arguments))
+                    if "_ha_parameters" in spec
+                    else validate_function_arguments(spec, arguments)
+                )
+            from .delayed_tools import _delay_as_timedelta
+            from .function_execution import split_legacy_execution_delay
+
+            if "_ha_parameters" not in spec:
+                arguments, delay = split_legacy_execution_delay(spec, arguments)
+            else:
+                delay = None
+            arguments = execution_identity(spec.get("_execution_config", {}), arguments)
+            if delay is not None:
+                arguments = {
+                    "execution": arguments,
+                    "delay_seconds": _delay_as_timedelta(delay).total_seconds(),
+                }
             arguments = _canonical_numbers(arguments)
     return json.dumps(
         [tool_input.tool_name, arguments],
@@ -145,7 +185,13 @@ def remember_unacknowledged_calls(
         for content in new_content
         if isinstance(content, conversation.AssistantContent) and content.tool_calls
         for tool_input in content.tool_calls
-        if tool_input.id in completed_ids
+        if (
+            tool_input.id in completed_ids
+            or getattr(entity, "_execution_tool_outcomes", {}).get(id(tool_input))
+            in {"completed", "uncertain"}
+        )
+        and getattr(entity, "_execution_tool_outcomes", {}).get(id(tool_input))
+        != "rejected"
         and getattr(entity, "_dispatched_tool_inputs", {}).get(id(tool_input))
         is tool_input
         and getattr(entity, "_read_only_tool_inputs", {}).get(id(tool_input))
@@ -163,8 +209,19 @@ def remember_unacknowledged_calls(
     if not isinstance(schemas, dict):
         schemas = entity._unacknowledged_tool_schemas = {}
     schemas.setdefault(conversation_id, {}).update(dict(records))
+    uncertain = getattr(entity, "_unacknowledged_uncertain_tools", None)
+    if not isinstance(uncertain, dict):
+        uncertain = entity._unacknowledged_uncertain_tools = {}
+    uncertain.setdefault(conversation_id, set()).update(
+        call.tool_name
+        for content in new_content
+        if isinstance(content, conversation.AssistantContent) and content.tool_calls
+        for call in content.tool_calls
+        if getattr(entity, "_execution_tool_outcomes", {}).get(id(call)) == "uncertain"
+    )
     while len(ledger) > _MAX_AMBIGUOUS_CONVERSATIONS:
         schemas.pop(next(iter(ledger)), None)
+        uncertain.pop(next(iter(ledger)), None)
         ledger.pop(next(iter(ledger)))
 
 
@@ -176,6 +233,10 @@ def was_unacknowledged_equivalent(
     if not isinstance(ledger, dict):
         return False
     signatures = ledger.get(chat_log.conversation_id, ())
+    if tool_input.tool_name in getattr(
+        entity, "_unacknowledged_uncertain_tools", {}
+    ).get(chat_log.conversation_id, ()):
+        return True
     if _signature(tool_input) in signatures:
         return True
     schemas = getattr(entity, "_unacknowledged_tool_schemas", {})
@@ -191,3 +252,6 @@ def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None
     if isinstance(ledger, dict) and isinstance(conversation_id, str):
         ledger.pop(conversation_id, None)
         getattr(entity, "_unacknowledged_tool_schemas", {}).pop(conversation_id, None)
+        getattr(entity, "_unacknowledged_uncertain_tools", {}).pop(
+            conversation_id, None
+        )

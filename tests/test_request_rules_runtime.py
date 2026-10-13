@@ -346,8 +346,8 @@ def test_legacy_slot_migration_recurses_and_slot_discovery_ignores_native_action
     assert rr._legacy_action_slots({"actions": "not-a-sequence"}) == set()
 
 
-def test_script_template_masking_preserves_shape_and_masks_action_templates() -> None:
-    """Schema-only masking replaces templates without mutating their container shape."""
+def test_script_preparation_preserves_native_lazy_templates() -> None:
+    """Native templated fields retain their authored lazy evaluation contract."""
     value = {
         "action": "{{ request.slots.action }}",
         "data": {
@@ -358,13 +358,7 @@ def test_script_template_masking_preserves_shape_and_masks_action_templates() ->
 
     masked = rr._mask_script_templates(value)
 
-    assert masked == {
-        "action": "homeassistant.update_entity",
-        "data": {
-            "message": "request_rule_template",
-            "items": ["plain", "request_rule_template"],
-        },
-    }
+    assert masked == value
     # The stored input remains untouched; masking is only for context-free schema checks.
     assert value["action"] == "{{ request.slots.action }}"
 

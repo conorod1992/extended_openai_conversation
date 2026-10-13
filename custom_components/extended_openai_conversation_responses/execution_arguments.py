@@ -22,6 +22,26 @@ def prepare_service_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def execution_identity(
+    function_config: Mapping[str, Any], arguments: Mapping[str, Any]
+) -> Any:
+    """Compare every child observer without rewriting Composite shared inputs."""
+    if function_config.get("type") != "composite":
+        return prepare_execution_arguments(function_config, arguments)
+    sequence = function_config.get("sequence", [])
+
+    # Responses feed later arguments. Their runtime values cannot be statically
+    # predicted, so preserve the shared representation for these compositions.
+    def feeds_arguments(config: Mapping[str, Any]) -> bool:
+        return bool(config.get("response_variable")) or any(
+            feeds_arguments(child) for child in config.get("sequence", [])
+        )
+
+    if feeds_arguments(function_config):
+        return dict(arguments)
+    return {"composite": [execution_identity(child, arguments) for child in sequence]}
+
+
 def prepare_execution_arguments(
     function_config: Mapping[str, Any], arguments: Mapping[str, Any]
 ) -> dict[str, Any]:

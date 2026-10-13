@@ -61,8 +61,9 @@ async def test_guest_knowledge_search_intersects_policy_without_leaking_ids() ->
         },
     )
 
-    knowledge.async_search.assert_awaited_once_with("boiler", ["allowed"], 5)
+    knowledge.async_search.assert_awaited_once_with("boiler", ["allowed"], 5, lookahead=True)
     assert result == {
+        "offset": 0, "returned": 0, "has_more": False, "next_offset": None,
         "results": [],
         "source_filter": {
             "applied_source_ids": ["allowed"],

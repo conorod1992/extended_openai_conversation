@@ -258,7 +258,17 @@ def _restore_automation_file(
 class NativeFunction(Function):
     def __init__(self) -> None:
         """Initialize native tool."""
-        super().__init__(vol.Schema({vol.Required("name"): str}))
+        from ..function_tool_policy import NATIVE_FUNCTION_IMPLEMENTATIONS
+
+        def implementation(value: Any) -> str:
+            if (
+                not isinstance(value, str)
+                or value not in NATIVE_FUNCTION_IMPLEMENTATIONS
+            ):
+                raise vol.Invalid(f"unknown native implementation: {value}")
+            return value
+
+        super().__init__(vol.Schema({vol.Required("name"): implementation}))
 
     async def execute(
         self,
@@ -272,6 +282,10 @@ class NativeFunction(Function):
 
         arguments = prepare_execution_arguments(function_config, arguments)
         name = function_config["name"]
+        from ..function_tool_policy import NATIVE_FUNCTION_IMPLEMENTATIONS
+
+        if name not in NATIVE_FUNCTION_IMPLEMENTATIONS:
+            raise NativeNotFound(name)
         if name == "execute_service":
             return await self.execute_service(
                 hass, function_config, arguments, llm_context, exposed_entities
@@ -345,12 +359,16 @@ class NativeFunction(Function):
             origin_device_id=origin_device_id,
             **target,
         )
+        from ..execution_outcomes import execution_completed, execution_started
+
+        execution_started()
         result = await manager.async_send(
             str(arguments.get("message", "")),
             entity_ids=targets,
             origin_device_id=origin_device_id,
             source="llm_tool",
         )
+        execution_completed()
         return {
             "success": True,
             "message_id": result["id"],
@@ -545,7 +563,12 @@ class NativeFunction(Function):
             return "Success"
 
         async with lock:
-            return await _async_settle_automation_update(update())
+            from ..execution_outcomes import execution_completed, execution_started
+
+            execution_started()
+            result = await _async_settle_automation_update(update())
+            execution_completed()
+            return result
 
     async def get_history(
         self,

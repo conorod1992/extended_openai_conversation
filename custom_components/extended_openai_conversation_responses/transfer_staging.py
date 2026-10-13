@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -36,10 +37,9 @@ class TransferStagingOwner:
         """Remove this owner's settled files and release native ownership."""
         if self.lock_handle.closed:
             return
-        try:
+        with suppress(FileNotFoundError):
             shutil.rmtree(self.directory)
-        finally:
-            self.lock_handle.close()
+        self.lock_handle.close()
 
 
 def _initialize_owner(root: Path) -> TransferStagingOwner:
@@ -118,7 +118,9 @@ def _discard_failed_initialization(
 
 async def async_close_transfer_staging(hass: HomeAssistant) -> None:
     """Settle any allocation before releasing this instance's native owner."""
-    task = hass.data.pop(_OWNER_KEY, None)
+    task = hass.data.get(_OWNER_KEY)
     if task is not None:
         owner = await asyncio.shield(task)
         await hass.async_add_executor_job(owner.close)
+        if hass.data.get(_OWNER_KEY) is task:
+            hass.data.pop(_OWNER_KEY)

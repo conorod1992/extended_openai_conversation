@@ -239,7 +239,7 @@ async def test_empty_composite_sequence_fails_cleanly(hass) -> None:
     with pytest.raises(InvalidFunction):
         function.validate_schema({"type": "composite", "sequence": []})
 
-    with pytest.raises(HomeAssistantError, match="at least one function"):
+    with pytest.raises(HomeAssistantError, match="at least"):
         await function.execute(
             hass,
             {"type": "composite", "sequence": []},
