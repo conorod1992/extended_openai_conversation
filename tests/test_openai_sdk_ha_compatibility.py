@@ -10,7 +10,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses import helpers
 
 
-@pytest.mark.parametrize("sdk", ["2.21.0", "2.45.0", "3.10.0"])
+@pytest.mark.parametrize("sdk", ["2.21.0", "2.45.0", "3.10.0", "3.26.0"])
 def test_manifest_allows_supported_ha_pins_and_bounds_unvalidated_sdk(sdk):
     manifest = json.loads(
         (
@@ -25,7 +25,7 @@ def test_manifest_allows_supported_ha_pins_and_bounds_unvalidated_sdk(sdk):
     )
     assert requirement.specifier.contains(sdk)
     assert not requirement.specifier.contains("2.20.0")
-    assert not requirement.specifier.contains("3.10.1")
+    assert not requirement.specifier.contains("3.26.1")
     assert not requirement.specifier.contains("4.0.0")
 
 
@@ -76,7 +76,7 @@ async def test_real_sdk_authentication_uses_ha_transport_once(
             assert requests[0].headers["authorization"] == "Bearer test-key"
 
 
-@pytest.mark.parametrize("sdk", ["2.21.0", "2.45.0", "3.10.0"])
+@pytest.mark.parametrize("sdk", ["2.21.0", "2.45.0", "3.10.0", "3.26.0"])
 def test_ci_dependency_install_respects_selected_ha_constraints(
     tmp_path, monkeypatch, sdk
 ):
@@ -96,7 +96,7 @@ def test_ci_dependency_install_respects_selected_ha_constraints(
         json.dumps(
             {
                 "requirements": [
-                    "openai>=2.21.0,<=3.10.0",
+                    "openai>=2.21.0,<=3.26.0",
                     "voluptuous-openapi==0.4.1",
                 ],
                 "dependencies": ["conversation"],
@@ -136,4 +136,4 @@ def test_ci_dependency_install_respects_selected_ha_constraints(
     command = commands[0]
     assert captured_constraints == [f"pydantic==2.13.4\naiohttp>=3.9\nopenai=={sdk}\n"]
     assert "voluptuous-openapi==0.4.1" in command
-    assert "openai>=2.21.0,<=3.10.0" in command
+    assert "openai>=2.21.0,<=3.26.0" in command

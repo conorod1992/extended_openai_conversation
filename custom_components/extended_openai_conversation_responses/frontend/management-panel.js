@@ -555,7 +555,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (path !== "/extended-openai" && !path.startsWith("/extended-openai/")) return;
         const route = routeFromPath(path);
         if (route.page === this._page && route.section === this._subsection) return;
-        await this._handleRouteChange(route);
+        await this._handleRouteChange(route, false);
         if (path === window.location.pathname) return;
       }
     }).catch((error) => {
@@ -565,7 +565,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._routeSyncPromise;
   }
 
-  async _handleRouteChange(route) {
+  async _handleRouteChange(route, waitForLoad = true) {
     const destination = route.section ? `${route.page}/${route.section}` : route.page;
     if (!await confirmStateSafeNavigation(this, destination)) {
       history.pushState({}, "", routePath(this._page, this._subsection));
@@ -578,7 +578,19 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._result = null;
     if (this._hydrateCleanConfiguration(this._viewKey())) this._render();
     else showPendingDestination(this);
-    await this._loadSection();
+    const loading = this._loadSection();
+    if (waitForLoad) await loading;
+    else {
+      // Serialize discard prompts, not network reads. A newer route must be
+      // able to invalidate the old load token while its request is still pending.
+      const loadToken = this._loadToken;
+      void loading.catch((error) => {
+        if (destination !== this._viewKey() || loadToken !== this._loadToken) return;
+        this._busy = false;
+        this._error = error.message || String(error);
+        this._render();
+      });
+    }
   }
 
   _viewKey(page = this._page, subsection = this._subsection) {

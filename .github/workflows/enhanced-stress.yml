@@ -1,4 +1,5 @@
 name: Enhanced nightly acceptance and stress
+run-name: Enhanced · ${{ inputs.campaign || 'all' }} / ${{ inputs.intensity || 'scheduled' }}
 
 on:
   schedule:

@@ -244,6 +244,10 @@ def test_real_final_gate_requires_intended_candidate_even_when_jobs_agree(
     )
     assert index["candidate_sha"] == SOURCE
     assert index["passed"] is (expected == 0)
+    assert index["scope"] == "selected-campaigns"
+    assert index["intensities"] == ["normal"]
+    assert index["expected_rows"] == 2
+    assert index["full_programme_passed"] is False
     if expected:
         assert any(
             SOURCE in error and WRONG in error for error in index["identity_errors"]

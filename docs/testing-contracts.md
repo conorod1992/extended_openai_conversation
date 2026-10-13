@@ -95,3 +95,25 @@ acceptance is required by these deterministic checks.
 - Native implementation validation belongs to its backend and runs recursively before any Composite child executes. Stored configuration stays serializable; runtime hydration remains a separate boundary.
 - Knowledge and Temporary Memory decode canonical records on import, cold load and failed-save reconciliation. Accepted normalized values are the values indexed, published and re-exported. Startup normalization preserves unrelated malformed Knowledge records and restore-journal evidence.
 - Retired transfer files are immediately unusable but remain owned and quota-accounted until physically deleted. Cleanup attempts every detached file and retries individual failures with bounded backoff. Shutdown always attempts owner-wide cleanup; its ownership handle remains retryable after failure. Pre-registration allocation failures remain owned too. A committed restore followed by upload deletion failure returns `cleanup_pending: true` with its successful restore result; this does not require repeating the restore.
+
+
+## PR regressions and Enhanced certification scope
+
+PR lint runs the nightly selection and execution-catalog guards without Home
+Assistant fixtures. A new real-HA file must be selected by Enhanced or explicitly
+assigned to an existing genuine-HA acceptance job in
+`tests_stress/nightly_real_ha_exclusions.json`. New selected test functions also
+need review in `tests_stress/nightly_execution_contract.json`; do not replace the
+catalog with only the cases from a targeted collection.
+
+Backend PR checks exercise the existing Composite business-outcome and resource
+boundary stress cases. Frontend browser checks exercise delayed-read navigation
+once per PR, alongside the normal sharded smoke suite. SDK range changes run the
+required pinned SDK wire matrix, including its tested upper boundary; newer SDKs
+remain advisory until validated and deliberately admitted.
+
+Enhanced summaries and `certification-final.json` report their campaign and
+intensity scope. `passed` means the selected scope passed. Only a successful run
+selecting all campaigns at both normal and heavy intensities sets
+`full_programme_passed`; a campaign-only green run cannot certify the full
+programme. Scheduled long-lifetime heavy execution remains in its dedicated lane.

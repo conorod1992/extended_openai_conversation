@@ -293,7 +293,7 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
                     if failed:
                         with pytest.raises(HomeAssistantError):
                             await get_function("composite").execute(
-                                hass, {"sequence": [validated]}, arguments, None, []
+                                hass, {"type": "composite", "sequence": [validated]}, arguments, None, []
                             )
                         record(
                             stress_trace,
@@ -305,7 +305,7 @@ async def test_shared_backend_business_outcomes_survive_enclosing_workflows(
                         )
                         continue
                     actual = await get_function("composite").execute(
-                        hass, {"sequence": [validated]}, arguments, None, []
+                        hass, {"type": "composite", "sequence": [validated]}, arguments, None, []
                     )
                 elif workflow == "request_rule":
                     for rule in agent._request_rules.snapshot()["rules"]:
