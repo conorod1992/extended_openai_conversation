@@ -491,7 +491,19 @@ class QuietHoursManager:
             try:
                 await self._async_save_locked()
             except BaseException:
-                self._config = previous
+                # Storage may have committed before the acknowledgement failed.
+                # Reload the durable config rather than blindly reverting RAM.
+                # Preserve the original exception but bring scheduling in line
+                # with the persisted state wherever readback succeeds.
+                try:
+                    stored = await self._store.async_load()
+                    durable = stored.get("config") if isinstance(stored, Mapping) else None
+                    self._config = (
+                        _config_from_data(durable) if durable is not None else previous
+                    )
+                except Exception:
+                    self._config = candidate
+                self._reschedule()
                 raise
             now = dt_util.now()
             old_period = (
