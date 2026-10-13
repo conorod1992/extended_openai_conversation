@@ -4,7 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-import voluptuous as vol
+
+from custom_components.extended_openai_conversation_responses.exceptions import InvalidFunction
 
 from custom_components.extended_openai_conversation_responses import quiet_hours as qh
 from custom_components.extended_openai_conversation_responses.functions.web import ScrapeFunction
@@ -13,7 +14,7 @@ from custom_components.extended_openai_conversation_responses.functions.web impo
 def test_scrape_requires_nonempty_sensor_before_any_network_request():
     function = ScrapeFunction()
     # Missing extraction is not a valid executable Scrape configuration.
-    with pytest.raises((vol.Invalid, KeyError, ValueError)):
+    with pytest.raises(InvalidFunction):
         function.validate_schema({"type": "scrape", "resource": "https://example.com"})
     with pytest.raises((vol.Invalid, KeyError, ValueError)):
         function.validate_schema({
@@ -63,11 +64,14 @@ async def test_legacy_backup_finalization_uses_executor(monkeypatch):
     monkeypatch.setattr(
         backup, "async_collect_backup_snapshot", AsyncMock(return_value=snapshot),
     )
-    hass = SimpleNamespace(async_add_executor_job=AsyncMock(return_value={"json": "done"}))
+    async def fake_to_thread(func, *args):
+        captured.append((func, args))
+        return {"json": "done"}
+
+    monkeypatch.setattr(backup.asyncio, "to_thread", fake_to_thread)
+    hass = SimpleNamespace()
     result = await backup.async_create_backup(
         hass, SimpleNamespace(entry_id="entry"), SimpleNamespace(subentry_id="agent")
     )
     assert result == {"json": "done"}
-    hass.async_add_executor_job.assert_awaited_once_with(
-        backup.finalize_backup_snapshot, snapshot
-    )
+    assert captured == [(backup.finalize_backup_snapshot, (snapshot,))]
