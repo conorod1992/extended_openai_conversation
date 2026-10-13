@@ -321,6 +321,10 @@ async def test_quiet_hours_apply_and_restore_failures_retain_context(
     hass, monkeypatch, caplog, kind
 ) -> None:
     caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(
+        quiet_hours_runtime.er, "async_get",
+        lambda _hass: SimpleNamespace(async_get=lambda _entity_id: None),
+    )
     manager = quiet_hours_runtime.QuietHoursManager(hass)
     manager._async_save_locked = AsyncMock()
     manager._async_set_volume = AsyncMock(side_effect=RuntimeError(SECRET))
@@ -328,6 +332,7 @@ async def test_quiet_hours_apply_and_restore_failures_retain_context(
     monkeypatch.setattr(quiet_hours_runtime, "_current_volume", lambda *_: 0.8)
     monkeypatch.setattr(quiet_hours_runtime, "_current_switch", lambda *_: True)
     controls = {}
+    manager._active = {"controls": controls}
     if kind == "volume":
         await manager._async_apply_volume_locked(
             "assist_satellite.room", "media_player.room", controls

@@ -185,6 +185,7 @@ async def test_quiet_hours_disabled_state_reschedules_existing_subscriptions(
 
 @pytest.mark.asyncio
 async def test_quiet_hours_restore_discards_malformed_controls(hass) -> None:
+    from copy import deepcopy
     from custom_components.extended_openai_conversation_responses import (
         quiet_hours_runtime as quiet,
     )
@@ -196,12 +197,18 @@ async def test_quiet_hours_restore_discards_malformed_controls(hass) -> None:
             "switch.bad": "not-a-control",
         }
     }
-    manager._async_save_locked = AsyncMock()
+    generations = []
+    manager._async_save_locked = AsyncMock(
+        side_effect=lambda: generations.append(deepcopy(manager._active))
+    )
 
     await manager._async_restore_locked()
 
     assert manager._active is None
-    manager._async_save_locked.assert_awaited_once()
+    assert len(generations) == 2
+    assert generations[0]["controls"] == {}
+    assert generations[1] is None
+    hass.services.async_call.assert_not_awaited()
 
 
 def test_sentence_pattern_whitespace_is_normalized() -> None:
