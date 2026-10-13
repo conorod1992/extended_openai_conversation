@@ -605,6 +605,8 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         )
 
     async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
+        if not await self._async_recover_configuration_locked():
+            return
         if self._migrate_control_entity_ids():
             await self._async_save_control_state_locked()
         if self._active is not None:

@@ -181,3 +181,25 @@ async def test_invalid_control_readback_installs_neither_half_and_retries_safely
     assert not manager.config.enabled
     assert manager.active is None
     assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.8
+
+
+@pytest.mark.parametrize("shutdown", [False, True])
+async def test_unreadable_generation_blocks_direct_restore_and_shutdown_actions(
+    hass, monkeypatch, timers, shutdown
+):
+    manager = await _manager(hass, monkeypatch, True)
+    manager._active["controls"]["media_player.bedroom"]["original_value"] = 0.6
+    manager._store = SimpleNamespace(
+        async_save=AsyncMock(side_effect=OSError("write acknowledgement lost")),
+        async_load=AsyncMock(side_effect=OSError("read unavailable")),
+    )
+    with pytest.raises(OSError, match="write acknowledgement"):
+        await manager._async_save_control_state_locked()
+    hass.services.async_call.reset_mock()
+    if shutdown:
+        await manager.async_shutdown()
+    else:
+        await manager._async_restore_locked()
+    hass.services.async_call.assert_not_awaited()
+    assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.2
+    assert manager._config_recovery_pending

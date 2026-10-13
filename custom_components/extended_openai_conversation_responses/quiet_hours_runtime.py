@@ -889,6 +889,8 @@ class QuietHoursManager:
             await self._async_save_locked()
 
     async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
+        if not await self._async_recover_configuration_locked():
+            return
         if self._active is None:
             return
         controls = self._active.get("controls", {})
