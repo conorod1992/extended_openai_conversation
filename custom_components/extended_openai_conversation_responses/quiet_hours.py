@@ -648,11 +648,20 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         for destination, records in destinations.items():
             # Resolve the entire mapping before moving anything: swaps and rename
             # chains must carry each identity's baseline to its current ID.
-            # Pending intents have not altered a device. They cannot displace
+            # A legacy ID alone cannot establish ownership against a record
+            # whose stable registry identity resolves to this current device.
+            verified = [
+                record
+                for record in records
+                if isinstance(record[2].get("registry_identity"), list)
+                and len(record[2]["registry_identity"]) == 3
+            ]
+            candidates = verified or records
+            # Among those candidates, pending intents cannot displace
             # an applied (or possibly applied prepared) control's restoration
             # obligation merely because their old key matches the destination.
-            owned = [record for record in records if record[0] == "controls"]
-            candidates = owned or records
+            owned = [record for record in candidates if record[0] == "controls"]
+            candidates = owned or candidates
             anchored = [record for record in candidates if record[1] == destination]
             selected = (
                 anchored[:1] if anchored else candidates if len(candidates) == 1 else []

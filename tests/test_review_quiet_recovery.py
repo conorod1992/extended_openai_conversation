@@ -344,10 +344,18 @@ def test_conflicting_unanchored_ownership_is_released_without_reclaim(
 
 
 @pytest.mark.parametrize("kind", ["volume", "switch"])
-@pytest.mark.parametrize("pending_anchored", [False, True])
-@pytest.mark.parametrize("pending_identity", [False, True])
-async def test_pending_collision_preserves_applied_restoration_across_restart(
-    hass, monkeypatch, kind, pending_anchored, pending_identity
+@pytest.mark.parametrize(
+    "pending_anchored,pending_identity,legacy_applied",
+    [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (True, True, False),
+        (True, False, True),
+    ],
+)
+async def test_ownership_collision_preserves_verified_restoration_across_restart(
+    hass, monkeypatch, kind, pending_anchored, pending_identity, legacy_applied
 ):
     manager = _stateful_public_manager(hass)
     domain = "media_player" if kind == "volume" else "switch"
@@ -374,14 +382,19 @@ async def test_pending_collision_preserves_applied_restoration_across_restart(
     if not pending_identity:
         pending.pop("registry_identity")
     pending_id = new if pending_anchored else other
+    controls = {old: owned}
+    pending_controls = {pending_id: pending}
+    if legacy_applied:
+        controls.update(pending_controls)
+        pending_controls = {}
     # Include the persisted envelope and use the public normalizer: legacy
     # identityless pending records remain supported after a restart.
     manager._active = manager._normalize_active(
         {
             "period_started_at": "2026-09-11T22:00:00+00:00",
             "period_ends_at": "2026-09-12T07:00:00+00:00",
-            "controls": {old: owned},
-            "pending_controls": {pending_id: pending},
+            "controls": controls,
+            "pending_controls": pending_controls,
             "observed_controls": [old, pending_id],
         }
     )
