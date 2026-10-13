@@ -445,6 +445,7 @@ class RestFunction(Function):
                 {
                     vol.Optional("value_template"): cv.template,
                     vol.Optional("payload_template"): _payload_template,
+                    vol.Required("sensor"): vol.All(cv.ensure_list, vol.Length(min=1)),
                 }
             )
         )
