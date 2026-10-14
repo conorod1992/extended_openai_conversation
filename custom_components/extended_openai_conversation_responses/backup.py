@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass
+import io
 import json
 import logging
 from pathlib import Path
@@ -27,6 +28,7 @@ from .agent_maintenance import (
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
 )
+from .bounded_json import JSONBudgetExceeded, check_utf8_budget, iter_bounded_json
 from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
@@ -248,12 +250,16 @@ def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         },
         "request_rules": _safe_configuration(snapshot["request_rules"]),
     }
-    serialized = json.dumps(document, indent=2, ensure_ascii=False)
-    if len(serialized.encode("utf-8")) > MAX_LEGACY_EXPORT_BYTES:
+    try:
+        with io.StringIO() as output:
+            for chunk in iter_bounded_json(document, MAX_LEGACY_EXPORT_BYTES, indent=2):
+                output.write(chunk.decode("utf-8"))
+            serialized = output.getvalue()
+    except JSONBudgetExceeded as err:
         raise BackupError(
             "This backup is too large for the legacy one-message JSON export; "
             "use the full backup transfer interface"
-        )
+        ) from err
     title = str(document["agent"]["title"])
     safe_title = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")
     created_at = str(document["created_at"])
@@ -316,23 +322,26 @@ def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
         raise ValueError("Backup validation byte limit is invalid")
     limit_mb = max_bytes // (1024 * 1024)
     if isinstance(value, str):
-        if len(value.encode("utf-8")) > max_bytes:
-            raise BackupError(f"The backup exceeds the {limit_mb} MB safety limit")
+        try:
+            check_utf8_budget(value, max_bytes)
+        except JSONBudgetExceeded as err:
+            raise BackupError(
+                f"The backup exceeds the {limit_mb} MB safety limit"
+            ) from err
         try:
             value = json.loads(value)
         except json.JSONDecodeError as err:
             raise BackupError("The backup is incomplete or corrupted") from err
     else:
         try:
-            encoded_size = len(
-                json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode(
-                    "utf-8"
-                )
-            )
+            for _chunk in iter_bounded_json(value, max_bytes):
+                pass
+        except JSONBudgetExceeded as err:
+            raise BackupError(
+                f"The backup exceeds the {limit_mb} MB safety limit"
+            ) from err
         except (TypeError, ValueError) as err:
             raise BackupError("The backup is incomplete or corrupted") from err
-        if encoded_size > max_bytes:
-            raise BackupError(f"The backup exceeds the {limit_mb} MB safety limit")
     if not isinstance(value, dict):
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     return value

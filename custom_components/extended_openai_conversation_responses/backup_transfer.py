@@ -31,6 +31,7 @@ from homeassistant.helpers.event import async_call_later
 
 from . import backup, transfer
 from .agent_maintenance import get_agent_maintenance_gate
+from .bounded_json import JSONBudgetExceeded, iter_bounded_json
 from .const import DOMAIN
 from .ha_schema import websocket_command as ha_websocket_command
 
@@ -405,7 +406,6 @@ def _build_archive_file(
     try:
         payload_hash = hashlib.sha256()
         payload_bytes = 0
-        encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
         with open(path, "w+b") as archive_file:
             with zipfile.ZipFile(
                 archive_file,
@@ -415,13 +415,10 @@ def _build_archive_file(
                 allowZip64=True,
             ) as archive:
                 with archive.open(PAYLOAD_NAME, "w", force_zip64=True) as payload:
-                    for text in encoder.iterencode(document):
-                        encoded = text.encode("utf-8")
+                    for encoded in iter_bounded_json(
+                        document, MAX_BACKUP_UNCOMPRESSED_BYTES
+                    ):
                         payload_bytes += len(encoded)
-                        if payload_bytes > MAX_BACKUP_UNCOMPRESSED_BYTES:
-                            raise backup.BackupError(
-                                "This full backup exceeds the 128 MB uncompressed safety limit"
-                            )
                         payload_hash.update(encoded)
                         payload.write(encoded)
                 manifest = {
@@ -449,6 +446,11 @@ def _build_archive_file(
             "sha256": _hash_file(path),
             "uncompressed_size": payload_bytes,
         }
+    except JSONBudgetExceeded as err:
+        _remove_file(path)
+        raise backup.BackupError(
+            "This full backup exceeds the 128 MB uncompressed safety limit"
+        ) from err
     except BaseException:
         _remove_file(path)
         raise
