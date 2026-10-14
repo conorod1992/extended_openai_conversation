@@ -93,6 +93,11 @@ def _install_native_boundary(hass, monkeypatch):
         native, "async_call_ha_action", ha_actions._async_call_ha_action_unchecked
     )
     monkeypatch.setattr(ha_actions, "_capture_previous_state", lambda *a: {})
+    # This service double models registry admission rejections. Genuine HA tests
+    # additionally distinguish identical exception types raised by a handler.
+    monkeypatch.setattr(
+        ha_actions, "_is_pre_dispatch_schema_rejection", lambda err: True
+    )
     hass.services.has_service.return_value = True
     hass.services.supports_response.return_value = SupportsResponse.NONE
     hass.services.async_call = AsyncMock(return_value=None)

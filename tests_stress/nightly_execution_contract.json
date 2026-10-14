@@ -820,6 +820,7 @@
     "tests_real_ha/test_delayed_tool_process_restart.py::test_delayed_tool_survives_process_restart_and_never_replays_execution_boundary",
     "tests_real_ha/test_deleted_user_memory_edit.py::test_admin_edit_preserves_deleted_owner_without_permitting_new_assignments",
     "tests_real_ha/test_effect_receipts.py::test_completed_handler_then_schema_rejection_remains_partial",
+    "tests_real_ha/test_effect_receipts.py::test_handler_validation_exception_after_effect_remains_uncertain",
     "tests_real_ha/test_effect_receipts.py::test_service_rejection_settles_only_current_effect_and_corrected_retry",
     "tests_real_ha/test_entity_attribute_runtime_integrity.py::test_selected_attribute_is_live_missing_safe_and_exposure_bound",
     "tests_real_ha/test_entity_attribute_runtime_integrity.py::test_selected_attribute_runtime_bounding_reaches_both_provider_apis",

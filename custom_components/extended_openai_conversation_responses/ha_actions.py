@@ -16,7 +16,14 @@ from homeassistant.const import (
     ATTR_LABEL_ID,
     ENTITY_MATCH_ALL,
 )
-from homeassistant.core import Context, HomeAssistant, State, SupportsResponse
+from homeassistant.core import (
+    Context,
+    HomeAssistant,
+    ServiceCall,
+    ServiceRegistry,
+    State,
+    SupportsResponse,
+)
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import (
     device_registry as dr,
@@ -117,6 +124,27 @@ async def async_authorize_ha_action(
     return entity_ids
 
 
+def _is_pre_dispatch_schema_rejection(error: BaseException) -> bool:
+    """Require actual registry validation provenance before releasing a receipt.
+
+    Handlers can raise the very same schema exception after performing an effect.
+    HA constructs a ServiceCall after validating and retains it while executing
+    the handler. Its presence in the traceback proves this is no longer an
+    admission rejection. Missing registry provenance stays conservatively unknown
+    (for example a custom service adapter), without running validators twice or
+    wrapping/modifying HA's global service registrations.
+    """
+    registry_frame = False
+    trace = error.__traceback__
+    while trace is not None:
+        frame = trace.tb_frame
+        if any(isinstance(value, ServiceCall) for value in frame.f_locals.values()):
+            return False
+        registry_frame |= frame.f_code is ServiceRegistry.async_call.__code__
+        trace = trace.tb_next
+    return registry_frame
+
+
 async def _async_call_ha_action_unchecked(
     hass: HomeAssistant,
     domain: str,
@@ -165,7 +193,8 @@ async def _async_call_ha_action_unchecked(
             domain=domain, service=service, **kwargs
         )
     except _SERVICE_SCHEMA_ERRORS as err:
-        execution_rejected(receipt)
+        if _is_pre_dispatch_schema_rejection(err):
+            execution_rejected(receipt)
         # Home Assistant has transitioned service schemas from voluptuous to
         # probatio. Keep the integration's action boundary stable across both: a
         # schema rejection is an ordinary Home Assistant action failure that the

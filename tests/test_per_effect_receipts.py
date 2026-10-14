@@ -488,3 +488,46 @@ async def test_queue_readback_cannot_settle_an_interleaved_effect(hass, committe
         ("persistence", "completed" if committed else "rejected"),
         ("unrelated", "uncertain"),
     ]
+
+
+@pytest.mark.parametrize("handler_failure", [False, True])
+async def test_genuine_service_provenance_distinguishes_same_exception_type(
+    tmp_path, handler_failure
+):
+    from homeassistant.core import HomeAssistant
+    from custom_components.extended_openai_conversation_responses.ha_actions import (
+        _async_call_ha_action_unchecked,
+    )
+
+    hass = HomeAssistant(str(tmp_path))
+    calls = []
+
+    async def handler(call):
+        calls.append(call.data["amount"])
+        raise vol.Invalid("handler failed after its effect")
+
+    hass.services.async_register(
+        "receipt_probe",
+        "apply",
+        handler,
+        schema=vol.Schema({vol.Required("amount"): int}),
+    )
+    entity, call = SimpleNamespace(), _call("first", "effect", RAW)
+    try:
+        with (
+            receipts.execution_attempt(entity, call, _tool()),
+            pytest.raises(HomeAssistantError),
+        ):
+            await _async_call_ha_action_unchecked(
+                hass,
+                "receipt_probe",
+                "apply",
+                data={"amount": 1 if handler_failure else "invalid"},
+                blocking=True,
+            )
+        assert calls == ([1] if handler_failure else [])
+        assert entity._execution_tool_outcomes[id(call)] == (
+            "uncertain" if handler_failure else "rejected"
+        )
+    finally:
+        await hass.async_stop(force=True)

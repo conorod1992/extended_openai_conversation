@@ -135,3 +135,31 @@ async def test_completed_handler_then_schema_rejection_remains_partial(hass):
                 hass, "receipt_probe", "apply", data={"amount": 1}, blocking=True
             )
     assert calls == [1]
+
+
+async def test_handler_validation_exception_after_effect_remains_uncertain(hass):
+    calls = []
+
+    async def handler(call):
+        calls.append(call.data["amount"])
+        raise vol.Invalid("handler failed after applying the effect")
+
+    hass.services.async_register(
+        "receipt_probe",
+        "apply",
+        handler,
+        schema=vol.Schema({vol.Required("amount"): int}),
+    )
+    entity = SimpleNamespace()
+    tool = {
+        "spec": {"name": "effect"},
+        "function": {"type": "native", "name": "execute_service_single"},
+    }
+    call = llm.ToolInput(tool_name="effect", tool_args={}, id="handler-failure")
+    with execution_attempt(entity, call, tool), pytest.raises(HomeAssistantError):
+        await _async_call_ha_action_unchecked(
+            hass, "receipt_probe", "apply", data={"amount": 1}, blocking=True
+        )
+    assert calls == [1]
+    assert entity._execution_tool_outcomes[id(call)] == "uncertain"
+    assert entity._execution_effect_receipts[id(call)][0].outcome == "uncertain"
