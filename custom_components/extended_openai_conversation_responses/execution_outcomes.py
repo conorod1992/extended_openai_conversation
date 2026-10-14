@@ -68,6 +68,12 @@ _CHILD_PATH: ContextVar[tuple[int, ...]] = ContextVar("eoai_effect_path", defaul
 _OPERATION: ContextVar[EffectOperation | None] = ContextVar(
     "eoai_effect_operation", default=None
 )
+_DETACHED: ContextVar[bool] = ContextVar("eoai_detached_execution", default=False)
+
+
+def execution_is_detached() -> bool:
+    """Whether this independent job has no provider continuation to recover."""
+    return _DETACHED.get()
 
 
 @contextmanager
@@ -165,10 +171,12 @@ def detached_execution() -> Iterator[None]:
     attempt_token = _ATTEMPT.set(None)
     operation_token = _OPERATION.set(None)
     path_token = _CHILD_PATH.set(())
+    detached_token = _DETACHED.set(True)
     try:
         with bind_effect_replay_scope(None, None):
             yield
     finally:
+        _DETACHED.reset(detached_token)
         _CHILD_PATH.reset(path_token)
         _OPERATION.reset(operation_token)
         _ATTEMPT.reset(attempt_token)

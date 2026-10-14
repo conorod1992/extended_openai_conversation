@@ -30,6 +30,8 @@ _MAX_DISPATCH_RECORDS = 4096
 
 def _retire_replay_history(entity: Any, conversation_id: str | None) -> None:
     """Keep bounded conservative evidence when precise history is discarded."""
+    if conversation_id == "":
+        return  # Independent deferred jobs have no failed provider continuation.
     retired = getattr(entity, "_retired_replay_conversations", None)
     if not isinstance(retired, set):
         retired = entity._retired_replay_conversations = set()
@@ -209,6 +211,11 @@ def record_dispatch(
         if scope is not None and scope.active and scope.entity is entity
         else None
     )
+    if conversation_id is None:
+        from .execution_outcomes import execution_is_detached
+
+        if execution_is_detached():
+            conversation_id = ""
     canonical = getattr(entity, "_dispatched_tool_signatures", None)
     if not isinstance(canonical, dict):
         canonical = entity._dispatched_tool_signatures = {}

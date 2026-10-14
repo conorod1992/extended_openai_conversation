@@ -149,3 +149,30 @@ async def test_tombstone_capacity_remains_fail_closed(hass, monkeypatch):
     await exchange(_args(9), chat_log=fresh)
     assert effects == [(0, int), (1, int), (2, int), (9, int)]
     assert len(entity._retired_replay_conversations) == 1
+
+
+async def test_independent_jobs_do_not_retire_conversation_history(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses.execution_outcomes import (
+        detached_execution,
+    )
+    from homeassistant.helpers import llm
+
+    monkeypatch.setattr(guard, "_MAX_DISPATCH_RECORDS", 2)
+    entity, _, exchange, effects, _ = await _service_owner(
+        hass, vol.Schema({"amount": int, "entity_id": [str]})
+    )
+    tool = {
+        "spec": {"name": "probe", "parameters": {"type": "object"}},
+        "function": {"type": "native", "name": "execute_service_single"},
+    }
+    with detached_execution():
+        for index in range(5):
+            await entity._execute_function_tool(
+                tool,
+                llm.ToolInput(tool_name="probe", tool_args=_args(index), id=str(index)),
+                None,
+                [{"entity_id": "sensor.probe"}],
+            )
+    await exchange(_args(9))
+    assert len(effects) == 6
+    assert not getattr(entity, "_replay_history_incomplete", False)

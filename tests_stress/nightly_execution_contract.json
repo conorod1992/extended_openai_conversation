@@ -2311,7 +2311,8 @@
     "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_typed_and_exact_text_results_survive_local_and_provider_consumers[value4]",
     "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_typed_and_exact_text_results_survive_local_and_provider_consumers[value5]",
     "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_typed_and_exact_text_results_survive_local_and_provider_consumers[value6]",
-    "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_typed_and_exact_text_results_survive_local_and_provider_consumers[{\\n  \"value\": [1, 2]\\n}\\n]"
+    "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_typed_and_exact_text_results_survive_local_and_provider_consumers[{\\n  \"value\": [1, 2]\\n}\\n]",
+    "tests_real_ha/test_service_effect_identity.py::test_independent_jobs_do_not_retire_conversation_history"
   ],
   "browser": {
     "browser": [
