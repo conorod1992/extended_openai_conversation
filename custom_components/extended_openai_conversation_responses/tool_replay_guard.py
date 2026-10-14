@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from functools import wraps
 import hashlib
 import json
-import math
 from typing import Any
 
 from homeassistant.components import conversation
@@ -25,6 +24,38 @@ from .parallel_tool_execution import is_parallel_safe_integration_tool
 from .schema_errors import SCHEMA_ERRORS
 
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
+_MAX_RETIRED_CONVERSATIONS = 4096
+_MAX_DISPATCH_RECORDS = 4096
+
+
+def _retire_replay_history(entity: Any, conversation_id: str | None) -> None:
+    """Keep bounded conservative evidence when precise history is discarded."""
+    retired = getattr(entity, "_retired_replay_conversations", None)
+    if not isinstance(retired, set):
+        retired = entity._retired_replay_conversations = set()
+    digest = (
+        hashlib.sha256(conversation_id.encode()).digest()
+        if conversation_id is not None
+        else None
+    )
+    if digest is not None:
+        getattr(entity, "_acknowledged_replay_conversations", {}).pop(digest, None)
+    if digest is None or (
+        digest not in retired and len(retired) >= _MAX_RETIRED_CONVERSATIONS
+    ):
+        entity._replay_history_incomplete = True
+        if conversation_id is None:
+            entity._acknowledged_replay_conversations = {}
+    else:
+        retired.add(digest)
+
+
+def _replay_history_incomplete(entity: Any, conversation_id: str) -> bool:
+    digest = hashlib.sha256(conversation_id.encode()).digest()
+    return digest in getattr(entity, "_retired_replay_conversations", ()) or (
+        getattr(entity, "_replay_history_incomplete", False)
+        and digest not in getattr(entity, "_acknowledged_replay_conversations", ())
+    )
 
 
 @dataclass
@@ -96,7 +127,9 @@ def effect_signature(kind: str, prepared: Any) -> str:
         if isinstance(value, list):
             return [canonical(item) for item in value]
         if value is None or isinstance(value, (str, int, float, bool)):
-            return _canonical_numbers(value)
+            # Handler-visible Python scalar types can be meaningful even when
+            # JSON Schema considers two numeric representations equivalent.
+            return [type(value).__name__, value]
         return {
             "opaque": [type(value).__module__, type(value).__qualname__, str(value)]
         }
@@ -117,7 +150,11 @@ def check_effect_replay(entity: Any, signature: str) -> None:
     signatures = getattr(entity, "_unacknowledged_effects", {}).get(
         scope.conversation_id, ()
     )
-    if signature in signatures or "*" in signatures:
+    if (
+        signature in signatures
+        or "*" in signatures
+        or _replay_history_incomplete(entity, scope.conversation_id)
+    ):
         raise EffectReplayBlocked(
             "Provider repeated an effect whose prior result was not acknowledged. "
             "Start a new conversation, or complete a turn without this effect before retrying"
@@ -163,6 +200,15 @@ def record_dispatch(
         and "delay" not in tool_input.tool_args
     )
     retained = dispatch_inputs(tool_input)
+    owners = getattr(entity, "_dispatched_tool_conversations", None)
+    if not isinstance(owners, dict):
+        owners = entity._dispatched_tool_conversations = {}
+    scope = _effect_replay_scope.get()
+    conversation_id = (
+        scope.conversation_id
+        if scope is not None and scope.active and scope.entity is entity
+        else None
+    )
     canonical = getattr(entity, "_dispatched_tool_signatures", None)
     if not isinstance(canonical, dict):
         canonical = entity._dispatched_tool_signatures = {}
@@ -192,27 +238,23 @@ def record_dispatch(
     )
     for item in retained:
         dispatched[id(item)] = item
+        owners[id(item)] = conversation_id
         if signature is not None:
             canonical[id(item)] = (signature, spec)
         if verified_read:
             read_only[id(item)] = item
         else:
             read_only.pop(id(item), None)
-    while len(dispatched) > 4096:
-        canonical.pop(next(iter(dispatched)), None)
-        read_only.pop(next(iter(dispatched)), None)
-        dispatched.pop(next(iter(dispatched)))
-
-
-def _canonical_numbers(value: Any) -> Any:
-    """Normalize equivalent JSON numbers without rounding integers through float."""
-    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
-        return int(value)
-    if isinstance(value, Mapping):
-        return {key: _canonical_numbers(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_canonical_numbers(item) for item in value]
-    return value
+    while len(dispatched) > _MAX_DISPATCH_RECORDS:
+        oldest = next(iter(dispatched))
+        if oldest not in read_only:
+            _retire_replay_history(entity, owners.get(oldest))
+        canonical.pop(oldest, None)
+        read_only.pop(oldest, None)
+        dispatched.pop(oldest)
+        owners.pop(oldest, None)
+        getattr(entity, "_execution_tool_outcomes", {}).pop(oldest, None)
+        getattr(entity, "_execution_effect_receipts", {}).pop(oldest, None)
 
 
 def dispatch_inputs(tool_input: llm.ToolInput) -> list[llm.ToolInput]:
@@ -252,7 +294,6 @@ def _signature(
                     "execution": arguments,
                     "delay_seconds": _delay_as_timedelta(delay).total_seconds(),
                 }
-            arguments = _canonical_numbers(arguments)
     return json.dumps(
         [tool_input.tool_name, arguments],
         sort_keys=True,
@@ -349,6 +390,7 @@ def remember_unacknowledged_calls(
         in {"partial", "uncertain"}
     )
     while len(ledger) > _MAX_AMBIGUOUS_CONVERSATIONS:
+        _retire_replay_history(entity, next(iter(ledger)))
         effects.pop(next(iter(ledger)), None)
         schemas.pop(next(iter(ledger)), None)
         uncertain.pop(next(iter(ledger)), None)
@@ -359,6 +401,8 @@ def was_unacknowledged_equivalent(
     entity: Any, chat_log: conversation.ChatLog, tool_input: llm.ToolInput
 ) -> bool:
     """Match only calls from an unresolved failed continuation in this conversation."""
+    if _replay_history_incomplete(entity, chat_log.conversation_id):
+        return True
     ledger = getattr(entity, "_unacknowledged_tool_calls", None)
     if not isinstance(ledger, dict):
         return False
@@ -386,3 +430,24 @@ def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None
         getattr(entity, "_unacknowledged_uncertain_tools", {}).pop(
             conversation_id, None
         )
+    if isinstance(conversation_id, str):
+        digest = hashlib.sha256(conversation_id.encode()).digest()
+        getattr(entity, "_retired_replay_conversations", set()).discard(digest)
+        if getattr(entity, "_replay_history_incomplete", False):
+            acknowledged = getattr(entity, "_acknowledged_replay_conversations", None)
+            if not isinstance(acknowledged, dict):
+                acknowledged = entity._acknowledged_replay_conversations = {}
+            acknowledged[digest] = None
+            while len(acknowledged) > _MAX_AMBIGUOUS_CONVERSATIONS:
+                acknowledged.pop(next(iter(acknowledged)))
+        owners = getattr(entity, "_dispatched_tool_conversations", {})
+        for key in [key for key, owner in owners.items() if owner == conversation_id]:
+            owners.pop(key, None)
+            for name in (
+                "_dispatched_tool_inputs",
+                "_dispatched_tool_signatures",
+                "_read_only_tool_inputs",
+                "_execution_tool_outcomes",
+                "_execution_effect_receipts",
+            ):
+                getattr(entity, name, {}).pop(key, None)

@@ -2233,7 +2233,24 @@
     "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[invalid_active-True]",
     "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[unavailable1-False]",
     "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[unavailable1-True]",
-    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_repeated_cancellation_settles_recovery"
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_repeated_cancellation_settles_recovery",
+    "tests_real_ha/test_prepared_effect_recovery.py::test_automation_replay[changed_definition]",
+    "tests_real_ha/test_prepared_effect_recovery.py::test_automation_replay[discarded_id]",
+    "tests_real_ha/test_prepared_effect_recovery.py::test_automation_replay[identical]",
+    "tests_real_ha/test_prepared_effect_recovery.py::test_automation_replay[ignored_argument]",
+    "tests_real_ha/test_prepared_effect_recovery.py::test_broadcast_admission_refusal[capacity]",
+    "tests_real_ha/test_prepared_effect_recovery.py::test_broadcast_admission_refusal[disabled]",
+    "tests_real_ha/test_prepared_effect_recovery.py::test_broadcast_admission_refusal[empty]",
+    "tests_real_ha/test_prepared_effect_recovery.py::test_broadcast_equivalence[changed_message]",
+    "tests_real_ha/test_prepared_effect_recovery.py::test_broadcast_equivalence[identical]",
+    "tests_real_ha/test_prepared_effect_recovery.py::test_broadcast_equivalence[whitespace_equivalent]",
+    "tests_real_ha/test_service_effect_identity.py::test_acknowledged_turns_release_provenance_without_retirement",
+    "tests_real_ha/test_service_effect_identity.py::test_lost_dispatch_provenance_refuses_actual_replay",
+    "tests_real_ha/test_service_effect_identity.py::test_meaningful_number_types_are_distinct[False]",
+    "tests_real_ha/test_service_effect_identity.py::test_meaningful_number_types_are_distinct[True]",
+    "tests_real_ha/test_service_effect_identity.py::test_retired_conversation_refuses_replay_until_acknowledged",
+    "tests_real_ha/test_service_effect_identity.py::test_schema_preparation_runs_once_and_retains_raw_event",
+    "tests_real_ha/test_service_effect_identity.py::test_tombstone_capacity_remains_fail_closed"
   ],
   "browser": {
     "browser": [
@@ -3309,7 +3326,9 @@
       "tests_stress/test_native_history_automation_lifecycle.py",
       "tests_stress/test_request_rules_provider_wire.py::test_function_execution_failure_stops_rule_independently_of_capture",
       "tests_real_ha/test_ha_runtime_mutation.py",
-      "tests_stress/test_environment_edge_contracts.py"
+      "tests_stress/test_environment_edge_contracts.py",
+      "tests_real_ha/test_prepared_effect_recovery.py",
+      "tests_real_ha/test_service_effect_identity.py"
     ],
     "guest-security": [
       "tests_real_ha/test_management_authorization_matrix.py",

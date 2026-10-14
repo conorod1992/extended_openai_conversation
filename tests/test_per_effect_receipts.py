@@ -8,8 +8,6 @@ from unittest.mock import AsyncMock
 import pytest
 import voluptuous as vol
 
-from homeassistant.exceptions import HomeAssistantError
-
 from custom_components.extended_openai_conversation_responses import (
     execution_outcomes as receipts,
 )
@@ -28,10 +26,11 @@ from custom_components.extended_openai_conversation_responses.tool_exchange impo
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
     bind_effect_replay_scope,
     clear_unacknowledged_calls,
+    effect_signature,
     remember_unacknowledged_calls,
     was_unacknowledged_equivalent,
-    effect_signature,
 )
+from homeassistant.exceptions import HomeAssistantError
 from tests.test_function_tool_error_recovery import _call, _chat_log, _retain_calls
 from tests.test_review_replay_execution import (
     ALIAS,
@@ -324,11 +323,11 @@ async def test_persistence_replay_refusal_restores_ram_without_starting_save(has
     with (
         bind_effect_replay_scope(entity, log.conversation_id),
         receipts.execution_attempt(entity, retry, tool),
+        pytest.raises(HomeAssistantError, match="not acknowledged"),
     ):
-        with pytest.raises(HomeAssistantError, match="not acknowledged"):
-            await _async_settle_transactional_save(
-                pending, rollback, lambda: None, None, lambda: None
-            )
+        await _async_settle_transactional_save(
+            pending, rollback, lambda: None, None, lambda: None
+        )
     assert pending.cr_frame is None
     assert state == {"generation": "committed"}
     assert writes == []
@@ -352,7 +351,7 @@ async def test_internal_persistence_does_not_settle_enclosing_effect():
 
 def test_prepared_identity_supports_typed_mapping_keys_without_mutation():
     first = {"data": {1: "integer", "1": "string"}, "amount": 1.0}
-    equivalent = {"amount": 1, "data": {"1": "string", 1: "integer"}}
+    equivalent = {"amount": 1.0, "data": {"1": "string", 1: "integer"}}
     original = deepcopy(first)
     assert effect_signature("ha_service", first) == effect_signature(
         "ha_service", equivalent
@@ -494,10 +493,10 @@ async def test_queue_readback_cannot_settle_an_interleaved_effect(hass, committe
 async def test_genuine_service_provenance_distinguishes_same_exception_type(
     tmp_path, handler_failure
 ):
-    from homeassistant.core import HomeAssistant
     from custom_components.extended_openai_conversation_responses.ha_actions import (
         _async_call_ha_action_unchecked,
     )
+    from homeassistant.core import HomeAssistant
 
     hass = HomeAssistant(str(tmp_path))
     calls = []
@@ -577,11 +576,11 @@ def test_anonymous_scope_does_not_inherit_an_outer_conversation(missing_identity
 async def test_shared_entity_boundary_owns_receipts_without_conversation_wrapper(
     hass, monkeypatch, ai_task
 ):
-    from custom_components.extended_openai_conversation_responses.entity import (
-        ExtendedOpenAIBaseLLMEntity,
-    )
     from custom_components.extended_openai_conversation_responses.ai_task import (
         ExtendedOpenAITaskEntity,
+    )
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
     )
 
     _install_native_boundary(hass, monkeypatch)
@@ -701,10 +700,10 @@ async def test_admitted_delayed_work_detaches_even_while_parent_is_active(
 async def test_genuine_service_identity_preserves_handler_visible_response_mode(
     tmp_path,
 ):
-    from homeassistant.core import HomeAssistant, SupportsResponse
     from custom_components.extended_openai_conversation_responses.ha_actions import (
         _async_call_ha_action_unchecked,
     )
+    from homeassistant.core import HomeAssistant, SupportsResponse
 
     hass = HomeAssistant(str(tmp_path))
     calls = []

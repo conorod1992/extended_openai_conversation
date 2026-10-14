@@ -111,7 +111,7 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
         yield
     finally:
         attempt.active = False
-        from .tool_replay_guard import dispatch_inputs
+        from .tool_replay_guard import _retire_replay_history, dispatch_inputs
 
         outcomes = getattr(entity, "_execution_tool_outcomes", None)
         if not isinstance(outcomes, dict):
@@ -123,8 +123,16 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
             outcomes[id(item)] = attempt.outcome
             receipts[id(item)] = tuple(attempt.receipts)
         while len(outcomes) > 4096:
-            receipts.pop(next(iter(outcomes)), None)
-            outcomes.pop(next(iter(outcomes)))
+            oldest = next(iter(outcomes))
+            if outcomes[oldest] != "rejected" and oldest not in getattr(
+                entity, "_read_only_tool_inputs", {}
+            ):
+                _retire_replay_history(
+                    entity,
+                    getattr(entity, "_dispatched_tool_conversations", {}).get(oldest),
+                )
+            receipts.pop(oldest, None)
+            outcomes.pop(oldest)
         _OPERATION.reset(operation_token)
         _CHILD_PATH.reset(path_token)
         _ATTEMPT.reset(token)

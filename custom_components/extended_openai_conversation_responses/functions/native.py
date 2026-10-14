@@ -359,23 +359,12 @@ class NativeFunction(Function):
             origin_device_id=origin_device_id,
             **target,
         )
-        from ..execution_outcomes import execution_completed, execution_started
-
-        receipt = execution_started(
-            kind="broadcast",
-            prepared={
-                "message": str(arguments.get("message", "")),
-                "targets": targets,
-                "origin_device_id": origin_device_id,
-            },
-        )
         result = await manager.async_send(
             str(arguments.get("message", "")),
             entity_ids=targets,
             origin_device_id=origin_device_id,
             source="llm_tool",
         )
-        execution_completed(receipt)
         return {
             "success": True,
             "message_id": result["id"],
@@ -580,7 +569,15 @@ class NativeFunction(Function):
         async with lock:
             from ..execution_outcomes import execution_completed, execution_started
 
-            receipt = execution_started(kind="automation_update")
+            receipt = execution_started(
+                kind="automation_update",
+                prepared={
+                    "destination": str(automation_path),
+                    "definition": {
+                        key: value for key, value in config.items() if key != "id"
+                    },
+                },
+            )
             result = await _async_settle_automation_update(update())
             execution_completed(receipt)
             return result
