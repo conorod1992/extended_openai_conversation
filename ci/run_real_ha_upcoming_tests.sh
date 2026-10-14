@@ -3,6 +3,7 @@ set -euo pipefail
 set -o pipefail
 
 TEST_PATHS=(
+  tests_real_ha/test_execution_result_lifecycle_contracts.py
   tests_real_ha/test_service_effect_identity.py
   tests_real_ha/test_prepared_effect_recovery.py
   tests_real_ha/test_quiet_hours_generation_recovery.py
