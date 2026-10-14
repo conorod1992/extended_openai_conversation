@@ -2223,6 +2223,8 @@
     "tests_stress/test_restore_journal_writer_reader_contract.py::test_reader_rejects_foreign_or_incomplete_store_envelopes[missing-data]",
     "tests_stress/test_restore_journal_writer_reader_contract.py::test_reader_rejects_foreign_or_incomplete_store_envelopes[wrong-key]",
     "tests_stress/test_restore_journal_writer_reader_contract.py::test_reader_rejects_foreign_or_incomplete_store_envelopes[wrong-version]",
+    "tests_real_ha/test_backup_processing_boundary.py::test_uploaded_numeric_backup_does_not_reencode_on_loop[archive]",
+    "tests_real_ha/test_backup_processing_boundary.py::test_uploaded_numeric_backup_does_not_reencode_on_loop[legacy_json]",
     "tests/test_bounded_backup_serialization.py::test_archive_limit_failure_removes_partial_file[False]",
     "tests/test_bounded_backup_serialization.py::test_archive_limit_failure_removes_partial_file[True]",
     "tests/test_bounded_backup_serialization.py::test_archive_preserves_payload_integrity_and_independent_limit[False]",
@@ -2241,6 +2243,7 @@
     "tests/test_bounded_backup_serialization.py::test_export_rejects_huge_surviving_key_before_redaction[archive]",
     "tests/test_bounded_backup_serialization.py::test_export_rejects_huge_surviving_key_before_redaction[legacy]",
     "tests/test_bounded_backup_serialization.py::test_export_rejects_huge_surviving_key_before_redaction[setup]",
+    "tests/test_bounded_backup_serialization.py::test_huge_negative_integer_rejection_does_not_copy_the_integer",
     "tests/test_bounded_backup_serialization.py::test_import_uses_exact_budget_and_keeps_invalid_contract[False]",
     "tests/test_bounded_backup_serialization.py::test_import_uses_exact_budget_and_keeps_invalid_contract[True]",
     "tests/test_bounded_backup_serialization.py::test_invalid_budget_is_rejected[-1]",
@@ -2263,9 +2266,7 @@
     "tests/test_bounded_backup_serialization.py::test_shared_numeric_graph_has_budget_bounded_processing",
     "tests/test_bounded_backup_serialization.py::test_shared_values_count_each_occurrence_and_cycles_are_rejected",
     "tests/test_bounded_backup_serialization.py::test_text_size_check_never_encodes_whole_input",
-    "tests/test_bounded_backup_serialization.py::test_transfer_text_size_check_never_encodes_whole_input",
-    "tests_real_ha/test_backup_processing_boundary.py::test_uploaded_numeric_backup_does_not_reencode_on_loop[archive]",
-    "tests_real_ha/test_backup_processing_boundary.py::test_uploaded_numeric_backup_does_not_reencode_on_loop[legacy_json]"
+    "tests/test_bounded_backup_serialization.py::test_transfer_text_size_check_never_encodes_whole_input"
   ],
   "browser": {
     "browser": [

@@ -73,7 +73,7 @@ def _check_string_budget(
         else:
             # Even a numeric-only tree must stop after O(byte budget) nodes.
             charge(
-                max(1, (abs(item).bit_length() - 1) * 30103 // 100000 + 1)
+                max(1, (item.bit_length() - 1) * 30103 // 100000 + 1)
                 if isinstance(item, int)
                 else 1
             )

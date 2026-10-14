@@ -98,6 +98,19 @@ def test_shared_numeric_graph_has_budget_bounded_processing():
         list(bounded_json.iter_bounded_json(value, 64))
 
 
+def test_huge_negative_integer_rejection_does_not_copy_the_integer():
+    import tracemalloc
+
+    value = -(1 << 32000000)
+    tracemalloc.start()
+    try:
+        with pytest.raises(bounded_json.JSONBudgetExceeded):
+            list(bounded_json.iter_bounded_json({"value": value}, 8192))
+        assert tracemalloc.get_traced_memory()[1] < 2 * 1024 * 1024
+    finally:
+        tracemalloc.stop()
+
+
 @pytest.mark.parametrize("kind", ["legacy", "setup", "archive"])
 def test_export_rejects_huge_surviving_key_before_redaction(
     monkeypatch, tmp_path, kind
