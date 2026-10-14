@@ -20,6 +20,7 @@ import {modelFieldPresentation, modelFieldNotes} from "./agent-config-model-pres
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
+import {captureConfigurationSubmission, configurationSubmissionIsCurrent, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
 import {saveBarMarkup} from "./unsaved-state.js";
 import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import { haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools-list.js";
@@ -683,10 +684,12 @@ function collectionToolIndex(panel, control) {
 }
 
 function queueFunctionGroupMutation(panel, operation) {
+  const submission = captureConfigurationSubmission(panel);
   const previous = panel._eocFunctionGroupUiTail || Promise.resolve();
   const pending = previous.catch(() => {}).then(async () => {
     const backendTail = panel._eocFunctionMutationTail;
     if (backendTail) await backendTail.catch(() => {});
+    if (!configurationSubmissionIsCurrent(panel, submission)) throw new Error("The selected assistant changed");
     return operation();
   });
   const tracked = pending.finally(() => {
@@ -719,11 +722,12 @@ function bindToolCollection(panel) {
     if (button.id === "add-group") return openFunctionGroup(panel);
     if (button.matches(".edit-group")) return openFunctionGroup(panel, button.dataset.groupId);
     if (button.matches(".delete-group")) {
+      const submission = captureConfigurationSubmission(panel);
       const group = (panel._draft.function_groups || []).find(item => item.id === button.dataset.groupId);
       panel._eocDeletingFunctionGroups ||= new Set();
       if (!group || panel._eocDeletingFunctionGroups.has(group.id)
         || !await panel._confirm("Delete function group?", `The group “${group.name}” will be removed. Its functions will not be deleted; they will move to Always available.`, "Delete group")) return;
-      if (panel._eocDeletingFunctionGroups.has(group.id)) return;
+      if (!configurationSubmissionIsCurrent(panel, submission) || panel._eocDeletingFunctionGroups.has(group.id)) return;
       panel._eocDeletingFunctionGroups.add(group.id);
       const idleLabel = button.textContent;
       button.disabled = true;
@@ -731,10 +735,9 @@ function bindToolCollection(panel) {
       button.setAttribute("aria-busy", "true");
       try {
         const result = await queueFunctionGroupMutation(panel, () => panel._call("tools", "delete_group", {group_id: group.id, confirm: true}));
-        synchronizePersistedFunctions(panel, result);
-        panel._toast("Function group deleted");
-        panel._render();
+        await completeFunctionMutation(panel, result, submission, "Function group deleted");
       } catch (err) {
+        if (!configurationSubmissionIsCurrent(panel, submission)) return;
         button.disabled = false;
         button.textContent = idleLabel;
         button.removeAttribute("aria-busy");
@@ -759,13 +762,14 @@ function bindToolCollection(panel) {
       return openTool(panel, null, copy);
     }
     if (button.matches(".delete-tool")) {
+      const submission = captureConfigurationSubmission(panel);
       const functionName = tool.spec?.name;
       panel._eocDeletingFunctions ||= new Set();
       if (!functionName || panel._eocDeletingFunctions.has(functionName)) return;
       if (!await panel._confirm(isHALlmTool(tool) ? "Remove Home Assistant Tool?" : "Delete function tool?", isHALlmTool(tool)
         ? `Remove “${haToolName(tool)}” from this agent and its groups? The underlying Home Assistant capability remains unchanged. Saved dependencies must be removed first.`
         : `The Function Tool “${tool.spec?.name || "Unnamed"}” will be deleted and removed from any Function Group. Deletion is refused while Request Rules or Guest Mode still reference it.`, isHALlmTool(tool) ? "Remove tool" : "Delete function")) return;
-      if (panel._eocDeletingFunctions.has(functionName)) return;
+      if (!configurationSubmissionIsCurrent(panel, submission) || panel._eocDeletingFunctions.has(functionName)) return;
       panel._eocDeletingFunctions.add(functionName);
       const idleLabel = button.textContent;
       button.disabled = true;
@@ -774,16 +778,17 @@ function bindToolCollection(panel) {
       try {
         const result = await panel._call("tools", "delete", {name: functionName, confirm: true});
         const syncStarted = globalThis.performance?.now?.() ?? Date.now();
-        synchronizePersistedFunctions(panel, result);
-        const syncCompleted = globalThis.performance?.now?.() ?? Date.now();
-        panel._toast("Function deleted");
-        panel._render();
-        const renderCompleted = globalThis.performance?.now?.() ?? Date.now();
-        panel._recordFunctionMutationUi?.(result, {
-          syncMs: syncCompleted - syncStarted,
-          renderAndReconcileMs: renderCompleted - syncCompleted,
+        await completeFunctionMutation(panel, result, submission, "Function deleted", () => {
+          const syncCompleted = globalThis.performance?.now?.() ?? Date.now();
+          panel._render();
+          const renderCompleted = globalThis.performance?.now?.() ?? Date.now();
+          panel._recordFunctionMutationUi?.(result, {
+            syncMs: syncCompleted - syncStarted,
+            renderAndReconcileMs: renderCompleted - syncCompleted,
+          });
         });
       } catch (err) {
+        if (!configurationSubmissionIsCurrent(panel, submission)) return;
         button.disabled = false;
         button.textContent = idleLabel;
         button.removeAttribute("aria-busy");
@@ -802,6 +807,7 @@ function bindToolCollection(panel) {
       : panel._draft.functions[collectionToolIndex(panel, input)];
     if (!item) return;
     const enabled = input.checked;
+    const submission = captureConfigurationSubmission(panel);
     input.disabled = true;
     try {
       const result = isGroup
@@ -811,32 +817,38 @@ function bindToolCollection(panel) {
             return panel._call("tools", "save_group", {group: {...latest, enabled}, original_id: latest.id});
           })
         : await panel._call("tools", "set_enabled", {name: item.spec.name, enabled});
-      synchronizePersistedFunctions(panel, result);
       const references = result.references || {};
       const affected = (references.request_rules || []).length + (references.guest_mode ? 1 : 0);
-      panel._toast(isGroup
+      await completeFunctionMutation(panel, result, submission, isGroup
         ? enabled ? "Function group enabled" : "Function group disabled; member Function Tool settings were kept"
         : enabled ? "Function enabled" : affected ? `Function disabled; ${affected} saved reference${affected === 1 ? "" : "s"} remain configured but unavailable until it is re-enabled` : "Function disabled");
-      panel._render();
-    } catch (err) { input.checked = item.enabled !== false; panel._toast(`Unable to update ${isGroup ? "Function Group" : "function"}: ${err.message || String(err)}`, true); }
+    } catch (err) {
+      if (!configurationSubmissionIsCurrent(panel, submission)) return;
+      input.checked = item.enabled !== false;
+      panel._toast(`Unable to update ${isGroup ? "Function Group" : "function"}: ${err.message || String(err)}`, true);
+    }
     finally { input.disabled = false; }
   });
 }
 
-export function synchronizePersistedFunctions(panel, result) {
-  const functions = clone(result.functions || []);
-  const function_groups = clone(result.function_groups || []);
-  panel._configData = {
-    ...panel._configData,
-    config: {...panel._configData.config, functions, function_groups},
-  };
+function functionAcknowledgement(result) {
+  return {...result, config:{functions:result.functions || [], function_groups:result.function_groups || []}};
+}
+
+export function synchronizePersistedFunctions(panel, result, submission = captureConfigurationSubmission(panel)) {
+  if (!reconcileConfigurationAcknowledgement(panel, functionAcknowledgement(result), submission, {fields:["functions", "function_groups"]})) return false;
   panel._result = panel._configData;
-  panel._draft = {
-    ...panel._draft,
-    functions: clone(functions),
-    function_groups: clone(function_groups),
-  };
-  panel._syncConfigDirty();
+  return true;
+}
+
+function completeFunctionMutation(panel, result, submission, message, refresh = () => panel._render()) {
+  return completeConfigurationAcknowledgement(panel, functionAcknowledgement(result), submission, {
+    fields:["functions", "function_groups"], message,
+    refresh:() => {
+      if (!panel._viewKey || panel._viewKey() === "capabilities/functions") panel._result = panel._configData;
+      return refresh();
+    },
+  });
 }
 
 function setToolEditorLoading(root, loading) {
@@ -1025,13 +1037,14 @@ async function saveFunctionGroup(panel) {
   delete error.dataset.field;
   error.textContent="Saving...";
   panel._setSaving(button, true);
+  const submission = captureConfigurationSubmission(panel);
   try {
     const result=await queueFunctionGroupMutation(panel,()=>panel._call("tools","save_group",{group:{id,name,description,loading_mode,functions,guest_allowed},...(panel._groupOriginalId?{original_id:panel._groupOriginalId}:{})}));
-    synchronizePersistedFunctions(panel,result);
-    root.querySelector("#group-dialog").close();
-    panel._toast("Function group saved");
-    panel._render();
-  } catch(err) { delete error.dataset.field; error.textContent=err.message||String(err); }
+    await completeFunctionMutation(panel, result, submission, "Function group saved", () => {
+      root.querySelector("#group-dialog").close();
+      panel._render();
+    });
+  } catch(err) { if (configurationSubmissionIsCurrent(panel, submission)) { delete error.dataset.field; error.textContent=err.message||String(err); } }
   finally { panel._setSaving(button, false); }
 }
 
@@ -1041,6 +1054,7 @@ async function assignToolToGroup(panel, select) {
   if (!name) return;
   select.disabled = true;
   let previousGroupId = "";
+  const submission = captureConfigurationSubmission(panel);
   try {
     const result = await queueFunctionGroupMutation(panel, async () => {
       const config = panel._draft || panel._result?.config || {};
@@ -1058,11 +1072,10 @@ async function assignToolToGroup(panel, select) {
       });
     });
     if (!result) return;
-    synchronizePersistedFunctions(panel, result);
-    const target = (panel._draft.function_groups || []).find(group => group.id === targetId);
-    panel._toast(targetId ? `${name} moved to ${target?.name || targetId}` : `${name} is now available on every request`);
-    panel._render();
+    const target = (result.function_groups || []).find(group => group.id === targetId);
+    await completeFunctionMutation(panel, result, submission, targetId ? `${name} moved to ${target?.name || targetId}` : `${name} is now available on every request`);
   } catch (err) {
+    if (!configurationSubmissionIsCurrent(panel, submission)) return;
     select.value = previousGroupId;
     panel._toast(`Unable to change Function Group: ${err.message || String(err)}`, true);
   } finally { select.disabled = false; }
@@ -1081,7 +1094,7 @@ export function bindTools(panel) {
   // Catalogue discovery and its dialog code are optional for the initial list.
   const attachHA = () => import("./ha-llm-tools.js").then(({bindHALlmTools}) => {
     if (panel.shadowRoot === root && root.querySelector(".tools-surface") === host) {
-      bindHALlmTools(panel, synchronizePersistedFunctions);
+      bindHALlmTools(panel, (result, submission, refresh) => completeFunctionMutation(panel, result, submission, "Home Assistant tools added", refresh));
     }
   });
   if ((panel._draft?.functions || []).some(isHALlmTool)) void attachHA().catch(() => {});
@@ -1125,21 +1138,22 @@ export function bindTools(panel) {
     const button = root.querySelector("#tool-save");
     if (button.disabled) return;
     const operation = toolEditorOperation(panel);
+    const submission = captureConfigurationSubmission(panel);
     panel._setSaving(button, true);
     try {
       const result = await panel._call("tools", "save", {yaml: operation.yaml, ...operation.destination,
         ...(operation.revision !== undefined ? {revision: operation.revision} : {}),
         ...(operation.originalName ? {original_name: operation.originalName} : {})});
-      if (!operation.isCurrent()) return;
       if (result.valid === false) {
+        if (!operation.isCurrent()) return;
         root.querySelector("#tool-error").className = "validation invalid";
         root.querySelector("#tool-error").textContent = `Function configuration is invalid: ${toolErrorText(result.errors)}`;
         return;
       }
-      synchronizePersistedFunctions(panel, result);
-      root.querySelector("#tool-dialog").close();
-      panel._toast("Changes saved");
-      panel._render();
+      await completeFunctionMutation(panel, result, submission, "Changes saved", () => {
+        if (operation.isCurrent()) root.querySelector("#tool-dialog").close();
+        panel._render();
+      });
     } catch (err) {
       if (!operation.isCurrent()) return;
       root.querySelector("#tool-error").className = "validation invalid";

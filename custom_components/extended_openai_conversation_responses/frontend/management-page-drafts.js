@@ -1,4 +1,5 @@
 import {saveConfiguration, synchronizePersistedConfigurationFields} from "./management-actions.js";
+import {captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation} from "./configuration-acknowledgement.js";
 import {formatWordingAlternatives, parseWordingAlternatives} from "./wording-alternatives.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {UnsavedState, clone, same, draftScope, saveBarMarkup} from "./unsaved-state.js";
@@ -61,22 +62,23 @@ export function initializePageDraft(panel) {
     destinations: () => [view],
     save: async (submitted, current) => {
       if (view === RULES) return saveRuleSettings(panel, submitted, current);
-      const agentId = panel._agentId, entryId = panel._selectedAgent?.()?.entry_id;
+      const submission = captureConfigurationSubmission(panel);
+      const {agentId, entryId} = submission;
       const saved = await panel._call(view === GUEST ? "guest_mode" : "quiet_hours", view === GUEST ? "save_policy" : "update", {
         config: submitted, ...(current.revision ? {revision: current.revision} : {}),
       });
       const savedResult = {...(current.result || result), ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
-      if (panel._agentId === agentId && panel._selectedAgent?.()?.entry_id === entryId) panel._result = {...panel._result, ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
+      if (configurationSubmissionIsCurrent(panel, submission) && panel._viewKey?.() === view) {
+        panel._result = {...panel._result, ...saved, ...(view === GUEST ? {legacy_policy:false, migration_notice:null} : {})};
+      }
       // The mutation acknowledgement owns the baseline and revision. A later
       // capability read must neither undo that commit nor discard newer edits.
       current.result = savedResult;
       current.revision = saved.revision;
-      current.baseline = clone(saved.config);
-      if (panel._agentId === agentId && panel._selectedAgent?.()?.entry_id === entryId && same(current.read(), submitted)) current.write(clone(saved.config));
       current.refreshWarning = null;
       if (view === GUEST) {
-        if (panel._agentId === agentId && panel._selectedAgent?.()?.entry_id === entryId) {
-          synchronizePersistedConfigurationFields(panel, saved, Object.keys(saved.config));
+        if (configurationSubmissionIsCurrent(panel, submission)) {
+          synchronizePersistedConfigurationFields(panel, saved, Object.keys(saved.config), submission);
           panel._guestMigrationReview = false;
           panel._guestStartingFresh = false;
         }
@@ -130,6 +132,7 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
 async function saveRuleSettings(panel, submitted, scope) {
   const invalid = submitted.wording_groups.find((group) => group.validation_error);
   if (invalid) throw new Error(invalid.validation_error);
+  const submission = captureConfigurationSubmission(panel);
   const result = await panel._call("request_rules", "settings", {
     defaults: submitted.defaults,
     wording_groups: submitted.wording_groups,
@@ -137,13 +140,16 @@ async function saveRuleSettings(panel, submitted, scope) {
   });
   scope.baseline = settings(result);
   scope.revision = result.revision;
-  panel._result = {
-    ...panel._result,
+  const acknowledged = {
     defaults: clone(result.defaults),
     wording_groups: clone(result.wording_groups),
     revision: result.revision,
   };
-  scope.result = panel._result;
+  scope.result = {...scope.result, ...acknowledged};
+  if (configurationSubmissionIsCurrent(panel, submission) && panel._viewKey?.() === submission.view) {
+    panel._result = {...panel._result, ...acknowledged};
+    scope.result = panel._result;
+  }
   return clone(scope.baseline);
 }
 
@@ -292,21 +298,21 @@ export async function savePageChanges(panel) {
   readRuleSettings(panel);
   const scope = currentPageScope(panel);
   if (!scope || scope.pending || !scope.dirty()) return false;
+  const submission = captureConfigurationSubmission(panel);
   const operation = scope.save();
   refreshPageSaveBar(panel);
   try {
     await operation;
-    // Keep the live route DOM when the saved structure is unchanged. The focused
-    // control, details state, selection, and scroll position then remain native.
-    // Fall back only if a future backend normalization changes editor structure.
-    if (!syncSavedPageDom(panel)) panel._render();
-    panel._toast("Changes saved");
-    const refresh = scope.refreshSavedPolicy;
-    scope.refreshSavedPolicy = null;
-    refresh?.();
-    return true;
+    return await presentAcknowledgedMutation(panel, submission, "Changes saved", () => {
+      if (panel._viewKey?.() !== submission.view) return;
+      // Keep the live editor when normalization preserves its structure.
+      if (!syncSavedPageDom(panel)) panel._render();
+      const refresh = scope.refreshSavedPolicy;
+      scope.refreshSavedPolicy = null;
+      refresh?.();
+    });
   } catch (err) {
-    panel._toast(`Unable to save changes: ${err.message || String(err)}`, true);
+    if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to save changes: ${err.message || String(err)}`, true);
     return false;
   } finally { refreshPageSaveBar(panel); }
 }

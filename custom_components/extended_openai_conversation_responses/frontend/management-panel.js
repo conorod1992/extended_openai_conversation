@@ -16,6 +16,7 @@ import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, isAgentMutation, syncAgentPicker} from "./management-actions.js";
+import {configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
@@ -675,6 +676,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const guidanceCall = section === "configuration"
       && ["get", "validate", "update", "save"].includes(action);
     const guidanceAgentId = this._agentId;
+    const owner = {agentId:this._agentId, entryId:this._selectedAgent?.()?.entry_id};
     // A fresh list supersedes a previously tracked revision, unless navigation
     // or a newer read/mutation made that response obsolete while it was in flight.
     const ruleRead = section === "request_rules" && action === "list" ? {
@@ -697,7 +699,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       result = nonAdminOverviewKnowledgeSnapshot(this);
     } else {
       result = await this._callWithMutationSafety(section, action, extra);
-      this._applyToolRevision(section, action, result);
+      this._applyToolRevision(section, action, result, owner);
     }
 
     if (
@@ -725,7 +727,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!isAgentMutation(section, action)) return this._callCore(section, action, extra);
 
     this._pendingMutations ||= new Map();
-    const key = JSON.stringify([section, action, extra]);
+    const owner = {agentId:this._agentId, entryId:this._selectedAgent?.()?.entry_id};
+    const key = JSON.stringify([owner.entryId, owner.agentId, section, action, extra]);
     if (this._pendingMutations.has(key)) return this._pendingMutations.get(key);
 
     const mutationTrace = section === "tools" ? {
@@ -742,6 +745,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         : Promise.resolve();
     const pending = previous.catch(() => {}).then(
       () => {
+        if (!configurationSubmissionIsCurrent(this, owner)) throw new Error("The selected assistant changed before the mutation started");
         if (mutationTrace) {
           mutationTrace.startedAt = performanceNow();
           mutationTrace.queueWaitMs = mutationTrace.startedAt - mutationTrace.queuedAt;
@@ -793,12 +797,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _runAgentMutation(section, action, extra, mutationTrace = null) {
     const ruleMutation = section === "request_rules" && REQUEST_RULE_MUTATIONS.has(action);
     const agentId = this._agentId;
+    const owner = {agentId, entryId:this._selectedAgent?.()?.entry_id};
     if (ruleMutation) this._eocRequestRuleMutationEpoch = (this._eocRequestRuleMutationEpoch || 0) + 1;
     this._eocAgentMutations = Number(this._eocAgentMutations || 0) + 1;
     syncAgentPicker(this);
     try {
       const result = await this._callCore(section, action, extra, mutationTrace);
-      this._applyToolRevision(section, action, result);
+      this._applyToolRevision(section, action, result, owner);
       if (
         ruleMutation
         && agentId === this._agentId
@@ -823,9 +828,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
   }
 
-  _applyToolRevision(section, action, result) {
+  _applyToolRevision(section, action, result, owner) {
     if (
       section === "tools"
+      && configurationSubmissionIsCurrent(this, owner)
       && TOOL_MUTATIONS.has(action)
       && typeof result?.revision === "string"
       && this._configData
@@ -1039,13 +1045,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._serviceCatalogPromise;
   }
 
-  async _loadAgents(selectedId = null) {
+  async _loadAgents(selectedId = null, owner = null) {
     this._markColdLifecycle("agents-start");
     try {
-      await loadAgentsWithOverviewPrefetch(this, selectedId);
+      await loadAgentsWithOverviewPrefetch(this, selectedId, owner);
       this._markColdLifecycle("agents-complete", {status: "fulfilled"});
     } catch (err) {
       this._markColdLifecycle("agents-complete", {status: "rejected"});
+      if (owner && !configurationSubmissionIsCurrent(this, owner)) return;
       // Failed catalogue reads cannot validate the owner of a mounted editor.
       // Close it so the failure can render and stale drafts cannot be submitted.
       this.shadowRoot?.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
