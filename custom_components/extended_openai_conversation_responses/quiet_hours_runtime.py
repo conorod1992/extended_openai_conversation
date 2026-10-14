@@ -474,7 +474,10 @@ class QuietHoursManager:
         async with self._lock:
             if getattr(self, "_stopping", False):
                 return
-            if self._config_recovery_pending:
+            if getattr(self, "_config_recovery_pending", False):
+                # A public getter may revisit an invalidated live manager. Its
+                # retained ownership must go through authoritative recovery,
+                # never the permissive cold-start migration below.
                 if not await self._async_recover_configuration_locked():
                     return
             elif self._initialized:
