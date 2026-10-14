@@ -199,7 +199,7 @@ async def test_consumed_request_rule_bypasses_local_intent_and_provider(
     try_local_intent.assert_not_awaited()
     entity._async_handle_message_with_ha_tools.assert_not_awaited()
     assert entity._continuity.async_record_success.await_count == int(successful)
-    assert entity._request_rule_runtime._requests == {}
+    assert not entity._request_rule_runtime._requests
     payload = entity.hass.bus.async_fire.call_args.args[1]
     assert payload["status"] == ("local" if successful else "error")
     assert result.response.error_code == (
