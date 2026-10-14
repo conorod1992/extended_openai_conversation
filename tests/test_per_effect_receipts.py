@@ -417,3 +417,26 @@ async def test_response_variable_consumer_records_executed_inputs(hass, monkeypa
         await _execute(entity, tool, retry)
     assert hass.services.async_call.await_count == 1
     assert observed == [1, 2]
+
+
+def test_receipt_ceiling_refuses_effects_and_bounds_rejection_markers(monkeypatch):
+    monkeypatch.setattr(receipts, "_MAX_EFFECT_RECEIPTS", 2)
+    entity, call, dispatched = SimpleNamespace(), _call("first", "effect"), []
+    with receipts.execution_attempt(entity, call, _tool()):
+        for index in range(10):
+            try:
+                handle = receipts.execution_started(
+                    kind="probe", prepared={"index": index}
+                )
+            except HomeAssistantError:
+                receipts.execution_rejected(before_dispatch=True)
+            else:
+                dispatched.append(index)
+                receipts.execution_completed(handle)
+    assert dispatched == [0, 1]
+    assert [r.outcome for r in entity._execution_effect_receipts[id(call)]] == [
+        "completed",
+        "completed",
+        "rejected",
+    ]
+    assert entity._execution_tool_outcomes[id(call)] == "partial"

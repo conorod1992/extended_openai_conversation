@@ -12,6 +12,8 @@ from uuid import uuid4
 
 from homeassistant.exceptions import HomeAssistantError
 
+_MAX_EFFECT_RECEIPTS = 4096
+
 
 @dataclass
 class EffectReceipt:
@@ -127,7 +129,7 @@ def execution_started(
             record_dispatch,
         )
 
-        if len(attempt.receipts) >= 4096:
+        if len(attempt.receipts) >= _MAX_EFFECT_RECEIPTS:
             raise HomeAssistantError(
                 "Tool execution exceeds the effect receipt safety limit"
             )
@@ -200,6 +202,10 @@ def execution_rejected(
             if receipt.outcome == "rejected":
                 return
         operation = _OPERATION.get()
+        # Reserve one terminal rejection beyond the dispatch budget so reaching
+        # the ceiling remains partial, without growing on every later refusal.
+        if len(attempt.receipts) >= _MAX_EFFECT_RECEIPTS + 1:
+            return
         attempt.receipts.append(
             EffectReceipt(
                 attempt.invocation_id,
