@@ -50,20 +50,61 @@ depth. A script with one action can pass action inspection while exceeding paylo
 limits. Shorthand normalization and Script Function device preflight gain no new
 limits in this refactor.
 
-## Consumers and PR6 boundary
+## Inspection consumers and rewriting policies
 
 Request Rules' Function validation, result-dependency checks, sensitive-action
 warnings and authorization inspections use the shared canonical traversal through
 a thin limit adapter. Function dependency inspection and match preview import the
 shared public iterator with the same explicit Request Rule limits. Script Function
-device rejection supplies only
-its device-action policy; it no longer knows the nesting grammar.
+device rejection supplies only its device-action policy; it no longer knows the
+nesting grammar.
 
-Normalization, canonical inspection and preflight share structural classification.
-Stop instrumentation, effect-template rewriting and native authorization insertion
-retain their existing transformers for PR6. No generic rewriting API is introduced
-here. Their migration must preserve one-to-many action expansion, native branch
-semantics, metadata and authorization timing.
+Normalization, canonical inspection, preflight and rewriting share structural
+classification. Stop instrumentation, effect-template mapping and native authorization
+insertion now use `rewrite_script_actions()`; their former recursive container walks
+have been removed. They retain their own execution/security policies.
+
+## Rewrite contract
+
+`rewrite_script_actions(actions, rewrite_action, transform_input=None)` provides
+controlled zero/one/many action output. The callback receives the original mapping,
+its structural role and a synchronous `descend()` continuation that rewrites children
+into a fresh mapping. It can emit prefixes, retain the descended action, or replace
+an action without descending. Call the continuation at most once, during the callback;
+do not retain it for later execution. Generated output is never revisited, preventing
+double instrumentation and recursion into newly inserted helper actions.
+
+The structural `sequence` role covers `sequence`, `then`, `else` and `default`, plus
+the outer action list. Parallel and choose roles remain distinct, so a Stop does not
+accidentally acquire sequence scope from being a direct parallel-list member. Existing
+scalar/non-list instrumentation compatibility is preserved separately from validated
+effect-input mapping.
+
+Without an input transformer, only structural containers are copied/rewritten.
+Payload and hydrated HA objects retain their identities and are not mutated. With
+`transform_input`, action effect fields and repeat inputs are mapped in original field
+order. Choose branch metadata, `if`, and repeat `while`/`until` conditions remain
+opaque; the effect consumer separately preserves complete native condition actions.
+Payloads with keys such as `sequence`, `stop` or `choose` are still passed as whole
+effect inputs, so their templates cannot bypass privacy checks.
+
+The policies remain explicit:
+
+- Stop probes own completion markers and success/error interpretation. An enabled
+  Stop is replaced by one enabled native sequence containing its marker and Stop,
+  preserving alias/continue-on-error metadata and one enabled decision.
+- Native guards own effect classification, the original pending action and its
+  enabled flag. Each guard stays immediately beside its effect. Authorization still
+  occurs at execution time and can tighten after an await.
+- Effect-template mapping owns the condition-action exemption and read wrappers.
+  The shared layer identifies structural fields; it does not authorize reads or
+  decide whether a condition should execute.
+
+The production phase order is unchanged: result preparation, guard insertion, Stop
+probes, HA schema/dynamic validation, effect-read wrapping, then existing result/slot
+bindings and execution. Rewriting adds no node/depth quota and does not count inserted
+helpers against the existing authored-input budgets. Result-value/payload traversals
+remain separate because they intentionally inspect ordinary data as well as actions.
 
 ## Regression evidence
 
@@ -78,3 +119,12 @@ Genuine HA tests compare authored Request Rules and Script Functions with separa
 specified canonical scripts executed by HA. They verify service effects, lazy
 templates, repeat counts, parallel branches, device rejection before earlier effects,
 and full-payload limits that remain stricter than native HA's action count.
+
+
+PR6 adds baseline transformer contracts for every container role and a direct
+replacement/expansion regression. Genuine HA cases compare nested enabled/error
+Stops with independently specified native scripts, then tighten Guest permissions
+while an awaited HA service is suspended. Those cases verify trusted choose/while/
+until conditions, revoked controls, hidden effect reads and owner positive controls.
+A separate seeded differential probe matches all three pre-migration transformer
+outputs and callback order/identity across 1,000 generated canonical trees.

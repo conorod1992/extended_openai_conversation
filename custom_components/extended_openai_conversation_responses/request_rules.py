@@ -76,8 +76,10 @@ from .request_rule_patterns import (
 from .script_structure import (
     MAX_SCRIPT_DEPTH,
     MAX_SCRIPT_NODES,
+    ScriptRewriteKind,
     iter_script_actions,
     normalize_script_containers as _normalize_script_containers,
+    rewrite_script_actions,
 )
 from .strict_store import PropagatingWriteStore
 
@@ -2668,59 +2670,34 @@ def _outcome_probes(
     completed = f"__eoai_completed_{uuid4().hex}"
     stopped = f"__eoai_stopped_{uuid4().hex}"
 
-    def instrument(value: Any, key: str = "") -> Any:
-        if isinstance(value, Mapping):
-            # Descend through script containers only, never service data or
-            # template payloads that happen to have a key called "stop".
-            return {
-                name: instrument(item, name)
-                if name
-                in {
-                    "sequence",
-                    "then",
-                    "else",
-                    "default",
-                    "choose",
-                    "parallel",
-                    "repeat",
+    def instrument(
+        action: Mapping[str, Any],
+        kind: ScriptRewriteKind,
+        descend: Callable[[], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if kind != "sequence" or "stop" not in action:
+            return [descend()]
+        marker = {"variables": {stopped: not action.get("error", False)}}
+        if "enabled" in action:
+            # Let HA evaluate enabled once for the probe and its Stop. Do not
+            # revisit this generated sequence or instrument its Stop again.
+            stop = dict(action)
+            enabled = stop.pop("enabled")
+            return [
+                {
+                    "sequence": [marker, stop],
+                    "enabled": enabled,
+                    **{
+                        name: action[name]
+                        for name in ("alias", "continue_on_error")
+                        if name in action
+                    },
                 }
-                else item
-                for name, item in value.items()
-            }
-        if isinstance(value, list):
-            sequence: list[Any] = []
-            for item in value:
-                if (
-                    key in {"sequence", "then", "else", "default"}
-                    and isinstance(item, Mapping)
-                    and "stop" in item
-                ):
-                    marker = {"variables": {stopped: not item.get("error", False)}}
-                    if "enabled" in item:
-                        # Let HA evaluate enabled once for both the probe and
-                        # its Stop. Native sequence sub-scripts propagate Stops
-                        # and fatal aborts, and update the existing outer marker.
-                        stop = dict(item)
-                        enabled = stop.pop("enabled")
-                        sequence.append(
-                            {
-                                "sequence": [marker, stop],
-                                "enabled": enabled,
-                                **{
-                                    name: item[name]
-                                    for name in ("alias", "continue_on_error")
-                                    if name in item
-                                },
-                            }
-                        )
-                        continue
-                    sequence.append(marker)
-                sequence.append(instrument(item))
-            return sequence
-        return value
+            ]
+        return [marker, descend()]
 
     sequence = [{"variables": {completed: False, stopped: False}}]
-    sequence.extend(instrument(list(actions), "sequence"))
+    sequence.extend(rewrite_script_actions(actions, instrument))
     sequence.append({"variables": {completed: True}})
     return sequence, completed, stopped
 
@@ -2757,42 +2734,19 @@ def _map_script_effect_templates(
     Walk only native action containers. A similarly named key in service data
     is still an effect input and must not bypass Guest read checks.
     """
-    result = []
-    for action in sequence:
-        if "condition" in action:
-            result.append(dict(action))
-            continue
-        mapped = {}
-        for key, value in action.items():
-            if key == "if":
-                mapped[key] = value
-            elif key in {"sequence", "then", "else", "default", "parallel"}:
-                mapped[key] = _map_script_effect_templates(value, transform)
-            elif key == "choose":
-                mapped[key] = [
-                    {
-                        **branch,
-                        "sequence": _map_script_effect_templates(
-                            branch.get("sequence", []), transform
-                        ),
-                    }
-                    for branch in value
-                ]
-            elif key == "repeat":
-                mapped[key] = {
-                    name: (
-                        _map_script_effect_templates(item, transform)
-                        if name == "sequence"
-                        else item
-                        if name in {"while", "until"}
-                        else transform(item)
-                    )
-                    for name, item in value.items()
-                }
-            else:
-                mapped[key] = transform(value)
-        result.append(mapped)
-    return result
+
+    def preserve_conditions(
+        action: Mapping[str, Any],
+        kind: ScriptRewriteKind,
+        descend: Callable[[], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if kind != "choose" and "condition" in action:
+            return [dict(action)]
+        return [descend()]
+
+    return rewrite_script_actions(
+        sequence, preserve_conditions, transform_input=transform
+    )
 
 
 def _guest_script_allowed(
@@ -3131,40 +3085,35 @@ def _guard_result_references(
 
 def _guard_native_actions(actions: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Place live authorization beside effects while preserving HA script scopes."""
-    containers = {"sequence", "then", "else", "default", "choose", "parallel", "repeat"}
 
-    def instrument(value: Any, key: str = "") -> Any:
-        if isinstance(value, Mapping):
-            return {
-                name: instrument(item, name) if name in containers else item
-                for name, item in value.items()
+    def instrument(
+        action: Mapping[str, Any],
+        _kind: ScriptRewriteKind,
+        descend: Callable[[], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        guarded = []
+        if any(
+            name in action
+            for name in (
+                "action",
+                "service",
+                "device_id",
+                "event",
+                "event_type",
+                "scene",
+            )
+        ):
+            guard = {
+                "action": f"{DOMAIN}.{_GUARD_SERVICE}",
+                "data": {"pending_action": dict(action)},
             }
-        if not isinstance(value, list):
-            return value
-        result = []
-        for item in value:
-            if isinstance(item, Mapping) and any(
-                name in item
-                for name in (
-                    "action",
-                    "service",
-                    "device_id",
-                    "event",
-                    "event_type",
-                    "scene",
-                )
-            ):
-                guard = {
-                    "action": f"{DOMAIN}.{_GUARD_SERVICE}",
-                    "data": {"pending_action": dict(item)},
-                }
-                if "enabled" in item:
-                    guard["enabled"] = item["enabled"]
-                result.append(guard)
-            result.append(instrument(item))
-        return result
+            if "enabled" in action:
+                guard["enabled"] = action["enabled"]
+            guarded.append(guard)
+        guarded.append(descend())
+        return guarded
 
-    return cast(list[dict[str, Any]], instrument(list(actions)))
+    return rewrite_script_actions(actions, instrument)
 
 
 def _ensure_action_guard_service(hass: HomeAssistant) -> None:
