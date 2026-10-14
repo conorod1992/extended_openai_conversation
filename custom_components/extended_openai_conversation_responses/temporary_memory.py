@@ -77,6 +77,17 @@ class TemporaryMemory:
             None
         )
 
+    async def async_prepare_for_deletion(self) -> None:
+        """Drain pending prune persistence before the coordinator erases stores.
+
+        Call only after request readers drain under exclusive maintenance.
+        This does not flush records or change ordinary unload behavior.
+        """
+        task = self._prune_save_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def async_initialize(self) -> None:
         """Load retryably, then persist canonical ownership and the startup ceiling."""
         async with async_storage_lock(self, self._lock):

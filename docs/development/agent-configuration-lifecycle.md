@@ -42,6 +42,9 @@ and integral floats, and retains five friendly UI presets. Booleans remain inval
 
 ## Refactor boundaries
 
+Deletion and restore use [explicit subsystem lifecycle APIs](subsystem-lifecycle-apis.md)
+for background-work disposal and transient runtime reset.
+
 Promote startup provider synchronization, archive initialization gating, retention
 scheduling, streaming capability, timeout normalization, and provider idempotency
 to their owners. Keep runtime reconciliation as an explicit configuration helper.

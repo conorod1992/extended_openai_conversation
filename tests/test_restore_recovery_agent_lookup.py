@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.test_subsystem_lifecycle_apis import _seeded_continuity
+
 from custom_components.extended_openai_conversation_responses import restore_recovery
 from homeassistant.components import conversation
 from homeassistant.components.conversation.const import DATA_COMPONENT
@@ -95,7 +97,7 @@ def test_runtime_reset_clears_distinct_registry_and_agent_runtime_objects(
     )
 
     def continuity_state(label):
-        return SimpleNamespace(
+        return _seeded_continuity(
             label=label,
             _sessions={"x": 1},
             _memory_bundles={"x": 1},
@@ -151,7 +153,7 @@ def test_runtime_reset_clears_distinct_registry_and_agent_runtime_objects(
 
 
 def _continuity_runtime(marker: str):
-    return SimpleNamespace(
+    return _seeded_continuity(
         _sessions={marker: object()},
         _memory_bundles={marker: object()},
         _pending_ends={marker},

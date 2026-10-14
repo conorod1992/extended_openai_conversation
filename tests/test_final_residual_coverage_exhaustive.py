@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from tests.test_subsystem_lifecycle_apis import _seeded_continuity
+
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -235,7 +237,7 @@ def test_restore_runtime_clears_registry_only_managers(hass, monkeypatch) -> Non
     )
 
     key = ("entry", "agent")
-    cont = SimpleNamespace(
+    cont = _seeded_continuity(
         _sessions={"x": 1},
         _memory_bundles={"x": 1},
         _pending_ends={"x"},

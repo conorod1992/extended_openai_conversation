@@ -105,6 +105,17 @@ class ConversationContinuity:
         self.resume_count = 0
         self.new_session_count = 0
 
+    def reset_all(self) -> None:
+        """Discard transient context under the caller's exclusive restore lease.
+
+        Retain diagnostics and HA-default lock ownership, as restoration did
+        before this operation became part of the continuity API.
+        """
+        self._sessions.clear()
+        self._memory_bundles.clear()
+        self._pending_ends.clear()
+        self._ignored_conversation_ids.clear()
+
     @staticmethod
     def identity_key(
         mode: str,

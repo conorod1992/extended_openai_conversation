@@ -54,14 +54,12 @@ async def test_agent_deletion_cancels_owned_background_work_and_fences_agent(
 
     prune_task = asyncio.create_task(pending_prune())
     await prune_started.wait()
-    manager = SimpleNamespace(
-        _store=store,
-        _prune_task=prune_task,
-        _prune_save_task=None,
-        _stopping=False,
-    )
+    from custom_components.extended_openai_conversation_responses.usage import UsageManager
+
+    manager = UsageManager(store)
+    manager._prune_task = prune_task
     key = ("entry-1", "agent-1")
-    hass.data[f"{DOMAIN}.memory_managers"] = {key: manager}
+    hass.data[f"{DOMAIN}.usage_managers"] = {key: manager}
 
     monkeypatch.setattr(agent_deletion, "Store", _FakeStore)
     monkeypatch.setattr(agent_deletion, "PropagatingWriteStore", _FakeStore)
@@ -79,7 +77,7 @@ async def test_agent_deletion_cancels_owned_background_work_and_fences_agent(
     assert store.delay_cleaned is True
     assert store.final_cleaned is True
     assert store.removed is True
-    assert key not in hass.data[f"{DOMAIN}.memory_managers"]
+    assert key not in hass.data[f"{DOMAIN}.usage_managers"]
     assert gate.deleted is True
     cleared.assert_called_once_with(hass, entry_id="entry-1", subentry_id="agent-1")
 
