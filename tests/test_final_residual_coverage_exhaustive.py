@@ -28,7 +28,6 @@ def test_backup_recovery_preserves_absence_of_function_fields(monkeypatch) -> No
         return dict(value)
 
     monkeypatch.setattr(backup, "agent_config_snapshot", normalize)
-    monkeypatch.setattr(backup, "preserve_legacy_guest_policy", lambda raw, value: value)
     monkeypatch.setattr(repair, "function_tools_issue", lambda raw: ([], "broken"))
     monkeypatch.setattr(repair, "safe_function_configuration", lambda raw: {})
 

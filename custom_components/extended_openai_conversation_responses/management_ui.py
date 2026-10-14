@@ -37,7 +37,9 @@ from .agent_config import (
     merge_agent_config as merge_validated_agent_config,
     model_capabilities,
     normalize_agent_config,
+    preserve_agent_model_setting_omissions,
     preserve_legacy_guest_policy,
+    project_agent_config_transfer,
     project_agent_config_updates,
     starter_function_tool_yaml,
     validate_agent_title,
@@ -58,7 +60,6 @@ from .const import (
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
-    CONF_REASONING_EFFORT,
     CONF_SHARED_MEMORY_MODE,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
@@ -434,12 +435,9 @@ def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
 
 def _export_agent(subentry) -> dict[str, Any]:
     """Build a versioned configuration document with best-effort redaction."""
-    snapshot = preserve_legacy_guest_policy(
+    snapshot = project_agent_config_transfer(
         dict(subentry.data), agent_config_snapshot(dict(subentry.data))
     )
-    # Omission selects the routed model's own recommendation at execution time.
-    if CONF_REASONING_EFFORT not in subentry.data:
-        snapshot.pop(CONF_REASONING_EFFORT, None)
     return {
         "schema": "extended_openai_conversation.agent",
         "version": AGENT_CONFIG_EXPORT_VERSION,
@@ -486,9 +484,7 @@ def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, 
         )
     if not isinstance(config, dict):
         raise AgentConfigError("config", "must be an object")
-    normalized = preserve_legacy_guest_policy(config, normalize_agent_config(config))
-    if CONF_REASONING_EFFORT not in config:
-        normalized.pop(CONF_REASONING_EFFORT, None)
+    normalized = project_agent_config_transfer(config, normalize_agent_config(config))
     return {
         "title": validate_agent_title(
             value.get("title"), default="Imported conversation agent"
@@ -1722,9 +1718,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             await _async_validate_configuration_dependencies(
                 hass, entry, subentry, parsed["config"]
             )
-        preview_config = agent_config_snapshot(parsed["config"])
-        if CONF_REASONING_EFFORT not in parsed["config"]:
-            preview_config.pop(CONF_REASONING_EFFORT, None)
+        preview_config = preserve_agent_model_setting_omissions(
+            parsed["config"], agent_config_snapshot(parsed["config"])
+        )
         return {
             "valid": True,
             "title": parsed["title"],
