@@ -444,17 +444,24 @@ class QuietHoursManager:
 
     async def async_setup(self) -> None:
         async with self._lock:
-            if self._initialized:
+            if self._config_recovery_pending:
+                # A public getter may revisit an invalidated live manager. Its
+                # retained ownership must go through authoritative recovery,
+                # never the permissive cold-start migration below.
+                if not await self._async_recover_configuration_locked():
+                    return
+            elif self._initialized:
                 return
-            raw = await self._store.async_load() or {}
-            try:
-                self._config = _config_from_data(raw.get("config"))
-            except ValueError:
-                self._config = QuietHoursConfig()
-            self._active = self._normalize_active(raw.get("active"))
-            self._config_recovery_pending = False
-            self._initialized = True
-            self._reschedule()
+            else:
+                raw = await _async_settle_store_io(self._store.async_load()) or {}
+                try:
+                    self._config = _config_from_data(raw.get("config"))
+                except ValueError:
+                    self._config = QuietHoursConfig()
+                self._active = self._normalize_active(raw.get("active"))
+                self._config_recovery_pending = False
+                self._initialized = True
+                self._reschedule()
         await self.async_reconcile()
 
     async def async_shutdown(self) -> None:
@@ -567,7 +574,9 @@ class QuietHoursManager:
         stored = await self._store.async_load()
         if stored is not None and not isinstance(stored, Mapping):
             raise ValueError("Quiet Hours configuration storage is invalid")
-        if stored is None and (self._active or {}).get("controls"):
+        if (self._active or {}).get("controls") and (
+            stored is None or "config" not in stored or "active" not in stored
+        ):
             raise ValueError("Quiet Hours saved ownership is unavailable")
         raw = stored or {}
         config = _config_from_data(raw.get("config"))
