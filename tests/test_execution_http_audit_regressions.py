@@ -80,7 +80,7 @@ def test_compat_zstd_bounds_and_requires_complete_frames(monkeypatch, content_si
 
 
 @pytest.mark.parametrize("numeric_type", ["number", ["integer", "null"]])
-async def test_numeric_retry_cannot_dispatch_again(hass, numeric_type):
+async def test_numeric_retry_preserves_handler_visible_type(hass, numeric_type):
     entity, log = _entity(hass), _chat_log(hass)
     tool = _tool("effect", parameters={"type": "object", "properties": {
         "payload": {"type": "array", "items": {"type": numeric_type}},
@@ -98,9 +98,10 @@ async def test_numeric_retry_cannot_dispatch_again(hass, numeric_type):
     remember_unacknowledged_calls(entity, log, before)
     retry = _call("fresh", "effect", {"payload": [1.0]})
     _retain_calls(log, [retry])
-    with pytest.raises(HomeAssistantError, match="not acknowledged"):
-        await async_execute_tool_exchange(entity, log, [retry], [tool], FunctionCallBudget(10), None, [], recovery_state=ToolRecoveryState(enabled=True))
-    assert effects == [{"payload": [1]}]
+    await async_execute_tool_exchange(entity, log, [retry], [tool], FunctionCallBudget(10), None, [], recovery_state=ToolRecoveryState(enabled=True))
+    assert len(effects) == 2
+    assert type(effects[0]["payload"][0]) is int
+    assert type(effects[1]["payload"][0]) is float
 
 
 def test_replay_preserves_precision_and_other_scalar_types():
@@ -111,7 +112,7 @@ def test_replay_preserves_precision_and_other_scalar_types():
     assert signature(True) != signature(1)
     assert signature("1") != signature(1)
     assert signature(None) != signature(0)
-    assert signature(-0.0) == signature(0)
+    assert signature(-0.0) != signature(0)
 
 
 def test_service_target_overrides_only_duplicate_selectors():

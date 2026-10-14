@@ -408,7 +408,10 @@ def was_unacknowledged_equivalent(
     entity: Any, chat_log: conversation.ChatLog, tool_input: llm.ToolInput
 ) -> bool:
     """Match only calls from an unresolved failed continuation in this conversation."""
-    if _replay_history_incomplete(entity, chat_log.conversation_id):
+    conversation_id = getattr(chat_log, "conversation_id", None)
+    if not isinstance(conversation_id, str) or not conversation_id:
+        return False
+    if _replay_history_incomplete(entity, conversation_id):
         return True
     ledger = getattr(entity, "_unacknowledged_tool_calls", None)
     if not isinstance(ledger, dict):

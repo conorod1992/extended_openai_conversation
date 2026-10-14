@@ -47,15 +47,21 @@ def _args(amount):
 
 
 @pytest.mark.parametrize("same_wrapper", [False, True])
-async def test_meaningful_number_types_are_distinct(hass, same_wrapper):
+@pytest.mark.parametrize("initial,repeated", [(1, 1.0), (-0.0, 0.0)])
+async def test_meaningful_number_types_are_distinct(
+    hass, same_wrapper, initial, repeated
+):
     entity, log, exchange, effects, _ = await _service_owner(
         hass, vol.Schema({"amount": vol.Any(int, float), "entity_id": [str]})
     )
-    await exchange(_args(1))
+    await exchange(_args(initial))
     guard.remember_unacknowledged_calls(entity, log, set())
-    await exchange(_args(1.0), name="probe" if same_wrapper else "other")
-    assert effects == [(1, int), (1.0, float)]
-    assert hass.states.get("sensor.probe").state == "1.0"
+    await exchange(_args(repeated), name="probe" if same_wrapper else "other")
+    assert len(effects) == 2
+    assert [kind for _, kind in effects] == [type(initial), type(repeated)]
+    assert str(effects[0][0]) == str(initial)
+    assert str(effects[1][0]) == str(repeated)
+    assert hass.states.get("sensor.probe").state == str(repeated)
 
 
 async def test_schema_preparation_runs_once_and_retains_raw_event(hass):

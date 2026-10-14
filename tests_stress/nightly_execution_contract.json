@@ -2244,13 +2244,6 @@
     "tests_real_ha/test_prepared_effect_recovery.py::test_broadcast_equivalence[changed_message]",
     "tests_real_ha/test_prepared_effect_recovery.py::test_broadcast_equivalence[identical]",
     "tests_real_ha/test_prepared_effect_recovery.py::test_broadcast_equivalence[whitespace_equivalent]",
-    "tests_real_ha/test_service_effect_identity.py::test_acknowledged_turns_release_provenance_without_retirement",
-    "tests_real_ha/test_service_effect_identity.py::test_lost_dispatch_provenance_refuses_actual_replay",
-    "tests_real_ha/test_service_effect_identity.py::test_meaningful_number_types_are_distinct[False]",
-    "tests_real_ha/test_service_effect_identity.py::test_meaningful_number_types_are_distinct[True]",
-    "tests_real_ha/test_service_effect_identity.py::test_retired_conversation_refuses_replay_until_acknowledged",
-    "tests_real_ha/test_service_effect_identity.py::test_schema_preparation_runs_once_and_retains_raw_event",
-    "tests_real_ha/test_service_effect_identity.py::test_tombstone_capacity_remains_fail_closed",
     "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_canonical_durable_records_reload_and_reexport_actual_store",
     "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_captured_condition_reopens_and_preserves_later_text_values[001]",
     "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_captured_condition_reopens_and_preserves_later_text_values[false]",
@@ -2312,7 +2305,16 @@
     "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_typed_and_exact_text_results_survive_local_and_provider_consumers[value5]",
     "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_typed_and_exact_text_results_survive_local_and_provider_consumers[value6]",
     "tests_real_ha/test_execution_result_lifecycle_contracts.py::test_typed_and_exact_text_results_survive_local_and_provider_consumers[{\\n  \"value\": [1, 2]\\n}\\n]",
-    "tests_real_ha/test_service_effect_identity.py::test_independent_jobs_do_not_retire_conversation_history"
+    "tests_real_ha/test_service_effect_identity.py::test_acknowledged_turns_release_provenance_without_retirement",
+    "tests_real_ha/test_service_effect_identity.py::test_independent_jobs_do_not_retire_conversation_history",
+    "tests_real_ha/test_service_effect_identity.py::test_lost_dispatch_provenance_refuses_actual_replay",
+    "tests_real_ha/test_service_effect_identity.py::test_meaningful_number_types_are_distinct[-0.0-0.0-False]",
+    "tests_real_ha/test_service_effect_identity.py::test_meaningful_number_types_are_distinct[-0.0-0.0-True]",
+    "tests_real_ha/test_service_effect_identity.py::test_meaningful_number_types_are_distinct[1-1.0-False]",
+    "tests_real_ha/test_service_effect_identity.py::test_meaningful_number_types_are_distinct[1-1.0-True]",
+    "tests_real_ha/test_service_effect_identity.py::test_retired_conversation_refuses_replay_until_acknowledged",
+    "tests_real_ha/test_service_effect_identity.py::test_schema_preparation_runs_once_and_retains_raw_event",
+    "tests_real_ha/test_service_effect_identity.py::test_tombstone_capacity_remains_fail_closed"
   ],
   "browser": {
     "browser": [
