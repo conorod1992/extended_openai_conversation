@@ -2,6 +2,7 @@
 
 import asyncio
 from copy import deepcopy
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -88,8 +89,6 @@ async def test_queue_settlement_owns_one_receipt_and_preserves_earlier_unknown(
     assert len(effects) == 2  # One earlier effect and exactly one queue transaction.
     queued = effects[1]
     assert queued.kind == "persistence"
-    assert queued.prepared["operation"] == "schedule"
-    assert queued.prepared["delay_seconds"] == 30
     assert queued.outcome == (
         "rejected"
         if mode == "rejected"
@@ -98,6 +97,13 @@ async def test_queue_settlement_owns_one_receipt_and_preserves_earlier_unknown(
         else "completed"
     )
     assert len(persisted["calls"]) == (mode != "rejected")
+    if persisted["calls"]:
+        saved = persisted["calls"][0]
+        assert saved["arguments"] == RAW
+        assert (
+            datetime.fromisoformat(saved["due_at"])
+            - datetime.fromisoformat(saved["created_at"])
+        ).total_seconds() == 30
 
 
 @pytest.mark.parametrize(
@@ -181,11 +187,13 @@ async def test_real_native_batch_records_each_effect_and_prepared_target(
     effects = entity._execution_effect_receipts[id(call)]
     assert [r.outcome for r in effects] == ["uncertain", "completed", "rejected"]
     assert [r.child_path for r in effects] == [(0,), (1,), (2,)]
-    assert all(r.prepared["data"] == {"entity_id": ["light.kitchen"]} for r in effects)
     assert effects[0].signature == effects[1].signature == effects[2].signature
     assert len({r.ordinal for r in effects}) == 3
     call.tool_args["list"][0]["entity_id"] = "light.changed"
-    assert effects[0].prepared["data"]["entity_id"] == ["light.kitchen"]
+    assert effects[0].signature == effects[1].signature
+    assert hass.services.async_call.call_args.kwargs["service_data"] == {
+        "entity_id": ["light.kitchen"]
+    }
 
 
 @pytest.mark.parametrize("recovery", [False, True])
@@ -404,7 +412,10 @@ async def test_response_variable_consumer_records_executed_inputs(hass, monkeypa
     _retain_calls(log, [first])
     await _execute(entity, tool, first)
     effects = entity._execution_effect_receipts[id(first)]
-    assert effects[-1].prepared["data"] == {"entity_id": ["light.kitchen"]}
+    assert effects[-1].kind == "ha_service"
+    assert hass.services.async_call.call_args.kwargs["service_data"] == {
+        "entity_id": ["light.kitchen"]
+    }
     assert first.tool_args == arguments
     remember_unacknowledged_calls(entity, log, set())
     retry = _call("retry", "effect", {**arguments, "noise": 2})

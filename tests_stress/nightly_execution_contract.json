@@ -2314,7 +2314,13 @@
     "tests_real_ha/test_service_effect_identity.py::test_meaningful_number_types_are_distinct[1-1.0-True]",
     "tests_real_ha/test_service_effect_identity.py::test_retired_conversation_refuses_replay_until_acknowledged",
     "tests_real_ha/test_service_effect_identity.py::test_schema_preparation_runs_once_and_retains_raw_event",
-    "tests_real_ha/test_service_effect_identity.py::test_tombstone_capacity_remains_fail_closed"
+    "tests_real_ha/test_service_effect_identity.py::test_tombstone_capacity_remains_fail_closed",
+    "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_equivalent_unordered_preparation_does_not_repeat_actual_effect[frozenset]",
+    "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_equivalent_unordered_preparation_does_not_repeat_actual_effect[set]",
+    "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_large_unused_arguments_are_not_retained_per_composite_child[100]",
+    "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_large_unused_arguments_are_not_retained_per_composite_child[32]",
+    "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_total_receipt_record_eviction_refuses_actual_replay",
+    "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_unsupported_prepared_objects_require_acknowledgment"
   ],
   "browser": {
     "browser": [
@@ -3393,7 +3399,8 @@
       "tests_stress/test_environment_edge_contracts.py",
       "tests_real_ha/test_prepared_effect_recovery.py",
       "tests_real_ha/test_service_effect_identity.py",
-      "tests_real_ha/test_execution_result_lifecycle_contracts.py"
+      "tests_real_ha/test_execution_result_lifecycle_contracts.py",
+      "tests_real_ha/test_receipt_resources_and_unordered_identity.py"
     ],
     "guest-security": [
       "tests_real_ha/test_management_authorization_matrix.py",

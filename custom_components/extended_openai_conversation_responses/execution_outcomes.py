@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, Literal
@@ -14,17 +13,17 @@ from uuid import uuid4
 from homeassistant.exceptions import HomeAssistantError
 
 _MAX_EFFECT_RECEIPTS = 4096
+_MAX_RETAINED_EFFECT_RECEIPTS = 4096
 
 
-@dataclass
+@dataclass(slots=True)
 class EffectReceipt:
-    """One invocation-owned dispatch occurrence, independently settled."""
+    """Compact invocation-owned occurrence; prepared payloads are not retained."""
 
     invocation_id: str
     ordinal: int
     child_path: tuple[int, ...]
     kind: str
-    prepared: Any
     signature: str
     outcome: Literal["uncertain", "completed", "rejected"] = "uncertain"
 
@@ -50,6 +49,7 @@ class ExecutionAttempt:
     active: bool = True
     invocation_id: str = field(default_factory=lambda: uuid4().hex)
     receipts: list[EffectReceipt] = field(default_factory=list)
+    dispatch_recorded: bool = False
 
     @property
     def outcome(self) -> str:
@@ -125,9 +125,10 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
         receipts = getattr(entity, "_execution_effect_receipts", None)
         if not isinstance(receipts, dict):
             receipts = entity._execution_effect_receipts = {}
+        retained = tuple(attempt.receipts)
         for item in dispatch_inputs(call):
             outcomes[id(item)] = attempt.outcome
-            receipts[id(item)] = tuple(attempt.receipts)
+            receipts[id(item)] = retained
         while len(outcomes) > 4096:
             oldest = next(iter(outcomes))
             if outcomes[oldest] != "rejected" and oldest not in getattr(
@@ -139,6 +140,29 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
                 )
             receipts.pop(oldest, None)
             outcomes.pop(oldest)
+        # Bound records across invocations too, counting validated-call aliases
+        # once. Missing precision must retire its owner, never permit a replay.
+        groups: dict[int, tuple[tuple[EffectReceipt, ...], list[int]]] = {}
+        for key, group in receipts.items():
+            if (entry := groups.get(id(group))) is None:
+                groups[id(group)] = (group, [key])
+            else:
+                entry[1].append(key)
+        count = sum(len(group) for group, _keys in groups.values())
+        for group, keys in groups.values():
+            if count <= _MAX_RETAINED_EFFECT_RECEIPTS:
+                break
+            has_effect = any(item.outcome != "rejected" for item in group)
+            for key in keys:
+                if has_effect and key not in getattr(
+                    entity, "_read_only_tool_inputs", {}
+                ):
+                    _retire_replay_history(
+                        entity,
+                        getattr(entity, "_dispatched_tool_conversations", {}).get(key),
+                    )
+                receipts.pop(key)
+            count -= len(group)
         _OPERATION.reset(operation_token)
         _CHILD_PATH.reset(path_token)
         _ATTEMPT.reset(token)
@@ -188,6 +212,7 @@ def execution_prepared(
     if (attempt := _ATTEMPT.get()) and attempt.active:
         attempt.arguments = arguments
         attempt.ha_parameters = ha_parameters
+        attempt.dispatch_recorded = False
 
 
 def current_execution_receipt() -> EffectReceipt | None:
@@ -201,6 +226,7 @@ def execution_started(
 ) -> EffectReceipt | None:
     if (attempt := _ATTEMPT.get()) and attempt.active:
         from .tool_replay_guard import (
+            UnidentifiableEffect,
             check_effect_replay,
             effect_signature,
             record_dispatch,
@@ -223,7 +249,6 @@ def execution_started(
                     else attempt.call.tool_args,
                 }
             )
-        prepared = deepcopy(prepared)
         # Opaque dispatches may depend on unobservable API/script context. Their
         # receipts stay owned by the selected tool; only precise effect contracts
         # can match across wrappers. Generic persistence lacks a prepared payload.
@@ -231,12 +256,17 @@ def execution_started(
             kind == "persistence"
             and (operation is None or operation.kind != "delayed_job")
         )
-        signature = effect_signature(
-            kind,
-            {"owner": attempt.call.tool_name, "operation": prepared}
-            if opaque
-            else prepared,
-        )
+        try:
+            signature = effect_signature(
+                kind,
+                {"owner": attempt.call.tool_name, "operation": prepared}
+                if opaque
+                else prepared,
+            )
+        except UnidentifiableEffect:
+            # An opaque value has no reliable textual identity. After a failed
+            # continuation, require acknowledgment rather than guessing equality.
+            signature = "*"
         # Only previous failed continuations participate. Live repeated actions
         # are distinct occurrences and never enter the recovery ledger here.
         check_effect_replay(attempt.entity, signature)
@@ -245,19 +275,20 @@ def execution_started(
             len(attempt.receipts),
             _CHILD_PATH.get(),
             kind,
-            prepared,
             signature,
         )
         attempt.receipts.append(receipt)
         if operation is not None:
             operation.receipt = receipt
-        record_dispatch(
-            attempt.entity,
-            attempt.call,
-            attempt.tool,
-            prepared_arguments=attempt.arguments,
-            ha_parameters=attempt.ha_parameters,
-        )
+        if not attempt.dispatch_recorded:
+            record_dispatch(
+                attempt.entity,
+                attempt.call,
+                attempt.tool,
+                prepared_arguments=attempt.arguments,
+                ha_parameters=attempt.ha_parameters,
+            )
+            attempt.dispatch_recorded = True
         return receipt
     return None
 
@@ -304,7 +335,6 @@ def execution_rejected(
                 len(attempt.receipts),
                 _CHILD_PATH.get(),
                 operation.kind if operation else "validation",
-                None,
                 "",
                 "rejected",
             )

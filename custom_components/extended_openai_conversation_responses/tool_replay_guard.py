@@ -106,10 +106,30 @@ def with_effect_replay_scope(
     return scoped
 
 
+class UnidentifiableEffect(ValueError):
+    """Prepared values cannot establish a reliable operation identity."""
+
+
 def effect_signature(kind: str, prepared: Any) -> str:
     """Identify the actual prepared operation, independently of its wrapper."""
 
+    from homeassistant.helpers.template import Template
+
+    from .functions.base import _RuntimeFunctionConfig
+
     def canonical(value: Any) -> Any:
+        if isinstance(value, _RuntimeFunctionConfig):
+            # Match the source config, without copying hydrated HA objects or
+            # retaining the shared arguments in every effect receipt.
+            return canonical(value._persisted_config)
+        if isinstance(value, Template):
+            return {
+                "template": [
+                    type(value).__module__,
+                    type(value).__qualname__,
+                    value.template,
+                ]
+            }
         # HA/template preparation can produce mappings with non-string keys.
         # Preserve their types rather than failing sort_keys or conflating 1 and
         # "1". All mappings get a tagged representation, avoiding marker clashes.
@@ -117,7 +137,8 @@ def effect_signature(kind: str, prepared: Any) -> str:
             pairs = [
                 [
                     json.dumps(
-                        [type(key).__module__, type(key).__qualname__, key], default=str
+                        [type(key).__module__, type(key).__qualname__, canonical(key)],
+                        sort_keys=True,
                     ),
                     canonical(item),
                 ]
@@ -128,19 +149,26 @@ def effect_signature(kind: str, prepared: Any) -> str:
             return {"tuple": [canonical(item) for item in value]}
         if isinstance(value, list):
             return [canonical(item) for item in value]
-        if value is None or isinstance(value, (str, int, float, bool)):
+        if type(value) in (set, frozenset):
+            items = [canonical(item) for item in value]
+            return {
+                type(value).__name__: sorted(
+                    items,
+                    key=lambda item: json.dumps(
+                        item, sort_keys=True, separators=(",", ":")
+                    ),
+                )
+            }
+        if value is None or type(value) in (str, int, float, bool):
             # Handler-visible Python scalar types can be meaningful even when
             # JSON Schema considers two numeric representations equivalent.
             return [type(value).__name__, value]
-        return {
-            "opaque": [type(value).__module__, type(value).__qualname__, str(value)]
-        }
+        raise UnidentifiableEffect(type(value).__qualname__)
 
     encoded = json.dumps(
         [kind, canonical(prepared)],
         sort_keys=True,
         separators=(",", ":"),
-        default=str,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
