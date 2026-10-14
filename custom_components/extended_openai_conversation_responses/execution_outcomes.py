@@ -117,7 +117,11 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
         yield
     finally:
         attempt.active = False
-        from .tool_replay_guard import _retire_replay_history, dispatch_inputs
+        from .tool_replay_guard import (
+            _forget_dispatch,
+            dispatch_conversation_id,
+            dispatch_inputs,
+        )
 
         outcomes = getattr(entity, "_execution_tool_outcomes", None)
         if not isinstance(outcomes, dict):
@@ -125,21 +129,17 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
         receipts = getattr(entity, "_execution_effect_receipts", None)
         if not isinstance(receipts, dict):
             receipts = entity._execution_effect_receipts = {}
+        owners = getattr(entity, "_dispatched_tool_conversations", None)
+        if not isinstance(owners, dict):
+            owners = entity._dispatched_tool_conversations = {}
+        owner = dispatch_conversation_id(entity)
         retained = tuple(attempt.receipts)
         for item in dispatch_inputs(call):
+            owners.setdefault(id(item), owner)
             outcomes[id(item)] = attempt.outcome
             receipts[id(item)] = retained
         while len(outcomes) > 4096:
-            oldest = next(iter(outcomes))
-            if outcomes[oldest] != "rejected" and oldest not in getattr(
-                entity, "_read_only_tool_inputs", {}
-            ):
-                _retire_replay_history(
-                    entity,
-                    getattr(entity, "_dispatched_tool_conversations", {}).get(oldest),
-                )
-            receipts.pop(oldest, None)
-            outcomes.pop(oldest)
+            _forget_dispatch(entity, next(iter(outcomes)), retire=True)
         # Bound records across invocations too, counting validated-call aliases
         # once. Missing precision must retire its owner, never permit a replay.
         groups: dict[int, tuple[tuple[EffectReceipt, ...], list[int]]] = {}
@@ -152,16 +152,8 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
         for group, keys in groups.values():
             if count <= _MAX_RETAINED_EFFECT_RECEIPTS:
                 break
-            has_effect = any(item.outcome != "rejected" for item in group)
             for key in keys:
-                if has_effect and key not in getattr(
-                    entity, "_read_only_tool_inputs", {}
-                ):
-                    _retire_replay_history(
-                        entity,
-                        getattr(entity, "_dispatched_tool_conversations", {}).get(key),
-                    )
-                receipts.pop(key)
+                _forget_dispatch(entity, key, retire=True)
             count -= len(group)
         _OPERATION.reset(operation_token)
         _CHILD_PATH.reset(path_token)

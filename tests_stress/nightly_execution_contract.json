@@ -2328,7 +2328,52 @@
     "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_large_unused_arguments_are_not_retained_per_composite_child[100]",
     "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_large_unused_arguments_are_not_retained_per_composite_child[32]",
     "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_total_receipt_record_eviction_refuses_actual_replay",
-    "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_unsupported_prepared_objects_require_acknowledgment"
+    "tests_real_ha/test_receipt_resources_and_unordered_identity.py::test_unsupported_prepared_objects_require_acknowledgment",
+    "tests/test_review_replay_execution.py::test_cancellation_waits_for_queue_commit_and_retains_receipt",
+    "tests/test_review_replay_execution.py::test_composite_identity_preserves_raw_observers_and_response_scope[entity_id]",
+    "tests/test_review_replay_execution.py::test_composite_identity_preserves_raw_observers_and_response_scope[previous]",
+    "tests/test_review_replay_execution.py::test_composite_identity_preserves_raw_observers_and_response_scope[service_data]",
+    "tests/test_review_replay_execution.py::test_composite_unknown_consumed_mapping_retains_raw_inputs[native_config0-service_data-arguments0]",
+    "tests/test_review_replay_execution.py::test_composite_unknown_consumed_mapping_retains_raw_inputs[native_config1-data-arguments1]",
+    "tests/test_review_replay_execution.py::test_composite_unknown_consumed_mapping_retains_raw_inputs[native_config2-list-arguments2]",
+    "tests/test_review_replay_execution.py::test_equivalent_multi_child_composite_cannot_repeat_effects[data-0]",
+    "tests/test_review_replay_execution.py::test_equivalent_multi_child_composite_cannot_repeat_effects[data-1]",
+    "tests/test_review_replay_execution.py::test_equivalent_multi_child_composite_cannot_repeat_effects[data-3]",
+    "tests/test_review_replay_execution.py::test_equivalent_multi_child_composite_cannot_repeat_effects[list-0]",
+    "tests/test_review_replay_execution.py::test_equivalent_multi_child_composite_cannot_repeat_effects[list-1]",
+    "tests/test_review_replay_execution.py::test_equivalent_multi_child_composite_cannot_repeat_effects[list-3]",
+    "tests/test_review_replay_execution.py::test_equivalent_multi_child_composite_cannot_repeat_effects[previous-0]",
+    "tests/test_review_replay_execution.py::test_equivalent_multi_child_composite_cannot_repeat_effects[previous-1]",
+    "tests/test_review_replay_execution.py::test_equivalent_multi_child_composite_cannot_repeat_effects[previous-3]",
+    "tests/test_review_replay_execution.py::test_native_batch_keeps_unknown_adapter_failures_uncertain[None]",
+    "tests/test_review_replay_execution.py::test_native_batch_keeps_unknown_adapter_failures_uncertain[first_error1]",
+    "tests/test_review_replay_execution.py::test_native_boundary_distinguishes_rejection_from_unknown[failure0-uncertain]",
+    "tests/test_review_replay_execution.py::test_native_boundary_distinguishes_rejection_from_unknown[failure1-uncertain]",
+    "tests/test_review_replay_execution.py::test_native_boundary_distinguishes_rejection_from_unknown[failure2-uncertain]",
+    "tests/test_review_replay_execution.py::test_scheduler_admission_has_no_effect_receipt[budget]",
+    "tests/test_review_replay_execution.py::test_scheduler_admission_has_no_effect_receipt[capacity]",
+    "tests/test_review_replay_execution.py::test_scheduler_admission_has_no_effect_receipt[quarantined]",
+    "tests/test_review_replay_execution.py::test_scheduler_admission_has_no_effect_receipt[unavailable]",
+    "tests/test_review_replay_execution.py::test_scheduler_receipts_follow_authoritative_queue_generation[committed_error]",
+    "tests/test_review_replay_execution.py::test_scheduler_receipts_follow_authoritative_queue_generation[rejected_write]",
+    "tests/test_review_replay_execution.py::test_scheduler_receipts_follow_authoritative_queue_generation[success]",
+    "tests/test_review_replay_execution.py::test_scheduler_receipts_follow_authoritative_queue_generation[unreadable]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_opaque_service_adapter_keeps_unknown_tool_guard_until_ack",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_precise_unknown_or_partial_effect_guards_only_same_operation[False-handler]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_precise_unknown_or_partial_effect_guards_only_same_operation[False-later_schema]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_precise_unknown_or_partial_effect_guards_only_same_operation[True-handler]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_precise_unknown_or_partial_effect_guards_only_same_operation[True-later_schema]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[async-none]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[async-only]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[async-optional]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[callback-none]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[callback-only]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[callback-optional]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[executor-none]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[executor-only]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[executor-optional]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_rejected_receipt_eviction_does_not_retire_safe_conversation",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_schema_registration_change_refuses_both_handlers"
   ],
   "browser": {
     "browser": [
@@ -3408,7 +3453,9 @@
       "tests_real_ha/test_prepared_effect_recovery.py",
       "tests_real_ha/test_service_effect_identity.py",
       "tests_real_ha/test_execution_result_lifecycle_contracts.py",
-      "tests_real_ha/test_receipt_resources_and_unordered_identity.py"
+      "tests_real_ha/test_receipt_resources_and_unordered_identity.py",
+      "tests_real_ha/test_service_receipt_compatibility.py",
+      "tests/test_review_replay_execution.py"
     ],
     "guest-security": [
       "tests_real_ha/test_management_authorization_matrix.py",
@@ -3482,7 +3529,8 @@
       "tests_real_ha/test_quiet_hours_acceptance.py::test_real_ha_quiet_hours_discovers_applies_survives_restart_and_restores",
       "tests_real_ha/test_request_rules_script_semantics.py::test_variables_delay_and_action_keep_one_ha_script_context",
       "tests_real_ha/test_request_rules_script_semantics.py::test_wait_timeout_stops_actions_and_next_request_works",
-      "tests_real_ha/test_user_permission_acceptance.py::test_restricted_user_cannot_bypass_ha_entity_or_management_permissions"
+      "tests_real_ha/test_user_permission_acceptance.py::test_restricted_user_cannot_bypass_ha_entity_or_management_permissions",
+      "tests_real_ha/test_service_receipt_compatibility.py"
     ],
     "native-browser-chromium": [
       "tests_real_ha/test_browser_compatibility_acceptance.py::test_compact_native_frontend_version_contract"
@@ -3553,7 +3601,8 @@
       "tests_real_ha/test_provider_transport_diagnostics_privacy.py"
     ],
     "public-version-journeys": [
-      "tests_real_ha/test_public_version_journeys.py"
+      "tests_real_ha/test_public_version_journeys.py",
+      "tests_real_ha/test_service_receipt_compatibility.py"
     ],
     "quiet-hours": [
       "tests_real_ha/test_quiet_hours_resilience.py",

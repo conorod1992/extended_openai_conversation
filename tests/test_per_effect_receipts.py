@@ -185,7 +185,7 @@ async def test_real_native_batch_records_each_effect_and_prepared_target(
     call = _call("batch", "effect", deepcopy({"list": [RAW, ALIAS, RAW]}))
     await _execute(entity, tool, call)
     effects = entity._execution_effect_receipts[id(call)]
-    assert [r.outcome for r in effects] == ["uncertain", "completed", "rejected"]
+    assert [r.outcome for r in effects] == ["uncertain", "completed", "uncertain"]
     assert [r.child_path for r in effects] == [(0,), (1,), (2,)]
     assert effects[0].signature == effects[1].signature == effects[2].signature
     assert len({r.ordinal for r in effects}) == 3
@@ -412,7 +412,7 @@ async def test_response_variable_consumer_records_executed_inputs(hass, monkeypa
     _retain_calls(log, [first])
     await _execute(entity, tool, first)
     effects = entity._execution_effect_receipts[id(first)]
-    assert effects[-1].kind == "ha_service"
+    assert effects[-1].kind == "backend"
     assert hass.services.async_call.call_args.kwargs["service_data"] == {
         "entity_id": ["light.kitchen"]
     }

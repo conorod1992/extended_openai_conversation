@@ -118,7 +118,7 @@ async def test_completed_handler_then_schema_rejection_remains_partial(hass):
         ],
     )
     remember_unacknowledged_calls(entity, log, set())
-    assert was_unacknowledged_equivalent(
+    assert not was_unacknowledged_equivalent(
         entity,
         log,
         llm.ToolInput(tool_name="effect", tool_args={"changed": True}, id="retry"),

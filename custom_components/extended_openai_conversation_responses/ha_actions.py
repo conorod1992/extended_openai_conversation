@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from copy import copy
 from functools import partial
 from typing import Any
 
@@ -17,14 +16,7 @@ from homeassistant.const import (
     ATTR_LABEL_ID,
     ENTITY_MATCH_ALL,
 )
-from homeassistant.core import (
-    Context,
-    HomeAssistant,
-    ServiceCall,
-    ServiceRegistry,
-    State,
-    SupportsResponse,
-)
+from homeassistant.core import Context, HomeAssistant, State, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import (
     device_registry as dr,
@@ -34,52 +26,13 @@ from homeassistant.helpers import (
 )
 
 from .ha_permissions import async_require_control_permission, get_active_ha_context
-from .ha_schema import schema_for_ha
+from .ha_service_compat import prepare_service_dispatch
 from .schema_errors import SCHEMA_ERRORS as _SERVICE_SCHEMA_ERRORS
 
 ActionTargetRevalidator = Callable[[HomeAssistant, set[str]], None]
 _ACTIVE_ACTION_TARGET_REVALIDATOR: ContextVar[ActionTargetRevalidator | None] = (
     ContextVar("extended_openai_action_target_revalidator", default=None)
 )
-
-
-def _prepare_service_dispatch(
-    hass: HomeAssistant, domain: str, service: str, kwargs: dict[str, Any]
-) -> tuple[Any, dict[str, Any]]:
-    """Validate once and dispatch through a call-local genuine HA registry.
-
-    HA exposes no prepared-call API. A private copy of the selected Service
-    retains its original job/response policy, but returns the already validated
-    data from its schema. HA still owns ServiceCall, events, background jobs and
-    response handling. Global registrations/listeners are never changed. Unknown
-    adapters retain conservative raw-input receipts and their own dispatch path.
-    """
-    registry = hass.services
-    if (
-        type(registry) is not ServiceRegistry
-        or getattr(registry.async_call, "__func__", None)
-        is not ServiceRegistry.async_call
-    ):
-        return registry, {
-            "data": dict(kwargs["service_data"]),
-            "target": dict(kwargs.get("target", {})),
-        }
-    handler = registry._services[domain.lower()][service.lower()]
-    raw = dict(kwargs["service_data"])
-    raw.update(kwargs.get("target", {}))
-    processed = handler.schema(raw) if handler.schema is not None else raw
-    if registry._services.get(domain.lower(), {}).get(service.lower()) is not handler:
-        raise HomeAssistantError(
-            "Home Assistant service changed during preparation; retry"
-        )
-    prepared_handler = copy(handler)
-    prepared_handler.schema = schema_for_ha(lambda _data: processed)
-    prepared_registry = ServiceRegistry(hass)
-    prepared_registry._services = {domain.lower(): {service.lower(): prepared_handler}}
-    # Retain HA's raw event payload, including mutations made by its validator.
-    kwargs["service_data"] = raw
-    kwargs.pop("target", None)
-    return prepared_registry, {"data": processed, "target": {}}
 
 
 @contextmanager
@@ -165,27 +118,6 @@ async def async_authorize_ha_action(
     return entity_ids
 
 
-def _is_pre_dispatch_schema_rejection(error: BaseException) -> bool:
-    """Require actual registry validation provenance before releasing a receipt.
-
-    Handlers can raise the very same schema exception after performing an effect.
-    HA constructs a ServiceCall after validating and retains it while executing
-    the handler. Its presence in the traceback proves this is no longer an
-    admission rejection. Missing registry provenance stays conservatively unknown
-    (for example a custom service adapter), without running validators twice or
-    wrapping/modifying HA's global service registrations.
-    """
-    registry_frame = False
-    trace = error.__traceback__
-    while trace is not None:
-        frame = trace.tb_frame
-        if any(isinstance(value, ServiceCall) for value in frame.f_locals.values()):
-            return False
-        registry_frame |= frame.f_code is ServiceRegistry.async_call.__code__
-        trace = trace.tb_next
-    return registry_frame
-
-
 async def _async_call_ha_action_unchecked(
     hass: HomeAssistant,
     domain: str,
@@ -221,13 +153,13 @@ async def _async_call_ha_action_unchecked(
     )
 
     try:
-        registry, prepared = _prepare_service_dispatch(hass, domain, service, kwargs)
+        registry, prepared = prepare_service_dispatch(hass, domain, service, kwargs)
     except _SERVICE_SCHEMA_ERRORS as err:
         execution_rejected(before_dispatch=True)
         raise HomeAssistantError(str(err)) from err
 
     receipt = execution_started(
-        kind="ha_service",
+        kind="ha_service" if registry is not hass.services else "backend",
         prepared={
             "domain": domain,
             "service": service,
@@ -239,8 +171,6 @@ async def _async_call_ha_action_unchecked(
     try:
         response = await registry.async_call(domain=domain, service=service, **kwargs)
     except _SERVICE_SCHEMA_ERRORS as err:
-        if _is_pre_dispatch_schema_rejection(err):
-            execution_rejected(receipt)
         # Home Assistant has transitioned service schemas from voluptuous to
         # probatio. Keep the integration's action boundary stable across both: a
         # schema rejection is an ordinary Home Assistant action failure that the

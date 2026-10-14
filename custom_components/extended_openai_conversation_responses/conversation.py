@@ -1263,7 +1263,7 @@ class ExtendedOpenAIAgentEntity(
                     None
                     if requested_conversation_reset() is not None
                     else chat_log.conversation_id
-                    if getattr(self, "_unacknowledged_tool_calls", {}).get(
+                    if getattr(self, "_unacknowledged_tool_schemas", {}).get(
                         chat_log.conversation_id
                     )
                     else user_input.conversation_id

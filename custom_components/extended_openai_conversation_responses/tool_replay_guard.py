@@ -26,6 +26,7 @@ from .schema_errors import SCHEMA_ERRORS
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
 _MAX_RETIRED_CONVERSATIONS = 4096
 _MAX_DISPATCH_RECORDS = 4096
+_PRECISE_EFFECT_KINDS = {"ha_service", "automation_update", "broadcast"}
 
 
 def _retire_replay_history(entity: Any, conversation_id: str | None) -> None:
@@ -58,6 +59,27 @@ def _replay_history_incomplete(entity: Any, conversation_id: str) -> bool:
         getattr(entity, "_replay_history_incomplete", False)
         and digest not in getattr(entity, "_acknowledged_replay_conversations", ())
     )
+
+
+def _forget_dispatch(entity: Any, key: int, *, retire: bool = False) -> None:
+    """Dispose one call's bookkeeping together; unknown losses remain unsafe."""
+    if (
+        retire
+        and key not in getattr(entity, "_read_only_tool_inputs", {})
+        and getattr(entity, "_execution_tool_outcomes", {}).get(key) != "rejected"
+    ):
+        _retire_replay_history(
+            entity, getattr(entity, "_dispatched_tool_conversations", {}).get(key)
+        )
+    for name in (
+        "_dispatched_tool_inputs",
+        "_dispatched_tool_signatures",
+        "_dispatched_tool_conversations",
+        "_read_only_tool_inputs",
+        "_execution_tool_outcomes",
+        "_execution_effect_receipts",
+    ):
+        getattr(entity, name, {}).pop(key, None)
 
 
 @dataclass
@@ -234,17 +256,7 @@ def record_dispatch(
     owners = getattr(entity, "_dispatched_tool_conversations", None)
     if not isinstance(owners, dict):
         owners = entity._dispatched_tool_conversations = {}
-    scope = _effect_replay_scope.get()
-    conversation_id = (
-        scope.conversation_id
-        if scope is not None and scope.active and scope.entity is entity
-        else None
-    )
-    if conversation_id is None:
-        from .execution_outcomes import execution_is_detached
-
-        if execution_is_detached():
-            conversation_id = ""
+    conversation_id = dispatch_conversation_id(entity)
     canonical = getattr(entity, "_dispatched_tool_signatures", None)
     if not isinstance(canonical, dict):
         canonical = entity._dispatched_tool_signatures = {}
@@ -282,15 +294,23 @@ def record_dispatch(
         else:
             read_only.pop(id(item), None)
     while len(dispatched) > _MAX_DISPATCH_RECORDS:
-        oldest = next(iter(dispatched))
-        if oldest not in read_only:
-            _retire_replay_history(entity, owners.get(oldest))
-        canonical.pop(oldest, None)
-        read_only.pop(oldest, None)
-        dispatched.pop(oldest)
-        owners.pop(oldest, None)
-        getattr(entity, "_execution_tool_outcomes", {}).pop(oldest, None)
-        getattr(entity, "_execution_effect_receipts", {}).pop(oldest, None)
+        _forget_dispatch(entity, next(iter(dispatched)), retire=True)
+
+
+def dispatch_conversation_id(entity: Any) -> str | None:
+    """Use the active ownership lease, including the detached-job sentinel."""
+    scope = _effect_replay_scope.get()
+    conversation_id = (
+        scope.conversation_id
+        if scope is not None and scope.active and scope.entity is entity
+        else None
+    )
+    if conversation_id is None:
+        from .execution_outcomes import execution_is_detached
+
+        if execution_is_detached():
+            conversation_id = ""
+    return conversation_id
 
 
 def dispatch_inputs(tool_input: llm.ToolInput) -> list[llm.ToolInput]:
@@ -338,6 +358,16 @@ def _signature(
     )
 
 
+def _needs_tool_wide_guard(entity: Any, call: llm.ToolInput) -> bool:
+    """Precise identities protect themselves even when their outcome is unknown."""
+    receipts = getattr(entity, "_execution_effect_receipts", {}).get(id(call), ())
+    return not receipts or any(
+        item.outcome != "rejected"
+        and (item.kind not in _PRECISE_EFFECT_KINDS or item.signature == "*")
+        for item in receipts
+    )
+
+
 def remember_unacknowledged_calls(
     entity: Any,
     chat_log: conversation.ChatLog,
@@ -377,8 +407,7 @@ def remember_unacknowledged_calls(
         and getattr(entity, "_read_only_tool_inputs", {}).get(id(tool_input))
         is not tool_input
     ]
-    signatures = {signature for signature, _spec in records}
-    if not signatures:
+    if not records:
         return
     effects = getattr(entity, "_unacknowledged_effects", None)
     if not isinstance(effects, dict):
@@ -405,11 +434,6 @@ def remember_unacknowledged_calls(
     if len(retained_effects) > 4096:
         # Never evict an unresolved effect and silently permit its replay.
         effects[conversation_id] = {"*"}
-    ledger = getattr(entity, "_unacknowledged_tool_calls", None)
-    if not isinstance(ledger, dict):
-        ledger = {}
-        entity._unacknowledged_tool_calls = ledger
-    ledger.setdefault(conversation_id, set()).update(signatures)
     schemas = getattr(entity, "_unacknowledged_tool_schemas", None)
     if not isinstance(schemas, dict):
         schemas = entity._unacknowledged_tool_schemas = {}
@@ -424,13 +448,14 @@ def remember_unacknowledged_calls(
         for call in content.tool_calls
         if getattr(entity, "_execution_tool_outcomes", {}).get(id(call))
         in {"partial", "uncertain"}
+        and _needs_tool_wide_guard(entity, call)
     )
-    while len(ledger) > _MAX_AMBIGUOUS_CONVERSATIONS:
-        _retire_replay_history(entity, next(iter(ledger)))
-        effects.pop(next(iter(ledger)), None)
-        schemas.pop(next(iter(ledger)), None)
-        uncertain.pop(next(iter(ledger)), None)
-        ledger.pop(next(iter(ledger)))
+    while len(schemas) > _MAX_AMBIGUOUS_CONVERSATIONS:
+        oldest = next(iter(schemas))
+        _retire_replay_history(entity, oldest)
+        effects.pop(oldest, None)
+        uncertain.pop(oldest, None)
+        schemas.pop(oldest)
 
 
 def was_unacknowledged_equivalent(
@@ -442,34 +467,30 @@ def was_unacknowledged_equivalent(
         return False
     if _replay_history_incomplete(entity, conversation_id):
         return True
-    ledger = getattr(entity, "_unacknowledged_tool_calls", None)
+    ledger = getattr(entity, "_unacknowledged_tool_schemas", None)
     if not isinstance(ledger, dict):
         return False
-    signatures = ledger.get(chat_log.conversation_id, ())
+    records = ledger.get(chat_log.conversation_id, {})
     if tool_input.tool_name in getattr(
         entity, "_unacknowledged_uncertain_tools", {}
     ).get(chat_log.conversation_id, ()):
         return True
-    if _signature(tool_input) in signatures:
+    if _signature(tool_input) in records:
         return True
-    schemas = getattr(entity, "_unacknowledged_tool_schemas", {})
     return any(
-        signature in signatures and _signature(tool_input, spec) == signature
-        for signature, spec in schemas.get(chat_log.conversation_id, {}).items()
+        _signature(tool_input, spec) == signature for signature, spec in records.items()
     )
 
 
 def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None:
     """A successful provider turn resolves ambiguity for this conversation."""
-    ledger = getattr(entity, "_unacknowledged_tool_calls", None)
-    if isinstance(ledger, dict) and isinstance(conversation_id, str):
-        ledger.pop(conversation_id, None)
-        getattr(entity, "_unacknowledged_effects", {}).pop(conversation_id, None)
-        getattr(entity, "_unacknowledged_tool_schemas", {}).pop(conversation_id, None)
-        getattr(entity, "_unacknowledged_uncertain_tools", {}).pop(
-            conversation_id, None
-        )
     if isinstance(conversation_id, str):
+        for name in (
+            "_unacknowledged_tool_schemas",
+            "_unacknowledged_effects",
+            "_unacknowledged_uncertain_tools",
+        ):
+            getattr(entity, name, {}).pop(conversation_id, None)
         digest = hashlib.sha256(conversation_id.encode()).digest()
         getattr(entity, "_retired_replay_conversations", set()).discard(digest)
         if getattr(entity, "_replay_history_incomplete", False):
@@ -481,12 +502,4 @@ def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None
                 acknowledged.pop(next(iter(acknowledged)))
         owners = getattr(entity, "_dispatched_tool_conversations", {})
         for key in [key for key, owner in owners.items() if owner == conversation_id]:
-            owners.pop(key, None)
-            for name in (
-                "_dispatched_tool_inputs",
-                "_dispatched_tool_signatures",
-                "_read_only_tool_inputs",
-                "_execution_tool_outcomes",
-                "_execution_effect_receipts",
-            ):
-                getattr(entity, name, {}).pop(key, None)
+            _forget_dispatch(entity, key)

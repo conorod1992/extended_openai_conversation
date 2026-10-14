@@ -125,7 +125,7 @@ async def test_completed_counter_effect_is_not_replayed_after_lost_continuation(
                 "counter": hass.states.get(entity_id).state,
                 "requests": len(requests),
                 "remembered_effect": bool(
-                    getattr(agent, "_unacknowledged_tool_calls", {})
+                    getattr(agent, "_unacknowledged_tool_schemas", {})
                 ),
             }
         )
