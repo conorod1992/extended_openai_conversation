@@ -371,6 +371,17 @@ def test_prepared_identity_supports_typed_mapping_keys_without_mutation():
 
 async def test_response_variable_consumer_records_executed_inputs(hass, monkeypatch):
     _install_native_boundary(hass, monkeypatch)
+    from custom_components.extended_openai_conversation_responses.functions.template import (
+        TemplateFunction,
+    )
+
+    observed = []
+
+    async def producer(self, hass, config, arguments, context, exposed):
+        observed.append(arguments["noise"])
+        return {"entity_id": [arguments["target"]]}
+
+    monkeypatch.setattr(TemplateFunction, "execute", producer)
     config = {
         "type": "composite",
         "sequence": [
@@ -405,3 +416,4 @@ async def test_response_variable_consumer_records_executed_inputs(hass, monkeypa
     ):
         await _execute(entity, tool, retry)
     assert hass.services.async_call.await_count == 1
+    assert observed == [1, 2]
