@@ -531,3 +531,57 @@ async def test_genuine_service_provenance_distinguishes_same_exception_type(
         )
     finally:
         await hass.async_stop(force=True)
+
+
+async def test_genuine_service_identity_preserves_handler_visible_response_mode(
+    tmp_path,
+):
+    from homeassistant.core import HomeAssistant, SupportsResponse
+    from custom_components.extended_openai_conversation_responses.ha_actions import (
+        _async_call_ha_action_unchecked,
+    )
+
+    hass = HomeAssistant(str(tmp_path))
+    calls = []
+
+    async def handler(call):
+        calls.append(call.return_response)
+        return {"acknowledged": True}
+
+    hass.services.async_register(
+        "receipt_probe", "apply", handler, supports_response=SupportsResponse.OPTIONAL
+    )
+    entity, tool = SimpleNamespace(), _tool()
+    log = SimpleNamespace(conversation_id="response-mode", content=[])
+    first = _call("first", "effect", {})
+    from homeassistant.components import conversation
+
+    log.content.append(
+        conversation.AssistantContent(agent_id="conversation.probe", tool_calls=[first])
+    )
+    try:
+        with receipts.execution_attempt(entity, first, tool):
+            await _async_call_ha_action_unchecked(
+                hass, "receipt_probe", "apply", blocking=True, include_response=True
+            )
+        remember_unacknowledged_calls(entity, log, set())
+        second = _call("different-mode", "another_wrapper", {})
+        with (
+            bind_effect_replay_scope(entity, log.conversation_id),
+            receipts.execution_attempt(entity, second, tool),
+        ):
+            await _async_call_ha_action_unchecked(
+                hass, "receipt_probe", "apply", blocking=True, include_response=False
+            )
+        repeated = _call("same-mode", "third_wrapper", {})
+        with (
+            bind_effect_replay_scope(entity, log.conversation_id),
+            receipts.execution_attempt(entity, repeated, tool),
+            pytest.raises(HomeAssistantError, match="not acknowledged"),
+        ):
+            await _async_call_ha_action_unchecked(
+                hass, "receipt_probe", "apply", blocking=True, include_response=True
+            )
+        assert calls == [True, False]
+    finally:
+        await hass.async_stop(force=True)

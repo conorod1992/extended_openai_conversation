@@ -186,6 +186,8 @@ async def _async_call_ha_action_unchecked(
             "service": service,
             "data": dict(data or {}),
             "target": dict(target or {}),
+            "return_response": request_response,
+            "user_id": getattr(context, "user_id", None),
         },
     )
     try:
