@@ -497,6 +497,11 @@ class QuietHoursManager:
     async def async_shutdown(self) -> None:
         # Unsubscribing cannot retract callbacks already queued on this lock.
         self._stopping = True
+        # Removal discards this manager after the await. Retain ownership through
+        # lock acquisition, restoration and cleanup before forwarding cancellation.
+        await _async_settle_store_io(self._async_finish_shutdown())
+
+    async def _async_finish_shutdown(self) -> None:
         async with self._lock:
             self._cancel_scheduled_callbacks()
             try:

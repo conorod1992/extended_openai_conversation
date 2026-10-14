@@ -2242,7 +2242,8 @@
     "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_deleted_observation_does_not_suppress_reused_id",
     "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_observation_identity_survives_rename_and_restart[0.1]",
     "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_observation_identity_survives_rename_and_restart[0.8]",
-    "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_registered_callback_queued_behind_shutdown_cannot_reapply"
+    "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_registered_callback_queued_behind_shutdown_cannot_reapply",
+    "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_cancelled_shutdown_waits_for_lock_and_restores_before_removal"
   ],
   "browser": {
     "browser": [

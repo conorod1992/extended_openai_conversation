@@ -37,6 +37,39 @@ async def _enabled_manager(hass, volume):
     return manager, satellite, media, calls
 
 
+async def test_cancelled_shutdown_waits_for_lock_and_restores_before_removal(hass):
+    from custom_components.extended_openai_conversation_responses import (
+        async_remove_entry,
+    )
+    from tests_real_ha.test_live_subentry_removal import _entry
+
+    manager, _, media, calls = await _enabled_manager(hass, 0.8)
+    assert hass.states.get(media).attributes["volume_level"] == 0.2
+    await manager._lock.acquire()
+    stopped = asyncio.create_task(async_remove_entry(hass, _entry()))
+    try:
+        async with asyncio.timeout(10):
+            while not manager._stopping:
+                await asyncio.sleep(0)
+        stopped.cancel()
+        await asyncio.sleep(0)
+        stopped.cancel()
+        await asyncio.sleep(0)
+        assert not stopped.done(), "Removal must retain ownership while shutdown waits"
+    finally:
+        manager._lock.release()
+    with pytest.raises(asyncio.CancelledError):
+        await stopped
+    assert hass.states.get(media).attributes["volume_level"] == 0.8
+    assert calls == [("volume_set", media), ("volume_set", media)]
+    assert manager.active is None
+    assert (await manager._store.async_load())["active"] is None
+    assert not manager._unsubscribers
+    assert manager._registry_unsubscribe is None
+    assert hass.states.get(manager._state_entity_id()) is None
+    assert "quiet_hours_manager" not in hass.data["extended_openai_conversation_responses"]
+
+
 @pytest.mark.parametrize("original", [0.1, 0.8])
 async def test_observation_identity_survives_rename_and_restart(hass, original):
     manager, _, media, calls = await _enabled_manager(hass, original)
