@@ -2230,7 +2230,11 @@
     "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[invalid_active-True]",
     "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[unavailable1-False]",
     "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[unavailable1-True]",
-    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_repeated_cancellation_settles_recovery"
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_repeated_cancellation_settles_recovery",
+    "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_deleted_observation_does_not_suppress_reused_id",
+    "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_observation_identity_survives_rename_and_restart[0.1]",
+    "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_observation_identity_survives_rename_and_restart[0.8]",
+    "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_registered_callback_queued_behind_shutdown_cannot_reapply"
   ],
   "browser": {
     "browser": [
@@ -3458,7 +3462,8 @@
       "tests_stress/test_quiet_hours_edges.py",
       "tests_stress/test_quiet_hours_multi_satellite.py",
       "tests_stress/test_quiet_hours_ownership_time.py",
-      "tests_real_ha/test_quiet_hours_generation_recovery.py"
+      "tests_real_ha/test_quiet_hours_generation_recovery.py",
+      "tests_real_ha/test_quiet_hours_identity_shutdown.py"
     ],
     "request-rules": [
       "tests_real_ha/test_request_rules_script_semantics.py",

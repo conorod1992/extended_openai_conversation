@@ -810,20 +810,22 @@ class QuietHoursManager:
                     )
                     if identity is not None:
                         break
-            verified = isinstance(identity, list) and len(identity) == 3
-            destination = (
+            has_identity = isinstance(identity, list) and len(identity) == 3
+            observed_destination = (
                 er.async_get(self.hass).async_get_entity_id(*identity)
-                if verified
+                if has_identity
                 else moves.get(old_id, old_id)
             )
-            if not isinstance(destination, str):
+            if not isinstance(observed_destination, str):
                 continue
-            observed.append(destination)
-            if verified:
+            observed.append(observed_destination)
+            if has_identity:
                 # Applied ownership wins a metadata collision too. Observation
                 # must never change which baseline owns the current device.
-                owner = rebuilt["controls"].get(destination, {})
-                identities[destination] = owner.get("registry_identity", identity)
+                owner = rebuilt["controls"].get(observed_destination, {})
+                identities[observed_destination] = owner.get(
+                    "registry_identity", identity
+                )
         observed = list(dict.fromkeys(observed + ambiguous))
         changed = (
             any(self._active.get(key, {}) != value for key, value in rebuilt.items())
