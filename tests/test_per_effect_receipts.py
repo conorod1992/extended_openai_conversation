@@ -559,6 +559,20 @@ async def test_opaque_operations_do_not_claim_equivalence_across_wrapper_context
     assert effects == ["kitchen", "bedroom"]
 
 
+@pytest.mark.parametrize("missing_identity", [None, ""])
+def test_anonymous_scope_does_not_inherit_an_outer_conversation(missing_identity):
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+        check_effect_replay,
+    )
+
+    entity = SimpleNamespace(_unacknowledged_effects={"known": {"effect"}})
+    with bind_effect_replay_scope(entity, "known"):
+        with bind_effect_replay_scope(entity, missing_identity):
+            check_effect_replay(entity, "effect")
+        with pytest.raises(HomeAssistantError, match="not acknowledged"):
+            check_effect_replay(entity, "effect")
+
+
 async def test_genuine_service_identity_preserves_handler_visible_response_mode(
     tmp_path,
 ):

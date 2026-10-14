@@ -660,12 +660,34 @@ async def test_composite_original_representation_observer_is_not_canonicalized_a
         agent,
         [call("changed", "effect", _arguments(equivalent=True)), text("Done")],
     )
-    # The Template child sees a different representation, so these whole calls
-    # are intentionally distinct even though their native child is equivalent.
+    # The observer retains different raw inputs, so whole-call identities differ.
+    # The earlier completed native effect nevertheless has its own replay guard.
+    from custom_components.extended_openai_conversation_responses.execution_arguments import (
+        execution_identity,
+    )
+
+    config = agent.subentry.data[CONF_FUNCTION_TOOLS][0]["function"]
+    assert execution_identity(config, _arguments()) != execution_identity(
+        config, _arguments(equivalent=True)
+    )
     result = await _say(
         hass, agent, "perform the different operation", first.conversation_id
     )
-    assert result.response.error_code is None
+    assert result.response.error_code is not None
+    assert hass.states.get("counter.receipt").state == "1"
+
+    # An acknowledged turn resolves this recovery scope; a deliberate subsequent
+    # action is permitted and still receives the original representation.
+    _install_wire(monkeypatch, agent, [text("Recovered")])
+    recovered = await _say(hass, agent, "continue without tools", first.conversation_id)
+    assert recovered.response.error_code is None
+    _install_wire(
+        monkeypatch,
+        agent,
+        [call("after-success", "effect", _arguments(equivalent=True)), text("Done")],
+    )
+    repeated = await _say(hass, agent, "increment again", first.conversation_id)
+    assert repeated.response.error_code is None
     assert hass.states.get("counter.receipt").state == "2"
 
 

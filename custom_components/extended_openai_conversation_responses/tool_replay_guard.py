@@ -30,9 +30,16 @@ _effect_replay_scope: ContextVar[tuple[Any, str] | None] = ContextVar(
 
 
 @contextmanager
-def bind_effect_replay_scope(entity: Any, conversation_id: str) -> Iterator[None]:
+def bind_effect_replay_scope(
+    entity: Any, conversation_id: str | None
+) -> Iterator[None]:
     """Keep effect recovery local to one entity and conversation, including tasks."""
-    token = _effect_replay_scope.set((entity, conversation_id))
+    scope = (
+        (entity, conversation_id)
+        if isinstance(conversation_id, str) and conversation_id
+        else None
+    )
+    token = _effect_replay_scope.set(scope)
     try:
         yield
     finally:
@@ -44,7 +51,9 @@ def with_effect_replay_scope(
 ) -> Callable[..., Awaitable[None]]:
     @wraps(function)
     async def scoped(entity: Any, chat_log: Any, *args: Any, **kwargs: Any) -> None:
-        with bind_effect_replay_scope(entity, chat_log.conversation_id):
+        with bind_effect_replay_scope(
+            entity, getattr(chat_log, "conversation_id", None)
+        ):
             await function(entity, chat_log, *args, **kwargs)
 
     return scoped
