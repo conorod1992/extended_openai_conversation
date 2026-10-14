@@ -550,7 +550,7 @@ def test_active_group_request_survives_sweeps_then_obeys_idle_expiration(
     now = 181.0
     runtime.begin("other", 1)
     assert "active" not in runtime._sessions
-    assert runtime._requests == {}
+    assert not runtime._requests
 
 
 def test_group_reset_invalidates_old_completion(monkeypatch):
@@ -566,4 +566,4 @@ def test_group_reset_invalidates_old_completion(monkeypatch):
     now = 120.0
     runtime.finish_request(token, successful=True)
     assert replacement.last_active == 0.0
-    assert runtime._requests == {}
+    assert not runtime._requests

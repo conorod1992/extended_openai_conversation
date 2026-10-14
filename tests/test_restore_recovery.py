@@ -386,8 +386,11 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(
         _pending_ends={"old"},
         _ignored_conversation_ids={"old": None},
     )
-    rule_runtime = SimpleNamespace(_conversation_overrides={"old": object()})
-    group_runtime = SimpleNamespace(_sessions={"old": object()}, _last_request={"x": 1})
+    rule_runtime = request_rules.RequestRuleRuntime()
+    rule_runtime.set("old", {"model": "old"})
+    group_runtime = function_groups.FunctionGroupRuntime()
+    group_runtime.begin("old", 5)
+    group_runtime._last_request = {"x": 1}
     fallback_usage = object()
     durable_usage = object()
     agent = SimpleNamespace(

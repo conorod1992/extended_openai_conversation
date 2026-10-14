@@ -351,7 +351,7 @@ def reset_restored_runtime(
         for item in (rule_runtime, agent_rule_runtime)
         if item is not None
     }.values():
-        current._conversation_overrides.clear()
+        current.reset_all()
     if agent_rule_runtime is not None:
         rule_runtimes[key] = agent_rule_runtime
 
@@ -363,8 +363,7 @@ def reset_restored_runtime(
         for item in (group_runtime, agent_group_runtime)
         if item is not None
     }.values():
-        current._sessions.clear()
-        current._last_request.clear()
+        current.reset_all()
     if agent_group_runtime is not None:
         group_runtimes[key] = agent_group_runtime
 

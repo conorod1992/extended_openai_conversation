@@ -46,6 +46,7 @@ from .const import (
     DOMAIN,
     SERVICE_CALL_FUNCTION,
 )
+from .conversation_requests import ConversationRequests, ConversationRequestToken
 from .functions.script import _AuthorizedScriptHass
 from .guest_mode import (
     GUEST_MODE_UNAVAILABLE,
@@ -1352,19 +1353,12 @@ class RequestRules:
         self._sort_and_compile()
 
 
-class _RuleRequestToken:
-    """Keep ended ownership visible to an in-flight evaluator after cleanup."""
-
-    ended = False
-    refresh_allowed = True
-
-
 class RequestRuleRuntime:
     """Per-agent, in-memory conversation routing overrides."""
 
     def __init__(self) -> None:
         self._conversation_overrides: dict[str, tuple[dict[str, str], float, int]] = {}
-        self._requests: dict[object, str] = {}
+        self._requests = ConversationRequests[str]()
 
     def get(
         self,
@@ -1376,7 +1370,7 @@ class RequestRuleRuntime:
             self._conversation_overrides.items()
         ):
             if (
-                key not in self._requests.values()
+                not self._requests.active(key)
                 and now - last_used >= max(1, stored_timeout) * 60
             ):
                 self._conversation_overrides.pop(key, None)
@@ -1394,20 +1388,19 @@ class RequestRuleRuntime:
     def begin_request(self, session_id: str, timeout_minutes: int) -> object:
         """Resolve idle expiration before protecting an active request."""
         self.get(session_id, timeout_minutes)
-        token = _RuleRequestToken()
-        self._requests[token] = session_id
-        return token
+        return self._requests.begin(session_id, session_id)
+
+    def request_ownership(
+        self, session_id: str
+    ) -> tuple[ConversationRequestToken[str], ...]:
+        """Capture execution ownership independently of permission to refresh."""
+        return self._requests.tokens(session_id)
 
     def finish_request(self, token: object, *, successful: bool) -> None:
         """Refresh surviving overrides after a successful request."""
-        session_id = self._requests.pop(token, None)
+        session_id = self._requests.finish(token, successful=successful)
         entry = self._conversation_overrides.get(session_id) if session_id else None
-        if (
-            successful
-            and session_id is not None
-            and entry is not None
-            and (not isinstance(token, _RuleRequestToken) or token.refresh_allowed)
-        ):
+        if session_id is not None and entry is not None:
             values, _, timeout = entry
             self._conversation_overrides[session_id] = (values, monotonic(), timeout)
 
@@ -1427,28 +1420,24 @@ class RequestRuleRuntime:
     def reset(self, session_id: str) -> None:
         """Clear routing without ending the request that issued the reset."""
         self._conversation_overrides.pop(session_id, None)
-        for token, active in self._requests.items():
-            if active == session_id and isinstance(token, _RuleRequestToken):
-                token.refresh_allowed = False
+        self._requests.invalidate(session_id, ended=False)
+
+    def reset_all(self) -> None:
+        """Discard overrides and end all outstanding request ownership."""
+        self._requests.clear()
+        self._conversation_overrides.clear()
 
     def reset_continuity(self, continuity_key: str) -> None:
         """Invalidate every conversation generation owned by an ended continuity."""
         owner = f"continuity:{continuity_key}"
-        sessions = set(self._conversation_overrides) | set(self._requests.values())
+        sessions = set(self._conversation_overrides) | self._requests.owners
         for session_id in sessions:
             if (
                 session_id == owner
                 or session_id.rpartition(":conversation:")[0] == owner
             ):
-                for token, active in self._requests.items():
-                    if active == session_id and isinstance(token, _RuleRequestToken):
-                        token.ended = True
-                self.reset(session_id)
-                self._requests = {
-                    token: active
-                    for token, active in self._requests.items()
-                    if active != session_id
-                }
+                self._conversation_overrides.pop(session_id, None)
+                self._requests.invalidate(session_id, ended=True)
 
     def effective_options(
         self,
@@ -3423,11 +3412,7 @@ async def async_evaluate_rule(
     )
 
     ownership = (
-        tuple(
-            token
-            for token, active in runtime._requests.items()
-            if active == session_id and isinstance(token, _RuleRequestToken)
-        )
+        runtime.request_ownership(session_id)
         if isinstance(runtime, RequestRuleRuntime)
         else ()
     )
