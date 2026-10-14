@@ -31,6 +31,35 @@ function panel() {
   return host;
 }
 
+for (const full of [false, true]) {
+  test(`queued ${full ? "full" : "field"} acknowledgement preserves a local revert after an earlier acknowledgement`, async () => {
+    const host = panel();
+    host._configData.config.functions = ["first", "second"];
+    host._draft.functions = ["first", "second"];
+    const first = captureConfigurationSubmission(host), second = captureConfigurationSubmission(host);
+    const projection = full ? {} : {fields:["functions"]};
+    const saved = (revision, functions) => ({valid:true, revision, title:host._draftTitle,
+      config:full ? {...structuredClone(host._configData.config), functions} : {functions}});
+    reconcileConfigurationAcknowledgement(host, saved("r2", ["second"]), first, projection);
+    assert.deepEqual(host._draft.functions, ["second"]);
+    host._draft.functions = ["first", "second"];
+    reconcileConfigurationAcknowledgement(host, saved("r3", []), second, projection);
+    assert.deepEqual(host._draft.functions, ["first", "second"]);
+    assert.deepEqual(host._configData.config.functions, []);
+    assert.equal(host._configData.revision, "r3");
+    assert.equal(host.dirty, true);
+    host._syncConfigDirty = () => { host._eocDirtyConfigKeys = new Set(["functions"]); };
+    host._call = async (_section, _action, payload) => {
+      assert.equal(payload.revision, "r3");
+      assert.deepEqual(payload.config.functions, ["first", "second"]);
+      return {valid:true, revision:"r4", title:host._draftTitle, config:structuredClone(host._draft)};
+    };
+    await saveConfiguration(host, {});
+    assert.deepEqual(host._configData.config.functions, ["first", "second"]);
+    assert.equal(host._configData.revision, "r4");
+  });
+}
+
 test("full acknowledgement canonicalizes unchanged fields and preserves newer field/title edits", async () => {
   const host = panel(), gate = deferred();
   host._call = async (...args) => { host.calls.push(args); return gate.promise; };

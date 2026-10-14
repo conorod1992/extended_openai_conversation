@@ -42,10 +42,11 @@ export function reconcileConfigurationAcknowledgement(panel, saved, submission, 
     const submitted = clone(submission.draft);
     // An earlier queued acknowledgement can advance both baseline and draft.
     // That is not a local edit that should hide this later acknowledgement.
+    // Compare with that acknowledged baseline, so a later local revert to the
+    // original submitted value remains an edit rather than becoming clean.
     for (const key of keys || new Set([...Object.keys(submitted), ...Object.keys(saved.config)])) {
-      if (same(field(previous?.config || {}, key), field(submission.baseline, key))
-          || !same(field(panel._draft, key), field(previous?.config || {}, key))) continue;
-      if (Object.hasOwn(panel._draft, key)) submitted[key] = clone(panel._draft[key]);
+      if (same(field(previous?.config || {}, key), field(submission.baseline, key))) continue;
+      if (Object.hasOwn(previous?.config || {}, key)) submitted[key] = clone(previous.config[key]);
       else delete submitted[key];
     }
     panel._draft = mergeAcknowledgedDraft(panel._draft, submitted, saved.config, keys);
