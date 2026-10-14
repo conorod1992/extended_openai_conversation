@@ -449,6 +449,7 @@ class QuietHoursManager:
         self._active: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._stopping = False
         self._config_recovery_pending = False
         self._unsubscribers: list[Callable[[], None]] = []
 
@@ -471,6 +472,8 @@ class QuietHoursManager:
 
     async def async_setup(self) -> None:
         async with self._lock:
+            if getattr(self, "_stopping", False):
+                return
             if self._initialized:
                 return
             raw = await self._store.async_load() or {}
@@ -485,6 +488,8 @@ class QuietHoursManager:
         await self.async_reconcile()
 
     async def async_shutdown(self) -> None:
+        # Unsubscribing cannot retract callbacks already queued on this lock.
+        self._stopping = True
         async with self._lock:
             self._cancel_scheduled_callbacks()
             try:
@@ -529,6 +534,8 @@ class QuietHoursManager:
         candidate = _config_from_data(value)
         failure: BaseException | None = None
         async with self._lock:
+            if getattr(self, "_stopping", False):
+                raise HomeAssistantError("Quiet Hours is shutting down")
             if not await self._async_recover_configuration_locked():
                 raise ValueError(
                     "Quiet Hours configuration recovery is pending; retry later"
@@ -560,6 +567,14 @@ class QuietHoursManager:
                     self._active["observed_controls"] = list(
                         self._active.get("controls", {})
                     )
+                    if "observed_identities" in self._active:
+                        self._active["observed_identities"] = {
+                            key: identity
+                            for key, identity in self._active[
+                                "observed_identities"
+                            ].items()
+                            if key in self._active["controls"]
+                        }
                     self._active["pending_controls"] = {}
                     await self._async_save_control_state_locked()
             except BaseException as err:
@@ -646,6 +661,8 @@ class QuietHoursManager:
         """Reconcile the scheduled policy using cross-version-safe discovery."""
         now = dt_util.now() if now is None else dt_util.as_local(now)
         async with self._lock:
+            if getattr(self, "_stopping", False):
+                return
             recovering = getattr(self, "_config_recovery_pending", False)
             if not self._initialized and not recovering:
                 return
@@ -773,22 +790,44 @@ class QuietHoursManager:
                 rebuilt[key][destination] = control
             # A collision without a canonical destination owner is ambiguous.
             # Release its claims, retaining observation to avoid reclaiming it.
-        observed = list(
-            dict.fromkeys(
-                [
-                    observed_id
-                    for old_id in self._active.get("observed_controls", [])
-                    if (observed_id := moves.get(old_id, old_id)) is not None
-                ]
-                + ambiguous
+        observed = []
+        identities = {}
+        previous_identities = self._active.get("observed_identities", {})
+        for old_id in self._active.get("observed_controls", []):
+            identity = previous_identities.get(old_id)
+            if identity is None:
+                for key in ("controls", "pending_controls"):
+                    identity = (
+                        self._active.get(key, {})
+                        .get(old_id, {})
+                        .get("registry_identity")
+                    )
+                    if identity is not None:
+                        break
+            verified = isinstance(identity, list) and len(identity) == 3
+            destination = (
+                er.async_get(self.hass).async_get_entity_id(*identity)
+                if verified
+                else moves.get(old_id, old_id)
             )
-        )
+            if not isinstance(destination, str):
+                continue
+            observed.append(destination)
+            if verified:
+                # Applied ownership wins a metadata collision too. Observation
+                # must never change which baseline owns the current device.
+                owner = rebuilt["controls"].get(destination, {})
+                identities[destination] = owner.get("registry_identity", identity)
+        observed = list(dict.fromkeys(observed + ambiguous))
         changed = (
             any(self._active.get(key, {}) != value for key, value in rebuilt.items())
             or self._active.get("observed_controls", []) != observed
+            or previous_identities != identities
         )
         if changed:
             self._active.update(rebuilt, observed_controls=observed)
+            if identities or "observed_identities" in self._active:
+                self._active["observed_identities"] = identities
         return changed
 
     async def _async_reconcile_controls_locked(
@@ -1155,6 +1194,10 @@ class QuietHoursManager:
                 ),
             }
             observed.append(entity_id)
+        if identity := intent.get("registry_identity"):
+            self._active.setdefault("observed_identities", {})[entity_id] = list(
+                identity
+            )
         if needs_action:
             pending[entity_id] = {**intent, "quiet_value": desired}
         else:
@@ -1389,6 +1432,23 @@ class QuietHoursManager:
         observed.update(pending)
         normalized["observed_controls"] = sorted(observed)
         normalized["pending_controls"] = pending
+        identities = (
+            {
+                entity_id: list(identity)
+                for entity_id, identity in value.get("observed_identities", {}).items()
+                if entity_id in observed
+                and isinstance(identity, list)
+                and len(identity) == 3
+                and all(isinstance(item, str) and item for item in identity)
+            }
+            if isinstance(value.get("observed_identities"), Mapping)
+            else {}
+        )
+        for entity_id, control in {**pending, **normalized["controls"]}.items():
+            if identity := control.get("registry_identity"):
+                identities[entity_id] = list(identity)
+        if identities:
+            normalized["observed_identities"] = identities
         return normalized
 
     def _normalize_active_values(self, value: Any) -> dict[str, Any] | None:
@@ -1526,6 +1586,8 @@ class QuietHoursManager:
 
     def _reschedule(self) -> None:
         self._cancel_scheduled_callbacks()
+        if getattr(self, "_stopping", False):
+            return
         if getattr(self, "_config_recovery_pending", False):
             self._unsubscribers.append(
                 async_track_time_interval(

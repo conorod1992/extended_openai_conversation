@@ -169,7 +169,12 @@ async def test_real_ha_quiet_hours_discovers_applies_survives_restart_and_restor
     # Recreate the domain-global manager against the same HA storage to model an
     # integration/HA restart. The already-ducked value must not become the new
     # baseline, and the same schedule occurrence must retain its ownership record.
-    await manager.async_shutdown()
+    # A process loss does not restore healthy devices before startup. Preserve
+    # the already-ducked persisted generation so the assertion tests recovery.
+    manager._cancel_scheduled_callbacks()
+    if manager._registry_unsubscribe is not None:
+        manager._registry_unsubscribe()
+        manager._registry_unsubscribe = None
     hass.data[DOMAIN].pop(_RUNTIME_KEY, None)
     restarted = await async_get_quiet_hours(hass)
     await hass.async_block_till_done()
