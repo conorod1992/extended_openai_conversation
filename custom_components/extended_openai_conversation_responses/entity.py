@@ -80,6 +80,7 @@ from .delayed_tools import (
     DelayedToolManager,
 )
 from .exceptions import ParseArgumentsFailed, TokenLengthExceededError
+from .execution_outcomes import with_execution_receipt
 from .function_call_budget import FunctionCallBudget
 from .function_execution import (
     async_execution_arguments,
@@ -2080,6 +2081,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             event_count,
         )
 
+    @with_execution_receipt
     async def _execute_function_tool(
         self,
         function_tool: dict[str, Any],

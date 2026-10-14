@@ -593,6 +593,12 @@ class DelayedToolManager:
                 self._tasks.pop(call_id, None)
 
     async def _async_execute_due(self, call_id: str) -> bool:
+        from .execution_outcomes import detached_execution
+
+        with detached_execution():
+            return await self._async_execute_due_detached(call_id)
+
+    async def _async_execute_due_detached(self, call_id: str) -> bool:
         """Re-authorize a due call against live configuration and execute it once."""
         record = self._records.get(call_id)
         if record is None or record.status != _PENDING:

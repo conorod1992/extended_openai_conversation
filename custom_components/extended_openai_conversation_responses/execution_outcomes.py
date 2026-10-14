@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Coroutine, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -39,11 +40,14 @@ class EffectOperation:
 
 @dataclass
 class ExecutionAttempt:
+    """One invocation lifetime; outcomes come exclusively from its receipts."""
+
     entity: Any
     call: Any
     tool: dict[str, Any]
     arguments: Mapping[str, Any] | None = None
     ha_parameters: Any = None
+    active: bool = True
     invocation_id: str = field(default_factory=lambda: uuid4().hex)
     receipts: list[EffectReceipt] = field(default_factory=list)
 
@@ -89,6 +93,16 @@ def execution_operation(kind: str, prepared: Any) -> Iterator[EffectOperation]:
 
 @contextmanager
 def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[None]:
+    current = _ATTEMPT.get()
+    if (
+        current is not None
+        and current.active
+        and current.entity is entity
+        and current.call is call
+    ):
+        # Conversation and shared entity seams may wrap the same invocation.
+        yield
+        return
     attempt = ExecutionAttempt(entity, call, tool)
     token = _ATTEMPT.set(attempt)
     path_token = _CHILD_PATH.set(())
@@ -96,6 +110,7 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
     try:
         yield
     finally:
+        attempt.active = False
         from .tool_replay_guard import dispatch_inputs
 
         outcomes = getattr(entity, "_execution_tool_outcomes", None)
@@ -115,16 +130,52 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
         _ATTEMPT.reset(token)
 
 
+def with_execution_receipt[ResultT](
+    function: Callable[..., Coroutine[Any, Any, ResultT]],
+) -> Callable[..., Coroutine[Any, Any, ResultT]]:
+    """Own receipts at the shared seam, including AI Task and direct callers."""
+
+    @wraps(function)
+    async def tracked(
+        entity: Any,
+        function_tool: dict[str, Any],
+        tool_input: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> ResultT:
+        with execution_attempt(entity, tool_input, function_tool):
+            return await function(entity, function_tool, tool_input, *args, **kwargs)
+
+    return tracked
+
+
+@contextmanager
+def detached_execution() -> Iterator[None]:
+    """Deferred work has a separate lifecycle from the request that admitted it."""
+    from .tool_replay_guard import bind_effect_replay_scope
+
+    attempt_token = _ATTEMPT.set(None)
+    operation_token = _OPERATION.set(None)
+    path_token = _CHILD_PATH.set(())
+    try:
+        with bind_effect_replay_scope(None, None):
+            yield
+    finally:
+        _CHILD_PATH.reset(path_token)
+        _OPERATION.reset(operation_token)
+        _ATTEMPT.reset(attempt_token)
+
+
 def execution_prepared(
     arguments: Mapping[str, Any], *, ha_parameters: Any = None
 ) -> None:
-    if attempt := _ATTEMPT.get():
+    if (attempt := _ATTEMPT.get()) and attempt.active:
         attempt.arguments = arguments
         attempt.ha_parameters = ha_parameters
 
 
 def current_execution_receipt() -> EffectReceipt | None:
-    if (attempt := _ATTEMPT.get()) and attempt.receipts:
+    if (attempt := _ATTEMPT.get()) and attempt.active and attempt.receipts:
         return attempt.receipts[-1]
     return None
 
@@ -132,7 +183,7 @@ def current_execution_receipt() -> EffectReceipt | None:
 def execution_started(
     *, kind: str | None = None, prepared: Any = None
 ) -> EffectReceipt | None:
-    if attempt := _ATTEMPT.get():
+    if (attempt := _ATTEMPT.get()) and attempt.active:
         from .tool_replay_guard import (
             check_effect_replay,
             effect_signature,
@@ -199,6 +250,7 @@ def execution_completed(receipt: EffectReceipt | None = None) -> None:
     receipt = receipt or current_execution_receipt()
     if (
         (attempt := _ATTEMPT.get())
+        and attempt.active
         and receipt is not None
         and receipt.invocation_id == attempt.invocation_id
         and receipt.outcome == "uncertain"
@@ -210,7 +262,7 @@ def execution_rejected(
     receipt: EffectReceipt | None = None, *, before_dispatch: bool = False
 ) -> None:
     """Authoritative pre-execution rejection does not imply an effect."""
-    if attempt := _ATTEMPT.get():
+    if (attempt := _ATTEMPT.get()) and attempt.active:
         explicit = receipt is not None
         receipt = None if before_dispatch else receipt or current_execution_receipt()
         if explicit and (

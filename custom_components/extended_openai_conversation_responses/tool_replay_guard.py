@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import wraps
 import hashlib
 import json
@@ -24,7 +25,18 @@ from .parallel_tool_execution import is_parallel_safe_integration_tool
 from .schema_errors import SCHEMA_ERRORS
 
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
-_effect_replay_scope: ContextVar[tuple[Any, str] | None] = ContextVar(
+
+
+@dataclass
+class _EffectReplayScope:
+    """A lease that expires even in task contexts inherited from the exchange."""
+
+    entity: Any
+    conversation_id: str
+    active: bool = True
+
+
+_effect_replay_scope: ContextVar[_EffectReplayScope | None] = ContextVar(
     "effect_replay_scope", default=None
 )
 
@@ -35,7 +47,7 @@ def bind_effect_replay_scope(
 ) -> Iterator[None]:
     """Keep effect recovery local to one entity and conversation, including tasks."""
     scope = (
-        (entity, conversation_id)
+        _EffectReplayScope(entity, conversation_id)
         if isinstance(conversation_id, str) and conversation_id
         else None
     )
@@ -43,6 +55,8 @@ def bind_effect_replay_scope(
     try:
         yield
     finally:
+        if scope is not None:
+            scope.active = False
         _effect_replay_scope.reset(token)
 
 
@@ -98,9 +112,11 @@ def effect_signature(kind: str, prepared: Any) -> str:
 
 def check_effect_replay(entity: Any, signature: str) -> None:
     scope = _effect_replay_scope.get()
-    if scope is None or scope[0] is not entity:
+    if scope is None or not scope.active or scope.entity is not entity:
         return
-    signatures = getattr(entity, "_unacknowledged_effects", {}).get(scope[1], ())
+    signatures = getattr(entity, "_unacknowledged_effects", {}).get(
+        scope.conversation_id, ()
+    )
     if signature in signatures or "*" in signatures:
         raise EffectReplayBlocked(
             "Provider repeated an effect whose prior result was not acknowledged. "

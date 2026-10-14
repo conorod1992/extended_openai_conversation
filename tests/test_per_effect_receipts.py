@@ -573,6 +573,131 @@ def test_anonymous_scope_does_not_inherit_an_outer_conversation(missing_identity
             check_effect_replay(entity, "effect")
 
 
+@pytest.mark.parametrize("ai_task", [False, True])
+async def test_shared_entity_boundary_owns_receipts_without_conversation_wrapper(
+    hass, monkeypatch, ai_task
+):
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+    from custom_components.extended_openai_conversation_responses.ai_task import (
+        ExtendedOpenAITaskEntity,
+    )
+
+    _install_native_boundary(hass, monkeypatch)
+    entity, call, tool = _entity(hass), _call("first", "effect", RAW), _tool()
+    owner = ExtendedOpenAITaskEntity if ai_task else ExtendedOpenAIBaseLLMEntity
+    await owner._execute_function_tool(entity, tool, call, None, [])
+    assert entity._execution_tool_outcomes[id(call)] == "completed"
+    assert len(entity._execution_effect_receipts[id(call)]) == 1
+
+
+async def test_resolved_tool_copy_reuses_enclosing_invocation(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+
+    _install_native_boundary(hass, monkeypatch)
+    entity, call, tool = _entity(hass), _call("first", "effect", RAW), _tool()
+    with receipts.execution_attempt(entity, call, tool):
+        await ExtendedOpenAIBaseLLMEntity._execute_function_tool(
+            entity, deepcopy(tool), call, None, []
+        )
+    assert entity._execution_tool_outcomes[id(call)] == "completed"
+    assert len(entity._execution_effect_receipts[id(call)]) == 1
+
+
+async def test_background_task_does_not_retain_expired_replay_scope():
+    prepared = {"target": "same"}
+    entity = SimpleNamespace(
+        _unacknowledged_effects={"request": {effect_signature("ha_service", prepared)}}
+    )
+    release = asyncio.Event()
+    call, effects = _call("background", "effect"), []
+
+    async def background():
+        await release.wait()
+        with receipts.execution_attempt(entity, call, _tool()):
+            handle = receipts.execution_started(kind="ha_service", prepared=prepared)
+            effects.append(True)
+            receipts.execution_completed(handle)
+
+    with bind_effect_replay_scope(entity, "request"):
+        task = asyncio.create_task(background())
+    release.set()
+    await task
+    assert effects == [True]
+
+
+async def test_late_callback_cannot_mutate_closed_invocation():
+    entity, call, release = (
+        SimpleNamespace(),
+        _call("parent", "effect"),
+        asyncio.Event(),
+    )
+
+    async def background(handle):
+        await release.wait()
+        receipts.execution_completed(handle)
+        assert receipts.execution_started(kind="late") is None
+
+    with receipts.execution_attempt(entity, call, _tool()):
+        unknown = receipts.execution_started()
+        task = asyncio.create_task(background(unknown))
+    release.set()
+    await task
+    assert unknown.outcome == "uncertain"
+    assert len(entity._execution_effect_receipts[id(call)]) == 1
+
+
+async def test_admitted_delayed_work_detaches_even_while_parent_is_active(
+    hass, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses.delayed_tools import (
+        DelayedToolManager,
+    )
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+
+    _install_native_boundary(hass, monkeypatch)
+    entity, tool, seed, log = (
+        _entity(hass),
+        _tool(),
+        _call("seed", "effect", RAW),
+        _chat_log(hass),
+    )
+    _retain_calls(log, [seed])
+    await ExtendedOpenAIBaseLLMEntity._execute_function_tool(
+        entity, tool, seed, None, []
+    )
+    remember_unacknowledged_calls(entity, log, set())
+    manager = DelayedToolManager(hass)
+
+    admitted = _call("admitted-job", "effect", RAW)
+
+    async def due_worker(call_id):
+        assert receipts.current_execution_receipt() is None
+        assert call_id == admitted.id
+        await ExtendedOpenAIBaseLLMEntity._execute_function_tool(
+            entity, tool, admitted, None, []
+        )
+        return False
+
+    monkeypatch.setattr(manager, "_async_execute_due_detached", due_worker)
+    parent = _call("parent", "effect")
+    with (
+        bind_effect_replay_scope(entity, log.conversation_id),
+        receipts.execution_attempt(entity, parent, tool),
+    ):
+        enclosing = receipts.execution_started(kind="parent")
+        assert await manager._async_execute_due("admitted-job") is False
+        assert enclosing.outcome == "uncertain"
+    assert hass.services.async_call.await_count == 2
+    assert entity._execution_tool_outcomes[id(parent)] == "uncertain"
+    assert entity._execution_tool_outcomes[id(admitted)] == "completed"
+
+
 async def test_genuine_service_identity_preserves_handler_visible_response_mode(
     tmp_path,
 ):
