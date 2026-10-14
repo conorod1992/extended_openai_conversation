@@ -23,6 +23,201 @@ from tests_real_ha.test_prepared_effect_recovery import exchange_owner
 from tests_real_ha.test_service_effect_identity import _args, _service_owner
 
 
+async def test_uncertain_effect_replay_uses_ha_service_name_casing(hass):
+    effects = []
+
+    async def apply(call):
+        effects.append(call.data["amount"])
+        hass.states.async_set("sensor.probe", str(call.data["amount"]))
+        raise HomeAssistantError("handler failed after applying effect")
+
+    hass.states.async_set("sensor.probe", "ready")
+    hass.services.async_register("probe", "apply", apply)
+    entity, log, exchange = exchange_owner(
+        hass,
+        {"type": "native", "name": "execute_service_single"},
+        exposed=[{"entity_id": "sensor.probe"}],
+    )
+    await exchange(_args(1))
+    guard.remember_unacknowledged_calls(entity, log, set())
+    retry = {**_args(1), "domain": "PROBE", "service": "APPLY"}
+    with pytest.raises(HomeAssistantError, match="not acknowledged"):
+        await exchange(retry, name="renamed")
+    assert effects == [1]
+    assert hass.states.get("sensor.probe").state == "1"
+
+
+async def test_failed_provider_continuation_cannot_replay_uncertain_cased_service(
+    hass, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_FUNCTION_TOOLS,
+    )
+    from homeassistant.components.homeassistant.exposed_entities import (
+        async_expose_entity,
+    )
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _say
+    from tests_real_ha.test_execution_result_lifecycle_contracts import _tool
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _chat_sse_tool_call,
+        _install_wire,
+    )
+
+    agent = await _agent(
+        hass,
+        api_mode="chat_completions",
+        **{
+            CONF_FUNCTION_TOOLS: [
+                _tool({"type": "native", "name": "execute_service_single"})
+            ],
+            "function_tool_error_recovery": True,
+        },
+    )
+    effects = []
+
+    async def apply(call):
+        effects.append(call.data["amount"])
+        hass.states.async_set("sensor.probe", str(call.data["amount"]))
+        raise HomeAssistantError("after effect")
+
+    hass.states.async_set("sensor.probe", "ready")
+    hass.services.async_register("probe", "apply", apply)
+    async_expose_entity(hass, "conversation", "sensor.probe", True)
+    _install_wire(monkeypatch, agent, [_chat_sse_text("Ready")])
+    seed = await _say(hass, agent, "hello")
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call("first", "effect", _args(1)),
+            (
+                400,
+                {
+                    "error": {
+                        "message": "continuation failed",
+                        "type": "invalid_request_error",
+                    }
+                },
+            ),
+        ],
+    )
+    failed = await _say(hass, agent, "apply", seed.conversation_id)
+    assert failed.response.error_code is not None
+    assert effects == [1]
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call(
+                "retry", "effect", {**_args(1), "domain": "PROBE", "service": "APPLY"}
+            ),
+            _chat_sse_text("Recovered"),
+        ],
+    )
+    await _say(hass, agent, "retry", failed.conversation_id)
+    assert effects == [1]
+    assert hass.states.get("sensor.probe").state == "1"
+
+
+@pytest.mark.parametrize("uncertain", [False, True])
+async def test_entity_service_replay_ignores_target_order_and_duplicates(
+    hass, uncertain
+):
+    import logging
+
+    from homeassistant.components.switch import SwitchEntity
+    from homeassistant.helpers.entity_component import EntityComponent
+
+    class ProbeSwitch(SwitchEntity):
+        _attr_should_poll = False
+        _attr_is_on = False
+
+        def __init__(self, name):
+            self._attr_name = name
+            self._attr_unique_id = name
+            self.effects = 0
+
+        async def async_toggle(self, **kwargs):
+            self.effects += 1
+            self._attr_is_on = not self._attr_is_on
+            self.async_write_ha_state()
+            if uncertain:
+                raise HomeAssistantError("uncertain toggle after effect")
+
+    component = EntityComponent(logging.getLogger(__name__), "switch", hass)
+    switches = [ProbeSwitch("Replay one"), ProbeSwitch("Replay two")]
+    await component.async_add_entities(switches)
+    component.async_register_entity_service("toggle", {}, "async_toggle")
+    ids = [item.entity_id for item in switches]
+    entity, log, exchange = exchange_owner(
+        hass,
+        {"type": "native", "name": "execute_service_single"},
+        exposed=[{"entity_id": item} for item in ids],
+    )
+    arguments = {
+        "domain": "switch",
+        "service": "toggle",
+        "service_data": {"entity_id": ids},
+    }
+    await exchange(arguments)
+    guard.remember_unacknowledged_calls(entity, log, set())
+    for targets in [list(reversed(ids)), [ids[0], ids[1], ids[0]]]:
+        with pytest.raises(HomeAssistantError, match="not acknowledged"):
+            await exchange(
+                {**arguments, "service_data": {"entity_id": targets}}, name="renamed"
+            )
+    assert [item.effects for item in switches] == [1, 1]
+    assert [hass.states.get(item).state for item in ids] == ["on", "on"]
+    # A genuinely different target set remains a separate operation.
+    await exchange(
+        {**arguments, "service_data": {"entity_id": [ids[0]]}}, name="renamed"
+    )
+    assert [item.effects for item in switches] == [2, 1]
+
+
+async def test_custom_service_target_and_payload_order_remain_significant(hass):
+    effects = []
+
+    async def apply(call):
+        effects.append((list(call.data["entity_id"]), list(call.data["payload"])))
+
+    ids = ["sensor.first", "sensor.second"]
+    for entity_id in ids:
+        hass.states.async_set(entity_id, "ready")
+    hass.services.async_register("probe", "apply", apply)
+    entity, log, exchange = exchange_owner(
+        hass,
+        {"type": "native", "name": "execute_service_single"},
+        exposed=[{"entity_id": item} for item in ids],
+    )
+    args = {
+        "domain": "probe",
+        "service": "apply",
+        "service_data": {"entity_id": ids, "payload": ["a", "b"]},
+    }
+    await exchange(args)
+    guard.remember_unacknowledged_calls(entity, log, set())
+    with pytest.raises(HomeAssistantError, match="not acknowledged"):
+        await exchange(args, name="renamed")
+    await exchange(
+        {
+            **args,
+            "service_data": {"entity_id": list(reversed(ids)), "payload": ["a", "b"]},
+        },
+        name="renamed",
+    )
+    await exchange(
+        {**args, "service_data": {"entity_id": ids, "payload": ["b", "a"]}},
+        name="renamed",
+    )
+    assert effects == [
+        (ids, ["a", "b"]),
+        (list(reversed(ids)), ["a", "b"]),
+        (ids, ["b", "a"]),
+    ]
+
+
 async def test_rejected_receipt_eviction_does_not_retire_safe_conversation(
     hass, monkeypatch
 ):

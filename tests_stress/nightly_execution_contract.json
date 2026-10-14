@@ -2373,7 +2373,12 @@
     "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[executor-only]",
     "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[executor-optional]",
     "tests_real_ha/test_service_receipt_compatibility.py::test_rejected_receipt_eviction_does_not_retire_safe_conversation",
-    "tests_real_ha/test_service_receipt_compatibility.py::test_schema_registration_change_refuses_both_handlers"
+    "tests_real_ha/test_service_receipt_compatibility.py::test_schema_registration_change_refuses_both_handlers",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_uncertain_effect_replay_uses_ha_service_name_casing",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_failed_provider_continuation_cannot_replay_uncertain_cased_service",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_entity_service_replay_ignores_target_order_and_duplicates[False]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_entity_service_replay_ignores_target_order_and_duplicates[True]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_custom_service_target_and_payload_order_remain_significant"
   ],
   "browser": {
     "browser": [

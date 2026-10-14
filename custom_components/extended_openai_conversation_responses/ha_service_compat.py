@@ -7,13 +7,52 @@ remain opaque to replay matching. No traceback or frame inspection is needed:
 validation finishes before a receipt starts; later failures cannot prove refusal.
 """
 
+from collections.abc import Mapping
 from copy import copy
+from functools import partial
 from typing import Any
 
+from homeassistant.const import (
+    ATTR_AREA_ID,
+    ATTR_DEVICE_ID,
+    ATTR_ENTITY_ID,
+    ATTR_FLOOR_ID,
+    ATTR_LABEL_ID,
+)
 from homeassistant.core import HomeAssistant, ServiceRegistry
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import service as service_helpers
 
 from .ha_schema import schema_for_ha
+
+
+def _entity_target_identity(handler: Any, processed: Any) -> Any:
+    """Match HA entity selectors as sets without changing dispatch or payloads."""
+    target = handler.job.target
+    if (
+        not isinstance(target, partial)
+        or target.func
+        not in (
+            service_helpers.entity_service_call,
+            getattr(service_helpers, "batched_entity_service_call", None),
+        )
+        or not isinstance(processed, Mapping)
+    ):
+        return processed
+    identity = dict(processed)
+    for key in (
+        ATTR_ENTITY_ID,
+        ATTR_AREA_ID,
+        ATTR_DEVICE_ID,
+        ATTR_FLOOR_ID,
+        ATTR_LABEL_ID,
+    ):
+        value = identity.get(key)
+        if isinstance(value, (list, tuple, set, frozenset)) and all(
+            isinstance(item, str) for item in value
+        ):
+            identity[key] = sorted(set(value))
+    return identity
 
 
 def prepare_service_dispatch(
@@ -48,4 +87,7 @@ def prepare_service_dispatch(
     # HA's service event contains raw input, including validator mutations.
     kwargs["service_data"] = raw
     kwargs.pop("target", None)
-    return prepared_registry, {"data": processed, "target": {}}
+    return prepared_registry, {
+        "data": _entity_target_identity(handler, processed),
+        "target": {},
+    }

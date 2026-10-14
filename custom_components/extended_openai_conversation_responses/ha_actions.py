@@ -161,8 +161,8 @@ async def _async_call_ha_action_unchecked(
     receipt = execution_started(
         kind="ha_service" if registry is not hass.services else "backend",
         prepared={
-            "domain": domain,
-            "service": service,
+            "domain": domain.lower(),
+            "service": service.lower(),
             **prepared,
             "return_response": request_response,
             "user_id": getattr(context, "user_id", None),

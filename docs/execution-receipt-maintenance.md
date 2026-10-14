@@ -59,6 +59,14 @@ different retention and ownership duties.
 
 ## Necessary complexity and residual risks
 
+Prepared HA service identities lowercase domain and service names, matching native
+dispatch. For registered HA entity-service dispatchers, top-level entity, device,
+area, floor and label selectors compare as sets. This affects receipt comparison
+only: actual dispatch data and service events remain unchanged. Custom services,
+arbitrary payload lists and ordered action batches retain their ordering. Exact
+whole-tool identities remain conservative; prepared-effect matching supplies the
+HA-specific equivalence even when tool names or wrappers differ.
+
 Invocation leases, child paths, validated-call aliases and explicit settlement
 handles remain: nested children, out-of-order completion and inherited task
 contexts require different ownership checks. Detached jobs have a distinct
