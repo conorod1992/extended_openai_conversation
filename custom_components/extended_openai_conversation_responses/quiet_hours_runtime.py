@@ -574,7 +574,7 @@ class QuietHoursManager:
         stored = await self._store.async_load()
         if stored is not None and not isinstance(stored, Mapping):
             raise ValueError("Quiet Hours configuration storage is invalid")
-        if (self._active or {}).get("controls") and (
+        if self._active is not None and (
             stored is None or "config" not in stored or "active" not in stored
         ):
             raise ValueError("Quiet Hours saved ownership is unavailable")
