@@ -102,7 +102,8 @@
     "tests_real_ha/test_voice_presentation_dependent_chains.py",
     "tests_real_ha/test_audited_runtime_contracts.py",
     "tests_real_ha/test_execution_result_lifecycle_contracts.py",
-    "tests_real_ha/test_script_structure_inspection.py"
+    "tests_real_ha/test_script_structure_inspection.py",
+    "tests_real_ha/test_script_transformer_migration.py"
   ],
   "partial_selected": {
     "tests_real_ha/test_management_backend_acceptance.py": {
@@ -743,6 +744,12 @@
       "reason": "Audited execution and durable lifecycle regressions run in the required genuine HA acceptance lane; Enhanced reuses its focused runtime and lifecycle campaigns."
     },
     "tests_real_ha/test_script_structure_inspection.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Focused regression coverage runs in the ordinary genuine HA acceptance suite; enhanced nightly retains its separate stress campaigns."
+    },
+    "tests_real_ha/test_script_transformer_migration.py": {
       "workflow": "real-ha.yml",
       "job": "stable",
       "selector": "tests_real_ha/",
