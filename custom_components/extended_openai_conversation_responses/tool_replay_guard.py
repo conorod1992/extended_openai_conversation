@@ -186,8 +186,9 @@ def check_effect_replay(entity: Any, signature: str) -> None:
         or _replay_history_incomplete(entity, scope.conversation_id)
     ):
         raise EffectReplayBlocked(
-            "Provider repeated an effect whose prior result was not acknowledged. "
-            "Start a new conversation, or complete a turn without this effect before retrying"
+            "A prior effect was not acknowledged, so this operation cannot safely "
+            "proceed during provider recovery. Complete a turn without effects "
+            "before retrying, or start a new conversation"
         )
 
 
