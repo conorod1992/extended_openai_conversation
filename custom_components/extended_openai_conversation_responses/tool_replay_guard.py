@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from copy import deepcopy
+from functools import wraps
 import json
 import math
 from typing import Any
@@ -14,6 +15,7 @@ from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
+from .exceptions import EffectReplayBlocked
 from .execution_arguments import execution_identity
 from .function_execution import _schema_without_patterns, validate_function_arguments
 from .ha_tool_result_compat import is_tool_result_content
@@ -21,6 +23,54 @@ from .parallel_tool_execution import is_parallel_safe_integration_tool
 from .schema_errors import SCHEMA_ERRORS
 
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
+_effect_replay_scope: ContextVar[tuple[Any, str] | None] = ContextVar(
+    "effect_replay_scope", default=None
+)
+
+
+@contextmanager
+def bind_effect_replay_scope(entity: Any, conversation_id: str) -> Iterator[None]:
+    """Keep effect recovery local to one entity and conversation, including tasks."""
+    token = _effect_replay_scope.set((entity, conversation_id))
+    try:
+        yield
+    finally:
+        _effect_replay_scope.reset(token)
+
+
+def with_effect_replay_scope(
+    function: Callable[..., Awaitable[None]],
+) -> Callable[..., Awaitable[None]]:
+    @wraps(function)
+    async def scoped(entity: Any, chat_log: Any, *args: Any, **kwargs: Any) -> None:
+        with bind_effect_replay_scope(entity, chat_log.conversation_id):
+            await function(entity, chat_log, *args, **kwargs)
+
+    return scoped
+
+
+def effect_signature(kind: str, prepared: Any) -> str:
+    """Identify the actual prepared operation, independently of its wrapper."""
+    return json.dumps(
+        [kind, _canonical_numbers(prepared)],
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def check_effect_replay(entity: Any, signature: str) -> None:
+    scope = _effect_replay_scope.get()
+    if scope is None or scope[0] is not entity:
+        return
+    signatures = getattr(entity, "_unacknowledged_effects", {}).get(scope[1], ())
+    if signature in signatures or "*" in signatures:
+        raise EffectReplayBlocked(
+            "Provider repeated an effect whose prior result was not acknowledged. "
+            "Start a new conversation, or complete a turn without this effect before retrying"
+        )
+
+
 _dispatch_origin: ContextVar[tuple[llm.ToolInput, llm.ToolInput] | None] = ContextVar(
     "tool_dispatch_origin", default=None
 )
@@ -188,7 +238,7 @@ def remember_unacknowledged_calls(
         if (
             tool_input.id in completed_ids
             or getattr(entity, "_execution_tool_outcomes", {}).get(id(tool_input))
-            in {"completed", "uncertain"}
+            in {"completed", "partial", "uncertain"}
         )
         and getattr(entity, "_execution_tool_outcomes", {}).get(id(tool_input))
         != "rejected"
@@ -200,6 +250,31 @@ def remember_unacknowledged_calls(
     signatures = {signature for signature, _spec in records}
     if not signatures:
         return
+    effects = getattr(entity, "_unacknowledged_effects", None)
+    if not isinstance(effects, dict):
+        effects = entity._unacknowledged_effects = {}
+    retained_effects = effects.setdefault(conversation_id, set())
+    for content in new_content:
+        if (
+            not isinstance(content, conversation.AssistantContent)
+            or not content.tool_calls
+        ):
+            continue
+        for call in content.tool_calls:
+            if getattr(entity, "_dispatched_tool_inputs", {}).get(id(call)) is not call:
+                continue
+            if getattr(entity, "_read_only_tool_inputs", {}).get(id(call)) is call:
+                continue
+            retained_effects.update(
+                receipt.signature
+                for receipt in getattr(entity, "_execution_effect_receipts", {}).get(
+                    id(call), ()
+                )
+                if receipt.outcome in {"completed", "uncertain"} and receipt.signature
+            )
+    if len(retained_effects) > 4096:
+        # Never evict an unresolved effect and silently permit its replay.
+        effects[conversation_id] = {"*"}
     ledger = getattr(entity, "_unacknowledged_tool_calls", None)
     if not isinstance(ledger, dict):
         ledger = {}
@@ -217,9 +292,11 @@ def remember_unacknowledged_calls(
         for content in new_content
         if isinstance(content, conversation.AssistantContent) and content.tool_calls
         for call in content.tool_calls
-        if getattr(entity, "_execution_tool_outcomes", {}).get(id(call)) == "uncertain"
+        if getattr(entity, "_execution_tool_outcomes", {}).get(id(call))
+        in {"partial", "uncertain"}
     )
     while len(ledger) > _MAX_AMBIGUOUS_CONVERSATIONS:
+        effects.pop(next(iter(ledger)), None)
         schemas.pop(next(iter(ledger)), None)
         uncertain.pop(next(iter(ledger)), None)
         ledger.pop(next(iter(ledger)))
@@ -251,6 +328,7 @@ def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None
     ledger = getattr(entity, "_unacknowledged_tool_calls", None)
     if isinstance(ledger, dict) and isinstance(conversation_id, str):
         ledger.pop(conversation_id, None)
+        getattr(entity, "_unacknowledged_effects", {}).pop(conversation_id, None)
         getattr(entity, "_unacknowledged_tool_schemas", {}).pop(conversation_id, None)
         getattr(entity, "_unacknowledged_uncertain_tools", {}).pop(
             conversation_id, None

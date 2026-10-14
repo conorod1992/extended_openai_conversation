@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+import inspect
 import os
 import stat
 from typing import Any
@@ -47,8 +48,16 @@ async def _async_settle_transactional_save(
     """
     from .execution_outcomes import execution_completed, execution_started
 
-    if record_execution:
-        execution_started()
+    try:
+        receipt = execution_started(kind="persistence") if record_execution else None
+    except BaseException:
+        # Managers install candidate RAM state before entering this helper. A
+        # recovery guard rejects before the coroutine starts: restore RAM and
+        # dispose of that unstarted coroutine instead of leaking it.
+        if inspect.iscoroutine(save):
+            save.close()
+        restore_committed_state()
+        raise
     cancellation: asyncio.CancelledError | None = None
 
     async def settle(operation: Awaitable[None]) -> None:
@@ -86,6 +95,6 @@ async def _async_settle_transactional_save(
 
     remember_committed_state()
     if record_execution:
-        execution_completed()
+        execution_completed(receipt)
     if cancellation is not None:
         raise cancellation

@@ -151,19 +151,27 @@ async def _async_call_ha_action_unchecked(
         execution_started,
     )
 
-    execution_started()
+    receipt = execution_started(
+        kind="ha_service",
+        prepared={
+            "domain": domain,
+            "service": service,
+            "data": dict(data or {}),
+            "target": dict(target or {}),
+        },
+    )
     try:
         response = await hass.services.async_call(
             domain=domain, service=service, **kwargs
         )
     except _SERVICE_SCHEMA_ERRORS as err:
-        execution_rejected()
+        execution_rejected(receipt)
         # Home Assistant has transitioned service schemas from voluptuous to
         # probatio. Keep the integration's action boundary stable across both: a
         # schema rejection is an ordinary Home Assistant action failure that the
         # caller can surface to the model/user, not an uncaught conversation error.
         raise HomeAssistantError(str(err)) from err
-    execution_completed()
+    execution_completed(receipt)
     if include_response:
         result: dict[str, Any] = {}
         if previous_state:

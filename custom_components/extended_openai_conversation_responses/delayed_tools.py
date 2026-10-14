@@ -378,6 +378,9 @@ class DelayedToolManager:
         now = dt_util.utcnow()
         context = getattr(llm_context, "context", None)
         record = None
+        from .execution_outcomes import current_execution_receipt, execution_operation
+
+        previous_receipt = current_execution_receipt()
         try:
             async with self._lock:
                 if not self._setup_complete or self._quarantined:
@@ -404,17 +407,33 @@ class DelayedToolManager:
                 )
                 updated = dict(self._records)
                 updated[record.call_id] = record
-                await self._async_save_records_transactionally(updated)
+                with execution_operation(
+                    "delayed_job",
+                    {
+                        "operation": "schedule",
+                        "entry_id": record.entry_id,
+                        "subentry_id": record.subentry_id,
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "delay_seconds": delay.total_seconds(),
+                        "definition": record.definition_fingerprint,
+                        "user_id": record.user_id,
+                        "device_id": record.device_id,
+                    },
+                ):
+                    await self._async_save_records_transactionally(updated)
         except BaseException:
             # Transactional readback can settle this particular queue write.
             # An unreadable generation invalidates the manager and stays unknown.
             if record is not None and self._setup_complete and not self._quarantined:
                 from .execution_outcomes import execution_completed, execution_rejected
 
-                if record.call_id in self._records:
-                    execution_completed()
-                else:
-                    execution_rejected()
+                receipt = current_execution_receipt()
+                if receipt is not previous_receipt:
+                    if record.call_id in self._records:
+                        execution_completed(receipt)
+                    else:
+                        execution_rejected(receipt)
             raise
         finally:
             # A committed call survives a lost acknowledgement, but rejected work never arms.

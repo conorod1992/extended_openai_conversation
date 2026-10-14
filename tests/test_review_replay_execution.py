@@ -176,7 +176,9 @@ async def test_native_batch_keeps_prior_effects_when_next_child_is_rejected(
     _retain_calls(log, [call])
     await _execute(entity, tool, call)
     assert hass.services.async_call.await_count == 2
-    assert entity._execution_tool_outcomes[id(call)] == "uncertain"
+    assert entity._execution_tool_outcomes[id(call)] == (
+        "uncertain" if first_error is not None else "partial"
+    )
     remember_unacknowledged_calls(entity, log, set())
     assert was_unacknowledged_equivalent(
         entity, log, _call("retry", "effect", {"list": [RAW]})

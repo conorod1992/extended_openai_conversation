@@ -148,6 +148,10 @@ class TokenLengthExceededError(HomeAssistantError):
         )
 
 
+class EffectReplayBlocked(HomeAssistantError):
+    """A recovery guard stopped execution before a prior effect could repeat."""
+
+
 class InvalidFunction(HomeAssistantError):
     """When function validation failed."""
 

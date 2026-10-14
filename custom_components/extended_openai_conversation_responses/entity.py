@@ -2180,8 +2180,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 # Retain the scheduler's existing textual result contract.
                 result = str(result)
         except HomeAssistantError as err:
+            from .exceptions import EffectReplayBlocked
+
             if (
                 delayed
+                or isinstance(err, EffectReplayBlocked)
                 or strict_execution_failures_enabled()
                 or function_execution_errors_propagate()
             ):

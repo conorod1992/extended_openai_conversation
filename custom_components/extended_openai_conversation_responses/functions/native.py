@@ -361,14 +361,21 @@ class NativeFunction(Function):
         )
         from ..execution_outcomes import execution_completed, execution_started
 
-        execution_started()
+        receipt = execution_started(
+            kind="broadcast",
+            prepared={
+                "message": str(arguments.get("message", "")),
+                "targets": targets,
+                "origin_device_id": origin_device_id,
+            },
+        )
         result = await manager.async_send(
             str(arguments.get("message", "")),
             entity_ids=targets,
             origin_device_id=origin_device_id,
             source="llm_tool",
         )
-        execution_completed()
+        execution_completed(receipt)
         return {
             "success": True,
             "message_id": result["id"],
@@ -459,6 +466,9 @@ class NativeFunction(Function):
             hass, service_data, exposed_entities, domain=domain, service=service
         )
 
+        from ..execution_outcomes import current_execution_receipt, execution_rejected
+
+        previous_receipt = current_execution_receipt()
         try:
             action_result = await async_call_ha_action(
                 hass,
@@ -473,6 +483,8 @@ class NativeFunction(Function):
                 result.update(action_result)
             return result
         except HomeAssistantError as e:
+            if current_execution_receipt() is previous_receipt:
+                execution_rejected(before_dispatch=True)
             log_handled_failure(
                 _LOGGER, f"Native Function Tool action={domain}.{service} failed", e
             )
@@ -488,16 +500,19 @@ class NativeFunction(Function):
     ) -> list[dict[str, Any]]:
         _validate_execute_service_request(arguments)
         result = []
-        for service_argument in arguments.get("list", []):
-            result.append(
-                await self.execute_service_single(
-                    hass,
-                    function_config,
-                    service_argument,
-                    llm_context,
-                    exposed_entities,
+        from ..execution_outcomes import execution_child
+
+        for index, service_argument in enumerate(arguments.get("list", [])):
+            with execution_child(index):
+                result.append(
+                    await self.execute_service_single(
+                        hass,
+                        function_config,
+                        service_argument,
+                        llm_context,
+                        exposed_entities,
+                    )
                 )
-            )
         return result
 
     async def add_automation(
@@ -565,9 +580,9 @@ class NativeFunction(Function):
         async with lock:
             from ..execution_outcomes import execution_completed, execution_started
 
-            execution_started()
+            receipt = execution_started(kind="automation_update")
             result = await _async_settle_automation_update(update())
-            execution_completed()
+            execution_completed(receipt)
             return result
 
     async def get_history(
