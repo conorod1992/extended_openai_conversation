@@ -7,6 +7,7 @@ from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from functools import wraps
+import hashlib
 import json
 import math
 from typing import Any
@@ -51,12 +52,39 @@ def with_effect_replay_scope(
 
 def effect_signature(kind: str, prepared: Any) -> str:
     """Identify the actual prepared operation, independently of its wrapper."""
-    return json.dumps(
-        [kind, _canonical_numbers(prepared)],
+
+    def canonical(value: Any) -> Any:
+        # HA/template preparation can produce mappings with non-string keys.
+        # Preserve their types rather than failing sort_keys or conflating 1 and
+        # "1". All mappings get a tagged representation, avoiding marker clashes.
+        if isinstance(value, Mapping):
+            pairs = [
+                [
+                    json.dumps(
+                        [type(key).__module__, type(key).__qualname__, key], default=str
+                    ),
+                    canonical(item),
+                ]
+                for key, item in value.items()
+            ]
+            return {"mapping": sorted(pairs, key=lambda pair: pair[0])}
+        if isinstance(value, tuple):
+            return {"tuple": [canonical(item) for item in value]}
+        if isinstance(value, list):
+            return [canonical(item) for item in value]
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return _canonical_numbers(value)
+        return {
+            "opaque": [type(value).__module__, type(value).__qualname__, str(value)]
+        }
+
+    encoded = json.dumps(
+        [kind, canonical(prepared)],
         sort_keys=True,
         separators=(",", ":"),
         default=str,
-    )
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def check_effect_replay(entity: Any, signature: str) -> None:

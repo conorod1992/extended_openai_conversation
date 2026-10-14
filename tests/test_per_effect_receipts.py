@@ -30,6 +30,7 @@ from custom_components.extended_openai_conversation_responses.tool_replay_guard 
     clear_unacknowledged_calls,
     remember_unacknowledged_calls,
     was_unacknowledged_equivalent,
+    effect_signature,
 )
 from tests.test_function_tool_error_recovery import _call, _chat_log, _retain_calls
 from tests.test_review_replay_execution import (
@@ -331,3 +332,76 @@ async def test_persistence_replay_refusal_restores_ram_without_starting_save(has
     assert pending.cr_frame is None
     assert state == {"generation": "committed"}
     assert writes == []
+
+
+async def test_internal_persistence_does_not_settle_enclosing_effect():
+    entity, call = SimpleNamespace(), _call("first", "effect", RAW)
+    with receipts.execution_attempt(entity, call, _tool()):
+        outer = receipts.execution_started(kind="outer")
+        await _async_settle_transactional_save(
+            AsyncMock()(),
+            lambda: None,
+            lambda: None,
+            None,
+            lambda: None,
+            record_execution=False,
+        )
+        assert outer.outcome == "uncertain"
+    assert len(entity._execution_effect_receipts[id(call)]) == 1
+
+
+def test_prepared_identity_supports_typed_mapping_keys_without_mutation():
+    first = {"data": {1: "integer", "1": "string"}, "amount": 1.0}
+    equivalent = {"amount": 1, "data": {"1": "string", 1: "integer"}}
+    original = deepcopy(first)
+    assert effect_signature("ha_service", first) == effect_signature(
+        "ha_service", equivalent
+    )
+    assert effect_signature("ha_service", {"data": {1: "x"}}) != effect_signature(
+        "ha_service", {"data": {"1": "x"}}
+    )
+    assert effect_signature("ha_service", {"mapping": [["x", 1]]}) != effect_signature(
+        "ha_service", {"x": 1}
+    )
+    assert first == original
+    assert effect_signature("ha_service", {"data": (1, 2)}) != effect_signature(
+        "ha_service", {"data": [1, 2]}
+    )
+
+
+async def test_response_variable_consumer_records_executed_inputs(hass, monkeypatch):
+    _install_native_boundary(hass, monkeypatch)
+    config = {
+        "type": "composite",
+        "sequence": [
+            {
+                "type": "template",
+                "value_template": "{{ {'entity_id': [target]} }}",
+                "parse_result": True,
+                "response_variable": "service_data",
+            },
+            NATIVE,
+        ],
+    }
+    entity, tool, log = _entity(hass), _tool(config), _chat_log(hass)
+    arguments = {
+        "domain": "light",
+        "service": "toggle",
+        "target": "light.kitchen",
+        "noise": 1,
+    }
+    first = _call("first", "effect", deepcopy(arguments))
+    _retain_calls(log, [first])
+    await _execute(entity, tool, first)
+    effects = entity._execution_effect_receipts[id(first)]
+    assert effects[-1].prepared["data"] == {"entity_id": ["light.kitchen"]}
+    assert first.tool_args == arguments
+    remember_unacknowledged_calls(entity, log, set())
+    retry = _call("retry", "effect", {**arguments, "noise": 2})
+    assert not was_unacknowledged_equivalent(entity, log, retry)
+    with (
+        bind_effect_replay_scope(entity, log.conversation_id),
+        pytest.raises(HomeAssistantError, match="not acknowledged"),
+    ):
+        await _execute(entity, tool, retry)
+    assert hass.services.async_call.await_count == 1
