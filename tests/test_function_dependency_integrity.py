@@ -572,15 +572,10 @@ async def test_validate_static_function_arguments_rejects_bad_schema_and_masks_d
     descendants.assert_awaited_once()
 
 
-async def test_rule_action_iteration_and_service_alias_references(monkeypatch) -> None:
+async def test_rule_action_iteration_and_service_alias_references() -> None:
     assert list(integrity._rule_script_actions({"action": {"actions": "bad"}})) == []
     assert list(integrity._rule_script_actions({})) == []
 
-    monkeypatch.setattr(
-        integrity.request_rules,
-        "_iter_script_actions",
-        lambda actions: iter(actions),
-    )
     service = f"{integrity.DOMAIN}.{integrity.SERVICE_CALL_FUNCTION}"
     manager = SimpleNamespace(
         _rules=[

@@ -73,6 +73,12 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
+from .script_structure import (
+    MAX_SCRIPT_DEPTH,
+    MAX_SCRIPT_NODES,
+    iter_script_actions,
+    normalize_script_containers as _normalize_script_containers,
+)
 from .strict_store import PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,8 +88,6 @@ STORAGE_KEY_PREFIX = "extended_openai_conversation_responses.request_rules"
 MAX_RULES = 500
 MAX_PHRASES = 25
 MAX_ACTIONS = 20
-MAX_SCRIPT_NODES = 500
-MAX_SCRIPT_DEPTH = 12
 MAX_RULE_NAME_LENGTH = 120
 MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_pattern")
 ACTION_TYPES = ("local_action", "model_routing")
@@ -2025,75 +2029,6 @@ def _legacy_action_slots(value: Any) -> set[str]:
     return result
 
 
-def _normalize_script_containers(value: Any) -> Any:
-    """Normalize HA action shorthand without replacing authored template text."""
-    if isinstance(value, Mapping):
-        value = [value]
-    if not isinstance(value, list):
-        return value
-    result = []
-    for action in value:
-        if not isinstance(action, Mapping):
-            result.append(action)
-            continue
-        normalized = deepcopy(dict(action))
-        # Store HA's historical service-name alias in the common service form so
-        # validation, dependency inspection and Guest preflight agree with HA.
-        if "service_template" in normalized and not (
-            "service" in normalized or "action" in normalized
-        ):
-            normalized["service"] = normalized.pop("service_template")
-        for key in ("sequence", "then", "else", "default"):
-            if key in normalized:
-                normalized[key] = _normalize_script_containers(normalized[key])
-        if "parallel" in normalized:
-            branches = normalized["parallel"]
-            if isinstance(branches, Mapping):
-                branches = [branches]
-            if isinstance(branches, list):
-                parallel = []
-                for branch in branches:
-                    if isinstance(branch, Mapping) and "sequence" in branch:
-                        parallel.append(
-                            {
-                                **branch,
-                                "sequence": _normalize_script_containers(
-                                    branch["sequence"]
-                                ),
-                            }
-                        )
-                    elif isinstance(branch, (Mapping, list)):
-                        parallel.append(
-                            {"sequence": _normalize_script_containers(branch)}
-                        )
-                    else:
-                        parallel.append(branch)
-                normalized["parallel"] = parallel
-        if isinstance(normalized.get("repeat"), Mapping):
-            repeat = dict(normalized["repeat"])
-            if "sequence" in repeat:
-                repeat["sequence"] = _normalize_script_containers(repeat["sequence"])
-            normalized["repeat"] = repeat
-        if "choose" in normalized:
-            branches = normalized["choose"]
-            if isinstance(branches, Mapping):
-                branches = [branches]
-            if isinstance(branches, list):
-                normalized["choose"] = [
-                    {
-                        **branch,
-                        "sequence": _normalize_script_containers(
-                            branch.get("sequence", [])
-                        ),
-                    }
-                    if isinstance(branch, Mapping)
-                    else branch
-                    for branch in branches
-                ]
-        result.append(normalized)
-    return result
-
-
 def _validate_script_sequence(
     value: Sequence[Any],
     *,
@@ -2475,46 +2410,14 @@ def _iter_script_actions(
     depth: int = 0,
     budget: list[int] | None = None,
 ):
-    """Yield executable action mappings from native nested script branches."""
-    if depth > MAX_SCRIPT_DEPTH:
-        raise ValueError(f"action sequence exceeds maximum depth {MAX_SCRIPT_DEPTH}")
-    if budget is None:
-        budget = [0]
-
-    def nested_sequence(value: Any):
-        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-            return None
-        if not all(isinstance(child, Mapping) for child in value):
-            return None
-        return cast(Sequence[Mapping[str, Any]], value)
-
-    for item in sequence:
-        budget[0] += 1
-        if budget[0] > MAX_SCRIPT_NODES:
-            raise ValueError(f"action sequence exceeds {MAX_SCRIPT_NODES} nodes")
-        yield item
-
-        for key in ("sequence", "then", "else", "default", "parallel"):
-            nested = nested_sequence(item.get(key))
-            if nested is not None:
-                yield from _iter_script_actions(nested, depth=depth + 1, budget=budget)
-
-        choose = item.get("choose")
-        if isinstance(choose, Sequence) and not isinstance(choose, (str, bytes)):
-            for branch in choose:
-                if not isinstance(branch, Mapping):
-                    continue
-                nested = nested_sequence(branch.get("sequence"))
-                if nested is not None:
-                    yield from _iter_script_actions(
-                        nested, depth=depth + 1, budget=budget
-                    )
-
-        repeat = item.get("repeat")
-        if isinstance(repeat, Mapping):
-            nested = nested_sequence(repeat.get("sequence"))
-            if nested is not None:
-                yield from _iter_script_actions(nested, depth=depth + 1, budget=budget)
+    """Inspect shared canonical structure using this caller's existing limits."""
+    return iter_script_actions(
+        sequence,
+        depth=depth,
+        budget=budget,
+        max_depth=MAX_SCRIPT_DEPTH,
+        max_nodes=MAX_SCRIPT_NODES,
+    )
 
 
 def rule_has_sensitive_actions(rule: Mapping[str, Any]) -> bool:
