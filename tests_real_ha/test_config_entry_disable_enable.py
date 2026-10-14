@@ -12,7 +12,7 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 )
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
-from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.const import MAJOR_VERSION, MINOR_VERSION, STATE_UNAVAILABLE
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from tests_real_ha.test_acceptance_lifecycle import (
@@ -66,6 +66,7 @@ async def test_user_disable_enable_preserves_registry_and_restores_runtime(
     before_identity = {
         row.unique_id: (row.entity_id, row.config_subentry_id) for row in before
     }
+    before_disablers = {row.unique_id: row.disabled_by for row in before}
     conversation_id = _conversation_subentry(entry).subentry_id
     guest_mode_entity_id = next(
         row.entity_id
@@ -87,15 +88,24 @@ async def test_user_disable_enable_preserves_registry_and_restores_runtime(
     assert entry.state is ConfigEntryState.NOT_LOADED
     assert conversation.async_get_agent(hass, entry.entry_id) is None
 
-    # HA intentionally keeps registry-backed entities represented while their
-    # integration is disabled. They must not be recreated under fresh identities.
+    # Registry identities survive disabling, even when HA removes restored states.
     disabled_rows = _rows(hass, entry.entry_id)
     assert {
         row.unique_id: (row.entity_id, row.config_subentry_id) for row in disabled_rows
     } == before_identity
+    assert {row.unique_id: row.disabled_by for row in disabled_rows} == {
+        unique_id: disabler or er.RegistryEntryDisabler.CONFIG_ENTRY
+        for unique_id, disabler in before_disablers.items()
+    }
     disabled_guest = hass.states.get(guest_mode_entity_id)
-    assert disabled_guest is not None
-    assert disabled_guest.state == STATE_UNAVAILABLE
+    # Core #186056 removes restored states when their registry entry is disabled
+    # starting in 2026.11. Keep a strict expectation for each HA contract.
+    if (MAJOR_VERSION, MINOR_VERSION) >= (2026, 11):
+        assert disabled_guest is None
+    else:
+        assert disabled_guest is not None
+        assert disabled_guest.state == STATE_UNAVAILABLE
+        assert disabled_guest.attributes["restored"] is True
 
     assert await hass.config_entries.async_set_disabled_by(entry.entry_id, None)
     await hass.async_block_till_done()
