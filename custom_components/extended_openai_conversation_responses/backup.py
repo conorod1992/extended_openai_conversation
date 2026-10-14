@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass
-import io
 import json
 import logging
 from pathlib import Path
@@ -28,7 +27,12 @@ from .agent_maintenance import (
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
 )
-from .bounded_json import JSONBudgetExceeded, check_utf8_budget, iter_bounded_json
+from .bounded_json import (
+    JSONBudgetExceeded,
+    bounded_json_dumps,
+    check_utf8_budget,
+    iter_bounded_json,
+)
 from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
@@ -251,10 +255,7 @@ def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "request_rules": _safe_configuration(snapshot["request_rules"]),
     }
     try:
-        with io.StringIO() as output:
-            for chunk in iter_bounded_json(document, MAX_LEGACY_EXPORT_BYTES, indent=2):
-                output.write(chunk.decode("utf-8"))
-            serialized = output.getvalue()
+        serialized = bounded_json_dumps(document, MAX_LEGACY_EXPORT_BYTES)
     except JSONBudgetExceeded as err:
         raise BackupError(
             "This backup is too large for the legacy one-message JSON export; "

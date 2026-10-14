@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
@@ -18,6 +19,7 @@ from homeassistant.util import dt as dt_util
 
 from . import backup
 from .agent_config import configured_function_tools_from_data, validate_agent_title
+from .bounded_json import JSONBudgetExceeded, bounded_json_dumps, check_utf8_budget
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
     CONF_VOICE_DEFAULT_USER_ID,
@@ -526,11 +528,12 @@ def redact_transfer_document(document: dict[str, Any]) -> dict[str, Any]:
 def finalize_setup_export(document: dict[str, Any]) -> dict[str, Any]:
     """Serialize a lightweight shareable setup document."""
     redacted = redact_transfer_document(document)
-    serialized = json.dumps(redacted, indent=2, ensure_ascii=False)
-    if len(serialized.encode("utf-8")) > backup.MAX_LEGACY_EXPORT_BYTES:
+    try:
+        serialized = bounded_json_dumps(redacted, backup.MAX_LEGACY_EXPORT_BYTES)
+    except JSONBudgetExceeded as err:
         raise backup.BackupError(
             "This setup export exceeds the 16 MB safety limit; use a custom backup instead"
-        )
+        ) from err
     title = validate_agent_title(redacted["agent"]["title"])
     date = str(redacted["created_at"])[:10]
     return {
@@ -553,7 +556,7 @@ async def async_create_setup_export(
         document = await async_collect_transfer_snapshot(
             hass, entry, subentry, mode="setup"
         )
-    return finalize_setup_export(document)
+    return await asyncio.to_thread(finalize_setup_export, document)
 
 
 def _secret_path(path: tuple[Any, ...]) -> str:
@@ -966,8 +969,12 @@ def inspect_transfer(
     if isinstance(value, PreparedTransfer):
         return value
     if isinstance(value, str):
-        if len(value.encode("utf-8")) > backup.MAX_BACKUP_BYTES:
-            raise backup.BackupError("The transfer exceeds the 128 MB safety limit")
+        try:
+            check_utf8_budget(value, backup.MAX_BACKUP_BYTES)
+        except JSONBudgetExceeded as err:
+            raise backup.BackupError(
+                "The transfer exceeds the 128 MB safety limit"
+            ) from err
         try:
             value = json.loads(value)
         except json.JSONDecodeError as err:

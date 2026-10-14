@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import io
 import json
 from typing import Any
 
@@ -91,3 +92,11 @@ def iter_bounded_json(
         if remaining < 0:
             raise JSONBudgetExceeded
         yield encoded
+
+
+def bounded_json_dumps(value: Any, max_bytes: int, *, indent: int = 2) -> str:
+    """Collect a bounded one-message export without a whole-document byte copy."""
+    with io.StringIO() as output:
+        for chunk in iter_bounded_json(value, max_bytes, indent=indent):
+            output.write(chunk.decode("utf-8"))
+        return output.getvalue()
