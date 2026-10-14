@@ -157,7 +157,19 @@ def execution_started(
                 }
             )
         prepared = deepcopy(prepared)
-        signature = effect_signature(kind, prepared)
+        # Opaque dispatches may depend on unobservable API/script context. Their
+        # receipts stay owned by the selected tool; only precise effect contracts
+        # can match across wrappers. Generic persistence lacks a prepared payload.
+        opaque = kind in {"backend", "ha_tool"} or (
+            kind == "persistence"
+            and (operation is None or operation.kind != "delayed_job")
+        )
+        signature = effect_signature(
+            kind,
+            {"owner": attempt.call.tool_name, "operation": prepared}
+            if opaque
+            else prepared,
+        )
         # Only previous failed continuations participate. Live repeated actions
         # are distinct occurrences and never enter the recovery ledger here.
         check_effect_replay(attempt.entity, signature)

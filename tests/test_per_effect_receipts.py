@@ -533,6 +533,32 @@ async def test_genuine_service_provenance_distinguishes_same_exception_type(
         await hass.async_stop(force=True)
 
 
+async def test_opaque_operations_do_not_claim_equivalence_across_wrapper_contexts(hass):
+    entity, log, effects = SimpleNamespace(), _chat_log(hass), []
+    config = {"type": "opaque"}
+
+    async def execute(hass, config, arguments, context, exposed):
+        effects.append(context.device_id)
+
+    backend = SimpleNamespace(execute=execute)
+    first = _call("first", "first_wrapper", {})
+    _retain_calls(log, [first])
+    with receipts.execution_attempt(entity, first, _tool(config)):
+        await receipts.execute_backend(
+            backend, None, config, {}, SimpleNamespace(device_id="kitchen"), []
+        )
+    remember_unacknowledged_calls(entity, log, set())
+    second = _call("second", "second_wrapper", {})
+    with (
+        bind_effect_replay_scope(entity, log.conversation_id),
+        receipts.execution_attempt(entity, second, _tool(config)),
+    ):
+        await receipts.execute_backend(
+            backend, None, config, {}, SimpleNamespace(device_id="bedroom"), []
+        )
+    assert effects == ["kitchen", "bedroom"]
+
+
 async def test_genuine_service_identity_preserves_handler_visible_response_mode(
     tmp_path,
 ):
