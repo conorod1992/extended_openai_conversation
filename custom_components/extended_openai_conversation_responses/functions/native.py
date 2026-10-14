@@ -466,29 +466,29 @@ class NativeFunction(Function):
             hass, service_data, exposed_entities, domain=domain, service=service
         )
 
-        from ..execution_outcomes import current_execution_receipt, execution_rejected
+        from ..execution_outcomes import execution_operation, execution_rejected
 
-        previous_receipt = current_execution_receipt()
-        try:
-            action_result = await async_call_ha_action(
-                hass,
-                domain,
-                service,
-                data=service_data,
-                blocking=True,
-                include_response=True,
-            )
-            result: dict[str, Any] = {"success": True}
-            if action_result:
-                result.update(action_result)
-            return result
-        except HomeAssistantError as e:
-            if current_execution_receipt() is previous_receipt:
-                execution_rejected(before_dispatch=True)
-            log_handled_failure(
-                _LOGGER, f"Native Function Tool action={domain}.{service} failed", e
-            )
-            return backend_failure(str(e), e)
+        with execution_operation("ha_service", service_argument) as operation:
+            try:
+                action_result = await async_call_ha_action(
+                    hass,
+                    domain,
+                    service,
+                    data=service_data,
+                    blocking=True,
+                    include_response=True,
+                )
+                result: dict[str, Any] = {"success": True}
+                if action_result:
+                    result.update(action_result)
+                return result
+            except HomeAssistantError as e:
+                if operation.receipt is None:
+                    execution_rejected(before_dispatch=True)
+                log_handled_failure(
+                    _LOGGER, f"Native Function Tool action={domain}.{service} failed", e
+                )
+                return backend_failure(str(e), e)
 
     async def execute_service(
         self,

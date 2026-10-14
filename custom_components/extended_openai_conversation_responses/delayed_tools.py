@@ -378,9 +378,9 @@ class DelayedToolManager:
         now = dt_util.utcnow()
         context = getattr(llm_context, "context", None)
         record = None
-        from .execution_outcomes import current_execution_receipt, execution_operation
+        from .execution_outcomes import execution_operation
 
-        previous_receipt = current_execution_receipt()
+        operation = None
         try:
             async with self._lock:
                 if not self._setup_complete or self._quarantined:
@@ -420,7 +420,7 @@ class DelayedToolManager:
                         "user_id": record.user_id,
                         "device_id": record.device_id,
                     },
-                ):
+                ) as operation:
                     await self._async_save_records_transactionally(updated)
         except BaseException:
             # Transactional readback can settle this particular queue write.
@@ -428,8 +428,8 @@ class DelayedToolManager:
             if record is not None and self._setup_complete and not self._quarantined:
                 from .execution_outcomes import execution_completed, execution_rejected
 
-                receipt = current_execution_receipt()
-                if receipt is not previous_receipt:
+                receipt = operation.receipt if operation is not None else None
+                if receipt is not None:
                     if record.call_id in self._records:
                         execution_completed(receipt)
                     else:

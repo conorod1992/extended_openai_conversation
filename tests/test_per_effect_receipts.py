@@ -440,3 +440,51 @@ def test_receipt_ceiling_refuses_effects_and_bounds_rejection_markers(monkeypatc
         "rejected",
     ]
     assert entity._execution_tool_outcomes[id(call)] == "partial"
+
+
+@pytest.mark.parametrize("committed", [False, True])
+async def test_queue_readback_cannot_settle_an_interleaved_effect(hass, committed):
+    from custom_components.extended_openai_conversation_responses.delayed_tools import (
+        DelayedToolManager,
+    )
+
+    manager = DelayedToolManager(hass)
+    manager._setup_complete = True
+    entered, finish = asyncio.Event(), asyncio.Event()
+    persisted = {"calls": []}
+
+    async def save(data):
+        entered.set()
+        await finish.wait()
+        if committed:
+            persisted.update(deepcopy(data))
+        raise OSError("lost acknowledgement")
+
+    manager._store = SimpleNamespace(
+        async_save=save, async_load=AsyncMock(side_effect=lambda: deepcopy(persisted))
+    )
+    entity, call, tool = _entity(hass), _call("first", "effect", RAW), _tool()
+    with receipts.execution_attempt(entity, call, tool):
+        task = asyncio.create_task(
+            manager.async_schedule(
+                entity,
+                "effect",
+                RAW,
+                None,
+                execution_delay={"seconds": 30},
+                function_tool=tool,
+            )
+        )
+        await entered.wait()
+        unrelated = receipts.execution_started(
+            kind="unrelated", prepared={"effect": "unknown"}
+        )
+        finish.set()
+        with pytest.raises(OSError, match="lost acknowledgement"):
+            await task
+        assert unrelated.outcome == "uncertain"
+    effects = entity._execution_effect_receipts[id(call)]
+    assert [(r.kind, r.outcome) for r in effects] == [
+        ("persistence", "completed" if committed else "rejected"),
+        ("unrelated", "uncertain"),
+    ]

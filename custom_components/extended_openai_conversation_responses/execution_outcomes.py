@@ -29,6 +29,15 @@ class EffectReceipt:
 
 
 @dataclass
+class EffectOperation:
+    """Task-local provenance and the precise dispatch handle it owns."""
+
+    kind: str
+    prepared: Any
+    receipt: EffectReceipt | None = None
+
+
+@dataclass
 class ExecutionAttempt:
     entity: Any
     call: Any
@@ -52,7 +61,7 @@ _ATTEMPT: ContextVar[ExecutionAttempt | None] = ContextVar(
     "eoai_execution_attempt", default=None
 )
 _CHILD_PATH: ContextVar[tuple[int, ...]] = ContextVar("eoai_effect_path", default=())
-_OPERATION: ContextVar[tuple[str, Any] | None] = ContextVar(
+_OPERATION: ContextVar[EffectOperation | None] = ContextVar(
     "eoai_effect_operation", default=None
 )
 
@@ -68,11 +77,12 @@ def execution_child(index: int) -> Iterator[None]:
 
 
 @contextmanager
-def execution_operation(kind: str, prepared: Any) -> Iterator[None]:
+def execution_operation(kind: str, prepared: Any) -> Iterator[EffectOperation]:
     """Supply provenance to a nested transactional boundary."""
-    token = _OPERATION.set((kind, prepared))
+    operation = EffectOperation(kind, prepared)
+    token = _OPERATION.set(operation)
     try:
-        yield
+        yield operation
     finally:
         _OPERATION.reset(token)
 
@@ -134,10 +144,10 @@ def execution_started(
                 "Tool execution exceeds the effect receipt safety limit"
             )
         operation = _OPERATION.get()
-        kind = kind or (operation[0] if operation else "tool")
+        kind = kind or (operation.kind if operation else "tool")
         if prepared is None:
             prepared = (
-                operation[1]
+                operation.prepared
                 if operation
                 else {
                     "function": attempt.tool.get("function", {}),
@@ -160,6 +170,8 @@ def execution_started(
             signature,
         )
         attempt.receipts.append(receipt)
+        if operation is not None:
+            operation.receipt = receipt
         record_dispatch(
             attempt.entity,
             attempt.call,
@@ -211,7 +223,7 @@ def execution_rejected(
                 attempt.invocation_id,
                 len(attempt.receipts),
                 _CHILD_PATH.get(),
-                operation[0] if operation else "validation",
+                operation.kind if operation else "validation",
                 None,
                 "",
                 "rejected",
