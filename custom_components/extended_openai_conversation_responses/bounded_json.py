@@ -23,7 +23,9 @@ def check_utf8_budget(value: str, max_bytes: int) -> None:
             raise JSONBudgetExceeded
 
 
-def _check_string_budget(value: Any, max_bytes: int) -> None:
+def _check_string_budget(
+    value: Any, max_bytes: int, *, keys_only: bool = False
+) -> None:
     """Reject oversized strings before JSONEncoder constructs a whole token.
 
     iterencode streams containers but emits each escaped string as one token.
@@ -35,20 +37,24 @@ def _check_string_budget(value: Any, max_bytes: int) -> None:
     remaining = max_bytes
     active: set[int] = set()
 
-    def visit(item: Any) -> None:
+    def charge(amount: int) -> None:
         nonlocal remaining
+        remaining -= amount
+        if remaining < 0:
+            raise JSONBudgetExceeded
+
+    def visit(item: Any, *, key: bool = False) -> None:
         if isinstance(item, str):
-            remaining -= 2  # Opening and closing quotes.
-            if remaining < 0:
-                raise JSONBudgetExceeded
+            charge(2)  # Opening and closing quotes.
+            if keys_only and not key:
+                return  # Credential values may shrink during redaction.
             for offset in range(0, len(item), _TEXT_CHUNK_SIZE):
                 escaped = json.dumps(
                     item[offset : offset + _TEXT_CHUNK_SIZE], ensure_ascii=False
                 )
-                remaining -= len(escaped[1:-1].encode("utf-8"))
-                if remaining < 0:
-                    raise JSONBudgetExceeded
+                charge(len(escaped[1:-1].encode("utf-8")))
         elif isinstance(item, (dict, list, tuple)):
+            charge(2)  # Brackets/braces; every occurrence consumes budget.
             identity = id(item)
             if identity in active:
                 raise ValueError("Circular reference detected")
@@ -56,15 +62,32 @@ def _check_string_budget(value: Any, max_bytes: int) -> None:
             try:
                 if isinstance(item, dict):
                     for key, child in item.items():
-                        visit(key)
+                        charge(1)  # Colon; omitted commas only weaken the bound.
+                        visit(key, key=True)
                         visit(child)
                 else:
                     for child in item:
                         visit(child)
             finally:
                 active.remove(identity)
+        else:
+            # Even a numeric-only tree must stop after O(byte budget) nodes.
+            charge(
+                max(1, (abs(item).bit_length() - 1) * 30103 // 100000 + 1)
+                if isinstance(item, int)
+                else 1
+            )
 
     visit(value)
+
+
+def check_redaction_budget(value: Any, max_bytes: int) -> None:
+    """Bound surviving keys and structure before allocating redacted copies.
+
+    Do not reject oversized credential values that redaction can safely replace.
+    The final serializer checks all remaining scalar bytes independently.
+    """
+    _check_string_budget(value, max_bytes, keys_only=True)
 
 
 def iter_bounded_json(

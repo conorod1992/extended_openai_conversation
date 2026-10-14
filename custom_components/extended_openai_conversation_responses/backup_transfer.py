@@ -31,7 +31,7 @@ from homeassistant.helpers.event import async_call_later
 
 from . import backup, transfer
 from .agent_maintenance import get_agent_maintenance_gate
-from .bounded_json import JSONBudgetExceeded, iter_bounded_json
+from .bounded_json import JSONBudgetExceeded, check_redaction_budget, iter_bounded_json
 from .const import DOMAIN
 from .ha_schema import websocket_command as ha_websocket_command
 
@@ -398,6 +398,12 @@ def _build_archive_file(
     snapshot: dict[str, Any], staging_dir: str | None = None
 ) -> dict[str, Any]:
     """Serialize and compress one detached snapshot with explicit byte ceilings."""
+    try:
+        check_redaction_budget(snapshot, MAX_BACKUP_UNCOMPRESSED_BYTES)
+    except JSONBudgetExceeded as err:
+        raise backup.BackupError(
+            "This full backup exceeds the 128 MB uncompressed safety limit"
+        ) from err
     document = _redacted_document(snapshot)
     fd, path = tempfile.mkstemp(
         prefix="extended-openai-backup-", suffix=".zip", dir=staging_dir
@@ -779,7 +785,7 @@ async def _async_load_prepared_restore(
     # inspect_transfer ultimately validates configured Function Tools. Some Home
     # Assistant validators used by those schemas (notably cv.template) require the
     # event-loop context, so only file I/O/decompression belongs in the executor.
-    return transfer.inspect_transfer(
+    return transfer._inspect_decoded_transfer(
         document, target_subentry_id, sections=sections, inspect_only=inspect_only
     )
 

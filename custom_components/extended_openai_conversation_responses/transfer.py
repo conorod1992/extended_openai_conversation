@@ -19,7 +19,12 @@ from homeassistant.util import dt as dt_util
 
 from . import backup
 from .agent_config import configured_function_tools_from_data, validate_agent_title
-from .bounded_json import JSONBudgetExceeded, bounded_json_dumps, check_utf8_budget
+from .bounded_json import (
+    JSONBudgetExceeded,
+    bounded_json_dumps,
+    check_redaction_budget,
+    check_utf8_budget,
+)
 from .const import (
     AGENT_CONFIG_EXPORT_VERSION,
     CONF_VOICE_DEFAULT_USER_ID,
@@ -527,8 +532,9 @@ def redact_transfer_document(document: dict[str, Any]) -> dict[str, Any]:
 
 def finalize_setup_export(document: dict[str, Any]) -> dict[str, Any]:
     """Serialize a lightweight shareable setup document."""
-    redacted = redact_transfer_document(document)
     try:
+        check_redaction_budget(document, backup.MAX_LEGACY_EXPORT_BYTES)
+        redacted = redact_transfer_document(document)
         serialized = bounded_json_dumps(redacted, backup.MAX_LEGACY_EXPORT_BYTES)
     except JSONBudgetExceeded as err:
         raise backup.BackupError(
@@ -930,8 +936,8 @@ def _inspect_full_backup(
     target_agent_id: str,
     selected: Iterable[str] | None = None,
 ) -> PreparedTransfer:
-    header = backup.inspect_backup(
-        value, target_agent_id, max_bytes=backup.MAX_BACKUP_BYTES, header_only=True
+    header = backup._inspect_decoded_backup(
+        dict(value), target_agent_id, header_only=True
     )
     sections = {
         SECTION_CONFIGURATION: value["agent"]["config"],
@@ -983,6 +989,25 @@ def inspect_transfer(
         raise backup.BackupError(
             "This file is not an Extended OpenAI Conversation transfer"
         )
+    if value.get("format") == backup.BACKUP_FORMAT:
+        value = backup._decode_backup_document(value, backup.MAX_BACKUP_BYTES)
+    return _inspect_decoded_transfer(
+        value, target_agent_id, sections=sections, inspect_only=inspect_only
+    )
+
+
+def _inspect_decoded_transfer(
+    value: Mapping[str, Any],
+    target_agent_id: str,
+    *,
+    sections: Iterable[str] | None = None,
+    inspect_only: bool = False,
+) -> PreparedTransfer:
+    """Validate HA-aware schemas after a bounded, context-free transport read.
+
+    File readers already verify actual bytes, decompression and manifest hashes.
+    Re-encoding their decoded document on HA's loop would block unrelated work.
+    """
     if value.get("format") == TRANSFER_FORMAT:
         return _validate_transfer_document(
             value, target_agent_id, frozenset() if inspect_only else sections

@@ -3,6 +3,8 @@ set -euo pipefail
 set -o pipefail
 
 TEST_PATHS=(
+  tests/test_bounded_backup_serialization.py
+  tests_real_ha/test_backup_processing_boundary.py
   tests_real_ha/test_archive_record_integrity.py
   tests_real_ha/test_conversation_runtime_lifecycle.py
   tests_real_ha/test_archive_private_activity.py

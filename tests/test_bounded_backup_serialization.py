@@ -74,7 +74,67 @@ def test_container_overflow_stops_before_later_invalid_value():
     with pytest.raises(bounded_json.JSONBudgetExceeded):
         for chunk in chunks:
             published += len(chunk)
-    assert 0 < published <= 64
+    assert published <= 64
+
+
+def test_numeric_preflight_stops_before_unvisited_tail():
+    class Unvisited(list):
+        def __iter__(self):
+            raise AssertionError(
+                "Oversized prefix must stop before traversing the tail"
+            )
+
+    with pytest.raises(bounded_json.JSONBudgetExceeded):
+        list(bounded_json.iter_bounded_json([[0] * 1000, Unvisited()], 64))
+
+
+def test_shared_numeric_graph_has_budget_bounded_processing():
+    # Forty small distinct lists would expand into over a trillion leaves.
+    # This must terminate by budget, including before archive redaction copies it.
+    value = [0]
+    for _ in range(40):
+        value = [value, value]
+    with pytest.raises(bounded_json.JSONBudgetExceeded):
+        list(bounded_json.iter_bounded_json(value, 64))
+
+
+@pytest.mark.parametrize("kind", ["legacy", "setup", "archive"])
+def test_export_rejects_huge_surviving_key_before_redaction(
+    monkeypatch, tmp_path, kind
+):
+    import tracemalloc
+
+    huge_key = "aA" * 200000
+    if kind == "setup":
+        document = _portable_document()
+        document["sections"][transfer.SECTION_CONFIGURATION][huge_key] = 0
+    else:
+        document = _document()
+        document["agent"]["config"][huge_key] = 0
+    monkeypatch.setattr(backup, "MAX_LEGACY_EXPORT_BYTES", 8192)
+    monkeypatch.setattr(backup_transfer, "MAX_BACKUP_UNCOMPRESSED_BYTES", 8192)
+    tracemalloc.start()
+    try:
+        with pytest.raises(backup.BackupError):
+            if kind == "legacy":
+                backup.finalize_backup_snapshot(document)
+            elif kind == "setup":
+                transfer.finalize_setup_export(document)
+            else:
+                backup_transfer._build_archive_file(document, str(tmp_path))
+        assert tracemalloc.get_traced_memory()[1] < 2 * 1024 * 1024
+        assert not list(tmp_path.iterdir())
+    finally:
+        tracemalloc.stop()
+
+
+def test_pre_redaction_budget_allows_large_credentials_to_shrink(monkeypatch):
+    document = _document()
+    document["agent"]["config"]["api_key"] = "private" * 100000
+    monkeypatch.setattr(backup, "MAX_LEGACY_EXPORT_BYTES", 16384)
+    result = backup.finalize_backup_snapshot(document)
+    assert "private" not in result["json"]
+    assert len(result["json"].encode()) < 16384
 
 
 def test_shared_values_count_each_occurrence_and_cycles_are_rejected():

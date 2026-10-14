@@ -30,6 +30,7 @@ from .agent_maintenance import (
 from .bounded_json import (
     JSONBudgetExceeded,
     bounded_json_dumps,
+    check_redaction_budget,
     check_utf8_budget,
     iter_bounded_json,
 )
@@ -246,6 +247,13 @@ async def async_collect_backup_snapshot(
 
 def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Redact and serialize a small legacy one-message JSON backup."""
+    try:
+        check_redaction_budget(snapshot, MAX_LEGACY_EXPORT_BYTES)
+    except JSONBudgetExceeded as err:
+        raise BackupError(
+            "This backup is too large for the legacy one-message JSON export; "
+            "use the full backup transfer interface"
+        ) from err
     document = {
         **snapshot,
         "agent": {
