@@ -104,10 +104,10 @@ def test_runtime_reset_clears_distinct_registry_and_agent_runtime_objects(
         )
 
     def rule_state(label):
-        return SimpleNamespace(label=label, _conversation_overrides={"x": 1})
+        return _rule_runtime(label)
 
     def group_state(label):
-        return SimpleNamespace(label=label, _sessions={"x": 1}, _last_request={"x": 1})
+        return _group_runtime(label)
 
     key = ("entry-1", "agent-new")
     registry_continuity = continuity_state("registry")
@@ -140,9 +140,11 @@ def test_runtime_reset_clears_distinct_registry_and_agent_runtime_objects(
         assert current._ignored_conversation_ids == {}
     for current in (registry_rules, agent_rules):
         assert current._conversation_overrides == {}
+        assert not current._requests
     for current in (registry_groups, agent_groups):
         assert current._sessions == {}
         assert current._last_request == {}
+        assert not current._requests
     assert hass.data[continuity._MANAGERS][key] is agent_continuity
     assert hass.data[request_rules._RUNTIMES][key] is agent_rules
     assert hass.data[function_groups._RUNTIMES][key] is agent_groups
@@ -158,14 +160,25 @@ def _continuity_runtime(marker: str):
 
 
 def _rule_runtime(marker: str):
-    return SimpleNamespace(_conversation_overrides={marker: object()})
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRuleRuntime,
+    )
+
+    runtime = RequestRuleRuntime()
+    runtime.set(marker, {"model": marker})
+    runtime.begin_request(marker, 5)
+    return runtime
 
 
 def _group_runtime(marker: str):
-    return SimpleNamespace(
-        _sessions={marker: object()},
-        _last_request={marker: object()},
+    from custom_components.extended_openai_conversation_responses.function_groups import (
+        FunctionGroupRuntime,
     )
+
+    runtime = FunctionGroupRuntime()
+    runtime.begin_request(runtime.begin(marker, 5))
+    runtime._last_request = {marker: object()}
+    return runtime
 
 
 def test_runtime_reset_reconciles_distinct_registry_and_agent_objects(
@@ -224,9 +237,11 @@ def test_runtime_reset_reconciles_distinct_registry_and_agent_objects(
         assert runtime._ignored_conversation_ids == {}
     for runtime in (registry_rules, agent_rules):
         assert runtime._conversation_overrides == {}
+        assert not runtime._requests
     for runtime in (registry_groups, agent_groups):
         assert runtime._sessions == {}
         assert runtime._last_request == {}
+        assert not runtime._requests
 
     assert hass.data[continuity._MANAGERS][key] is agent_continuity
     assert hass.data[request_rules._RUNTIMES][key] is agent_rules

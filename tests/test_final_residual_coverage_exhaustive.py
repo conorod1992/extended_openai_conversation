@@ -248,8 +248,11 @@ def test_restore_runtime_clears_registry_only_managers(hass, monkeypatch) -> Non
         _pending_ends={"x"},
         _ignored_conversation_ids={"x": None},
     )
-    rules = SimpleNamespace(_conversation_overrides={"x": 1})
-    groups = SimpleNamespace(_sessions={"x": 1}, _last_request={"x": 1})
+    rules = request_rules.RequestRuleRuntime()
+    rules.set("x", {"model": "x"})
+    groups = function_groups.FunctionGroupRuntime()
+    groups.begin("x", 5)
+    groups._last_request = {"x": 1}
     hass.data[continuity._MANAGERS] = {key: cont}
     hass.data[request_rules._RUNTIMES] = {key: rules}
     hass.data[function_groups._RUNTIMES] = {key: groups}

@@ -16,6 +16,7 @@ from .const import (
     FUNCTION_GROUP_LOADING_ALWAYS,
     FUNCTION_GROUP_LOADING_ON_DEMAND,
 )
+from .conversation_requests import ConversationRequests
 from .skill_availability import function_group_enabled
 
 _RUNTIMES = "extended_openai_conversation_responses.function_group_runtimes"
@@ -84,15 +85,15 @@ class FunctionGroupRuntime:
     def __init__(self) -> None:
         self._sessions: dict[str, FunctionGroupSession] = {}
         self._last_request: dict[str, Any] = {}
-        self._requests: dict[object, FunctionGroupSession] = {}
+        self._requests = ConversationRequests[FunctionGroupSession]()
 
     def begin(self, session_key: str, timeout_minutes: int) -> FunctionGroupSession:
         """Resolve a session and prune inactive conversation state."""
         now = time.monotonic()
         cutoff = now - max(1, timeout_minutes) * 60
         for key, current_session in list(self._sessions.items()):
-            if current_session.last_active < cutoff and not any(
-                active is current_session for active in self._requests.values()
+            if current_session.last_active < cutoff and not self._requests.active(
+                key, current_session
             ):
                 del self._sessions[key]
         session = self._sessions.get(session_key)
@@ -105,18 +106,14 @@ class FunctionGroupRuntime:
 
     def begin_request(self, session: FunctionGroupSession) -> object:
         """Protect a resolved session while a conversation request is active."""
-        token = object()
-        self._requests[token] = session
-        return token
+        return self._requests.begin(session.session_key, session)
 
     def finish_request(self, token: object, *, successful: bool) -> None:
         """Refresh activity on success without reviving an ended conversation."""
-        session = self._requests.pop(token, None)
-        if (
-            successful
-            and session is not None
-            and self._sessions.get(session.session_key) is session
-        ):
+        session = self._requests.finish(
+            token, successful=successful, current_generation=self._sessions.get
+        )
+        if session is not None:
             session.last_active = time.monotonic()
 
     def record_request(self, assembly: FunctionToolAssembly) -> None:
@@ -134,11 +131,8 @@ class FunctionGroupRuntime:
     def end(self, session_key: str) -> bool:
         """Discard loaded groups when one logical conversation ends."""
         session = self._sessions.pop(session_key, None)
-        self._requests = {
-            token: active
-            for token, active in self._requests.items()
-            if active is not session
-        }
+        if session is not None:
+            self._requests.invalidate(session_key, ended=True)
         return session is not None
 
     def end_continuity(self, continuity_key: str) -> None:
@@ -150,6 +144,12 @@ class FunctionGroupRuntime:
                 or session_id.rpartition(":conversation:")[0] == owner
             ):
                 self.end(session_id)
+
+    def reset_all(self) -> None:
+        """Discard transient state and invalidate all outstanding completions."""
+        self._requests.clear()
+        self._sessions.clear()
+        self._last_request.clear()
 
     def stats(self) -> dict[str, Any]:
         """Return non-sensitive runtime diagnostics."""

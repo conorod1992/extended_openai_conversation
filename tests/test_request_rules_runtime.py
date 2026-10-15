@@ -562,7 +562,7 @@ def test_active_route_request_survives_sweeps_then_obeys_idle_expiration(
     assert ("active" in runtime._conversation_overrides) is successful
     now = 181.0
     assert runtime.get("active", 1) == {}
-    assert runtime._requests == {}
+    assert not runtime._requests
 
 
 def test_route_reset_invalidates_old_completion(monkeypatch):
@@ -578,4 +578,4 @@ def test_route_reset_invalidates_old_completion(monkeypatch):
     now = 120.0
     runtime.finish_request(token, successful=True)
     assert runtime.get("same", 1) == {}
-    assert runtime._requests == {}
+    assert not runtime._requests
