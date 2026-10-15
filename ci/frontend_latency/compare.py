@@ -8,6 +8,9 @@ from statistics import median
 import sys
 from typing import Any
 
+from ci.enhanced_evidence import environment_fingerprint
+from ci.frontend_latency.environment import environment_differences
+
 
 def pct(delta: float, baseline: float) -> str:
     if baseline == 0:
@@ -96,6 +99,22 @@ def main() -> None:
     baseline_path, current_path, output_dir = map(Path, sys.argv[1:4])
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     current = json.loads(current_path.read_text(encoding="utf-8"))
+    errors = []
+    for label, item in (("baseline", baseline), ("candidate", current)):
+        identity = item.get("environment", {})
+        if (
+            not identity.get("python_packages")
+            or not identity.get("node")
+            or item.get("environment_sha256") != environment_fingerprint(identity)
+        ):
+            errors.append(f"{label}: missing/invalid resolved environment identity")
+    errors += environment_differences(
+        baseline.get("environment", {}), current.get("environment", {})
+    )
+    if errors:
+        raise SystemExit(
+            "Latency comparison environments rejected:\n" + "\n".join(errors)
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     lines = [

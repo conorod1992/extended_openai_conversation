@@ -12,11 +12,8 @@ from typing import Any
 import pytest
 from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
 
-from ci.enhanced_evidence import (
-    checkout_sha,
-    environment_fingerprint,
-    environment_identity,
-)
+from ci.enhanced_evidence import checkout_sha, environment_fingerprint
+from ci.frontend_latency.environment import verified_environment_identity
 from homeassistant.components import onboarding
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
@@ -62,6 +59,7 @@ async def test_manual_frontend_latency_diagnostics(
     socket_enabled: Any,
 ) -> None:
     """Collect backend WS and real-HA browser timings into one JSON artifact."""
+    verified_environment_identity()
     runs = max(1, int(os.environ.get("EOAI_LATENCY_RUNS", "3")))
     label = os.environ.get("EOAI_LATENCY_LABEL", "candidate")
     output = Path(
@@ -225,7 +223,7 @@ async def test_manual_frontend_latency_diagnostics(
 
     browser = json.loads(browser_output.read_text(encoding="utf-8"))
     browser_output.unlink(missing_ok=True)
-    environment = environment_identity()
+    environment = verified_environment_identity()
     environment["browser"] = browser["environment"]
     output.write_text(
         json.dumps(

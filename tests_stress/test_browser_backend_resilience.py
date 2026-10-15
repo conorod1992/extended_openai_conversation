@@ -340,6 +340,7 @@ async def test_native_shell_accessibility_error_recovery(
     hass, real_ha_shell, monkeypatch, stress_trace
 ):
     from ci.enhanced_evidence import checkout_sha
+    from ci.frontend_latency.environment import environment_identity
     from ci.frontend_latency.review import POLICY, check_accessibility
     from ci.frontend_latency.test_frontend_accessibility import (
         test_genuine_shell_accessibility_semantics,
@@ -350,6 +351,12 @@ async def test_native_shell_accessibility_error_recovery(
         / "native-accessibility.json"
     )
     monkeypatch.setenv("EOAI_ACCESSIBILITY_OUTPUT", str(path.resolve()))
+    environment_path = path.with_name("native-accessibility-environment.json")
+    environment_path.parent.mkdir(parents=True, exist_ok=True)
+    environment_path.write_text(
+        json.dumps({"environment": environment_identity()}), encoding="utf-8"
+    )
+    monkeypatch.setenv("EOAI_LATENCY_ENVIRONMENT", str(environment_path.resolve()))
     try:
         await test_genuine_shell_accessibility_semantics(real_ha_shell)
         path = Path(

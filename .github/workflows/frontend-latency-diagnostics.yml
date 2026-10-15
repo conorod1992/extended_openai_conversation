@@ -39,6 +39,7 @@ jobs:
     env:
       PYTHONPATH: ${{ github.workspace }}
       EOAI_ACCESSIBILITY_DIAGNOSTIC_PICKER: ${{ inputs.diagnostic_picker && '1' || '0' }}
+      EOAI_LATENCY_ENVIRONMENT: ${{ github.workspace }}/latency-results/environment.json
 
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
@@ -79,32 +80,23 @@ jobs:
           echo "Current develop: $CURRENT_SHA"
           echo "Baseline:        $BASELINE_SHA"
 
-      - name: Require matching dependency declarations
-        id: dependency_check
+      - name: Read dependency declarations for both revisions
         run: |
           git show "$BASELINE_SHA:requirements_test.txt" > /tmp/baseline-requirements_test.txt
           git show "$BASELINE_SHA:custom_components/extended_openai_conversation_responses/manifest.json" > /tmp/baseline-manifest.json
           git show "$CURRENT_SHA:requirements_test.txt" > /tmp/current-requirements_test.txt
           git show "$CURRENT_SHA:custom_components/extended_openai_conversation_responses/manifest.json" > /tmp/current-manifest.json
-          if ! cmp -s /tmp/baseline-requirements_test.txt /tmp/current-requirements_test.txt \
-            || ! cmp -s /tmp/baseline-manifest.json /tmp/current-manifest.json; then
-            echo "Latency comparison requires identical test/HA dependency declarations on baseline and current develop." >&2
-            exit 1
-          fi
 
-      - name: Reconcile Home Assistant environment
+      - name: Resolve and validate shared pinned dependency environment
+        id: dependency_check
         run: |
           git checkout --force "$CURRENT_SHA"
-          CURRENT_ENVIRONMENT_SHA="$(cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json | sha256sum | awk '{print $1}')"
-          BUILT_ENVIRONMENT_SHA="$(cat /opt/eoai-ci/environment.sha256)"
-          if [ "$CURRENT_ENVIRONMENT_SHA" = "$BUILT_ENVIRONMENT_SHA" ]; then
-            echo "Prebuilt dependency environment matches current develop."
-          else
-            pip install -r requirements_test.txt
-            pip install --upgrade homeassistant
-            python ci/install_ha_dependencies.py \
-              --manifest custom_components/extended_openai_conversation_responses/manifest.json
-          fi
+          python -m ci.frontend_latency.environment \
+            --baseline-requirements /tmp/baseline-requirements_test.txt \
+            --baseline-manifest /tmp/baseline-manifest.json \
+            --current-requirements /tmp/current-requirements_test.txt \
+            --current-manifest /tmp/current-manifest.json \
+            --output latency-results/environment.json
 
       - name: Verify browser environment
         run: |
