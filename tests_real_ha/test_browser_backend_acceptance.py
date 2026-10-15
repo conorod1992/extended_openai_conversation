@@ -247,6 +247,73 @@ async def test_function_repair_controls_on_cold_functions_route(
         await runner.cleanup()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_catalogue", [False, True])
+async def test_bulk_function_repair_acknowledgement_survives_failed_reads(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+    fail_catalogue: bool,
+) -> None:
+    """A real bulk write supplies its baseline before optional browser refreshes."""
+    entry = _make_entry(
+        "Browser Bulk Repair",
+        include_ai_task=False,
+        conversation_options={
+            CONF_FUNCTION_TOOLS: "[unterminated",
+            "prompt": "Saved prompt before bulk repair",
+        },
+    )
+    await _setup_entry(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+    before = await _management_call(
+        client, entry=entry, section="configuration", action="get"
+    )
+    assert before["function_repair"]["isolatable"] is False
+    assert before["function_repair"]["validation_error"]
+
+    class BrowserClient:
+        client = None
+
+        async def send_json_auto_id(self, message):
+            if self.client is None:
+                self.client = await _admin_client(
+                    hass, hass_ws_client, user_id="browser-bulk-repair-admin"
+                )
+            await self.client.send_json_auto_id(message)
+
+        async def receive_json(self):
+            return await self.client.receive_json()
+
+    runner, backend_url = await _start_ws_bridge(BrowserClient())
+    try:
+        await _run_playwright(
+            repo_root=Path(__file__).resolve().parent.parent,
+            spec="tests_browser/real-ha-bulk-function-repair.spec.mjs",
+            config="playwright.config.mjs",
+            env={
+                "REAL_HA_BACKEND_URL": backend_url,
+                "BULK_REPAIR_FAIL_CATALOGUE": "1" if fail_catalogue else "0",
+            },
+            failure_label="Bulk repair acknowledgement did not survive refresh",
+        )
+    finally:
+        await runner.cleanup()
+
+    # Browser startup can outlive the original test client's idle WS timeout.
+    client = await _admin_client(
+        hass, hass_ws_client, user_id="bulk-repair-verification-admin"
+    )
+    persisted = await _management_call(
+        client, entry=entry, section="configuration", action="get"
+    )
+    assert persisted["revision"] != before["revision"]
+    assert [tool["spec"]["name"] for tool in persisted["config"]["functions"]] == [
+        "bulk_repaired_tool"
+    ]
+    assert persisted["config"]["prompt"] == "Saved prompt before bulk repair"
+    assert "function_repair" not in persisted
+
+
 @pytest.fixture
 async def real_ha_shell(
     hass: HomeAssistant,

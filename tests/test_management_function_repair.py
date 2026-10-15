@@ -381,6 +381,12 @@ async def test_function_repair_save_replaces_invalid_collection(
     assert saved["revision"] != before["revision"]
     assert config_entries.updates == 1
     assert function_tools_issue(dict(subentry.data))[1] is None
+    assert saved["config"]["functions"] == saved["tools"]
+    assert saved["config"]["function_groups"] == []
+    assert saved["title"] == subentry.title
+    assert saved["function_repair"]["invalid_count"] == 0
+    assert saved["function_repair"]["validation_error"] is None
+    assert saved["revision"] == repair.repair_revision(subentry)
 
 
 @pytest.mark.asyncio

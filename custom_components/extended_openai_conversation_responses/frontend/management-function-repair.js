@@ -140,13 +140,19 @@ async function openInvalidToolEditor(panel, item) {
 
 export async function refreshAfterRepair(panel, message, saved) {
   const selectedId = panel._agentId;
-  if (!saved?.config) saved = await panel._call("configuration", "get");
   if (panel._configData) {
     panel._configData = {...panel._configData, function_repair:saved.function_repair};
   }
   synchronizePersistedConfigurationFields(panel, saved, ["functions", "function_groups"]);
   if (panel._configData) panel._result = panel._configData;
-  await panel._loadAgents(selectedId);
+  try {
+    await panel._loadAgents(selectedId);
+    // The catalogue loader handles transport failures by rendering _error.
+    if (panel._error) throw new Error(panel._error);
+  } catch (err) {
+    panel._toast(`${message}, but some displayed information could not be refreshed: ${err.message || String(err)}`, true);
+    return;
+  }
   panel._toast(message);
 }
 
