@@ -26,32 +26,54 @@ from homeassistant.helpers import service as service_helpers
 from .ha_schema import schema_for_ha
 
 
-def _entity_target_identity(handler: Any, processed: Any) -> Any:
-    """Match HA entity selectors as sets without changing dispatch or payloads."""
+def _entity_target_identity(
+    handler: Any, processed: Any, domain: str, service: str
+) -> Any:
+    """Normalize only selectors hidden from the downstream service handler."""
     target = handler.job.target
-    if (
-        not isinstance(target, partial)
-        or target.func
-        not in (
-            service_helpers.entity_service_call,
-            getattr(service_helpers, "batched_entity_service_call", None),
+    if not isinstance(processed, Mapping):
+        return processed
+    generic_power = (
+        domain.lower() == "homeassistant"
+        and service.lower() in {"turn_on", "turn_off", "toggle"}
+        and getattr(target, "__module__", None)
+        == "homeassistant.components.homeassistant"
+        and getattr(target, "__qualname__", None)
+        == "async_setup.<locals>.async_handle_turn_service"
+    )
+    stripped_selectors = isinstance(target, partial) and (
+        target.func is getattr(service_helpers, "batched_entity_service_call", None)
+        or (
+            target.func is service_helpers.entity_service_call
+            and isinstance(
+                target.args[2] if len(target.args) > 2 else target.keywords.get("func"),
+                str,
+            )
         )
-        or not isinstance(processed, Mapping)
-    ):
+    )
+    if not generic_power and not stripped_selectors:
         return processed
     identity = dict(processed)
-    for key in (
-        ATTR_ENTITY_ID,
-        ATTR_AREA_ID,
-        ATTR_DEVICE_ID,
-        ATTR_FLOOR_ID,
-        ATTR_LABEL_ID,
-    ):
+    keys = (
+        (ATTR_ENTITY_ID,)
+        if generic_power
+        else (
+            ATTR_ENTITY_ID,
+            ATTR_AREA_ID,
+            ATTR_DEVICE_ID,
+            ATTR_FLOOR_ID,
+            ATTR_LABEL_ID,
+        )
+    )
+    for key in keys:
         value = identity.get(key)
         if isinstance(value, (list, tuple, set, frozenset)) and all(
             isinstance(item, str) for item in value
         ):
-            identity[key] = sorted(set(value))
+            if value:
+                identity[key] = sorted(set(value))
+            else:
+                identity.pop(key, None)
     return identity
 
 
@@ -88,6 +110,6 @@ def prepare_service_dispatch(
     kwargs["service_data"] = raw
     kwargs.pop("target", None)
     return prepared_registry, {
-        "data": _entity_target_identity(handler, processed),
+        "data": _entity_target_identity(handler, processed, domain, service),
         "target": {},
     }

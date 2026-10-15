@@ -31,6 +31,10 @@ invocation remain separate effects.
 
 ## Comparison
 
+These measurements describe the initial extraction at `68add5cd`, before the
+subsequent replay-hardening corrections documented below. They are a historical
+comparison rather than current-head measurements.
+
 Counts include the complete `execution_outcomes.py`, `tool_replay_guard.py`,
 `ha_actions.py` and new `ha_service_compat.py`; the new boundary is not excluded
 from the after count. Unchanged authorization code within `ha_actions.py` is
@@ -60,12 +64,19 @@ different retention and ownership duties.
 ## Necessary complexity and residual risks
 
 Prepared HA service identities lowercase domain and service names, matching native
-dispatch. For registered HA entity-service dispatchers, top-level entity, device,
-area, floor and label selectors compare as sets. This affects receipt comparison
-only: actual dispatch data and service events remain unchanged. Custom services,
-arbitrary payload lists and ordered action batches retain their ordering. Exact
-whole-tool identities remain conservative; prepared-effect matching supplies the
-HA-specific equivalence even when tool names or wrappers differ.
+dispatch. Entity services using string method names, and batched dispatchers which
+strip selector fields, compare top-level selectors as sets and omit empty selector
+lists. Callable entity handlers receive the full ServiceCall, so their selector
+ordering and presence remain part of the identity. The recognized built-in
+homeassistant power dispatcher compares entity IDs as a set because it forwards
+sorted IDs, while preserving its other forwarded fields. Custom replacements for
+those services remain opaque. Actual dispatch data, events, arbitrary payload
+lists and action-batch ordering are unchanged. Exact whole-tool identities remain
+conservative; prepared-effect matching supplies HA-specific equivalence.
+
+Local Request Rule Functions and deferred jobs have explicit detached ownership.
+Their invocation receipts still bound execution, but do not enter provider replay
+history or evict its provenance. Unknown ownership retains fail-closed retirement.
 
 Invocation leases, child paths, validated-call aliases and explicit settlement
 handles remain: nested children, out-of-order completion and inherited task

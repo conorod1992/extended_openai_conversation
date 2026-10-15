@@ -705,7 +705,9 @@ async def test_admitted_delayed_work_detaches_even_while_parent_is_active(
         assert enclosing.outcome == "uncertain"
     assert hass.services.async_call.await_count == 2
     assert entity._execution_tool_outcomes[id(parent)] == "uncertain"
-    assert entity._execution_tool_outcomes[id(admitted)] == "completed"
+    # Independent completion must not retain provider provenance or evict it.
+    for name in ("_execution_tool_outcomes", "_execution_effect_receipts", "_dispatched_tool_inputs", "_dispatched_tool_signatures", "_dispatched_tool_conversations"):
+        assert id(admitted) not in getattr(entity, name, {})
 
 
 async def test_genuine_service_identity_preserves_handler_visible_response_mode(

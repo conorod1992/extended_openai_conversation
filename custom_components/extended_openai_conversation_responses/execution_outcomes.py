@@ -117,47 +117,56 @@ def execution_attempt(entity: Any, call: Any, tool: dict[str, Any]) -> Iterator[
         yield
     finally:
         attempt.active = False
-        from .tool_replay_guard import (
-            _forget_dispatch,
-            dispatch_conversation_id,
-            dispatch_inputs,
-        )
-
-        outcomes = getattr(entity, "_execution_tool_outcomes", None)
-        if not isinstance(outcomes, dict):
-            outcomes = entity._execution_tool_outcomes = {}
-        receipts = getattr(entity, "_execution_effect_receipts", None)
-        if not isinstance(receipts, dict):
-            receipts = entity._execution_effect_receipts = {}
-        owners = getattr(entity, "_dispatched_tool_conversations", None)
-        if not isinstance(owners, dict):
-            owners = entity._dispatched_tool_conversations = {}
-        owner = dispatch_conversation_id(entity)
-        retained = tuple(attempt.receipts)
-        for item in dispatch_inputs(call):
-            owners.setdefault(id(item), owner)
-            outcomes[id(item)] = attempt.outcome
-            receipts[id(item)] = retained
-        while len(outcomes) > 4096:
-            _forget_dispatch(entity, next(iter(outcomes)), retire=True)
-        # Bound records across invocations too, counting validated-call aliases
-        # once. Missing precision must retire its owner, never permit a replay.
-        groups: dict[int, tuple[tuple[EffectReceipt, ...], list[int]]] = {}
-        for key, group in receipts.items():
-            if (entry := groups.get(id(group))) is None:
-                groups[id(group)] = (group, [key])
-            else:
-                entry[1].append(key)
-        count = sum(len(group) for group, _keys in groups.values())
-        for group, keys in groups.values():
-            if count <= _MAX_RETAINED_EFFECT_RECEIPTS:
-                break
-            for key in keys:
-                _forget_dispatch(entity, key, retire=True)
-            count -= len(group)
+        _retain_execution_attempt(entity, call, attempt)
         _OPERATION.reset(operation_token)
         _CHILD_PATH.reset(path_token)
         _ATTEMPT.reset(token)
+
+
+def _retain_execution_attempt(
+    entity: Any, call: Any, attempt: ExecutionAttempt
+) -> None:
+    """Retain provider/unknown ownership only; independent work has no continuation."""
+    if execution_is_detached():
+        return
+    from .tool_replay_guard import (
+        _forget_dispatch,
+        dispatch_conversation_id,
+        dispatch_inputs,
+    )
+
+    outcomes = getattr(entity, "_execution_tool_outcomes", None)
+    if not isinstance(outcomes, dict):
+        outcomes = entity._execution_tool_outcomes = {}
+    receipts = getattr(entity, "_execution_effect_receipts", None)
+    if not isinstance(receipts, dict):
+        receipts = entity._execution_effect_receipts = {}
+    owners = getattr(entity, "_dispatched_tool_conversations", None)
+    if not isinstance(owners, dict):
+        owners = entity._dispatched_tool_conversations = {}
+    owner = dispatch_conversation_id(entity)
+    retained = tuple(attempt.receipts)
+    for item in dispatch_inputs(call):
+        owners.setdefault(id(item), owner)
+        outcomes[id(item)] = attempt.outcome
+        receipts[id(item)] = retained
+    while len(outcomes) > 4096:
+        _forget_dispatch(entity, next(iter(outcomes)), retire=True)
+    # Bound records across invocations too, counting validated-call aliases
+    # once. Missing precision must retire its owner, never permit a replay.
+    groups: dict[int, tuple[tuple[EffectReceipt, ...], list[int]]] = {}
+    for key, group in receipts.items():
+        if (entry := groups.get(id(group))) is None:
+            groups[id(group)] = (group, [key])
+        else:
+            entry[1].append(key)
+    count = sum(len(group) for group, _keys in groups.values())
+    for group, keys in groups.values():
+        if count <= _MAX_RETAINED_EFFECT_RECEIPTS:
+            break
+        for key in keys:
+            _forget_dispatch(entity, key, retire=True)
+        count -= len(group)
 
 
 def with_execution_receipt[ResultT](
@@ -181,7 +190,7 @@ def with_execution_receipt[ResultT](
 
 @contextmanager
 def detached_execution() -> Iterator[None]:
-    """Deferred work has a separate lifecycle from the request that admitted it."""
+    """Independent work has no provider continuation to recover."""
     from .tool_replay_guard import bind_effect_replay_scope
 
     attempt_token = _ATTEMPT.set(None)

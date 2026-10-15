@@ -240,6 +240,9 @@ def record_dispatch(
     ha_parameters: Any = None,
 ) -> None:
     """Keep trusted dispatch provenance separately from model-facing outcomes."""
+    conversation_id = dispatch_conversation_id(entity)
+    if conversation_id == "":
+        return  # Explicitly independent work must not evict provider provenance.
     dispatched = getattr(entity, "_dispatched_tool_inputs", None)
     if not isinstance(dispatched, dict):
         dispatched = entity._dispatched_tool_inputs = {}
@@ -256,7 +259,6 @@ def record_dispatch(
     owners = getattr(entity, "_dispatched_tool_conversations", None)
     if not isinstance(owners, dict):
         owners = entity._dispatched_tool_conversations = {}
-    conversation_id = dispatch_conversation_id(entity)
     canonical = getattr(entity, "_dispatched_tool_signatures", None)
     if not isinstance(canonical, dict):
         canonical = entity._dispatched_tool_signatures = {}
