@@ -107,3 +107,20 @@ real deployment latency or resource use requires it. That work needs explicit
 index versioning/rebuild rules and parity for privacy changes, deletion, retention,
 restore and restart. A silent workload cap would hide matches or misrepresent
 rankings, so this PR does not introduce one.
+
+
+## Snapshot publication and concurrent changes
+
+Model searches and Management search/list operations use
+`ConversationArchive.async_query_snapshot()`. Archive captures scoped retained
+records under its lock, releases the lock while the existing ranker runs in a
+worker, and rechecks returned sessions and turn identities before publication.
+Privacy changes, deletion, replaced/pruned turns, or unavailable Archive state
+prevent stale results from escaping. Ordinary appends and unrelated sibling
+changes remain allowed; there is no global revision rejection or lock held across
+ranking. Cancellation stops waiting for the read without waiting for its worker.
+
+The model tool keeps its existing controlled unavailable response after a revoked
+search. Management keeps its existing retry error. The two rankers, tie ordering,
+local date handling, page ceilings, output shapes and ranking memory bounds are
+unchanged. The shared boundary owns publication safety, not ranking policy.

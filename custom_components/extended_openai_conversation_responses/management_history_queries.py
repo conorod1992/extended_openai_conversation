@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable
 from dataclasses import asdict
 from heapq import heappush, heapreplace
 from typing import Any
@@ -12,6 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .conversation_archive import (
+    ConversationArchive,
     _excerpt,
     _local_date_bounds,
     _normalize,
@@ -271,53 +270,6 @@ def _validate_archive_page(offset: int, limit: int, maximum: int) -> tuple[int, 
     return safe_offset, max(1, min(int(limit), maximum))
 
 
-async def _async_archive_query(
-    archive: Any,
-    query: Callable[..., dict[str, Any]],
-    scope_id: str,
-    *args: Any,
-    include_turns: bool = False,
-) -> dict[str, Any]:
-    """Snapshot retained records under the lock; rank without blocking mutations."""
-    async with archive._lock:
-        archive._ensure_initialized()
-        sessions = {
-            key: session
-            for key, session in archive._sessions.items()
-            if session.scope_id == scope_id and session.retention_state == "retained"
-        }
-        if include_turns:
-            turns = {key: tuple(archive._turns.get(key, ())) for key in sessions}
-            snapshot_args = (sessions, turns, scope_id, *args)
-        else:
-            snapshot_args = (sessions, scope_id, *args)
-    result = await asyncio.to_thread(query, *snapshot_args)
-    # Deletion/privacy changes may occur while ranking. Never publish their old text.
-    async with archive._lock:
-        for record in result.get("results", result.get("sessions", ())):
-            session_id = record["session_id"]
-            current = archive._sessions.get(session_id)
-            if (
-                current is None
-                or current.scope_id != scope_id
-                or current.retention_state != "retained"
-            ):
-                raise HomeAssistantError(
-                    "Archive changed during search; retry the query"
-                )
-            if "turn_id" in record:
-                index = record["turn_index"]
-                original = turns[session_id][index]
-                current_turns = archive._turns.get(session_id, ())
-                # Appends preserve indices. Pruning/replacement invalidates the
-                # cursor, so retry rather than scanning whole histories here.
-                if index >= len(current_turns) or current_turns[index] is not original:
-                    raise HomeAssistantError(
-                        "Archive changed during search; retry the query"
-                    )
-    return result
-
-
 def _archive_list_sync(
     sessions: dict[str, Any], scope_id: str, offset: int, limit: int
 ) -> dict[str, Any]:
@@ -349,16 +301,15 @@ def _archive_list_sync(
 
 
 async def archive_list_page(
-    archive: Any, scope_id: str, *, limit: int = 50, offset: int = 0
+    archive: ConversationArchive, scope_id: str, *, limit: int = 50, offset: int = 0
 ) -> dict[str, Any]:
     """List retained sessions with bounded ranking work memory."""
     safe_offset, safe_limit = _validate_archive_page(
         offset, limit, MANAGEMENT_ARCHIVE_LIST_PAGE_MAX
     )
-    return await _async_archive_query(
-        archive,
-        _archive_list_sync,
+    return await archive.async_query_snapshot(
         scope_id,
+        _archive_list_sync,
         safe_offset,
         safe_limit,
     )
@@ -446,7 +397,7 @@ def _archive_search_sync(
 
 
 async def archive_search_page(
-    archive: Any,
+    archive: ConversationArchive,
     scope_id: str,
     query: str,
     *,
@@ -461,10 +412,9 @@ async def archive_search_page(
     safe_offset, safe_limit = _validate_archive_page(
         offset, limit, MANAGEMENT_ARCHIVE_SEARCH_PAGE_MAX
     )
-    return await _async_archive_query(
-        archive,
-        _archive_search_sync,
+    return await archive.async_query_snapshot(
         scope_id,
+        _archive_search_sync,
         query,
         start_date,
         end_date,

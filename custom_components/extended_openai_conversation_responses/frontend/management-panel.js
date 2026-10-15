@@ -1,3 +1,4 @@
+import {mutationEffects} from "./management-mutation-effects.js";
 import {invalidateUsageWindows} from "./usage-cache.js";
 import {scheduleWallTime, scheduleInstant} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
@@ -15,7 +16,7 @@ import {
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
-import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, isAgentMutation, syncAgentPicker} from "./management-actions.js";
+import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, syncAgentPicker} from "./management-actions.js";
 import {configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
@@ -34,8 +35,6 @@ import {
 } from "./management-state-safety.js";
 
 const WS_TYPE = "extended_openai_conversation_responses/management";
-const TOOL_MUTATIONS = new Set(["save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"]);
-const REQUEST_RULE_MUTATIONS = new Set(["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move", "rule_pack_import"]);
 const REQUEST_RULE_CACHE_KEY = "capabilities/request-rules";
 
 const KNOWLEDGE_TITLE_LIMIT = 120;
@@ -724,23 +723,24 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _callWithMutationSafety(section, action, extra = {}) {
-    if (!isAgentMutation(section, action)) return this._callCore(section, action, extra);
+    const effects = mutationEffects(section, action);
+    if (!effects) return this._callCore(section, action, extra);
 
     this._pendingMutations ||= new Map();
     const owner = {agentId:this._agentId, entryId:this._selectedAgent?.()?.entry_id};
     const key = JSON.stringify([owner.entryId, owner.agentId, section, action, extra]);
     if (this._pendingMutations.has(key)) return this._pendingMutations.get(key);
 
-    const mutationTrace = section === "tools" ? {
+    const mutationTrace = effects.revision === "tools" ? {
       id: ++functionMutationSequence,
       section,
       action,
       queuedAt: performanceNow(),
       status: "queued",
     } : null;
-    const previous = section === "tools"
+    const previous = effects.revision === "tools"
       ? (this._eocFunctionMutationTail || Promise.resolve())
-      : section === "request_rules"
+      : effects.revision === "request_rules"
         ? (this._eocRequestRuleMutationTail || Promise.resolve())
         : Promise.resolve();
     const pending = previous.catch(() => {}).then(
@@ -754,15 +754,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         // Resolve implicit Function Tool revisions only after this serialized
         // operation reaches the head of the queue. Explicit caller revisions
         // remain concurrency guards and must never be rewritten.
-        let payload = section === "tools"
-          && TOOL_MUTATIONS.has(action)
+        let payload = effects.revision === "tools"
           && extra.revision === undefined
           && typeof this._configData?.revision === "string"
           ? {revision: this._configData.revision, ...extra}
           : extra;
         if (
-          section === "request_rules"
-          && REQUEST_RULE_MUTATIONS.has(action)
+          effects.revision === "request_rules"
           && extra.revision === undefined
         ) {
           const trackedRevision = this._eocRequestRuleRevision;
@@ -788,14 +786,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }
       }
     });
-    if (section === "tools") this._eocFunctionMutationTail = tracked;
-    if (section === "request_rules") this._eocRequestRuleMutationTail = tracked;
+    if (effects.revision === "tools") this._eocFunctionMutationTail = tracked;
+    if (effects.revision === "request_rules") this._eocRequestRuleMutationTail = tracked;
     this._pendingMutations.set(key, tracked);
     return tracked;
   }
 
   async _runAgentMutation(section, action, extra, mutationTrace = null) {
-    const ruleMutation = section === "request_rules" && REQUEST_RULE_MUTATIONS.has(action);
+    const ruleMutation = mutationEffects(section, action)?.revision === "request_rules";
     const agentId = this._agentId;
     const owner = {agentId, entryId:this._selectedAgent?.()?.entry_id};
     if (ruleMutation) this._eocRequestRuleMutationEpoch = (this._eocRequestRuleMutationEpoch || 0) + 1;
@@ -830,9 +828,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _applyToolRevision(section, action, result, owner) {
     if (
-      section === "tools"
+      mutationEffects(section, action)?.revision === "tools"
       && configurationSubmissionIsCurrent(this, owner)
-      && TOOL_MUTATIONS.has(action)
       && typeof result?.revision === "string"
       && this._configData
     ) {
@@ -927,16 +924,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _invalidateAfterMutation(agentId, section, action) {
-    if (agentId && ((section === "configuration" && ["save", "update", "import"].includes(action))
-        || (section === "function_repair" && isAgentMutation(section, action))
-        || (section === "tools" && TOOL_MUTATIONS.has(action))
-        || (section === "knowledge" && action === "set_enabled")
-        || (section === "guest_mode" && action === "save_policy")
-        || (section === "settings" && action === "update")
-        || (section === "backup" && action === "restore"))) {
+    const effects = mutationEffects(section, action);
+    if (agentId && effects?.configuration) {
       this._invalidateCleanConfiguration(agentId);
     }
-    if (agentId && section === "usage" && action === "clear_details") {
+    if (agentId && effects?.usageWindows) {
       invalidateUsageWindows(this, agentId);
       if (agentId === this._agentId) this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
       for (const key of this._sectionCache.keys()) {
@@ -945,13 +937,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         this._eocSectionCacheTimes.delete(key);
       }
     }
-    if (agentId && isAgentMutation(section, action)) {
+    if (agentId && effects) {
       this._cacheGeneration += 1;
       this._sectionCache.delete(`${agentId}|overview`);
       this._eocSectionCacheTimes.delete(`${agentId}|overview`);
       this._eocPendingRouteReads?.clear();
     }
-    if (agentId && section === "backup" && action === "restore") {
+    if (agentId && effects?.restore) {
       this._cacheGeneration += 1;
       // Replacing the map also isolates reads started before the restore.
       this._eocUsageWindowCache = new Map();
@@ -963,20 +955,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       for (const key of this._scopeCatalogCache.keys()) if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
       if (this._scopeCatalogVisitKey?.startsWith(prefix)) this._scopeCatalogVisitKey = null;
     } else {
-      const mutations = {
-        request_rules: REQUEST_RULE_MUTATIONS,
-        knowledge: new Set(["create", "update", "delete", "set_enabled"]),
-        memories: new Set(["add", "update", "delete", "clear", "temporary_add", "temporary_update", "temporary_delete", "temporary_clear", "reassign_legacy"]),
-      };
-      if (agentId && mutations[section]?.has(action)) {
+      if (agentId && (effects?.collectionView || effects?.scopeCatalog)) {
         this._cacheGeneration += 1;
         const prefix = `${agentId}|`;
-        const view = {request_rules:"capabilities/request-rules", knowledge:"data-memory/knowledge"}[section];
+        const view = effects.collectionView;
         if (view) {
           this._sectionCache.delete(`${prefix}${view}`);
           this._eocSectionCacheTimes.delete(`${prefix}${view}`);
         }
-        if (["memories", "conversations"].includes(section)) {
+        if (effects.scopeCatalog) {
           for (const key of this._scopeCatalogCache.keys()) {
             if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
           }
@@ -985,13 +972,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
     }
 
-    const affectsRequestRules = agentId && (
-      (section === "configuration" && ["save", "update", "import"].includes(action))
-      || (section === "tools" && TOOL_MUTATIONS.has(action))
-      || (section === "function_repair" && isAgentMutation(section, action))
-      || (section === "request_rules" && action === "move")
-    );
-    if (affectsRequestRules) {
+    if (agentId && effects?.requestRules) {
       const key = `${agentId}|${REQUEST_RULE_CACHE_KEY}`;
       this._sectionCache?.delete(key);
       this._eocSectionCacheTimes?.delete(key);

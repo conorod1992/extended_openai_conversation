@@ -5,12 +5,13 @@ from typing import Any
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import context_usage_hardening
+from custom_components.extended_openai_conversation_responses import (
+    context_usage_hardening,
+)
 from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
-    _capture_provider_usage,
     _LOCAL_ESTIMATE_DETAIL,
     _PARTIAL_PROVIDER_USAGE_DETAIL,
-    _restore_local_estimate,
+    _capture_provider_usage,
     _serialized_characters,
     estimate_prepared_request,
     estimate_provider_input_tokens,
@@ -174,7 +175,7 @@ def test_missing_provider_usage_keeps_local_estimate() -> None:
 
     captured = _capture_provider_usage(usage, None)
 
-    assert captured is False
+    assert captured is None
     assert usage.input_tokens == 500
     assert usage.total_tokens == 500
     assert usage.details == {_LOCAL_ESTIMATE_DETAIL: 500}
@@ -197,7 +198,7 @@ def test_provider_usage_replaces_local_estimate() -> None:
         },
     )
 
-    assert captured is True
+    assert captured is not None
     assert usage.input_tokens == 120
     assert usage.output_tokens == 30
     assert usage.total_tokens == 150
@@ -218,7 +219,7 @@ def test_unusable_zero_provider_usage_keeps_local_estimate() -> None:
         {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     )
 
-    assert captured is False
+    assert captured == RequestUsage()
     assert usage.input_tokens == 500
     assert usage.details == {_LOCAL_ESTIMATE_DETAIL: 500}
 
@@ -235,7 +236,7 @@ def test_output_only_provider_usage_keeps_estimate_for_context() -> None:
         {"completion_tokens": 30, "total_tokens": 30},
     )
 
-    assert captured is True
+    assert captured is not None
     assert usage.input_tokens == 800
     assert usage.output_tokens == 30
     assert usage.total_tokens == 30
@@ -258,7 +259,7 @@ def test_reasoning_only_provider_usage_keeps_estimate_for_context() -> None:
         {"output_tokens_details": {"reasoning_tokens": 17}},
     )
 
-    assert captured is True
+    assert captured is not None
     assert usage.input_tokens == 900
     assert usage.output_tokens == 0
     assert usage.total_tokens == 0
@@ -273,16 +274,15 @@ def test_reasoning_only_provider_usage_keeps_estimate_for_context() -> None:
     )
 
 
-def test_partial_usage_can_be_reconciled_after_stock_transform_overwrite() -> None:
-    usage = RequestUsage(output_tokens=25, total_tokens=25)
+def test_partial_usage_preserves_active_context_estimate() -> None:
+    usage = RequestUsage(input_tokens=700, total_tokens=700, details={_LOCAL_ESTIMATE_DETAIL: 700})
 
     captured = _capture_provider_usage(
         usage,
         {"completion_tokens": 25, "total_tokens": 25},
-        local_estimate=700,
     )
 
-    assert captured is True
+    assert captured is not None
     assert usage.input_tokens == 700
     assert usage.output_tokens == 25
     assert usage.total_tokens == 25
@@ -291,11 +291,9 @@ def test_partial_usage_can_be_reconciled_after_stock_transform_overwrite() -> No
 
 
 def test_terminal_zero_usage_cannot_erase_local_estimate() -> None:
-    usage = RequestUsage()
+    usage = RequestUsage(input_tokens=700, total_tokens=700, details={_LOCAL_ESTIMATE_DETAIL: 700})
 
-    # Simulate the stock terminal-event normalizer replacing the in-flight estimate
-    # with an unusable all-zero provider usage object before the wrapper resumes.
-    _restore_local_estimate(usage, 700)
+    _capture_provider_usage(usage, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
 
     assert usage.input_tokens == 700
     assert usage.total_tokens == 700
@@ -305,7 +303,7 @@ def test_terminal_zero_usage_cannot_erase_local_estimate() -> None:
 def test_real_usage_is_never_replaced_by_local_estimate() -> None:
     usage = RequestUsage(input_tokens=123, output_tokens=10, total_tokens=133)
 
-    _restore_local_estimate(usage, 700)
+    _capture_provider_usage(usage, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
 
     assert usage.input_tokens == 123
     assert usage.output_tokens == 10

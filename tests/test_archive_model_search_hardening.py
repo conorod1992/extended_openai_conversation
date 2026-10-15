@@ -112,7 +112,7 @@ async def test_archive_search_scores_snapshot_in_worker(monkeypatch) -> None:
     result = await archive.async_search("user:alice", "kitchen", limit=5)
 
     assert [call[0] for call in calls] == [
-        conversation_archive._search_archive_snapshot
+        conversation_archive._search_archive_query
     ]
     assert len(result["results"]) == 1
     assert result["results"][0]["session_id"] == session.session_id

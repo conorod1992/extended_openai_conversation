@@ -70,6 +70,7 @@ from .context_summary_performance import (
     schedule_context_summary,
 )
 from .context_usage_hardening import (
+    _trace_provider_usage,
     estimate_prepared_request,
     normalized_chat_stream,
     normalized_responses_stream,
@@ -1620,23 +1621,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 first_chunk = False
 
             if not chunk.choices:
-                # Track usage from final chunk if available
+                # Diagnostics stay after parser admission; usage is already applied.
                 if chunk.usage:
-                    normalized = extract_usage(chunk.usage)
-                    request_usage.input_tokens = normalized.input_tokens
-                    request_usage.output_tokens = normalized.output_tokens
-                    request_usage.total_tokens = normalized.total_tokens
-                    request_usage.cached_input_tokens = normalized.cached_input_tokens
-                    request_usage.reasoning_tokens = normalized.reasoning_tokens
-                    request_usage.details = normalized.details
-                    chat_log.async_trace(
-                        {
-                            "stats": {
-                                "input_tokens": normalized.input_tokens,
-                                "output_tokens": normalized.output_tokens,
-                            }
-                        }
-                    )
+                    _trace_provider_usage(chat_log, extract_usage(chunk.usage))
                 continue
 
             if terminal_finish_seen:
@@ -2031,21 +2018,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     terminal_event_seen = True
                 response = event.response
                 if response.usage is not None:
-                    normalized = extract_usage(response.usage)
-                    request_usage.input_tokens = normalized.input_tokens
-                    request_usage.output_tokens = normalized.output_tokens
-                    request_usage.total_tokens = normalized.total_tokens
-                    request_usage.cached_input_tokens = normalized.cached_input_tokens
-                    request_usage.reasoning_tokens = normalized.reasoning_tokens
-                    request_usage.details = normalized.details
-                    chat_log.async_trace(
-                        {
-                            "stats": {
-                                "input_tokens": normalized.input_tokens,
-                                "output_tokens": normalized.output_tokens,
-                            }
-                        }
-                    )
+                    _trace_provider_usage(chat_log, extract_usage(response.usage))
 
                 if event_type == "response.incomplete":
                     details = response.incomplete_details

@@ -713,7 +713,7 @@ def test_archive_list_sync_filters_sorts_and_pages() -> None:
 @pytest.mark.asyncio
 async def test_archive_query_cancels_without_waiting_for_snapshot_worker(monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses import (
-        management_history_queries as history,
+        conversation_archive as archives,
     )
 
     started = asyncio.Event()
@@ -730,14 +730,14 @@ async def test_archive_query_cancels_without_waiting_for_snapshot_worker(monkeyp
         completed = True
         return "done"
 
-    monkeypatch.setattr(history.asyncio, "to_thread", to_thread)
-    archive = SimpleNamespace(
-        _lock=asyncio.Lock(),
-        _sessions={},
-        _ensure_initialized=Mock(),
-    )
+    monkeypatch.setattr(archives.asyncio, "to_thread", to_thread)
+    from tests.test_conversation_archive import FakeArchiveStorage
 
-    task = asyncio.create_task(history._async_archive_query(archive, query, "scope"))
+    archive = archives.ConversationArchive(FakeArchiveStorage(), "agent")
+    await archive.async_initialize()
+    archive._ensure_initialized = Mock(wraps=archive._ensure_initialized)
+
+    task = asyncio.create_task(archive.async_query_snapshot("scope", query))
     await started.wait()
     task.cancel()
     await asyncio.sleep(0)

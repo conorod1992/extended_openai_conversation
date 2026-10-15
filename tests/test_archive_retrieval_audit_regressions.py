@@ -352,7 +352,7 @@ async def test_management_revalidation_rejects_replaced_turn(monkeypatch):
                 archive._turns[session.session_id][0], user_text="replacement"
             )
         return result
-    monkeypatch.setattr(history.asyncio, "to_thread", query_then_replace)
+    monkeypatch.setattr(archive_module.asyncio, "to_thread", query_then_replace)
     with pytest.raises(HomeAssistantError, match="changed during search"):
         await history.archive_search_page(archive, "user:alice", "alpha")
 
@@ -408,3 +408,90 @@ def test_full_feature_cache_skips_admission_accounting(monkeypatch):
     assert normalized and tokens
     assert not calls
     assert id(turn) not in archive_module._SEARCH_FEATURES
+
+
+@pytest.mark.parametrize("surface", ["model", "management"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["private", "delete", "replace", "prune", "reload", "invalidate", "append", "sibling"],
+)
+async def test_archive_search_publication_rechecks_returned_snapshot(
+    monkeypatch, surface, mutation
+):
+    """Both search consumers reject revoked text while accepting harmless writes."""
+    archive, storage, session = await retained_archive()
+    entered, release = Event(), Event()
+    module = archive_module if surface == "model" else history
+    name = "_search_archive_snapshot" if surface == "model" else "_archive_search_sync"
+    original = getattr(module, name)
+
+    def blocked(*args):
+        entered.set()
+        assert release.wait(10)
+        return original(*args)
+
+    monkeypatch.setattr(module, name, blocked)
+    search = (
+        archive.async_search
+        if surface == "model"
+        else lambda *a: history.archive_search_page(archive, *a)
+    )
+    task = asyncio.create_task(search("user:alice", "alpha"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        assert not archive._lock.locked()
+        if mutation == "private":
+            await archive.async_make_private(session.session_id)
+        elif mutation == "delete":
+            await archive.async_delete_session("user:alice", session.session_id)
+        elif mutation == "replace":
+            doc = await archive.async_backup_data()
+            sessions, turns = archive.validate_backup_data(doc, "agent")
+            turns[0] = replace(turns[0], user_text="replacement text")
+            await archive.async_replace_backup(sessions, turns)
+        elif mutation == "prune":
+            from datetime import timedelta
+            from homeassistant.util import dt as dt_util
+
+            future = dt_util.utcnow() + timedelta(days=2)
+            monkeypatch.setattr(dt_util, "utcnow", lambda: future)
+            assert (await archive.async_prune(1))["deleted_turns"] == 1
+        elif mutation in {"reload", "invalidate"}:
+            archive._invalidate_after_unreadable_metadata()
+            if mutation == "reload":
+                await archive.async_initialize()
+        elif mutation == "append":
+            await archive.async_record_turn(
+                session.session_id,
+                run_id="append",
+                user_text="later",
+                assistant_text="later",
+                successful=True,
+            )
+        else:
+            sibling = await archive.async_begin_session(
+                "sibling",
+                user_scope("bob", source="authenticated_user"),
+                "sibling",
+                archive_enabled=True,
+                shared_archive_enabled=False,
+                inactivity_minutes=30,
+            )
+            await archive.async_make_private(sibling.session_id)
+        release.set()
+        if mutation in {"append", "sibling"}:
+            result = await task
+            assert len(result["results"]) == 1
+            assert result["results"][0]["session_id"] == session.session_id
+            assert "alpha" in result["results"][0]["excerpt"]
+        else:
+            with pytest.raises(
+                (HomeAssistantError, RuntimeError),
+                match="changed during search|not been initialized",
+            ):
+                await task
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
