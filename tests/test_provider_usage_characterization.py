@@ -1,8 +1,4 @@
-"""Characterize existing stream accounting before removing competing writers.
-
-These assertions describe the baseline, including its terminal-event asymmetries;
-they do not declare every observed fallback decision to be desirable policy.
-"""
+"""Provider usage policy: snapshots, fallback, accounting and stream lifetime."""
 
 from __future__ import annotations
 
@@ -131,12 +127,7 @@ async def test_terminal_usage_context_accounting_and_diagnostics(mode, limited, 
     else:
         _ = [delta async for delta in transformed]
 
-    # Responses raises while the wrapper is suspended, before its repair runs.
-    expected = (
-        _provider_expected(kind)
-        if mode == "responses" and limited and kind != "missing"
-        else _context_expected(kind)
-    )
+    expected = _context_expected(kind)
     assert asdict(usage) == asdict(expected)
     assert usage_for_accounting(usage) == _provider_expected(kind)
     expected_traces = (
@@ -166,8 +157,8 @@ async def test_repeated_usage_is_snapshot_replacement_not_addition(mode, last):
     )
     source = FakeStream([first, *_terminal(mode, _reported(last))])
     _ = [delta async for delta in _transform(mode, source, usage, traces)]
-    # A zero terminal clears an earlier genuine report; an omitted one retains it.
-    expected = _provider_expected("full" if last == "missing" else last)
+    # Missing and all-zero reports cannot retract a genuine provider snapshot.
+    expected = _provider_expected("full" if last in {"missing", "zero"} else last)
     assert usage == expected
     assert usage_for_accounting(usage) == expected
     assert traces[0] == {"stats": {"input_tokens": 120, "output_tokens": 30}}
@@ -223,7 +214,7 @@ async def test_interrupted_usage_retains_partial_provider_counts(mode, ending):
     "kind",
     ["missing", "zero", "full", "input", "output", "total", "reasoning", "cached"],
 )
-async def test_failed_responses_event_preserves_context_unlike_incomplete(kind):
+async def test_failed_responses_event_preserves_context(kind):
     usage = _estimated()
     traces = []
     failed = _event(
@@ -265,4 +256,35 @@ async def test_zero_nonterminal_usage_retains_previous_provider_snapshot(mode):
         )
     ]
     assert usage == _provider_expected("full")
+    assert traces == [{"stats": {"input_tokens": 120, "output_tokens": 30}}]
+
+
+async def test_chat_terminal_stats_wait_for_parser_admission():
+    """Closing at the initial role does not newly publish terminal diagnostics."""
+    usage = _estimated()
+    traces = []
+    transformed = _transform(
+        "chat",
+        FakeStream([SimpleNamespace(choices=[], usage=_reported("full"))]),
+        usage,
+        traces,
+    )
+    assert await anext(transformed) == {"role": "assistant"}
+    await transformed.aclose()
+    assert usage_for_accounting(usage) == _provider_expected("full")
+    assert traces == []
+
+
+async def test_rejected_responses_terminal_does_not_publish_extra_stats():
+    """Usage ownership does not change duplicate-terminal diagnostic admission."""
+    usage = _estimated()
+    traces = []
+    source = FakeStream(
+        [
+            *_terminal("responses", _reported("full")),
+            *_terminal("responses", _reported("output")),
+        ]
+    )
+    with pytest.raises(ProviderStreamError):
+        _ = [delta async for delta in _transform("responses", source, usage, traces)]
     assert traces == [{"stats": {"input_tokens": 120, "output_tokens": 30}}]

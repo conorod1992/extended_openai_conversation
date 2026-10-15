@@ -1,4 +1,4 @@
-"""Usage characterization through public HA processing, SDK SSE and native Stores."""
+"""Usage policies through public HA processing, SDK SSE and native Stores."""
 
 from copy import deepcopy
 import json
@@ -27,7 +27,7 @@ from tests_real_ha.test_provider_wire_e2e import (
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
-def _body(mode, kind, limited, *, prior_full=False):
+def _body(mode, kind, limited, *, prior_full=False, failed=False):
     raw = _reported(kind)
     source = (
         _chat_sse_text("Usage characterization")
@@ -65,6 +65,12 @@ def _body(mode, kind, limited, *, prior_full=False):
             terminal["type"] = "response.incomplete"
             terminal["response"].update(
                 status="incomplete", incomplete_details={"reason": "max_output_tokens"}
+            )
+        if failed:
+            terminal["type"] = "response.failed"
+            terminal["response"].update(
+                status="failed",
+                error={"code": "server_error", "message": "Provider failed"},
             )
         if prior_full:
             events.insert(
@@ -128,7 +134,7 @@ async def test_public_stream_usage_matches_accounting_storage_and_diagnostics(
         "total",
         "reasoning",
         "cached",
-    } and not (mode == API_MODE_RESPONSES and limited and kind != "missing")
+    }
     assert (_LOCAL_ESTIMATE_DETAIL in context.details) == retains_estimate
     if retains_estimate:
         assert context.input_tokens == context.details[_LOCAL_ESTIMATE_DETAIL] > 0
@@ -155,15 +161,67 @@ async def test_public_stream_usage_matches_accounting_storage_and_diagnostics(
 
 @pytest.mark.usefixtures("real_store_io")
 @pytest.mark.parametrize("mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
-@pytest.mark.parametrize("kind", ["missing", "zero"])
-async def test_later_empty_terminal_has_existing_snapshot_semantics(
-    hass, monkeypatch, mode, kind
+@pytest.mark.parametrize("kind", ["missing", "zero", "output"])
+@pytest.mark.parametrize("limited", [False, True], ids=["completed", "length"])
+async def test_later_empty_terminal_preserves_genuine_snapshot(
+    hass, monkeypatch, mode, kind, limited
 ):
     agent = await _agent(hass, mode)
-    _install_wire(monkeypatch, agent, [_body(mode, kind, False, prior_full=True)])
+    _install_wire(monkeypatch, agent, [_body(mode, kind, limited, prior_full=True)])
     result = await _say(hass, agent)
-    assert result.response.error_code is None
-    expected = _provider_expected("full" if kind == "missing" else "zero")
+    assert (result.response.error_code is not None) == limited
+    expected = _provider_expected("full" if kind in {"missing", "zero"} else kind)
     totals = await agent._usage._daily_storage.async_load()
     for key in ("input_tokens", "output_tokens", "total_tokens"):
         assert totals["totals"][key] == getattr(expected, key)
+
+
+@pytest.mark.usefixtures("real_store_io")
+@pytest.mark.parametrize(
+    "kind",
+    ["missing", "zero", "full", "input", "output", "total", "reasoning", "cached"],
+)
+async def test_failed_responses_persists_provider_counts_and_next_turn_recovers(
+    hass, monkeypatch, kind
+):
+    agent = await _agent(hass, API_MODE_RESPONSES)
+    manager = agent._usage
+    captured = []
+    original = manager.async_record_request
+
+    async def record(**kwargs):
+        captured.append(deepcopy(kwargs["usage"]))
+        await original(**kwargs)
+
+    monkeypatch.setattr(manager, "async_record_request", record)
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _body(API_MODE_RESPONSES, kind, False, failed=True),
+            _body(API_MODE_RESPONSES, "missing", False),
+        ],
+    )
+    failed = await _say(hass, agent)
+    assert failed.response.error_code is not None
+    assert (_LOCAL_ESTIMATE_DETAIL in captured[0].details) == (
+        kind not in {"full", "input"}
+    )
+    recovered = await _say(hass, agent)
+    assert recovered.response.error_code is None
+    expected = _provider_expected(kind)
+    aggregates = await manager._daily_storage.async_load()
+    details = await manager._detail_storage.async_load()
+    assert aggregates["totals"]["failed_request_count"] == 1
+    assert aggregates["totals"]["successful_request_count"] == 1
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cached_input_tokens",
+        "reasoning_tokens",
+    ):
+        assert aggregates["totals"][key] == getattr(expected, key)
+        assert details["requests"][0][key] == getattr(expected, key)
+        assert details["requests"][1][key] == 0
+    assert _LOCAL_ESTIMATE_DETAIL not in json.dumps(details)
