@@ -6,7 +6,7 @@ and branch-wrapper behavior. Neither walker descends into payloads or conditions
 Home Assistant remains responsible for schema validation and script execution.
 """
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, cast
@@ -15,13 +15,19 @@ MAX_SCRIPT_NODES = 500
 MAX_SCRIPT_DEPTH = 12
 _MISSING = object()
 
+type ScriptContainerKind = Literal["sequence", "parallel", "choose", "repeat"]
+type ScriptRewriteKind = ScriptContainerKind | Literal["other"]
+type ScriptActionRewrite = Callable[
+    [Mapping[str, Any], ScriptRewriteKind, Callable[[], dict[str, Any]]], Sequence[Any]
+]
+
 
 @dataclass(frozen=True, slots=True)
 class ScriptContainer:
     """A structural field of an action, never a similarly named payload field."""
 
     key: str
-    kind: Literal["sequence", "parallel", "choose", "repeat"]
+    kind: ScriptContainerKind
     value: Any
 
 
@@ -35,7 +41,7 @@ def script_containers(action: Mapping[str, Any]) -> Iterator[ScriptContainer]:
         value = action.get(key, _MISSING)
         if value is not _MISSING:
             kind = cast(
-                Literal["sequence", "parallel", "choose", "repeat"],
+                ScriptContainerKind,
                 key if key in {"parallel", "choose", "repeat"} else "sequence",
             )
             yield ScriptContainer(key, kind, value)
@@ -207,3 +213,72 @@ def normalize_script_containers(value: Any) -> Any:
                     ]
         result.append(normalized)
     return result
+
+
+def rewrite_script_actions(
+    actions: Sequence[Mapping[str, Any]],
+    rewrite_action: ScriptActionRewrite,
+    *,
+    transform_input: Callable[[Any], Any] | None = None,
+) -> list[Any]:
+    """Rewrite canonical structure with policy-owned zero/one/many action output.
+
+    A callback receives the original mapping, its container role, and a continuation
+    that rewrites its children into a fresh mapping. It may omit the continuation
+    when replacing an action. Generated output is not revisited. Opaque inputs retain
+    their identity unless ``transform_input`` is supplied; that mode maps effect
+    fields while retaining choose metadata and repeat/if condition fields.
+
+    No evaluation, authorization or new quota is introduced here. Scalar/non-list
+    compatibility for instrumentation remains distinct from validated effect mapping.
+    """
+
+    def fields(source: Mapping[str, Any], kind: ScriptRewriteKind) -> dict[str, Any]:
+        if transform_input is not None and kind == "choose":
+            return {**source, "sequence": walk(source.get("sequence", []), "sequence")}
+        containers = {
+            container.key: container.kind for container in script_containers(source)
+        }
+        result = {}
+        for name, value in source.items():
+            if transform_input is not None and kind == "repeat":
+                result[name] = (
+                    walk(value, "sequence")
+                    if name == "sequence"
+                    else value
+                    if name in {"while", "until"}
+                    else transform_input(value)
+                )
+            elif name in containers:
+                result[name] = walk(value, containers[name])
+            elif transform_input is None or name == "if":
+                result[name] = value
+            else:
+                result[name] = transform_input(value)
+        return result
+
+    def sequence(value: Any, kind: ScriptRewriteKind) -> list[Any]:
+        result: list[Any] = []
+        for item in value:
+            if transform_input is not None or isinstance(item, Mapping):
+
+                def descend(source: Mapping[str, Any] = item) -> dict[str, Any]:
+                    return fields(source, kind)
+
+                result.extend(rewrite_action(item, kind, descend))
+            else:
+                # Instrumentation historically retains scalar sequence members and
+                # recursively visits nested lists without assigning them Stop scope.
+                result.append(walk(item, "other"))
+        return result
+
+    def walk(value: Any, kind: ScriptRewriteKind) -> Any:
+        if transform_input is not None:
+            return fields(value, kind) if kind == "repeat" else sequence(value, kind)
+        if isinstance(value, Mapping):
+            return fields(value, kind)
+        if isinstance(value, list):
+            return sequence(value, kind)
+        return value
+
+    return sequence(list(actions), "sequence")
