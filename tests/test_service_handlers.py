@@ -8,6 +8,9 @@ from openai import OpenAIError
 import pytest
 
 from custom_components.extended_openai_conversation_responses import services
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    agent_config_defaults,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -1004,6 +1007,10 @@ async def test_function_enable_action_materializes_runtime_defaults(hass, monkey
         hass, "entry", "agent", ["execute_services"], False
     )
     persisted = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    # This legacy endpoint materializes ordinary defaults, unlike section saves.
+    assert persisted["temperature"] == agent_config_defaults()["temperature"]
+    assert persisted["top_p"] == agent_config_defaults()["top_p"]
+    assert "reasoning_effort" not in persisted
     tools = services.validate_function_tools(persisted["functions"])
     assert (
         next(tool for tool in tools if tool["spec"]["name"] == "execute_services")[

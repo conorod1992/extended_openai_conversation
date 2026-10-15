@@ -20,7 +20,7 @@ from homeassistant.util import dt as dt_util
 from .agent_config import (
     agent_config_snapshot,
     normalize_agent_config,
-    preserve_legacy_guest_policy,
+    project_agent_config_transfer,
     validate_agent_title,
 )
 from .agent_maintenance import (
@@ -131,18 +131,10 @@ def _configuration_snapshot_preserving_quarantine(
     raw = dict(data)
     from .agent_config import AGENT_CONFIG_FIELDS
 
-    opaque = {
-        key: deepcopy(value)
-        for key, value in raw.items()
-        if key not in AGENT_CONFIG_FIELDS
-    }
     known = {key: value for key, value in raw.items() if key in AGENT_CONFIG_FIELDS}
     normalize = agent_config_snapshot if frontend_shape else normalize_agent_config
     try:
-        snapshot = {**preserve_legacy_guest_policy(raw, normalize(known)), **opaque}
-        if "reasoning_effort" not in raw:
-            snapshot.pop("reasoning_effort", None)
-        return snapshot
+        snapshot = normalize(known)
     except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
         # Backup/import is a recovery boundary: tolerate only a Function Tool
         # validation failure. Normalize every unrelated field strictly using a
@@ -156,12 +148,7 @@ def _configuration_snapshot_preserving_quarantine(
         _usable, issue = function_tools_issue(raw)
         if issue is None:
             raise
-        snapshot = {
-            **preserve_legacy_guest_policy(
-                raw, normalize(safe_function_configuration(known))
-            ),
-            **opaque,
-        }
+        snapshot = normalize(safe_function_configuration(known))
         for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
             if key in raw:
                 snapshot[key] = deepcopy(raw[key])
@@ -177,9 +164,7 @@ def _configuration_snapshot_preserving_quarantine(
                         ) from err
             else:
                 snapshot.pop(key, None)
-        if "reasoning_effort" not in raw:
-            snapshot.pop("reasoning_effort", None)
-        return snapshot
+    return project_agent_config_transfer(raw, snapshot, preserve_unknown=True)
 
 
 def export_configuration_snapshot(data: Any) -> dict[str, Any]:

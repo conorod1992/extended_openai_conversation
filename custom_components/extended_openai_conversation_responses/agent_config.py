@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from functools import lru_cache
 import json
@@ -362,24 +362,78 @@ def preserve_legacy_guest_policy(
     return normalized
 
 
+def _agent_model_changed(
+    current: Mapping[str, Any], updates: Mapping[str, Any]
+) -> bool:
+    """Recognize the same model transition for validation and persistence."""
+    return any(
+        key in updates and updates[key] != current.get(key)
+        for key in (CONF_CHAT_MODEL, "azure_model")
+    )
+
+
+def preserve_agent_model_setting_omissions(
+    source: Mapping[str, Any], normalized: dict[str, Any]
+) -> dict[str, Any]:
+    """Retain key absence for settings that inherit the routed model's profile.
+
+    This is an operation contract, not a list inferred from default values.
+    Sampling settings deliberately remain outside this policy.
+    """
+    for key in (CONF_REASONING_EFFORT,):
+        if key not in source:
+            normalized.pop(key, None)
+    return normalized
+
+
+def project_agent_config_fields(
+    current: Mapping[str, Any],
+    fields: Iterable[str],
+    normalized: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Apply owned validated fields while retaining every untouched raw value."""
+    result = deepcopy(dict(current))
+    for key in fields:
+        if key in normalized:
+            result[key] = deepcopy(normalized[key])
+        else:
+            result.pop(key, None)
+    return result
+
+
 def project_agent_config_updates(
     current: Mapping[str, Any],
     updates: Mapping[str, Any],
     normalized: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Persist validated edits without rewriting untouched retained settings."""
-    result = deepcopy(dict(current))
+    """Persist submitted edits, including reasoning reset on a model transition."""
     changed = set(updates)
-    if any(
-        key in updates and updates[key] != current.get(key)
-        for key in (CONF_CHAT_MODEL, "azure_model")
-    ):
+    if _agent_model_changed(current, updates):
         changed.add(CONF_REASONING_EFFORT)
-    for key in changed:
-        if key in normalized:
-            result[key] = deepcopy(normalized[key])
-        else:
-            result.pop(key, None)
+    return project_agent_config_fields(current, changed, normalized)
+
+
+def project_agent_config_transfer(
+    source: dict[str, Any],
+    normalized: dict[str, Any],
+    *,
+    preserve_unknown: bool = False,
+) -> dict[str, Any]:
+    """Project a normalized transfer without adopting model/legacy Guest defaults.
+
+    Takes ownership of the fresh normalized dictionary, never the raw source.
+    Ordinary defaults (including sampling) remain materialized. Recovery transfers
+    can retain opaque fields; versioned portable documents keep their strict schema.
+    """
+    result = preserve_agent_model_setting_omissions(
+        source, preserve_legacy_guest_policy(source, normalized)
+    )
+    if preserve_unknown:
+        result.update(
+            (key, deepcopy(value))
+            for key, value in source.items()
+            if key not in AGENT_CONFIG_FIELDS
+        )
     return result
 
 
@@ -1162,16 +1216,8 @@ def merge_agent_config(
             "config", "unknown fields: " + ", ".join(sorted(unknown))
         )
     known = {key: value for key, value in current.items() if key in AGENT_CONFIG_FIELDS}
-    if (
-        (
-            CONF_CHAT_MODEL in updates
-            and updates[CONF_CHAT_MODEL] != known.get(CONF_CHAT_MODEL)
-        )
-        or (
-            "azure_model" in updates
-            and updates["azure_model"] != known.get("azure_model")
-        )
-    ) and CONF_REASONING_EFFORT not in updates:
+    model_changed = _agent_model_changed(current, updates)
+    if model_changed and CONF_REASONING_EFFORT not in updates:
         # A model change with no explicit effort should use the new model's
         # recommended profile. Retaining the prior model's effort can make a
         # perfectly valid switch to a non-reasoning model unsavable.
@@ -1183,15 +1229,8 @@ def merge_agent_config(
     )
     # Recommended values are for creation/model changes, not unrelated
     # edits to older/restored configurations whose omission is meaningful.
-    if (
-        CONF_REASONING_EFFORT not in current
-        and CONF_REASONING_EFFORT not in updates
-        and all(
-            updates.get(key, current.get(key)) == current.get(key)
-            for key in (CONF_CHAT_MODEL, "azure_model")
-        )
-    ):
-        normalized.pop(CONF_REASONING_EFFORT, None)
+    if not model_changed:
+        preserve_agent_model_setting_omissions({**current, **updates}, normalized)
     return {
         **{
             key: deepcopy(value)
@@ -1205,7 +1244,7 @@ def merge_agent_config(
 def agent_config_snapshot(
     data: dict[str, Any], *, preparsed_function_tools: bool = False
 ) -> dict[str, Any]:
-    """Return frontend-safe normalized configuration with parsed tools."""
+    """Return defaulted display values and parsed tools, never a save projection."""
     result = normalize_agent_config(
         {key: value for key, value in data.items() if key in AGENT_CONFIG_FIELDS},
         function_tools_as_list=preparsed_function_tools,

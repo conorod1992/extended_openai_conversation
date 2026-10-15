@@ -1,5 +1,8 @@
 # Agent configuration lifecycle
 
+For authored, display, execution and transfer projection rules, see
+[Configuration operation contracts](configuration-operation-contracts.md).
+
 Baseline inspected: `develop` at `e31db84b`.
 
 ## Effective behavior before ownership refactor
