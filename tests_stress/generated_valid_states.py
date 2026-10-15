@@ -112,6 +112,7 @@ CAPABILITY_KEYS = (
     "web_search",
     "function_tools",
     "function_groups",
+    "service_tier",
 )
 
 
@@ -296,6 +297,9 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
     phase_started = perf_counter()
     rng = random.Random(seed)
     default = {key: values[0] for key, values in DIMENSIONS.items()}
+    # 'auto' is not supported by every model. Use the universally valid omitted
+    # tier when searching unrelated obligations; explicit tiers are still covered.
+    default["service_tier"] = "default"
     candidates: dict[str, dict[str, Any]] = {}
     required: set[tuple[tuple[str, Any], ...]] = set()
     excluded: dict[str, int] = {}
@@ -313,7 +317,8 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
             capability_states.append(cap)
         else:
             capability_rejected.append((cap, reason))
-    rng.shuffle(capability_states)
+    # Witness feasibility and exclusion reasons must not depend on the seed.
+    # Randomize the final cover below, after establishing this fixed boundary.
     timings["capability_enumeration_and_validation_seconds"] = (
         perf_counter() - phase_started
     )
@@ -388,7 +393,11 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
     phase_started = perf_counter()
     # A valid witness may cover obligations not used in its construction.
     candidate_coverage = [obligations(case) for case in candidates.values()]
-    required.update(*(coverage for coverage in candidate_coverage))
+    unexpected = set().union(*candidate_coverage) - required
+    assert not unexpected, (
+        "Valid candidates escaped the exhaustive witness boundary: "
+        f"{len(unexpected)} obligations; {sorted(map(repr, unexpected))[:5]}"
+    )
     obligation_ids = {obligation: index for index, obligation in enumerate(required)}
     pool = []
     for case, coverage in zip(candidates.values(), candidate_coverage, strict=True):
@@ -400,6 +409,7 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
     phase_started = perf_counter()
     uncovered = (1 << len(obligation_ids)) - 1
     selected: list[dict[str, Any]] = []
+    selected_masks: list[int] = []
     rng.shuffle(pool)
     while uncovered:
         best_index = max(
@@ -412,11 +422,23 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
                 f"Uncovered generated obligations: {uncovered.bit_count()}"
             )
         selected.append(best)
+        selected_masks.append(best_cover)
         uncovered &= ~gain
         if budget is not None and len(selected) > budget:
             raise AssertionError(
                 f"Covering budget {budget} exhausted with {uncovered.bit_count()} obligations left"
             )
+    # Later choices can make an earlier greedy witness redundant. Remove those
+    # cases while preserving the entire reviewed coverage boundary and run budget.
+    full_mask = (1 << len(obligation_ids)) - 1
+    for index in reversed(range(len(selected))):
+        other_mask = 0
+        for other_index, mask in enumerate(selected_masks):
+            if other_index != index:
+                other_mask |= mask
+        if other_mask == full_mask:
+            selected.pop(index)
+            selected_masks.pop(index)
     timings["greedy_cover_seconds"] = perf_counter() - phase_started
     exploratory_count = 0
     if heavy:
