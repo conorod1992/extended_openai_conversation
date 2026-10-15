@@ -275,7 +275,7 @@ async def test_quiet_hours_pending_restore_releases_observed_control(hass, monke
     assert manager._active["observed_controls"] == []
     assert manager._active["controls"] == {}
     hass.services.async_call.assert_awaited_once_with(
-        "switch", "turn_on", {"entity_id": "switch.wake"}, blocking=True
+        "switch", "turn_on", {"entity_id": "switch.wake"}, blocking=True, context=None
     )
 
 

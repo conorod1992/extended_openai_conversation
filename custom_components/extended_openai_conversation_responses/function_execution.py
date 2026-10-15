@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
-from .exceptions import FunctionValidationInfrastructureError
+from .exceptions import EffectReplayBlocked, FunctionValidationInfrastructureError
 from .function_tool_recovery import strict_execution_failures_enabled
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,6 +42,8 @@ def function_execution_errors_propagate() -> bool:
 
 def backend_failure(message: str, cause: Exception | None = None) -> dict[str, str]:
     """Report a backend-owned failure without interpreting returned business data."""
+    if isinstance(cause, EffectReplayBlocked):
+        raise cause
     if function_execution_errors_propagate() or strict_execution_failures_enabled():
         if isinstance(cause, HomeAssistantError):
             raise cause

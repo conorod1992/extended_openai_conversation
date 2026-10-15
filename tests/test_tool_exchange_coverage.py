@@ -402,17 +402,17 @@ def test_replay_guard_ignores_unscoped_or_empty_ledger_entries(monkeypatch) -> N
     entity = SimpleNamespace()
 
     remember_unacknowledged_calls(entity, unscoped, set())
-    assert not hasattr(entity, "_unacknowledged_tool_calls")
+    assert not hasattr(entity, "_unacknowledged_tool_schemas")
 
     empty = FakeChatLog()
     empty.conversation_id = "conversation"
     remember_unacknowledged_calls(entity, empty, set())
-    entity._unacknowledged_tool_calls = []
+    entity._unacknowledged_tool_schemas = []
     assert not was_unacknowledged_equivalent(entity, empty, call)
 
-    entity._unacknowledged_tool_calls = {"conversation": {"pending"}}
+    entity._unacknowledged_tool_schemas = {"conversation": {"pending": {}}}
     clear_unacknowledged_calls(entity, None)
-    assert entity._unacknowledged_tool_calls == {"conversation": {"pending"}}
+    assert entity._unacknowledged_tool_schemas == {"conversation": {"pending": {}}}
 
 
 def test_replay_guard_bounds_ambiguous_conversation_ledger(monkeypatch) -> None:
@@ -436,7 +436,7 @@ def test_replay_guard_bounds_ambiguous_conversation_ledger(monkeypatch) -> None:
         record_dispatch(entity, log.content[0].tool_calls[0])
         remember_unacknowledged_calls(entity, log, set())
 
-    ledger = entity._unacknowledged_tool_calls
+    ledger = entity._unacknowledged_tool_schemas
     assert len(ledger) == _MAX_AMBIGUOUS_CONVERSATIONS
     assert "conversation-0" not in ledger
     assert f"conversation-{_MAX_AMBIGUOUS_CONVERSATIONS}" in ledger

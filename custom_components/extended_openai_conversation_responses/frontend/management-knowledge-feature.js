@@ -2,6 +2,7 @@ import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, s
 import {selectedFeatureStatus} from "./management-feature-status-core.js";
 import {knowledgeSourceAvailabilityBadge} from "./knowledge-presentation.js";
 import {formatUsageNumber} from "./usage-format.js";
+import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
 
 const collections = new WeakMap();
 const identity = panel => JSON.stringify([panel._selectedAgent?.()?.entry_id, panel._agentId, panel._hass?.user?.id]);
@@ -63,43 +64,28 @@ export function knowledgeAvailabilityMarkup(panel) {
 
 async function saveKnowledgeAvailability(panel, input) {
   const desired = input.checked;
-  const agentId = panel._agentId;
+  const submission = captureConfigurationSubmission(panel);
   const loadToken = panel._loadToken;
   input.disabled = true;
   try {
     const result = await panel._call("knowledge", "set_enabled", {enabled: desired});
-    if (panel._agentId !== agentId || panel._viewKey?.() !== "data-memory/knowledge" || panel._loadToken !== loadToken) return;
-    const agent = panel._selectedAgent?.();
-    if (agent) {
-      agent.knowledge_enabled = result.knowledge_enabled;
-      agent.feature_status = {
-        ...(agent.feature_status || {}),
-        knowledge: result.feature_status,
-      };
-    }
-    if (panel._viewKey?.() === "data-memory/knowledge" && panel._result) {
-      panel._result = {
-        ...panel._result,
-        feature_status: result.feature_status,
-      };
-    }
-    // Immediate saves update the baseline without discarding other page edits.
-    if (panel._configData?.config) {
-      panel._configData.config.knowledge_enabled = result.knowledge_enabled;
-      panel._configData.revision = result.revision;
-      panel._configDataStale = false;
-      panel._rememberCleanConfiguration?.(panel._configData);
-    }
-    if (panel._draft && panel._draftAgentId === agentId) {
-      panel._draft.knowledge_enabled = result.knowledge_enabled;
-      panel._syncConfigDirty?.();
-    }
-    panel._render();
-    panel._toast(`Knowledge ${result.knowledge_enabled ? "enabled" : "disabled"}`);
+    await completeConfigurationAcknowledgement(panel, {revision:result.revision, config:{knowledge_enabled:result.knowledge_enabled}}, submission, {
+      fields:["knowledge_enabled"], message:`Knowledge ${result.knowledge_enabled ? "enabled" : "disabled"}`,
+      refresh:() => {
+        const agent = panel._selectedAgent?.();
+        if (agent) {
+          agent.knowledge_enabled = result.knowledge_enabled;
+          agent.feature_status = {...agent.feature_status, knowledge:result.feature_status};
+        }
+        if (panel._viewKey?.() !== "data-memory/knowledge" || panel._loadToken !== loadToken) return;
+        if (panel._result) panel._result = {...panel._result, feature_status:result.feature_status};
+        panel._render();
+      },
+    });
   } catch (err) {
     input.checked = !desired;
     input.disabled = false;
-    panel._toast(`Unable to update Knowledge: ${err.message || String(err)}`, true);
+    if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to update Knowledge: ${err.message || String(err)}`, true);
   } finally {
     input.disabled = false;
   }

@@ -404,6 +404,18 @@ class UsageManager:
             finally:
                 self._active_runs.pop(run.run_id, None)
 
+    async def async_prepare_for_deletion(self) -> None:
+        """Drain pruning and release callbacks without flushing erased data.
+
+        The coordinator must first drain request readers under its exclusive
+        maintenance lease, and must remove the owned stores afterward.
+        """
+        task = self._prune_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self.dispose_maintenance()
+
     def dispose_maintenance(self) -> None:
         """Release callbacks without flushing data during permanent deletion."""
         self._stopping = True

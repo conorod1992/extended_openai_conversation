@@ -431,7 +431,11 @@ def test_overnight_latency_evidence_rejects_incomplete_or_wrong_candidate(failur
     from ci.frontend_latency.review import backend_operations, check_latency, routes
 
     sha = "a" * 40
-    environment = {"packages": {"homeassistant": "fixture"}}
+    environment = {
+        "packages": {"homeassistant": "fixture"},
+        "python_packages": {"homeassistant": "fixture"},
+        "node": "v24.20.0",
+    }
     item = {
         "eoai_sha": sha,
         "harness_sha": sha,
@@ -498,7 +502,11 @@ def test_overnight_accessibility_semantics_fail_closed(failure):
     from ci.frontend_latency.review import check_accessibility, expected_scans
 
     sha = "a" * 40
-    environment = {"packages": {"homeassistant": "fixture"}}
+    environment = {
+        "packages": {"homeassistant": "fixture"},
+        "python_packages": {"homeassistant": "fixture"},
+        "node": "v24.20.0",
+    }
     item = {
         "eoai_sha": sha,
         "environment": environment,
@@ -609,7 +617,11 @@ def test_reviewed_accessibility_allowance_cannot_hide_node_growth(state):
     from ci.enhanced_evidence import environment_fingerprint
     from ci.frontend_latency.review import check_accessibility, expected_scans
 
-    environment = {"packages": {"homeassistant": "fixture"}}
+    environment = {
+        "packages": {"homeassistant": "fixture"},
+        "python_packages": {"homeassistant": "fixture"},
+        "node": "v24.20.0",
+    }
     sha = "a" * 40
     scans = [
         {

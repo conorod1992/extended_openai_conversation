@@ -46,6 +46,7 @@ from .const import (
     DOMAIN,
     SERVICE_CALL_FUNCTION,
 )
+from .conversation_requests import ConversationRequests, ConversationRequestToken
 from .functions.script import _AuthorizedScriptHass
 from .guest_mode import (
     GUEST_MODE_UNAVAILABLE,
@@ -73,6 +74,14 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
+from .script_structure import (
+    MAX_SCRIPT_DEPTH,
+    MAX_SCRIPT_NODES,
+    ScriptRewriteKind,
+    iter_script_actions,
+    normalize_script_containers as _normalize_script_containers,
+    rewrite_script_actions,
+)
 from .strict_store import PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,8 +91,6 @@ STORAGE_KEY_PREFIX = "extended_openai_conversation_responses.request_rules"
 MAX_RULES = 500
 MAX_PHRASES = 25
 MAX_ACTIONS = 20
-MAX_SCRIPT_NODES = 500
-MAX_SCRIPT_DEPTH = 12
 MAX_RULE_NAME_LENGTH = 120
 MATCH_TYPES = ("equals", "starts_with", "ends_with", "contains", "sentence_pattern")
 ACTION_TYPES = ("local_action", "model_routing")
@@ -1352,19 +1359,12 @@ class RequestRules:
         self._sort_and_compile()
 
 
-class _RuleRequestToken:
-    """Keep ended ownership visible to an in-flight evaluator after cleanup."""
-
-    ended = False
-    refresh_allowed = True
-
-
 class RequestRuleRuntime:
     """Per-agent, in-memory conversation routing overrides."""
 
     def __init__(self) -> None:
         self._conversation_overrides: dict[str, tuple[dict[str, str], float, int]] = {}
-        self._requests: dict[object, str] = {}
+        self._requests = ConversationRequests[str]()
 
     def get(
         self,
@@ -1376,7 +1376,7 @@ class RequestRuleRuntime:
             self._conversation_overrides.items()
         ):
             if (
-                key not in self._requests.values()
+                not self._requests.active(key)
                 and now - last_used >= max(1, stored_timeout) * 60
             ):
                 self._conversation_overrides.pop(key, None)
@@ -1394,20 +1394,19 @@ class RequestRuleRuntime:
     def begin_request(self, session_id: str, timeout_minutes: int) -> object:
         """Resolve idle expiration before protecting an active request."""
         self.get(session_id, timeout_minutes)
-        token = _RuleRequestToken()
-        self._requests[token] = session_id
-        return token
+        return self._requests.begin(session_id, session_id)
+
+    def request_ownership(
+        self, session_id: str
+    ) -> tuple[ConversationRequestToken[str], ...]:
+        """Capture execution ownership independently of permission to refresh."""
+        return self._requests.tokens(session_id)
 
     def finish_request(self, token: object, *, successful: bool) -> None:
         """Refresh surviving overrides after a successful request."""
-        session_id = self._requests.pop(token, None)
+        session_id = self._requests.finish(token, successful=successful)
         entry = self._conversation_overrides.get(session_id) if session_id else None
-        if (
-            successful
-            and session_id is not None
-            and entry is not None
-            and (not isinstance(token, _RuleRequestToken) or token.refresh_allowed)
-        ):
+        if session_id is not None and entry is not None:
             values, _, timeout = entry
             self._conversation_overrides[session_id] = (values, monotonic(), timeout)
 
@@ -1427,28 +1426,24 @@ class RequestRuleRuntime:
     def reset(self, session_id: str) -> None:
         """Clear routing without ending the request that issued the reset."""
         self._conversation_overrides.pop(session_id, None)
-        for token, active in self._requests.items():
-            if active == session_id and isinstance(token, _RuleRequestToken):
-                token.refresh_allowed = False
+        self._requests.invalidate(session_id, ended=False)
+
+    def reset_all(self) -> None:
+        """Discard overrides and end all outstanding request ownership."""
+        self._requests.clear()
+        self._conversation_overrides.clear()
 
     def reset_continuity(self, continuity_key: str) -> None:
         """Invalidate every conversation generation owned by an ended continuity."""
         owner = f"continuity:{continuity_key}"
-        sessions = set(self._conversation_overrides) | set(self._requests.values())
+        sessions = set(self._conversation_overrides) | self._requests.owners
         for session_id in sessions:
             if (
                 session_id == owner
                 or session_id.rpartition(":conversation:")[0] == owner
             ):
-                for token, active in self._requests.items():
-                    if active == session_id and isinstance(token, _RuleRequestToken):
-                        token.ended = True
-                self.reset(session_id)
-                self._requests = {
-                    token: active
-                    for token, active in self._requests.items()
-                    if active != session_id
-                }
+                self._conversation_overrides.pop(session_id, None)
+                self._requests.invalidate(session_id, ended=True)
 
     def effective_options(
         self,
@@ -2025,75 +2020,6 @@ def _legacy_action_slots(value: Any) -> set[str]:
     return result
 
 
-def _normalize_script_containers(value: Any) -> Any:
-    """Normalize HA action shorthand without replacing authored template text."""
-    if isinstance(value, Mapping):
-        value = [value]
-    if not isinstance(value, list):
-        return value
-    result = []
-    for action in value:
-        if not isinstance(action, Mapping):
-            result.append(action)
-            continue
-        normalized = deepcopy(dict(action))
-        # Store HA's historical service-name alias in the common service form so
-        # validation, dependency inspection and Guest preflight agree with HA.
-        if "service_template" in normalized and not (
-            "service" in normalized or "action" in normalized
-        ):
-            normalized["service"] = normalized.pop("service_template")
-        for key in ("sequence", "then", "else", "default"):
-            if key in normalized:
-                normalized[key] = _normalize_script_containers(normalized[key])
-        if "parallel" in normalized:
-            branches = normalized["parallel"]
-            if isinstance(branches, Mapping):
-                branches = [branches]
-            if isinstance(branches, list):
-                parallel = []
-                for branch in branches:
-                    if isinstance(branch, Mapping) and "sequence" in branch:
-                        parallel.append(
-                            {
-                                **branch,
-                                "sequence": _normalize_script_containers(
-                                    branch["sequence"]
-                                ),
-                            }
-                        )
-                    elif isinstance(branch, (Mapping, list)):
-                        parallel.append(
-                            {"sequence": _normalize_script_containers(branch)}
-                        )
-                    else:
-                        parallel.append(branch)
-                normalized["parallel"] = parallel
-        if isinstance(normalized.get("repeat"), Mapping):
-            repeat = dict(normalized["repeat"])
-            if "sequence" in repeat:
-                repeat["sequence"] = _normalize_script_containers(repeat["sequence"])
-            normalized["repeat"] = repeat
-        if "choose" in normalized:
-            branches = normalized["choose"]
-            if isinstance(branches, Mapping):
-                branches = [branches]
-            if isinstance(branches, list):
-                normalized["choose"] = [
-                    {
-                        **branch,
-                        "sequence": _normalize_script_containers(
-                            branch.get("sequence", [])
-                        ),
-                    }
-                    if isinstance(branch, Mapping)
-                    else branch
-                    for branch in branches
-                ]
-        result.append(normalized)
-    return result
-
-
 def _validate_script_sequence(
     value: Sequence[Any],
     *,
@@ -2475,46 +2401,14 @@ def _iter_script_actions(
     depth: int = 0,
     budget: list[int] | None = None,
 ):
-    """Yield executable action mappings from native nested script branches."""
-    if depth > MAX_SCRIPT_DEPTH:
-        raise ValueError(f"action sequence exceeds maximum depth {MAX_SCRIPT_DEPTH}")
-    if budget is None:
-        budget = [0]
-
-    def nested_sequence(value: Any):
-        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-            return None
-        if not all(isinstance(child, Mapping) for child in value):
-            return None
-        return cast(Sequence[Mapping[str, Any]], value)
-
-    for item in sequence:
-        budget[0] += 1
-        if budget[0] > MAX_SCRIPT_NODES:
-            raise ValueError(f"action sequence exceeds {MAX_SCRIPT_NODES} nodes")
-        yield item
-
-        for key in ("sequence", "then", "else", "default", "parallel"):
-            nested = nested_sequence(item.get(key))
-            if nested is not None:
-                yield from _iter_script_actions(nested, depth=depth + 1, budget=budget)
-
-        choose = item.get("choose")
-        if isinstance(choose, Sequence) and not isinstance(choose, (str, bytes)):
-            for branch in choose:
-                if not isinstance(branch, Mapping):
-                    continue
-                nested = nested_sequence(branch.get("sequence"))
-                if nested is not None:
-                    yield from _iter_script_actions(
-                        nested, depth=depth + 1, budget=budget
-                    )
-
-        repeat = item.get("repeat")
-        if isinstance(repeat, Mapping):
-            nested = nested_sequence(repeat.get("sequence"))
-            if nested is not None:
-                yield from _iter_script_actions(nested, depth=depth + 1, budget=budget)
+    """Inspect shared canonical structure using this caller's existing limits."""
+    return iter_script_actions(
+        sequence,
+        depth=depth,
+        budget=budget,
+        max_depth=MAX_SCRIPT_DEPTH,
+        max_nodes=MAX_SCRIPT_NODES,
+    )
 
 
 def rule_has_sensitive_actions(rule: Mapping[str, Any]) -> bool:
@@ -2765,59 +2659,34 @@ def _outcome_probes(
     completed = f"__eoai_completed_{uuid4().hex}"
     stopped = f"__eoai_stopped_{uuid4().hex}"
 
-    def instrument(value: Any, key: str = "") -> Any:
-        if isinstance(value, Mapping):
-            # Descend through script containers only, never service data or
-            # template payloads that happen to have a key called "stop".
-            return {
-                name: instrument(item, name)
-                if name
-                in {
-                    "sequence",
-                    "then",
-                    "else",
-                    "default",
-                    "choose",
-                    "parallel",
-                    "repeat",
+    def instrument(
+        action: Mapping[str, Any],
+        kind: ScriptRewriteKind,
+        descend: Callable[[], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if kind != "sequence" or "stop" not in action:
+            return [descend()]
+        marker = {"variables": {stopped: not action.get("error", False)}}
+        if "enabled" in action:
+            # Let HA evaluate enabled once for the probe and its Stop. Do not
+            # revisit this generated sequence or instrument its Stop again.
+            stop = dict(action)
+            enabled = stop.pop("enabled")
+            return [
+                {
+                    "sequence": [marker, stop],
+                    "enabled": enabled,
+                    **{
+                        name: action[name]
+                        for name in ("alias", "continue_on_error")
+                        if name in action
+                    },
                 }
-                else item
-                for name, item in value.items()
-            }
-        if isinstance(value, list):
-            sequence: list[Any] = []
-            for item in value:
-                if (
-                    key in {"sequence", "then", "else", "default"}
-                    and isinstance(item, Mapping)
-                    and "stop" in item
-                ):
-                    marker = {"variables": {stopped: not item.get("error", False)}}
-                    if "enabled" in item:
-                        # Let HA evaluate enabled once for both the probe and
-                        # its Stop. Native sequence sub-scripts propagate Stops
-                        # and fatal aborts, and update the existing outer marker.
-                        stop = dict(item)
-                        enabled = stop.pop("enabled")
-                        sequence.append(
-                            {
-                                "sequence": [marker, stop],
-                                "enabled": enabled,
-                                **{
-                                    name: item[name]
-                                    for name in ("alias", "continue_on_error")
-                                    if name in item
-                                },
-                            }
-                        )
-                        continue
-                    sequence.append(marker)
-                sequence.append(instrument(item))
-            return sequence
-        return value
+            ]
+        return [marker, descend()]
 
     sequence = [{"variables": {completed: False, stopped: False}}]
-    sequence.extend(instrument(list(actions), "sequence"))
+    sequence.extend(rewrite_script_actions(actions, instrument))
     sequence.append({"variables": {completed: True}})
     return sequence, completed, stopped
 
@@ -2854,42 +2723,19 @@ def _map_script_effect_templates(
     Walk only native action containers. A similarly named key in service data
     is still an effect input and must not bypass Guest read checks.
     """
-    result = []
-    for action in sequence:
-        if "condition" in action:
-            result.append(dict(action))
-            continue
-        mapped = {}
-        for key, value in action.items():
-            if key == "if":
-                mapped[key] = value
-            elif key in {"sequence", "then", "else", "default", "parallel"}:
-                mapped[key] = _map_script_effect_templates(value, transform)
-            elif key == "choose":
-                mapped[key] = [
-                    {
-                        **branch,
-                        "sequence": _map_script_effect_templates(
-                            branch.get("sequence", []), transform
-                        ),
-                    }
-                    for branch in value
-                ]
-            elif key == "repeat":
-                mapped[key] = {
-                    name: (
-                        _map_script_effect_templates(item, transform)
-                        if name == "sequence"
-                        else item
-                        if name in {"while", "until"}
-                        else transform(item)
-                    )
-                    for name, item in value.items()
-                }
-            else:
-                mapped[key] = transform(value)
-        result.append(mapped)
-    return result
+
+    def preserve_conditions(
+        action: Mapping[str, Any],
+        kind: ScriptRewriteKind,
+        descend: Callable[[], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if kind != "choose" and "condition" in action:
+            return [dict(action)]
+        return [descend()]
+
+    return rewrite_script_actions(
+        sequence, preserve_conditions, transform_input=transform
+    )
 
 
 def _guest_script_allowed(
@@ -3228,40 +3074,35 @@ def _guard_result_references(
 
 def _guard_native_actions(actions: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Place live authorization beside effects while preserving HA script scopes."""
-    containers = {"sequence", "then", "else", "default", "choose", "parallel", "repeat"}
 
-    def instrument(value: Any, key: str = "") -> Any:
-        if isinstance(value, Mapping):
-            return {
-                name: instrument(item, name) if name in containers else item
-                for name, item in value.items()
+    def instrument(
+        action: Mapping[str, Any],
+        _kind: ScriptRewriteKind,
+        descend: Callable[[], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        guarded = []
+        if any(
+            name in action
+            for name in (
+                "action",
+                "service",
+                "device_id",
+                "event",
+                "event_type",
+                "scene",
+            )
+        ):
+            guard = {
+                "action": f"{DOMAIN}.{_GUARD_SERVICE}",
+                "data": {"pending_action": dict(action)},
             }
-        if not isinstance(value, list):
-            return value
-        result = []
-        for item in value:
-            if isinstance(item, Mapping) and any(
-                name in item
-                for name in (
-                    "action",
-                    "service",
-                    "device_id",
-                    "event",
-                    "event_type",
-                    "scene",
-                )
-            ):
-                guard = {
-                    "action": f"{DOMAIN}.{_GUARD_SERVICE}",
-                    "data": {"pending_action": dict(item)},
-                }
-                if "enabled" in item:
-                    guard["enabled"] = item["enabled"]
-                result.append(guard)
-            result.append(instrument(item))
-        return result
+            if "enabled" in action:
+                guard["enabled"] = action["enabled"]
+            guarded.append(guard)
+        guarded.append(descend())
+        return guarded
 
-    return cast(list[dict[str, Any]], instrument(list(actions)))
+    return rewrite_script_actions(actions, instrument)
 
 
 def _ensure_action_guard_service(hass: HomeAssistant) -> None:
@@ -3423,11 +3264,7 @@ async def async_evaluate_rule(
     )
 
     ownership = (
-        tuple(
-            token
-            for token, active in runtime._requests.items()
-            if active == session_id and isinstance(token, _RuleRequestToken)
-        )
+        runtime.request_ownership(session_id)
         if isinstance(runtime, RequestRuleRuntime)
         else ()
     )

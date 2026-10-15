@@ -1263,7 +1263,7 @@ class ExtendedOpenAIAgentEntity(
                     None
                     if requested_conversation_reset() is not None
                     else chat_log.conversation_id
-                    if getattr(self, "_unacknowledged_tool_calls", {}).get(
+                    if getattr(self, "_unacknowledged_tool_schemas", {}).get(
                         chat_log.conversation_id
                     )
                     else user_input.conversation_id
@@ -1505,9 +1505,14 @@ class ExtendedOpenAIAgentEntity(
     ) -> Any:
         """Execute a configured function through the model-tool security seam."""
         function_tool = configured_function_tool_for_execution(self, function_name)
+        from .execution_outcomes import detached_execution
         from .model_tool_results import local_function_results
 
-        with propagate_function_execution_errors(), local_function_results():
+        with (
+            detached_execution(),
+            propagate_function_execution_errors(),
+            local_function_results(),
+        ):
             return await self._execute_function_tool(
                 function_tool,
                 llm.ToolInput(

@@ -191,10 +191,6 @@ def test_required_current_models_and_invalid_aliases():
         "gpt-5",
         "gpt-5-mini",
         "gpt-5-nano",
-        "gpt-4.1",
-        "gpt-4.1-mini",
-        "gpt-4o",
-        "gpt-4o-mini",
         "o3",
     }
     current = {item["id"] for item in data.catalog_picker_models()}
@@ -210,7 +206,8 @@ def test_october_deprecations_preserve_existing_model_choices(model, replacement
     assert data.BUNDLED_CATALOG["catalog_version"] >= 11
     assert model not in {item["id"] for item in data.catalog_picker_models()}
     existing = next(
-        item for item in data.catalog_picker_models(selected_model=model)
+        item
+        for item in data.catalog_picker_models(selected_model=model)
         if item["id"] == model
     )
     metadata = data.model_metadata(model)
@@ -233,6 +230,77 @@ def test_picker_hides_deprecated_unless_already_selected():
     existing = data.catalog_picker_models(selected_model="gpt-4-turbo")
     deprecated = next(item for item in existing if item["id"] == "gpt-4-turbo")
     assert deprecated["status"] == "deprecated"
+
+
+@pytest.mark.parametrize(
+    ("model", "parent"),
+    [
+        ("gpt-4o", None),
+        ("gpt-4o-mini", None),
+        ("gpt-4.1", None),
+        ("gpt-4.1-mini", None),
+        ("gpt-4o-2024-08-06", "gpt-4o"),
+        ("gpt-4o-2024-11-20", "gpt-4o"),
+        ("gpt-4o-mini-2024-07-18", "gpt-4o-mini"),
+        ("gpt-4.1-2025-04-14", "gpt-4.1"),
+        ("gpt-4.1-mini-2025-04-14", "gpt-4.1-mini"),
+    ],
+)
+def test_january_retirements_preserve_exact_choices_and_capabilities(model, parent):
+    assert data.BUNDLED_CATALOG["catalog_version"] >= 15
+    assert model not in {item["id"] for item in data.catalog_picker_models()}
+    selected = next(
+        item
+        for item in data.catalog_picker_models(selected_model=model)
+        if item["id"] == model
+    )
+    metadata = data.model_metadata(model)
+    for item in (selected, metadata):
+        assert item["status"] == "deprecated"
+        assert item["deprecated_at"] == "2026-10-14"
+        assert item["shutdown_at"] == "2027-01-14"
+        assert "gpt-6-luna" in item["lifecycle_note"]
+        assert "explicit model selection" in item["lifecycle_note"]
+    assert metadata["kind"] == ("snapshot" if parent else "alias")
+    if parent:
+        assert metadata["alias_of"] == parent
+        parent_metadata = data.model_metadata(parent)
+        for field in ("api", "function_calling", "reasoning", "limits", "tools"):
+            assert metadata[field] == parent_metadata[field]
+    assert metadata["api"] == {
+        "responses": True,
+        "chat_completions": True,
+        "completions_legacy": False,
+    }
+    assert metadata["function_calling"]["responses"] is True
+    assert metadata["function_calling"]["chat_completions"] is True
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-4o-2024-11-20",
+        "gpt-4o-mini-2024-07-18",
+        "gpt-4.1-2025-04-14",
+        "gpt-4.1-mini-2025-04-14",
+    ],
+)
+def test_new_snapshot_auto_preserves_previous_unknown_model_endpoint(model, monkeypatch):
+    from custom_components.extended_openai_conversation_responses.model_capabilities import (
+        select_api_path,
+    )
+
+    previous = deepcopy(data._bundled_effective)
+    previous["models"] = [item for item in previous["models"] if item["id"] != model]
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(data, "_bundled_effective", previous)
+            data.activate_catalog(None)
+            assert data.model_metadata(model)["status"] == "unknown"
+            assert select_api_path(model, "auto") == "responses"
+    finally:
+        data.activate_catalog(None)
+    assert select_api_path(model, "auto") == "responses"
 
 
 def test_unknown_model_is_preserved_with_conservative_capabilities():

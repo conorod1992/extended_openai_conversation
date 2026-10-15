@@ -1,6 +1,7 @@
 import {filterHATools, isHALlmTool} from "./ha-llm-tools-list.js";
+import {captureConfigurationSubmission} from "./configuration-acknowledgement.js";
 export {filterHATools, haToolName, isHALlmTool, renderHAToolCard, toolDescription} from "./ha-llm-tools-list.js";
-export function bindHALlmTools(panel, synchronize) {
+export function bindHALlmTools(panel, acknowledge) {
   if (!panel?._draft) return;
   const root = panel.shadowRoot;
   const host = root.querySelector(".tools-surface");
@@ -87,18 +88,18 @@ export function bindHALlmTools(panel, synchronize) {
         button.disabled = true;
         try {
           if (panel._agentId !== agentId) throw new Error("The selected agent changed");
+          const submission = captureConfigurationSubmission(panel);
           const result = await panel._call("tools", "ha_add", {tools: [...selected].map(index => available[index].reference), group_id: dialog.querySelector("[data-group]").value});
-          if (panel._agentId !== agentId) return;
-          synchronize(panel, result);
-          for (const index of selected) available[index].already_added = true;
-          if (result.ha_saved) {
-            panel._haCatalog = {...catalog, saved: {...catalog.saved, ...result.ha_saved}};
-            panel._haCatalogAgent = agentId;
-            panel._haCatalogLoadedAt = Date.now();
-          }
-          dialog.close();
-          panel._toast("Home Assistant tools added");
-          panel._render();
+          await acknowledge(result, submission, () => {
+            for (const index of selected) available[index].already_added = true;
+            if (result.ha_saved) {
+              panel._haCatalog = {...catalog, saved: {...catalog.saved, ...result.ha_saved}};
+              panel._haCatalogAgent = agentId;
+              panel._haCatalogLoadedAt = Date.now();
+            }
+            dialog.close();
+            panel._render();
+          });
         } catch (err) { status.textContent = err.message || String(err); button.disabled = false; }
       };
       render();

@@ -20,12 +20,19 @@ from homeassistant.util import dt as dt_util
 from .agent_config import (
     agent_config_snapshot,
     normalize_agent_config,
-    preserve_legacy_guest_policy,
+    project_agent_config_transfer,
     validate_agent_title,
 )
 from .agent_maintenance import (
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
+)
+from .bounded_json import (
+    JSONBudgetExceeded,
+    bounded_json_dumps,
+    check_redaction_budget,
+    check_utf8_budget,
+    iter_bounded_json,
 )
 from .const import (
     CONF_FUNCTION_GROUPS,
@@ -124,18 +131,10 @@ def _configuration_snapshot_preserving_quarantine(
     raw = dict(data)
     from .agent_config import AGENT_CONFIG_FIELDS
 
-    opaque = {
-        key: deepcopy(value)
-        for key, value in raw.items()
-        if key not in AGENT_CONFIG_FIELDS
-    }
     known = {key: value for key, value in raw.items() if key in AGENT_CONFIG_FIELDS}
     normalize = agent_config_snapshot if frontend_shape else normalize_agent_config
     try:
-        snapshot = {**preserve_legacy_guest_policy(raw, normalize(known)), **opaque}
-        if "reasoning_effort" not in raw:
-            snapshot.pop("reasoning_effort", None)
-        return snapshot
+        snapshot = normalize(known)
     except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
         # Backup/import is a recovery boundary: tolerate only a Function Tool
         # validation failure. Normalize every unrelated field strictly using a
@@ -149,12 +148,7 @@ def _configuration_snapshot_preserving_quarantine(
         _usable, issue = function_tools_issue(raw)
         if issue is None:
             raise
-        snapshot = {
-            **preserve_legacy_guest_policy(
-                raw, normalize(safe_function_configuration(known))
-            ),
-            **opaque,
-        }
+        snapshot = normalize(safe_function_configuration(known))
         for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
             if key in raw:
                 snapshot[key] = deepcopy(raw[key])
@@ -170,9 +164,7 @@ def _configuration_snapshot_preserving_quarantine(
                         ) from err
             else:
                 snapshot.pop(key, None)
-        if "reasoning_effort" not in raw:
-            snapshot.pop("reasoning_effort", None)
-        return snapshot
+    return project_agent_config_transfer(raw, snapshot, preserve_unknown=True)
 
 
 def export_configuration_snapshot(data: Any) -> dict[str, Any]:
@@ -240,6 +232,13 @@ async def async_collect_backup_snapshot(
 
 def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Redact and serialize a small legacy one-message JSON backup."""
+    try:
+        check_redaction_budget(snapshot, MAX_LEGACY_EXPORT_BYTES)
+    except JSONBudgetExceeded as err:
+        raise BackupError(
+            "This backup is too large for the legacy one-message JSON export; "
+            "use the full backup transfer interface"
+        ) from err
     document = {
         **snapshot,
         "agent": {
@@ -248,12 +247,13 @@ def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         },
         "request_rules": _safe_configuration(snapshot["request_rules"]),
     }
-    serialized = json.dumps(document, indent=2, ensure_ascii=False)
-    if len(serialized.encode("utf-8")) > MAX_LEGACY_EXPORT_BYTES:
+    try:
+        serialized = bounded_json_dumps(document, MAX_LEGACY_EXPORT_BYTES)
+    except JSONBudgetExceeded as err:
         raise BackupError(
             "This backup is too large for the legacy one-message JSON export; "
             "use the full backup transfer interface"
-        )
+        ) from err
     title = str(document["agent"]["title"])
     safe_title = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")
     created_at = str(document["created_at"])
@@ -316,23 +316,26 @@ def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
         raise ValueError("Backup validation byte limit is invalid")
     limit_mb = max_bytes // (1024 * 1024)
     if isinstance(value, str):
-        if len(value.encode("utf-8")) > max_bytes:
-            raise BackupError(f"The backup exceeds the {limit_mb} MB safety limit")
+        try:
+            check_utf8_budget(value, max_bytes)
+        except JSONBudgetExceeded as err:
+            raise BackupError(
+                f"The backup exceeds the {limit_mb} MB safety limit"
+            ) from err
         try:
             value = json.loads(value)
         except json.JSONDecodeError as err:
             raise BackupError("The backup is incomplete or corrupted") from err
     else:
         try:
-            encoded_size = len(
-                json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode(
-                    "utf-8"
-                )
-            )
+            for _chunk in iter_bounded_json(value, max_bytes):
+                pass
+        except JSONBudgetExceeded as err:
+            raise BackupError(
+                f"The backup exceeds the {limit_mb} MB safety limit"
+            ) from err
         except (TypeError, ValueError) as err:
             raise BackupError("The backup is incomplete or corrupted") from err
-        if encoded_size > max_bytes:
-            raise BackupError(f"The backup exceeds the {limit_mb} MB safety limit")
     if not isinstance(value, dict):
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     return value

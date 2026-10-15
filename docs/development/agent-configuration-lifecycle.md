@@ -1,5 +1,8 @@
 # Agent configuration lifecycle
 
+For authored, display, execution and transfer projection rules, see
+[Configuration operation contracts](configuration-operation-contracts.md).
+
 Baseline inspected: `develop` at `e31db84b`.
 
 ## Effective behavior before ownership refactor
@@ -41,6 +44,9 @@ The timeout wrapper accepts integers from 1 to 1440, coerces legacy integer stri
 and integral floats, and retains five friendly UI presets. Booleans remain invalid.
 
 ## Refactor boundaries
+
+Deletion and restore use [explicit subsystem lifecycle APIs](subsystem-lifecycle-apis.md)
+for background-work disposal and transient runtime reset.
 
 Promote startup provider synchronization, archive initialization gating, retention
 scheduling, streaming capability, timeout normalization, and provider idempotency

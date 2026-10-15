@@ -420,7 +420,6 @@ def test_build_archive_removes_temp_file_when_uncompressed_limit_is_exceeded(
     monkeypatch,
 ):
     """Failed archive construction does not leak its private temporary file."""
-    monkeypatch.setattr(backup_transfer, "MAX_BACKUP_UNCOMPRESSED_BYTES", 1)
     created: list[str] = []
     real_mkstemp = backup_transfer.tempfile.mkstemp
 
@@ -435,6 +434,13 @@ def test_build_archive_removes_temp_file_when_uncompressed_limit_is_exceeded(
         "request_rules": {},
         "created_at": "2026-09-12T12:00:00Z",
     }
+    # The conservative preflight permits this prefix, but the exact stream
+    # exceeds the limit after the archive exists. Keep testing real cleanup.
+    limit = (
+        len(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode())
+        - 1
+    )
+    monkeypatch.setattr(backup_transfer, "MAX_BACKUP_UNCOMPRESSED_BYTES", limit)
 
     with pytest.raises(backup.BackupError, match="uncompressed safety limit"):
         backup_transfer._build_archive_file(snapshot)

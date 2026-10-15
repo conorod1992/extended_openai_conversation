@@ -13,6 +13,7 @@ import re
 import sys
 
 from ci.enhanced_evidence import environment_fingerprint
+from ci.frontend_latency.environment import environment_differences
 
 ROOT = Path(__file__).resolve().parent
 POLICY = ROOT / "overnight_policy.json"
@@ -55,6 +56,8 @@ def check_identity(item, sha):
         environment
     ):
         errors.append("Missing/invalid environment fingerprint")
+    if not environment.get("python_packages") or not environment.get("node"):
+        errors.append("Missing resolved Python package pins or Node runtime identity")
     return errors
 
 
@@ -276,13 +279,16 @@ def main():
             item, sha, os.environ["CURRENT_SHA"], baseline=label == "baseline"
         )
         if label == "baseline":
-            baseline_environment = item.get("environment_sha256")
-        elif baseline_environment != item.get("environment_sha256"):
-            errors.append("Baseline/candidate environments differ")
+            baseline_environment = item.get("environment", {})
+        else:
+            errors += environment_differences(
+                baseline_environment, item.get("environment", {})
+            )
     item = json.loads((directory / "accessibility.json").read_text(encoding="utf-8"))
     errors += check_accessibility(item, os.environ["CURRENT_SHA"], policy)
-    if item.get("environment_sha256") != baseline_environment:
-        errors.append("Accessibility/latency environments differ")
+    errors += environment_differences(
+        baseline_environment, item.get("environment", {}), "accessibility.environment"
+    )
     if errors:
         raise SystemExit("Overnight frontend evidence rejected:\n" + "\n".join(errors))
     print(

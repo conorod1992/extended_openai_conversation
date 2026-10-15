@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from tests.test_subsystem_lifecycle_apis import _seeded_continuity
+
 from homeassistant.components import conversation as ha_conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
@@ -556,22 +558,29 @@ def test_restore_runtime_rebinds_live_agent_and_clears_transient_state(
     )
 
     key = ("entry", "agent")
-    registry_continuity = SimpleNamespace(
+    registry_continuity = _seeded_continuity(
         _sessions={"old": 1},
         _memory_bundles={"old": 1},
         _pending_ends={"old"},
         _ignored_conversation_ids={"old": None},
     )
-    agent_continuity = SimpleNamespace(
+    agent_continuity = _seeded_continuity(
         _sessions={"live": 1},
         _memory_bundles={"live": 1},
         _pending_ends={"live"},
         _ignored_conversation_ids={"live": None},
     )
-    registry_rules = SimpleNamespace(_conversation_overrides={"old": 1})
-    agent_rules = SimpleNamespace(_conversation_overrides={"live": 1})
-    registry_groups = SimpleNamespace(_sessions={"old": 1}, _last_request={"old": 1})
-    agent_groups = SimpleNamespace(_sessions={"live": 1}, _last_request={"live": 1})
+    registry_rules = request_rules.RequestRuleRuntime()
+    agent_rules = request_rules.RequestRuleRuntime()
+    registry_groups = function_groups.FunctionGroupRuntime()
+    agent_groups = function_groups.FunctionGroupRuntime()
+    for marker, rules, groups in (
+        ("old", registry_rules, registry_groups),
+        ("live", agent_rules, agent_groups),
+    ):
+        rules.set(marker, {"model": marker})
+        groups.begin(marker, 5)
+        groups._last_request = {marker: 1}
     fallback_usage = object()
     durable_usage = object()
     agent = SimpleNamespace(

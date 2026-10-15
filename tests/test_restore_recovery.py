@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.test_subsystem_lifecycle_apis import _seeded_continuity
+
 from custom_components.extended_openai_conversation_responses import (
     backup,
     management_function_repair,
@@ -380,14 +382,17 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(
     )
 
     key = ("entry-1", "agent-new")
-    continuity_manager = SimpleNamespace(
+    continuity_manager = _seeded_continuity(
         _sessions={"old": object()},
         _memory_bundles={"old": object()},
         _pending_ends={"old"},
         _ignored_conversation_ids={"old": None},
     )
-    rule_runtime = SimpleNamespace(_conversation_overrides={"old": object()})
-    group_runtime = SimpleNamespace(_sessions={"old": object()}, _last_request={"x": 1})
+    rule_runtime = request_rules.RequestRuleRuntime()
+    rule_runtime.set("old", {"model": "old"})
+    group_runtime = function_groups.FunctionGroupRuntime()
+    group_runtime.begin("old", 5)
+    group_runtime._last_request = {"x": 1}
     fallback_usage = object()
     durable_usage = object()
     agent = SimpleNamespace(

@@ -119,12 +119,12 @@ async def test_pending_restore_rejects_writes_until_durable_recovery(
             fault.setattr(atomicwrites, "replace_atomic", fail_replace)
         else:
 
-            def fail_configuration_write(data):
+            async def fail_configuration_write(data):
                 faults.append("native Core configuration write")
                 raise OSError(errno.EROFS, "configuration destination is read-only")
 
             fault.setattr(
-                hass.config_entries._store, "_write_data", fail_configuration_write
+                hass.config_entries._store, "_async_write_data", fail_configuration_write
             )
         with pytest.raises(backup.BackupError, match="pending"):
             await backup.async_restore_backup(hass, entry, subentry, target)

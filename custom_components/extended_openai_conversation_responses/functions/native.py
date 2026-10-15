@@ -359,16 +359,12 @@ class NativeFunction(Function):
             origin_device_id=origin_device_id,
             **target,
         )
-        from ..execution_outcomes import execution_completed, execution_started
-
-        execution_started()
         result = await manager.async_send(
             str(arguments.get("message", "")),
             entity_ids=targets,
             origin_device_id=origin_device_id,
             source="llm_tool",
         )
-        execution_completed()
         return {
             "success": True,
             "message_id": result["id"],
@@ -459,24 +455,29 @@ class NativeFunction(Function):
             hass, service_data, exposed_entities, domain=domain, service=service
         )
 
-        try:
-            action_result = await async_call_ha_action(
-                hass,
-                domain,
-                service,
-                data=service_data,
-                blocking=True,
-                include_response=True,
-            )
-            result: dict[str, Any] = {"success": True}
-            if action_result:
-                result.update(action_result)
-            return result
-        except HomeAssistantError as e:
-            log_handled_failure(
-                _LOGGER, f"Native Function Tool action={domain}.{service} failed", e
-            )
-            return backend_failure(str(e), e)
+        from ..execution_outcomes import execution_operation, execution_rejected
+
+        with execution_operation("ha_service", service_argument) as operation:
+            try:
+                action_result = await async_call_ha_action(
+                    hass,
+                    domain,
+                    service,
+                    data=service_data,
+                    blocking=True,
+                    include_response=True,
+                )
+                result: dict[str, Any] = {"success": True}
+                if action_result:
+                    result.update(action_result)
+                return result
+            except HomeAssistantError as e:
+                if operation.receipt is None:
+                    execution_rejected(before_dispatch=True)
+                log_handled_failure(
+                    _LOGGER, f"Native Function Tool action={domain}.{service} failed", e
+                )
+                return backend_failure(str(e), e)
 
     async def execute_service(
         self,
@@ -488,16 +489,19 @@ class NativeFunction(Function):
     ) -> list[dict[str, Any]]:
         _validate_execute_service_request(arguments)
         result = []
-        for service_argument in arguments.get("list", []):
-            result.append(
-                await self.execute_service_single(
-                    hass,
-                    function_config,
-                    service_argument,
-                    llm_context,
-                    exposed_entities,
+        from ..execution_outcomes import execution_child
+
+        for index, service_argument in enumerate(arguments.get("list", [])):
+            with execution_child(index):
+                result.append(
+                    await self.execute_service_single(
+                        hass,
+                        function_config,
+                        service_argument,
+                        llm_context,
+                        exposed_entities,
+                    )
                 )
-            )
         return result
 
     async def add_automation(
@@ -565,9 +569,17 @@ class NativeFunction(Function):
         async with lock:
             from ..execution_outcomes import execution_completed, execution_started
 
-            execution_started()
+            receipt = execution_started(
+                kind="automation_update",
+                prepared={
+                    "destination": str(automation_path),
+                    "definition": {
+                        key: value for key, value in config.items() if key != "id"
+                    },
+                },
+            )
             result = await _async_settle_automation_update(update())
-            execution_completed()
+            execution_completed(receipt)
             return result
 
     async def get_history(

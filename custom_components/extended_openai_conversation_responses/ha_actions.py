@@ -26,6 +26,7 @@ from homeassistant.helpers import (
 )
 
 from .ha_permissions import async_require_control_permission, get_active_ha_context
+from .ha_service_compat import prepare_service_dispatch
 from .schema_errors import SCHEMA_ERRORS as _SERVICE_SCHEMA_ERRORS
 
 ActionTargetRevalidator = Callable[[HomeAssistant, set[str]], None]
@@ -151,19 +152,31 @@ async def _async_call_ha_action_unchecked(
         execution_started,
     )
 
-    execution_started()
     try:
-        response = await hass.services.async_call(
-            domain=domain, service=service, **kwargs
-        )
+        registry, prepared = prepare_service_dispatch(hass, domain, service, kwargs)
     except _SERVICE_SCHEMA_ERRORS as err:
-        execution_rejected()
+        execution_rejected(before_dispatch=True)
+        raise HomeAssistantError(str(err)) from err
+
+    receipt = execution_started(
+        kind="ha_service" if registry is not hass.services else "backend",
+        prepared={
+            "domain": domain.lower(),
+            "service": service.lower(),
+            **prepared,
+            "return_response": request_response,
+            "user_id": getattr(context, "user_id", None),
+        },
+    )
+    try:
+        response = await registry.async_call(domain=domain, service=service, **kwargs)
+    except _SERVICE_SCHEMA_ERRORS as err:
         # Home Assistant has transitioned service schemas from voluptuous to
         # probatio. Keep the integration's action boundary stable across both: a
         # schema rejection is an ordinary Home Assistant action failure that the
         # caller can surface to the model/user, not an uncaught conversation error.
         raise HomeAssistantError(str(err)) from err
-    execution_completed()
+    execution_completed(receipt)
     if include_response:
         result: dict[str, Any] = {}
         if previous_state:

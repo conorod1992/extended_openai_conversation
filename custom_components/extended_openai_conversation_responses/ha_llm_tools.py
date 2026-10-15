@@ -167,11 +167,13 @@ class LiveTool:
         )
 
         execution_prepared(args, ha_parameters=self.tool.parameters)
-        execution_started()
+        receipt = execution_started(
+            kind="ha_tool", prepared={"reference": self.reference, "arguments": args}
+        )
         result = await self.instance.async_call_tool(
             llm.ToolInput(tool_name=self.tool.name, tool_args=args, id=tool_input.id)
         )
-        execution_completed()
+        execution_completed(receipt)
         return execution_tool_result(result)
 
 

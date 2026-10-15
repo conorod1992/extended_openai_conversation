@@ -30,6 +30,7 @@ from .ha_llm_tools import ToolSnapshot, caller_api_tools, tool_snapshot_scope
 from .ha_schema import SchemaValidator
 from .provider_errors import log_provider_failure, request_reauthentication
 from .schema_errors import SCHEMA_ERRORS
+from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledged_calls
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -382,6 +383,8 @@ class ExtendedOpenAITaskEntity(
             if chat_log.llm_api is not None
             else (ToolSnapshot(), [])
         )
+        existing_content_ids = {id(content) for content in chat_log.content}
+        continuation_accepted = False
         try:
             if chat_log.llm_api is not None:
                 caller_instance = chat_log.llm_api
@@ -410,6 +413,7 @@ class ExtendedOpenAITaskEntity(
                     structure=task.structure,
                     structure_schema=original_schema,
                 )
+            continuation_accepted = True
         except OpenAIError as err:
             from .model_lifecycle import record_entity_retirement_failure
 
@@ -418,6 +422,13 @@ class ExtendedOpenAITaskEntity(
             record_current_provider_failure(err)
             log_provider_failure(_LOGGER, "OpenAI AI Task request failed", err)
             raise
+        finally:
+            if not continuation_accepted:
+                remember_unacknowledged_calls(self, chat_log, existing_content_ids)
+
+        # The provider accepted the tool results. Output parsing below cannot
+        # turn this completed continuation back into ambiguous execution history.
+        clear_unacknowledged_calls(self, chat_log.conversation_id)
 
         from .model_lifecycle import clear_entity_retirement_failure
 

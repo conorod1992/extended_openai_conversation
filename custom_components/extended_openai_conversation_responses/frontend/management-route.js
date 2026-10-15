@@ -3,6 +3,7 @@ import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule, startOverviewDetailReads} from "./overview-page.js";
 import {readOptionalStorage, writeOptionalStorage} from "./browser-storage.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
+import {configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_TRACE_PREFIX = "extended-openai:config-read";
 const CONFIG_TRACE_LIMIT = 100;
@@ -595,7 +596,7 @@ function applyPrefetchedConfiguration(panel, prefetch, configData) {
   panel._setConfigDirty?.(false);
 }
 
-export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
+export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null, owner = null) {
   const initialToken = panel._loadToken;
   const previousAgentId = panel._agentId;
   const saved = readOptionalStorage(AGENT_KEY);
@@ -611,7 +612,9 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
   const prefetch = startStoredOverviewPrefetch(panel, preferred, routeAsset);
   const configurationPrefetch = startStoredConfigurationPrefetch(panel, preferred);
 
-  panel._data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
+  const data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
+  if (owner && !configurationSubmissionIsCurrent(panel, owner)) return;
+  panel._data = data;
   // A fresh agent catalogue is an ownership boundary: cached user scopes may
   // refer to users that have since been deleted.
   panel._scopeCatalogCache.clear();
@@ -623,6 +626,7 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
     : agents[0]?.subentry_id;
 
   const selected = panel._selectedAgent?.();
+  const selectedOwner = {agentId:panel._agentId, entryId:selected?.entry_id};
   if (panel._agentId) writeOptionalStorage(AGENT_KEY, panel._agentId);
   if (selected?.entry_id) writeOptionalStorage(ENTRY_KEY, selected.entry_id);
   if (previousAgentId !== panel._agentId) {
@@ -692,6 +696,7 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null) {
     return;
   }
 
+  if (owner && !configurationSubmissionIsCurrent(panel, selectedOwner)) return;
   await panel._loadSection(overviewSelected);
 }
 

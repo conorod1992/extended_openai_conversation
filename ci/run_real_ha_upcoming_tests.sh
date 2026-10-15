@@ -3,6 +3,16 @@ set -euo pipefail
 set -o pipefail
 
 TEST_PATHS=(
+  tests_real_ha/test_quiet_hours_identity_shutdown.py
+  tests/test_bounded_backup_serialization.py
+  tests_real_ha/test_backup_processing_boundary.py
+  tests_real_ha/test_service_receipt_compatibility.py
+  tests_real_ha/test_receipt_resources_and_unordered_identity.py
+  tests_real_ha/test_execution_result_lifecycle_contracts.py
+  tests_real_ha/test_service_effect_identity.py
+  tests_real_ha/test_prepared_effect_recovery.py
+  tests_real_ha/test_quiet_hours_generation_recovery.py
+  tests_real_ha/test_quiet_hours_scheduling.py
   tests_real_ha/test_archive_record_integrity.py
   tests_real_ha/test_conversation_runtime_lifecycle.py
   tests_real_ha/test_archive_private_activity.py
@@ -13,6 +23,7 @@ TEST_PATHS=(
   tests_real_ha/test_conversation_contract_remediation.py
   tests_real_ha/test_ai_task_lifecycle.py
   tests_real_ha/test_ai_task_runtime.py
+  tests_real_ha/test_ai_task_replay_lifecycle.py
   tests_real_ha/test_assist_origin_context.py
   tests_real_ha/test_assist_streaming_speech_processing.py
   tests_real_ha/test_assist_voice_identity_precedence.py
@@ -22,6 +33,7 @@ TEST_PATHS=(
   tests_real_ha/test_config_flow_edges.py
   tests_real_ha/test_config_flow_lifecycle_contracts.py
   tests_real_ha/test_entry_point_contract_matrix.py
+  tests_real_ha/test_effect_receipts.py
   tests_real_ha/test_entity_registry_customization.py
   tests_real_ha/test_entity_registry_disabled.py
   tests_real_ha/test_exposed_attribute_catalog_acceptance.py

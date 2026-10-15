@@ -95,7 +95,7 @@ def test_ending_continuity_invalidates_generations_without_touching_other_owners
     assert all(rules.get(key) == {} for key in own)
     assert rules.get(other) == {"chat_model": "gpt-4.1"}
     assert set(groups._sessions) == {other}
-    assert list(rules._requests.values()) == [other]
+    assert rules._requests.owners == {other}
 
 
 def test_continuity_cleanup_handles_delimiter_in_conversation_and_owner_ids():
@@ -154,7 +154,7 @@ async def test_ended_conversation_cannot_be_recreated_by_inflight_route(
     evaluation = await async_evaluate_rule(hass, rules, runtime, "route", session_id)
     assert evaluation.request_override == {"chat_model": "gpt-4.1"}
     assert runtime.get(session_id) == {}
-    assert token not in runtime._requests
+    assert not runtime._requests.tokens(session_id)
 
 
 async def test_ended_request_reset_cannot_clear_a_new_request_route(hass):

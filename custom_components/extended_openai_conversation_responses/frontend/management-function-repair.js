@@ -1,4 +1,4 @@
-import {synchronizePersistedConfigurationFields} from "./management-actions.js";
+import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
 import {getToolYamlEditor} from "./tool-yaml-editor-adapter.js";
 
 function repairIssue(panel) {
@@ -138,16 +138,17 @@ async function openInvalidToolEditor(panel, item) {
   }
 }
 
-export async function refreshAfterRepair(panel, message, saved) {
-  const selectedId = panel._agentId;
-  if (!saved?.config) saved = await panel._call("configuration", "get");
-  if (panel._configData) {
-    panel._configData = {...panel._configData, function_repair:saved.function_repair};
-  }
-  synchronizePersistedConfigurationFields(panel, saved, ["functions", "function_groups"]);
-  if (panel._configData) panel._result = panel._configData;
-  await panel._loadAgents(selectedId);
-  panel._toast(message);
+export async function refreshAfterRepair(panel, message, saved, submission = captureConfigurationSubmission(panel)) {
+  return completeConfigurationAcknowledgement(panel, saved, submission, {
+    fields:["functions", "function_groups"], metadata:["function_repair"], message,
+    refresh:async () => {
+      if (panel._viewKey && panel._viewKey() !== "capabilities/functions") return;
+      if (panel._configData) panel._result = panel._configData;
+      await panel._loadAgents(submission.agentId, submission);
+      // The catalogue loader handles transport failures by rendering _error.
+      if (panel._error) throw new Error(panel._error);
+    },
+  });
 }
 
 async function saveInvalidTool(panel, button) {
@@ -155,10 +156,12 @@ async function saveInvalidTool(panel, button) {
   if (!Number.isInteger(index)) return false;
   const editor = getToolYamlEditor(panel);
   const yaml = editor?.getYaml?.() || "";
+  const submission = captureConfigurationSubmission(panel);
   if (typeof panel._setSaving === "function") panel._setSaving(button, true);
   else button.disabled = true;
   try {
     const validation = await panel._call("tools", "validate_yaml", {yaml});
+    if (!configurationSubmissionIsCurrent(panel, submission)) return true;
     if (!validation?.valid) {
       const detail = Object.values(validation?.errors || {})[0] || "Function Tool is still invalid.";
       const status = panel.shadowRoot?.querySelector("#tool-error");
@@ -173,11 +176,12 @@ async function saveInvalidTool(panel, button) {
       tool: validation.config,
       revision: panel._repairToolRevision,
     });
+    if (!configurationSubmissionIsCurrent(panel, submission)) return true;
     panel.shadowRoot?.querySelector("#tool-dialog")?.close?.();
     panel._repairToolIndex = null;
-    await refreshAfterRepair(panel, "Function Tool repaired", saved);
+    await refreshAfterRepair(panel, "Function Tool repaired", saved, submission);
   } catch (err) {
-    panel._toast(`Unable to repair Function Tool: ${err.message || String(err)}`, true);
+    if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to repair Function Tool: ${err.message || String(err)}`, true);
   } finally {
     if (typeof panel._setSaving === "function") panel._setSaving(button, false);
     else button.disabled = false;
@@ -186,20 +190,21 @@ async function saveInvalidTool(panel, button) {
 }
 
 async function deleteInvalidTool(panel, item, button) {
+  const submission = captureConfigurationSubmission(panel);
   const label = item.name || `Function Tool ${Number(item.index) + 1}`;
   const confirmed = typeof panel._confirm === "function"
     ? await panel._confirm(`Delete ${label}?`, "Its retained Function Group assignment will also be removed.")
     : globalThis.confirm?.(`Delete ${label}?`) !== false;
-  if (!confirmed) return;
+  if (!confirmed || !configurationSubmissionIsCurrent(panel, submission)) return;
   button.disabled = true;
   try {
     const saved = await panel._call("function_repair", "delete_one", {
       index: Number(item.index),
       revision: panel._result?.revision,
     });
-    await refreshAfterRepair(panel, "Function Tool deleted", saved);
+    await refreshAfterRepair(panel, "Function Tool deleted", saved, submission);
   } catch (err) {
-    panel._toast(`Unable to delete Function Tool: ${err.message || String(err)}`, true);
+    if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to delete Function Tool: ${err.message || String(err)}`, true);
     button.disabled = false;
   }
 }
@@ -249,6 +254,7 @@ function bindFallbackRepair(panel) {
   button.dataset.eocBound = "true";
   button.addEventListener("click", () => {
     void (async () => {
+      const submission = captureConfigurationSubmission(panel);
       let tools;
       try {
         tools = JSON.parse(panel.shadowRoot?.querySelector?.("#function-repair-editor")?.value || "");
@@ -260,9 +266,9 @@ function bindFallbackRepair(panel) {
       button.disabled = true;
       try {
         const saved = await panel._call("function_repair", "save", {tools, revision: panel._result?.revision});
-        await refreshAfterRepair(panel, "Function Tools repaired", saved);
+        await refreshAfterRepair(panel, "Function Tools repaired", saved, submission);
       } catch (err) {
-        panel._toast(`Unable to repair Function Tools: ${err.message || String(err)}`, true);
+        if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to repair Function Tools: ${err.message || String(err)}`, true);
       } finally {
         button.disabled = false;
       }

@@ -336,10 +336,7 @@ def reset_restored_runtime(
         for item in (continuity_manager, agent_continuity)
         if item is not None
     }.values():
-        current._sessions.clear()
-        current._memory_bundles.clear()
-        current._pending_ends.clear()
-        current._ignored_conversation_ids.clear()
+        current.reset_all()
     if agent_continuity is not None:
         continuity_managers[key] = agent_continuity
 
@@ -351,7 +348,7 @@ def reset_restored_runtime(
         for item in (rule_runtime, agent_rule_runtime)
         if item is not None
     }.values():
-        current._conversation_overrides.clear()
+        current.reset_all()
     if agent_rule_runtime is not None:
         rule_runtimes[key] = agent_rule_runtime
 
@@ -363,8 +360,7 @@ def reset_restored_runtime(
         for item in (group_runtime, agent_group_runtime)
         if item is not None
     }.values():
-        current._sessions.clear()
-        current._last_request.clear()
+        current.reset_all()
     if agent_group_runtime is not None:
         group_runtimes[key] = agent_group_runtime
 

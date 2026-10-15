@@ -479,7 +479,7 @@ async def test_prepare_control_does_not_reclaim_already_observed_control(hass) -
 async def test_control_save_failure_reloads_durable_generation(hass) -> None:
     manager = _stateful_public_manager(hass)
     durable = _active("media_player.bedroom", "volume")
-    manager._async_save_locked = AsyncMock(side_effect=OSError("ack lost"))
+    manager._store.async_save = AsyncMock(side_effect=OSError("ack lost"))
     manager._store.async_load = AsyncMock(return_value={"active": deepcopy(durable)})
 
     with pytest.raises(OSError, match="ack lost"):
@@ -497,13 +497,15 @@ async def test_control_save_failure_invalidates_unreadable_generation(
 ) -> None:
     manager = _stateful_public_manager(hass)
     manager._active = _active("media_player.bedroom", "volume")
-    manager._async_save_locked = AsyncMock(side_effect=OSError("ack lost"))
+    manager._store.async_save = AsyncMock(side_effect=OSError("ack lost"))
     manager._store.async_load = AsyncMock(return_value=persisted)
 
     with pytest.raises(OSError, match="ack lost"):
         await manager._async_save_control_state_locked()
 
-    assert manager._active is None
+    assert manager._active is not None
+    assert manager._config_recovery_pending
+    assert manager._unsubscribers
     assert manager._initialized is False
 
 

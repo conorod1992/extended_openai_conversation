@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from copy import deepcopy
+from dataclasses import dataclass
+from functools import wraps
+import hashlib
 import json
-import math
 from typing import Any
 
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
+from .exceptions import EffectReplayBlocked
 from .execution_arguments import execution_identity
 from .function_execution import _schema_without_patterns, validate_function_arguments
 from .ha_tool_result_compat import is_tool_result_content
@@ -21,6 +24,196 @@ from .parallel_tool_execution import is_parallel_safe_integration_tool
 from .schema_errors import SCHEMA_ERRORS
 
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
+_MAX_RETIRED_CONVERSATIONS = 4096
+_MAX_DISPATCH_RECORDS = 4096
+_PRECISE_EFFECT_KINDS = {"ha_service", "automation_update", "broadcast"}
+
+
+def _retire_replay_history(entity: Any, conversation_id: str | None) -> None:
+    """Keep bounded conservative evidence when precise history is discarded."""
+    if conversation_id == "":
+        return  # Independent deferred jobs have no failed provider continuation.
+    retired = getattr(entity, "_retired_replay_conversations", None)
+    if not isinstance(retired, set):
+        retired = entity._retired_replay_conversations = set()
+    digest = (
+        hashlib.sha256(conversation_id.encode()).digest()
+        if conversation_id is not None
+        else None
+    )
+    if digest is not None:
+        getattr(entity, "_acknowledged_replay_conversations", {}).pop(digest, None)
+    if digest is None or (
+        digest not in retired and len(retired) >= _MAX_RETIRED_CONVERSATIONS
+    ):
+        entity._replay_history_incomplete = True
+        if conversation_id is None:
+            entity._acknowledged_replay_conversations = {}
+    else:
+        retired.add(digest)
+
+
+def _replay_history_incomplete(entity: Any, conversation_id: str) -> bool:
+    digest = hashlib.sha256(conversation_id.encode()).digest()
+    return digest in getattr(entity, "_retired_replay_conversations", ()) or (
+        getattr(entity, "_replay_history_incomplete", False)
+        and digest not in getattr(entity, "_acknowledged_replay_conversations", ())
+    )
+
+
+def _forget_dispatch(entity: Any, key: int, *, retire: bool = False) -> None:
+    """Dispose one call's bookkeeping together; unknown losses remain unsafe."""
+    if (
+        retire
+        and key not in getattr(entity, "_read_only_tool_inputs", {})
+        and getattr(entity, "_execution_tool_outcomes", {}).get(key) != "rejected"
+    ):
+        _retire_replay_history(
+            entity, getattr(entity, "_dispatched_tool_conversations", {}).get(key)
+        )
+    for name in (
+        "_dispatched_tool_inputs",
+        "_dispatched_tool_signatures",
+        "_dispatched_tool_conversations",
+        "_read_only_tool_inputs",
+        "_execution_tool_outcomes",
+        "_execution_effect_receipts",
+    ):
+        getattr(entity, name, {}).pop(key, None)
+
+
+@dataclass
+class _EffectReplayScope:
+    """A lease that expires even in task contexts inherited from the exchange."""
+
+    entity: Any
+    conversation_id: str
+    active: bool = True
+
+
+_effect_replay_scope: ContextVar[_EffectReplayScope | None] = ContextVar(
+    "effect_replay_scope", default=None
+)
+
+
+@contextmanager
+def bind_effect_replay_scope(
+    entity: Any, conversation_id: str | None
+) -> Iterator[None]:
+    """Keep effect recovery local to one entity and conversation, including tasks."""
+    scope = (
+        _EffectReplayScope(entity, conversation_id)
+        if isinstance(conversation_id, str) and conversation_id
+        else None
+    )
+    token = _effect_replay_scope.set(scope)
+    try:
+        yield
+    finally:
+        if scope is not None:
+            scope.active = False
+        _effect_replay_scope.reset(token)
+
+
+def with_effect_replay_scope(
+    function: Callable[..., Awaitable[None]],
+) -> Callable[..., Awaitable[None]]:
+    @wraps(function)
+    async def scoped(entity: Any, chat_log: Any, *args: Any, **kwargs: Any) -> None:
+        with bind_effect_replay_scope(
+            entity, getattr(chat_log, "conversation_id", None)
+        ):
+            await function(entity, chat_log, *args, **kwargs)
+
+    return scoped
+
+
+class UnidentifiableEffect(ValueError):
+    """Prepared values cannot establish a reliable operation identity."""
+
+
+def effect_signature(kind: str, prepared: Any) -> str:
+    """Identify the actual prepared operation, independently of its wrapper."""
+
+    from homeassistant.helpers.template import Template
+
+    from .functions.base import _RuntimeFunctionConfig
+
+    def canonical(value: Any) -> Any:
+        if isinstance(value, _RuntimeFunctionConfig):
+            # Match the source config, without copying hydrated HA objects or
+            # retaining the shared arguments in every effect receipt.
+            return canonical(value._persisted_config)
+        if isinstance(value, Template):
+            return {
+                "template": [
+                    type(value).__module__,
+                    type(value).__qualname__,
+                    value.template,
+                ]
+            }
+        # HA/template preparation can produce mappings with non-string keys.
+        # Preserve their types rather than failing sort_keys or conflating 1 and
+        # "1". All mappings get a tagged representation, avoiding marker clashes.
+        if isinstance(value, Mapping):
+            pairs = [
+                [
+                    json.dumps(
+                        [type(key).__module__, type(key).__qualname__, canonical(key)],
+                        sort_keys=True,
+                    ),
+                    canonical(item),
+                ]
+                for key, item in value.items()
+            ]
+            return {"mapping": sorted(pairs, key=lambda pair: pair[0])}
+        if isinstance(value, tuple):
+            return {"tuple": [canonical(item) for item in value]}
+        if isinstance(value, list):
+            return [canonical(item) for item in value]
+        if type(value) in (set, frozenset):
+            items = [canonical(item) for item in value]
+            return {
+                type(value).__name__: sorted(
+                    items,
+                    key=lambda item: json.dumps(
+                        item, sort_keys=True, separators=(",", ":")
+                    ),
+                )
+            }
+        if value is None or type(value) in (str, int, float, bool):
+            # Handler-visible Python scalar types can be meaningful even when
+            # JSON Schema considers two numeric representations equivalent.
+            return [type(value).__name__, value]
+        raise UnidentifiableEffect(type(value).__qualname__)
+
+    encoded = json.dumps(
+        [kind, canonical(prepared)],
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def check_effect_replay(entity: Any, signature: str) -> None:
+    scope = _effect_replay_scope.get()
+    if scope is None or not scope.active or scope.entity is not entity:
+        return
+    signatures = getattr(entity, "_unacknowledged_effects", {}).get(
+        scope.conversation_id, ()
+    )
+    if (
+        signature in signatures
+        or "*" in signatures
+        or _replay_history_incomplete(entity, scope.conversation_id)
+    ):
+        raise EffectReplayBlocked(
+            "A prior effect was not acknowledged, so this operation cannot safely "
+            "proceed during provider recovery. Complete a turn without effects "
+            "before retrying, or start a new conversation"
+        )
+
+
 _dispatch_origin: ContextVar[tuple[llm.ToolInput, llm.ToolInput] | None] = ContextVar(
     "tool_dispatch_origin", default=None
 )
@@ -47,6 +240,9 @@ def record_dispatch(
     ha_parameters: Any = None,
 ) -> None:
     """Keep trusted dispatch provenance separately from model-facing outcomes."""
+    conversation_id = dispatch_conversation_id(entity)
+    if conversation_id == "":
+        return  # Explicitly independent work must not evict provider provenance.
     dispatched = getattr(entity, "_dispatched_tool_inputs", None)
     if not isinstance(dispatched, dict):
         dispatched = entity._dispatched_tool_inputs = {}
@@ -60,6 +256,9 @@ def record_dispatch(
         and "delay" not in tool_input.tool_args
     )
     retained = dispatch_inputs(tool_input)
+    owners = getattr(entity, "_dispatched_tool_conversations", None)
+    if not isinstance(owners, dict):
+        owners = entity._dispatched_tool_conversations = {}
     canonical = getattr(entity, "_dispatched_tool_signatures", None)
     if not isinstance(canonical, dict):
         canonical = entity._dispatched_tool_signatures = {}
@@ -89,27 +288,31 @@ def record_dispatch(
     )
     for item in retained:
         dispatched[id(item)] = item
+        owners[id(item)] = conversation_id
         if signature is not None:
             canonical[id(item)] = (signature, spec)
         if verified_read:
             read_only[id(item)] = item
         else:
             read_only.pop(id(item), None)
-    while len(dispatched) > 4096:
-        canonical.pop(next(iter(dispatched)), None)
-        read_only.pop(next(iter(dispatched)), None)
-        dispatched.pop(next(iter(dispatched)))
+    while len(dispatched) > _MAX_DISPATCH_RECORDS:
+        _forget_dispatch(entity, next(iter(dispatched)), retire=True)
 
 
-def _canonical_numbers(value: Any) -> Any:
-    """Normalize equivalent JSON numbers without rounding integers through float."""
-    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
-        return int(value)
-    if isinstance(value, Mapping):
-        return {key: _canonical_numbers(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_canonical_numbers(item) for item in value]
-    return value
+def dispatch_conversation_id(entity: Any) -> str | None:
+    """Use the active ownership lease, including the detached-job sentinel."""
+    scope = _effect_replay_scope.get()
+    conversation_id = (
+        scope.conversation_id
+        if scope is not None and scope.active and scope.entity is entity
+        else None
+    )
+    if conversation_id is None:
+        from .execution_outcomes import execution_is_detached
+
+        if execution_is_detached():
+            conversation_id = ""
+    return conversation_id
 
 
 def dispatch_inputs(tool_input: llm.ToolInput) -> list[llm.ToolInput]:
@@ -149,12 +352,21 @@ def _signature(
                     "execution": arguments,
                     "delay_seconds": _delay_as_timedelta(delay).total_seconds(),
                 }
-            arguments = _canonical_numbers(arguments)
     return json.dumps(
         [tool_input.tool_name, arguments],
         sort_keys=True,
         separators=(",", ":"),
         default=str,
+    )
+
+
+def _needs_tool_wide_guard(entity: Any, call: llm.ToolInput) -> bool:
+    """Precise identities protect themselves even when their outcome is unknown."""
+    receipts = getattr(entity, "_execution_effect_receipts", {}).get(id(call), ())
+    return not receipts or any(
+        item.outcome != "rejected"
+        and (item.kind not in _PRECISE_EFFECT_KINDS or item.signature == "*")
+        for item in receipts
     )
 
 
@@ -188,7 +400,7 @@ def remember_unacknowledged_calls(
         if (
             tool_input.id in completed_ids
             or getattr(entity, "_execution_tool_outcomes", {}).get(id(tool_input))
-            in {"completed", "uncertain"}
+            in {"completed", "partial", "uncertain"}
         )
         and getattr(entity, "_execution_tool_outcomes", {}).get(id(tool_input))
         != "rejected"
@@ -197,14 +409,33 @@ def remember_unacknowledged_calls(
         and getattr(entity, "_read_only_tool_inputs", {}).get(id(tool_input))
         is not tool_input
     ]
-    signatures = {signature for signature, _spec in records}
-    if not signatures:
+    if not records:
         return
-    ledger = getattr(entity, "_unacknowledged_tool_calls", None)
-    if not isinstance(ledger, dict):
-        ledger = {}
-        entity._unacknowledged_tool_calls = ledger
-    ledger.setdefault(conversation_id, set()).update(signatures)
+    effects = getattr(entity, "_unacknowledged_effects", None)
+    if not isinstance(effects, dict):
+        effects = entity._unacknowledged_effects = {}
+    retained_effects = effects.setdefault(conversation_id, set())
+    for content in new_content:
+        if (
+            not isinstance(content, conversation.AssistantContent)
+            or not content.tool_calls
+        ):
+            continue
+        for call in content.tool_calls:
+            if getattr(entity, "_dispatched_tool_inputs", {}).get(id(call)) is not call:
+                continue
+            if getattr(entity, "_read_only_tool_inputs", {}).get(id(call)) is call:
+                continue
+            retained_effects.update(
+                receipt.signature
+                for receipt in getattr(entity, "_execution_effect_receipts", {}).get(
+                    id(call), ()
+                )
+                if receipt.outcome in {"completed", "uncertain"} and receipt.signature
+            )
+    if len(retained_effects) > 4096:
+        # Never evict an unresolved effect and silently permit its replay.
+        effects[conversation_id] = {"*"}
     schemas = getattr(entity, "_unacknowledged_tool_schemas", None)
     if not isinstance(schemas, dict):
         schemas = entity._unacknowledged_tool_schemas = {}
@@ -217,41 +448,60 @@ def remember_unacknowledged_calls(
         for content in new_content
         if isinstance(content, conversation.AssistantContent) and content.tool_calls
         for call in content.tool_calls
-        if getattr(entity, "_execution_tool_outcomes", {}).get(id(call)) == "uncertain"
+        if getattr(entity, "_execution_tool_outcomes", {}).get(id(call))
+        in {"partial", "uncertain"}
+        and _needs_tool_wide_guard(entity, call)
     )
-    while len(ledger) > _MAX_AMBIGUOUS_CONVERSATIONS:
-        schemas.pop(next(iter(ledger)), None)
-        uncertain.pop(next(iter(ledger)), None)
-        ledger.pop(next(iter(ledger)))
+    while len(schemas) > _MAX_AMBIGUOUS_CONVERSATIONS:
+        oldest = next(iter(schemas))
+        _retire_replay_history(entity, oldest)
+        effects.pop(oldest, None)
+        uncertain.pop(oldest, None)
+        schemas.pop(oldest)
 
 
 def was_unacknowledged_equivalent(
     entity: Any, chat_log: conversation.ChatLog, tool_input: llm.ToolInput
 ) -> bool:
     """Match only calls from an unresolved failed continuation in this conversation."""
-    ledger = getattr(entity, "_unacknowledged_tool_calls", None)
+    conversation_id = getattr(chat_log, "conversation_id", None)
+    if not isinstance(conversation_id, str) or not conversation_id:
+        return False
+    if _replay_history_incomplete(entity, conversation_id):
+        return True
+    ledger = getattr(entity, "_unacknowledged_tool_schemas", None)
     if not isinstance(ledger, dict):
         return False
-    signatures = ledger.get(chat_log.conversation_id, ())
+    records = ledger.get(chat_log.conversation_id, {})
     if tool_input.tool_name in getattr(
         entity, "_unacknowledged_uncertain_tools", {}
     ).get(chat_log.conversation_id, ()):
         return True
-    if _signature(tool_input) in signatures:
+    if _signature(tool_input) in records:
         return True
-    schemas = getattr(entity, "_unacknowledged_tool_schemas", {})
     return any(
-        signature in signatures and _signature(tool_input, spec) == signature
-        for signature, spec in schemas.get(chat_log.conversation_id, {}).items()
+        _signature(tool_input, spec) == signature for signature, spec in records.items()
     )
 
 
 def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None:
     """A successful provider turn resolves ambiguity for this conversation."""
-    ledger = getattr(entity, "_unacknowledged_tool_calls", None)
-    if isinstance(ledger, dict) and isinstance(conversation_id, str):
-        ledger.pop(conversation_id, None)
-        getattr(entity, "_unacknowledged_tool_schemas", {}).pop(conversation_id, None)
-        getattr(entity, "_unacknowledged_uncertain_tools", {}).pop(
-            conversation_id, None
-        )
+    if isinstance(conversation_id, str):
+        for name in (
+            "_unacknowledged_tool_schemas",
+            "_unacknowledged_effects",
+            "_unacknowledged_uncertain_tools",
+        ):
+            getattr(entity, name, {}).pop(conversation_id, None)
+        digest = hashlib.sha256(conversation_id.encode()).digest()
+        getattr(entity, "_retired_replay_conversations", set()).discard(digest)
+        if getattr(entity, "_replay_history_incomplete", False):
+            acknowledged = getattr(entity, "_acknowledged_replay_conversations", None)
+            if not isinstance(acknowledged, dict):
+                acknowledged = entity._acknowledged_replay_conversations = {}
+            acknowledged[digest] = None
+            while len(acknowledged) > _MAX_AMBIGUOUS_CONVERSATIONS:
+                acknowledged.pop(next(iter(acknowledged)))
+        owners = getattr(entity, "_dispatched_tool_conversations", {})
+        for key in [key for key, owner in owners.items() if owner == conversation_id]:
+            _forget_dispatch(entity, key)

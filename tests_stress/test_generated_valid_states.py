@@ -64,6 +64,9 @@ def _check_contract(fields: dict, dimension_values: dict) -> None:
         if name.startswith("CONF_")
         and getattr(agent_config, name) in agent_config.AGENT_CONFIG_FIELDS
     }
+    # A few persisted fields use literal keys rather than imported CONF_* names.
+    named_values = {getattr(agent_config, name) for name in actual}
+    actual.update(agent_config.AGENT_CONFIG_FIELDS - named_values)
     assert set(fields) == actual
     assert dimension_values == {key: list(values) for key, values in DIMENSIONS.items()}
     for name, classification in fields.items():
@@ -72,7 +75,7 @@ def _check_contract(fields: dict, dimension_values: dict) -> None:
             assert coverage["dimension"] in DIMENSIONS, name
         else:
             assert coverage.get("reason"), name
-    by_value = {getattr(agent_config, name): name for name in fields}
+    by_value = {getattr(agent_config, name, name): name for name in fields}
     for dimension in DIMENSIONS:
         if dimension in agent_config.AGENT_CONFIG_FIELDS:
             coverage = fields[by_value[dimension]]["coverage"]
@@ -158,5 +161,7 @@ def test_covering_generator_is_valid_complete_bounded_and_reproducible() -> None
 def test_seed_changes_equivalent_covering_choice() -> None:
     one = generate(2983703646, heavy=False)
     other = generate(2983703647, heavy=False)
-    assert one.obligations == other.obligations
+    # Compare compact inventories: pytest's diff of thousands of obligations can
+    # itself exceed the campaign timeout when the coverage boundary regresses.
+    assert one.reviewed_inventory() == other.reviewed_inventory()
     assert one.cases != other.cases

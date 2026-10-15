@@ -177,7 +177,7 @@ jobs:
           if [ "$ENHANCED_EXECUTION_EVIDENCE" = 1 ]; then
             read -ra TEST_PATHS <<< "$(python ci/compatibility_evidence.py select)"
           else
-            TEST_PATHS=(tests_real_ha/test_public_version_journeys.py)
+            TEST_PATHS=(tests_real_ha/test_public_version_journeys.py tests_real_ha/test_service_receipt_compatibility.py)
           fi
           # Newer HA Core aliases httpx during initialization. Import Core
           # before pytest autoloads plugins that may import httpx first.

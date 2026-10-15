@@ -45,6 +45,29 @@ The catalogue is compatibility knowledge for EOAI's current request paths, not a
 
 Deprecated models are hidden from new model suggestions but retained for existing saved configurations. A structured `shutdown_at` date drives Overview warnings but never blocks a request by itself. After that date, EOAI only treats a model as retired when the provider also returns a model-unavailable/not-found failure; that confirmed failure produces an actionable Assist error and Home Assistant Repair until the model is changed or a later request succeeds.
 
+### GPT-4 retirement on 14 January 2027
+
+OpenAI's [14 October 2026 deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-10-14-gpt-4-series-model-deprecations) retires `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, and `gpt-4.1-mini` on **14 January 2027**. Catalogue revision 15 records these dates for the aliases and the exact snapshots below:
+
+| Alias | Snapshots retiring on 14 January 2027 |
+| --- | --- |
+| `gpt-4o` | `gpt-4o-2024-08-06`, `gpt-4o-2024-11-20` |
+| `gpt-4o-mini` | `gpt-4o-mini-2024-07-18` |
+| `gpt-4.1` | `gpt-4.1-2025-04-14` |
+| `gpt-4.1-mini` | `gpt-4.1-mini-2025-04-14` |
+
+The notice includes fine-tuned versions of these base models. EOAI does not infer capabilities or lifecycle dates from custom/fine-tuned ID prefixes; those IDs retain the existing unknown-model handling and provider errors. Owners of fine-tuned configurations must also plan migration.
+
+The four newly documented snapshot IDs keep Responses as their no-tool Auto path, preserving the behavior they had as unknown exact IDs. Existing aliases and the already documented August 2024 snapshot keep their previous Auto routing.
+
+Newly catalogued snapshots use the documented `max_completion_tokens` field for explicit Chat Completions requests. OpenAI and Azure already used that field for these IDs. Third-party endpoints exposing these exact OpenAI IDs must support it; custom unknown IDs keep their existing `max_tokens` fallback.
+
+OpenAI recommends [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna). Select it explicitly in **Assistant → Model & responses** after testing representative conversations, Home Assistant actions, Request Rules and any AI Task settings. EOAI does not rewrite saved models, defaults or routing rules. The existing model continues to be sent unchanged, including after the announced date; a provider-confirmed retirement then asks you to select an available model instead of silently substituting one.
+
+Follow the [GPT-6 migration guide](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra): use **Responses** for function tools with reasoning. Luna's **Chat Completions** function calling requires `reasoning_effort: none`. Temperature and `top_p` are supported only with `none`; otherwise omit them. Luna supports a 1,050,000-token context and up to 128,000 output tokens, with `medium` as the provider's default reasoning effort. EOAI's existing Luna record already describes these constraints. Review the reasoning and sampling settings when changing models; this is not a drop-in rename for every saved request.
+
+Similar names do not imply the same schedule. The [separate notices](https://developers.openai.com/api/docs/deprecations) retire `gpt-4o-2024-05-13` and `gpt-4.1-nano` (including its 2025-04-14 snapshot) on **23 October 2026**, with `gpt-5.6-sol` and `gpt-5.6-luna` as the respective replacements. Audio/realtime, transcription and TTS variants have their own notices and dates. They do not inherit the January 14 metadata. The older May GPT-4o snapshot is not added by inheriting the newer alias's capabilities: [Structured Outputs support](https://developers.openai.com/api/docs/guides/structured-outputs) differs. This update adds only the verified January 14 snapshots.
+
 Exact IDs take precedence. Only snapshots that explicitly name a parent inherit capabilities. Unspecified IDs receive conservative unknown metadata. Parent chains are resolved once into an exact-ID index at catalogue activation; runtime requests never search or merge a family tree. Remote data cannot supply regexes, matching expressions, request templates, executable code, endpoints, tool/security rules, Guest Mode policy, or request-building instructions. Adding a new kind of capability requires a code/schema change.
 
 Data-only catalogue updates cannot silently narrow previously accepted durable request choices. Transition checks compare effective inherited capabilities, including API paths, function calling, reasoning choices, sampling, service tiers, streaming, and output ceilings. Narrowing requires an integration release with an explicit compatibility/migration decision.

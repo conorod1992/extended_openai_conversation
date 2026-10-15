@@ -1,9 +1,10 @@
-"""Residual private Store permission repair for historical files."""
+"""Private Store permission repair and durable generation settlement."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+import inspect
 import os
 import stat
 from typing import Any
@@ -36,32 +37,47 @@ async def _async_settle_transactional_save(
     remember_committed_state: Callable[[], None],
     reconcile_failed_state: Callable[[], Awaitable[None]] | None,
     invalidate_state: Callable[[], None],
+    *,
+    record_execution: bool = True,
 ) -> None:
-    """Settle a write and reconcile actual disk state before reporting failure."""
+    """Settle a write and authoritative readback before reporting failure.
+
+    Managers install their entire validated generation in reconcile_failed_state.
+    Set record_execution=False when an enclosing operation owns the receipt;
+    internal persistence must not start or settle that enclosing operation.
+    """
     from .execution_outcomes import execution_completed, execution_started
 
-    execution_started()
-    save_task = asyncio.ensure_future(save)
+    try:
+        receipt = execution_started(kind="persistence") if record_execution else None
+    except BaseException:
+        # Managers install candidate RAM state before entering this helper. A
+        # recovery guard rejects before the coroutine starts: restore RAM and
+        # dispose of that unstarted coroutine instead of leaking it.
+        if inspect.iscoroutine(save):
+            save.close()
+        restore_committed_state()
+        raise
     cancellation: asyncio.CancelledError | None = None
 
-    # Once live manager state has changed, caller cancellation must not abandon an
-    # in-flight Store write. Keep observing it to a known result, then preserve the
-    # original persistence and cancellation precedence.
-    while not save_task.done():
-        try:
-            await asyncio.shield(save_task)
-        except asyncio.CancelledError as err:
-            if save_task.cancelled():
+    async def settle(operation: Awaitable[None]) -> None:
+        nonlocal cancellation
+        task = asyncio.ensure_future(operation)
+        # The lock owner must observe both surviving writes and readbacks. A
+        # second cancellation cannot abandon recovery or release the lock early.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as err:
+                if task.cancelled():
+                    break
+                cancellation = cancellation or err
+            except Exception:
                 break
-            if cancellation is None:
-                cancellation = err
-        except Exception:
-            # Inspect the finished task below so rollback and cancellation
-            # precedence stay in one place.
-            break
+        task.result()
 
     try:
-        save_task.result()
+        await settle(save)
     except BaseException as err:
         if reconcile_failed_state is None:
             # Initialization repairs do not yet have a usable validator for
@@ -69,7 +85,7 @@ async def _async_settle_transactional_save(
             restore_committed_state()
         else:
             try:
-                await reconcile_failed_state()
+                await settle(reconcile_failed_state())
             except BaseException:
                 # A failed read cannot establish which generation reached disk.
                 invalidate_state()
@@ -78,6 +94,7 @@ async def _async_settle_transactional_save(
         raise
 
     remember_committed_state()
-    execution_completed()
+    if record_execution:
+        execution_completed(receipt)
     if cancellation is not None:
         raise cancellation

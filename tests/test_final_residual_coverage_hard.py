@@ -119,7 +119,10 @@ async def test_memory_move_to_disabled_shared_scope_is_rejected(hass, monkeypatc
 async def test_quiet_hours_failed_volume_apply_releases_unchanged_control(
     hass, monkeypatch
 ) -> None:
-    from custom_components.extended_openai_conversation_responses import quiet_hours
+    from custom_components.extended_openai_conversation_responses import (
+        quiet_hours,
+        quiet_hours_runtime,
+    )
 
     manager = quiet_hours.QuietHoursManager(hass)
     manager._active = {"controls": {}, "observed_controls": ["media_player.kitchen"]}
@@ -135,7 +138,9 @@ async def test_quiet_hours_failed_volume_apply_releases_unchanged_control(
     manager._async_set_volume = AsyncMock(side_effect=RuntimeError("failed"))
     manager._async_save_control_state_locked = AsyncMock()
     manager._log_control_failure = Mock()
-    monkeypatch.setattr(quiet_hours, "_current_volume", Mock(side_effect=[0.8, 0.8]))
+    monkeypatch.setattr(
+        quiet_hours_runtime, "_current_volume", Mock(side_effect=[0.8, 0.8])
+    )
     controls = {"media_player.kitchen": control}
 
     await manager._async_apply_volume_locked(
@@ -151,7 +156,10 @@ async def test_quiet_hours_failed_volume_apply_releases_unchanged_control(
 async def test_quiet_hours_failed_volume_apply_retains_changed_control(
     hass, monkeypatch
 ) -> None:
-    from custom_components.extended_openai_conversation_responses import quiet_hours
+    from custom_components.extended_openai_conversation_responses import (
+        quiet_hours,
+        quiet_hours_runtime,
+    )
 
     manager = quiet_hours.QuietHoursManager(hass)
     manager._active = {"controls": {}, "observed_controls": ["media_player.kitchen"]}
@@ -167,7 +175,9 @@ async def test_quiet_hours_failed_volume_apply_retains_changed_control(
     manager._async_set_volume = AsyncMock(side_effect=RuntimeError("failed"))
     manager._async_save_control_state_locked = AsyncMock()
     manager._log_control_failure = Mock()
-    monkeypatch.setattr(quiet_hours, "_current_volume", Mock(side_effect=[0.8, 0.5]))
+    monkeypatch.setattr(
+        quiet_hours_runtime, "_current_volume", Mock(side_effect=[0.8, 0.5])
+    )
     controls = {"media_player.kitchen": control}
 
     await manager._async_apply_volume_locked(

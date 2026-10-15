@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 
+from ci.enhanced_evidence import environment_fingerprint
 from ci.frontend_latency.compare import main
 
 
@@ -24,6 +25,12 @@ def test_comparison_keeps_historical_gaps_and_current_results(
             ]
         },
     }
+    environment = {"python_packages": {"openai": "3.10.0"}, "node": "v24.20.0"}
+    for item in (baseline, current):
+        item.update(
+            environment=environment,
+            environment_sha256=environment_fingerprint(environment),
+        )
     before = tmp_path / "baseline.json"
     after = tmp_path / "current.json"
     output = tmp_path / "result"

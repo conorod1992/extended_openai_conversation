@@ -27,6 +27,7 @@ from .agent_config import (
     function_tool_enabled,
     merge_agent_config as _strict_merge_agent_config,
     preserve_legacy_guest_policy,
+    project_agent_config_fields,
     validate_function_groups,
     validate_function_tools,
 )
@@ -702,13 +703,10 @@ def persist_valid_function_configuration(
     # Function edits must not turn implicit model-dependent defaults into saved
     # settings. For example, an absent effort follows each routed model's profile;
     # persisting the default model's effort can invalidate an unchanged route.
-    normalized = deepcopy(dict(subentry.data))
     changed_fields = {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS, *(extra_updates or {})}
-    for key in changed_fields:
-        if key in normalized_candidate:
-            normalized[key] = deepcopy(normalized_candidate[key])
-        else:
-            normalized.pop(key, None)
+    normalized = project_agent_config_fields(
+        subentry.data, changed_fields, normalized_candidate
+    )
     normalization_ms = (perf_counter() - phase) * 1000
     from .management_ui import _validated_model_request
 
@@ -1194,11 +1192,16 @@ async def async_function_repair(
     )
     require_repair_revision(subentry, operation_revision)
     update_live_subentry(hass, entry, subentry, data=persisted)
-    return {
-        "valid": True,
-        "tools": deepcopy(validated_tools),
-        "revision": saved_agent_config_revision(subentry, persisted, subentry.title),
-        "agent": management_loading_performance._agent_snapshot(
-            hass, entry, subentry, config=persisted
-        ),
-    }
+    payload = _safe_configuration_payload(
+        hass, management_ui, management_loading_performance, entry, subentry
+    )
+    payload.update(
+        {
+            "valid": True,
+            "tools": deepcopy(validated_tools),
+            "agent": management_loading_performance._agent_snapshot(
+                hass, entry, subentry, config=persisted
+            ),
+        }
+    )
+    return payload

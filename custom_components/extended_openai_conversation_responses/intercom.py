@@ -376,6 +376,21 @@ class IntercomManager:
             targets=targets,
             deliveries={entity_id: Delivery(entity_id) for entity_id in targets},
         )
+        from .execution_outcomes import execution_completed, execution_started
+
+        # This receipt describes queue admission, not eventual announcement.
+        # No await separates these validated inputs from the first mutation.
+        receipt = execution_started(
+            kind="broadcast",
+            prepared={
+                "message": text,
+                "targets": targets,
+                "origin_entity_id": origin_entity_id,
+                "origin_device_id": origin_device_id,
+                "ttl_seconds": bounded_ttl,
+                "source": source,
+            },
+        )
         self._history.appendleft(item)
         for entity_id in targets:
             state = self.hass.states.get(entity_id)
@@ -395,6 +410,7 @@ class IntercomManager:
         unsubscribe = async_call_later(self.hass, bounded_ttl, expire_message)
         self._expiry_unsubscribers.add(unsubscribe)
         self._expiry_by_message[item.id] = unsubscribe
+        execution_completed(receipt)
         return item.as_dict()
 
     @callback

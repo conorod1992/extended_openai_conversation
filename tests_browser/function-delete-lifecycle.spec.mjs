@@ -120,6 +120,9 @@ test("queued Function Tool mutation resolves its implicit revision when it start
     currentRevision:browserHarness.panel._configData.revision,
     tailReleased:browserHarness.panel._eocFunctionMutationTail === null,
     mutations:browserHarness.panel._eocAgentMutations,
+    draftTools:browserHarness.panel._draft.functions,
+    baselineTools:browserHarness.panel._configData.config.functions,
+    persistedTools:browserHarness.getState().configuration.config.functions,
   }));
   expect(result.calls).toHaveLength(2);
   expect(result.calls[1]).toMatchObject({action:"set_enabled", name:secondName, enabled:false});
@@ -128,6 +131,8 @@ test("queued Function Tool mutation resolves its implicit revision when it start
   expect(result.currentRevision).toBe(`${result.calls[1].revision}x`);
   expect(result.tailReleased).toBe(true);
   expect(result.mutations).toBe(0);
+  expect(result.draftTools).toEqual(result.baselineTools);
+  expect(result.baselineTools).toEqual(result.persistedTools);
 
   await panel.evaluate(async host => {
     let observed;

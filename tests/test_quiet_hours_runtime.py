@@ -768,14 +768,14 @@ async def test_volume_apply_covers_skip_noop_success_and_rollback(
         )
     manager._async_save_locked.assert_not_awaited()
 
-    monkeypatch.setattr(quiet_hours, "_current_volume", lambda *_args: None)
+    monkeypatch.setattr(runtime, "_current_volume", lambda *_args: None)
     await manager._async_apply_volume_locked(
         "assist_satellite.test", "media_player.unknown", controls
     )
     manager._async_save_locked.assert_not_awaited()
 
     values = iter((0.1, 0.8, 0.8, 0.9, 0.9, 0.9))
-    monkeypatch.setattr(quiet_hours, "_current_volume", lambda *_args: next(values))
+    monkeypatch.setattr(runtime, "_current_volume", lambda *_args: next(values))
     await manager._async_apply_volume_locked(
         "assist_satellite.test", "media_player.quiet", controls
     )
@@ -813,14 +813,14 @@ async def test_switch_apply_covers_skip_noop_success_and_rollback(
         )
     manager._async_save_locked.assert_not_awaited()
 
-    monkeypatch.setattr(quiet_hours, "_current_switch", lambda *_args: None)
+    monkeypatch.setattr(runtime, "_current_switch", lambda *_args: None)
     await manager._async_apply_switch_locked(
         "assist_satellite.test", "switch.unknown", False, controls
     )
     manager._async_save_locked.assert_not_awaited()
 
     values = iter((False, True, True, True, True, True))
-    monkeypatch.setattr(quiet_hours, "_current_switch", lambda *_args: next(values))
+    monkeypatch.setattr(runtime, "_current_switch", lambda *_args: next(values))
     await manager._async_apply_switch_locked(
         "assist_satellite.test", "switch.already_off", False, controls
     )
@@ -1157,7 +1157,10 @@ async def test_update_config_rolls_back_then_succeeds() -> None:
     manager = _runtime_manager()
     previous = manager.config
     manager._async_restore_locked = AsyncMock()
-    manager._async_save_locked = AsyncMock(side_effect=RuntimeError("disk failed"))
+    manager._store.async_save = AsyncMock(side_effect=RuntimeError("disk failed"))
+    manager._store.async_load = AsyncMock(
+        return_value={"config": previous.as_dict(), "active": None}
+    )
     manager._reschedule = Mock()
 
     with pytest.raises(RuntimeError, match="disk failed"):
@@ -1166,7 +1169,7 @@ async def test_update_config_rolls_back_then_succeeds() -> None:
     manager._async_restore_locked.assert_not_awaited()
     manager._reschedule.assert_not_called()
 
-    manager._async_save_locked = AsyncMock()
+    manager._store.async_save = AsyncMock()
     manager.async_reconcile = AsyncMock()
     manager.snapshot = Mock(return_value={"updated": True})
     result = await manager.async_update_config(
@@ -1243,6 +1246,9 @@ async def test_apply_controls_claim_only_needed_values_and_release_on_failure() 
             "media_player.quiet": _state(
                 "media_player.quiet", "idle", volume_level=0.1
             ),
+            "media_player.failed": _state(
+                "media_player.failed", "idle", volume_level=0.8
+            ),
             "switch.on": _state("switch.on", "on"),
             "switch.off": _state("switch.off", "off"),
         }
@@ -1253,6 +1259,7 @@ async def test_apply_controls_claim_only_needed_values_and_release_on_failure() 
     manager._async_set_volume = AsyncMock()
     manager._async_set_switch = AsyncMock()
     controls = {}
+    manager._active = {"controls": controls}
 
     await manager._async_apply_volume_locked(
         "assist_satellite.bedroom", "media_player.quiet", controls
@@ -1273,7 +1280,7 @@ async def test_apply_controls_claim_only_needed_values_and_release_on_failure() 
     controls.clear()
     manager._async_set_volume = AsyncMock(side_effect=RuntimeError("offline"))
     await manager._async_apply_volume_locked(
-        "assist_satellite.bedroom", "media_player.loud", controls
+        "assist_satellite.bedroom", "media_player.failed", controls
     )
     assert controls == {}
 
@@ -1360,9 +1367,22 @@ async def test_service_save_shutdown_and_callbacks() -> None:
             "volume_set",
             {"entity_id": "media_player.bedroom", "volume_level": 0.2},
             blocking=True,
+            context=None,
         ),
-        call("switch", "turn_on", {"entity_id": "switch.wake"}, blocking=True),
-        call("switch", "turn_off", {"entity_id": "switch.wake"}, blocking=True),
+        call(
+            "switch",
+            "turn_on",
+            {"entity_id": "switch.wake"},
+            blocking=True,
+            context=None,
+        ),
+        call(
+            "switch",
+            "turn_off",
+            {"entity_id": "switch.wake"},
+            blocking=True,
+            context=None,
+        ),
     ]
 
     manager.async_reconcile = AsyncMock()
@@ -1673,6 +1693,7 @@ async def test_apply_switch_failure_releases_ownership(
 ) -> None:
     manager = _bare_runtime_manager(SimpleNamespace())
     controls: dict[str, Any] = {}
+    manager._active = {"controls": controls}
     manager._async_save_locked = AsyncMock()
     manager._async_set_switch = AsyncMock(side_effect=RuntimeError("failed"))
     monkeypatch.setattr(runtime, "_current_switch", lambda *_args: True)
@@ -1682,7 +1703,9 @@ async def test_apply_switch_failure_releases_ownership(
     )
 
     assert "switch.test" not in controls
-    assert manager._async_save_locked.await_count == 2
+    assert manager._active["pending_controls"] == {}
+    assert manager._active["observed_controls"] == []
+    assert manager._async_save_locked.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -1694,7 +1717,7 @@ async def test_restore_with_non_mapping_controls_clears_active_state() -> None:
     await manager._async_restore_locked()
 
     assert manager._active is None
-    manager._async_save_locked.assert_awaited_once_with()
+    assert manager._async_save_locked.await_count == 2
 
 
 @pytest.mark.asyncio

@@ -855,10 +855,14 @@
     "chat_model": [
       "gpt-4-turbo",
       "gpt-4.1",
+      "gpt-4.1-2025-04-14",
       "gpt-4.1-mini",
+      "gpt-4.1-mini-2025-04-14",
       "gpt-4o",
       "gpt-4o-2024-08-06",
+      "gpt-4o-2024-11-20",
       "gpt-4o-mini",
+      "gpt-4o-mini-2024-07-18",
       "gpt-5",
       "gpt-5-mini",
       "gpt-5-nano",
@@ -1115,5 +1119,5 @@
       240
     ]
   },
-  "catalogue_capability_digest": "6d649a3c054bef3237b5494ef7668f0ea0f8e9fb67e3d3e58813aa34fe73eb95"
+  "catalogue_capability_digest": "4a4a007d8fdbc15a933630917fc30ff891ac582f4d4a6e126ac1a5964953b760"
 }

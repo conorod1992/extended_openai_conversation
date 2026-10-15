@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from tests.test_subsystem_lifecycle_apis import _seeded_continuity
+
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -28,7 +30,6 @@ def test_backup_recovery_preserves_absence_of_function_fields(monkeypatch) -> No
         return dict(value)
 
     monkeypatch.setattr(backup, "agent_config_snapshot", normalize)
-    monkeypatch.setattr(backup, "preserve_legacy_guest_policy", lambda raw, value: value)
     monkeypatch.setattr(repair, "function_tools_issue", lambda raw: ([], "broken"))
     monkeypatch.setattr(repair, "safe_function_configuration", lambda raw: {})
 
@@ -185,6 +186,7 @@ async def test_quiet_hours_disabled_state_reschedules_existing_subscriptions(
 
 @pytest.mark.asyncio
 async def test_quiet_hours_restore_discards_malformed_controls(hass) -> None:
+    from copy import deepcopy
     from custom_components.extended_openai_conversation_responses import (
         quiet_hours_runtime as quiet,
     )
@@ -196,12 +198,18 @@ async def test_quiet_hours_restore_discards_malformed_controls(hass) -> None:
             "switch.bad": "not-a-control",
         }
     }
-    manager._async_save_locked = AsyncMock()
+    generations = []
+    manager._async_save_locked = AsyncMock(
+        side_effect=lambda: generations.append(deepcopy(manager._active))
+    )
 
     await manager._async_restore_locked()
 
     assert manager._active is None
-    manager._async_save_locked.assert_awaited_once()
+    assert len(generations) == 2
+    assert generations[0]["controls"] == {}
+    assert generations[1] is None
+    hass.services.async_call.assert_not_awaited()
 
 
 def test_sentence_pattern_whitespace_is_normalized() -> None:
@@ -235,14 +243,17 @@ def test_restore_runtime_clears_registry_only_managers(hass, monkeypatch) -> Non
     )
 
     key = ("entry", "agent")
-    cont = SimpleNamespace(
+    cont = _seeded_continuity(
         _sessions={"x": 1},
         _memory_bundles={"x": 1},
         _pending_ends={"x"},
         _ignored_conversation_ids={"x": None},
     )
-    rules = SimpleNamespace(_conversation_overrides={"x": 1})
-    groups = SimpleNamespace(_sessions={"x": 1}, _last_request={"x": 1})
+    rules = request_rules.RequestRuleRuntime()
+    rules.set("x", {"model": "x"})
+    groups = function_groups.FunctionGroupRuntime()
+    groups.begin("x", 5)
+    groups._last_request = {"x": 1}
     hass.data[continuity._MANAGERS] = {key: cont}
     hass.data[request_rules._RUNTIMES] = {key: rules}
     hass.data[function_groups._RUNTIMES] = {key: groups}

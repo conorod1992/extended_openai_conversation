@@ -12,6 +12,9 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.extended_openai_conversation_responses import backup
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    preserve_legacy_guest_policy,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_MODE,
     CONF_SKIP_AUTHENTICATION,
@@ -112,7 +115,7 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
     # Restore writes the integration's canonical/default-expanded agent config, so
     # compare against the same canonical representation rather than the sparse raw
     # subentry mapping Home Assistant happened to start with.
-    subentry_data_before = backup.preserve_legacy_guest_policy(
+    subentry_data_before = preserve_legacy_guest_policy(
         dict(subentry.data), backup.agent_config_snapshot(subentry.data)
     )
     # Rollback must preserve an unset provider setting rather than materialize a default.
