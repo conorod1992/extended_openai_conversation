@@ -853,10 +853,12 @@ async def _booted_soak(config_dir, seed, scale):
                     recovered, _ = await turn("Recover after cancellation")
                     assert _speech(recovered) == "Process remains responsive."
                 if long_lifetime and window == 5:
-                    # Production TTL elapses naturally during idle. Cleanup is
-                    # intentionally lazy: the next supported start reclaims it.
+                    # Production TTL elapses naturally during idle. The scheduled
+                    # expiry callback (or an intervening reload) reclaims the
+                    # private file without waiting for the next supported start.
                     assert monotonic() - lifetime_started >= 900
-                    assert abandoned_id in transfers._imports(hass)
+                    assert abandoned_id not in transfers._imports(hass)
+                    assert not abandoned_path.exists()
                     fresh = await transfers._start_import(
                         hass,
                         entry.entry_id,

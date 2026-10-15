@@ -339,7 +339,9 @@ async def test_combined_context_boundary_tiers_use_real_assist_and_provider_wire
         CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_EAGER,
         CONF_KNOWLEDGE_ENABLED: True,
         CONF_ARCHIVE_ENABLED: True,
-        CONF_CONTEXT_THRESHOLD: 1_000,
+        # Keep preflight context below the test threshold. Reported usage
+        # below deliberately triggers compaction only after the recent reply.
+        CONF_CONTEXT_THRESHOLD: 1_000_000,
         CONF_CONTEXT_TRUNCATE_STRATEGY: CONTEXT_TRUNCATE_KEEP_RECENT,
         CONF_PROMPT: prompt,
     }
@@ -431,7 +433,7 @@ async def test_combined_context_boundary_tiers_use_real_assist_and_provider_wire
         population_seconds=population_seconds,
     )
 
-    observed_tokens = 12_000 + tier * 24_000
+    observed_tokens = 12_000_000 + tier * 24_000_000
     warm_turns = 8 if stress_scale == 1 else 16
     wire = _install_wire(
         monkeypatch,
@@ -491,6 +493,10 @@ async def test_combined_context_boundary_tiers_use_real_assist_and_provider_wire
         conversation_id = warm.conversation_id
     second = await _say(hass, entry.entry_id, owner, recent_marker, conversation_id)
     assert _speech(second) == "Recent turn complete"
+    # This response supplies the high usage that triggers compaction. Its input
+    # must still contain the warm history, proving preflight did not prune it.
+    before_compaction = json.dumps(wire.requests[-1]["body"], ensure_ascii=False)
+    assert first_marker in before_compaction and recent_marker in before_compaction
     third = await _say(
         hass,
         entry.entry_id,
@@ -592,7 +598,9 @@ async def test_concurrent_deferred_summaries_keep_owner_and_recent_turns(
             CONF_API_MODE: mode,
             CONF_CHAT_MODEL: "gpt-5.6",
             CONF_FUNCTION_TOOLS: [],
-            CONF_CONTEXT_THRESHOLD: 1000,
+            # A held summary must start after the third reply, not during
+            # preflight of the warmup request (which would deadlock the fixture).
+            CONF_CONTEXT_THRESHOLD: 10_000,
             CONF_CONTEXT_TRUNCATE_STRATEGY: CONTEXT_TRUNCATE_SUMMARIZE,
         },
     )
@@ -611,6 +619,7 @@ async def test_concurrent_deferred_summaries_keep_owner_and_recent_turns(
         number = owners.pop()
         requests.append((number, body))
         if not body.get("stream", False):
+            assert traffic[number] >= 3, "Summary started before the usage trigger"
             summary_requests.append(number)
             if number < 4:
                 started[number].set()
@@ -663,7 +672,7 @@ async def test_concurrent_deferred_summaries_keep_owner_and_recent_turns(
                 )
             return httpx.Response(200, json=payload, request=request)
         traffic[number] += 1
-        tokens = 10000 if traffic[number] == 3 else 50
+        tokens = 100_000 if traffic[number] == 3 else 50
         text = f"Reply PRIVATE-{number}"
         if mode == "chat_completions":
             content = _text_with_usage(text, tokens)
@@ -792,7 +801,10 @@ async def test_noncompleted_summary_text_is_rejected_and_recovers(
     owner = MockUser(id="summary-recovery-owner", name="Summary owner", is_owner=True).add_to_hass(hass)
     entry = _make_entry("Summary completion recovery", include_ai_task=False,
         conversation_options={CONF_API_MODE: mode, CONF_CHAT_MODEL: "gpt-5.6",
-            CONF_FUNCTION_TOOLS: [], CONF_CONTEXT_THRESHOLD: 1000,
+            CONF_FUNCTION_TOOLS: [],
+            # A held summary must start after the third reply, not during
+            # preflight of the warmup request (which would deadlock the fixture).
+            CONF_CONTEXT_THRESHOLD: 10_000,
             CONF_CONTEXT_TRUNCATE_STRATEGY: CONTEXT_TRUNCATE_SUMMARIZE})
     await _setup_entry(hass, entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
@@ -804,6 +816,7 @@ async def test_noncompleted_summary_text_is_rejected_and_recovers(
         body = json.loads(request.content)
         requests.append(body)
         if not body.get("stream"):
+            assert foreground >= 3, "Summary started before the usage trigger"
             summaries += 1
             first = summaries == 1
             if first:
@@ -828,7 +841,7 @@ async def test_noncompleted_summary_text_is_rejected_and_recovers(
                     "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}}
             return httpx.Response(200, json=payload, request=request)
         foreground += 1
-        tokens = 10000 if foreground in {3, 6} else 50
+        tokens = 100_000 if foreground in {3, 6} else 50
         if mode == "responses":
             events = [json.loads(line[6:]) for line in _responses_sse_text("Healthy reply").decode().splitlines()
                       if line.startswith("data: ")]
