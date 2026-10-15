@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -175,23 +174,12 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                     continue
                 if suffix == "request_debug_managers":
                     manager.clear()
-                tasks = [
-                    getattr(manager, attribute, None)
-                    for attribute in ("_prune_task", "_prune_save_task")
-                ]
-                pending = [
-                    task
-                    for task in tasks
-                    if isinstance(task, asyncio.Task) and not task.done()
-                ]
-                for task in pending:
-                    task.cancel()
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
-                if suffix in {"usage_managers", "volatile_usage_managers"}:
-                    manager.dispose_maintenance()
-                if hasattr(manager, "_stopping"):
-                    manager._stopping = True
+                if suffix in {
+                    "usage_managers",
+                    "volatile_usage_managers",
+                    "temporary_memory_managers",
+                }:
+                    await manager.async_prepare_for_deletion()
                 stores.extend(_owned_stores(manager))
             for store in stores:
                 # Cancel delayed/final writers on the actual owned handle before

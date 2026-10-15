@@ -89,6 +89,7 @@
     "tests_real_ha/test_shared_service_lifecycle.py",
     "tests_real_ha/test_sibling_subentry_inflight_reload.py",
     "tests_real_ha/test_subentry_runtime_policy_isolation.py",
+    "tests_real_ha/test_subsystem_lifecycle_apis.py",
     "tests_real_ha/test_template_shutdown_acceptance.py",
     "tests_real_ha/test_temporary_memory_lifecycle.py",
     "tests_real_ha/test_temporary_memory_unload_reload.py",
@@ -757,6 +758,12 @@
       "reason": "Focused regression coverage runs in the ordinary genuine HA acceptance suite; enhanced nightly retains its separate stress campaigns."
     },
     "tests_real_ha/test_script_transformer_migration.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Focused regression coverage runs in the ordinary genuine HA acceptance suite; enhanced nightly retains its separate stress campaigns."
+    },
+    "tests_real_ha/test_subsystem_lifecycle_apis.py": {
       "workflow": "real-ha.yml",
       "job": "stable",
       "selector": "tests_real_ha/",
