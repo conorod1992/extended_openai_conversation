@@ -6,6 +6,8 @@ TEST_PATHS=(
   tests_real_ha/test_quiet_hours_identity_shutdown.py
   tests_real_ha/test_quiet_hours_generation_recovery.py
   tests_real_ha/test_quiet_hours_scheduling.py
+  tests/test_bounded_backup_serialization.py
+  tests_real_ha/test_backup_processing_boundary.py
   tests_real_ha/test_archive_record_integrity.py
   tests_real_ha/test_conversation_runtime_lifecycle.py
   tests_real_ha/test_archive_private_activity.py
