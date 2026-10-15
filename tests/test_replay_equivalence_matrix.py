@@ -33,7 +33,7 @@ from tests.test_function_tool_error_recovery import (
 from tests.functions.behaviour_generators import assert_typed_value
 
 
-# Only pairs permitted by the declared schema should canonicalize as equivalent.
+# Schema acceptance does not erase handler-visible numeric types.
 @pytest.mark.parametrize(
     "schema,initial,repeated,equivalent",
     [
@@ -41,7 +41,7 @@ from tests.functions.behaviour_generators import assert_typed_value
             {"payload": {"type": "array", "items": {"type": "number"}}},
             {"payload": [1, 2]},
             {"payload": [1.0, 2.0]},
-            True,
+            False,
         ),
         (
             {"payload": {"type": "object", "properties": {
@@ -49,7 +49,7 @@ from tests.functions.behaviour_generators import assert_typed_value
             }, "required": ["value"]}},
             {"payload": {"value": 1}},
             {"payload": {"value": 1.0}},
-            True,
+            False,
         ),
         (
             {"payload": {"type": "object", "properties": {

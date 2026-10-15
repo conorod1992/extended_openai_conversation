@@ -117,11 +117,11 @@ class CompositeFunction(Function):
         new_arguments = arguments.copy()
         result: Any = None
 
-        for next_function_config in sequence:
+        for index, next_function_config in enumerate(sequence):
             next_function = get_function(next_function_config["type"])
-            with propagate_function_execution_errors():
-                from ..execution_outcomes import execute_backend
+            from ..execution_outcomes import execute_backend, execution_child
 
+            with propagate_function_execution_errors(), execution_child(index):
                 result = await execute_backend(
                     next_function,
                     hass,

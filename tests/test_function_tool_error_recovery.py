@@ -157,7 +157,7 @@ async def test_replay_rejection_retains_matching_error_result(hass) -> None:
     entity = _entity(hass)
     chat_log = _chat_log(hass)
     call = _call("new-id", "action")
-    entity._unacknowledged_tool_calls = {chat_log.conversation_id: {_signature(call)}}
+    entity._unacknowledged_tool_schemas = {chat_log.conversation_id: {_signature(call): {}}}
     _retain_calls(chat_log, [call])
     with pytest.raises(HomeAssistantError, match="not acknowledged"):
         await async_execute_tool_exchange(entity, chat_log, [call], [_tool("action")], FunctionCallBudget(1), None, [])

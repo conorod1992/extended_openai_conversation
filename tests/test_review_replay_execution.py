@@ -93,6 +93,7 @@ def _install_native_boundary(hass, monkeypatch):
         native, "async_call_ha_action", ha_actions._async_call_ha_action_unchecked
     )
     monkeypatch.setattr(ha_actions, "_capture_previous_state", lambda *a: {})
+    # An adapter cannot prove whether a raised schema error preceded effects.
     hass.services.has_service.return_value = True
     hass.services.supports_response.return_value = SupportsResponse.NONE
     hass.services.async_call = AsyncMock(return_value=None)
@@ -101,7 +102,7 @@ def _install_native_boundary(hass, monkeypatch):
 @pytest.mark.parametrize(
     "failure,expected",
     [
-        (vol.Invalid("schema rejected"), "rejected"),
+        (vol.Invalid("adapter schema error"), "uncertain"),
         (TimeoutError("acknowledgement lost"), "uncertain"),
         (RuntimeError("handler failed"), "uncertain"),
     ],
@@ -160,7 +161,7 @@ async def test_scheduler_admission_has_no_effect_receipt(hass, monkeypatch, admi
 @pytest.mark.parametrize(
     "first_error", [None, HomeAssistantError("first outcome unknown")]
 )
-async def test_native_batch_keeps_prior_effects_when_next_child_is_rejected(
+async def test_native_batch_keeps_unknown_adapter_failures_uncertain(
     hass, monkeypatch, first_error
 ):
     _install_native_boundary(hass, monkeypatch)

@@ -378,6 +378,9 @@ class DelayedToolManager:
         now = dt_util.utcnow()
         context = getattr(llm_context, "context", None)
         record = None
+        from .execution_outcomes import execution_operation
+
+        operation = None
         try:
             async with self._lock:
                 if not self._setup_complete or self._quarantined:
@@ -404,17 +407,33 @@ class DelayedToolManager:
                 )
                 updated = dict(self._records)
                 updated[record.call_id] = record
-                await self._async_save_records_transactionally(updated)
+                with execution_operation(
+                    "delayed_job",
+                    {
+                        "operation": "schedule",
+                        "entry_id": record.entry_id,
+                        "subentry_id": record.subentry_id,
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "delay_seconds": delay.total_seconds(),
+                        "definition": record.definition_fingerprint,
+                        "user_id": record.user_id,
+                        "device_id": record.device_id,
+                    },
+                ) as operation:
+                    await self._async_save_records_transactionally(updated)
         except BaseException:
             # Transactional readback can settle this particular queue write.
             # An unreadable generation invalidates the manager and stays unknown.
             if record is not None and self._setup_complete and not self._quarantined:
                 from .execution_outcomes import execution_completed, execution_rejected
 
-                if record.call_id in self._records:
-                    execution_completed()
-                else:
-                    execution_rejected()
+                receipt = operation.receipt if operation is not None else None
+                if receipt is not None:
+                    if record.call_id in self._records:
+                        execution_completed(receipt)
+                    else:
+                        execution_rejected(receipt)
             raise
         finally:
             # A committed call survives a lost acknowledgement, but rejected work never arms.
@@ -574,6 +593,12 @@ class DelayedToolManager:
                 self._tasks.pop(call_id, None)
 
     async def _async_execute_due(self, call_id: str) -> bool:
+        from .execution_outcomes import detached_execution
+
+        with detached_execution():
+            return await self._async_execute_due_detached(call_id)
+
+    async def _async_execute_due_detached(self, call_id: str) -> bool:
         """Re-authorize a due call against live configuration and execute it once."""
         record = self._records.get(call_id)
         if record is None or record.status != _PENDING:

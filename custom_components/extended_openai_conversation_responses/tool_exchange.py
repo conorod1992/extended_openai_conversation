@@ -36,7 +36,11 @@ from .parallel_tool_execution import (
     async_execute_parallel_safe_batch_outcomes,
     resolve_parallel_safe_batch,
 )
-from .tool_replay_guard import bind_dispatch_origin, was_unacknowledged_equivalent
+from .tool_replay_guard import (
+    bind_dispatch_origin,
+    was_unacknowledged_equivalent,
+    with_effect_replay_scope,
+)
 
 _MAX_ERROR_TEXT = 512
 
@@ -477,6 +481,7 @@ async def _async_execute_with_recovery(
         chat_log.async_add_assistant_content_without_tools(tool_result_content)
 
 
+@with_effect_replay_scope
 async def async_execute_tool_exchange(
     entity: Any,
     chat_log: conversation.ChatLog,

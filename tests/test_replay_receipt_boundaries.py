@@ -63,8 +63,8 @@ def _attempt_outcome(entity, call, tool, steps):
         (["start", "start", "complete"], "uncertain"),
         (["start", "reject"], "rejected"),
         (["start", "start", "reject"], "uncertain"),
-        (["start", "complete", "start", "reject"], "uncertain"),
-        (["start", "complete", "reject"], "uncertain"),
+        (["start", "complete", "start", "reject"], "partial"),
+        (["start", "complete", "reject"], "partial"),
         (["reject"], "rejected"),
     ],
 )
