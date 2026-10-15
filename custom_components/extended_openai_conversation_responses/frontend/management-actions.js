@@ -191,24 +191,7 @@ export function bindFrontendCorrectness(panel) {
 export {fieldErrorKey, normalizeGuestModeTimestamp, runFrontendMutation, validatedImportMatches, setControlPending, saveConfiguration};
 
 
-export const MUTATIONS = new Map([
-  ["backup", new Set(["restore"])],
-  ["quiet_hours", new Set(["update"])],
-  ["configuration", new Set(["update", "save", "import"])],
-  ["function_repair", new Set(["save", "save_one", "delete_one", "configuration_save"])],
-  ["conversations", new Set(["delete", "end_active"])],
-  ["guest_mode", new Set(["save_policy", "update", "disable"])],
-  ["knowledge", new Set(["create", "update", "delete", "set_enabled"])],
-  ["memories", new Set(["add", "update", "delete", "clear", "temporary_add", "temporary_delete", "temporary_update", "temporary_clear", "reassign_legacy"])],
-  ["request_rules", new Set(["settings", "defaults", "wording_groups", "groups", "create", "update", "delete", "duplicate", "move", "rule_pack_import"])],
-  ["settings", new Set(["update"])],
-  ["tools", new Set(["save", "delete", "set_enabled", "save_group", "delete_group", "ha_add"])],
-  ["usage", new Set(["clear_details"])],
-]);
-
-export function isAgentMutation(section, action) {
-  return Boolean(MUTATIONS.get(section)?.has(action));
-}
+export {isAgentMutation} from "./management-mutation-effects.js";
 
 export function syncAgentPicker(panel) {
   for (const id of ["guest-now", "guest-update", "guest-disable"]) {

@@ -558,3 +558,64 @@ async def test_sequential_shared_draft_is_preserved_and_savable(hass, hass_ws_cl
         await hass.async_block_till_done()
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario", ["configuration_rules", "rule_pack", "usage"])
+async def test_frontend_mutation_effects_preserve_real_revisions_and_projections(
+    hass: HomeAssistant, hass_ws_client: Any, scenario: str
+) -> None:
+    """The shipped browser uses actual HA acknowledgements and refreshed projections."""
+    entry = _make_entry(
+        "Browser Mutation Effects",
+        include_ai_task=False,
+        conversation_options={
+            CONF_FUNCTION_TOOLS: [],
+            "prompt": "Initial mutation prompt",
+        },
+    )
+    await _setup_entry(hass, entry)
+    if scenario == "usage":
+        from custom_components.extended_openai_conversation_responses.usage import (
+            RequestUsage,
+            async_get_usage,
+        )
+
+        subentry = next(iter(entry.subentries.values()))
+        manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
+        async with manager.async_run():
+            await manager.async_record_request(
+                successful=True,
+                usage=RequestUsage(input_tokens=12, output_tokens=5, total_tokens=17),
+                provider="openai",
+                model="gpt-5-mini",
+                api_mode="responses",
+            )
+
+    class BrowserClient:
+        client = None
+
+        async def send_json_auto_id(self, message):
+            if self.client is None:
+                self.client = await _admin_client(
+                    hass, hass_ws_client, user_id="browser-mutation-effects-admin"
+                )
+            await self.client.send_json_auto_id(message)
+
+        async def receive_json(self):
+            return await self.client.receive_json()
+
+    runner, backend_url = await _start_ws_bridge(BrowserClient())
+    try:
+        await _run_playwright(
+            repo_root=Path(__file__).resolve().parent.parent,
+            spec="tests_browser/real-ha-mutation-effects.spec.mjs",
+            config="playwright.config.mjs",
+            env={
+                "REAL_HA_BACKEND_URL": backend_url,
+                "MUTATION_EFFECTS_SCENARIO": scenario,
+            },
+            failure_label="Frontend mutation effects diverged from genuine HA state",
+        )
+    finally:
+        await runner.cleanup()
