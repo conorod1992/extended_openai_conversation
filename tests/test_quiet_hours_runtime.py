@@ -1157,7 +1157,10 @@ async def test_update_config_rolls_back_then_succeeds() -> None:
     manager = _runtime_manager()
     previous = manager.config
     manager._async_restore_locked = AsyncMock()
-    manager._async_save_locked = AsyncMock(side_effect=RuntimeError("disk failed"))
+    manager._store.async_save = AsyncMock(side_effect=RuntimeError("disk failed"))
+    manager._store.async_load = AsyncMock(
+        return_value={"config": previous.as_dict(), "active": None}
+    )
     manager._reschedule = Mock()
 
     with pytest.raises(RuntimeError, match="disk failed"):
@@ -1166,7 +1169,7 @@ async def test_update_config_rolls_back_then_succeeds() -> None:
     manager._async_restore_locked.assert_not_awaited()
     manager._reschedule.assert_not_called()
 
-    manager._async_save_locked = AsyncMock()
+    manager._store.async_save = AsyncMock()
     manager.async_reconcile = AsyncMock()
     manager.snapshot = Mock(return_value={"updated": True})
     result = await manager.async_update_config(

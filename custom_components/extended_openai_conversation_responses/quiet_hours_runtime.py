@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 import logging
@@ -28,6 +27,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .operational_errors import log_handled_failure
+from .persistence_hardening import _async_settle_transactional_save
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
 
 _STORAGE_VERSION = 2
@@ -444,24 +444,34 @@ class QuietHoursManager:
 
     async def async_setup(self) -> None:
         async with self._lock:
-            if self._initialized:
+            if getattr(self, "_config_recovery_pending", False):
+                # A public getter may revisit an invalidated live manager. Its
+                # retained ownership must go through authoritative recovery,
+                # never the permissive cold-start migration below.
+                if not await self._async_recover_configuration_locked():
+                    return
+            elif self._initialized:
                 return
-            raw = await self._store.async_load() or {}
-            try:
-                self._config = _config_from_data(raw.get("config"))
-            except ValueError:
-                self._config = QuietHoursConfig()
-            self._active = self._normalize_active(raw.get("active"))
-            self._config_recovery_pending = False
-            self._initialized = True
-            self._reschedule()
+            else:
+                raw = await _async_settle_store_io(self._store.async_load()) or {}
+                try:
+                    self._config = _config_from_data(raw.get("config"))
+                except ValueError:
+                    self._config = QuietHoursConfig()
+                self._active = self._normalize_active(raw.get("active"))
+                self._config_recovery_pending = False
+                self._initialized = True
+                self._reschedule()
         await self.async_reconcile()
 
     async def async_shutdown(self) -> None:
+        self._cancel_scheduled_callbacks()
+        self.hass.states.async_remove(_STATE_ENTITY_ID)
+
+    def _cancel_scheduled_callbacks(self) -> None:
         for unsubscribe in self._unsubscribers:
             unsubscribe()
         self._unsubscribers.clear()
-        self.hass.states.async_remove(_STATE_ENTITY_ID)
 
     def discovery_snapshot(self) -> list[dict[str, Any]]:
         return [
@@ -497,8 +507,7 @@ class QuietHoursManager:
             previous = self._config
             self._config = candidate
             try:
-                # Observe a surviving native write before cancellation/readback.
-                await _async_settle_store_io(self._async_save_locked())
+                await self._async_save_locked()
                 now = dt_util.now()
                 old_period = (
                     quiet_period_for(now, previous.start, previous.end)
@@ -523,16 +532,12 @@ class QuietHoursManager:
                         self._active.get("controls", {})
                     )
                     self._active["pending_controls"] = {}
-                    await _async_settle_store_io(
-                        self._async_save_control_state_locked()
-                    )
+                    await self._async_save_control_state_locked()
             except BaseException as err:
                 failure = err
-                self._config = previous
-                self._config_recovery_pending = True
-                # Keep the original failure and an explicit retry obligation.
-                with suppress(BaseException):
-                    await self._async_recover_configuration_locked()
+                if self._config_recovery_pending:
+                    # Publish no speculative configuration while disk is unknown.
+                    self._config = previous
             needs_reconcile = failure is None or self._config != previous
             needs_schedule = needs_reconcile or self._config_recovery_pending
         try:
@@ -556,22 +561,46 @@ class QuietHoursManager:
             self._config_recovery_pending = False
             return True
         try:
-            stored = await self._store.async_load()
-            if stored is not None and not isinstance(stored, Mapping):
-                raise ValueError("Quiet Hours configuration storage is invalid")
-            config = _config_from_data((stored or {}).get("config"))
-            active = self._active
-            if stored is not None and "active" in stored:
-                active = self._normalize_active(stored["active"])
-                if stored["active"] is not None and active is None:
-                    raise ValueError("Quiet Hours saved ownership is invalid")
+            await _async_settle_store_io(self._async_reload_generation_locked())
         except Exception:
             return False
-        self._config_recovery_pending = False
+        return True
+
+    async def _async_reload_generation_locked(self) -> None:
+        """Validate both halves before installing an authoritative generation."""
+        recovering = (
+            getattr(self, "_config_recovery_pending", False) or not self._initialized
+        )
+        stored = await self._store.async_load()
+        if stored is not None and not isinstance(stored, Mapping):
+            raise ValueError("Quiet Hours configuration storage is invalid")
+        if self._active is not None and (
+            stored is None or "config" not in stored or "active" not in stored
+        ):
+            raise ValueError("Quiet Hours saved ownership is unavailable")
+        raw = stored or {}
+        config = _config_from_data(raw.get("config"))
+        active = self._normalize_active(raw.get("active"))
+        if raw.get("active") is not None and active is None:
+            raise ValueError("Quiet Hours saved ownership is invalid")
         self._config = config
         self._active = active
+        self._mark_generation_available()
+        # Installing a readback generation must also secure its callbacks before
+        # deferred caller cancellation can leave the recovery operation.
+        if recovering:
+            self._reschedule()
+
+    def _mark_generation_available(self) -> None:
+        self._config_recovery_pending = False
         self._initialized = True
-        return True
+
+    def _invalidate_generation(self) -> None:
+        # Keep unresolved ownership for diagnostics and retry; forbid actions
+        # until authoritative readback succeeds, including while disabled.
+        self._config_recovery_pending = True
+        self._initialized = False
+        self._reschedule()
 
     def _active_period_overlaps(self, period: QuietPeriod) -> bool:
         """Preserve ownership across a continuously quiet schedule change."""
@@ -594,8 +623,6 @@ class QuietHoursManager:
                 return
             if not await self._async_recover_configuration_locked():
                 return
-            if recovering:
-                self._reschedule()
             period = (
                 quiet_period_for(now, self._config.start, self._config.end)
                 if self._config.enabled
@@ -879,6 +906,8 @@ class QuietHoursManager:
             await self._async_save_locked()
 
     async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
+        if not await self._async_recover_configuration_locked():
+            return
         if self._active is None:
             return
         controls = self._active.get("controls", {})
@@ -966,8 +995,15 @@ class QuietHoursManager:
         )
 
     async def _async_save_locked(self) -> None:
-        await self._store.async_save(
-            {"config": self._config.as_dict(), "active": self._active}
+        await _async_settle_transactional_save(
+            self._store.async_save(
+                {"config": self._config.as_dict(), "active": self._active}
+            ),
+            self._invalidate_generation,
+            self._mark_generation_available,
+            self._async_reload_generation_locked,
+            self._invalidate_generation,
+            record_execution=False,
         )
 
     def _normalize_active(self, value: Any) -> dict[str, Any] | None:
@@ -1071,9 +1107,7 @@ class QuietHoursManager:
         )
 
     def _reschedule(self) -> None:
-        for unsubscribe in self._unsubscribers:
-            unsubscribe()
-        self._unsubscribers.clear()
+        self._cancel_scheduled_callbacks()
         if getattr(self, "_config_recovery_pending", False):
             self._unsubscribers.append(
                 async_track_time_interval(

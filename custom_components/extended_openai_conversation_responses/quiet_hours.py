@@ -273,8 +273,6 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 return
             if not await self._async_recover_configuration_locked():
                 return
-            if recovering:
-                self._reschedule()
             if self._migrate_control_entity_ids():
                 await self._async_save_control_state_locked()
             period = (
@@ -605,6 +603,8 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         )
 
     async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
+        if not await self._async_recover_configuration_locked():
+            return
         if self._migrate_control_entity_ids():
             await self._async_save_control_state_locked()
         if self._active is not None:
@@ -739,24 +739,6 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         await self._async_save_control_state_locked()
         return False
 
-    async def _async_save_control_state_locked(self) -> None:
-        """A reported control-write failure must reconcile its actual generation."""
-        try:
-            await self._async_save_locked()
-        except Exception:
-            try:
-                persisted = await self._store.async_load()
-                if not isinstance(persisted, Mapping):
-                    raise ValueError("Quiet Hours control state cannot be reconciled")
-                active = self._normalize_active(persisted.get("active"))
-                if active is None and persisted.get("active") is not None:
-                    raise ValueError("Quiet Hours control state is invalid")
-                self._active = active
-            except Exception:
-                self._active = None
-                self._initialized = False
-            raise
-
     def _normalize_active(self, value: Any) -> dict[str, Any] | None:
         normalized = super()._normalize_active(value)
         if normalized is None:
@@ -816,12 +798,12 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             self._registry_unsubscribe()
             self._registry_unsubscribe = None
         async with self._lock:
-            for unsubscribe in self._unsubscribers:
-                unsubscribe()
-            self._unsubscribers.clear()
+            self._cancel_scheduled_callbacks()
             try:
                 await self._async_restore_locked()
             finally:
+                # Recovery can rearm an authoritative generation while stopping.
+                self._cancel_scheduled_callbacks()
                 entity_id = self._state_entity_id()
                 self._remove_previous_publication(entity_id)
                 self.hass.states.async_remove(entity_id)

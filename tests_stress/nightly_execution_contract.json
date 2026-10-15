@@ -1053,6 +1053,7 @@
     "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_fall_back_duplicate_time_is_one_quiet_period",
     "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_registered_listeners_reconcile_forward_and_backward_clock_correction",
     "tests_real_ha/test_quiet_hours_scheduling.py::test_real_ha_spring_forward_normalizes_nonexistent_start_time",
+    "tests_real_ha/test_quiet_hours_scheduling.py::test_timer_waits_for_generation_persistence_before_device_effect",
     "tests_real_ha/test_release_upgrade_acceptance.py::test_active_published_release_upgrade_recovers_without_replay",
     "tests_real_ha/test_release_upgrade_acceptance.py::test_published_release_upgrades_to_candidate_and_survives_restart",
     "tests_real_ha/test_request_rules_script_semantics.py::test_concurrent_rules_keep_ha_variables_request_local",
@@ -2222,7 +2223,22 @@
     "tests_stress/test_restore_journal_writer_reader_contract.py::test_corrupt_disk_journal_cannot_be_accepted_or_silently_removed",
     "tests_stress/test_restore_journal_writer_reader_contract.py::test_reader_rejects_foreign_or_incomplete_store_envelopes[missing-data]",
     "tests_stress/test_restore_journal_writer_reader_contract.py::test_reader_rejects_foreign_or_incomplete_store_envelopes[wrong-key]",
-    "tests_stress/test_restore_journal_writer_reader_contract.py::test_reader_rejects_foreign_or_incomplete_store_envelopes[wrong-version]"
+    "tests_stress/test_restore_journal_writer_reader_contract.py::test_reader_rejects_foreign_or_incomplete_store_envelopes[wrong-version]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_missing_readback_preserves_nonapplied_ownership[None-observed_controls]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_missing_readback_preserves_nonapplied_ownership[None-pending_controls]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_missing_readback_preserves_nonapplied_ownership[active_only-observed_controls]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_missing_readback_preserves_nonapplied_ownership[active_only-pending_controls]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_missing_readback_preserves_nonapplied_ownership[config_only-observed_controls]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_missing_readback_preserves_nonapplied_ownership[config_only-pending_controls]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_missing_readback_preserves_nonapplied_ownership[missing1-observed_controls]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_missing_readback_preserves_nonapplied_ownership[missing1-pending_controls]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[None-False]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[None-True]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[invalid_active-False]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[invalid_active-True]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[unavailable1-False]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_preserves_unresolved_generation[unavailable1-True]",
+    "tests_real_ha/test_quiet_hours_generation_recovery.py::test_public_getter_repeated_cancellation_settles_recovery"
   ],
   "browser": {
     "browser": [
@@ -3449,7 +3465,8 @@
       "tests_real_ha/test_quiet_hours_scheduling.py",
       "tests_stress/test_quiet_hours_edges.py",
       "tests_stress/test_quiet_hours_multi_satellite.py",
-      "tests_stress/test_quiet_hours_ownership_time.py"
+      "tests_stress/test_quiet_hours_ownership_time.py",
+      "tests_real_ha/test_quiet_hours_generation_recovery.py"
     ],
     "request-rules": [
       "tests_real_ha/test_request_rules_script_semantics.py",
