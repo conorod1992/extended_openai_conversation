@@ -70,6 +70,7 @@ from .context_summary_performance import (
     schedule_context_summary,
 )
 from .context_usage_hardening import (
+    _capture_provider_usage,
     estimate_prepared_request,
     normalized_chat_stream,
     normalized_responses_stream,
@@ -1623,12 +1624,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 # Track usage from final chunk if available
                 if chunk.usage:
                     normalized = extract_usage(chunk.usage)
-                    request_usage.input_tokens = normalized.input_tokens
-                    request_usage.output_tokens = normalized.output_tokens
-                    request_usage.total_tokens = normalized.total_tokens
-                    request_usage.cached_input_tokens = normalized.cached_input_tokens
-                    request_usage.reasoning_tokens = normalized.reasoning_tokens
-                    request_usage.details = normalized.details
+                    _capture_provider_usage(request_usage, chunk.usage)
                     chat_log.async_trace(
                         {
                             "stats": {
@@ -2032,12 +2028,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 response = event.response
                 if response.usage is not None:
                     normalized = extract_usage(response.usage)
-                    request_usage.input_tokens = normalized.input_tokens
-                    request_usage.output_tokens = normalized.output_tokens
-                    request_usage.total_tokens = normalized.total_tokens
-                    request_usage.cached_input_tokens = normalized.cached_input_tokens
-                    request_usage.reasoning_tokens = normalized.reasoning_tokens
-                    request_usage.details = normalized.details
+                    _capture_provider_usage(request_usage, response.usage)
                     chat_log.async_trace(
                         {
                             "stats": {
