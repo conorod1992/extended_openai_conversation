@@ -36,8 +36,15 @@ export function reconcileConfigurationAcknowledgement(panel, saved, submission, 
     else delete panel._configData[key];
   }
   if (panel._result === previous) panel._result = panel._configData;
-  panel._configDataStale = false;
-  panel._rememberCleanConfiguration?.(panel._configData);
+  if (full) {
+    panel._configDataStale = false;
+    panel._rememberCleanConfiguration?.(panel._configData);
+  } else {
+    // A field acknowledgement cannot certify the rest of the snapshot. Function
+    // renames also update Guest allowlists which are absent from this response.
+    panel._invalidateCleanConfiguration?.(submission.agentId);
+    panel._configDataStale = true;
+  }
   if (panel._draft && panel._draftAgentId === submission.agentId) {
     const submitted = clone(submission.draft);
     // An earlier queued acknowledgement can advance both baseline and draft.

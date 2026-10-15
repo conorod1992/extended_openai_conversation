@@ -25,3 +25,16 @@ draft is submitted using the latest acknowledged revision. Existing tests retain
 the complementary guarantee that queued acknowledgements without local edits
 advance the draft normally. This establishes the helper contract without claiming
 an end-to-end browser reproduction.
+
+
+A subset acknowledgement advances its fields and revision, but does not certify
+that the entire configuration snapshot is fresh. Function and group renames also
+rewrite Guest allowlists that are absent from their partial response. The helper
+invalidates the full-snapshot cache and retains stale status until a full read or
+acknowledgement arrives. Clean in-document navigation then rereads configuration;
+unrelated local drafts remain protected by the existing dirty-draft policy.
+
+Focused regressions cover both rename projections and the real panel cache/load
+methods. Genuine HA browser regressions save Function/group renames through the
+shipped editors under custom Guest policy, navigate within the same panel, and
+check that the effective-request preview includes the allowed renamed tool.

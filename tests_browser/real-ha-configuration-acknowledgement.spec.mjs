@@ -7,6 +7,7 @@ test.skip(!backendUrl, "requires the genuine Home Assistant management bridge");
 const fixture = "/tests_browser/real-ha-fixture.html?bundle=1&route=assistant%2Fprompt-context&backend=" + encodeURIComponent(backendUrl);
 
 test("a real configuration acknowledgement preserves newer edits and survives presentation failure", async ({page}) => {
+  test.skip(Boolean(process.env.CONFIGURATION_ACK_GUEST_RENAME));
   const errors = trackPageErrors(page);
   const panel = page.locator("extended-openai-management-panel");
   const prompt = panel.locator('[data-config="prompt"]');
@@ -63,5 +64,57 @@ test("a real configuration acknowledgement preserves newer edits and survives pr
   expect(await page.evaluate(() => window.configurationAckProbe.writes)).toBe(2);
   await page.goto(fixture);
   await expect(prompt).toHaveValue("Newer acknowledgement prompt");
+  await expectHarnessClean(page, errors);
+});
+
+
+test("partial Function acknowledgements reload renamed custom Guest permissions before preview", async ({page}) => {
+  const kind = process.env.CONFIGURATION_ACK_GUEST_RENAME;
+  test.skip(!kind);
+  const errors = trackPageErrors(page);
+  const panel = page.locator("extended-openai-management-panel");
+  await page.goto(fixture.replace("assistant%2Fprompt-context", "capabilities%2Ffunctions"));
+  const group = panel.locator('.function-group-card[data-group-id="old_group"]');
+  await expect(group).toBeVisible();
+  await panel.evaluate(host => host._call("guest_mode", "update", {indefinite:true}));
+  await page.evaluate(() => {
+    const {hass} = window.browserHarness;
+    const original = hass.callWS.bind(hass);
+    window.guestRenameProbe = {reads:0};
+    hass.callWS = async message => {
+      if (message.section === "configuration" && message.action === "get") window.guestRenameProbe.reads++;
+      const result = await original(message);
+      if (message.section === "tools" && ["save", "save_group"].includes(message.action)) {
+        window.guestRenameProbe.saved = structuredClone(result);
+      }
+      return result;
+    };
+  });
+  if (kind === "function") {
+    await group.locator("summary").click();
+    await group.locator(".edit-tool").click();
+    const tool = await panel.evaluate(host => structuredClone(host._draft.functions[0]));
+    tool.spec.name = "renamed_tool";
+    await panel.locator("#tool-yaml").fill(JSON.stringify(tool));
+    await panel.locator("#tool-save").click();
+    await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+  } else {
+    await group.locator(".edit-group").click();
+    await panel.locator("#group-id").fill("renamed_group");
+    await panel.locator("#group-save").click();
+    await expect(panel.locator("#group-dialog")).toHaveJSProperty("open", false);
+  }
+  expect(await page.evaluate(() => window.guestRenameProbe.saved.config)).toBeUndefined();
+  const reads = await page.evaluate(() => window.guestRenameProbe.reads);
+  // In-document navigation must not reuse a partial acknowledgement as a full snapshot.
+  await panel.evaluate(host => host._navigate("capabilities", "guest-mode"));
+  await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
+  await expect.poll(() => page.evaluate(() => window.guestRenameProbe.reads)).toBeGreaterThan(reads);
+  const draft = await panel.evaluate(host => host._draft);
+  expect(kind === "function" ? draft.guest_allowed_function_names : draft.guest_allowed_group_ids)
+    .toEqual([kind === "function" ? "renamed_tool" : "renamed_group"]);
+  await panel.locator("#preview-request").click();
+  await expect.poll(async () => (await panel.locator("#request-preview-sections textarea").evaluateAll(nodes => nodes.map(node => node.value))).join("\n"))
+    .toContain(kind === "function" ? "renamed_tool" : "old_tool");
   await expectHarnessClean(page, errors);
 });

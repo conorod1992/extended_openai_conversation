@@ -25,8 +25,9 @@ describe("Functions progressive loading", () => {
     expect(panel._configData.config.prompt).toBe("Saved prompt");
     expect(panel._draft.functions).toEqual(saved.config.functions);
     expect(panel._configData.revision).toBe("new");
-    expect(cached.function_repair).toBeUndefined();
-    expect(cached.config.functions).toEqual(saved.config.functions);
+    expect(cached).toBeUndefined();
+    expect(panel._configDataStale).toBe(true);
+    expect(panel._configData.function_repair).toBeUndefined();
     expect(calls).toEqual(["agents:agent-a", "toast:Repaired"]);
   });
 });

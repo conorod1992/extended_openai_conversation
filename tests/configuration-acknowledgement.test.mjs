@@ -134,7 +134,8 @@ test("independent fields preserve newer same-field edits, unrelated drafts and u
   assert.equal(host._configData.config.prompt, "Saved prompt");
   assert.equal(host._draft.prompt, "Submitted prompt");
   assert.equal(host._draftTitle, "Edited title");
-  assert.equal(host.clean.revision, "r2");
+  assert.equal(host.clean, undefined, "a subset is not a complete clean snapshot");
+  assert.equal(host._configDataStale, true);
 });
 
 test("an omitted revision in a legacy subset acknowledgement cannot erase the existing revision", () => {
