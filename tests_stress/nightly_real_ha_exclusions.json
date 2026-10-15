@@ -102,7 +102,8 @@
     "tests_real_ha/test_voice_presentation_dependent_chains.py",
     "tests_real_ha/test_audited_runtime_contracts.py",
     "tests_real_ha/test_conversation_request_lifetimes.py",
-    "tests_real_ha/test_configuration_operation_contracts.py"
+    "tests_real_ha/test_configuration_operation_contracts.py",
+    "tests_real_ha/test_script_structure_inspection.py"
   ],
   "partial_selected": {
     "tests_real_ha/test_management_backend_acceptance.py": {
@@ -743,6 +744,12 @@
       "reason": "Focused regression coverage runs in the ordinary genuine HA acceptance suite; enhanced nightly retains its separate stress campaigns."
     },
     "tests_real_ha/test_configuration_operation_contracts.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Focused regression coverage runs in the ordinary genuine HA acceptance suite; enhanced nightly retains its separate stress campaigns."
+    },
+    "tests_real_ha/test_script_structure_inspection.py": {
       "workflow": "real-ha.yml",
       "job": "stable",
       "selector": "tests_real_ha/",

@@ -13,6 +13,7 @@ from . import request_rules
 from .agent_config import function_tool_enabled
 from .const import CONF_GUEST_ALLOWED_GROUP_IDS, DOMAIN, SERVICE_CALL_FUNCTION
 from .function_execution import async_validate_function_arguments
+from .script_structure import iter_script_actions
 
 _TOOL_MUTATIONS = frozenset(
     {"save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"}
@@ -177,8 +178,10 @@ def _rule_script_actions(rule: Mapping[str, Any]):
     actions = action.get("actions", []) if isinstance(action, Mapping) else []
     if not isinstance(actions, Sequence) or isinstance(actions, (str, bytes)):
         return iter(())
-    return request_rules._iter_script_actions(
-        cast(Sequence[Mapping[str, Any]], actions)
+    return iter_script_actions(
+        cast(Sequence[Mapping[str, Any]], actions),
+        max_depth=request_rules.MAX_SCRIPT_DEPTH,
+        max_nodes=request_rules.MAX_SCRIPT_NODES,
     )
 
 

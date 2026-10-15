@@ -713,7 +713,7 @@ def _pattern_rule(rule_id: str, order: int, phrase: str) -> dict:
     }
 
 
-def test_sort_and_compile_deactivates_pattern_that_exceeds_aggregate_state_limit() -> (
+async def test_sort_and_compile_deactivates_pattern_that_exceeds_aggregate_state_limit(hass) -> (
     None
 ):
     """The per-agent state ceiling applies across enabled patterns, not just per rule."""

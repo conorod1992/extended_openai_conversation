@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from contextlib import ExitStack
 from copy import deepcopy
 import logging
@@ -16,6 +15,7 @@ from homeassistant.helpers.script import Script, async_validate_actions_config
 
 from .. import ha_actions
 from ..const import DOMAIN
+from ..script_structure import iter_unvalidated_script_actions
 from .base import Function, copy_runtime_function_config
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,22 +27,12 @@ def _reject_device_actions(sequence: Any) -> None:
     Walk only action containers, never similarly named fields in service data.
     Accept HA's single-action shorthand while inspecting unvalidated config too.
     """
-    actions = [sequence] if isinstance(sequence, Mapping) else sequence
-    for action in actions:
-        if not isinstance(action, Mapping):
-            continue
+    for action in iter_unvalidated_script_actions(sequence):
         if "device_id" in action and "condition" not in action:
             raise HomeAssistantError(
                 "Script Functions do not support device actions because their "
                 "entity permissions cannot be enforced. Use a service action instead."
             )
-        for key in ("sequence", "then", "else", "default", "parallel"):
-            if key in action:
-                _reject_device_actions(action[key])
-        if "repeat" in action:
-            _reject_device_actions(action["repeat"].get("sequence", []))
-        if "choose" in action:
-            _reject_device_actions(action["choose"])
 
 
 class _AuthorizedScriptServices:

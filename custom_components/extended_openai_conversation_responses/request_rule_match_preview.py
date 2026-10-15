@@ -7,13 +7,10 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
+from . import request_rules
 from .request_rule_patterns import SentenceMatchLimitError
-from .request_rules import (
-    RuleMatch,
-    _iter_script_actions,
-    rule_provider_input,
-    rule_stops_matching,
-)
+from .request_rules import RuleMatch, rule_provider_input, rule_stops_matching
+from .script_structure import iter_script_actions
 
 
 def _preview_ai_input(match: RuleMatch, original: str) -> dict[str, Any] | None:
@@ -42,7 +39,11 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
                 "name": step["data"]["function"],
                 "result_alias": step["data"].get("result_alias"),
             }
-            for step in _iter_script_actions(action.get("actions", []))
+            for step in iter_script_actions(
+                action.get("actions", []),
+                max_depth=request_rules.MAX_SCRIPT_DEPTH,
+                max_nodes=request_rules.MAX_SCRIPT_NODES,
+            )
             if isinstance(step.get("data"), dict)
             and step.get("action", step.get("service"))
             == "extended_openai_conversation_responses.call_function"
