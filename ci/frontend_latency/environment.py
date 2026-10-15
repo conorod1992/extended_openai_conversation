@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
 from ci.enhanced_evidence import environment_identity as evidence_environment_identity
@@ -35,9 +36,10 @@ def environment_identity() -> dict:
 
 def declarations(
     requirements: Path, manifest: Path, components: Path
-) -> list[tuple[str, str]]:
-    """Read both EOAI and recursively referenced HA integration requirements."""
-    result = [(str(requirements), value) for value in _requirements(requirements)]
+) -> tuple[list[tuple[str, str]], list[dict]]:
+    """Apply the installer's runtime integration precedence over test bootstrap."""
+    bootstrap = [(str(requirements), value) for value in _requirements(requirements)]
+    runtime = []
     pending = [manifest]
     visited = set()
     while pending:
@@ -46,7 +48,7 @@ def declarations(
             continue
         visited.add(path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        result.extend((str(path), value) for value in data.get("requirements", []))
+        runtime.extend((str(path), value) for value in data.get("requirements", []))
         pending.extend(
             components / domain / "manifest.json"
             for domain in (
@@ -54,7 +56,36 @@ def declarations(
                 *data.get("after_dependencies", []),
             )
         )
-    return result
+    runtime_by_name = {}
+    for source, requirement in active_requirements(runtime):
+        runtime_by_name.setdefault(canonicalize_name(requirement.name), []).append(
+            (source, str(requirement))
+        )
+    effective = list(runtime)
+    overridden = []
+    # requirements_test.txt bootstraps the image before install_ha_dependencies.py
+    # installs authoritative integration requirements. Validate that final state,
+    # while retaining every baseline/current integration constraint.
+    active_requirements(bootstrap)  # Validate unsupported declaration syntax too.
+    for source, value in bootstrap:
+        requirement = Requirement(value)
+        name = canonicalize_name(requirement.name)
+        if name in runtime_by_name:
+            overridden.append(
+                {
+                    "source": source,
+                    "requirement": value,
+                    "runtime_declarations": runtime_by_name[name],
+                }
+            )
+            if requirement.extras:
+                # The installer also keeps extras installed during bootstrap;
+                # supersede only its package version, not those dependencies.
+                requirement.specifier = SpecifierSet()
+                effective.append((source, str(requirement)))
+        else:
+            effective.append((source, value))
+    return effective, overridden
 
 
 def active_requirements(
@@ -156,13 +187,19 @@ def main() -> None:
 
     components = Path(next(iter(homeassistant.__path__))) / "components"
     declared = []
+    overridden = []
     for label in ("baseline", "current"):
-        declared.extend(
-            declarations(
-                getattr(args, f"{label}_requirements"),
-                getattr(args, f"{label}_manifest"),
-                components,
-            )
+        effective, bootstrap_overrides = declarations(
+            getattr(args, f"{label}_requirements"),
+            getattr(args, f"{label}_manifest"),
+            components,
+        )
+        declared.extend(effective)
+        overridden.extend(bootstrap_overrides)
+    for item in overridden:
+        print(
+            f"{item['source']}: bootstrap {item['requirement']} superseded by runtime integration declarations: {item['runtime_declarations']}",
+            flush=True,
         )
     # Match the existing HA dependency installer's OpenAI constraint. Core/test
     # plugin versions stay pinned to this job's image, never upgraded from PyPI.
@@ -204,7 +241,11 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(
-            {"environment": environment_identity(), "validated_declarations": declared},
+            {
+                "environment": environment_identity(),
+                "validated_declarations": declared,
+                "overridden_test_declarations": overridden,
+            },
             indent=2,
             sort_keys=True,
         )

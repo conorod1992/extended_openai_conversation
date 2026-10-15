@@ -106,13 +106,93 @@ def test_collects_recursive_ha_dependencies_ignoring_manifest_metadata(tmp_path)
         path = components / domain / "manifest.json"
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps(data), encoding="utf-8")
-    declared = environment.declarations(requirements, manifest, components)
+    declared, overridden = environment.declarations(requirements, manifest, components)
+    assert overridden == []
     assert {value for _, value in declared} == {
         "pytest>=8",
         "openai>=2",
         "hassil==3",
         "helper==1",
     }
+
+
+def test_runtime_integration_pin_overrides_test_bootstrap_without_package_exemption(
+    tmp_path,
+):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("Gazetteer_Matcher==1.0.0\npytest>=8\n", encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"dependencies": ["conversation"]}), encoding="utf-8"
+    )
+    components = tmp_path / "components"
+    conversation = components / "conversation" / "manifest.json"
+    conversation.parent.mkdir(parents=True)
+    conversation.write_text(
+        json.dumps({"requirements": ["gazetteer-matcher==1.1.0"]}), encoding="utf-8"
+    )
+    declared, overridden = environment.declarations(requirements, manifest, components)
+    assert (
+        environment.compatibility_errors(
+            declared, {"gazetteer-matcher": "1.1.0", "pytest": "9"}
+        )
+        == []
+    )
+    assert overridden == [
+        {
+            "source": str(requirements),
+            "requirement": "Gazetteer_Matcher==1.0.0",
+            "runtime_declarations": [(str(conversation), "gazetteer-matcher==1.1.0")],
+        }
+    ]
+    assert (str(requirements), "pytest>=8") in declared
+
+
+def test_baseline_current_runtime_constraints_are_never_overridden(tmp_path):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("sdk==1\n", encoding="utf-8")
+    declared = []
+    for label, pin in (("baseline", "sdk==2"), ("current", "sdk==3")):
+        manifest = tmp_path / f"{label}.json"
+        manifest.write_text(json.dumps({"requirements": [pin]}), encoding="utf-8")
+        effective, overridden = environment.declarations(
+            requirements, manifest, tmp_path
+        )
+        assert len(overridden) == 1
+        declared.extend(effective)
+    errors = environment.compatibility_errors(declared, {"sdk": "3"})
+    assert len(errors) == 1
+    assert "baseline.json: requires sdk==2; resolved sdk==3" in errors[0]
+
+
+def test_inactive_runtime_requirement_does_not_override_test_bootstrap(tmp_path):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("sdk==1\n", encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"requirements": ['sdk==2; python_version < "3"']}), encoding="utf-8"
+    )
+    effective, overridden = environment.declarations(requirements, manifest, tmp_path)
+    assert overridden == []
+    assert environment.compatibility_errors(effective, {"sdk": "2"})
+
+
+def test_overridden_bootstrap_preserves_requested_extras(tmp_path, monkeypatch):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("sdk[http]==1\n", encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"requirements": ["sdk==2"]}), encoding="utf-8")
+    effective, overridden = environment.declarations(requirements, manifest, tmp_path)
+    assert overridden[0]["requirement"] == "sdk[http]==1"
+    assert (str(requirements), "sdk[http]") in effective
+    monkeypatch.setattr(
+        environment, "requires", lambda _: ['transport>=2; extra == "http"']
+    )
+    assert environment.compatibility_errors(effective, {"sdk": "2"})
+    assert (
+        environment.compatibility_errors(effective, {"sdk": "2", "transport": "2"})
+        == []
+    )
 
 
 @pytest.mark.parametrize(
