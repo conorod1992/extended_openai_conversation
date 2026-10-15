@@ -36,7 +36,9 @@ async def test_archive_query_cancellation_never_holds_mutation_lock(
     worker_fails,
 ):
     started, release, settled = Event(), Event(), Event()
-    archive = SimpleNamespace(_lock=asyncio.Lock(), _ensure_initialized=Mock(), _sessions={})
+    archive = archives.ConversationArchive(FakeArchiveStorage(), "agent")
+    await archive.async_initialize()
+    archive._ensure_initialized = Mock(wraps=archive._ensure_initialized)
 
     def query(*_args):
         started.set()
@@ -48,7 +50,7 @@ async def test_archive_query_cancellation_never_holds_mutation_lock(
         finally:
             settled.set()
 
-    owner = asyncio.create_task(history._async_archive_query(archive, query, "scope"))
+    owner = asyncio.create_task(archive.async_query_snapshot("scope", query))
     try:
         assert await asyncio.to_thread(started.wait, 5)
         owner.cancel("first cancellation")
