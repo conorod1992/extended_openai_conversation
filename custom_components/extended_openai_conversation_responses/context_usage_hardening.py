@@ -47,18 +47,6 @@ def _local_estimate(usage: RequestUsage | None) -> int | None:
     return value if isinstance(value, int) and value > 0 else None
 
 
-def _restore_local_estimate(usage: RequestUsage | None, estimate: int | None) -> None:
-    """Restore an estimate if a terminal provider event replaced it with zeros."""
-    if usage is None or estimate is None or _has_token_count(usage):
-        return
-    usage.input_tokens = estimate
-    usage.output_tokens = 0
-    usage.total_tokens = estimate
-    usage.cached_input_tokens = 0
-    usage.reasoning_tokens = 0
-    usage.details = {_LOCAL_ESTIMATE_DETAIL: estimate}
-
-
 def _copy_usage(target: RequestUsage, source: RequestUsage) -> None:
     """Replace an in-flight estimate with provider-reported usage."""
     target.input_tokens = source.input_tokens
@@ -70,25 +58,36 @@ def _copy_usage(target: RequestUsage, source: RequestUsage) -> None:
 
 
 def _capture_provider_usage(
-    target: RequestUsage | None,
-    raw_usage: Any,
-    *,
-    local_estimate: int | None = None,
-) -> bool:
-    """Normalize provider usage while preserving a missing-input context estimate."""
-    if target is None or raw_usage is None:
-        return False
-    normalized = extract_usage(raw_usage)
-    if not _has_token_count(normalized):
-        return False
+    target: RequestUsage | None, raw_usage: Any
+) -> RequestUsage | None:
+    """Apply one usable provider snapshot and return its provider-only diagnostics.
 
-    estimate = local_estimate if local_estimate is not None else _local_estimate(target)
-    _copy_usage(target, normalized)
-    if estimate is not None and normalized.input_tokens <= 0:
-        target.input_tokens = estimate
-        target.details[_LOCAL_ESTIMATE_DETAIL] = estimate
-        target.details[_PARTIAL_PROVIDER_USAGE_DETAIL] = 1
-    return True
+    Missing/zero reports leave the current snapshot intact. An active local input
+    estimate survives partial reports, independently of stream termination.
+    """
+    if target is None or raw_usage is None:
+        return None
+    normalized = extract_usage(raw_usage)
+    if _has_token_count(normalized):
+        estimate = _local_estimate(target)
+        _copy_usage(target, normalized)
+        if estimate is not None and normalized.input_tokens <= 0:
+            target.input_tokens = estimate
+            target.details[_LOCAL_ESTIMATE_DETAIL] = estimate
+            target.details[_PARTIAL_PROVIDER_USAGE_DETAIL] = 1
+    return normalized
+
+
+def _trace_provider_usage(chat_log: Any, reported: RequestUsage) -> None:
+    """Trace raw provider counts, never the in-flight context estimate."""
+    chat_log.async_trace(
+        {
+            "stats": {
+                "input_tokens": reported.input_tokens,
+                "output_tokens": reported.output_tokens,
+            }
+        }
+    )
 
 
 def _serialized_characters(value: Any) -> tuple[int, int]:
@@ -201,63 +200,37 @@ def usage_for_accounting(usage: RequestUsage | None) -> RequestUsage | None:
 async def normalized_chat_stream(
     chat_log: Any, result: Any, request_usage: RequestUsage | None
 ) -> AsyncIterator[Any]:
+    """Apply usage before the Chat parser can yield, fail or be closed."""
     async for chunk in result:
-        estimate = _local_estimate(request_usage)
         raw_usage = getattr(chunk, "usage", None)
-        captured = _capture_provider_usage(request_usage, raw_usage)
-        # The original transformer handles the standard final usage-only
-        # chunk. Trace only non-standard usage attached to a normal choice.
-        if captured and getattr(chunk, "choices", None):
-            provider_usage = extract_usage(raw_usage)
-            chat_log.async_trace(
-                {
-                    "stats": {
-                        "input_tokens": provider_usage.input_tokens,
-                        "output_tokens": provider_usage.output_tokens,
-                    }
-                }
-            )
+        reported = _capture_provider_usage(request_usage, raw_usage)
+        if (
+            reported is not None
+            and _has_token_count(reported)
+            and getattr(chunk, "choices", None)
+        ):
+            _trace_provider_usage(chat_log, reported)
         yield chunk
-        if captured:
-            # The stock transformer writes normalized provider usage into the
-            # same object while consuming this event. Reconcile afterwards so
-            # partial usage cannot erase the request-local input estimate.
-            _capture_provider_usage(request_usage, raw_usage, local_estimate=estimate)
-        else:
-            _restore_local_estimate(request_usage, estimate)
 
 
 async def normalized_responses_stream(
     chat_log: Any, result: Any, request_usage: RequestUsage | None
 ) -> AsyncIterator[Any]:
+    """Apply usage before the Responses parser can yield, fail or be closed."""
     async for event in result:
-        estimate = _local_estimate(request_usage)
         response = getattr(event, "response", None)
         raw_usage = getattr(response, "usage", None)
         if raw_usage is None:
             raw_usage = getattr(event, "usage", None)
-        captured = _capture_provider_usage(request_usage, raw_usage)
-        event_type = getattr(event, "type", "")
-        if captured and event_type not in {
-            "response.completed",
-            "response.incomplete",
-        }:
-            provider_usage = extract_usage(raw_usage)
-            chat_log.async_trace(
-                {
-                    "stats": {
-                        "input_tokens": provider_usage.input_tokens,
-                        "output_tokens": provider_usage.output_tokens,
-                    }
-                }
-            )
+        reported = _capture_provider_usage(request_usage, raw_usage)
+        if (
+            reported is not None
+            and _has_token_count(reported)
+            and getattr(event, "type", "")
+            not in {"response.completed", "response.incomplete"}
+        ):
+            _trace_provider_usage(chat_log, reported)
         yield event
-        if captured:
-            # Terminal Responses events also write into request_usage in the
-            # stock transformer before this generator resumes.
-            _capture_provider_usage(request_usage, raw_usage, local_estimate=estimate)
-        else:
-            _restore_local_estimate(request_usage, estimate)
 
 
 def estimate_prepared_request(

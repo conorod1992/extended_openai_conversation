@@ -2,6 +2,9 @@
 
 This follow-up adopts two deliberate changes to the behavior characterized in
 PR #1245. That PR remains unchanged and records the historical baseline.
+The follow-up carries forward the same characterization test files with deliberate
+policy updates, rather than introducing a second suite of conflicting assertions.
+If #1245 is merged first, retain the follow-up expectations when rebasing this PR.
 
 ## Usage snapshots
 
@@ -31,6 +34,21 @@ Thus a zero diagnostic event can coexist with retained earlier accounting usage.
 The request loop observes context usage on its success path. Consistent fallback
 on incomplete errors is not itself evidence of a billing or public context-trimming
 defect in the old implementation.
+
+## One application owner
+
+The Chat and Responses adapters apply usage through `_capture_provider_usage()`
+before yielding each event. The parsers no longer assign usage, and neither
+adapter repairs usage after yielding. `_restore_local_estimate()` and its saved
+estimate override are removed. This reduces the two production files by 54 lines
+without adding a usage accumulator, event-state framework or shared stream parser.
+
+Terminal stats remain after parser admission, including the initial Chat role
+yield and Responses terminal-sequence validation. Their read-only normalization
+does not apply usage. `_trace_provider_usage()` shares the stats shape while
+keeping diagnostic admission and timing unchanged. Provider debug summaries still
+describe the raw wire events; they are independent from the retained accounting
+snapshot.
 
 ## Scope and validation
 

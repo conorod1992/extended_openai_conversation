@@ -257,3 +257,34 @@ async def test_zero_nonterminal_usage_retains_previous_provider_snapshot(mode):
     ]
     assert usage == _provider_expected("full")
     assert traces == [{"stats": {"input_tokens": 120, "output_tokens": 30}}]
+
+
+async def test_chat_terminal_stats_wait_for_parser_admission():
+    """Closing at the initial role does not newly publish terminal diagnostics."""
+    usage = _estimated()
+    traces = []
+    transformed = _transform(
+        "chat",
+        FakeStream([SimpleNamespace(choices=[], usage=_reported("full"))]),
+        usage,
+        traces,
+    )
+    assert await anext(transformed) == {"role": "assistant"}
+    await transformed.aclose()
+    assert usage_for_accounting(usage) == _provider_expected("full")
+    assert traces == []
+
+
+async def test_rejected_responses_terminal_does_not_publish_extra_stats():
+    """Usage ownership does not change duplicate-terminal diagnostic admission."""
+    usage = _estimated()
+    traces = []
+    source = FakeStream(
+        [
+            *_terminal("responses", _reported("full")),
+            *_terminal("responses", _reported("output")),
+        ]
+    )
+    with pytest.raises(ProviderStreamError):
+        _ = [delta async for delta in _transform("responses", source, usage, traces)]
+    assert traces == [{"stats": {"input_tokens": 120, "output_tokens": 30}}]
