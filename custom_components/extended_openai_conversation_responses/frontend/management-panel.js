@@ -1517,6 +1517,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // A newer acknowledgement/read owns its revision and baseline. Metadata
       // additions may replace the envelope while retaining the same config.
       if (currentBaseline?.config !== baseline?.config || currentBaseline?.revision !== baseline?.revision) return;
+      if (!configData?.config || typeof configData.config !== "object" || Array.isArray(configData.config)) {
+        throw new Error("The server returned invalid assistant configuration. Retry loading this section.");
+      }
       const retainedDraft = baseline?.config && this._draftAgentId === agentId && this._draft
         ? {draft:this._draft, title:this._draftTitle} : null;
       if (this._configDirty && this._draftAgentId === agentId && !retainedDraft) return;

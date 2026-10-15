@@ -22,6 +22,7 @@ from tests_stress.conftest import record
 PHASE = "EOAI_DELAYED_BACKLOG_PHASE"
 ROOT_ENV = "EOAI_DELAYED_BACKLOG_CONFIG"
 COUNT_ENV = "EOAI_DELAYED_BACKLOG_COUNT"
+TRANSIENT_FAILURES = 6
 
 
 async def schedule_backlog(hass, agent, user, function_tool):
@@ -119,7 +120,9 @@ async def recover(root):
     manager = hass.data[base.DOMAIN]["delayed_tool_manager"]
     resolve = manager._resolve_agent
     transient_failures = 0
-    fault_budget = 0 if (root / "backlog-partial-proof.json").exists() else 6
+    fault_budget = (
+        0 if (root / "backlog-partial-proof.json").exists() else TRANSIENT_FAILURES
+    )
 
     def transient_resolution(*args):
         nonlocal transient_failures
@@ -314,6 +317,7 @@ def test_overdue_backlog_drains_once_across_two_restarts(
                 and proof["active"] > 0
                 and proof["foreground_reads"] == 2
             )
+            assert proof["retryable_failures"] == TRANSIENT_FAILURES
             # Cold recovery deliberately discards durable executing records; no
             # replay requirement is imposed on ambiguous already-started effects.
             completed = {item["marker"] for item in base._read_executions(root)}
@@ -334,6 +338,7 @@ def test_overdue_backlog_drains_once_across_two_restarts(
                 layer="process",
                 delayed_partial_termination_cases=1,
                 delayed_foreground_during_backlog=2,
+                delayed_retryable_pre_dispatch_failures=proof["retryable_failures"],
                 ambiguous_started_calls=len(ambiguous),
             )
             continue
