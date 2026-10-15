@@ -2366,6 +2366,7 @@
     "tests_real_ha/test_service_receipt_compatibility.py::test_entity_service_replay_ignores_target_order_and_duplicates[True-generic]",
     "tests_real_ha/test_service_receipt_compatibility.py::test_callable_entity_service_preserves_handler_visible_selector_order",
     "tests_real_ha/test_service_receipt_compatibility.py::test_local_request_rule_functions_do_not_retire_provider_replay_history",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_nested_provider_conversation_overrides_local_function_ownership",
     "tests_real_ha/test_service_receipt_compatibility.py::test_unknown_execution_ownership_still_retires_fail_closed",
     "tests_real_ha/test_service_receipt_compatibility.py::test_custom_service_target_and_payload_order_remain_significant[probe-apply]",
     "tests_real_ha/test_service_receipt_compatibility.py::test_custom_service_target_and_payload_order_remain_significant[homeassistant-toggle]",

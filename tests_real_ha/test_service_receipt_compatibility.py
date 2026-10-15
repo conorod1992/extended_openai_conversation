@@ -324,6 +324,93 @@ async def test_local_request_rule_functions_do_not_retire_provider_replay_histor
     assert hass.states.get("counter.receipt").state == "15"
 
 
+async def test_nested_provider_conversation_overrides_local_function_ownership(
+    hass, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_FUNCTION_TOOLS,
+    )
+    from homeassistant.components.homeassistant.exposed_entities import (
+        async_expose_entity,
+    )
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _say
+    from tests_real_ha.test_execution_result_lifecycle_contracts import _tool
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _chat_sse_tool_call,
+        _install_wire,
+    )
+
+    function = {"type": "native", "name": "execute_service_single"}
+    bridge_tool = _tool(function)
+    bridge_tool["spec"]["name"] = "bridge_function"
+    agent = await _agent(
+        hass,
+        api_mode="chat_completions",
+        **{CONF_FUNCTION_TOOLS: [_tool(function), bridge_tool]},
+    )
+    effects, nested_results = [], []
+
+    async def apply(call):
+        effects.append(call.data["amount"])
+        hass.states.async_set("sensor.probe", str(call.data["amount"]))
+
+    async def bridge(call):
+        nested_results.append(
+            await _say(hass, agent, "nested action", seed.conversation_id)
+        )
+
+    hass.states.async_set("sensor.probe", "ready")
+    hass.services.async_register("probe", "apply", apply)
+    hass.services.async_register("bridge", "invoke", bridge)
+    async_expose_entity(hass, "conversation", "sensor.probe", True)
+    _install_wire(monkeypatch, agent, [_chat_sse_text("Ready")])
+    seed = await _say(hass, agent, "hello")
+    assert seed.response.error_code is None
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call("nested", "effect", _args(1)),
+            (
+                400,
+                {
+                    "error": {
+                        "message": "lost continuation",
+                        "type": "invalid_request_error",
+                    }
+                },
+            ),
+        ],
+    )
+    await agent._async_execute_request_rule_function(
+        "bridge_function",
+        {"domain": "bridge", "service": "invoke", "entity_id": "sensor.probe"},
+        None,
+    )
+    assert len(nested_results) == 1
+    assert nested_results[0].response.error_code is not None
+    assert effects == [1]
+    assert all(
+        call.tool_name == "effect" for call in agent._dispatched_tool_inputs.values()
+    )
+
+    # Retry from a normal conversation request, after the local Function exits.
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            _chat_sse_tool_call(
+                "retry", "effect", {**_args(1), "domain": "PROBE", "service": "APPLY"}
+            )
+        ],
+    )
+    retry = await _say(hass, agent, "retry", seed.conversation_id)
+    assert retry.response.error_code is not None
+    assert effects == [1]
+    assert hass.states.get("sensor.probe").state == "1"
+
+
 async def test_unknown_execution_ownership_still_retires_fail_closed(hass, monkeypatch):
     from types import SimpleNamespace
     from homeassistant.helpers import llm

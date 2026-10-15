@@ -127,14 +127,16 @@ def _retain_execution_attempt(
     entity: Any, call: Any, attempt: ExecutionAttempt
 ) -> None:
     """Retain provider/unknown ownership only; independent work has no continuation."""
-    if execution_is_detached():
-        return
     from .tool_replay_guard import (
         _forget_dispatch,
         dispatch_conversation_id,
         dispatch_inputs,
     )
 
+    # Match dispatch recording: a provider scope overrides inherited detachment.
+    owner = dispatch_conversation_id(entity)
+    if owner == "":
+        return
     outcomes = getattr(entity, "_execution_tool_outcomes", None)
     if not isinstance(outcomes, dict):
         outcomes = entity._execution_tool_outcomes = {}
@@ -144,7 +146,6 @@ def _retain_execution_attempt(
     owners = getattr(entity, "_dispatched_tool_conversations", None)
     if not isinstance(owners, dict):
         owners = entity._dispatched_tool_conversations = {}
-    owner = dispatch_conversation_id(entity)
     retained = tuple(attempt.receipts)
     for item in dispatch_inputs(call):
         owners.setdefault(id(item), owner)

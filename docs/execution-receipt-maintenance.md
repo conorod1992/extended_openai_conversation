@@ -77,6 +77,10 @@ conservative; prepared-effect matching supplies HA-specific equivalence.
 Local Request Rule Functions and deferred jobs have explicit detached ownership.
 Their invocation receipts still bound execution, but do not enter provider replay
 history or evict its provenance. Unknown ownership retains fail-closed retirement.
+If independent work starts a nested provider exchange, that exchange's active
+conversation scope takes precedence over the inherited detached flag. Dispatch
+recording and receipt retention use the same resolved owner, so a later ordinary
+provider retry remains protected after a failed nested continuation.
 
 Invocation leases, child paths, validated-call aliases and explicit settlement
 handles remain: nested children, out-of-order completion and inherited task

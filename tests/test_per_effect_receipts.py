@@ -706,7 +706,13 @@ async def test_admitted_delayed_work_detaches_even_while_parent_is_active(
     assert hass.services.async_call.await_count == 2
     assert entity._execution_tool_outcomes[id(parent)] == "uncertain"
     # Independent completion must not retain provider provenance or evict it.
-    for name in ("_execution_tool_outcomes", "_execution_effect_receipts", "_dispatched_tool_inputs", "_dispatched_tool_signatures", "_dispatched_tool_conversations"):
+    for name in (
+        "_execution_tool_outcomes",
+        "_execution_effect_receipts",
+        "_dispatched_tool_inputs",
+        "_dispatched_tool_signatures",
+        "_dispatched_tool_conversations",
+    ):
         assert id(admitted) not in getattr(entity, name, {})
 
 
@@ -760,5 +766,118 @@ async def test_genuine_service_identity_preserves_handler_visible_response_mode(
                 hass, "receipt_probe", "apply", blocking=True, include_response=True
             )
         assert calls == [True, False]
+    finally:
+        await hass.async_stop(force=True)
+
+
+@pytest.mark.parametrize("source", ["local_rule", "delayed"])
+@pytest.mark.parametrize("handler_failure", [False, True])
+async def test_nested_provider_exchange_overrides_independent_ownership(
+    tmp_path, monkeypatch, source, handler_failure
+):
+    from functools import partial
+
+    from custom_components.extended_openai_conversation_responses.conversation import (
+        ExtendedOpenAIAgentEntity,
+    )
+    from custom_components.extended_openai_conversation_responses.delayed_tools import (
+        DelayedToolManager,
+    )
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+
+    hass = HomeAssistant(str(tmp_path))
+    dr.async_setup(hass)
+    await dr.async_load(hass, load_empty=True)
+    await er.async_load(hass, load_empty=True)
+    hass.states.async_set("sensor.probe", "ready")
+    effects = []
+
+    async def apply(call):
+        effects.append(call.data["amount"])
+        hass.states.async_set("sensor.probe", str(call.data["amount"]))
+        if handler_failure:
+            raise HomeAssistantError("handler failed after its effect")
+
+    hass.services.async_register("probe", "apply", apply)
+    exposed = [{"entity_id": "sensor.probe"}]
+    tool = _tool()
+    provider = SimpleNamespace(
+        hass=hass,
+        entity_id="conversation.provider",
+        should_run_in_background=lambda delay: False,
+    )
+    provider._execute_function_tool = partial(
+        ExtendedOpenAIBaseLLMEntity._execute_function_tool, provider
+    )
+    log = _chat_log(hass)
+    arguments = {
+        "domain": "probe",
+        "service": "apply",
+        "service_data": {"entity_id": ["sensor.probe"], "amount": 1},
+    }
+    first = _call("nested", "effect", arguments)
+    _retain_calls(log, [first])
+
+    async def nested_exchange(*_args):
+        try:
+            await async_execute_tool_exchange(
+                provider, log, [first], [tool], FunctionCallBudget(10), None, exposed
+            )
+        except HomeAssistantError as err:
+            # The nested conversation owns the error, as its request boundary
+            # does when the local caller propagates Function execution failures.
+            assert handler_failure
+            assert str(err) == "handler failed after its effect"
+
+    try:
+        if source == "local_rule":
+            hass.services.async_register("bridge", "invoke", nested_exchange)
+            bridge_tool = _tool()
+            bridge_tool["spec"]["name"] = "bridge_function"
+            local = SimpleNamespace(
+                hass=hass,
+                entity_id="conversation.local",
+                subentry=SimpleNamespace(data={"function_groups": []}),
+                should_run_in_background=lambda delay: False,
+                _configured_function_tools_from_data=lambda data: [bridge_tool],
+                _get_exposed_entities=lambda: exposed,
+            )
+            local._execute_function_tool = partial(
+                ExtendedOpenAIBaseLLMEntity._execute_function_tool, local
+            )
+            await ExtendedOpenAIAgentEntity._async_execute_request_rule_function(
+                local,
+                "bridge_function",
+                {"domain": "bridge", "service": "invoke", "entity_id": "sensor.probe"},
+                None,
+            )
+            assert not getattr(local, "_execution_effect_receipts", {})
+        else:
+            manager = DelayedToolManager(hass)
+            monkeypatch.setattr(manager, "_async_execute_due_detached", nested_exchange)
+            await manager._async_execute_due("independent-job")
+
+        remember_unacknowledged_calls(provider, log, set())
+        retry = _call(
+            "retry", "effect", {**arguments, "domain": "PROBE", "service": "APPLY"}
+        )
+        _retain_calls(log, [retry])
+        # The later retry is an ordinary provider request, outside detached work.
+        with pytest.raises(HomeAssistantError, match="not acknowledged"):
+            await async_execute_tool_exchange(
+                provider, log, [retry], [tool], FunctionCallBudget(10), None, exposed
+            )
+        assert effects == [1]
+        assert hass.states.get("sensor.probe").state == "1"
+        assert provider._dispatched_tool_conversations[id(first)] == log.conversation_id
+        assert provider._execution_tool_outcomes[id(first)] == (
+            "uncertain" if handler_failure else "completed"
+        )
+        clear_unacknowledged_calls(provider, log.conversation_id)
+        assert not provider._execution_effect_receipts
     finally:
         await hass.async_stop(force=True)
