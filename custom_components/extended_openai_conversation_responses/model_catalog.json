@@ -1,6 +1,6 @@
 {
   "schema_version": 8,
-  "catalog_version": 14,
+  "catalog_version": 15,
   "compatibility": {"minimum_eoai_version": "6.8.3"},
   "defaults": {
     "status": "unknown",
@@ -492,7 +492,10 @@
       "id": "gpt-4.1",
       "display_name": "gpt-4.1",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "deprecated_at": "2026-10-14",
+      "shutdown_at": "2027-01-14",
+      "lifecycle_note": "Deprecated on October 14, 2026; API shutdown on January 14, 2027, including listed snapshots and fine-tuned versions. Evaluate gpt-6-luna before shutdown; use Responses for tools with reasoning, or Chat Completions with reasoning_effort none. Retained for existing configurations; migration requires an explicit model selection.",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
@@ -512,7 +515,10 @@
       "id": "gpt-4.1-mini",
       "display_name": "gpt-4.1-mini",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "deprecated_at": "2026-10-14",
+      "shutdown_at": "2027-01-14",
+      "lifecycle_note": "Deprecated on October 14, 2026; API shutdown on January 14, 2027, including listed snapshots and fine-tuned versions. Evaluate gpt-6-luna before shutdown; use Responses for tools with reasoning, or Chat Completions with reasoning_effort none. Retained for existing configurations; migration requires an explicit model selection.",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
@@ -532,7 +538,10 @@
       "id": "gpt-4o",
       "display_name": "gpt-4o",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "deprecated_at": "2026-10-14",
+      "shutdown_at": "2027-01-14",
+      "lifecycle_note": "Deprecated on October 14, 2026; API shutdown on January 14, 2027, including the 2024-08-06 and 2024-11-20 snapshots and their fine-tuned versions. The older 2024-05-13 snapshot shuts down on October 23, 2026. Evaluate gpt-6-luna before shutdown; use Responses for tools with reasoning, or Chat Completions with reasoning_effort none. Retained for existing configurations; migration requires an explicit model selection.",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
@@ -552,7 +561,10 @@
       "id": "gpt-4o-mini",
       "display_name": "gpt-4o-mini",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "deprecated_at": "2026-10-14",
+      "shutdown_at": "2027-01-14",
+      "lifecycle_note": "Deprecated on October 14, 2026; API shutdown on January 14, 2027, including listed snapshots and fine-tuned versions. Evaluate gpt-6-luna before shutdown; use Responses for tools with reasoning, or Chat Completions with reasoning_effort none. Retained for existing configurations; migration requires an explicit model selection.",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
@@ -614,6 +626,34 @@
       "display_name": "gpt-4o-2024-08-06",
       "kind": "snapshot",
       "alias_of": "gpt-4o"
+    },
+    {
+      "id": "gpt-4o-2024-11-20",
+      "display_name": "gpt-4o-2024-11-20",
+      "kind": "snapshot",
+      "auto_api": "responses",
+      "alias_of": "gpt-4o"
+    },
+    {
+      "id": "gpt-4o-mini-2024-07-18",
+      "display_name": "gpt-4o-mini-2024-07-18",
+      "kind": "snapshot",
+      "auto_api": "responses",
+      "alias_of": "gpt-4o-mini"
+    },
+    {
+      "id": "gpt-4.1-2025-04-14",
+      "display_name": "gpt-4.1-2025-04-14",
+      "kind": "snapshot",
+      "auto_api": "responses",
+      "alias_of": "gpt-4.1"
+    },
+    {
+      "id": "gpt-4.1-mini-2025-04-14",
+      "display_name": "gpt-4.1-mini-2025-04-14",
+      "kind": "snapshot",
+      "auto_api": "responses",
+      "alias_of": "gpt-4.1-mini"
     },
     {
       "id": "gpt-4-turbo",
