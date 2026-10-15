@@ -250,3 +250,24 @@ async def test_every_configured_model_emits_only_catalogue_allowed_sdk_fields(
             any(item["type"] == "web_search" for item in tools) == case["web_search"]
         ), label
         assert chat_log.content[-1].content == "Conformant", label
+
+
+def test_catalog_model_parameters_match_reviewed_execution_inventory():
+    """New supported snapshots must not silently outrun nightly obligations."""
+    import json
+    from pathlib import Path
+
+    catalog = json.loads(
+        (Path(__file__).resolve().parents[1] / "tests_stress/nightly_execution_contract.json")
+        .read_text(encoding="utf-8")
+    )
+    prefix = (
+        "tests/test_openai_sdk_catalog_matrix.py::"
+        "test_every_configured_model_emits_only_catalogue_allowed_sdk_fields["
+    )
+    expected = {
+        f"{prefix}{item['id']}]"
+        for item in BUNDLED_CATALOG.resolved.values()
+        if item["status"] in {"current", "deprecated"}
+    }
+    assert {node for node in catalog["pytest"] if node.startswith(prefix)} == expected

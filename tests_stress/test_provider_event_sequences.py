@@ -104,6 +104,7 @@ def _duplicate_responses_tool_stream() -> bytes:
             _responses_sse_text("Provider recovered after duplicate events."),
         ),
     ],
+    ids=["chat_completions", "responses"],
 )
 @pytest.mark.asyncio
 async def test_duplicate_or_contradictory_events_never_repeat_side_effects(

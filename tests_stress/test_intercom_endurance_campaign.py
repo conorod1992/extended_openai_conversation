@@ -220,10 +220,13 @@ async def test_native_intercom_real_stability_expiry_and_playback_acknowledgemen
     assert len(satellite.announcements) == 1
 
     queued = await send("This queued message expires behind acknowledged playback")
-    await until(lambda: queued["id"] in expiries)
+    queued_peer = await send("Another queued message expires behind the same playback")
+    await until(lambda: all(item["id"] in expiries for item in (queued, queued_peer)))
     # Production intentionally keeps already delivering work over its TTL.
     assert status(held["id"]) == "delivering"
     assert status(queued["id"]) == "expired"
+    assert status(queued_peer["id"]) == "expired"
+    assert len(expiries) == 4
     assert len(satellite.announcements) == 1
     satellite.announce_release.set()
     await until(lambda: status(held["id"]) == "delivered")
@@ -239,7 +242,9 @@ async def test_native_intercom_real_stability_expiry_and_playback_acknowledgemen
         held["message"],
         healthy["message"],
     ]
-    assert status(expired["id"]) == status(queued["id"]) == "expired"
+    assert all(
+        status(item["id"]) == "expired" for item in (expired, queued, queued_peer)
+    )
     assert status(held["id"]) == status(healthy["id"]) == "delivered"
     assert satellite.state == AssistSatelliteState.IDLE
     assert manager._queues == {} and not manager._draining
@@ -253,7 +258,7 @@ async def test_native_intercom_real_stability_expiry_and_playback_acknowledgemen
         actual_expiry_callbacks=len(expiries),
         delayed_playback_acknowledgements=1,
         intercom_deliveries=2,
-        intercom_expired=2,
+        intercom_expired=3,
         intercom_timing_recoveries=1,
     )
 
