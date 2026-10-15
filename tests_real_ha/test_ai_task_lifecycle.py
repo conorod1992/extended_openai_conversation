@@ -62,16 +62,21 @@ async def test_ai_task_entity_survives_unload_reload_and_stale_id_fails_cleanly(
         row_unloaded.config_subentry_id,
     ) == identity_before
 
-    with pytest.raises(
-        HomeAssistantError,
-        match=rf"AI Task entity {entity_id} not found",
-    ):
+    with pytest.raises(HomeAssistantError) as missing_entity:
         await ai_task.async_generate_data(
             hass,
             task_name="Stale entity while unloaded",
             entity_id=entity_id,
             instructions="This must not reach a provider.",
         )
+    # HA dev uses a translated validation error. Its structured identity is
+    # stable even when the test runtime renders only the translation key.
+    if missing_entity.value.translation_key is not None:
+        assert missing_entity.value.translation_domain == ai_task.DOMAIN
+        assert missing_entity.value.translation_key == "entity_not_found"
+        assert missing_entity.value.translation_placeholders == {"entity_id": entity_id}
+    else:
+        assert str(missing_entity.value) == f"AI Task entity {entity_id} not found"
     assert len(initial_client.completions.calls) == 1
 
     # Reload through Home Assistant's real config-entry manager. Replace only the

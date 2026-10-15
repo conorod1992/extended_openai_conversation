@@ -36,10 +36,17 @@ def _entity_target_identity(
     generic_power = (
         domain.lower() == "homeassistant"
         and service.lower() in {"turn_on", "turn_off", "toggle"}
-        and getattr(target, "__module__", None)
-        == "homeassistant.components.homeassistant"
-        and getattr(target, "__qualname__", None)
-        == "async_setup.<locals>.async_handle_turn_service"
+        and (getattr(target, "__module__", None), getattr(target, "__qualname__", None))
+        in {
+            (
+                "homeassistant.components.homeassistant",
+                "async_setup.<locals>.async_handle_turn_service",
+            ),
+            (
+                "homeassistant.components.homeassistant.services",
+                "_async_handle_turn_service",
+            ),
+        }
     )
     stripped_selectors = isinstance(target, partial) and (
         target.func is getattr(service_helpers, "batched_entity_service_call", None)
