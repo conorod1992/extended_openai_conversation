@@ -314,6 +314,121 @@ async def test_bulk_function_repair_acknowledgement_survives_failed_reads(
     assert "function_repair" not in persisted
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_render", [False, True])
+async def test_configuration_acknowledgement_preserves_newer_browser_edits(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+    fail_render: bool,
+) -> None:
+    """A confirmed save survives newer browser edits and presentation failures."""
+    entry = _make_entry(
+        "Browser Configuration Acknowledgement",
+        include_ai_task=False,
+        conversation_options={CONF_FUNCTION_TOOLS: [], "prompt": "Initial prompt"},
+    )
+    await _setup_entry(hass, entry)
+
+    class BrowserClient:
+        client = None
+
+        async def send_json_auto_id(self, message):
+            if self.client is None:
+                self.client = await _admin_client(
+                    hass, hass_ws_client, user_id="browser-configuration-ack-admin"
+                )
+            await self.client.send_json_auto_id(message)
+
+        async def receive_json(self):
+            return await self.client.receive_json()
+
+    runner, backend_url = await _start_ws_bridge(BrowserClient())
+    try:
+        await _run_playwright(
+            repo_root=Path(__file__).resolve().parent.parent,
+            spec="tests_browser/real-ha-configuration-acknowledgement.spec.mjs",
+            config="playwright.config.mjs",
+            env={
+                "REAL_HA_BACKEND_URL": backend_url,
+                "CONFIGURATION_ACK_FAIL_RENDER": "1" if fail_render else "0",
+            },
+            failure_label="Configuration acknowledgement lost a newer browser draft",
+        )
+    finally:
+        await runner.cleanup()
+
+    client = await _admin_client(
+        hass, hass_ws_client, user_id="configuration-ack-verification-admin"
+    )
+    persisted = await _management_call(
+        client, entry=entry, section="configuration", action="get"
+    )
+    assert persisted["config"]["prompt"] == "Newer acknowledgement prompt"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rename_kind", ["function", "group"])
+@pytest.mark.parametrize("dirty_draft", [False, True])
+async def test_partial_function_acknowledgement_reloads_guest_policy(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+    rename_kind: str,
+    dirty_draft: bool,
+) -> None:
+    """Real rename writes must refresh coupled Guest allowlists before preview."""
+    tool = {
+        "spec": {
+            "name": "old_tool",
+            "description": "Allowed Guest tool",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "get_history"},
+    }
+    entry = _make_entry(
+        "Browser Guest Rename",
+        include_ai_task=False,
+        conversation_options={
+            CONF_FUNCTION_TOOLS: yaml.safe_dump([tool]),
+            "function_groups": [{
+                "id": "old_group", "name": "Allowed group",
+                "description": "Allowed Guest functions", "loading_mode": "always",
+                "functions": ["old_tool"], "guest_allowed": True,
+            }],
+            "guest_function_policy": "custom",
+            "guest_allowed_function_names": ["old_tool"] if rename_kind == "function" else [],
+            "guest_allowed_group_ids": ["old_group"] if rename_kind == "group" else [],
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
+        },
+    )
+    await _setup_entry(hass, entry)
+
+    class BrowserClient:
+        client = None
+
+        async def send_json_auto_id(self, message):
+            if self.client is None:
+                self.client = await _admin_client(
+                    hass, hass_ws_client, user_id="browser-guest-rename-admin"
+                )
+            await self.client.send_json_auto_id(message)
+
+        async def receive_json(self):
+            return await self.client.receive_json()
+
+    runner, backend_url = await _start_ws_bridge(BrowserClient())
+    try:
+        await _run_playwright(
+            repo_root=Path(__file__).resolve().parent.parent,
+            spec="tests_browser/real-ha-configuration-acknowledgement.spec.mjs",
+            config="playwright.config.mjs",
+            env={"REAL_HA_BACKEND_URL": backend_url, "CONFIGURATION_ACK_GUEST_RENAME": rename_kind,
+                 "CONFIGURATION_ACK_DIRTY_DRAFT": "1" if dirty_draft else "0"},
+            failure_label="Partial Function acknowledgement retained stale Guest permissions",
+        )
+    finally:
+        await runner.cleanup()
+
+
 @pytest.fixture
 async def real_ha_shell(
     hass: HomeAssistant,

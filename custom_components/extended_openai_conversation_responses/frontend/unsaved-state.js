@@ -4,6 +4,22 @@ const canonical = (value) => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 export const same = (left, right) => JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 
+// Adopt acknowledged values only where the draft still matches the submission.
+// Key presence matters: a removed field is different from an explicit null.
+export function mergeAcknowledgedDraft(current, submitted, saved, fields) {
+  if (![current, submitted, saved].every(value => value && typeof value === "object" && !Array.isArray(value))) {
+    return same(current, submitted) ? clone(saved) : current;
+  }
+  const result = clone(current);
+  const keys = fields || new Set([...Object.keys(submitted), ...Object.keys(saved)]);
+  for (const key of keys) {
+    if (Object.hasOwn(current, key) !== Object.hasOwn(submitted, key) || !same(current[key], submitted[key])) continue;
+    if (Object.hasOwn(saved, key)) result[key] = clone(saved[key]);
+    else delete result[key];
+  }
+  return result;
+}
+
 export class UnsavedState {
   constructor() { this.scopes = new Map(); }
   register(id, scope) { this.scopes.set(id, scope); return scope; }
@@ -26,7 +42,7 @@ export function draftScope({read, write, baseline, save, owns, destinations}) {
         const saved = await save(submitted, this);
         this.baseline = clone(saved);
         // Edits made during an in-flight save belong to the next save.
-        if (same(this.read(), submitted)) this.write(clone(saved));
+        this.write(mergeAcknowledgedDraft(this.read(), submitted, saved));
         return true;
       } finally { this.pending = false; }
     },

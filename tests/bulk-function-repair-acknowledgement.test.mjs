@@ -45,7 +45,8 @@ async function repairScenario({refresh, reject = false}) {
     assert.match(toasts[0][0], /^Unable to repair Function Tools: Write rejected$/);
   } else {
     assert.equal(panel._configData.revision, "acknowledged");
-    assert.equal(panel.clean.revision, "acknowledged");
+    assert.equal(panel.clean, undefined);
+    assert.equal(panel._configDataStale, true);
     assert.deepEqual(panel._draft.functions, [repaired]);
     assert.equal(panel._configData.config.prompt, "Saved prompt");
     assert.equal(panel._result, panel._configData);

@@ -1,5 +1,6 @@
 import {same} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
+import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
@@ -75,8 +76,9 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
-  const submitted = clone(panel._draft), submittedTitle = panel._draftTitle;
-  const owner = {agentId:panel._agentId, entryId:panel._selectedAgent().entry_id,
+  const submission = captureConfigurationSubmission(panel);
+  const submitted = submission.draft, submittedTitle = submission.title;
+  const owner = {...submission,
     view:panel._viewKey?.(), main:panel.shadowRoot.querySelector("main"),
     route:panel._eocRenderedRoute, markup:panel._eocMainMarkup, model:submitted.chat_model,
     voiceMappings:clone(submitted.voice_device_mappings || {}), voicePolicy:submitted.voice_scope_policy,
@@ -90,30 +92,25 @@ async function saveConfiguration(panel, button) {
     const result = await saveConfigurationAcrossRestart(panel, {
       config: changed,
       ...(dirty.has("__title") ? {title: submittedTitle} : {}),
-      revision: panel._configData?.revision,
+      revision: submission.revision,
     }, submitted, submittedTitle);
-    if (panel._agentId !== owner.agentId || panel._selectedAgent?.()?.entry_id !== owner.entryId) return;
+    if (!configurationSubmissionIsCurrent(panel, submission)) return;
     showErrors(panel, result.errors || {});
     if (!result.valid) {
       panel._toast("Fix the highlighted configuration errors", true);
       return;
     }
 
-    const {valid: _valid, errors: _errors, agent, ...saved} = result;
-    panel._configData = {...panel._configData, ...saved};
-    panel._configDataStale = false;
-    panel._result = panel._configData;
-    panel._rememberCleanConfiguration?.(panel._configData);
-    if (same(panel._draft, submitted)) panel._draft = clone(saved.config);
-    if (panel._draftTitle === submittedTitle) panel._draftTitle = saved.title;
-    panel._draftAgentId = panel._agentId;
-    if (agent) Object.assign(panel._selectedAgent(), agent);
-    panel._syncConfigDirty();
-    panel._toast("Changes saved");
-    reconcileSavedConfiguration(panel, owner);
-    panel._render();
+    await completeConfigurationAcknowledgement(panel, result, submission, {
+      message:"Changes saved",
+      refresh:() => {
+        if (panel._viewKey?.() === submission.view) panel._result = panel._configData;
+        reconcileSavedConfiguration(panel, owner);
+        panel._render();
+      },
+    });
   } catch (err) {
-    panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
+    if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
   } finally {
     panel._configurationSaving = false;
     panel._setSaving(panel.shadowRoot.querySelector("#save-config") || button, false);
@@ -228,14 +225,6 @@ export function syncAgentPicker(panel) {
 
 // Independently saved fields must advance the shared baseline without adopting
 // unrelated persisted values over the assistant's pending settings or title.
-export function synchronizePersistedConfigurationFields(panel, saved, fields) {
-  if (!panel._configData?.config || !saved?.config) return;
-  const updates = Object.fromEntries(fields.filter(key => Object.hasOwn(saved.config, key)).map(key => [key, clone(saved.config[key])]));
-  panel._configData = {...panel._configData, revision:saved.revision, config:{...panel._configData.config, ...updates}};
-  panel._configDataStale = false;
-  panel._rememberCleanConfiguration?.(panel._configData);
-  if (panel._draft && panel._draftAgentId === panel._agentId) {
-    panel._draft = {...panel._draft, ...clone(updates)};
-    panel._syncConfigDirty?.();
-  }
+export function synchronizePersistedConfigurationFields(panel, saved, fields, submission = captureConfigurationSubmission(panel)) {
+  return reconcileConfigurationAcknowledgement(panel, saved, submission, {fields});
 }

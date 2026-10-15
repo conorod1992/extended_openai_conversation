@@ -245,7 +245,8 @@ const configResult = (projection, title = "A") => ({
   finishRead(configResult("full", "Remote update"));
   await loading;
   assert.equal(panel._draftTitle, "Edited while configuration refreshed");
-  assert.equal(panel._configData, baseline, "an in-flight read must not replace a newly dirty baseline");
+  assert.equal(panel._configData.revision, "Remote update-r1", "the fresh baseline advances without adopting the local title as saved");
+  assert.equal(panel._configData.title, "Remote update");
   assert.equal(panel._configDirty, true);
 }
 
