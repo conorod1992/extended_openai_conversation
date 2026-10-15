@@ -32,7 +32,7 @@ from custom_components.extended_openai_conversation_responses.tool_exchange impo
 from homeassistant.components import ai_task, conversation
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import llm
+from homeassistant.helpers import frame, llm
 
 _SIDECARS = (
     "_dispatched_tool_inputs",
@@ -46,6 +46,7 @@ _SIDECARS = (
 
 class _CounterTool(llm.Tool):
     name = "counter"
+    integration = "extended_openai_conversation_responses"
     description = "Increment Home Assistant state once."
     parameters = vol.Schema({})
 
@@ -60,7 +61,9 @@ class _CounterTool(llm.Tool):
         hass.states.async_set("sensor.ai_task_effects", value)
         if self.fail_after_effect:
             raise HomeAssistantError("handler failed after increment")
-        return {"count": value}
+        payload = {"count": value}
+        result_type = getattr(llm, "ToolResult", None)
+        return result_type(data=payload) if result_type is not None else payload
 
 
 class _TaskDriver:
@@ -154,11 +157,13 @@ class _TaskDriver:
 @pytest.fixture
 async def task_driver(tmp_path):
     hass = HomeAssistant(str(tmp_path))
+    frame.async_setup(hass)
     driver = _TaskDriver(hass)
     try:
         yield driver
     finally:
         await hass.async_stop(force=True)
+        frame.async_setup(None)
 
 
 def _assert_acknowledged(entity):

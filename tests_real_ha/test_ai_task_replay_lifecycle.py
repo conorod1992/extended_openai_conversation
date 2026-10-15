@@ -26,6 +26,7 @@ from tests_real_ha.test_ai_task_runtime import (
 
 class _IncrementCounter(llm.Tool):
     name = "increment_counter"
+    integration = "extended_openai_conversation_responses"
     description = "Increment the acceptance-test counter once."
     parameters = vol.Schema({})
 
@@ -41,7 +42,9 @@ class _IncrementCounter(llm.Tool):
             blocking=True,
             context=llm_context.context,
         )
-        return {"count": hass.states.get("counter.receipt_probe").state}
+        payload = {"count": hass.states.get("counter.receipt_probe").state}
+        result_type = getattr(llm, "ToolResult", None)
+        return result_type(data=payload) if result_type is not None else payload
 
 
 def _request_tool(call_id):
@@ -58,10 +61,11 @@ def _request_tool(call_id):
 
 
 async def _loaded_task(hass, provider_outcomes):
+    # Recorder must install its registry listener before counter entities do.
+    _, entity_id, client = await _setup_entry(hass, provider_outcomes)
     assert await async_setup_component(
         hass, "counter", {"counter": {"receipt_probe": {"initial": 0}}}
     )
-    _, entity_id, client = await _setup_entry(hass, provider_outcomes)
     entity = hass.data[DATA_COMPONENT].get_entity(entity_id)
     assert entity is not None
     tool = _IncrementCounter()
