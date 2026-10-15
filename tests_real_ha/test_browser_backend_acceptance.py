@@ -368,10 +368,12 @@ async def test_configuration_acknowledgement_preserves_newer_browser_edits(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("rename_kind", ["function", "group"])
+@pytest.mark.parametrize("dirty_draft", [False, True])
 async def test_partial_function_acknowledgement_reloads_guest_policy(
     hass: HomeAssistant,
     hass_ws_client: Any,
     rename_kind: str,
+    dirty_draft: bool,
 ) -> None:
     """Real rename writes must refresh coupled Guest allowlists before preview."""
     tool = {
@@ -419,7 +421,8 @@ async def test_partial_function_acknowledgement_reloads_guest_policy(
             repo_root=Path(__file__).resolve().parent.parent,
             spec="tests_browser/real-ha-configuration-acknowledgement.spec.mjs",
             config="playwright.config.mjs",
-            env={"REAL_HA_BACKEND_URL": backend_url, "CONFIGURATION_ACK_GUEST_RENAME": rename_kind},
+            env={"REAL_HA_BACKEND_URL": backend_url, "CONFIGURATION_ACK_GUEST_RENAME": rename_kind,
+                 "CONFIGURATION_ACK_DIRTY_DRAFT": "1" if dirty_draft else "0"},
             failure_label="Partial Function acknowledgement retained stale Guest permissions",
         )
     finally:

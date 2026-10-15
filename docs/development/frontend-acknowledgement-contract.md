@@ -31,10 +31,17 @@ A subset acknowledgement advances its fields and revision, but does not certify
 that the entire configuration snapshot is fresh. Function and group renames also
 rewrite Guest allowlists that are absent from their partial response. The helper
 invalidates the full-snapshot cache and retains stale status until a full read or
-acknowledgement arrives. Clean in-document navigation then rereads configuration;
-unrelated local drafts remain protected by the existing dirty-draft policy.
+acknowledgement arrives. In-document navigation rereads stale configuration even
+with an unrelated dirty draft. The read merges the latest draft against its saved
+baseline: unchanged fields adopt the server value, while changed fields, deleted
+keys and an edited title remain local. A field reverted to that baseline has no
+local delta. A newer baseline/revision, owner, route, load token or cache generation
+invalidates the pending read. Cold Retention reads remain partial; expansion and
+refresh of an existing full snapshot preserve unrelated fields.
 
-Focused regressions cover both rename projections and the real panel cache/load
-methods. Genuine HA browser regressions save Function/group renames through the
-shipped editors under custom Guest policy, navigate within the same panel, and
-check that the effective-request preview includes the allowed renamed tool.
+Focused regressions cover both rename projections, real UI Save/preview handlers,
+navigation guards, edits during refresh, presence/revert semantics and read races.
+Genuine HA browser regressions save Function/group renames through the shipped
+editors under custom Guest policy with clean and dirty prompt/title drafts,
+navigate within the same panel, and check the allowed renamed tool in the preview.
+The subsequent full Save sends only local edits using the refreshed revision.

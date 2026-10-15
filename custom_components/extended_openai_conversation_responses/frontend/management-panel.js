@@ -20,7 +20,7 @@ import {configurationSubmissionIsCurrent} from "./configuration-acknowledgement.
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
-import {clone, same} from "./unsaved-state.js";
+import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview, enhanceOverviewHealthClarity, startOverviewDetailReads} from "./overview-page.js";
 import {formatUsageNumber} from "./usage-format.js";
@@ -1109,7 +1109,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const cacheGeneration = this._cacheGeneration;
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules", "usage-maintenance/backup-restore"].includes(view);
-    if (configOnly && this._configData && (this._configDirty || !this._configDataStale) && this._draftAgentId === this._agentId
+    if (configOnly && this._configData && !this._configDataStale && this._draftAgentId === this._agentId
         && (this._configData.projection !== "retention" || view === "usage-maintenance/retention")) {
       this._applyConfigurationLiveMetadata(view);
       this._contentData = null;
@@ -1468,13 +1468,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _loadConfigDraft() {
     const diagnostics = this._eocConfigurationReadDiagnostics ||= {};
-    if (!this._configData || (this._configDataStale && !this._configDirty) || this._draftAgentId !== this._agentId
+    if (!this._configData || this._configDataStale || this._draftAgentId !== this._agentId
         || (this._configData.projection === "retention" && this._viewKey() !== "usage-maintenance/retention")) {
       const agentId = this._agentId;
+      const entryId = this._selectedAgent()?.entry_id;
+      const baseline = this._draftAgentId === agentId ? this._configData : null;
       const loadToken = this._loadToken;
       const cacheGeneration = this._cacheGeneration;
       const view = this._viewKey();
-      const projection = this._viewKey() === "usage-maintenance/retention" ? "retention" : "full";
+      // Cold Retention visits stay partial. Refresh an existing full baseline
+      // with a full read so its unrelated draft fields cannot disappear.
+      const projection = view === "usage-maintenance/retention" && (!baseline || baseline.projection === "retention") ? "retention" : "full";
       const action = projection === "retention" ? "retention_get" : "get";
       const trace = (event, detail) => markConfigurationRead(event, {view, action, ...detail});
       const key = this._configurationSnapshotKey(agentId, projection);
@@ -1526,28 +1530,27 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           }
         }
       }
-      if (agentId !== this._agentId || loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration || view !== this._viewKey()) return;
-      // A user can edit the visible draft while an earlier configuration read
-      // is in flight. The read is no longer allowed to replace that draft.
-      const retainedRetentionDraft = this._configDirty && this._draftAgentId === agentId
-        && this._configData?.projection === "retention" && projection === "full"
-        ? {draft: this._draft, baseline: this._configData.config} : null;
-      if (this._configDirty && this._draftAgentId === agentId && !retainedRetentionDraft) return;
+      if (agentId !== this._agentId || entryId !== this._selectedAgent()?.entry_id
+          || loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration || view !== this._viewKey()) return;
+      const currentBaseline = this._draftAgentId === agentId ? this._configData : null;
+      // A newer acknowledgement/read owns its revision and baseline. Metadata
+      // additions may replace the envelope while retaining the same config.
+      if (currentBaseline?.config !== baseline?.config || currentBaseline?.revision !== baseline?.revision) return;
+      const retainedDraft = baseline?.config && this._draftAgentId === agentId && this._draft
+        ? {draft:this._draft, title:this._draftTitle} : null;
+      if (this._configDirty && this._draftAgentId === agentId && !retainedDraft) return;
       const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
       if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);
       this._configData = configData;
       this._configDataStale = false;
       if (!cached) this._rememberCleanConfiguration(configData, agentId);
-      this._draft = JSON.parse(JSON.stringify(configData.config));
-      if (retainedRetentionDraft) {
-        for (const [field, value] of Object.entries(retainedRetentionDraft.draft)) {
-          if (!same(value, retainedRetentionDraft.baseline[field])) this._draft[field] = clone(value);
-        }
-      }
-      this._draftTitle = configData.title;
+      // Adopt fresh unchanged fields and keep the latest local delta, including
+      // edits/deletions made while the read was pending and Retention expansion.
+      this._draft = retainedDraft ? mergeAcknowledgedDraft(retainedDraft.draft, baseline.config, configData.config) : clone(configData.config);
+      this._draftTitle = retainedDraft && retainedDraft.title !== baseline.title ? retainedDraft.title : configData.title;
       this._draftAgentId = agentId;
       this._setConfigDirty(false);
-      if (retainedRetentionDraft) this._syncConfigDirty();
+      if (retainedDraft) this._syncConfigDirty();
     } else {
       diagnostics.draft = {source: "active-config", action: this._viewKey() === "usage-maintenance/retention" ? "retention_get" : "get", sentAction: null};
       markConfigurationRead("draft-source", {view: this._viewKey(), action: diagnostics.draft.action, source: "active-config"});
