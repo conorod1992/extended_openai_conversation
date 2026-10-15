@@ -82,6 +82,12 @@ conversation scope takes precedence over the inherited detached flag. Dispatch
 recording and receipt retention use the same resolved owner, so a later ordinary
 provider retry remains protected after a failed nested continuation.
 
+AI Tasks retain the same provider ownership as conversations. Their successful
+provider continuation clears dispatched receipts before output parsing, while
+failed or cancelled continuations retain replay evidence. A structured-output
+validation failure after provider acknowledgement does not reopen that recovery
+interval. Repeated successful tasks therefore cannot exhaust retention history.
+
 Invocation leases, child paths, validated-call aliases and explicit settlement
 handles remain: nested children, out-of-order completion and inherited task
 contexts require different ownership checks. Detached jobs have a distinct

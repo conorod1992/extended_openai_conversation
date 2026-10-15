@@ -20,6 +20,7 @@ TEST_PATHS=(
   tests_real_ha/test_conversation_contract_remediation.py
   tests_real_ha/test_ai_task_lifecycle.py
   tests_real_ha/test_ai_task_runtime.py
+  tests_real_ha/test_ai_task_replay_lifecycle.py
   tests_real_ha/test_assist_origin_context.py
   tests_real_ha/test_assist_streaming_speech_processing.py
   tests_real_ha/test_assist_voice_identity_precedence.py

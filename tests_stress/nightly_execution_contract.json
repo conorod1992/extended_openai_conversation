@@ -2385,7 +2385,20 @@
     "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[executor-none]",
     "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[executor-optional]",
     "tests_real_ha/test_service_receipt_compatibility.py::test_prepared_dispatch_preserves_ha_job_events_context_and_response[executor-only]",
-    "tests_real_ha/test_service_receipt_compatibility.py::test_schema_registration_change_refuses_both_handlers"
+    "tests_real_ha/test_service_receipt_compatibility.py::test_schema_registration_change_refuses_both_handlers",
+    "tests/test_ai_task_replay_lifecycle.py::test_successful_ai_tasks_release_receipts_before_retention_eviction[False]",
+    "tests/test_ai_task_replay_lifecycle.py::test_successful_ai_tasks_release_receipts_before_retention_eviction[True]",
+    "tests/test_ai_task_replay_lifecycle.py::test_failed_ai_task_continuations_retain_effects_until_acknowledged[provider_error]",
+    "tests/test_ai_task_replay_lifecycle.py::test_failed_ai_task_continuations_retain_effects_until_acknowledged[cancel]",
+    "tests/test_ai_task_replay_lifecycle.py::test_failed_ai_task_continuations_retain_effects_until_acknowledged[tool_error]",
+    "tests/test_ai_task_replay_lifecycle.py::test_rejected_ai_task_tools_do_not_retire_effect_history",
+    "tests/test_ai_task_replay_lifecycle.py::test_structured_output_failure_follows_provider_acknowledgement[not JSON]",
+    "tests/test_ai_task_replay_lifecycle.py::test_structured_output_failure_follows_provider_acknowledgement[{\"answer\":\"wrong type\"}]",
+    "tests_real_ha/test_ai_task_replay_lifecycle.py::test_loaded_successful_tasks_release_replay_history[False]",
+    "tests_real_ha/test_ai_task_replay_lifecycle.py::test_loaded_successful_tasks_release_replay_history[True]",
+    "tests_real_ha/test_ai_task_replay_lifecycle.py::test_loaded_failed_task_preserves_effect_until_provider_ack[provider_error]",
+    "tests_real_ha/test_ai_task_replay_lifecycle.py::test_loaded_failed_task_preserves_effect_until_provider_ack[cancel]",
+    "tests_real_ha/test_ai_task_replay_lifecycle.py::test_loaded_structured_result_failure_keeps_provider_acknowledgement"
   ],
   "browser": {
     "browser": [
@@ -3352,7 +3365,9 @@
       "tests_real_ha/test_ai_task_runtime.py",
       "tests_stress/test_ai_task_continuity.py",
       "tests_stress/test_ai_task_mixed_campaign.py",
-      "tests_stress/test_conversation_tool_ai_task_runtime_semantics.py"
+      "tests_stress/test_conversation_tool_ai_task_runtime_semantics.py",
+      "tests/test_ai_task_replay_lifecycle.py",
+      "tests_real_ha/test_ai_task_replay_lifecycle.py"
     ],
     "archive": [
       "tests/test_conversation_archive.py",
