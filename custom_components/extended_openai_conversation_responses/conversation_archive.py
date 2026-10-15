@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, time, timedelta, tzinfo
 from heapq import heappush, heapreplace
@@ -18,6 +19,7 @@ from uuid import uuid4
 import weakref
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -482,6 +484,62 @@ class ConversationArchive:
             await self._async_publish_session_locked(session_key, session)
             return session
 
+    async def async_query_snapshot(
+        self,
+        scope_id: str,
+        query: Callable[..., dict[str, Any]],
+        *args: Any,
+        include_turns: bool = False,
+    ) -> dict[str, Any]:
+        """Run a trusted read on a retained snapshot and validate before publication.
+
+        The worker receives detached containers of immutable records. Only returned
+        rows are rechecked, so unrelated writes and appends do not invalidate a read.
+        Ranking, paging and output shape remain the caller's responsibility.
+        """
+        async with self._lock:
+            self._ensure_initialized()
+            sessions = {
+                key: session
+                for key, session in self._sessions.items()
+                if session.scope_id == scope_id
+                and session.retention_state == "retained"
+            }
+            if include_turns:
+                turns = {key: tuple(self._turns.get(key, ())) for key in sessions}
+                snapshot_args = (sessions, turns, scope_id, *args)
+            else:
+                snapshot_args = (sessions, scope_id, *args)
+        result = await asyncio.to_thread(query, *snapshot_args)
+        # Deletion/privacy changes may occur while ranking. Never publish their old text.
+        async with self._lock:
+            self._ensure_initialized()
+            for record in result.get("results", result.get("sessions", ())):
+                session_id = record["session_id"]
+                current = self._sessions.get(session_id)
+                if (
+                    current is None
+                    or current.scope_id != scope_id
+                    or current.retention_state != "retained"
+                ):
+                    raise HomeAssistantError(
+                        "Archive changed during search; retry the query"
+                    )
+                if "turn_id" in record:
+                    index = record["turn_index"]
+                    original = turns[session_id][index]
+                    current_turns = self._turns.get(session_id, ())
+                    # Appends preserve indices. Pruning/replacement invalidates the
+                    # cursor, so retry rather than scanning whole histories here.
+                    if (
+                        index >= len(current_turns)
+                        or current_turns[index] is not original
+                    ):
+                        raise HomeAssistantError(
+                            "Archive changed during search; retry the query"
+                        )
+        return result
+
     async def async_search(
         self,
         scope_id: str,
@@ -501,23 +559,16 @@ class ConversationArchive:
             raise ValueError(
                 f"offset must not exceed {MAX_SEARCH_OFFSET}; narrow the query"
             )
-        async with self._lock:
-            self._ensure_initialized()
-            snapshot = tuple(
-                (session, tuple(self._turns.get(session.session_id, ())))
-                for session in self._sessions.values()
-                if session.scope_id == scope_id
-                and session.retention_state == "retained"
-            )
-        return await asyncio.to_thread(
-            _search_archive_snapshot,
-            snapshot,
+        return await self.async_query_snapshot(
+            scope_id,
+            _search_archive_query,
             query,
             start_date,
             end_date,
             limit,
             offset,
             dt_util.DEFAULT_TIME_ZONE,
+            include_turns=True,
         )
 
     async def async_get(
@@ -1281,6 +1332,17 @@ def _local_date_bounds(
     except (TypeError, ValueError, OverflowError) as err:
         raise ValueError("a valid start_date and end_date are required") from err
     return start, end
+
+
+def _search_archive_query(
+    sessions: dict[str, ArchiveSession],
+    turns: dict[str, tuple[ArchiveTurn, ...]],
+    _scope_id: str,
+    *args: Any,
+) -> dict[str, Any]:
+    """Adapt the shared snapshot to the existing model search ranker."""
+    snapshot = tuple((session, turns[key]) for key, session in sessions.items())
+    return _search_archive_snapshot(snapshot, *args)
 
 
 def _search_archive_snapshot(

@@ -25,7 +25,6 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
 )
 from custom_components.extended_openai_conversation_responses.management_history_queries import (
     MAX_MANAGEMENT_HISTORY_OFFSET,
-    _async_archive_query,
     archive_get_page,
     archive_list_page,
     archive_search_page,
@@ -659,10 +658,9 @@ async def test_management_archive_search_uses_home_assistant_local_calendar_date
         },
     )
 
-    result = await management_history_queries._async_archive_query(
-        archive,
-        management_history_queries._archive_search_sync,
+    result = await archive.async_query_snapshot(
         "user:alice",
+        management_history_queries._archive_search_sync,
         "alpha",
         "2026-06-02",
         "2026-06-02",
@@ -683,10 +681,9 @@ async def test_async_archive_query_cancellation_releases_snapshot_without_waitin
     started = Event()
     release = Event()
 
-    class _Archive:
+    class _Archive(ConversationArchive):
         def __init__(self):
-            self._lock = asyncio.Lock()
-            self._sessions = {}
+            super().__init__(_Storage(), "agent")
             self.initialized_checks = 0
 
         def _ensure_initialized(self):
@@ -699,7 +696,7 @@ async def test_async_archive_query_cancellation_releases_snapshot_without_waitin
         assert release.wait(timeout=5)
         return "done"
 
-    task = asyncio.create_task(_async_archive_query(archive, query, "user:alice"))
+    task = asyncio.create_task(archive.async_query_snapshot("user:alice", query))
     for _ in range(100):
         if started.is_set():
             break
