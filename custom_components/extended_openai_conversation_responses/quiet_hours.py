@@ -43,6 +43,8 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
 
     async def async_setup(self) -> None:
         await super().async_setup()
+        if self._stopping:
+            return
         if self._registry_unsubscribe is None:
             self._registry_unsubscribe = self.hass.bus.async_listen(
                 er.EVENT_ENTITY_REGISTRY_UPDATED, self._async_registry_updated

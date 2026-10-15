@@ -8,6 +8,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
+    QuietHoursManager,
     async_get_quiet_hours,
 )
 from homeassistant.core import Context
@@ -67,7 +68,9 @@ async def test_cancelled_shutdown_waits_for_lock_and_restores_before_removal(has
     assert not manager._unsubscribers
     assert manager._registry_unsubscribe is None
     assert hass.states.get(manager._state_entity_id()) is None
-    assert "quiet_hours_manager" not in hass.data["extended_openai_conversation_responses"]
+    assert (
+        "quiet_hours_manager" not in hass.data["extended_openai_conversation_responses"]
+    )
 
 
 @pytest.mark.parametrize("original", [0.1, 0.8])
@@ -184,3 +187,76 @@ async def test_registered_callback_queued_behind_shutdown_cannot_reapply(
     finally:
         finish.set()
         await stopped
+
+
+@pytest.mark.parametrize("setup_timing", ["queued", "after_shutdown"])
+async def test_public_getter_after_shutdown_cannot_reattach_registry_listener(
+    hass, monkeypatch, setup_timing
+):
+    registry_events = []
+    original_callback = QuietHoursManager._async_registry_updated
+
+    async def observed_callback(self, event):
+        registry_events.append(event)
+        await original_callback(self, event)
+
+    monkeypatch.setattr(QuietHoursManager, "_async_registry_updated", observed_callback)
+    manager, _, media, calls = await _enabled_manager(hass, 0.8)
+    await hass.async_block_till_done()
+    state_id = manager._state_entity_id()
+    listeners_before = hass.bus.async_listeners()[er.EVENT_ENTITY_REGISTRY_UPDATED]
+    assert manager._registry_unsubscribe is not None
+    assert manager._unsubscribers
+    entered, finish = asyncio.Event(), asyncio.Event()
+    stopped = setup = None
+    try:
+        if setup_timing == "queued":
+            save = manager._store.async_save
+
+            async def blocked_save(data):
+                entered.set()
+                await finish.wait()
+                await save(data)
+
+            monkeypatch.setattr(manager._store, "async_save", blocked_save)
+            stopped = asyncio.create_task(manager.async_shutdown())
+            async with asyncio.timeout(10):
+                await entered.wait()
+            assert manager._stopping
+            assert manager._lock.locked()
+            setup = asyncio.create_task(async_get_quiet_hours(hass))
+            await asyncio.sleep(0)
+            assert not setup.done()
+            finish.set()
+            await stopped
+            assert await setup is manager
+        else:
+            await manager.async_shutdown()
+            assert await async_get_quiet_hours(hass) is manager
+
+        await hass.async_block_till_done()
+        registry_events.clear()
+        assert manager._registry_unsubscribe is None
+        assert (
+            hass.bus.async_listeners().get(er.EVENT_ENTITY_REGISTRY_UPDATED, 0)
+            == listeners_before - 1
+        )
+        assert not manager._unsubscribers
+        assert manager.active is None
+        assert hass.states.get(state_id) is None
+        assert hass.states.get(media).attributes["volume_level"] == 0.8
+        assert calls == [("volume_set", media), ("volume_set", media)]
+
+        er.async_get(hass).async_update_entity(state_id, name="Stopped Quiet Hours")
+        await hass.async_block_till_done()
+        assert not registry_events
+        assert not manager._unsubscribers
+        assert hass.states.get(state_id) is None
+        assert len(calls) == 2
+    finally:
+        finish.set()
+        if stopped is not None:
+            await stopped
+        if setup is not None:
+            await setup
+        await manager.async_shutdown()
