@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 import re
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from homeassistant.const import ATTR_FRIENDLY_NAME, ATTR_SUPPORTED_FEATURES
@@ -224,6 +224,9 @@ class IntercomManager:
         if entity.device_id:
             device = dr.async_get(self.hass).async_get(entity.device_id)
             if device is not None:
+                # Child-device inheritance was added after our minimum HA.
+                if resolver := getattr(dr, "async_get_effective_area_id", None):
+                    return cast(str | None, resolver(self.hass, device))
                 return device.area_id
         return None
 

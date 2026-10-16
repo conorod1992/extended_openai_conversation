@@ -348,6 +348,10 @@ async def async_discover(
             llm_component, "AssistAPI", None
         ):
             try:
+                if getattr(api, "requires_admin", False):
+                    # Platform attribution must not bypass an API-level gate.
+                    async with asyncio.timeout(15):
+                        await llm.async_get_api(hass, api.id, context)
                 registry = hass.data.get(llm_component.DATA_PLATFORMS)
                 if registry is None:
                     raise HomeAssistantError("LLM platform registry unavailable")
@@ -388,7 +392,9 @@ async def async_discover(
             continue
         try:
             async with asyncio.timeout(15):
-                instance = await api.async_get_api_instance(context)
+                # The public entry point enforces API-level authorization on
+                # newer HA, and is also available on our oldest supported HA.
+                instance = await llm.async_get_api(hass, api.id, context)
             # Some third-party APIs reuse an instance. Never mutate it or accept a
             # cached administrator context as the authority for this request.
             instance = replace(

@@ -325,11 +325,36 @@ def _disjoint_schema_alternatives(variants: list[Any]) -> bool:
     return bool(variants)
 
 
-def _adjust_schema(schema: dict[str, Any], *, root: bool = False) -> None:
+def _adjust_schema(
+    schema: dict[str, Any], *, root: bool = False, azure: bool = False
+) -> None:
     """Adjust the schema to be compatible with OpenAI API."""
     # HA selectors emit domain-specific annotations outside strict provider schemas.
     schema.pop("format", None)
     schema.pop("uniqueItems", None)
+    if azure:
+        # Azure's strict subset excludes constraints supported by direct OpenAI.
+        # The caller's original schema still validates the returned task data.
+        for keyword in (
+            "minLength",
+            "maxLength",
+            "pattern",
+            "minimum",
+            "maximum",
+            "multipleOf",
+            "patternProperties",
+            "unevaluatedProperties",
+            "propertyNames",
+            "minProperties",
+            "maxProperties",
+            "unevaluatedItems",
+            "contains",
+            "minContains",
+            "maxContains",
+            "minItems",
+            "maxItems",
+        ):
+            schema.pop(keyword, None)
     if root and (
         schema.get("type") != "object" or "anyOf" in schema or "oneOf" in schema
     ):
@@ -363,14 +388,14 @@ def _adjust_schema(schema: dict[str, Any], *, root: bool = False) -> None:
         if isinstance(variants, list):
             for variant in variants:
                 if isinstance(variant, dict):
-                    _adjust_schema(variant)
+                    _adjust_schema(variant, azure=azure)
 
     for keyword in ("$defs", "definitions"):
         definitions = schema.get(keyword)
         if isinstance(definitions, dict):
             for definition in definitions.values():
                 if isinstance(definition, dict):
-                    _adjust_schema(definition)
+                    _adjust_schema(definition, azure=azure)
 
     schema_type = schema.get("type")
     schema_types = (
@@ -397,7 +422,7 @@ def _adjust_schema(schema: dict[str, Any], *, root: bool = False) -> None:
             for prop, prop_info in properties.items():
                 if not isinstance(prop_info, dict):
                     continue
-                _adjust_schema(prop_info)
+                _adjust_schema(prop_info, azure=azure)
                 if prop not in required:
                     _make_schema_nullable(prop_info)
                     required.append(prop)
@@ -405,7 +430,7 @@ def _adjust_schema(schema: dict[str, Any], *, root: bool = False) -> None:
     if "array" in schema_types:
         items = schema.get("items")
         if isinstance(items, dict):
-            _adjust_schema(items)
+            _adjust_schema(items, azure=azure)
 
 
 def _serialize_structured_output(
@@ -425,11 +450,11 @@ def _serialize_structured_output(
 
 
 def _format_structured_output(
-    schema: SchemaValidator, llm_api: llm.APIInstance | None
+    schema: SchemaValidator, llm_api: llm.APIInstance | None, *, azure: bool = False
 ) -> dict[str, Any]:
     """Adapt a fresh caller schema to the provider's strict contract."""
     result = _serialize_structured_output(schema, llm_api)
-    _adjust_schema(result, root=True)
+    _adjust_schema(result, root=True, azure=azure)
     return result
 
 
@@ -496,14 +521,16 @@ def _convert_content_to_param(
             # Remove tool_calls field if it's an empty array to maintain compatibility
             if msg.get("tool_calls") == []:
                 msg.pop("tool_calls", None)
-            if (
-                msg.get("tool_calls")
-                and messages
-                and messages[-1].get("role") == "assistant"
-                and messages[-1].get("tool_calls")
-            ):
+            if messages and messages[-1].get("role") == "assistant":
+                # Responses can interleave text, native items and calls in one
+                # assistant output group. Chat requires all calls in that group
+                # before their results, with no intervening assistant message.
                 previous = cast(ChatCompletionAssistantMessageParam, messages[-1])
-                previous["tool_calls"] = [*previous["tool_calls"], *msg["tool_calls"]]
+                if msg.get("tool_calls"):
+                    previous["tool_calls"] = [
+                        *previous.get("tool_calls", []),
+                        *msg["tool_calls"],
+                    ]
                 if msg.get("content"):
                     previous["content"] = "\n".join(
                         str(part)
@@ -803,13 +830,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     raise HomeAssistantError(
                         f"{model} does not support native Structured Outputs."
                     )
+                azure = self.entry.data.get(CONF_API_PROVIDER) == "azure"
                 if structure_schema is None:
                     structured_schema = _format_structured_output(
-                        structure, chat_log.llm_api
+                        structure, chat_log.llm_api, azure=azure
                     )
                 else:
                     structured_schema = deepcopy(structure_schema)
-                    _adjust_schema(structured_schema, root=True)
+                    _adjust_schema(structured_schema, root=True, azure=azure)
                 output_format = {
                     "type": "json_schema",
                     "name": _provider_schema_name(structure_name),

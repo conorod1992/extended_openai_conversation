@@ -241,6 +241,22 @@ def _execute_sqlite_query(
         conn.close()
 
 
+class _ParameterTemplate(Template):
+    """Retain authored text before HA normalizes the template source."""
+
+    def __init__(self, source: str, hass: HomeAssistant) -> None:
+        super().__init__(source, hass)
+        self.source = source
+
+
+def _parameter_template(value: Any) -> Template:
+    validated = cv.template(value)
+    if isinstance(validated, _ParameterTemplate):
+        return validated
+    source = value if isinstance(value, str) else validated.template
+    return _ParameterTemplate(source, validated.hass)
+
+
 class SqliteFunction(Function):
     def __init__(self) -> None:
         """Initialize sqlite tool."""
@@ -248,7 +264,7 @@ class SqliteFunction(Function):
             vol.Schema(
                 {
                     vol.Optional("query"): str,
-                    vol.Optional("parameters"): {str: cv.template},
+                    vol.Optional("parameters"): {str: _parameter_template},
                     vol.Optional("string_parameters"): [str],
                     vol.Optional("db_url"): str,
                     vol.Optional("single"): bool,
@@ -331,15 +347,22 @@ class SqliteFunction(Function):
             )
         parameters = {}
         for name, raw in function_config.get("parameters", {}).items():
-            value = raw if isinstance(raw, Template) else Template(str(raw), hass)
             if name in string_parameters:
                 # HA strips template output before returning it. Non-whitespace
                 # guards preserve whitespace that belongs to the string value.
-                value = Template(f".{value.template}.", hass)
+                source = (
+                    raw.source
+                    if isinstance(raw, _ParameterTemplate)
+                    else raw.template
+                    if isinstance(raw, Template)
+                    else str(raw)
+                )
+                value = Template(f".{source}.", hass)
                 rendered = value.async_render(template_arguments, parse_result=False)[
                     1:-1
                 ]
             else:
+                value = raw if isinstance(raw, Template) else Template(str(raw), hass)
                 rendered = value.async_render(template_arguments)
             if not isinstance(rendered, (str, int, float, type(None))) or (
                 isinstance(rendered, float) and not math.isfinite(rendered)
