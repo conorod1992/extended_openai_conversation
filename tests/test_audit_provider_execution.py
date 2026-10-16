@@ -67,6 +67,7 @@ async def test_structured_result_is_bounded_after_serialization():
     from custom_components.extended_openai_conversation_responses.conversation import ExtendedOpenAIAgentEntity
     from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import tool_result_data
     from custom_components.extended_openai_conversation_responses.runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
+    from custom_components.extended_openai_conversation_responses.model_tool_results import model_tool_result_data
 
     class StructuredEntity(ExtendedOpenAIAgentEntity):
         async def _async_dispatch_function_tool(self, *_args):
@@ -74,7 +75,10 @@ async def test_structured_result_is_bounded_after_serialization():
             return make_tool_result_content(agent_id="test", tool_call_id="call", tool_name="test", tool_result={"result": [{"value": "x" * 1000}] * 400})
 
     content = await object.__new__(StructuredEntity)._execute_function_tool({}, {}, None, [])
-    assert tool_result_data(content)["result"]["status"] == "output_overflow"
+    retained = tool_result_data(content)["result"]
+    assert len(retained) == 400
+    assert all(item == {"value": "x" * 1000} for item in retained)
+    assert model_tool_result_data(content)["result"]["status"] == "output_overflow"
 
 
 async def test_history_is_trimmed_before_provider_request(hass):

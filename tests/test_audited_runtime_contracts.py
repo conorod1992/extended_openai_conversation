@@ -602,6 +602,8 @@ async def test_oversized_rest_json_is_bounded_without_full_parsing(monkeypatch):
     projected = await object.__new__(RestResultEntity)._execute_function_tool(
         {}, {}, None, []
     )
+    assert tool_result_data(projected)["result"] is value
     assert (
-        len(tool_result_data(projected)["result"]) == MAX_MODEL_TOOL_RESULT_CHARACTERS
+        len(model_tool_results.model_tool_result_data(projected)["result"])
+        == MAX_MODEL_TOOL_RESULT_CHARACTERS
     )

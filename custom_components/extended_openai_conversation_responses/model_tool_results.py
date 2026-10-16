@@ -10,7 +10,12 @@ from typing import Any
 
 import orjson
 
-from .ha_tool_result_compat import tool_result_data
+from .ha_tool_result_compat import (
+    ExecutionFailure,
+    ToolResultPayload,
+    is_tool_result_content,
+    tool_result_data,
+)
 from .memory import MemoryRecord, memory_as_dict
 
 _OPTIONAL_MEMORY_FIELDS = {
@@ -46,18 +51,57 @@ class OwnedJSONPayload(dict[str, Any]):
         self.value = value
 
 
-async def project_tool_result(content: Any) -> Any:
-    """Bound presentation without parsing literal strings or truncating JSON."""
-    import asyncio
+def _overflow_result(*, error: bool = False) -> dict[str, Any]:
+    overflow = {
+        "status": "output_overflow",
+        "execution_completed": True,
+        "message": "The completed Function result exceeds the model output limit. Use a bounded query; do not repeat side effects.",
+    }
+    if error:
+        overflow["error"] = True
+        return ExecutionFailure(overflow)
+    return overflow
 
+
+def _tool_result_failed(content: Any, payload: Any) -> bool:
+    """Retain native and structured failure indications without parsing text."""
+    if isinstance(payload, OwnedJSONPayload):
+        value = payload.value
+    elif isinstance(payload, dict):
+        value = payload.get("result", payload)
+    else:
+        value = payload
+    if bool(getattr(getattr(content, "result", None), "error", False)) or (
+        isinstance(payload, OwnedJSONPayload)
+        and isinstance(value, dict)
+        and (value.get("status") == "error" or value.get("error") is True)
+    ):
+        return True
+    # Native batches can contain both successful results and handled failures.
+    # Recognise only producer-owned markers at arbitrary nesting; a plain
+    # business-data dictionary containing an "error" string remains ordinary data.
+    pending = [payload, value]
+    seen: set[int] = set()
+    while pending:
+        item = pending.pop()
+        if isinstance(item, ExecutionFailure):
+            return True
+        if not isinstance(item, (dict, list, tuple)) or id(item) in seen:
+            continue
+        seen.add(id(item))
+        pending.extend(item.values() if isinstance(item, dict) else item)
+    return False
+
+
+def _project_tool_payload(payload: Any, *, error: bool = False) -> Any:
+    """Project the result value without mutating backend-owned data."""
     from .runtime_hardening import (
         MAX_MODEL_TOOL_RESULT_CHARACTERS,
         bounded_tool_result_text,
     )
 
-    payload = tool_result_data(content)
     if not isinstance(payload, dict) or "result" not in payload:
-        return content
+        return payload
     owned = isinstance(payload, OwnedJSONPayload)
     value = (
         payload.value if isinstance(payload, OwnedJSONPayload) else payload["result"]
@@ -66,19 +110,11 @@ async def project_tool_result(content: Any) -> Any:
     if isinstance(value, str) and not owned:
         projected = bounded_tool_result_text(value)
     else:
-        serialized = (
-            payload["result"]
-            if owned
-            else await asyncio.to_thread(compact_tool_json, value)
-        )
+        serialized = payload["result"] if owned else compact_tool_json(value)
         projected = (
             value
             if len(serialized) <= MAX_MODEL_TOOL_RESULT_CHARACTERS
-            else {
-                "status": "output_overflow",
-                "execution_completed": True,
-                "message": "The completed Function result exceeds the model output limit. Use a bounded query; do not repeat side effects.",
-            }
+            else _overflow_result(error=error)
         )
     # Never mutate the retained execution result or a backend-owned object.
     # The ownership marker is internal: HA's dataclasses.asdict reconstructs
@@ -86,16 +122,90 @@ async def project_tool_result(content: Any) -> Any:
     if owned or projected is not value:
         if owned:
             projected = compact_tool_json(projected)
+        return {**payload, "result": projected}
+    return payload
+
+
+async def project_tool_result(content: Any, *, prepare_wire: bool = False) -> Any:
+    """Prepare failure provenance, bounded data and wire output off the event loop."""
+    import asyncio
+
+    payload = tool_result_data(content)
+    if isinstance(payload, ToolResultPayload) and payload.model_wire is not None:
+        return content
+    retained, error, _, changed = await asyncio.to_thread(_prepare_tool_result, content)
+    # Execution wrappers preserve unchanged backend results. Prepared log data
+    # remains complete; only its internal wire cache contains the projection.
+    if not prepare_wire and not changed:
+        return content
+    if isinstance(retained, dict):
         from .ha_tool_result_compat import make_tool_result_content
 
         return make_tool_result_content(
             agent_id=content.agent_id,
             tool_call_id=content.tool_call_id,
             tool_name=content.tool_name,
-            tool_result={**payload, "result": projected},
-            error=getattr(getattr(content, "result", None), "error", False),
+            tool_result=retained,
+            error=error,
         )
     return content
+
+
+async def async_prepare_tool_results(chat_content: list[Any]) -> None:
+    """Prepare retained/new results once without changing backend/local objects."""
+    snapshot = list(chat_content)
+    prepared = {
+        id(content): await project_tool_result(content, prepare_wire=True)
+        for content in snapshot
+        if is_tool_result_content(content)
+    }
+    chat_content[:] = [prepared.get(id(content), content) for content in chat_content]
+
+
+def _prepare_tool_result(content: Any) -> tuple[Any, bool, str, bool]:
+    """Perform all payload-sized work together on the worker thread."""
+    from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
+
+    payload = tool_result_data(content)
+    retained = payload
+    error = _tool_result_failed(content, payload)
+    payload = _project_tool_payload(payload, error=error)
+    # The established budget measures the result value before the provider's
+    # outer JSON encoding. Counting its escaping again would discard complete
+    # bounded knowledge pages and turn clipped literal text into structured data.
+    if isinstance(payload, dict) and "result" in payload:
+        value = payload["result"]
+        size = len(value) if isinstance(value, str) else len(compact_tool_json(value))
+        other_data = {key: value for key, value in payload.items() if key != "result"}
+        # Sibling fields share the result's budget, including their JSON keys
+        # and structure. Only the fixed result envelope/outer escaping is extra.
+        if other_data:
+            size += len(compact_tool_json(other_data))
+        if size > MAX_MODEL_TOOL_RESULT_CHARACTERS:
+            payload = {"result": _overflow_result(error=error)}
+    elif len(compact_tool_json(payload)) > MAX_MODEL_TOOL_RESULT_CHARACTERS:
+        payload = _overflow_result(error=error)
+    wire = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS).decode()
+    changed = payload is not retained
+    if isinstance(retained, dict):
+        retained = ExecutionFailure(retained) if error else ToolResultPayload(retained)
+        retained.model_wire = wire
+    return retained, error, wire, changed
+
+
+def serialize_model_tool_result(content: Any) -> str:
+    """Reuse prepared output; standalone conversion keeps synchronous compatibility."""
+    payload = tool_result_data(content)
+    if isinstance(payload, ToolResultPayload) and payload.model_wire is not None:
+        return payload.model_wire
+    # Live provider/history paths await async_prepare_tool_results first. Keep
+    # the existing standalone converter API for callers outside those paths.
+    return _prepare_tool_result(content)[2]
+
+
+def model_tool_result_data(content: Any) -> Any:
+    """Read bounded presentation data for history maintenance, never raw data."""
+    return orjson.loads(serialize_model_tool_result(content))
 
 
 def compact_tool_json(value: Any) -> str:

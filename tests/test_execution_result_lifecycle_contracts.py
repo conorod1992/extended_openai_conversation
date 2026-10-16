@@ -38,6 +38,7 @@ from custom_components.extended_openai_conversation_responses.model_tool_results
     OwnedJSONPayload,
     local_function_results,
     project_tool_result,
+    serialize_model_tool_result,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
@@ -158,9 +159,10 @@ async def test_owned_projection_survives_ha_dataclass_serialization(hass, value)
     )
     projected = await project_tool_result(content)
     payload = tool_result_data(projected)
-    assert type(payload) is dict
+    assert isinstance(payload, dict)
     assert json.loads(json.dumps(asdict(Envelope(payload))))["data"] == payload
-    actual = json.loads(payload["result"])
+    assert json.loads(payload["result"]) == value
+    actual = json.loads(json.loads(serialize_model_tool_result(projected))["result"])
     assert (
         actual == value
         if len(json.dumps(value)) < 32000
@@ -213,7 +215,8 @@ async def test_structured_overflow_is_complete_and_does_not_mutate_local_result(
     )
     assert tool_result_data(local)["result"] == value
     assert tool_result_data(content)["result"] == value
-    overflow = tool_result_data(projected)["result"]
+    assert tool_result_data(projected)["result"] is value
+    overflow = json.loads(serialize_model_tool_result(projected))["result"]
     assert overflow["execution_completed"] is True
     assert len(json.dumps(overflow)) < 32000
     with pytest.raises(HomeAssistantError, match="too large"):

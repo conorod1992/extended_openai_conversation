@@ -104,9 +104,9 @@ from .ha_tool_result_compat import (
     execution_tool_result,
     is_tool_result_content,
     make_tool_result_content,
-    tool_result_data,
 )
 from .helpers import get_api_mode
+from .model_tool_results import async_prepare_tool_results, serialize_model_tool_result
 from .non_streaming import completed_chat_chunks, completed_responses_events
 from .operational_errors import log_handled_failure
 from .provider_content import answer_text
@@ -519,9 +519,7 @@ def _convert_content_to_param(
                     "tool_call_id": _shorten_tool_call_id(content.tool_call_id)
                     if shorten_tool_call_id
                     else content.tool_call_id,
-                    "content": orjson.dumps(
-                        tool_result_data(content), option=orjson.OPT_SORT_KEYS
-                    ).decode(),
+                    "content": serialize_model_tool_result(content),
                 }
             )
 
@@ -563,9 +561,7 @@ def _convert_content_to_responses_param(
                     {
                         "type": "function_call_output",
                         "call_id": call_id,
-                        "output": orjson.dumps(
-                            tool_result_data(content), option=orjson.OPT_SORT_KEYS
-                        ).decode(),
+                        "output": serialize_model_tool_result(content),
                     }
                 )
                 continue
@@ -681,6 +677,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         structure_schema: dict[str, Any] | None = None,
     ) -> bool | None:
         """Generate an answer for the chat log with streaming support."""
+        await async_prepare_tool_results(chat_log.content)
         async with context_summary_request(self, chat_log):
             if self._usage is not None:
                 current_run = getattr(self._usage, "current_run", None)
@@ -1277,6 +1274,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     recovery_state=recovery_state,
                     request_config_data=request_config_data,
                 )
+                await async_prepare_tool_results(chat_log.content)
 
                 if api_mode == API_MODE_RESPONSES:
                     messages.extend(
@@ -2199,6 +2197,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         api_mode: str | None = None,
     ) -> None:
         """Truncate message history based on strategy."""
+        await async_prepare_tool_results(chat_log.content)
         if schedule_context_summary(
             self,
             chat_log,
@@ -2273,6 +2272,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         api_mode: str,
     ) -> str | None:
         """Summarize older turns once without tools or recursive truncation."""
+        older = list(older)
+        await async_prepare_tool_results(older)
         transcript = history_as_summary_text(older)
         if not transcript:
             return None
