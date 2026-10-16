@@ -204,7 +204,7 @@ def _local_handling_config_changed(
 
 
 @lru_cache(maxsize=1)
-def _cached_configuration_defaults() -> dict[str, Any]:
+def _cached_configuration_defaults(generation: int = 0) -> dict[str, Any]:
     """Build the immutable-source default configuration projection once."""
     return agent_config_snapshot(agent_config_defaults())
 
@@ -216,7 +216,9 @@ def _cached_configuration_options() -> dict[str, list[dict[str, Any]]]:
 
 
 def _configuration_defaults() -> dict[str, Any]:
-    return deepcopy(_cached_configuration_defaults())
+    from .model_catalog import catalog_generation
+
+    return deepcopy(_cached_configuration_defaults(catalog_generation()))
 
 
 def _configuration_options() -> dict[str, list[dict[str, Any]]]:
